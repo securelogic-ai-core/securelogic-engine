@@ -1,0 +1,8 @@
+{
+  "triggers": [
+    "identity",
+    "authentication",
+    "access control",
+    "governance"
+  ]
+}
