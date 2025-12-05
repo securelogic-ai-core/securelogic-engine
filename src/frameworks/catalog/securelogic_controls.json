@@ -1,0 +1,14 @@
+{
+  "controls": [
+    {
+      "id": "GOV-01",
+      "domain": "Govern",
+      "title": "AI Governance Policy",
+      "description": "The organization maintains a formal AI governance and oversight policy.",
+      "keywords": ["policy", "governance", "oversight"],
+      "triggerTags": ["policy", "governance"],
+      "baselineImpact": 4,
+      "baselineLikelihood": 2
+    }
+  ]
+}

@@ -5,12 +5,10 @@ class IntakeEngine {
     static normalize(input) {
         return {
             size: input.size ?? "small",
-            industry: input.industry?.toLowerCase() ?? undefined,
-            triggers: (input.triggers ?? []).map(t => t.trim().toLowerCase()),
-            // REQUIRED BY NormalizedIntake
-            frameworks: input.frameworks ?? [],
-            domains: input.domains ?? [],
-            controlIds: input.controlIds ?? [],
+            triggers: (input.triggers ?? []).map(x => x.toLowerCase()),
+            frameworks: (input.frameworks ?? []).map(x => x.toLowerCase()),
+            domains: (input.domains ?? []).map(x => x.toLowerCase()),
+            controlIds: (input.controlIds ?? []).map(x => x.toLowerCase())
         };
     }
 }
