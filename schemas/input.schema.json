@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SecureLogic Engine Input",
+  "type": "object",
+  "required": ["size", "triggers"],
+  "properties": {
+    "size": { "type": "string" },
+    "triggers": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "frameworks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "domains": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "controlIds": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}
+
