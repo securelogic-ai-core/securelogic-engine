@@ -1,4 +1,0 @@
-{
-  "size": "small",
-  "triggers": ["identity", "authentication", "governance", "policy"]
-}

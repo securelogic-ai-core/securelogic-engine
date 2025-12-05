@@ -1,3 +1,5 @@
+import { validateURO } from "../validation/validateURO";
+import type { Request, Response, NextFunction } from "express";
 import express from "express";
 import dotenv from "dotenv";
 import { RunnerEngine } from "../engines/v2/RunnerEngine";
@@ -13,7 +15,7 @@ const app = express();
 app.use(express.json());
 
 // ---- API KEY MIDDLEWARE ----
-app.use((req, res, next) => {
+app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (!API_KEY) {
     return res.status(500).json({ error: "Server missing API key" });
   }
@@ -27,12 +29,12 @@ app.use((req, res, next) => {
 });
 
 // ---- HEALTH CHECK ----
-app.get("/health", (_req, res) => {
+app.get("/health", (_req: express.Request, res: express.Response) => {
   res.json({ status: "ok", service: "SecureLogic Engine API" });
 });
 
 // ---- ASSESS ----
-app.post("/assess", (req, res) => {
+app.post("/assess", (req: express.Request, res: express.Response) => {
   try {
     validateInput(req.body);
     const result = RunnerEngine.run(req.body, catalog);
