@@ -1,0 +1,10 @@
+{
+  "name": "SecureLogic Engine",
+  "forwardPorts": [4000],
+  "portsAttributes": {
+    "4000": {
+      "label": "SecureLogic API",
+      "visibility": "public"
+    }
+  }
+}
