@@ -1,0 +1,14 @@
+{
+  "multipliers": {
+    "missingPoliciesLikelihood": 0.12,
+    "missingPoliciesMax": 0.30,
+
+    "riskIndicatorsImpact": 0.20,
+    "riskIndicatorsMax": 0.40,
+
+    "foundControlsLikelihoodReduction": 0.05,
+    "foundControlsReductionMax": 0.20
+  },
+  "version": "1.0.0",
+  "lastUpdated": "2025-01-01T00:00:00Z"
+}

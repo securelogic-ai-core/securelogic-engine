@@ -1,51 +1,23 @@
-import { validateURO } from "../validation/validateURO";
-import type { Request, Response, NextFunction } from "express";
 import express from "express";
-import dotenv from "dotenv";
-import { RunnerEngine } from "../engines/v2/RunnerEngine";
-import { validateInput } from "../validation/validateInput";
-import catalog from "../frameworks/catalog/securelogic_full.json";
-
-dotenv.config();
-
-const PORT = process.env.PORT || 4000;
-const API_KEY = process.env.API_KEY;
+import bodyParser from "body-parser";
+import { ScoringEngine } from "../engines/v2/ScoringEngine";
+import scoreV3Route from "./routes/scoreV3";
 
 const app = express();
-app.use(express.json());
+app.use(bodyParser.json());
+app.use("/api/score/v3", scoreV3Route);
 
-// ---- API KEY MIDDLEWARE ----
-app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
-  if (!API_KEY) {
-    return res.status(500).json({ error: "Server missing API key" });
-  }
-
-  const headerKey = req.headers["x-api-key"];
-  if (headerKey !== API_KEY) {
-    return res.status(401).json({ error: "Unauthorized: Invalid API Key" });
-  }
-
-  next();
-});
-
-// ---- HEALTH CHECK ----
-app.get("/health", (_req: express.Request, res: express.Response) => {
-  res.json({ status: "ok", service: "SecureLogic Engine API" });
-});
-
-// ---- ASSESS ----
-app.post("/assess", (req: express.Request, res: express.Response) => {
+// Public scoring endpoint
+app.post("/api/score", (req, res) => {
   try {
-    validateInput(req.body);
-    const result = RunnerEngine.run(req.body, catalog);
-    res.json(result);
+    const { controls, intake } = req.body;
+    const result = ScoringEngine.score(controls, intake);
+    res.json({ ok: true, result });
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    res.status(400).json({ ok: false, error: err.message });
   }
 });
 
-// ---- START SERVER ----
-app.listen(PORT, () => {
-  console.log(`SecureLogic API running at http://localhost:${PORT}`);
+app.listen(4000, "0.0.0.0", () => {
+  console.log("🚀 SecureLogic Engine API running on port 4000");
 });
-

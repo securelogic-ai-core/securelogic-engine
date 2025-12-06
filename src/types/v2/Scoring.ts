@@ -9,6 +9,7 @@ export interface ScoredControl {
 
 export interface ScoringResult {
   scored: ScoredControl[];
-  highestRisk: ScoredControl | null;
+  highestRisk: ScoredControl;
   averageRisk: number;
+  narrative?: string[];
 }
