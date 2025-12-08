@@ -1,0 +1,9 @@
+{
+  "ports": [
+    {
+      "port": 4000,
+      "onAutoForward": "openBrowser",
+      "visibility": "public"
+    }
+  ]
+}

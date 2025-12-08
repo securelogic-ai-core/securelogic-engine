@@ -4,7 +4,7 @@
   "main": "dist/server/index.js",
   "license": "MIT",
   "scripts": {
-    "start": "node dist/server/index.js",
+    "start": "NODE_OPTIONS=\"--max-old-space-size=256\" node dist/server/index.js",
     "dev": "nodemon --watch src --watch engines --exec \"npm run build && npm start\"",
     "build": "tsc && npm run copy",
     "copy": "rsync -a frameworks dist/frameworks --exclude '*.ts'",

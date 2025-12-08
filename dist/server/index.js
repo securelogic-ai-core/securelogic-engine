@@ -22,5 +22,5 @@ app.post("/api/score", (req, res) => {
     }
 });
 app.listen(4000, "0.0.0.0", () => {
-    console.log("🚀 SecureLogic Engine API running on port 4000");
+    console.log("🔥 SecureLogic Engine API running on 0.0.0.0:4000");
 });
