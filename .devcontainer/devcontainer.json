@@ -1,4 +1,5 @@
-{
+mkdir -p .devcontainer
+nano .devcontainer/devcontainer.json{
   "name": "SecureLogic Engine",
   "forwardPorts": [4000],
   "portsAttributes": {
