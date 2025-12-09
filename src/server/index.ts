@@ -18,6 +18,16 @@ app.post("/api/score", (req, res) => {
   }
 });
 
+// Health check
+app.get("/", (_req, res) => {
+  res.json({ service: "SecureLogic Engine", status: "ok" });
+});
+
 app.listen(4000, "0.0.0.0", () => {
   console.log("🔥 SecureLogic Engine API running on 0.0.0.0:4000");
+});
+
+// Health check
+app.get("/", (_req, res) => {
+  res.json({ service: "SecureLogic Engine", status: "ok" });
 });

@@ -1,6 +1,6 @@
-mkdir -p .devcontainer
-nano .devcontainer/devcontainer.json{
+{
   "name": "SecureLogic Engine",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:20",
   "forwardPorts": [4000],
   "portsAttributes": {
     "4000": {

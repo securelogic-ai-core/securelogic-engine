@@ -1,21 +1,20 @@
 {
   "name": "securelogic-engine",
   "version": "1.0.0",
-  "main": "dist/server/index.js",
-  "license": "MIT",
+  "main": "dist/server/index.js",  "license": "MIT",
   "scripts": {
-    "start": "node dist/server/index.js",
-    "dev": "nodemon src/server/index.ts",
+    "start": "NODE_OPTIONS=\"--max-old-space-size=256\" node dist/server/index.js",
+    "dev": "nodemon --watch src --watch engines --exec \"npm run build && npm start\"",
     "build": "tsc && npm run copy",
     "copy": "rsync -a frameworks dist/frameworks --exclude '*.ts'",
     "api": "ts-node src/server.ts"
   },
   "dependencies": {
     "ajv": "^8.17.1",
-    "body-parser": "^1.20.2",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
-    "zod": "^4.1.13"
+    "zod": "^4.1.13",
+    "body-parser": "^1.20.2"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
