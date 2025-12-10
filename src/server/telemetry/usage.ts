@@ -1,21 +1,31 @@
-type UsageRecord = {
-  apiKey: string;
-  path: string;
-  status: number;
-  durationMs: number;
-  timestamp: string;
-};
+type EndpointUsage = Record<string, number>;
 
-const MAX_RECORDS = 1000;
-const usageLog: UsageRecord[] = [];
+interface UsageRecord {
+  total: number;
+  blocked: number;
+  endpoints: EndpointUsage;
+}
 
-export function recordUsage(entry: UsageRecord) {
-  usageLog.push(entry);
-  if (usageLog.length > MAX_RECORDS) {
-    usageLog.shift();
+const usage: Record<string, UsageRecord> = {};
+
+export function recordUsage(apiKey: string, endpoint: string) {
+  if (!usage[apiKey]) {
+    usage[apiKey] = { total: 0, blocked: 0, endpoints: {} };
   }
+
+  usage[apiKey].total += 1;
+  usage[apiKey].endpoints[endpoint] =
+    (usage[apiKey].endpoints[endpoint] ?? 0) + 1;
+}
+
+export function recordBlocked(apiKey: string) {
+  if (!usage[apiKey]) {
+    usage[apiKey] = { total: 0, blocked: 0, endpoints: {} };
+  }
+
+  usage[apiKey].blocked += 1;
 }
 
 export function getUsage() {
-  return usageLog;
+  return usage;
 }
