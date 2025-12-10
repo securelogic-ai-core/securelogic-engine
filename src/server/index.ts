@@ -4,7 +4,9 @@ import { ScoringEngine } from "../engines/v2/ScoringEngine";
 import scoreV3Route from "./routes/scoreV3";
 
 const app = express();
+import { requireApiKey } from "./middleware/apiKey";
 app.use(bodyParser.json());
+app.use("/api", requireApiKey);
 app.use("/api/score/v3", scoreV3Route);
 
 // Public scoring endpoint
