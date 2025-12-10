@@ -10,6 +10,8 @@ const scoreV3_1 = __importDefault(require("./routes/scoreV3"));
 const app = (0, express_1.default)();
 const apiKey_1 = require("./middleware/apiKey");
 app.use(body_parser_1.default.json());
+app.use("/api", require("./middleware/apiKey").requireApiKey);
+app.use("/api", require("./middleware/rateLimit").apiRateLimiter);
 app.use("/api", apiKey_1.requireApiKey);
 app.use("/api/score/v3", scoreV3_1.default);
 // Public scoring endpoint
@@ -33,4 +35,13 @@ app.listen(4000, "0.0.0.0", () => {
 // Health check
 app.get("/", (_req, res) => {
     res.json({ service: "SecureLogic Engine", status: "ok" });
+});
+// Internal usage inspection (admin only)
+app.get("/internal/usage", (req, res) => {
+    const adminKey = process.env.ENGINE_API_KEY;
+    if (req.header("x-api-key") !== adminKey) {
+        return res.status(403).json({ ok: false });
+    }
+    const { getUsage } = require("./telemetry/usage");
+    res.json({ ok: true, usage: getUsage() });
 });
