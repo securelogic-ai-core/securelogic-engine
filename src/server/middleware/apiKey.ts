@@ -1,7 +1,11 @@
 import { Request, Response, NextFunction } from "express";
 import { API_KEYS } from "../config/apiKeys";
 
-export function requireApiKey(req: Request, res: Response, next: NextFunction) {
+export function requireApiKey(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
   const apiKey = req.header("x-api-key");
 
   if (!apiKey || !API_KEYS[apiKey]) {
