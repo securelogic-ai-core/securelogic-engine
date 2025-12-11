@@ -1,29 +1,30 @@
 import express from "express";
 import bodyParser from "body-parser";
-import { RunnerEngine } from "../engines/v2/RunnerEngine";
 
+import { RunnerEngine } from "../engines/v2/RunnerEngine";
+import { normalizeQuestionnaire } from "../engine/intake/normalizeQuestionnaire";
+import { mapToScoringInput } from "../engine/intake/mapToScoringInput";
+import { requireApiKey } from "./middleware/apiKey";
+
+const PORT = 4000;
 const app = express();
 
-/* ===== Core middleware ===== */
 app.use(bodyParser.json());
-app.use("/api", require("./middleware/apiKey").requireApiKey);
-app.use("/api", require("./middleware/rateLimit").apiRateLimiter);
+app.use("/api", requireApiKey);
 
-/* ===== Routes ===== */
 app.post("/api/score", (req, res) => {
-  const engineResult = RunnerEngine.run(req.body);
-  res.json({ ok: true, engineResult });
-});
+  try {
+    const questionnaire = normalizeQuestionnaire(req.body);
+    const scoringInput = mapToScoringInput(questionnaire);
 
-/* ===== Health ===== */
-app.get("/", (_req, res) => {
-  res.json({ service: "SecureLogic Engine", status: "ok" });
-});
+    const result = RunnerEngine.run(scoringInput);
 
-const PORT = process.env.PORT || 4000;
+    return res.json({ ok: true, engineResult: result });
+  } catch (err: any) {
+    return res.status(400).json({ ok: false, error: err.message });
+  }
+});
 
 app.listen(PORT, () => {
-  console.log(`✅ SecureLogic Engine listening on port ${PORT}`);
+  console.log(`SecureLogic AI Engine running on port ${PORT}`);
 });
-
-export default app;

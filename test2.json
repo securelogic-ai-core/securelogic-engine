@@ -1,0 +1,13 @@
+{
+  "orgProfile": {
+    "industry": "Finance",
+    "size": "Enterprise",
+    "aiUsage": ["Fraud Detection", "LLM"]
+  },
+  "controls": {
+    "aiGovernanceDocumented": true,
+    "modelMonitoring": false,
+    "biasTesting": false,
+    "incidentResponseForAI": true
+  }
+}

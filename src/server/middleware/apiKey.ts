@@ -1,22 +1,9 @@
 import { Request, Response, NextFunction } from "express";
-import { API_KEYS } from "../config/apiKeys";
 
-export function requireApiKey(
-  req: Request,
-  res: Response,
-  next: NextFunction
-) {
-  const apiKey = req.header("x-api-key");
-
-  if (!apiKey || !API_KEYS[apiKey]) {
-    return res.status(401).json({
-      ok: false,
-      error: "Unauthorized: invalid or missing API key"
-    });
+export function requireApiKey(req: Request, res: Response, next: NextFunction) {
+  const key = req.headers["x-api-key"];
+  if (!key || key !== "test123") {
+    return res.status(401).json({ ok: false, error: "Unauthorized" });
   }
-
-  req.apiKey = apiKey;
-  req.apiTier = API_KEYS[apiKey].tier;
-
   next();
 }
