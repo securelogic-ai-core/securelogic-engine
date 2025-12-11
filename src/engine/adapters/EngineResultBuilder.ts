@@ -1,6 +1,8 @@
 import { EngineFinding } from "../contracts/EngineResult";
 
 export function buildEngineResult(findings: EngineFinding[]) {
+  const severityOrder = { Low: 1, Moderate: 2, High: 3, Critical: 4 };
+
   const severityBreakdown = {
     Low: 0,
     Moderate: 0,
@@ -8,36 +10,22 @@ export function buildEngineResult(findings: EngineFinding[]) {
     Critical: 0
   };
 
-  for (const f of findings) {
-    severityBreakdown[f.severity]++;
-  }
+  findings.forEach(f => {
+    severityBreakdown[f.severity] += 1;
+  });
 
-  const overallRiskLevel =
-    severityBreakdown.Critical > 0
-      ? "Critical"
-      : severityBreakdown.High > 0
-      ? "High"
-      : severityBreakdown.Moderate > 0
-      ? "Moderate"
-      : "Low";
-
-  const monetizationSignal = {
-    urgency: overallRiskLevel === "High" || overallRiskLevel === "Critical" ? "High" : "Medium",
-    estimatedDealValue:
-      overallRiskLevel === "Critical"
-        ? 75000
-        : overallRiskLevel === "High"
-        ? 25000
-        : overallRiskLevel === "Moderate"
-        ? 10000
-        : 2500
-  };
+  const highest = findings.sort(
+    (a, b) => severityOrder[b.severity] - severityOrder[a.severity]
+  )[0];
 
   return {
-    overallRiskLevel,
+    overallRiskLevel: highest ? highest.severity : "None",
     findings,
     severityBreakdown,
-    recommendedSprint: overallRiskLevel === "Low" ? "Advisory" : "Remediation",
-    monetizationSignal
+    recommendedSprint: "Remediation",
+    monetizationSignal: {
+      urgency: highest ? highest.severity : "None",
+      estimatedDealValue: 25000
+    }
   };
 }
