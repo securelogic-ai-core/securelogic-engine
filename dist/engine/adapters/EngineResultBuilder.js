@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildEngineResult = buildEngineResult;
 function buildEngineResult(findings) {
+    const severityOrder = { Low: 1, Moderate: 2, High: 3, Critical: 4 };
     const severityBreakdown = {
         Low: 0,
         Moderate: 0,
@@ -9,31 +10,17 @@ function buildEngineResult(findings) {
         Critical: 0
     };
     findings.forEach(f => {
-        severityBreakdown[f.severity]++;
+        severityBreakdown[f.severity] += 1;
     });
-    const overallRiskLevel = severityBreakdown.Critical > 0 ? "Critical" :
-        severityBreakdown.High > 0 ? "High" :
-            severityBreakdown.Moderate > 0 ? "Moderate" :
-                "Low";
-    const recommendedSprint = overallRiskLevel === "Critical" ? "Managed" :
-        overallRiskLevel === "High" ? "Remediation" :
-            "Advisory";
-    const urgency = overallRiskLevel === "Critical" || overallRiskLevel === "High"
-        ? "High"
-        : overallRiskLevel === "Moderate"
-            ? "Medium"
-            : "Low";
-    const estimatedDealValue = urgency === "High" ? 25000 :
-        urgency === "Medium" ? 7500 :
-            2500;
+    const highest = findings.sort((a, b) => severityOrder[b.severity] - severityOrder[a.severity])[0];
     return {
-        overallRiskLevel,
+        overallRiskLevel: highest ? highest.severity : "None",
         findings,
         severityBreakdown,
-        recommendedSprint,
+        recommendedSprint: "Remediation",
         monetizationSignal: {
-            urgency,
-            estimatedDealValue
+            urgency: highest ? highest.severity : "None",
+            estimatedDealValue: 25000
         }
     };
 }

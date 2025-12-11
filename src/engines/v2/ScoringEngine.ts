@@ -1,69 +1,36 @@
-import { ControlsArraySchema } from "../../schema/ControlSchema";
+import { EngineFinding } from "../../engine/contracts/EngineResult";
+import { ScoringInput } from "../../engine/contracts/ScoringInput";
 
 export class ScoringEngine {
-  static score(rawControls: any[] = [], intake: any = {}) {
+  static score(input: ScoringInput): EngineFinding[] {
+    const findings: EngineFinding[] = [];
 
-    // Validate controls
-    const parsed = ControlsArraySchema.safeParse(rawControls);
-
-    if (!parsed.success) {
-      return {
-        scored: [],
-        highestRisk: null,
-        averageRisk: 0,
-        narrative: [
-          "Control validation failed.",
-          JSON.stringify(parsed.error.format(), null, 2)
-        ]
-      };
+    // Missing AI governance
+    if (!input.controls.aiGovernanceDocumented) {
+      findings.push({
+        id: "AI-GOV-001",
+        title: "No documented AI governance framework",
+        severity: "High",
+        likelihood: "Likely",
+        framework: "ISO 42001",
+        rationale:
+          "The organization has not formally documented roles, responsibilities, or oversight for AI systems."
+      });
     }
 
-    const controls = parsed.data;
-
-    if (controls.length === 0) {
-      return {
-        scored: [],
-        highestRisk: null,
-        averageRisk: 0,
-        narrative: [
-          "No controls were provided. Risk cannot be assessed. Returning baseline result."
-        ]
-      };
+    // Missing monitoring
+    if (!input.controls.modelMonitoring) {
+      findings.push({
+        id: "AI-GOV-002",
+        title: "Lack of AI model monitoring",
+        severity: "Moderate",
+        likelihood: "Possible",
+        framework: "NIST AI RMF",
+        rationale:
+          "AI systems are not actively monitored for drift, bias, or anomalous behavior."
+      });
     }
 
-    // Score controls
-    const scored = controls.map(ctrl => {
-      const risk = ctrl.impact * ctrl.likelihood;
-      return {
-        ...ctrl,
-        domain: ctrl.domain ?? "UNKNOWN",
-        title: ctrl.title ?? "Untitled Control",
-        risk
-      };
-    });
-
-    const highestRisk = scored.reduce(
-      (a, b) => (b.risk > a.risk ? b : a),
-      scored[0]
-    );
-
-    const averageRisk =
-      scored.reduce((sum, c) => sum + c.risk, 0) / scored.length;
-
-    const narrative: string[] = [];
-
-    if (intake?.signals?.missingPolicies?.length) {
-      narrative.push(
-        "Likelihood increased due to missing policies: " +
-          intake.signals.missingPolicies.join(", ")
-      );
-    }
-
-    return {
-      scored,
-      highestRisk,
-      averageRisk,
-      narrative
-    };
+    return findings;
   }
 }
