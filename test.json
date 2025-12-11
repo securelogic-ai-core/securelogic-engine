@@ -1,0 +1,18 @@
+{
+  "orgProfile": {
+    "industry": "Healthcare",
+    "size": "SMB",
+    "aiUsage": ["Chatbot"],
+    "modelTypes": []
+  },
+  "governance": {
+    "aiGovernanceDocumented": false,
+    "riskOwnerAssigned": false
+  },
+  "controls": {
+    "modelMonitoring": false,
+    "biasTesting": true,
+    "incidentResponseForAI": false,
+    "inventoryMaintained": false
+  }
+}

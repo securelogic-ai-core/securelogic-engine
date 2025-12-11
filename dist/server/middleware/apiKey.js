@@ -1,16 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.requireApiKey = requireApiKey;
-const apiKeys_1 = require("../config/apiKeys");
 function requireApiKey(req, res, next) {
-    const apiKey = req.header("x-api-key");
-    if (!apiKey || !apiKeys_1.API_KEYS[apiKey]) {
-        return res.status(401).json({
-            ok: false,
-            error: "Unauthorized: invalid or missing API key"
-        });
+    const key = req.headers["x-api-key"];
+    if (!key || key !== "test123") {
+        return res.status(401).json({ ok: false, error: "Unauthorized" });
     }
-    req.apiKey = apiKey;
-    req.apiTier = apiKeys_1.API_KEYS[apiKey].tier;
     next();
 }
