@@ -1,15 +1,15 @@
+import { ControlState } from "./ControlState";
+import { ControlAssessment } from "./ControlAssessment";
+
 export interface ScoringInput {
   orgProfile: {
     industry: string;
     size: "SMB" | "Mid-Market" | "Enterprise";
     aiUsage: string[];
+    modelTypes: string[];
   };
 
-  controls: {
-    aiGovernanceDocumented: boolean;
-    modelMonitoring: boolean;
-    biasTesting: boolean;
-    incidentResponseForAI: boolean;
-    inventoryMaintained: boolean;
-  };
+  controlState: ControlState;
+
+  assessments: Record<string, ControlAssessment>;
 }
