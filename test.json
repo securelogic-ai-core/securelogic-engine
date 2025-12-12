@@ -5,14 +5,71 @@
     "aiUsage": ["Chatbot"],
     "modelTypes": []
   },
+
   "governance": {
     "aiGovernanceDocumented": false,
     "riskOwnerAssigned": false
   },
+
   "controls": {
-    "modelMonitoring": false,
-    "biasTesting": true,
-    "incidentResponseForAI": false,
-    "inventoryMaintained": false
+    "governance": {
+      "aiGovernancePolicy": false,
+      "riskOwnerAssigned": false,
+      "rolesDefined": false,
+      "oversightCommittee": false,
+      "governanceWorkflow": false
+    },
+
+    "dataQuality": {
+      "dataLineage": false,
+      "dataQualityChecks": false,
+      "piiManagement": false,
+      "dataRetention": false,
+      "secureTrainingPipelines": false
+    },
+
+    "modelDevelopment": {
+      "validationTesting": false,
+      "biasTesting": true,
+      "robustnessTesting": false,
+      "adversarialTesting": false,
+      "modelVersioning": false,
+      "reproducibility": false
+    },
+
+    "monitoring": {
+      "modelMonitoring": false,
+      "driftDetection": false,
+      "anomalyDetection": false,
+      "incidentPlaybook": false,
+      "escalationPath": false,
+      "loggingCoverage": false
+    },
+
+    "security": {
+      "accessControls": false,
+      "modelRepoSecurity": false,
+      "vulnScanning": false,
+      "secureInterfaces": false,
+      "rateLimiting": false,
+      "adversarialDefenses": false
+    },
+
+    "transparency": {
+      "modelCards": false,
+      "systemCards": false,
+      "auditTrails": false,
+      "documentationCompleteness": false,
+      "userDisclosure": false,
+      "explainabilityMechanisms": false
+    },
+
+    "humanOversight": {
+      "humanInLoop": false,
+      "overrideMechanism": false,
+      "misusePrevention": false,
+      "oversightTraining": false,
+      "roleClarity": false
+    }
   }
 }

@@ -1,31 +1,34 @@
-import { EngineFinding } from "../contracts/EngineResult";
+import { EngineFinding, SeverityLevel, EngineResult } from "../contracts/EngineResult";
 
-export function buildEngineResult(findings: EngineFinding[]) {
-  const severityOrder = { Low: 1, Moderate: 2, High: 3, Critical: 4 };
+const severityOrder: Record<SeverityLevel, number> = {
+  Low: 1,
+  Medium: 2,
+  High: 3,
+  Critical: 4
+};
 
-  const severityBreakdown = {
+export function buildEngineResult(findings: EngineFinding[]): EngineResult {
+  const severityBreakdown: Record<SeverityLevel, number> = {
     Low: 0,
-    Moderate: 0,
+    Medium: 0,
     High: 0,
     Critical: 0
   };
 
-  findings.forEach(f => {
-    severityBreakdown[f.severity] += 1;
-  });
+  for (const f of findings) {
+    severityBreakdown[f.severity]++;
+  }
 
-  const highest = findings.sort(
+  const sorted = [...findings].sort(
     (a, b) => severityOrder[b.severity] - severityOrder[a.severity]
-  )[0];
+  );
+
+  const overallRiskLevel =
+    sorted.length === 0 ? "Low" : sorted[0]?.severity ?? "Low";
 
   return {
-    overallRiskLevel: highest ? highest.severity : "None",
-    findings,
-    severityBreakdown,
-    recommendedSprint: "Remediation",
-    monetizationSignal: {
-      urgency: highest ? highest.severity : "None",
-      estimatedDealValue: 25000
-    }
+    overallRiskLevel,
+    findings: sorted,
+    severityBreakdown
   };
 }

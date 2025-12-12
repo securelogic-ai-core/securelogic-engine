@@ -1,10 +1,5 @@
-import { ScoringEngine } from "./ScoringEngine";
-import { buildEngineResult } from "../../engine/adapters/EngineResultBuilder";
-import { ScoringInput } from "../../engine/contracts/ScoringInput";
-
 export class RunnerEngine {
-  static run(input: ScoringInput) {
-    const findings = ScoringEngine.score(input);
-    return buildEngineResult(findings);
+  static run(): never {
+    throw new Error("RunnerEngine v2 is deprecated. Use v3.");
   }
 }

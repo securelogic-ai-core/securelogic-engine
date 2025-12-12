@@ -1,4 +1,4 @@
-import { RunnerEngine } from "./engines/v2/RunnerEngine";
+import { RunnerEngine } from "./engine/RunnerEngine";
 import { ScoringInput } from "./engine/contracts/ScoringInput";
 
 export function runEngine(input: ScoringInput) {
