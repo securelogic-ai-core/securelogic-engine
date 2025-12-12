@@ -1,3 +1,6 @@
+import { ControlState } from "./ControlState";
+import { ControlAssessment } from "./ControlAssessment";
+
 export interface Questionnaire {
   orgProfile: {
     industry: string;
@@ -6,15 +9,7 @@ export interface Questionnaire {
     modelTypes: string[];
   };
 
-  governance: {
-    aiGovernanceDocumented: boolean;
-    riskOwnerAssigned: boolean;
-  };
+  controls: ControlState;
 
-  controls: {
-    modelMonitoring: boolean;
-    biasTesting: boolean;
-    incidentResponseForAI: boolean;
-    inventoryMaintained: boolean;
-  };
+  assessments: Record<string, ControlAssessment>;
 }

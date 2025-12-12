@@ -1,21 +1,25 @@
-export type RiskLevel = "Low" | "Moderate" | "High" | "Critical";
+export type SeverityLevel =
+  | "Low"
+  | "Medium"
+  | "High"
+  | "Critical";
+
+export type LikelihoodLevel =
+  | "Unlikely"
+  | "Possible"
+  | "Likely";
 
 export interface EngineFinding {
   id: string;
   title: string;
-  severity: RiskLevel;
-  likelihood: "Unlikely" | "Possible" | "Likely";
-  framework: "NIST AI RMF" | "ISO 42001" | "SOC 2";
+  severity: SeverityLevel;
+  likelihood: LikelihoodLevel;
+  framework: string; // ← intentionally open-ended
   rationale: string;
 }
 
 export interface EngineResult {
-  overallRiskLevel: RiskLevel;
+  overallRiskLevel: SeverityLevel;
   findings: EngineFinding[];
-  severityBreakdown: Record<RiskLevel, number>;
-  recommendedSprint: "Advisory" | "Remediation" | "Managed";
-  monetizationSignal: {
-    urgency: "Low" | "Medium" | "High";
-    estimatedDealValue: number;
-  };
+  severityBreakdown?: Record<SeverityLevel, number>;
 }
