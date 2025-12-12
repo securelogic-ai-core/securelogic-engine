@@ -6,14 +6,31 @@ import { ScoringInput } from "../contracts/ScoringInput";
 export class ControlRiskScoringEngine {
   static score(
     assessments: ControlAssessment[],
-    input: ScoringInput
+    _input: ScoringInput
   ): RiskScore[] {
     return assessments.map(a => {
-      const definition =
-        ControlRegistry.controls[a.controlPath];
+      const definition = ControlRegistry.controls[a.controlPath];
 
-      const modifierScore = a.satisfied ? 0 : 2;
-      const maturityPenalty = a.satisfied ? 0 : 1;
+      if (!definition) {
+        throw new Error(`Unknown controlPath: ${a.controlPath}`);
+      }
+
+      const satisfactionPenalty = a.satisfied ? 0 : 2;
+
+      const maturityPenalty =
+        a.maturityLevel >= 3 ? 0 :
+        a.maturityLevel === 2 ? 1 :
+        a.maturityLevel === 1 ? 2 : 3;
+
+      const acceptancePenalty = a.riskAccepted ? -1 : 0;
+
+      const modifierScore =
+        satisfactionPenalty +
+        acceptancePenalty +
+        (definition.dynamicModifiers?.genAIUsage ?? 0) +
+        (definition.dynamicModifiers?.sensitiveData ?? 0) +
+        (definition.dynamicModifiers?.highRiskIndustry ?? 0) +
+        (definition.dynamicModifiers?.enterpriseScale ?? 0);
 
       const totalRiskScore =
         definition.baseWeight +
@@ -31,21 +48,20 @@ export class ControlRiskScoringEngine {
           controlId: definition.id,
           controlTitle: definition.title,
           observedState: {
-  implemented: a.implemented,
-  maturityLevel: a.maturityLevel,
-  riskAccepted: a.riskAccepted,
-  evidenceProvided: a.evidenceProvided
-},
+            implemented: a.implemented,
+            maturityLevel: a.maturityLevel,
+            riskAccepted: a.riskAccepted,
+            evidenceProvided: a.evidenceProvided
+          },
           scoringFactors: {
-  baseWeight: definition.baseWeight,
-  modifierScore,
-  maturityPenalty,
-  totalRiskScore
-},
+            baseWeight: definition.baseWeight,
+            modifierScore,
+            maturityPenalty,
+            totalRiskScore
+          },
           rationale: `Risk derived from control ${definition.id} (${definition.title})`
         }
       };
     });
   }
 }
-
