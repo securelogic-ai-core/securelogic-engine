@@ -1,3 +1,4 @@
+import { EnterpriseEscalationPolicy } from "./scoring/policy/EnterpriseEscalationPolicy";
 import { ExceptionWeightingPolicy } from "./scoring/policy/ExceptionWeightingPolicy";
 
 import { EnterpriseSeverityPolicy } from "./scoring/policy/EnterpriseSeverityPolicy";
@@ -36,6 +37,10 @@ const controlScores =
 
     enterprise =
       CategoryMaterialityPolicy.apply(enterprise);
+
+    enterprise =
+      EnterpriseEscalationPolicy.apply(enterprise);
+
 
     const narrative =
       ExecutiveNarrativeEngine.generate(enterprise);
