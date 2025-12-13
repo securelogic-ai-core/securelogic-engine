@@ -2,6 +2,7 @@ import { RiskScore } from "../contracts/RiskScore";
 import { EnterpriseRiskSummary } from "../contracts/EnterpriseRiskSummary";
 import { RiskSeverityEngine } from "./RiskSeverityEngine";
 import { ControlRegistry } from "../registry/ControlRegistry";
+import { DOMAIN_WEIGHTS } from "../policy/DomainWeightPolicy";
 
 export class EnterpriseRiskAggregationEngine {
   static aggregate(scores: RiskScore[]): EnterpriseRiskSummary {
@@ -12,10 +13,13 @@ export class EnterpriseRiskAggregationEngine {
       const definition = Object.values(ControlRegistry.controls)
         .find(c => c.id === score.controlId);
 
-      const category = definition?.domain ?? "Unknown";
+      const category = definition?.domain ?? "Uncategorized";
+      const weight = DOMAIN_WEIGHTS[category] ?? 1.0;
+
+      const weightedScore = score.totalRiskScore * weight;
 
       categoryTotals[category] =
-        (categoryTotals[category] ?? 0) + score.totalRiskScore;
+        (categoryTotals[category] ?? 0) + weightedScore;
 
       score.drivers.forEach(d => drivers.add(d));
     }

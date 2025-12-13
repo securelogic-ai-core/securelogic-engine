@@ -1,17 +1,11 @@
 {
   "orgProfile": {
-    "industry": "Healthcare",
-    "size": "SMB",
-    "aiUsage": ["Chatbot"],
-    "modelTypes": []
+    "industry": "Finance",
+    "size": "Enterprise",
+    "aiUsage": ["Fraud Detection"],
+    "modelTypes": ["ML"]
   },
-
-  "governance": {
-    "aiGovernanceDocumented": false,
-    "riskOwnerAssigned": false
-  },
-
-  "controls": {
+  "controlState": {
     "governance": {
       "aiGovernancePolicy": false,
       "riskOwnerAssigned": false,
@@ -19,57 +13,27 @@
       "oversightCommittee": false,
       "governanceWorkflow": false
     },
-
     "dataQuality": {
       "dataLineage": false,
       "dataQualityChecks": false,
       "piiManagement": false,
-      "dataRetention": false,
-      "secureTrainingPipelines": false
+      "dataRetention": false
     },
-
     "modelDevelopment": {
-      "validationTesting": false,
-      "biasTesting": true,
-      "robustnessTesting": false,
+      "trainingDocumentation": false,
       "adversarialTesting": false,
-      "modelVersioning": false,
-      "reproducibility": false
+      "modelValidation": false
     },
-
     "monitoring": {
       "modelMonitoring": false,
-      "driftDetection": false,
-      "anomalyDetection": false,
-      "incidentPlaybook": false,
-      "escalationPath": false,
-      "loggingCoverage": false
+      "performanceMonitoring": false
     },
-
-    "security": {
-      "accessControls": false,
-      "modelRepoSecurity": false,
-      "vulnScanning": false,
-      "secureInterfaces": false,
-      "rateLimiting": false,
-      "adversarialDefenses": false
+    "businessContinuity": {
+      "rpoDefined": false,
+      "disasterRecoveryPlan": false
     },
-
-    "transparency": {
-      "modelCards": false,
-      "systemCards": false,
-      "auditTrails": false,
-      "documentationCompleteness": false,
-      "userDisclosure": false,
-      "explainabilityMechanisms": false
-    },
-
     "humanOversight": {
-      "humanInLoop": false,
-      "overrideMechanism": false,
-      "misusePrevention": false,
-      "oversightTraining": false,
-      "roleClarity": false
+      "humanInLoop": false
     }
   }
 }

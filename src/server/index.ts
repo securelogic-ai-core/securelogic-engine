@@ -1,6 +1,13 @@
-import { runEngine } from "../runEngine";
-import { ScoringInput } from "../engine/contracts/ScoringInput";
+import express from "express";
+import scoreRouter from "./routes/score";
 
-export function handleRequest(scoringInput: ScoringInput) {
-  return runEngine(scoringInput);
-}
+const app = express();
+
+app.use(express.json());
+app.use("/api", scoreRouter);
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`SecureLogic Engine listening on port ${PORT}`);
+});

@@ -1,3 +1,4 @@
+import { ExceptionWeightingPolicy } from "./scoring/policy/ExceptionWeightingPolicy";
 
 import { EnterpriseSeverityPolicy } from "./scoring/policy/EnterpriseSeverityPolicy";
 import { CategoryMaterialityPolicy } from "./scoring/policy/CategoryMaterialityPolicy";
@@ -15,8 +16,11 @@ export class RunnerEngine {
     const assessments =
       AssessmentInferenceEngine.infer(input.controlState);
 
-    const controlScores =
-      ControlRiskScoringEngine.score(assessments, input);
+    const rawScores =
+  ControlRiskScoringEngine.score(assessments, input);
+
+const controlScores =
+  ExceptionWeightingPolicy.apply(rawScores);
 
     let enterprise =
       EnterpriseRiskAggregationEngine.aggregate(controlScores);
