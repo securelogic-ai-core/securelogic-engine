@@ -8,7 +8,8 @@
     "dev": "nodemon src/server/index.ts",
     "build": "tsc && npm run copy",
     "copy": "rsync -a frameworks dist/frameworks --exclude '*.ts'",
-    "api": "ts-node src/server.ts"
+    "api": "ts-node src/server.ts",
+    "test": "jest --runInBand"
   },
   "dependencies": {
     "ajv": "^8.17.1",
@@ -20,8 +21,11 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
+    "@types/jest": "^30.0.0",
     "@types/node": "^24.10.1",
+    "jest": "^30.2.0",
     "nodemon": "^3.1.11",
+    "ts-jest": "^29.4.6",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }

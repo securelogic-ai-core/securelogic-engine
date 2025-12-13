@@ -1,6 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RunnerEngine = void 0;
+const CategoryCompoundingRiskPolicy_1 = require("./scoring/policy/CategoryCompoundingRiskPolicy");
+const EnterpriseEscalationPolicy_1 = require("./scoring/policy/EnterpriseEscalationPolicy");
 const ExceptionWeightingPolicy_1 = require("./scoring/policy/ExceptionWeightingPolicy");
 const EnterpriseSeverityPolicy_1 = require("./scoring/policy/EnterpriseSeverityPolicy");
 const CategoryMaterialityPolicy_1 = require("./scoring/policy/CategoryMaterialityPolicy");
@@ -16,14 +18,20 @@ class RunnerEngine {
         const rawScores = ControlRiskScoringEngine_1.ControlRiskScoringEngine.score(assessments, input);
         const controlScores = ExceptionWeightingPolicy_1.ExceptionWeightingPolicy.apply(rawScores);
         let enterprise = EnterpriseRiskAggregationEngine_1.EnterpriseRiskAggregationEngine.aggregate(controlScores);
+        // 1. Base severity decision (adds rationale)
         const severityDecision = EnterpriseSeverityPolicy_1.EnterpriseSeverityPolicy.evaluate(enterprise);
         enterprise = {
             ...enterprise,
             severity: severityDecision.finalSeverity,
-            severityRationale: severityDecision.rationale
+            severityRationale: [
+                ...(enterprise.severityRationale ?? []),
+                ...severityDecision.rationale
+            ]
         };
-        enterprise =
-            CategoryMaterialityPolicy_1.CategoryMaterialityPolicy.apply(enterprise);
+        // 2. Escalation policies (each appends rationale)
+        enterprise = CategoryMaterialityPolicy_1.CategoryMaterialityPolicy.apply(enterprise);
+        enterprise = EnterpriseEscalationPolicy_1.EnterpriseEscalationPolicy.apply(enterprise);
+        enterprise = CategoryCompoundingRiskPolicy_1.CategoryCompoundingRiskPolicy.apply(enterprise);
         const narrative = ExecutiveNarrativeEngine_1.ExecutiveNarrativeEngine.generate(enterprise);
         return {
             controls: controlScores,

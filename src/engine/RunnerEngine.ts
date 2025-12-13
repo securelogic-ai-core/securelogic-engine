@@ -1,6 +1,6 @@
+import { CategoryCompoundingRiskPolicy } from "./scoring/policy/CategoryCompoundingRiskPolicy";
 import { EnterpriseEscalationPolicy } from "./scoring/policy/EnterpriseEscalationPolicy";
 import { ExceptionWeightingPolicy } from "./scoring/policy/ExceptionWeightingPolicy";
-
 import { EnterpriseSeverityPolicy } from "./scoring/policy/EnterpriseSeverityPolicy";
 import { CategoryMaterialityPolicy } from "./scoring/policy/CategoryMaterialityPolicy";
 import { SystemInvariantValidator } from "./validators/SystemInvariantValidator";
@@ -18,29 +18,31 @@ export class RunnerEngine {
       AssessmentInferenceEngine.infer(input.controlState);
 
     const rawScores =
-  ControlRiskScoringEngine.score(assessments, input);
+      ControlRiskScoringEngine.score(assessments, input);
 
-const controlScores =
-  ExceptionWeightingPolicy.apply(rawScores);
+    const controlScores =
+      ExceptionWeightingPolicy.apply(rawScores);
 
     let enterprise =
       EnterpriseRiskAggregationEngine.aggregate(controlScores);
 
+    // 1. Base severity decision (adds rationale)
     const severityDecision =
       EnterpriseSeverityPolicy.evaluate(enterprise);
 
     enterprise = {
       ...enterprise,
       severity: severityDecision.finalSeverity,
-      severityRationale: severityDecision.rationale
+      severityRationale: [
+        ...(enterprise.severityRationale ?? []),
+        ...severityDecision.rationale
+      ]
     };
 
-    enterprise =
-      CategoryMaterialityPolicy.apply(enterprise);
-
-    enterprise =
-      EnterpriseEscalationPolicy.apply(enterprise);
-
+    // 2. Escalation policies (each appends rationale)
+    enterprise = CategoryMaterialityPolicy.apply(enterprise);
+    enterprise = EnterpriseEscalationPolicy.apply(enterprise);
+    enterprise = CategoryCompoundingRiskPolicy.apply(enterprise);
 
     const narrative =
       ExecutiveNarrativeEngine.generate(enterprise);
