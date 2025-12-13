@@ -6,10 +6,10 @@ export class EnterpriseEscalationPolicy {
       d => d === "Unmitigated control exception"
     ).length;
 
-    if (exceptionCount >= 2 && summary.severity === "Moderate") {
+    if (exceptionCount >= 2) {
       return {
         ...summary,
-        severity: "High",
+        severity: summary.severity === "Critical" ? "Critical" : "High",
         severityRationale: [
           ...(summary.severityRationale ?? []),
           "Multiple unmitigated control exceptions triggered enterprise escalation"
