@@ -11,4 +11,7 @@ export interface EnterpriseRiskSummary {
   }[];
 
   topRiskDrivers: string[];
+
+  // Regulator-facing justification for enterprise severity
+  severityRationale?: string[];
 }

@@ -2,20 +2,20 @@ import { EnterpriseRiskSummary } from "../contracts/EnterpriseRiskSummary";
 
 export class ExecutiveNarrativeEngine {
   static generate(summary: EnterpriseRiskSummary): string {
-    const severityStatement =
-      summary.severity === "Critical"
-        ? "The organization is exposed to critical AI-related risks requiring immediate executive intervention."
-        : summary.severity === "High"
-        ? "The organization faces elevated AI risks that demand prioritized remediation."
-        : summary.severity === "Moderate"
-        ? "The organization maintains moderate AI risk exposure with targeted improvement opportunities."
-        : "The organization demonstrates a generally controlled AI risk posture.";
-
     const drivers =
       summary.topRiskDrivers.length > 0
-        ? `Key risk drivers include: ${summary.topRiskDrivers.join(", ")}.`
-        : "No dominant systemic risk drivers were identified.";
+        ? summary.topRiskDrivers.join(", ")
+        : "no dominant drivers";
 
-    return `${severityStatement} ${drivers}`;
+    switch (summary.severity) {
+      case "Critical":
+        return `Critical AI risk exposure detected. Immediate executive intervention is required. Key drivers include: ${drivers}.`;
+      case "High":
+        return `Elevated AI risk requires prioritized remediation. Key drivers include: ${drivers}.`;
+      case "Moderate":
+        return `Moderate AI risk exposure identified. Targeted improvements are recommended. Key drivers include: ${drivers}.`;
+      default:
+        return `The organization demonstrates a generally controlled AI risk posture. Key risk drivers include: ${drivers}.`;
+    }
   }
 }
