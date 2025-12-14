@@ -7,7 +7,7 @@
     "start": "node dist/server/index.js",
     "dev": "nodemon src/server/index.ts",
     "build": "tsc && npm run copy",
-    "copy": "mkdir -p dist/frameworks && cp -r frameworks/* dist/frameworks/
+    "copy": "mkdir -p dist/frameworks && cp -r frameworks/* dist/frameworks/",
     "api": "ts-node src/server.ts",
     "test": "jest --runInBand"
   },
