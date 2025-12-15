@@ -1,3 +1,4 @@
+import { HeatmapScale } from "../contracts/HeatmapScale";
 import { RiskScore } from "../contracts/RiskScore";
 
 export type HeatmapCell = {
