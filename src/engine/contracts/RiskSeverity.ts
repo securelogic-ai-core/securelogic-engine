@@ -1,5 +1,6 @@
-export type RiskSeverity =
-  | "Low"
-  | "Moderate"
-  | "High"
-  | "Critical";
+export enum RiskSeverity {
+  Low = "Low",
+  Moderate = "Moderate",
+  High = "High",
+  Critical = "Critical"
+}

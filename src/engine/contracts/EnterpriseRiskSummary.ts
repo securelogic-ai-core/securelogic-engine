@@ -1,17 +1,53 @@
 import { RiskSeverity } from "./RiskSeverity";
 
+/* ---------- Domain & Category ---------- */
+
+export interface DomainRiskScore {
+  domain: string;
+  score: number;
+  severity: RiskSeverity;
+  impact?: number;
+  likelihood?: number;
+}
+
+export interface CategoryRiskScore {
+  category: string;
+  score: number;
+  severity: RiskSeverity;
+}
+
+/* ---------- Remediation ---------- */
+
+export type RemediationPriority =
+  | "Immediate"
+  | "Short-Term"
+  | "Planned";
+
+export interface RemediationAction {
+  id: string;
+  description: string;
+  estimatedRiskReduction: number;
+  priority: RemediationPriority;
+}
+
+/* ---------- Enterprise Summary ---------- */
+
 export interface EnterpriseRiskSummary {
+  /* Quantitative */
   overallScore: number;
+  enterpriseRiskScore: number;
+
+  /* Severity */
   severity: RiskSeverity;
 
-  categoryScores: {
-    category: string;
-    score: number;
-    severity: RiskSeverity;
-  }[];
+  /* Breakdown */
+  domainScores: DomainRiskScore[];
+  categoryScores: CategoryRiskScore[];
 
+  /* Decision Drivers */
   topRiskDrivers: string[];
+  severityRationale: string[];
 
-  // Regulator-facing justification for enterprise severity
-  severityRationale?: string[];
+  /* Remediation */
+  recommendedActions: RemediationAction[];
 }

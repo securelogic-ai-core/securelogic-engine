@@ -8,7 +8,7 @@ export class ControlRiskScoringEngine {
     assessments: ControlAssessment[],
     _input: ScoringInput
   ): RiskScore[] {
-    return assessments.map(a => {
+    return assessments.map((a: any) => {
       const definition = ControlRegistry.controls[a.controlPath];
 
       if (!definition) {

@@ -1,5 +1,16 @@
-import { RiskDecision, RiskLevel } from "../contracts/RiskDecision";
-import { EnterpriseRiskSummary } from "./contracts/EnterpriseRiskSummary";
+import {
+  RiskDecision,
+  RiskLevel,
+  ApprovalStatus,
+  HeatMapPoint,
+  RemediationDecision
+} from "../contracts/RiskDecision";
+
+import {
+  EnterpriseRiskSummary,
+  DomainRiskScore,
+  RemediationAction
+} from "./contracts/EnterpriseRiskSummary";
 
 export class RiskDecisionEngine {
   static generate(summary: EnterpriseRiskSummary): RiskDecision {
@@ -11,32 +22,40 @@ export class RiskDecisionEngine {
       score >= 31 ? "Moderate" :
       "Low";
 
-    const approvalStatus =
+    const approvalStatus: ApprovalStatus =
       level === "Low"
         ? "Approved"
         : level === "Moderate"
         ? "Conditional"
         : "Rejected";
 
+    const heatMap: HeatMapPoint[] = summary.domainScores.map(
+      (d: DomainRiskScore): HeatMapPoint => ({
+        domain: d.domain,
+        impact: d.impact ?? 0,
+        likelihood: d.likelihood ?? 0
+      })
+    );
+
+    const remediationPlan: RemediationDecision[] =
+      summary.recommendedActions.map(
+        (a: RemediationAction): RemediationDecision => ({
+          id: a.id,
+          description: a.description,
+          estimatedRiskReduction: a.estimatedRiskReduction,
+          priority: a.priority
+        })
+      );
+
     return {
       score,
       level,
 
       dominantDomains: summary.topRiskDrivers,
-      severityRationale: summary.severityRationale,
+      severityRationale: summary.severityRationale ?? [],
 
-      heatMap: summary.domainScores.map(d => ({
-        domain: d.domain,
-        impact: d.impact ?? 0,
-        likelihood: d.likelihood ?? 0
-      })),
-
-      remediationPlan: summary.recommendedActions.map(a => ({
-        id: a.id,
-        description: a.description,
-        estimatedRiskReduction: a.estimatedRiskReduction,
-        priority: a.priority
-      })),
+      heatMap,
+      remediationPlan,
 
       approvalStatus
     };
