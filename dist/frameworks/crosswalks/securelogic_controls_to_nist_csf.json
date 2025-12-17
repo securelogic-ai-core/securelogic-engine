@@ -1,0 +1,14 @@
+[
+  {
+    "source": "SL-01",
+    "target": ["GV.OC-02"],
+    "confidence": 1.0,
+    "rationale": "Unified governance aligns with NIST CSF governance."
+  },
+  {
+    "source": "SL-05",
+    "target": ["DE.CM-01"],
+    "confidence": 1.0,
+    "rationale": "Oversight and monitoring align with NIST event monitoring."
+  }
+]
