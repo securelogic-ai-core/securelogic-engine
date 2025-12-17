@@ -1,7 +1,7 @@
 {
   "name": "securelogic-engine",
   "version": "0.1.4",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "license": "MIT",
   "scripts": {
     "start": "node dist/server/index.js",
@@ -36,8 +36,13 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/product/index.d.ts",
-      "default": "./dist/product/index.js"
+      "require": "./dist/src/index.js",
+      "import": "./dist/src/index.js"
     }
-  }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "package.json"
+  ]
 }
