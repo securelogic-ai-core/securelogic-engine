@@ -1,0 +1,39 @@
+{
+    "orgProfile": {
+        "industry": "Finance",
+        "size": "Enterprise",
+        "aiUsage": ["Fraud Detection"],
+        "modelTypes": ["ML"]
+    },
+    "controlState": {
+        "governance": {
+            "aiGovernancePolicy": false,
+            "riskOwnerAssigned": false,
+            "rolesDefined": false,
+            "oversightCommittee": false,
+            "governanceWorkflow": false
+        },
+        "dataQuality": {
+            "dataLineage": false,
+            "dataQualityChecks": false,
+            "piiManagement": false,
+            "dataRetention": false
+        },
+        "modelDevelopment": {
+            "trainingDocumentation": false,
+            "adversarialTesting": false,
+            "modelValidation": false
+        },
+        "monitoring": {
+            "modelMonitoring": false,
+            "performanceMonitoring": false
+        },
+        "businessContinuity": {
+            "rpoDefined": false,
+            "disasterRecoveryPlan": false
+        },
+        "humanOversight": {
+            "humanInLoop": false
+        }
+    }
+}
