@@ -1,8 +1,0 @@
-[
-  {
-    "source": "GOV-1",
-    "target": ["GV.OC-02"],
-    "confidence": 1.0,
-    "rationale": "AI governance aligns with cybersecurity governance structure."
-  }
-]
