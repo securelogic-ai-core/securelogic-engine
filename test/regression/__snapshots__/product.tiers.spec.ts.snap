@@ -1,0 +1,143 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`Product tier enforcement Enterprise includes full report 1`] = `
+{
+  "decision": {
+    "approvalStatus": "Rejected",
+    "dominantDomains": [
+      "Governance",
+    ],
+    "heatMap": [],
+    "level": "Critical",
+    "remediationPlan": [],
+    "score": 80,
+    "severityRationale": [
+      "High residual risk",
+    ],
+  },
+  "report": {
+    "assessment": {
+      "date": "2025-12-17",
+      "name": "Enterprise Risk Assessment",
+    },
+    "decision": {
+      "approvalStatus": "Rejected",
+      "dominantDomains": [
+        "Governance",
+      ],
+      "heatMap": [],
+      "level": "Critical",
+      "remediationPlan": [],
+      "score": 80,
+      "severityRationale": [
+        "High residual risk",
+      ],
+    },
+    "executiveNarrative": "This assessment reflects enterprise risk exposure based on severity, domain concentration, governance impact, and remediation complexity.",
+    "pricing": {
+      "estimatedAnnualCost": 4800,
+      "rationale": [
+        "High enterprise severity",
+        "0 affected risk domains",
+        "0 remediation actions",
+      ],
+      "tier": "Standard",
+    },
+    "remediationPlan": {
+      "advisoryNote": "Remediation priorities should focus on high-impact domains and governance gaps.",
+      "items": [],
+    },
+    "summary": {
+      "categoryScores": [],
+      "domainScores": [],
+      "enterpriseRiskScore": 80,
+      "overallScore": 80,
+      "recommendedActions": [],
+      "severity": "High",
+      "severityRationale": [
+        "High residual risk",
+      ],
+      "topRiskDrivers": [
+        "Governance",
+      ],
+    },
+  },
+  "tier": "Enterprise",
+}
+`;
+
+exports[`Product tier enforcement Professional excludes pricing 1`] = `
+{
+  "decision": {
+    "approvalStatus": "Rejected",
+    "dominantDomains": [
+      "Governance",
+    ],
+    "heatMap": [],
+    "level": "Critical",
+    "remediationPlan": [],
+    "score": 80,
+    "severityRationale": [
+      "High residual risk",
+    ],
+  },
+  "report": {
+    "assessment": {
+      "date": "2025-12-17",
+      "name": "Enterprise Risk Assessment",
+    },
+    "decision": {
+      "approvalStatus": "Rejected",
+      "dominantDomains": [
+        "Governance",
+      ],
+      "heatMap": [],
+      "level": "Critical",
+      "remediationPlan": [],
+      "score": 80,
+      "severityRationale": [
+        "High residual risk",
+      ],
+    },
+    "executiveNarrative": "This assessment reflects enterprise risk exposure based on severity, domain concentration, governance impact, and remediation complexity.",
+    "remediationPlan": {
+      "advisoryNote": "Remediation priorities should focus on high-impact domains and governance gaps.",
+      "items": [],
+    },
+    "summary": {
+      "categoryScores": [],
+      "domainScores": [],
+      "enterpriseRiskScore": 80,
+      "overallScore": 80,
+      "recommendedActions": [],
+      "severity": "High",
+      "severityRationale": [
+        "High residual risk",
+      ],
+      "topRiskDrivers": [
+        "Governance",
+      ],
+    },
+  },
+  "tier": "Professional",
+}
+`;
+
+exports[`Product tier enforcement Starter receives decision only 1`] = `
+{
+  "decision": {
+    "approvalStatus": "Rejected",
+    "dominantDomains": [
+      "Governance",
+    ],
+    "heatMap": [],
+    "level": "Critical",
+    "remediationPlan": [],
+    "score": 80,
+    "severityRationale": [
+      "High residual risk",
+    ],
+  },
+  "tier": "Starter",
+}
+`;
