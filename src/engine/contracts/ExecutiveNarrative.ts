@@ -1,4 +1,4 @@
-import { RiskSeverity } from "./RiskSeverity";
+import { RiskSeverity, RISK_SEVERITY } from "./RiskSeverity";
 
 export interface ExecutiveNarrative {
   severity: RiskSeverity;

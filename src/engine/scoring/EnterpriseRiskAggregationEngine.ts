@@ -33,7 +33,7 @@ export class EnterpriseRiskAggregationEngine {
       domainScores.push({
         domain,
         score: weightedScore,
-        severity: RiskSeverityEngine.fromScore(weightedScore),
+        severity: RiskSeverityEngine.fromScore(weightedScore)
       });
     }
 

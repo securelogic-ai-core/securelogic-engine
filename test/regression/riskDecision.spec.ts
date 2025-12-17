@@ -1,19 +1,19 @@
+import { RISK_SEVERITY } from "../../src/engine/contracts/RiskSeverity";
 import { RiskDecisionEngine } from "../../src/engine/RiskDecisionEngine";
 import { EnterpriseRiskSummary } from "../../src/engine/contracts/EnterpriseRiskSummary";
-import { RiskSeverity } from "../../src/engine/contracts/RiskSeverity";
 
 describe("RiskDecisionEngine regression", () => {
   it("handles undefined impact and likelihood without failing", () => {
     const summary: EnterpriseRiskSummary = {
       overallScore: 72,
       enterpriseRiskScore: 72,
-      severity: RiskSeverity.High,
+      severity: RISK_SEVERITY.High,
 
       domainScores: [
         {
           domain: "Security",
           score: 72,
-          severity: RiskSeverity.High,
+          severity: RISK_SEVERITY.High,
           impact: undefined,
           likelihood: undefined
         }
@@ -23,7 +23,7 @@ describe("RiskDecisionEngine regression", () => {
         {
           category: "Security",
           score: 72,
-          severity: RiskSeverity.High
+          severity: RISK_SEVERITY.High
         }
       ],
 
