@@ -62,7 +62,6 @@ exports[`Product tier enforcement Enterprise includes full report 1`] = `
       ],
     },
   },
-  "tier": "Enterprise",
 }
 `;
 
@@ -100,6 +99,7 @@ exports[`Product tier enforcement Professional excludes pricing 1`] = `
       ],
     },
     "executiveNarrative": "This assessment reflects enterprise risk exposure based on severity, domain concentration, governance impact, and remediation complexity.",
+    "pricing": undefined,
     "remediationPlan": {
       "advisoryNote": "Remediation priorities should focus on high-impact domains and governance gaps.",
       "items": [],
@@ -119,7 +119,6 @@ exports[`Product tier enforcement Professional excludes pricing 1`] = `
       ],
     },
   },
-  "tier": "Professional",
 }
 `;
 
@@ -138,6 +137,5 @@ exports[`Product tier enforcement Starter receives decision only 1`] = `
       "High residual risk",
     ],
   },
-  "tier": "Starter",
 }
 `;
