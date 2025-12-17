@@ -21,6 +21,7 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.2.1",
     "puppeteer": "^24.33.0",
+    "securelogic-engine": "^0.1.5",
     "zod": "^4.1.13"
   },
   "devDependencies": {
