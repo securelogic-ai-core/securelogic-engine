@@ -1,6 +1,6 @@
 {
   "name": "securelogic-engine",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "main": "dist/index.js",
   "license": "MIT",
   "scripts": {
@@ -9,7 +9,10 @@
     "build": "tsc && npm run copy",
     "copy": "mkdir -p dist/frameworks && cp -r frameworks/* dist/frameworks/",
     "api": "ts-node src/server.ts",
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "release:patch": "npm version patch && git push --follow-tags",
+    "release:minor": "npm version minor && git push --follow-tags",
+    "release:major": "npm version major && git push --follow-tags"
   },
   "dependencies": {
     "ajv": "^8.17.1",
@@ -30,5 +33,11 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   },
-  "types": "dist/index.d.ts"
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/product/index.d.ts",
+      "default": "./dist/product/index.js"
+    }
+  }
 }
