@@ -10,7 +10,7 @@ import {
   EnterpriseRiskSummary,
   DomainRiskScore,
   RemediationAction
-} from "./contracts/EnterpriseRiskSummary";
+} from "../engine/contracts/EnterpriseRiskSummary";
 
 export class RiskDecisionEngine {
   static generate(summary: EnterpriseRiskSummary): RiskDecision {

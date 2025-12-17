@@ -1,7 +1,7 @@
 {
   "name": "securelogic-engine",
   "version": "1.0.0",
-  "main": "dist/server/index.js",
+  "main": "dist/index.js",
   "license": "MIT",
   "scripts": {
     "start": "node dist/server/index.js",
@@ -17,6 +17,7 @@
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "express-rate-limit": "^8.2.1",
+    "puppeteer": "^24.33.0",
     "zod": "^4.1.13"
   },
   "devDependencies": {
@@ -28,5 +29,6 @@
     "ts-jest": "^29.4.6",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
-  }
+  },
+  "types": "dist/index.d.ts"
 }

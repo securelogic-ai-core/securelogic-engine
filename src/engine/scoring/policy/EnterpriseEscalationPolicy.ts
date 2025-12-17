@@ -1,6 +1,7 @@
+import { SeverityNormalizationEngine } from "../normalization/SeverityNormalizationEngine";
 
 import { EnterpriseRiskSummary } from "../../contracts/EnterpriseRiskSummary";
-import { RiskSeverity } from "../../contracts/RiskSeverity";
+import { RiskSeverity, RISK_SEVERITY } from "../../contracts/RiskSeverity";
 
 export class EnterpriseEscalationPolicy {
   static apply(summary: EnterpriseRiskSummary): EnterpriseRiskSummary {
@@ -12,9 +13,9 @@ export class EnterpriseEscalationPolicy {
       return {
         ...summary,
         severity:
-          summary.severity === RiskSeverity.Critical
-            ? RiskSeverity.Critical
-            : RiskSeverity.High,
+          summary.severity === RISK_SEVERITY.Critical
+            ? RISK_SEVERITY.Critical
+            : RISK_SEVERITY.High,
         severityRationale: [
           ...(summary.severityRationale ?? []),
           "Multiple unmitigated control exceptions triggered enterprise escalation"
