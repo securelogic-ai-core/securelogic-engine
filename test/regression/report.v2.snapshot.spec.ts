@@ -35,7 +35,6 @@ describe("ExecutiveRiskReportV2 snapshot", () => {
         }
       ]
     };
-git status
     const license: LicenseContext = { tier: "Enterprise" };
 
     const result = SecureLogicAI.runAssessment(summary, license);

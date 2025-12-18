@@ -1,8 +1,9 @@
 import { CategoryCompoundingRiskPolicy } from "./scoring/policy/CategoryCompoundingRiskPolicy";
-import { EnterpriseEscalationPolicy } from "./scoring/policy/EnterpriseEscalationPolicy";
-import { ExceptionWeightingPolicy } from "./scoring/policy/ExceptionWeightingPolicy";
-import { EnterpriseSeverityPolicy } from "./scoring/policy/EnterpriseSeverityPolicy";
 import { CategoryMaterialityPolicy } from "./scoring/policy/CategoryMaterialityPolicy";
+import { EnterpriseEscalationPolicy } from "./scoring/policy/EnterpriseEscalationPolicy";
+import { EnterpriseSeverityPolicy } from "./scoring/policy/EnterpriseSeverityPolicy";
+import { ExceptionWeightingPolicy } from "./scoring/policy/ExceptionWeightingPolicy";
+import { MaterialityEngine } from "./materiality/MaterialityEngine";
 import { SystemInvariantValidator } from "./validators/SystemInvariantValidator";
 import { ScoringInput } from "./contracts/ScoringInput";
 import { AssessmentInferenceEngine } from "./scoring/AssessmentInferenceEngine";
@@ -26,7 +27,7 @@ export class RunnerEngine {
     let enterprise =
       EnterpriseRiskAggregationEngine.aggregate(controlScores);
 
-    // 1. Base severity decision (adds rationale)
+    // Base severity decision
     const severityDecision =
       EnterpriseSeverityPolicy.evaluate(enterprise);
 
@@ -39,18 +40,23 @@ export class RunnerEngine {
       ]
     };
 
-    // 2. Escalation policies (each appends rationale)
+    // Escalation policies
     enterprise = CategoryMaterialityPolicy.apply(enterprise);
     enterprise = EnterpriseEscalationPolicy.apply(enterprise);
     enterprise = CategoryCompoundingRiskPolicy.apply(enterprise);
 
-    const narrative =
+    // Materiality is computed OUTSIDE the enterprise object
+    const materiality =
+      MaterialityEngine.evaluate(enterprise);
+
+    const executiveNarrative =
       ExecutiveNarrativeEngine.generate(enterprise);
 
     return {
       controls: controlScores,
       enterprise,
-      executiveNarrative: narrative
+      materiality,
+      executiveNarrative
     };
   }
 }
