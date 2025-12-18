@@ -1,49 +1,26 @@
 {
   "name": "securelogic-engine",
   "version": "0.1.6",
-  "main": "dist/src/index.js",
   "license": "MIT",
   "scripts": {
-    "start": "node dist/server/index.js",
-    "dev": "nodemon src/server/index.ts",
     "build": "tsc && npm run copy",
-    "copy": "mkdir -p dist/frameworks && cp -r frameworks/* dist/frameworks/",
-    "api": "ts-node src/server.ts",
-    "test": "jest --runInBand",
-    "release:patch": "npm version patch && git push --follow-tags",
-    "release:minor": "npm version minor && git push --follow-tags",
-    "release:major": "npm version major && git push --follow-tags"
+    "copy": "mkdir -p dist/frameworks dist/api && cp -r frameworks/* dist/frameworks/ && cp -r src/api/* dist/api/",
+    "start:api": "node dist/api/server.js",
+    "test": "jest --runInBand"
   },
   "dependencies": {
     "ajv": "^8.17.1",
-    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
-    "express-rate-limit": "^8.2.1",
-    "puppeteer": "^24.33.0",
-    "securelogic-engine": "^0.1.5",
-    "zod": "^4.1.13"
+    "zod": "^4.2.1"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
-    "@types/node": "^24.10.4",
+    "@types/node": "^25.0.3",
     "jest": "^30.2.0",
-    "nodemon": "^3.1.11",
     "ts-jest": "^29.4.6",
-    "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
-  },
-  "types": "dist/index.d.ts",
-  "exports": {
-    ".": {
-      "require": "./dist/src/index.js",
-      "import": "./dist/src/index.js"
-    }
-  },
-  "files": [
-    "dist",
-    "README.md",
-    "package.json"
-  ]
+  }
 }
