@@ -1,0 +1,1 @@
+export { AttestationRegistry } from "./AttestationRegistry";
