@@ -3,10 +3,14 @@
  * ----------------------------------
  * ENTERPRISE PUBLIC SURFACE
  *
- * This file defines the ONLY exports allowed from scoring.
- * Internal scoring mechanics MUST NOT be exported directly.
- *
- * Versioned, contract-safe, monetizable boundary.
+ * Internal files MUST NOT be imported outside this folder.
+ * This is a monetizable boundary.
  */
 
+import type { ScoringOutputV1 } from "../contracts";
+
+// Public API
 export { runScoring } from "./runScoring";
+
+// Re-export contract ONLY (not implementations)
+export type { ScoringOutputV1 };
