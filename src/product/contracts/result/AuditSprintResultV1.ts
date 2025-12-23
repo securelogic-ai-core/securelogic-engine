@@ -9,6 +9,7 @@ import type { RiskRollupV1 } from "../risk/RiskRollup";
 import type { ControlTraceV1 } from "../control/ControlTrace";
 import type { ExecutionContextV1 } from "../context/ExecutionContext";
 import type { AttestationV1 } from "../attestation/Attestation";
+import type { ResultSignatureV1 } from "../signature/ResultSignature";
 
 /**
  * Audit Sprint Result — V1
@@ -24,6 +25,7 @@ export interface AuditSprintResultV1 {
   executionContext: ExecutionContextV1;
 
   integrity: ResultIntegrityV1;
+  signature?: ResultSignatureV1;
 
   scoring: ScoringOutputV1;
   executiveSummary?: ExecutiveSummary;
