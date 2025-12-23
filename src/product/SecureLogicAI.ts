@@ -5,7 +5,7 @@ import type { AuditSprintResultV1 } from "./contracts/result";
 import { runScoring } from "../engine/scoring";
 import { buildExecutiveSummary } from "./builders/buildExecutiveSummary";
 import { buildRemediationPlan } from "./builders/buildRemediationPlan";
-import { LICENSE_ENTITLEMENTS } from "./contracts/LicenseEntitlements";
+import { buildFindings } from "./builders/buildFindings";
 import { finalizeAuditSprintResult } from "./factories/AuditSprintResultFactory";
 
 export class SecureLogicAI {
@@ -13,28 +13,19 @@ export class SecureLogicAI {
 
   runAuditSprint(input: ScoringInput): Readonly<AuditSprintResultV1> {
     const scoring = runScoring(input);
-    const entitlements = LICENSE_ENTITLEMENTS[this.license.tier];
 
-    const result = {
+    const result: Omit<AuditSprintResultV1, "integrity"> = {
       meta: {
         version: "audit-sprint-result-v1",
         generatedAt: new Date().toISOString(),
         licenseTier: this.license.tier
       },
+
       scoring,
-      entitlements: {
-        executiveSummary: entitlements.executiveNarrative,
-        remediationPlan: entitlements.remediationPlan
-      }
-    } as any;
-
-    if (entitlements.executiveNarrative) {
-      result.executiveSummary = buildExecutiveSummary(scoring);
-    }
-
-    if (entitlements.remediationPlan) {
-      result.remediationPlan = buildRemediationPlan(scoring);
-    }
+      findings: buildFindings(scoring),
+      executiveSummary: buildExecutiveSummary(scoring),
+      remediationPlan: buildRemediationPlan(scoring)
+    };
 
     return finalizeAuditSprintResult(result);
   }
