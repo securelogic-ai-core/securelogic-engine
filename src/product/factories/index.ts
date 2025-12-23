@@ -1,0 +1,1 @@
+export { finalizeAuditSprintResult } from "./AuditSprintResultFactory";

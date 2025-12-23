@@ -9,6 +9,7 @@
 import type { ScoringOutputV1 } from "../../../engine/contracts/scoring";
 import type { ExecutiveSummary } from "../output/ExecutiveSummary";
 import type { RemediationPlan } from "../output/RemediationPlan";
+import type { ResultIntegrityV1 } from "../integrity/ResultIntegrity";
 
 export interface AuditSprintResultV1 {
   meta: {
@@ -26,4 +27,6 @@ export interface AuditSprintResultV1 {
     executiveSummary: boolean;
     remediationPlan: boolean;
   };
+
+  integrity: ResultIntegrityV1;
 }
