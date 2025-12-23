@@ -1,39 +1,43 @@
-import { LicenseContext } from "./LicenseTier";
-import { EnterpriseRiskSummary } from "../engine/contracts/EnterpriseRiskSummary";
-import { RiskDecisionEngine } from "../engine/RiskDecisionEngine";
-import { ExecutiveRiskReportV2Builder } from "../report/builders/ExecutiveRiskReportV2Builder";
+import type { LicenseContext } from "./contracts/LicenseContext";
+import type { ScoringInput } from "../engine/contracts/ScoringInput";
+import type { AuditSprintResultV1 } from "./contracts/result";
+
+import { runScoring } from "../engine/scoring";
+import { buildExecutiveSummary } from "./builders/buildExecutiveSummary";
+import { buildRemediationPlan } from "./builders/buildRemediationPlan";
 import { LICENSE_ENTITLEMENTS } from "./contracts/LicenseEntitlements";
+import { finalizeAuditSprintResult } from "./factories/AuditSprintResultFactory";
 
 export class SecureLogicAI {
-  static runAssessment(
-    summary: EnterpriseRiskSummary,
-    license: LicenseContext
-  ) {
-    const decision = RiskDecisionEngine.generate(summary);
-    const entitlements = LICENSE_ENTITLEMENTS[license.tier];
+  constructor(private readonly license: LicenseContext) {}
 
-    if (!entitlements.includesExecutiveReport) {
-      return { decision };
-    }
+  runAuditSprint(input: ScoringInput): Readonly<AuditSprintResultV1> {
+    const scoring = runScoring(input);
+    const entitlements = LICENSE_ENTITLEMENTS[this.license.tier];
 
-    const fullReport = ExecutiveRiskReportV2Builder.build(summary);
-
-    return {
-      decision,
-      report: {
-        assessment: fullReport.assessment,
-        summary: fullReport.summary,
-        decision: fullReport.decision,
-        executiveNarrative: fullReport.executiveNarrative,
-
-        remediationPlan: entitlements.includesRemediationPlan
-          ? fullReport.remediationPlan
-          : undefined,
-
-        pricing: entitlements.includesPricing
-          ? fullReport.pricing
-          : undefined
+    // Base object (no optional fields yet)
+    const result: AuditSprintResultV1 = {
+      meta: {
+        version: "audit-sprint-result-v1",
+        generatedAt: new Date().toISOString(),
+        licenseTier: this.license.tier
+      },
+      scoring,
+      entitlements: {
+        executiveSummary: entitlements.executiveNarrative,
+        remediationPlan: entitlements.remediationPlan
       }
     };
+
+    // Conditionally attach optional fields (CORRECT way)
+    if (entitlements.executiveNarrative) {
+      result.executiveSummary = buildExecutiveSummary(scoring);
+    }
+
+    if (entitlements.remediationPlan) {
+      result.remediationPlan = buildRemediationPlan(scoring);
+    }
+
+    return finalizeAuditSprintResult(result);
   }
 }
