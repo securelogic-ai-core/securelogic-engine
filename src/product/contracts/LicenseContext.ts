@@ -1,10 +1,7 @@
-import type { LicenseTier } from "./LicenseTier";
+import type { ProductTier } from "./ProductTier";
 
-/**
- * Runtime license context.
- * Passed into SecureLogicAI at execution time.
- */
 export interface LicenseContext {
-  tier: LicenseTier;
-  organizationId: string;
+  tier: ProductTier;
+  customerId: string;
+  expiresAt?: string;
 }

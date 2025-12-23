@@ -1,24 +1,28 @@
-import type { ScoringOutputV1 } from "../engine/contracts/scoring";
 import type { LicenseContext } from "./contracts/LicenseContext";
-import { LICENSE_ENTITLEMENTS } from "./contracts/LicenseEntitlements";
+import type { AuditSprintResultV1 } from "./contracts/result";
 
 /**
- * Enforces license constraints on scoring output.
- * ENTERPRISE SAFE — respects exactOptionalPropertyTypes
+ * HARD LICENSE ENFORCEMENT
  */
-export function enforceScoringLicense(
-  output: ScoringOutputV1,
+export function enforceLicense(
+  result: AuditSprintResultV1,
   license: LicenseContext
-): Partial<ScoringOutputV1> {
-  const entitlements = LICENSE_ENTITLEMENTS[license.tier];
+): AuditSprintResultV1 {
+  if (license.tier === "Community") {
+    return {
+      ...result,
+      remediationPlan: undefined,
+      controlTraces: [],
+      attestations: []
+    };
+  }
 
-  return {
-    version: output.version,
-    overallRiskScore: output.overallRiskScore,
-    orgProfile: output.orgProfile,
-    generatedAt: output.generatedAt,
-    ...(entitlements.domainBreakdown && {
-      domainScores: output.domainScores
-    })
-  };
+  if (license.tier === "Professional") {
+    return {
+      ...result,
+      attestations: []
+    };
+  }
+
+  return result;
 }
