@@ -3,41 +3,47 @@ import type { Entitlements } from "../contracts/entitlement/Entitlements";
 
 /**
  * Enforce entitlements on a PRE-INTEGRITY result.
- * Fields are DELETED, never set to undefined.
+ * exactOptionalPropertyTypes SAFE.
  */
 export function enforceEntitlements(
   draft: Omit<AuditSprintResultV1, "integrity">,
   entitlements: Entitlements
 ): Omit<AuditSprintResultV1, "integrity"> {
-  const result = { ...draft };
+  return {
+    meta: draft.meta,
+    executionContext: draft.executionContext,
+    scoring: draft.scoring,
 
-  if (!entitlements.executiveSummary) {
-    delete result.executiveSummary;
-  }
+    ...(entitlements.executiveSummary && draft.executiveSummary
+      ? { executiveSummary: draft.executiveSummary }
+      : {}),
 
-  if (!entitlements.remediationPlan) {
-    delete result.remediationPlan;
-  }
+    ...(entitlements.remediationPlan && draft.remediationPlan
+      ? { remediationPlan: draft.remediationPlan }
+      : {}),
 
-  if (!entitlements.riskRollup) {
-    delete result.riskRollup;
-  }
+    ...(entitlements.findings && draft.findings
+      ? { findings: draft.findings }
+      : {}),
 
-  if (!entitlements.evidence) {
-    delete result.evidence;
-  }
+    ...(entitlements.riskRollup && draft.riskRollup
+      ? { riskRollup: draft.riskRollup }
+      : {}),
 
-  if (!entitlements.evidenceLinks) {
-    delete result.evidenceLinks;
-  }
+    ...(entitlements.controlTraces && draft.controlTraces
+      ? { controlTraces: draft.controlTraces }
+      : {}),
 
-  if (!entitlements.controlTraces) {
-    delete result.controlTraces;
-  }
+    ...(entitlements.evidence && draft.evidence
+      ? { evidence: draft.evidence }
+      : {}),
 
-  if (!entitlements.attestations) {
-    delete result.attestations;
-  }
+    ...(entitlements.evidenceLinks && draft.evidenceLinks
+      ? { evidenceLinks: draft.evidenceLinks }
+      : {}),
 
-  return result;
+    ...(entitlements.attestations && draft.attestations
+      ? { attestations: draft.attestations }
+      : {})
+  };
 }
