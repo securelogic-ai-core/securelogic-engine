@@ -8,6 +8,7 @@ import type { FindingV1 } from "../finding/Finding";
 import type { RiskRollupV1 } from "../risk/RiskRollup";
 import type { ControlTraceV1 } from "../control/ControlTrace";
 import type { ExecutionContextV1 } from "../context/ExecutionContext";
+import type { AttestationV1 } from "../attestation/Attestation";
 
 /**
  * Audit Sprint Result — V1
@@ -22,20 +23,18 @@ export interface AuditSprintResultV1 {
 
   executionContext: ExecutionContextV1;
 
-  scoring: ScoringOutputV1;
+  integrity: ResultIntegrityV1;
 
+  scoring: ScoringOutputV1;
   executiveSummary?: ExecutiveSummary;
   remediationPlan?: RemediationPlan;
 
   findings: FindingV1[];
   riskRollup: RiskRollupV1;
-
   controlTraces: ControlTraceV1[];
 
-  evidence: {
-    references: EvidenceReferenceV1[];
-    links: EvidenceLinkV1[];
-  };
+  evidence: EvidenceReferenceV1[];
+  evidenceLinks: EvidenceLinkV1[];
 
-  integrity: ResultIntegrityV1;
+  attestations: AttestationV1[];
 }

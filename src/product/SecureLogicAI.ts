@@ -38,10 +38,9 @@ export class SecureLogicAI {
       riskRollup,
       controlTraces,
 
-      evidence: {
-        references: [],
-        links: []
-      }
+      evidence: [],
+      evidenceLinks: [],
+      attestations: []
     };
 
     return finalizeAuditSprintResult(result);
