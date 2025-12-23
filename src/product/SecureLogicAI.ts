@@ -6,6 +6,7 @@ import { runScoring } from "../engine/scoring";
 import { buildExecutiveSummary } from "./builders/buildExecutiveSummary";
 import { buildRemediationPlan } from "./builders/buildRemediationPlan";
 import { buildFindings } from "./builders/buildFindings";
+import { buildRiskRollup } from "./risk/buildRiskRollup";
 import { finalizeAuditSprintResult } from "./factories/AuditSprintResultFactory";
 
 export class SecureLogicAI {
@@ -13,6 +14,7 @@ export class SecureLogicAI {
 
   runAuditSprint(input: ScoringInput): Readonly<AuditSprintResultV1> {
     const scoring = runScoring(input);
+    const findings = buildFindings(scoring);
 
     const result: Omit<AuditSprintResultV1, "integrity"> = {
       meta: {
@@ -22,7 +24,8 @@ export class SecureLogicAI {
       },
 
       scoring,
-      findings: buildFindings(scoring),
+      findings,
+      riskRollup: buildRiskRollup(findings),
       executiveSummary: buildExecutiveSummary(scoring),
       remediationPlan: buildRemediationPlan(scoring)
     };
