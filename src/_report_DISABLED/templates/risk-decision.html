@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Risk Decision Report</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 40px; }
+    h1 { font-size: 28px; }
+    h2 { margin-top: 40px; }
+    .summary-box {
+      border: 1px solid #000;
+      padding: 20px;
+      margin-top: 20px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 15px;
+    }
+    th, td {
+      border: 1px solid #000;
+      padding: 8px;
+      text-align: left;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Risk Decision Report</h1>
+
+<p><strong>Client:</strong> {{clientName}}</p>
+<p><strong>Assessment:</strong> {{assessmentType}}</p>
+<p><strong>Date:</strong> {{assessmentDate}}</p>
+<p><strong>Engine Version:</strong> {{engineVersion}}</p>
+
+<div class="summary-box">
+  <h2>Executive Decision Summary</h2>
+  <p><strong>Risk Score:</strong> {{score}}</p>
+  <p><strong>Risk Level:</strong> {{level}}</p>
+  <p><strong>Approval Status:</strong> {{approvalStatus}}</p>
+</div>
+
+<h2>Severity Rationale</h2>
+<ul>
+  {{severityRationale}}
+</ul>
+
+<h2>Risk Heat Map</h2>
+<table>
+  <tr>
+    <th>Domain</th>
+    <th>Impact</th>
+    <th>Likelihood</th>
+  </tr>
+  {{heatMapRows}}
+</table>
+
+<h2>Recommended Remediation Actions</h2>
+<ul>
+  {{remediationActions}}
+</ul>
+
+<h2>Methodology & Scope</h2>
+<p>
+This assessment was generated using SecureLogic AI’s automated risk
+decision engine. Results are based on provided inputs and configured
+scoring logic. This report represents a point-in-time evaluation.
+</p>
+
+</body>
+</html>
