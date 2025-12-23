@@ -1,17 +1,25 @@
-// ─────────────────────────────────────────────
-// Primary Product Interfaces (ONLY entry points)
-// ─────────────────────────────────────────────
+/**
+ * SecureLogic AI — Public Product API
+ * ==================================
+ * 
+ * ⚠️ This file defines the ONLY supported import surface.
+ * Anything not exported here is INTERNAL and NOT supported.
+ * 
+ * Breaking changes REQUIRE a new major version.
+ */
+
+// Primary product interfaces
 export { SecureLogicAI } from "./SecureLogicAI";
 export { SecureLogicVerifier } from "./SecureLogicVerifier";
 
-// ─────────────────────────────────────────────
-// Core Client-Facing Result Surface
-// ─────────────────────────────────────────────
+// Core result surface (versioned)
 export * from "./contracts/result";
 
-// ─────────────────────────────────────────────
-// Audit Artifacts (Deterministic & Traceable)
-// ─────────────────────────────────────────────
+// Commercial model
+export * from "./contracts/entitlement";
+export * from "./entitlement";
+
+// Audit artifacts (read-only contracts)
 export * from "./contracts/finding";
 export * from "./contracts/risk";
 export * from "./contracts/control";
@@ -20,13 +28,9 @@ export * from "./contracts/evidence";
 export * from "./contracts/attestation";
 export * from "./contracts/context";
 
-// ─────────────────────────────────────────────
-// Integrity & Validation (Read-only)
-// ─────────────────────────────────────────────
+// Integrity & verification
 export * from "./contracts/integrity";
 export * from "./validation";
 
-// ─────────────────────────────────────────────
-// Backward Compatibility & Replay
-// ─────────────────────────────────────────────
+// Backward compatibility
 export * from "./migration";
