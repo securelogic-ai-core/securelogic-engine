@@ -1,7 +1,12 @@
-import type { ProductTier } from "./ProductTier";
+import type { LicenseTier } from "./LicenseTier";
 
+/**
+ * License Context
+ * ===============
+ * Immutable license metadata
+ */
 export interface LicenseContext {
-  tier: ProductTier;
+  tier: LicenseTier;
   customerId: string;
-  expiresAt?: string;
+  issuedAt: string;
 }

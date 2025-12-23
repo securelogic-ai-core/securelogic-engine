@@ -1,10 +1,9 @@
 /**
- * SecureLogic AI — License Tiers
- * ENTERPRISE LOCKED CONTRACT
+ * License Tier
+ * ============
+ * Canonical commercial tiers
  */
-
 export type LicenseTier =
-  | "free"
-  | "starter"
-  | "professional"
-  | "enterprise";
+  | "CORE"
+  | "PRO"
+  | "ENTERPRISE";

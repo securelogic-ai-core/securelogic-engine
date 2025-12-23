@@ -1,5 +1,22 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.SecureLogicAI = void 0;
-var SecureLogicAI_1 = require("./SecureLogicAI");
-Object.defineProperty(exports, "SecureLogicAI", { enumerable: true, get: function () { return SecureLogicAI_1.SecureLogicAI; } });
+// Primary product interfaces
+export { SecureLogicAI } from "./SecureLogicAI";
+export { SecureLogicVerifier } from "./SecureLogicVerifier";
+
+// Core result surface
+export * from "./contracts/result";
+
+// Audit artifacts
+export * from "./contracts/finding";
+export * from "./contracts/risk";
+export * from "./contracts/control";
+export * from "./contracts/lineage";
+export * from "./contracts/evidence";
+export * from "./contracts/attestation";
+export * from "./contracts/context";
+
+// Integrity & verification
+export * from "./contracts/integrity";
+export * from "./validation";
+
+// Backward compatibility
+export * from "./migration";

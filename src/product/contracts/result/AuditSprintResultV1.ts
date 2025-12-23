@@ -9,7 +9,6 @@ import type { RiskRollupV1 } from "../risk/RiskRollup";
 import type { ControlTraceV1 } from "../control/ControlTrace";
 import type { ExecutionContextV1 } from "../context/ExecutionContext";
 import type { AttestationV1 } from "../attestation/Attestation";
-import type { ResultSignatureV1 } from "../signature/ResultSignature";
 
 /**
  * Audit Sprint Result — V1
@@ -23,20 +22,20 @@ export interface AuditSprintResultV1 {
   };
 
   executionContext: ExecutionContextV1;
-
-  integrity: ResultIntegrityV1;
-  signature?: ResultSignatureV1;
-
   scoring: ScoringOutputV1;
+
+  // Always present
+  findings: FindingV1[];
+
+  // License-gated (OPTIONAL by design)
   executiveSummary?: ExecutiveSummary;
   remediationPlan?: RemediationPlan;
+  riskRollup?: RiskRollupV1;
+  controlTraces?: ControlTraceV1[];
+  evidence?: EvidenceReferenceV1[];
+  evidenceLinks?: EvidenceLinkV1[];
+  attestations?: AttestationV1[];
 
-  findings: FindingV1[];
-  riskRollup: RiskRollupV1;
-  controlTraces: ControlTraceV1[];
-
-  evidence: EvidenceReferenceV1[];
-  evidenceLinks: EvidenceLinkV1[];
-
-  attestations: AttestationV1[];
+  // Integrity always added last
+  integrity: ResultIntegrityV1;
 }

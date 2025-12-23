@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["email", "company", "vendor", "controlState", "context"],
+  "properties": {
+    "email": { "type": "string", "format": "email" },
+    "company": { "type": "string", "minLength": 2 },
+    "vendor": { "type": "string", "minLength": 2 },
+    "controlState": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["implemented"],
+        "properties": {
+          "implemented": {
+            "oneOf": [
+              { "type": "boolean" },
+              { "enum": ["partial"] }
+            ]
+          }
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "required": ["organizationType", "industry", "dataSensitivity"],
+      "properties": {
+        "organizationType": {
+          "enum": ["SMB", "Enterprise", "Regulated"]
+        },
+        "industry": { "type": "string" },
+        "dataSensitivity": {
+          "enum": ["Low", "Moderate", "High"]
+        },
+        "aiCriticality": {
+          "enum": ["Advisory", "Operational", "Mission-Critical"]
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["fileId", "type"],
+        "properties": {
+          "fileId": { "type": "string" },
+          "type": {
+            "enum": ["policy", "report", "diagram", "contract"]
+          },
+          "linkedControls": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

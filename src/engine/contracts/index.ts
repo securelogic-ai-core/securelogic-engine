@@ -8,10 +8,8 @@
  * 2) Explicit migration layer
  */
 
-export * from "./RiskSeverity";
 export * from "./ControlState";
 export * from "./ControlAssessment";
 export * from "./ScoringInput";
 
-// Scoring (PUBLIC)
 export * from "./scoring";
