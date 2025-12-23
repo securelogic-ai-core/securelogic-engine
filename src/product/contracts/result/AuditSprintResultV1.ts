@@ -4,6 +4,7 @@ import type { RemediationPlan } from "../output/RemediationPlan";
 import type { EvidenceReferenceV1 } from "../evidence/EvidenceReference";
 import type { EvidenceLinkV1 } from "../evidence/EvidenceLink";
 import type { ResultIntegrityV1 } from "../integrity/ResultIntegrity";
+import type { FindingV1 } from "../finding/Finding";
 
 /**
  * Audit Sprint Result — V1
@@ -17,6 +18,8 @@ export interface AuditSprintResultV1 {
   };
 
   scoring: ScoringOutputV1;
+
+  findings: FindingV1[];
 
   executiveSummary?: ExecutiveSummary;
   remediationPlan?: RemediationPlan;
