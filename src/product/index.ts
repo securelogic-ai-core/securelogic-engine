@@ -1,2 +1,5 @@
 export { SecureLogicAI } from "./SecureLogicAI";
-export type { LicenseContext } from "./LicenseTier";
+export { SecureLogicVerifier } from "./SecureLogicVerifier";
+
+export * from "./contracts/result";
+export * from "./contracts/integrity";
