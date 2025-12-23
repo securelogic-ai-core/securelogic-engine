@@ -1,21 +1,16 @@
+import type { FindingLineageV1 } from "../lineage/FindingLineage";
+
 /**
  * Finding — V1
  *
- * Normalized audit finding with control attribution.
- * ENTERPRISE AUDIT CONTRACT
+ * Atomic, immutable audit finding
  */
 export interface FindingV1 {
-  id: string;
-
-  severity: "Low" | "Medium" | "High" | "Critical";
-
-  domain: string;
-  controlId: string;
-
+  id: string; // deterministic
   title: string;
   description: string;
 
-  evidenceIds: string[];
+  severity: "Low" | "Medium" | "High" | "Critical";
 
-  detectedAt: string;
+  lineage: FindingLineageV1;
 }

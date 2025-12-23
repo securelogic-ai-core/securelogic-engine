@@ -6,3 +6,4 @@ export * from "./contracts/integrity";
 export * from "./contracts/evidence";
 export * from "./contracts/finding";
 export * from "./contracts/risk";
+export * from "./contracts/lineage";
