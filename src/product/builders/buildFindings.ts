@@ -1,37 +1,43 @@
 import type { ScoringOutputV1 } from "../../engine/contracts/scoring";
-import type { FindingV1 } from "../contracts/finding";
+import type { FindingV1 } from "../contracts/finding/Finding";
+import { generateFindingId } from "../finding/generateFindingId";
 
 /**
- * Deterministic Findings Builder
- * Converts scoring signals into normalized findings.
+ * Builds traceable findings from scoring output.
+ * ENTERPRISE-SAFE: handles redacted or licensed outputs.
  */
 export function buildFindings(
   scoring: ScoringOutputV1
 ): FindingV1[] {
-  const findings: FindingV1[] = [];
+  const domainScores = scoring.domainScores ?? [];
 
-  for (const domainScore of scoring.domainScores ?? []) {
-    if (domainScore.score <= 20) continue;
-
-    findings.push({
-      id: `F-${domainScore.domain}`,
-      severity:
-        domainScore.score >= 80
+  return domainScores
+    .filter(d => d.score > 0)
+    .map(d => {
+      const severity =
+        d.score >= 80
           ? "Critical"
-          : domainScore.score >= 60
+          : d.score >= 60
           ? "High"
-          : "Medium",
+          : d.score >= 30
+          ? "Medium"
+          : "Low";
 
-      domain: domainScore.domain,
-      controlId: `${domainScore.domain}-CONTROL-001`,
+      const id = generateFindingId(d.domain, severity);
 
-      title: `Control weakness detected in ${domainScore.domain}`,
-      description: `One or more controls in ${domainScore.domain} failed to meet expected criteria.`,
-
-      evidenceIds: [],
-      detectedAt: new Date().toISOString()
+      return {
+        id,
+        title: `Control weakness in ${d.domain}`,
+        description: `Controls in ${d.domain} are not operating effectively.`,
+        severity,
+        lineage: {
+          findingId: id,
+          controlId: d.domain,
+          controlDomain: d.domain,
+          scoringSource: "engine",
+          evidenceIds: [],
+          derivedAt: new Date().toISOString()
+        }
+      };
     });
-  }
-
-  return findings;
 }
