@@ -6,6 +6,7 @@ import type { EvidenceLinkV1 } from "../evidence/EvidenceLink";
 import type { ResultIntegrityV1 } from "../integrity/ResultIntegrity";
 import type { FindingV1 } from "../finding/Finding";
 import type { RiskRollupV1 } from "../risk/RiskRollup";
+import type { ControlTraceV1 } from "../control/ControlTrace";
 
 /**
  * Audit Sprint Result — V1
@@ -20,14 +21,15 @@ export interface AuditSprintResultV1 {
 
   scoring: ScoringOutputV1;
 
-  findings: FindingV1[];
-
-  riskRollup: RiskRollupV1;
-
   executiveSummary?: ExecutiveSummary;
   remediationPlan?: RemediationPlan;
 
-  evidence?: {
+  findings: FindingV1[];
+  riskRollup: RiskRollupV1;
+
+  controlTraces: ControlTraceV1[];
+
+  evidence: {
     references: EvidenceReferenceV1[];
     links: EvidenceLinkV1[];
   };
