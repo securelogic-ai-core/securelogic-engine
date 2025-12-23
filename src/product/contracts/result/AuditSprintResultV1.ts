@@ -7,6 +7,7 @@ import type { ResultIntegrityV1 } from "../integrity/ResultIntegrity";
 import type { FindingV1 } from "../finding/Finding";
 import type { RiskRollupV1 } from "../risk/RiskRollup";
 import type { ControlTraceV1 } from "../control/ControlTrace";
+import type { ExecutionContextV1 } from "../context/ExecutionContext";
 
 /**
  * Audit Sprint Result — V1
@@ -18,6 +19,8 @@ export interface AuditSprintResultV1 {
     generatedAt: string;
     licenseTier: string;
   };
+
+  executionContext: ExecutionContextV1;
 
   scoring: ScoringOutputV1;
 

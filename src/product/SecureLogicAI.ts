@@ -8,6 +8,7 @@ import { buildRemediationPlan } from "./builders/buildRemediationPlan";
 import { buildFindings } from "./builders/buildFindings";
 import { buildRiskRollup } from "./risk/buildRiskRollup";
 import { buildControlTraces } from "./builders/buildControlTraces";
+import { buildExecutionContext } from "./context/buildExecutionContext";
 import { finalizeAuditSprintResult } from "./factories/AuditSprintResultFactory";
 
 export class SecureLogicAI {
@@ -26,12 +27,17 @@ export class SecureLogicAI {
         generatedAt: new Date().toISOString(),
         licenseTier: this.license.tier
       },
+
+      executionContext: buildExecutionContext(),
+
       scoring,
       executiveSummary: buildExecutiveSummary(scoring),
       remediationPlan: buildRemediationPlan(scoring),
+
       findings,
       riskRollup,
       controlTraces,
+
       evidence: {
         references: [],
         links: []
