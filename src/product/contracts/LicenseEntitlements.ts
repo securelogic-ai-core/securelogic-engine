@@ -1,26 +1,45 @@
-export interface LicenseEntitlements {
-  includesExecutiveReport: boolean;
-  includesPricing: boolean;
-  includesRemediationPlan: boolean;
-}
+import type { LicenseTier } from "./LicenseTier";
 
+/**
+ * License Entitlements
+ * Defines exactly what each tier can access.
+ */
 export const LICENSE_ENTITLEMENTS: Record<
-  "Starter" | "Professional" | "Enterprise",
-  LicenseEntitlements
+  LicenseTier,
+  {
+    scoring: boolean;
+    domainBreakdown: boolean;
+    executiveNarrative: boolean;
+    remediationPlan: boolean;
+    exportPdf: boolean;
+  }
 > = {
-  Starter: {
-    includesExecutiveReport: false,
-    includesPricing: false,
-    includesRemediationPlan: false
+  free: {
+    scoring: true,
+    domainBreakdown: false,
+    executiveNarrative: false,
+    remediationPlan: false,
+    exportPdf: false
   },
-  Professional: {
-    includesExecutiveReport: true,
-    includesPricing: false,
-    includesRemediationPlan: true
+  starter: {
+    scoring: true,
+    domainBreakdown: true,
+    executiveNarrative: false,
+    remediationPlan: false,
+    exportPdf: false
   },
-  Enterprise: {
-    includesExecutiveReport: true,
-    includesPricing: true,
-    includesRemediationPlan: true
+  professional: {
+    scoring: true,
+    domainBreakdown: true,
+    executiveNarrative: true,
+    remediationPlan: true,
+    exportPdf: true
+  },
+  enterprise: {
+    scoring: true,
+    domainBreakdown: true,
+    executiveNarrative: true,
+    remediationPlan: true,
+    exportPdf: true
   }
 };

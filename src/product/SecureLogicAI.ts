@@ -15,8 +15,7 @@ export class SecureLogicAI {
     const scoring = runScoring(input);
     const entitlements = LICENSE_ENTITLEMENTS[this.license.tier];
 
-    // Base object (no optional fields yet)
-    const result: AuditSprintResultV1 = {
+    const result = {
       meta: {
         version: "audit-sprint-result-v1",
         generatedAt: new Date().toISOString(),
@@ -27,9 +26,8 @@ export class SecureLogicAI {
         executiveSummary: entitlements.executiveNarrative,
         remediationPlan: entitlements.remediationPlan
       }
-    };
+    } as any;
 
-    // Conditionally attach optional fields (CORRECT way)
     if (entitlements.executiveNarrative) {
       result.executiveSummary = buildExecutiveSummary(scoring);
     }
