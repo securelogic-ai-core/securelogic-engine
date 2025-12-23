@@ -5,3 +5,4 @@ export * from "./contracts/result";
 export * from "./contracts/integrity";
 export * from "./contracts/evidence";
 export * from "./contracts/finding";
+export * from "./contracts/risk";
