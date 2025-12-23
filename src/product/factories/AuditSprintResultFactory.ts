@@ -1,10 +1,10 @@
 import type { AuditSprintResultV1 } from "../contracts/result";
 import { hashResult } from "../integrity/hashResult";
+import { validateAuditSprintResult } from "../validation/validateAuditSprintResult";
 
 /**
  * AuditSprintResultFactory
- * ------------------------
- * SINGLE EXIT POINT for client-facing results.
+ * SINGLE EXIT POINT — VALIDATED & IMMUTABLE
  */
 export function finalizeAuditSprintResult(
   result: Omit<AuditSprintResultV1, "integrity">
@@ -16,17 +16,19 @@ export function finalizeAuditSprintResult(
     integrity
   };
 
+  validateAuditSprintResult(finalized);
+
   return deepFreeze(finalized);
 }
 
-/* Deep freeze for immutability */
 function deepFreeze<T>(obj: T): Readonly<T> {
-  Object.freeze(obj);
-  Object.getOwnPropertyNames(obj).forEach(prop => {
-    const value = (obj as any)[prop];
-    if (value && typeof value === "object" && !Object.isFrozen(value)) {
-      deepFreeze(value);
-    }
-  });
+  if (obj && typeof obj === "object") {
+    Object.freeze(obj);
+    Object.values(obj).forEach(value => {
+      if (value && typeof value === "object" && !Object.isFrozen(value)) {
+        deepFreeze(value);
+      }
+    });
+  }
   return obj;
 }
