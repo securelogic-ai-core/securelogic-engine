@@ -1,16 +1,14 @@
-/**
- * SecureLogic AI
- * =========================
- * Audit Sprint Result — V1
- *
- * ENTERPRISE, CLIENT-FACING, VERSIONED CONTRACT
- */
-
 import type { ScoringOutputV1 } from "../../../engine/contracts/scoring";
 import type { ExecutiveSummary } from "../output/ExecutiveSummary";
 import type { RemediationPlan } from "../output/RemediationPlan";
+import type { EvidenceReferenceV1 } from "../evidence/EvidenceReference";
+import type { EvidenceLinkV1 } from "../evidence/EvidenceLink";
 import type { ResultIntegrityV1 } from "../integrity/ResultIntegrity";
 
+/**
+ * Audit Sprint Result — V1
+ * ENTERPRISE CLIENT OUTPUT
+ */
 export interface AuditSprintResultV1 {
   meta: {
     version: "audit-sprint-result-v1";
@@ -23,9 +21,9 @@ export interface AuditSprintResultV1 {
   executiveSummary?: ExecutiveSummary;
   remediationPlan?: RemediationPlan;
 
-  entitlements: {
-    executiveSummary: boolean;
-    remediationPlan: boolean;
+  evidence?: {
+    references: EvidenceReferenceV1[];
+    links: EvidenceLinkV1[];
   };
 
   integrity: ResultIntegrityV1;
