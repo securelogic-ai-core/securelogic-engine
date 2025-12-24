@@ -1,4 +1,9 @@
 /**
+ * PUBLIC CONTRACT — CRYPTOGRAPHIC SEAL
+ * Altering this invalidates prior results
+ */
+
+/**
  * Result Integrity Metadata — V1
  *
  * ENTERPRISE AUDIT CONTRACT
