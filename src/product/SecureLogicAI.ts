@@ -17,38 +17,28 @@ import { finalizeAuditSprintResult } from "./factories/AuditSprintResultFactory"
 export class SecureLogicAI {
   constructor(private readonly license: LicenseContext) {}
 
-  runAuditSprint(
-    input: ScoringInput
-  ): Readonly<AuditSprintResultV1> {
+  runAuditSprint(input: ScoringInput): AuditSprintResultV1 {
     const scoring = runScoring(input);
 
     const findings = buildFindings(scoring);
-    const riskRollup = buildRiskRollup(findings);
-    const controlTraces = buildControlTraces(scoring, findings);
 
-    const draftResult: Omit<AuditSprintResultV1, "integrity"> = {
+    const draftResult = {
       meta: {
-        version: "audit-sprint-result-v1",
         generatedAt: new Date().toISOString(),
         licenseTier: this.license.tier
       },
       executionContext: buildExecutionContext(),
       scoring,
-      findings,
-      riskRollup,
-      controlTraces,
+
       executiveSummary: buildExecutiveSummary(scoring),
       remediationPlan: buildRemediationPlan(scoring),
-      evidence: [],
-      evidenceLinks: [],
-      attestations: []
+      findings,
+      riskRollup: buildRiskRollup(findings),
+      controlTraces: buildControlTraces(scoring, findings)
     };
 
-    const entitlements =
-      ENTITLEMENT_CATALOG[this.license.tier];
-
-    const gated =
-      enforceEntitlements(draftResult, entitlements);
+    const entitlements = ENTITLEMENT_CATALOG[this.license.tier];
+    const gated = enforceEntitlements(draftResult, entitlements);
 
     return finalizeAuditSprintResult(gated);
   }
