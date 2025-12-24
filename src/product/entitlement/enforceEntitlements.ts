@@ -2,48 +2,21 @@ import type { AuditSprintResultV1 } from "../contracts/result/AuditSprintResultV
 import type { Entitlements } from "../contracts/entitlement/Entitlements";
 
 /**
- * Enforce entitlements on a PRE-INTEGRITY result.
- * exactOptionalPropertyTypes SAFE.
+ * Enforce entitlements on a PRE-INTEGRITY, PRE-VERSION result.
+ * Properties are OMITTED, never set to undefined.
  */
 export function enforceEntitlements(
-  draft: Omit<AuditSprintResultV1, "integrity">,
+  draft: Omit<AuditSprintResultV1, "integrity" | "kind" | "version">,
   entitlements: Entitlements
-): Omit<AuditSprintResultV1, "integrity"> {
-  return {
-    meta: draft.meta,
-    executionContext: draft.executionContext,
-    scoring: draft.scoring,
+): Omit<AuditSprintResultV1, "integrity" | "kind" | "version"> {
+  const result: any = { ...draft };
 
-    ...(entitlements.executiveSummary && draft.executiveSummary
-      ? { executiveSummary: draft.executiveSummary }
-      : {}),
+  if (!entitlements.executiveSummary) delete result.executiveSummary;
+  if (!entitlements.remediationPlan) delete result.remediationPlan;
+  if (!entitlements.controlTraces) delete result.controlTraces;
+  if (!entitlements.evidence) delete result.evidence;
+  if (!entitlements.evidenceLinks) delete result.evidenceLinks;
+  if (!entitlements.attestations) delete result.attestations;
 
-    ...(entitlements.remediationPlan && draft.remediationPlan
-      ? { remediationPlan: draft.remediationPlan }
-      : {}),
-
-    ...(entitlements.findings && draft.findings
-      ? { findings: draft.findings }
-      : {}),
-
-    ...(entitlements.riskRollup && draft.riskRollup
-      ? { riskRollup: draft.riskRollup }
-      : {}),
-
-    ...(entitlements.controlTraces && draft.controlTraces
-      ? { controlTraces: draft.controlTraces }
-      : {}),
-
-    ...(entitlements.evidence && draft.evidence
-      ? { evidence: draft.evidence }
-      : {}),
-
-    ...(entitlements.evidenceLinks && draft.evidenceLinks
-      ? { evidenceLinks: draft.evidenceLinks }
-      : {}),
-
-    ...(entitlements.attestations && draft.attestations
-      ? { attestations: draft.attestations }
-      : {})
-  };
+  return result;
 }
