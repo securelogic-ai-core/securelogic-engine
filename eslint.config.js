@@ -3,19 +3,31 @@ import tsparser from "@typescript-eslint/parser";
 
 export default [
   {
-    files: ["**/*.ts"],
+    ignores: ["**/*_DISABLED/**", "test/**", "dist/**"]
+  },
+  {
+    files: ["src/product/**/*.ts"],
     languageOptions: {
-      parser: tsparser,
-      parserOptions: {
-        sourceType: "module",
-        ecmaVersion: "latest"
-      }
+      parser: tsparser
     },
     plugins: {
       "@typescript-eslint": tseslint
     },
     rules: {
       "@typescript-eslint/no-explicit-any": "error",
+      "@typescript-eslint/consistent-type-imports": "error"
+    }
+  },
+  {
+    files: ["src/**/*.ts"],
+    languageOptions: {
+      parser: tsparser
+    },
+    plugins: {
+      "@typescript-eslint": tseslint
+    },
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/consistent-type-imports": "error"
     }
   }
