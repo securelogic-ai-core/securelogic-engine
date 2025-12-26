@@ -1,4 +1,4 @@
-import type { ResultEnvelope } from "./contracts";
+import type { ResultEnvelopeV1 } from "./contracts";
 
 import { createAuditSprintResult } from "./factories/AuditSprintResultFactory";
 import { createResultEnvelopeV1 } from "./factories/ResultEnvelopeFactory";
@@ -11,7 +11,7 @@ export class SecureLogicAI {
   runAuditSprint(
     input: unknown,
     entitlements: Entitlements
-  ): ResultEnvelope {
+  ): ResultEnvelopeV1 {
     const raw = createAuditSprintResult(input);
     const gated = enforceEntitlements(raw, entitlements);
     const normalized = normalizeAuditSprintResult(gated);
