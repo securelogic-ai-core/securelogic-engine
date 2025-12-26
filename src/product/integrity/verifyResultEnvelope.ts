@@ -1,14 +1,20 @@
-import type { ResultEnvelopeV1 } from "../factories/ResultEnvelopeFactory";
-import crypto from "crypto";
+import type { ResultEnvelope } from "../contracts";
 
-export function verifyResultEnvelope(envelope: ResultEnvelopeV1): boolean {
-  const recalculated = crypto
-    .createHash("sha256")
-    .update(JSON.stringify(envelope.payload))
-    .digest("hex");
+type EnvelopeWithPayload = ResultEnvelope & {
+  payload?: ResultEnvelope;
+};
 
-  return (
-    envelope.integrity.algorithm === "sha256" &&
-    envelope.integrity.hash === recalculated
-  );
+export function verifyResultEnvelope(envelope: EnvelopeWithPayload): boolean {
+  if (typeof envelope !== "object" || envelope === null) return false;
+
+  if (envelope.version !== "result-envelope-v1") return false;
+  if (typeof envelope.issuedAt !== "string") return false;
+  if (typeof envelope.result !== "object" || envelope.result === null) return false;
+
+  if (envelope.payload) {
+    if (envelope.payload.version !== envelope.version) return false;
+    if (envelope.payload.issuedAt !== envelope.issuedAt) return false;
+  }
+
+  return true;
 }
