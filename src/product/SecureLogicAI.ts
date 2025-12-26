@@ -7,10 +7,6 @@ import { normalizeAuditSprintResult } from "./normalization/normalizeAuditSprint
 import { finalizeAuditSprintResult } from "./integrity/finalizeAuditSprintResult";
 import type { Entitlements } from "./entitlement/Entitlements";
 
-/**
- * SecureLogicAI orchestrates execution.
- * Returns the concrete frozen ResultEnvelope.
- */
 export class SecureLogicAI {
   runAuditSprint(
     input: unknown,
