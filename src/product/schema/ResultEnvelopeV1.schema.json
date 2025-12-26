@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ResultEnvelopeV1",
+  "type": "object",
+  "required": ["kind", "version", "payload", "integrity"],
+  "properties": {
+    "kind": { "const": "result-envelope" },
+    "version": { "const": "result-envelope-v1" },
+    "payload": { "type": "object" },
+    "integrity": {
+      "type": "object",
+      "required": ["algorithm", "hash", "generatedAt"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "hash": { "type": "string" },
+        "generatedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
