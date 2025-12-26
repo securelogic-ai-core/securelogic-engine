@@ -6,7 +6,10 @@
     "build": "tsc && npm run copy",
     "copy": "mkdir -p dist/frameworks dist/api && cp -r frameworks/* dist/frameworks/ && cp -r src/api/* dist/api/",
     "start:api": "node dist/api/server.js",
-    "test": "jest --runInBand"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.ts\"",
+    "ci": "npm run typecheck && npm run lint && npm run test"
   },
   "dependencies": {
     "ajv": "^8.17.1",
