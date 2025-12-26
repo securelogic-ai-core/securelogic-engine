@@ -1,33 +1,36 @@
-import type { AuditSprintResultV1 } from "../contracts/result";
+import type { AuditSprintResultV1 } from "../contracts";
 
 /**
- * Runtime validator for AuditSprintResultV1
- * ENTERPRISE SAFETY GATE
+ * Validates that an object conforms to AuditSprintResultV1
+ * BEFORE envelope creation.
  */
 export function validateAuditSprintResult(
-  result: AuditSprintResultV1
-): void {
-  if (result.meta.version !== "audit-sprint-result-v1") {
-    throw new Error("Invalid result version");
+  input: unknown
+): AuditSprintResultV1 {
+  if (typeof input !== "object" || input === null) {
+    throw new Error("AuditSprintResult must be an object");
   }
 
-  if (!result.executionContext) {
-    throw new Error("Missing execution context");
+  const candidate = input as Partial<AuditSprintResultV1>;
+
+  if (
+    candidate.kind !== "audit-sprint-result" ||
+    candidate.version !== "audit-sprint-result-v1"
+  ) {
+    throw new Error("Invalid AuditSprintResult identity");
   }
 
-  if (!result.integrity || result.integrity.algorithm !== "sha256") {
-    throw new Error("Invalid or missing integrity block");
+  if (!candidate.domains || !Array.isArray(candidate.domains)) {
+    throw new Error("AuditSprintResult.domains must be an array");
   }
 
-  if (!Array.isArray(result.findings)) {
-    throw new Error("Findings must be an array");
+  if (!candidate.findings || !Array.isArray(candidate.findings)) {
+    throw new Error("AuditSprintResult.findings must be an array");
   }
 
-  if (!result.riskRollup) {
-    throw new Error("Missing risk rollup");
+  if (!candidate.summary || typeof candidate.summary !== "object") {
+    throw new Error("AuditSprintResult.summary must be an object");
   }
 
-  if (!result.scoring) {
-    throw new Error("Missing scoring output");
-  }
+  return candidate as AuditSprintResultV1;
 }
