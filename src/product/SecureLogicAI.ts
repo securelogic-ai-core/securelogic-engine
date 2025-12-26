@@ -3,8 +3,8 @@ import type { ResultEnvelope } from "./contracts";
 import { createAuditSprintResult } from "./factories/AuditSprintResultFactory";
 import { createResultEnvelopeV1 } from "./factories/ResultEnvelopeFactory";
 import { enforceEntitlements } from "./entitlement/enforceEntitlements";
-import { finalizeAuditSprintResult } from "./integrity/finalizeAuditSprintResult";
 import { normalizeAuditSprintResult } from "./normalization/normalizeAuditSprintResult";
+import { finalizeAuditSprintResult } from "./integrity/finalizeAuditSprintResult";
 import type { Entitlements } from "./entitlement/Entitlements";
 
 /**
