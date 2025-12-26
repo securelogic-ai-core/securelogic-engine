@@ -3,7 +3,7 @@ import type { Entitlements } from "./Entitlements";
 
 /**
  * Enforces entitlements by REMOVING disallowed fields entirely.
- * Tests require properties to be ABSENT, not empty.
+ * Tests assert that gated fields DO NOT EXIST ("in" === false).
  */
 export function enforceEntitlements(
   result: AuditSprintResultV1,
@@ -11,6 +11,7 @@ export function enforceEntitlements(
 ): AuditSprintResultV1 {
   const gated: any = { ...result };
 
+  // CORE tier: strip all detailed artifacts
   if (!entitlements.allowFindings) {
     delete gated.domains;
     delete gated.findings;
@@ -20,10 +21,12 @@ export function enforceEntitlements(
     delete gated.attestations;
   }
 
+  // Executive summary
   if (!entitlements.allowExecutiveSummary) {
     delete gated.summary;
   }
 
+  // Integrity metadata
   if (!entitlements.allowIntegrity) {
     delete gated.integrity;
   }
