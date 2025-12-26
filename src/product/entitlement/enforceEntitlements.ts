@@ -1,22 +1,32 @@
-import type { AuditSprintResultV1 } from "../contracts/result/AuditSprintResultV1";
-import type { Entitlements } from "../contracts/entitlement/Entitlements";
+import type { AuditSprintResultV1 } from "../contracts";
+import type { Entitlements } from "./Entitlements";
 
 /**
- * Enforce entitlements on a PRE-INTEGRITY, PRE-VERSION result.
- * Properties are OMITTED, never set to undefined.
+ * Enforces entitlements by REMOVING disallowed fields entirely.
+ * Tests require properties to be ABSENT, not empty.
  */
 export function enforceEntitlements(
-  draft: Omit<AuditSprintResultV1, "integrity" | "kind" | "version">,
+  result: AuditSprintResultV1,
   entitlements: Entitlements
-): Omit<AuditSprintResultV1, "integrity" | "kind" | "version"> {
-  const result: any = { ...draft };
+): AuditSprintResultV1 {
+  const gated: any = { ...result };
 
-  if (!entitlements.executiveSummary) delete result.executiveSummary;
-  if (!entitlements.remediationPlan) delete result.remediationPlan;
-  if (!entitlements.controlTraces) delete result.controlTraces;
-  if (!entitlements.evidence) delete result.evidence;
-  if (!entitlements.evidenceLinks) delete result.evidenceLinks;
-  if (!entitlements.attestations) delete result.attestations;
+  if (!entitlements.allowFindings) {
+    delete gated.domains;
+    delete gated.findings;
+    delete gated.remediationPlan;
+    delete gated.controlTraces;
+    delete gated.evidence;
+    delete gated.attestations;
+  }
 
-  return result;
+  if (!entitlements.allowExecutiveSummary) {
+    delete gated.summary;
+  }
+
+  if (!entitlements.allowIntegrity) {
+    delete gated.integrity;
+  }
+
+  return gated as AuditSprintResultV1;
 }
