@@ -1,5 +1,5 @@
-import { ScoringInput } from "../contracts/ScoringInput";
-import { ControlAssessment } from "../contracts/ControlAssessment";
+import type { ScoringInput } from "../contracts/ScoringInput";
+import type { ControlAssessment } from "../contracts/ControlAssessment";
 import { ControlRegistry } from "../registry/ControlRegistry";
 
 export class ControlAssessmentEngine {

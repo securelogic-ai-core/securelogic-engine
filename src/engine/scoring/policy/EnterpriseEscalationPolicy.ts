@@ -1,6 +1,6 @@
 import { SeverityNormalizationEngine } from "../normalization/SeverityNormalizationEngine";
 
-import { EnterpriseRiskSummary } from "../../contracts/EnterpriseRiskSummary";
+import type { EnterpriseRiskSummary } from "../../contracts/EnterpriseRiskSummary";
 import { RiskSeverity, RISK_SEVERITY } from "../../contracts/RiskSeverity";
 
 export class EnterpriseEscalationPolicy {

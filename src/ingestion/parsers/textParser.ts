@@ -1,4 +1,4 @@
-import { IPCv1Document } from "../IPC_v1";
+import type { IPCv1Document } from "../IPC_v1";
 
 export function parseText(doc: IPCv1Document) {
   return {

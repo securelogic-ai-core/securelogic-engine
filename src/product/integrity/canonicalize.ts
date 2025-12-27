@@ -1,21 +1,14 @@
-/**
- * Canonical JSON serializer
- * Ensures deterministic key ordering for hashing
- */
-export function canonicalize(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalize).join(",")}]`;
+export function canonicalize(input: unknown): string {
+  if (input === null || typeof input !== "object") {
+    return JSON.stringify(input);
   }
 
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(
-        ([key, val]) => `"${key}":${canonicalize(val)}`
-      );
-
-    return `{${entries.join(",")}}`;
+  if (Array.isArray(input)) {
+    return `[${input.map(canonicalize).join(",")}]`;
   }
 
-  return JSON.stringify(value);
+  const obj = input as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+
+  return `{${keys.map(k => `"${k}":${canonicalize(obj[k])}`).join(",")}}`;
 }

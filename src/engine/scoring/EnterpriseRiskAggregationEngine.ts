@@ -1,5 +1,5 @@
-import { RiskScore } from "../contracts/RiskScore";
-import {
+import type { RiskScore } from "../contracts/RiskScore";
+import type {
   EnterpriseRiskSummary,
   CategoryRiskScore,
   DomainRiskScore,

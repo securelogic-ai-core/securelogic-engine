@@ -1,4 +1,4 @@
-import { ControlState } from "../contracts/ControlState";
+import type { ControlState } from "../contracts/ControlState";
 
 /**
  * Canonical enterprise initial control state.

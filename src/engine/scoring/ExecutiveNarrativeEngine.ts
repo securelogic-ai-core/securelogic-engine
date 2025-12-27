@@ -1,4 +1,4 @@
-import { EnterpriseRiskSummary } from "../contracts/EnterpriseRiskSummary";
+import type { EnterpriseRiskSummary } from "../contracts/EnterpriseRiskSummary";
 
 export class ExecutiveNarrativeEngine {
   static generate(summary: EnterpriseRiskSummary): string {

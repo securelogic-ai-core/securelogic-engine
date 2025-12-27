@@ -1,5 +1,5 @@
-import { Request } from "express";
-import { LicenseTier } from "../../contracts/LicenseTier";
+import type { Request } from "express";
+import type { LicenseTier } from "../../contracts/LicenseTier";
 import { verifyLicenseToken } from "./licenseToken";
 
 /**

@@ -1,6 +1,6 @@
-import { RiskDecision } from "../../engine/contracts/RiskDecision";
-import { RemediationDecision } from "../../engine/contracts/RiskDecision";
-import { EnterpriseRiskSummary } from "../../engine/contracts/EnterpriseRiskSummary";
+import type { RiskDecision } from "../../engine/contracts/RiskDecision";
+import type { RemediationDecision } from "../../engine/contracts/RiskDecision";
+import type { EnterpriseRiskSummary } from "../../engine/contracts/EnterpriseRiskSummary";
 
 export interface ExecutiveRiskReportV2Readonly {
   assessment: {

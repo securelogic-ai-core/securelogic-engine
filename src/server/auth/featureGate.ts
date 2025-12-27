@@ -1,4 +1,4 @@
-import { LicenseTier } from "../../contracts/LicenseTier";
+import type { LicenseTier } from "../../contracts/LicenseTier";
 
 export type Feature =
   | "RISK_SCORING"

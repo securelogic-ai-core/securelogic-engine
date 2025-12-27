@@ -5,7 +5,7 @@ import { EnterpriseSeverityPolicy } from "./scoring/policy/EnterpriseSeverityPol
 import { ExceptionWeightingPolicy } from "./scoring/policy/ExceptionWeightingPolicy";
 import { MaterialityEngine } from "./materiality/MaterialityEngine";
 import { SystemInvariantValidator } from "./validators/SystemInvariantValidator";
-import { ScoringInput } from "./contracts/ScoringInput";
+import type { ScoringInput } from "./contracts/ScoringInput";
 import { AssessmentInferenceEngine } from "./scoring/AssessmentInferenceEngine";
 import { ControlRiskScoringEngine } from "./scoring/ControlRiskScoringEngine";
 import { EnterpriseRiskAggregationEngine } from "./scoring/EnterpriseRiskAggregationEngine";

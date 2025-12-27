@@ -1,5 +1,5 @@
 import rateLimit from "express-rate-limit";
-import { Request } from "express";
+import type { Request } from "express";
 import { resolveLicense } from "../auth/resolveLicense";
 
 export const licenseRateLimiter = rateLimit({

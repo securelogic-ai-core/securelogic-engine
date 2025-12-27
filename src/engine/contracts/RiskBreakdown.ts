@@ -1,5 +1,5 @@
-import { RiskFinding } from "./RiskFinding";
-import { RiskLevel } from "./RiskLevel";
+import type { RiskFinding } from "./RiskFinding";
+import type { RiskLevel } from "./RiskLevel";
 
 export interface RiskBreakdown {
   overallScore: number; // 0–100

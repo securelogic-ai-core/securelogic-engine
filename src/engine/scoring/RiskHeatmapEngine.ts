@@ -1,5 +1,5 @@
 import { HeatmapScale } from "../contracts/HeatmapScale";
-import { RiskScore } from "../contracts/RiskScore";
+import type { RiskScore } from "../contracts/RiskScore";
 
 export type HeatmapCell = {
   impact: "Low" | "Medium" | "High";

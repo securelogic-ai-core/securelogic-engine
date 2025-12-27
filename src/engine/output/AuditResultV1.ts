@@ -1,5 +1,5 @@
-import { RiskDecision } from "../contracts/RiskDecision";
-import { EnterpriseRiskSummary } from "../contracts/EnterpriseRiskSummary";
+import type { RiskDecision } from "../contracts/RiskDecision";
+import type { EnterpriseRiskSummary } from "../contracts/EnterpriseRiskSummary";
 
 export interface AuditMetadata {
   auditId: string;
