@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { handleRequest } from "../handlers/handleRequest";
-import { ScoringInput } from "../../engine/contracts/ScoringInput";
+import type { ScoringInput } from "../../engine/contracts/ScoringInput";
 
 const router = Router();
 

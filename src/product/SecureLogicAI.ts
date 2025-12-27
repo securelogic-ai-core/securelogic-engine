@@ -1,11 +1,12 @@
 import type { ResultEnvelope } from "./contracts";
+import type { Entitlements } from "./entitlement/Entitlements";
 
 import { createAuditSprintResult } from "./factories/AuditSprintResultFactory";
 import { createResultEnvelopeV1 } from "./factories/ResultEnvelopeFactory";
 import { enforceEntitlements } from "./entitlement/enforceEntitlements";
 import { normalizeAuditSprintResult } from "./normalization/normalizeAuditSprintResult";
 import { finalizeAuditSprintResult } from "./integrity/finalizeAuditSprintResult";
-import type { Entitlements } from "./entitlement/Entitlements";
+import { signResultEnvelope } from "./signing/signResultEnvelope";
 
 export class SecureLogicAI {
   runAuditSprint(
@@ -17,6 +18,6 @@ export class SecureLogicAI {
     const normalized = normalizeAuditSprintResult(gated);
     const finalized = finalizeAuditSprintResult(normalized);
 
-    return createResultEnvelopeV1(finalized);
+    return signResultEnvelope(createResultEnvelopeV1(finalized));
   }
 }

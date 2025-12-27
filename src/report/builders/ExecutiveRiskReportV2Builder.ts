@@ -1,5 +1,5 @@
-import { ExecutiveRiskReportV2 } from "../contracts/ExecutiveRiskReportV2";
-import { EnterpriseRiskSummary } from "../../engine/contracts/EnterpriseRiskSummary";
+import type { ExecutiveRiskReportV2 } from "../contracts/ExecutiveRiskReportV2";
+import type { EnterpriseRiskSummary } from "../../engine/contracts/EnterpriseRiskSummary";
 import { BillableComplexityEngine } from "../../engine/scoring/BillableComplexityEngine";
 import { RiskDecisionEngine } from "../../engine/RiskDecisionEngine";
 

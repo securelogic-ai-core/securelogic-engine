@@ -1,2 +1,2 @@
-export { signResult } from "./signResult";
-export { attachSignature } from "./attachSignature";
+export { hashEnvelope } from "./hashEnvelope";
+export { verifyResultSignature } from "./verifyResultSignature";

@@ -1,5 +1,5 @@
-import { Questionnaire } from "../contracts/Questionnaire";
-import { ScoringInput } from "../contracts/ScoringInput";
+import type { Questionnaire } from "../contracts/Questionnaire";
+import type { ScoringInput } from "../contracts/ScoringInput";
 
 export class ControlMapper {
   static toScoringInput(q: Questionnaire): ScoringInput {

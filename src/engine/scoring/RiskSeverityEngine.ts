@@ -1,4 +1,5 @@
-import { RiskSeverity, RISK_SEVERITY } from "../contracts/RiskSeverity";
+import type { RiskSeverity} from "../contracts/RiskSeverity";
+import { RISK_SEVERITY } from "../contracts/RiskSeverity";
 
 export class RiskSeverityEngine {
   static fromScore(score: number): RiskSeverity {

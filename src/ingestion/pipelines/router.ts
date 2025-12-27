@@ -1,4 +1,4 @@
-import { IPCv1Document } from "../IPC_v1";
+import type { IPCv1Document } from "../IPC_v1";
 import { parsePDF } from "../parsers/pdfParser";
 import { parseDocx } from "../parsers/docxParser";
 import { parseText } from "../parsers/textParser";

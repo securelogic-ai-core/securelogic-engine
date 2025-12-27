@@ -1,4 +1,5 @@
-import { RiskSeverity, RISK_SEVERITY } from "../../contracts/RiskSeverity";
+import type { RiskSeverity} from "../../contracts/RiskSeverity";
+import { RISK_SEVERITY } from "../../contracts/RiskSeverity";
 
 /**
  * Single source of truth for severity escalation and normalization.

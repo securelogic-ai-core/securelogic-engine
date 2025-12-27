@@ -1,4 +1,4 @@
-import { ExecutiveRiskReportV2 } from "../contracts/ExecutiveRiskReportV2";
+import type { ExecutiveRiskReportV2 } from "../contracts/ExecutiveRiskReportV2";
 import { ExecutiveRiskReportV2PdfRenderer } from "./ExecutiveRiskReportV2PdfRenderer";
 
 export class ClientReportRenderer {

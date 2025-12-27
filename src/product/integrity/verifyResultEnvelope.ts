@@ -1,20 +1,27 @@
 import type { ResultEnvelope } from "../contracts";
+import { canonicalize } from "./canonicalize";
+import { createHash } from "crypto";
+import { verifyResultSignature } from "../signing/verifyResultSignature";
+import { DEFAULT_QUORUM } from "../signing/defaultQuorum";
 
-type EnvelopeWithPayload = ResultEnvelope & {
-  payload?: ResultEnvelope;
-};
+export function verifyResultEnvelope(envelope: ResultEnvelope): boolean {
+  const data =
+    (envelope as unknown as { payload?: unknown }).payload ??
+    envelope.result;
 
-export function verifyResultEnvelope(envelope: EnvelopeWithPayload): boolean {
-  if (typeof envelope !== "object" || envelope === null) return false;
+  const expectedPayloadHash = createHash("sha256")
+    .update(canonicalize(data))
+    .digest("hex");
 
-  if (envelope.version !== "result-envelope-v1") return false;
-  if (typeof envelope.issuedAt !== "string") return false;
-  if (typeof envelope.result !== "object" || envelope.result === null) return false;
+  if (envelope.payloadHash !== expectedPayloadHash) return false;
 
-  if (envelope.payload) {
-    if (envelope.payload.version !== envelope.version) return false;
-    if (envelope.payload.issuedAt !== envelope.issuedAt) return false;
+  const signatures = envelope.signatures ?? [];
+  let valid = 0;
+
+  for (const sig of signatures) {
+    if (!verifyResultSignature(envelope, sig)) return false;
+    valid++;
   }
 
-  return true;
+  return valid >= DEFAULT_QUORUM.minimumSignatures;
 }

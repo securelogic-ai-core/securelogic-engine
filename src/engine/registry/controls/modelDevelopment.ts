@@ -1,4 +1,4 @@
-import { ControlDefinition } from "../../contracts/ControlDefinition";
+import type { ControlDefinition } from "../../contracts/ControlDefinition";
 
 export const ModelDevelopmentControls: Record<string, ControlDefinition> = {
   "modelDevelopment.validationTesting": {

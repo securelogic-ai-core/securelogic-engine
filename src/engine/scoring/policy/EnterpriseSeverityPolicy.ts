@@ -1,4 +1,4 @@
-import { EnterpriseRiskSummary } from "../../contracts/EnterpriseRiskSummary";
+import type { EnterpriseRiskSummary } from "../../contracts/EnterpriseRiskSummary";
 
 export interface PolicyDecisionTrace {
   policyId: string;

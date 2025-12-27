@@ -1,4 +1,4 @@
-import { RiskDecision } from "../../engine/contracts/RiskDecision";
+import type { RiskDecision } from "../../engine/contracts/RiskDecision";
 
 export interface RiskDecisionReportV1 {
   reportVersion: "1.0";

@@ -1,6 +1,6 @@
 import { ControlRegistry } from "../registry/ControlRegistry";
-import { ControlAssessment } from "../contracts/ControlAssessment";
-import { ControlState } from "../contracts/ControlState";
+import type { ControlAssessment } from "../contracts/ControlAssessment";
+import type { ControlState } from "../contracts/ControlState";
 
 export class AssessmentInferenceEngine {
   static infer(controlState: ControlState): ControlAssessment[] {

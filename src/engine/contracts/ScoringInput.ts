@@ -1,5 +1,5 @@
-import { ControlState } from "./ControlState";
-import { ControlAssessment } from "./ControlAssessment";
+import type { ControlState } from "./ControlState";
+import type { ControlAssessment } from "./ControlAssessment";
 
 export interface ScoringInput {
   orgProfile: {

@@ -1,2 +1,2 @@
-export { hashResult } from "./hashResult";
-export { verifyResult } from "./verifyResult";
+export { verifyResultEnvelope } from "./verifyResultEnvelope";
+export { canonicalize } from "./canonicalize";

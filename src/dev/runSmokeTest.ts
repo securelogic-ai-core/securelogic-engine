@@ -1,6 +1,6 @@
 import { RunnerEngine } from "../engine/RunnerEngine";
 import { ControlStateFactory } from "../engine/factories/ControlStateFactory";
-import { ScoringInput } from "../engine/contracts/ScoringInput";
+import type { ScoringInput } from "../engine/contracts/ScoringInput";
 
 const input: ScoringInput = {
   orgProfile: {

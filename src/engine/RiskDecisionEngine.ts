@@ -1,4 +1,4 @@
-import {
+import type {
   RiskDecision,
   RiskLevel,
   ApprovalStatus,
@@ -6,7 +6,7 @@ import {
   RemediationDecision
 } from "../contracts/RiskDecision";
 
-import {
+import type {
   EnterpriseRiskSummary,
   DomainRiskScore,
   RemediationAction

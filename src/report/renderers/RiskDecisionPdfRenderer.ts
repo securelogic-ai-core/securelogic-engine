@@ -1,5 +1,5 @@
-import { RiskDecisionReportV1 } from "../contracts/RiskDecisionReportV1";
-import { RemediationDecision } from "../../engine/contracts/RiskDecision";
+import type { RiskDecisionReportV1 } from "../contracts/RiskDecisionReportV1";
+import type { RemediationDecision } from "../../engine/contracts/RiskDecision";
 
 export class RiskDecisionPdfRenderer {
   static render(input: RiskDecisionReportV1): string {

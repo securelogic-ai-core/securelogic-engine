@@ -1,4 +1,4 @@
-import { RiskDecision } from "../../engine/contracts/RiskDecision";
+import type { RiskDecision } from "../../engine/contracts/RiskDecision";
 
 export interface RiskDecisionReportInput {
   clientName: string;

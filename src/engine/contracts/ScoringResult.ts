@@ -1,4 +1,4 @@
-import { RiskBreakdown } from "./RiskBreakdown";
+import type { RiskBreakdown } from "./RiskBreakdown";
 
 export interface ScoringResult {
   generatedAt: string;

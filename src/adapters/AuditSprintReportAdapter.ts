@@ -1,4 +1,4 @@
-import { AuditSprintReportV1 } from "../contracts/AuditSprintReportV1";
+import type { AuditSprintReportV1 } from "../contracts/AuditSprintReportV1";
 
 export function adaptToAuditSprintReportV1(engineResult: any): AuditSprintReportV1 {
   return {

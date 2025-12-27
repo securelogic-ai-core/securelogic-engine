@@ -1,5 +1,6 @@
-import jwt, { SignOptions } from "jsonwebtoken";
-import { LicenseTier } from "../../contracts/LicenseTier";
+import type { SignOptions } from "jsonwebtoken";
+import jwt from "jsonwebtoken";
+import type { LicenseTier } from "../../contracts/LicenseTier";
 
 const LICENSE_SECRET: jwt.Secret =
   process.env.LICENSE_SECRET || "dev-secret-change-me";

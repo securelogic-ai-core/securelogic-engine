@@ -1,4 +1,4 @@
-import { EngineFinding, SeverityLevel, EngineResult } from "../contracts/EngineResult";
+import type { EngineFinding, SeverityLevel, EngineResult } from "../contracts/EngineResult";
 
 const severityOrder: Record<SeverityLevel, number> = {
   Low: 1,

@@ -1,4 +1,5 @@
-import { RiskSeverity, RISK_SEVERITY } from "./RiskSeverity";
+import type { RiskSeverity} from "./RiskSeverity";
+import { RISK_SEVERITY } from "./RiskSeverity";
 
 export interface ExecutiveNarrative {
   severity: RiskSeverity;

@@ -1,6 +1,6 @@
 import { ControlRegistry } from "../registry/ControlRegistry";
-import { ControlAssessment } from "../contracts/ControlAssessment";
-import { EngineResult, EngineFinding } from "../contracts/EngineResult";
+import type { ControlAssessment } from "../contracts/ControlAssessment";
+import type { EngineResult, EngineFinding } from "../contracts/EngineResult";
 
 export class ScoringEngineV3 {
   static score(

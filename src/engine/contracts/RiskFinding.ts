@@ -1,5 +1,5 @@
-import { RiskDomain } from "./RiskDomain";
-import { RiskLevel } from "./RiskLevel";
+import type { RiskDomain } from "./RiskDomain";
+import type { RiskLevel } from "./RiskLevel";
 
 export interface RiskFinding {
   domain: RiskDomain;
