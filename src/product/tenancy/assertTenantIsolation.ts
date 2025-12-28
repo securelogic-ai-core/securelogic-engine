@@ -1,10 +1,8 @@
-import type { TenantContextV1 } from "./TenantContextV1";
-
 export function assertTenantIsolation(
-  requester: TenantContextV1,
+  actorTenantId: string,
   resourceTenantId: string
 ): void {
-  if (requester.tenantId !== resourceTenantId) {
+  if (actorTenantId !== resourceTenantId) {
     throw new Error("TENANT_ISOLATION_VIOLATION");
   }
 }
