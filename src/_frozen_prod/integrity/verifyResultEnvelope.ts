@@ -1,22 +1,16 @@
 import crypto from "crypto";
 
 export function verifyResultEnvelope(envelope: any): boolean {
-  // 1. Verify payload immutability
-  const recomputed = crypto
+  const recomputedHash = crypto
     .createHash("sha256")
-    .update(JSON.stringify(envelope.payload))
+    .update(JSON.stringify({ payload: envelope.payload, metadata: envelope.metadata }))
     .digest("hex");
 
-  if (recomputed !== envelope.payloadHash) {
-    return false;
-  }
+  if (recomputedHash !== envelope.payloadHash) return false;
 
-  // 2. Verify signature integrity (if present)
-  if (Array.isArray(envelope.signatures)) {
+  if (envelope.signatures?.length) {
     for (const sig of envelope.signatures) {
-      if (sig.algorithm !== "sha256") {
-        return false;
-      }
+      if (sig.algorithm !== "sha256") return false;
     }
   }
 
