@@ -1,7 +1,5 @@
-import {
-  APPROVED_SIGNATURE_ALGORITHMS,
-  ApprovedSignatureAlgorithm
-} from "./ApprovedAlgorithms";
+import { APPROVED_SIGNATURE_ALGORITHMS } from "./ApprovedAlgorithms";
+import type { ApprovedSignatureAlgorithm } from "./ApprovedAlgorithms";
 
 export function assertApprovedAlgorithm(
   alg: string
