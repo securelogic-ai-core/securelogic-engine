@@ -9,21 +9,11 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true
   },
-  "include": [
-    "src/**/*.ts"
-  ],
+  "include": ["src/**/*.ts"],
   "exclude": [
-    "**/_dev_DISABLED/**",
-    "**/_server_DISABLED/**",
-    "**/_report_DISABLED/**",
-    "**/_product_DISABLED/**",
-    "**/_legacy/**",
-    "**/_wip/**",
-    "**/_quarantine/**",
     "**/*.test.ts",
     "**/*.spec.ts",
-    "test/**",
-    "tests/**",
-    "node_modules/**"
+    "node_modules",
+    "dist"
   ]
 }
