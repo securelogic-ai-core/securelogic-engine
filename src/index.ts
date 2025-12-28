@@ -1,3 +1,4 @@
+import "./product/release/assertEnterpriseOnly";
 import "./runtime/assertProduction";
 /**
  * SecureLogic AI – Public API
