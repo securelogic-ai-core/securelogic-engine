@@ -1,36 +1,13 @@
 import express from "express";
-import auditSprintRouter from "./routes/auditSprint";
-import auditSprintPdfRouter from "./routes/auditSprintPdf";
-import { licenseRateLimiter } from "./middleware/licenseRateLimit";
+import bodyParser from "body-parser";
+import { verifyHandler } from "./verifyHandler";
 
 const app = express();
+app.use(bodyParser.json({ limit: "5mb" }));
 
-// --------------------
-// Core middleware
-// --------------------
-app.use(express.json());
+app.post("/verify", verifyHandler);
 
-// --------------------
-// Health check
-// --------------------
-app.get("/health", (_req, res) => {
-  res.status(200).json({ status: "ok" });
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+  console.log(`SecureLogic verifier running on ${port}`);
 });
-
-// --------------------
-// Rate-limited API routes
-// --------------------
-app.use("/api", licenseRateLimiter);
-app.use("/api/audit-sprint", auditSprintRouter);
-app.use("/api/audit-sprint/pdf", auditSprintPdfRouter);
-
-// --------------------
-// Server startup
-// --------------------
-const PORT = Number(process.env.PORT) || 3000;
-
-app.listen(PORT, () => {
-  console.log(`SecureLogic Engine listening on port ${PORT}`);
-});
-
-export default app;
