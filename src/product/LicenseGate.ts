@@ -1,6 +1,6 @@
 import type { LicenseContext } from "./contracts/LicenseContext";
 import type { AuditSprintResultV1 } from "./contracts/result";
-import {  LICENSE_ENTITLEMENTS  } from "./contracts/entitlements/EntitlementMatrix";
+import {  LICENSE_ENTITLEMENTS  } from "./contracts/LicenseEntitlements";
 
 /**
  * HARD FEATURE ENFORCEMENT
