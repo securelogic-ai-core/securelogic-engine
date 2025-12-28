@@ -3,7 +3,7 @@ export function createResultEnvelopeV1(payload: any) {
     version: "v1",
     payload,
     issuedAt: new Date().toISOString(),
-    signature: null,
-    nonce: Math.random().toString(36).slice(2),
+    nonce: crypto.randomUUID(),
+    signatures: []
   };
 }
