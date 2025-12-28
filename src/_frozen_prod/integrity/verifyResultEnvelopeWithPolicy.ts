@@ -1,4 +1,4 @@
-import { verifyResultEnvelopeWithResult } from "./verifyResultEnvelopeWithResult";
+import { verifyResultEnvelope } from "./verifyResultEnvelope";
 import { verifyPolicy } from "../policy/verifyPolicy";
 import type { EnvelopePolicy } from "../policy/PolicyTypes";
 
@@ -6,10 +6,9 @@ export function verifyResultEnvelopeWithPolicy(
   envelope: any,
   requestedCapabilities: string[]
 ) {
-  const base = verifyResultEnvelopeWithResult(envelope);
-
-  if (base.status !== "VALID") {
-    return base;
+  // integrity + signature ONLY (no replay)
+  if (!verifyResultEnvelope(envelope)) {
+    return { status: "INVALID_INTEGRITY" };
   }
 
   const policy: EnvelopePolicy | undefined =
