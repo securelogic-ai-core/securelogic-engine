@@ -1,7 +1,8 @@
 export interface AuditEventV1 {
-  version: "audit-event-v1";
-  eventType: string;
+  eventId: string;
+  type: string;
   actor: string;
+  tenantId: string;
   timestamp: string;
   metadata?: Record<string, unknown>;
 }
