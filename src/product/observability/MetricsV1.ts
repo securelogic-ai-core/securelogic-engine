@@ -1,6 +1,6 @@
-export interface MetricPointV1 {
+export interface MetricV1 {
   name: string;
   value: number;
-  timestamp: string;
   tags?: Record<string, string>;
+  timestamp: string;
 }
