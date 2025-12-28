@@ -1,20 +1,29 @@
 import crypto from "crypto";
 import type { AuditRecordV1 } from "./AuditRecordV1";
+import { hashAuditRecord } from "./hashAuditRecord";
+
+let lastHash: string | undefined;
 
 export function appendAuditRecord(
-  eventType: string,
-  subjectId: string,
-  payload: object
+  category: AuditRecordV1["category"],
+  action: string,
+  subjectId?: string
 ): AuditRecordV1 {
-  const serialized = JSON.stringify(payload);
-  const checksum = crypto.createHash("sha256").update(serialized).digest("hex");
-
-  return Object.freeze({
+  const base = {
     version: "audit-record-v1",
     recordId: crypto.randomUUID(),
-    eventType,
+    category,
     subjectId,
-    checksum,
-    occurredAt: new Date().toISOString()
+    action,
+    timestamp: new Date().toISOString(),
+    previousHash: lastHash
+  };
+
+  const hash = hashAuditRecord(base);
+  lastHash = hash;
+
+  return Object.freeze({
+    ...base,
+    hash
   });
 }
