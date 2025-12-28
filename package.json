@@ -13,6 +13,7 @@
     "ci": "npm run typecheck && npm run build && npm run test"
   },
   "devDependencies": {
+    "@types/node": "~25.0.3",
     "typescript": "~5.9.3"
   },
   "dependencies": {
