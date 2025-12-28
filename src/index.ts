@@ -1,3 +1,6 @@
+import "./product/ops/assertBuildIntegrity";
+import { healthCheck } from "./product/ops/healthCheck";
+healthCheck();
 import "./product/release/assertEnterpriseOnly";
 import "./runtime/assertProduction";
 /**
