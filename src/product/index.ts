@@ -17,7 +17,6 @@ export * from "./tenancy/assertTenantIsolation";
 export * from "./data/assertDataResidency";
 export * from "./tenancy/TenantContextV1";
 export * from "./tenancy/assertTenantIsolation";
-export * from "./tenant/TenantContextV1";
 export * from "./tenancy/TenantContextV1";
 export * from "./tenancy/assertTenantIsolation";
 export * from "./data/DataResidencyV1";
