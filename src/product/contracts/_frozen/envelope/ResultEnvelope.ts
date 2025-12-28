@@ -1,7 +1,14 @@
 import type { AuditSprintResultV1 } from "../result/AuditSprintResultV1";
-import type { ResultAttestationV1 } from "../../ResultAttestationV1";
-import type { ResultLineageV1 } from "../../ResultLineageV1";
-import type { ResultIdentityV1 } from "../../ResultIdentityV1";
+import type { AttestationV1 as ResultAttestationV1 } from "../attestation/AttestationV1";
+
+export interface ResultLineageV1 {
+  parentHash?: string;
+  chainHash: string;
+}
+
+export interface ResultIdentityV1 {
+  envelopeId: string;
+}
 
 export interface ResultEnvelope extends ResultIdentityV1 {
   version: "result-envelope-v1";
