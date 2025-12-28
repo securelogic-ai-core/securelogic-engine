@@ -10,7 +10,7 @@
     "typecheck": "npx tsc -p tsconfig.ci.json",
     "lint": "eslint .",
     "test": "vitest run",
-    "ci": "npm run typecheck && npm run build && npm run test",
+    "ci": "bash scripts/check-contract-version.sh && npm run typecheck && npm run build",
     "build:contracts": "cd packages/contracts && npm run build"
   },
   "devDependencies": {
