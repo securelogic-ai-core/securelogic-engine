@@ -5,7 +5,7 @@ export type DataSensitivity =
   | "RESTRICTED";
 
 export interface DataClassificationV1 {
+  resourceId: string;
   sensitivity: DataSensitivity;
-  regulated: boolean;
-  retentionPolicyId?: string;
+  ownerTenantId: string;
 }
