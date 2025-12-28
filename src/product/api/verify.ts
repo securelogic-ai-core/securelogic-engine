@@ -1,3 +1,6 @@
+import { assertNoReplay } from "./security/replayGuard";
+import { assertRateLimit } from "./security/rateLimiter";
+
 import type { ResultEnvelope } from "../contracts";
 import type { VerificationPolicy } from "../integrity/VerificationPolicy";
 import type { VerificationMode } from "../integrity/VerificationMode";
