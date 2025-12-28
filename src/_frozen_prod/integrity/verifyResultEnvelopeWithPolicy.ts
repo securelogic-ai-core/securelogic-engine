@@ -6,21 +6,24 @@ export function verifyResultEnvelopeWithPolicy(
   envelope: any,
   requestedCapabilities: string[]
 ) {
-  // integrity + signature ONLY (no replay)
+  // Integrity only (no replay)
   if (!verifyResultEnvelope(envelope)) {
     return { status: "INVALID_INTEGRITY" };
   }
 
+  // Canonical policy resolution (DO NOT CHANGE ORDER)
   const policy: EnvelopePolicy | undefined =
-    envelope.payload?.policy ?? envelope.policy;
+    envelope.payload?.policy ??
+    envelope.policy ??
+    envelope.payload?.meta?.policy;
 
   if (!policy) {
     return { status: "INVALID_POLICY" };
   }
 
-  const policyResult = verifyPolicy(policy, requestedCapabilities);
+  const result = verifyPolicy(policy, requestedCapabilities);
 
-  if (!policyResult.valid) {
+  if (!result.valid) {
     return { status: "INVALID_POLICY" };
   }
 
