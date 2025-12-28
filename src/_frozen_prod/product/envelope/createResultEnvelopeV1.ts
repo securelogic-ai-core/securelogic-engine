@@ -1,17 +1,13 @@
 import crypto from "crypto";
 
 export function createResultEnvelopeV1(payload: any) {
-  const payloadHash = crypto
-    .createHash("sha256")
-    .update(JSON.stringify(payload))
-    .digest("hex");
+  const payloadJson = JSON.stringify(payload);
 
   return {
     version: "v1",
     payload,
-    payloadHash,
+    payloadHash: crypto.createHash("sha256").update(payloadJson).digest("hex"),
     issuedAt: new Date().toISOString(),
-    nonce: crypto.randomUUID(),
-    signatures: [],
+    signatures: []
   };
 }
