@@ -1,3 +1,6 @@
+import { startupBanner } from "./product/ops/startupBanner";
+startupBanner();
+
 import { assertRuntimeVersion } from "./product/versioning/assertRuntimeVersion";
 assertRuntimeVersion(process.env.EXPECTED_RUNTIME_VERSION ?? "");
 
