@@ -5,6 +5,6 @@ export function assertTenantIsolation(
   resourceTenantId: string
 ): void {
   if (ctx.tenantId !== resourceTenantId) {
-    throw new Error("TENANT_ISOLATION_BREACH");
+    throw new Error("TENANT_ISOLATION_VIOLATION");
   }
 }
