@@ -10,11 +10,11 @@ export function verifyResult(
   const coreValid = verifyResultEnvelope(envelope);
   const fullValid = verifyResultEnvelopeWithResult(envelope);
 
-  if (mode === "permissive") {
+  if (mode === VerificationMode.PERMISSIVE) {
     return coreValid;
   }
 
-  if (mode === "strict") {
+  if (mode === VerificationMode.STRICT) {
     return coreValid && fullValid;
   }
 
