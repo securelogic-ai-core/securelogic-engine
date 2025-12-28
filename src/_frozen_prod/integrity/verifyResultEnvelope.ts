@@ -1,9 +1,6 @@
 import crypto from "crypto";
-import { checkReplay } from "./replayCache";
 
 export function verifyResultEnvelope(envelope: any): boolean {
-  if (checkReplay(envelope.nonce)) return false;
-
   if (!envelope.signatures || envelope.signatures.length === 0) return true;
 
   const sig = envelope.signatures[0];
