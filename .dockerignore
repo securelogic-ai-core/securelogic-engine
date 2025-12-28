@@ -1,6 +1,4 @@
 node_modules
+src
 .git
 .gitignore
-dist
-test
-*.log

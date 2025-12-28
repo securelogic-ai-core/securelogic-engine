@@ -1,9 +1,12 @@
+import { loadConfig } from "../../config/loadConfig";
+const config = loadConfig();
+
 import fs from "fs/promises";
 import path from "path";
 import type { AuditEventV1 } from "../../audit/AuditEventV1";
 import type { AuditStore } from "../AuditStore";
 
-const BASE = path.resolve("data/audit");
+const BASE = config.auditDir;
 
 export class FsAuditStore implements AuditStore {
   async append(event: AuditEventV1) {
