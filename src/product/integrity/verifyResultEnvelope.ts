@@ -1,27 +1,22 @@
 import type { ResultEnvelope } from "../contracts";
-import { canonicalize } from "./canonicalize";
-import { createHash } from "crypto";
-import { verifyResultSignature } from "../signing/verifyResultSignature";
-import { DEFAULT_QUORUM } from "../signing/defaultQuorum";
+import { verifyResultEnvelopeCore } from "./verifyResultEnvelopeCore";
+import { hasSeenEnvelope, markEnvelopeSeen } from "./replayCache";
 
 export function verifyResultEnvelope(envelope: ResultEnvelope): boolean {
-  const data =
-    (envelope as unknown as { payload?: unknown }).payload ??
-    envelope.result;
-
-  const expectedPayloadHash = createHash("sha256")
-    .update(canonicalize(data))
-    .digest("hex");
-
-  if (envelope.payloadHash !== expectedPayloadHash) return false;
-
-  const signatures = envelope.signatures ?? [];
-  let valid = 0;
-
-  for (const sig of signatures) {
-    if (!verifyResultSignature(envelope, sig)) return false;
-    valid++;
+  // 1. Cryptographic & structural integrity
+  if (!verifyResultEnvelopeCore(envelope)) {
+    return false;
   }
 
-  return valid >= DEFAULT_QUORUM.minimumSignatures;
+  const hasSignatures = (envelope.signatures?.length ?? 0) > 0;
+
+  // 2. Replay protection ONLY for signed envelopes
+  if (hasSignatures) {
+    if (hasSeenEnvelope(envelope)) {
+      return false;
+    }
+    markEnvelopeSeen(envelope);
+  }
+
+  return true;
 }
