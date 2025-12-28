@@ -1,6 +1,6 @@
 import type { LicenseContext } from "./contracts/LicenseContext";
 import type { AuditSprintResultV1 } from "./contracts/result";
-import { ENTITLEMENT_MATRIX } from "./contracts/entitlements/EntitlementMatrix";
+import {  LICENSE_ENTITLEMENTS  } from "./contracts/entitlements/EntitlementMatrix";
 
 /**
  * HARD FEATURE ENFORCEMENT
@@ -11,7 +11,7 @@ export function enforceLicense(
   result: AuditSprintResultV1,
   license: LicenseContext
 ): AuditSprintResultV1 {
-  const entitlements = ENTITLEMENT_MATRIX[license.tier];
+  const entitlements =  LICENSE_ENTITLEMENTS [license.tier];
 
   return {
     ...result,
@@ -31,7 +31,7 @@ export function enforceLicense(
 
     evidence: entitlements.evidence ? result.evidence : [],
 
-    riskRollup: entitlements.riskRollup
+    riskRollup: entitlements.riskRollup!
       ? result.riskRollup
       : undefined,
 
