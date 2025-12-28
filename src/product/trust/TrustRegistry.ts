@@ -1,22 +1,12 @@
-export interface PublicKeyV1 {
-  keyId: string;
-  algorithm: "ed25519";
-  publicKey: string;
-  revoked?: boolean;
+import type { TrustLevelV1 } from "./TrustLevelV1";
+import { deepFreeze } from "../integrity/deepFreeze";
+
+const trustLevels = new Map<string, TrustLevelV1>();
+
+export function registerTrustLevel(level: TrustLevelV1): void {
+  trustLevels.set(level.subjectId, deepFreeze(level));
 }
 
-export interface TrustedAttester {
-  attesterId: string;
-  keys: PublicKeyV1[];
-  revoked?: boolean;
-}
-
-const TRUSTED_ATTESTERS: TrustedAttester[] = [];
-
-export function resolveTrustedAttester(
-  attesterId: string
-): TrustedAttester | null {
-  return TRUSTED_ATTESTERS.find(
-    a => a.attesterId === attesterId && !a.revoked
-  ) ?? null;
+export function getTrustLevel(subjectId: string): TrustLevelV1 | undefined {
+  return trustLevels.get(subjectId);
 }
