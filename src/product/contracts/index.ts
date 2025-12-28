@@ -5,7 +5,10 @@ export type { AuditSprintResultV1 } from "./_frozen/result/AuditSprintResultV1";
 export type { ResultEnvelope } from "./_frozen/envelope/ResultEnvelope";
 export type { ResultSignatureV1 } from "./_frozen/signature/ResultSignatureV1";
 export type { AttestationV1 } from "./_frozen/attestation/AttestationV1";
+
+export type {
+  ResultIdentityV1,
+  ResultLineageV1
+} from "./_frozen/envelope/ResultEnvelope";
+
 export * from "./ResultAttestationV1";
-export * from "./ResultAttestationV1";
-export * from "./ResultLineageV1";
-export * from "./ResultIdentityV1";

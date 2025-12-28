@@ -1,26 +1,23 @@
-import type { AuditSprintResultV1 } from "../contracts/result";
-import type { VerificationResultV1 } from "../contracts/integrity/VerificationResult";
-import { canonicalize } from "./canonicalize";
-import { createHash } from "crypto";
+import type { VerificationMode } from "./VerificationMode";
+import type { ResultEnvelope } from "../contracts";
+import { verifyResultEnvelope } from "./verifyResultEnvelope";
+import { verifyResultEnvelopeWithResult } from "./verifyResultEnvelopeWithResult";
 
-/**
- * Verifies integrity of an AuditSprintResult
- */
 export function verifyResult(
-  result: AuditSprintResultV1
-): VerificationResultV1 {
-  const { integrity, ...payload } = result;
+  mode: VerificationMode,
+  envelope: ResultEnvelope
+): boolean {
+  const coreValid = verifyResultEnvelope(envelope);
+  const fullValid = verifyResultEnvelopeWithResult(envelope);
 
-  const canonical = canonicalize(payload);
-  const actualHash = createHash("sha256")
-    .update(canonical)
-    .digest("hex");
+  if (mode === "permissive") {
+    return coreValid;
+  }
 
-  return {
-    valid: actualHash === integrity.hash,
-    expectedHash: integrity.hash,
-    actualHash,
-    algorithm: integrity.algorithm,
-    verifiedAt: new Date().toISOString()
-  };
+  if (mode === "strict") {
+    return coreValid && fullValid;
+  }
+
+  // forensic
+  return true;
 }
