@@ -1,35 +1,26 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.PRODUCT_SKUS = void 0;
-exports.PRODUCT_SKUS = {
-    Starter: {
-        name: "Starter Risk Decision",
-        priceRangeUSD: [499, 499],
-        intendedBuyer: "Founders, early-stage teams",
-        deliverables: [
-            "Risk approval decision",
-            "Overall risk severity"
-        ]
+export const PRODUCT_SKUS = [
+    {
+        sku: "SL-AUDIT-COMMUNITY",
+        tier: "Community",
+        description: "Entry-level audit visibility (non-commercial)",
+        annualPriceUSD: 0
     },
-    Professional: {
-        name: "Executive Risk Assessment",
-        priceRangeUSD: [5000, 7500],
-        intendedBuyer: "SMBs, compliance teams",
-        deliverables: [
-            "Executive risk report (PDF)",
-            "Risk decision & rationale",
-            "Remediation plan"
-        ]
+    {
+        sku: "SL-AUDIT-PRO",
+        tier: "Professional",
+        description: "Audit findings & remediation guidance",
+        annualPriceUSD: 2400
     },
-    Enterprise: {
-        name: "Enterprise Risk & Pricing Analysis",
-        priceRangeUSD: [20000, 35000],
-        intendedBuyer: "Enterprises, boards, regulators",
-        deliverables: [
-            "Executive risk report (PDF)",
-            "Risk decision & rationale",
-            "Remediation plan",
-            "Pricing & complexity justification"
-        ]
+    {
+        sku: "SL-AUDIT-ENT",
+        tier: "Enterprise",
+        description: "Full traceability, verification, and reporting",
+        annualPriceUSD: 12000
+    },
+    {
+        sku: "SL-AUDIT-REG",
+        tier: "Regulated",
+        description: "Regulator-grade audit engine with attestations",
+        annualPriceUSD: 25000
     }
-};
+];

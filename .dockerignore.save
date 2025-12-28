@@ -1,0 +1,14 @@
+  GNU nano 8.4                                              .dockerignore                                                       
+node_modules
+src
+.git
+.gitignore
+
+
+
+
+
+
+
+                                                        [ Read 4 lines ]
+^G Help         ^O Write Out    ^F Where Is     ^K Cut          ^T Execute      ^C Location     M-U Undo        M-A Set Mark
