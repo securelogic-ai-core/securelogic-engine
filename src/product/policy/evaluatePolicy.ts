@@ -1,13 +1,16 @@
-import type { PolicySetV1 } from "./PolicySetV1";
+import type { PolicyRuleV1 } from "./PolicyRuleV1";
+import type { PolicyContextV1 } from "./PolicyContextV1";
 
 export function evaluatePolicy(
-  policy: PolicySetV1,
-  context: any
-): boolean {
-  for (const rule of policy.rules) {
+  rules: PolicyRuleV1[],
+  context: PolicyContextV1
+): { decision: "ALLOW" | "DENY"; violatedRule?: string } {
+  for (const rule of rules) {
     if (rule.condition(context)) {
-      return rule.effect === "ALLOW";
+      if (rule.effect === "DENY") {
+        return { decision: "DENY", violatedRule: rule.id };
+      }
     }
   }
-  return false;
+  return { decision: "ALLOW" };
 }
