@@ -6,12 +6,13 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.prod.json",
-    "typecheck": "tsc -p tsconfig.ci.json",
+    "build": "npx tsc -p tsconfig.prod.json",
+    "typecheck": "npx tsc -p tsconfig.ci.json",
     "lint": "eslint .",
     "test": "vitest run",
     "ci": "npm run typecheck && npm run build && npm run test"
   },
-  "dependencies": {},
-  "devDependencies": {}
+  "devDependencies": {
+    "typescript": "~5.9.3"
+  }
 }
