@@ -1,6 +1,6 @@
-import type { ResultEnvelope } from "../contracts";
-import type { AuditSprintResultV1 } from "../contracts";
-import { canonicalize } from "./canonicalize";
+import type { ResultEnvelope } from "securelogic-contracts";
+import type { AuditSprintResultV1 } from "securelogic-contracts";
+import { canonicalize } from "./canonicalize.js";
 import { createHash } from "crypto";
 
 export function createResultEnvelopeV1(payload: unknown): ResultEnvelope {

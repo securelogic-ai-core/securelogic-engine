@@ -1,4 +1,4 @@
-import type { EnvelopePayloadV1 } from "./EnvelopePayloadV1";
+import type { EnvelopePayloadV1 } from "./EnvelopePayloadV1.js";
 
 export interface ResultEnvelopeV1 {
   version: "result-envelope-v1";
