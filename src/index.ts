@@ -1,7 +1,6 @@
 import { assertRuntimeVersion } from "./product/versioning/assertRuntimeVersion";
 assertRuntimeVersion(process.env.EXPECTED_RUNTIME_VERSION ?? "");
-import { assertRuntimeVersion } from "./product/versioning/assertRuntimeVersion";
-assertRuntimeVersion(process.env.EXPECTED_RUNTIME_VERSION ?? "");
+
 import "./product/ops/assertBuildIntegrity";
 import { healthCheck } from "./product/ops/healthCheck";
 healthCheck();
