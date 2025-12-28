@@ -1,1 +1,1 @@
-export type VerificationMode = "permissive" | "strict" | "forensic";
+export type VerificationMode = "STRICT" | "AUDIT" | "PERMISSIVE";

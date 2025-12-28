@@ -1,6 +1,7 @@
 export interface VerificationPolicy {
   requireSignatures: boolean;
-  minimumSignatures: number;
-  requireLineage: boolean;
-  blockReplay: boolean;
+  requireAttestations: boolean;
+  minSignatures?: number;
+  minAttestations?: number;
+  allowExpired?: boolean;
 }
