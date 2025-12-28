@@ -1,4 +1,4 @@
-# @securelogic/contracts
+# securelogic-contracts
 
 ⚠️ CONTRACT PACKAGE — PUBLIC API ⚠️
 
