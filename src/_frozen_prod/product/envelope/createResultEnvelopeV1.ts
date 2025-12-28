@@ -1,25 +1,17 @@
 import crypto from "crypto";
 
-export function createResultEnvelopeV1(payload: any) {
-  const issuedAt = new Date().toISOString();
-
-  const metadata = {
-    engineVersion: "0.3.3",
-    issuedBy: "securelogic-engine",
-    environment: "prod" as const,
-  };
-
+export function createResultEnvelopeV1(payload: any, policy?: any) {
   const payloadHash = crypto
     .createHash("sha256")
-    .update(JSON.stringify({ payload, metadata }))
+    .update(JSON.stringify(payload))
     .digest("hex");
 
   return {
     version: "v1",
-    issuedAt,
-    metadata,
     payload,
     payloadHash,
-    signatures: [],
+    policy,
+    issuedAt: new Date().toISOString(),
+    signatures: []
   };
 }

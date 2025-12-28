@@ -10,8 +10,12 @@ export function verifyResultEnvelopeWithPolicy(
     return { status: "INVALID_INTEGRITY" };
   }
 
+  if (!envelope.policy) {
+    return { status: "INVALID_POLICY", reason: "POLICY_MISSING" };
+  }
+
   const policyResult = verifyPolicy(
-    envelope.policy as EnvelopePolicy | undefined,
+    envelope.policy as EnvelopePolicy,
     requestedCapabilities
   );
 
