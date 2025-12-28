@@ -9,6 +9,9 @@ import { getKey } from "../keys/KeyRegistry";
   publicKey: crypto.KeyObject
 ): void {
 getKey(sig.publicKeyId);
+import { assertKeyRotation } from "../../crypto/keys/assertKeyRotation";
+assertKeyRotation(sig.publicKeyId);
+
 
   const ok = crypto.verify(
     null,
