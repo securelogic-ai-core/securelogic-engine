@@ -6,7 +6,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "npm run build:contracts && npx tsc -p tsconfig.prod.json",
+    "build": "npx tsc -p tsconfig.prod.json",
     "typecheck": "npx tsc -p tsconfig.ci.json",
     "lint": "eslint .",
     "test": "vitest run",
@@ -19,5 +19,8 @@
   },
   "dependencies": {
     "@securelogic/contracts": "file:packages/contracts"
-  }
+  },
+  "workspaces": [
+    "packages/*"
+  ]
 }
