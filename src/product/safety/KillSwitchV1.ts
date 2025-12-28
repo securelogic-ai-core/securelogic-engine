@@ -1,4 +1,5 @@
 export interface KillSwitchV1 {
-  active: boolean;
+  activated: boolean;
+  activatedAt?: string;
   reason?: string;
 }
