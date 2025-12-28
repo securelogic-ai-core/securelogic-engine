@@ -1,20 +1,16 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
+    "target": "ES2022",
     "module": "CommonJS",
-    "rootDir": "src",
     "outDir": "dist",
+    "rootDir": "src",
     "strict": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true,
-    "resolveJsonModule": true,
-    "noImplicitAny": true,
-    "exactOptionalPropertyTypes": true
+    "skipLibCheck": true
   },
   "include": [
-    "src/index.ts",
-    "src/engine/**/*"
+    "src/**/*.ts"
   ],
   "exclude": [
     "**/_dev_DISABLED/**",
@@ -24,10 +20,10 @@
     "**/_legacy/**",
     "**/_wip/**",
     "**/_quarantine/**",
-    "**/node_modules/**",
     "**/*.test.ts",
     "**/*.spec.ts",
     "test/**",
-    "tests/**"
+    "tests/**",
+    "node_modules/**"
   ]
 }
