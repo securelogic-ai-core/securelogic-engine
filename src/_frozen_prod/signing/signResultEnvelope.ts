@@ -6,8 +6,10 @@ export function signResultEnvelope(envelope: any) {
     .update(JSON.stringify(envelope.payload))
     .digest("hex");
 
-  return {
-    ...envelope,
-    signature: hash,
-  };
+  envelope.signatures.push({
+    algorithm: "sha256",
+    value: hash
+  });
+
+  return envelope;
 }
