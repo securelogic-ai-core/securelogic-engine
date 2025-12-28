@@ -1,5 +1,12 @@
-import type { ResultEnvelopeV1 } from "../types/ResultEnvelope";
+import crypto from "crypto";
 
-export function verifyResultEnvelope(_envelope: ResultEnvelopeV1) {
-  return { valid: true };
+export function verifyResultEnvelope(envelope: any) {
+  if (!envelope.signature) return false;
+
+  const expected = crypto
+    .createHash("sha256")
+    .update(JSON.stringify(envelope.payload))
+    .digest("hex");
+
+  return envelope.signature === expected;
 }

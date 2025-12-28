@@ -1,5 +1,7 @@
-import type { ResultEnvelopeV1 } from "../types/ResultEnvelope";
+import { verifyResultEnvelope } from "./verifyResultEnvelope";
 
-export function verifyResultEnvelopeWithResult(_envelope: ResultEnvelopeV1) {
-  return { valid: true };
+export function verifyResultEnvelopeWithResult(envelope: any) {
+  return verifyResultEnvelope(envelope)
+    ? { status: "VALID" }
+    : { status: "INVALID" };
 }
