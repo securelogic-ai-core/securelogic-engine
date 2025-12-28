@@ -1,3 +1,6 @@
+import { buildSBOM } from "../release/buildSBOM";
+const __sbom = buildSBOM();
+
 import { loadRuntimeEnv } from "../runtime/loadRuntimeEnv";
 const __runtime = loadRuntimeEnv();
 
