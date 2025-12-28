@@ -1,3 +1,4 @@
+import "./runtime/assertProduction";
 /**
  * SecureLogic AI – Public API
  * Only export what is safe for consumers.
