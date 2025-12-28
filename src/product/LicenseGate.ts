@@ -31,7 +31,7 @@ export function enforceLicense(
 
     evidence: entitlements.evidence ? result.evidence : [],
 
-    riskRollup: entitlements.riskRollup!
+    riskRollup: entitlements.riskRollup as RiskRollupV1
       ? result.riskRollup
       : undefined,
 

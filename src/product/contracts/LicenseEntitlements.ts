@@ -1,26 +1,18 @@
 import type { LicenseTier } from "./LicenseTier";
-import type { Entitlements } from "./Entitlements";
+import type { RiskRollupV1 } from "./result/RiskRollupV1";
+
+export type Entitlements = {
+  riskRollup: RiskRollupV1;
+};
 
 export const LICENSE_ENTITLEMENTS: Record<LicenseTier, Entitlements> = {
   BASIC: {
-    scoring: true,
-    domainBreakdown: false,
-    executiveNarrative: false,
-    remediationPlan: false,
-    exportPdf: false
+    riskRollup: { level: "LOW" }
   },
   PRO: {
-    scoring: true,
-    domainBreakdown: true,
-    executiveNarrative: false,
-    remediationPlan: false,
-    exportPdf: false
+    riskRollup: { level: "MEDIUM" }
   },
   ENTERPRISE: {
-    scoring: true,
-    domainBreakdown: true,
-    executiveNarrative: true,
-    remediationPlan: true,
-    exportPdf: true
+    riskRollup: { level: "HIGH" }
   }
 };
