@@ -1,10 +1,12 @@
 {
   "name": "securelogic-engine",
   "version": "0.1.6",
-  "engines": {"node": ">=20"},
+  "engines": {
+    "node": ">=20"
+  },
   "license": "MIT",
   "scripts": {
-    "build": "tsc && npm run copy",
+    "build": "tsc -p tsconfig.build.json && npm run copy",
     "copy": "mkdir -p dist/frameworks dist/api && cp -r frameworks/* dist/frameworks/ && cp -r src/api/* dist/api/",
     "start:api": "node dist/api/server.js",
     "test": "vitest run",
