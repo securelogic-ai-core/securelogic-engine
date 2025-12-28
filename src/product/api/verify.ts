@@ -1,3 +1,6 @@
+import { loadRuntimeEnv } from "../runtime/loadRuntimeEnv";
+const __runtime = loadRuntimeEnv();
+
 import { assertNoReplay } from "./security/replayGuard";
 import { assertRateLimit } from "./security/rateLimiter";
 
