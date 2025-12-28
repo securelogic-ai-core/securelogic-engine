@@ -7,6 +7,11 @@ export async function runAuditSprint(input: unknown) {
   const signed = signResultEnvelope(envelope);
 
   emitAuditEvent({
+  tenantId: ctx.tenantId,
+  actor: ctx.actorId,
+  resource: "AUDIT_SPRINT",
+  immutable: true,
+  timestamp: new Date().toISOString(),
     eventId: signed.envelopeId,
     action: "AUDIT_SPRINT_COMPLETED"
   });

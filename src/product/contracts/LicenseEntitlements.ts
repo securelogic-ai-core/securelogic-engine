@@ -14,7 +14,6 @@ export const LICENSE_ENTITLEMENTS: Record<
     exportPdf: boolean;
   }
 > = {
-  free: {
     scoring: true,
     domainBreakdown: false,
     executiveNarrative: false,

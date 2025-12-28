@@ -7,7 +7,7 @@ export function hashEnvelope(envelope: ResultEnvelope): string {
     .update(
       canonicalize({
         version: envelope.version,
-        payloadHash: envelope.payloadHash,
+        payloadHash: hashObject(envelope.payload),
       })
     )
     .digest("hex");

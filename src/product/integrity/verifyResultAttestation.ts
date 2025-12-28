@@ -8,8 +8,8 @@ export function verifyResultAttestation(
   const envelopeHash = hashEnvelope(envelope);
 
   return (
-    attestation.subjectEnvelopeId === envelope.envelopeId &&
-    attestation.subjectEnvelopeHash === envelopeHash &&
+    attestation.envelopeId === envelope.envelopeId &&
+    attestation.envelopeHash === envelopeHash &&
     typeof attestation.attester === "string" &&
     typeof attestation.issuedAt === "string"
   );
