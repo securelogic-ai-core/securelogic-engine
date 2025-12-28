@@ -9,7 +9,7 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
-      "@securelogic/contracts": [
+      "securelogic-contracts": [
         "packages/contracts/src/index.ts"
       ]
     },
