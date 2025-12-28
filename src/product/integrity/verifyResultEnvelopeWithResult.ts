@@ -5,7 +5,6 @@ import { createChainHash } from "./createChainHash";
 import { hasSeenEnvelope, markEnvelopeSeen } from "./replayCache";
 
 export function verifyResultEnvelopeWithResult(envelope: ResultEnvelope) {
-  // 1. LINEAGE
   if (envelope.lineage?.parentHash) {
     const expected = createChainHash(
       envelope.result,
@@ -16,12 +15,10 @@ export function verifyResultEnvelopeWithResult(envelope: ResultEnvelope) {
     }
   }
 
-  // 2. SIGNATURES
   if (!verifyResultEnvelopeCore(envelope)) {
     return { status: "INVALID_SIGNATURE" as const };
   }
 
-  // 3. ATTESTATIONS
   const attestations = envelope.attestations ?? [];
   let verified = 0;
   for (const att of attestations) {
@@ -30,7 +27,6 @@ export function verifyResultEnvelopeWithResult(envelope: ResultEnvelope) {
     }
   }
 
-  // 4. REPLAY (ONLY AFTER VALID)
   if (hasSeenEnvelope(envelope)) {
     return { status: "INVALID_REPLAY" as const };
   }
