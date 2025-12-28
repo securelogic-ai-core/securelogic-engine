@@ -1,4 +1,4 @@
-import { verifyResultEnvelope } from "./verifyResultEnvelope";
+import { verifyResultEnvelopeWithResult } from "./verifyResultEnvelopeWithResult";
 import { verifyPolicy } from "../policy/verifyPolicy";
 import type { EnvelopePolicy } from "../policy/PolicyTypes";
 
@@ -6,21 +6,23 @@ export function verifyResultEnvelopeWithPolicy(
   envelope: any,
   requestedCapabilities: string[]
 ) {
-  if (!verifyResultEnvelope(envelope)) {
-    return { status: "INVALID_INTEGRITY" };
+  const base = verifyResultEnvelopeWithResult(envelope);
+
+  if (base.status !== "VALID") {
+    return base;
   }
 
-  if (!envelope.policy) {
-    return { status: "INVALID_POLICY", reason: "POLICY_MISSING" };
+  const policy: EnvelopePolicy | undefined =
+    envelope.payload?.policy ?? envelope.policy;
+
+  if (!policy) {
+    return { status: "INVALID_POLICY" };
   }
 
-  const policyResult = verifyPolicy(
-    envelope.policy as EnvelopePolicy,
-    requestedCapabilities
-  );
+  const policyResult = verifyPolicy(policy, requestedCapabilities);
 
   if (!policyResult.valid) {
-    return { status: "INVALID_POLICY", reason: policyResult.reason };
+    return { status: "INVALID_POLICY" };
   }
 
   return { status: "VALID" };
