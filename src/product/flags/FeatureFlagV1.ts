@@ -1,5 +1,4 @@
 export interface FeatureFlagV1 {
-  flag: string;
+  name: string;
   enabled: boolean;
-  tenantId: string;
 }
