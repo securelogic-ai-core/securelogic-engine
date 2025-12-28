@@ -1,3 +1,9 @@
+import { validateEnv } from "../config/validateEnv";
+validateEnv();
+
+import { assertEnterpriseRuntime } from "../runtime/assertEnterpriseRuntime";
+assertEnterpriseRuntime();
+
 import { buildSBOM } from "../release/buildSBOM";
 const __sbom = buildSBOM();
 
