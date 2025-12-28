@@ -1,8 +1,6 @@
 import type { ResultEnvelope } from "../contracts";
-import {
-  SUPPORTED_ENVELOPE_VERSIONS,
-  SupportedEnvelopeVersion
-} from "./SupportedVersions";
+import { SUPPORTED_ENVELOPE_VERSIONS } from "./SupportedVersions";
+import type { SupportedEnvelopeVersion } from "./SupportedVersions";
 
 export function verifySupportedVersion(
   envelope: ResultEnvelope
