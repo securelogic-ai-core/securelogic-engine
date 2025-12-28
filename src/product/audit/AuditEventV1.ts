@@ -1,9 +1,9 @@
 export interface AuditEventV1 {
   eventId: string;
   tenantId: string;
-  actorId: string;
+  actor: string;
   action: string;
-  outcome: "allow" | "deny";
+  resource: string;
   timestamp: string;
-  metadata?: Record<string, unknown>;
+  immutable: true;
 }
