@@ -1,8 +1,6 @@
 export interface PolicyContextV1 {
-  envelopeId: string;
-  consumerId?: string;
-  trustLevel: number;
-  attestationCount: number;
-  signatureCount: number;
-  verifiedAt: string;
+  tenantId: string;
+  actorId: string;
+  roles: string[];
+  attributes: Record<string, string | number | boolean>;
 }

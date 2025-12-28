@@ -1,16 +1,11 @@
-import type { PolicyRuleV1 } from "./PolicyRuleV1";
 import type { PolicyContextV1 } from "./PolicyContextV1";
+import type { PolicyDecision } from "./PolicyDecision";
 
 export function evaluatePolicy(
-  rules: PolicyRuleV1[],
-  context: PolicyContextV1
-): { decision: "ALLOW" | "DENY"; violatedRule?: string } {
-  for (const rule of rules) {
-    if (rule.condition(context)) {
-      if (rule.effect === "DENY") {
-        return { decision: "DENY", violatedRule: rule.id };
-      }
-    }
-  }
-  return { decision: "ALLOW" };
+  ctx: PolicyContextV1,
+  action: string
+): PolicyDecision {
+  if (!ctx.tenantId || !ctx.actorId) return "deny";
+  if (ctx.roles.includes("admin")) return "allow";
+  return "deny";
 }
