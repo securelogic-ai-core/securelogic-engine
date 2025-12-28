@@ -1,15 +1,20 @@
+import crypto from "crypto";
 import type { AuditRecordV1 } from "./AuditRecordV1";
-import { hashAuditRecord } from "./hashAuditRecord";
 
 let lastHash: string | undefined;
 
 export function appendAuditRecord(
-  input: Omit<AuditRecordV1, "hash" | "previousHash">
+  input: Omit<AuditRecordV1, "hash" | "prevHash">
 ): AuditRecordV1 {
-  const record = hashAuditRecord({
+  const payload = JSON.stringify({ ...input, prevHash: lastHash });
+  const hash = crypto.createHash("sha256").update(payload).digest("hex");
+
+  const record: AuditRecordV1 = {
     ...input,
-    previousHash: lastHash
-  });
-  lastHash = record.hash;
+    hash,
+    prevHash: lastHash
+  };
+
+  lastHash = hash;
   return record;
 }
