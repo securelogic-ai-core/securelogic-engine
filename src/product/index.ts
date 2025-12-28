@@ -6,3 +6,5 @@
  */
 
 export * from "./public";
+export * from "./tenant/TenantContextV1";
+export * from "./tenant/assertTenantBoundary";
