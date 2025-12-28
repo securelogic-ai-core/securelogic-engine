@@ -1,9 +1,12 @@
+import { loadConfig } from "../../config/loadConfig";
+const config = loadConfig();
+
 import fs from "fs/promises";
 import path from "path";
 import type { ResultEnvelope } from "../../contracts";
 import type { ResultStore } from "../ResultStore";
 
-const BASE = path.resolve("data/results");
+const BASE = config.dataDir;
 
 export class FsResultStore implements ResultStore {
   async save(result: ResultEnvelope) {
