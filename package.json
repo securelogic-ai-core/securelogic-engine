@@ -6,11 +6,12 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "npx tsc -p tsconfig.prod.json",
+    "build": "npm run build:contracts && npx tsc -p tsconfig.prod.json",
     "typecheck": "npx tsc -p tsconfig.ci.json",
     "lint": "eslint .",
     "test": "vitest run",
-    "ci": "npm run typecheck && npm run build && npm run test"
+    "ci": "npm run typecheck && npm run build && npm run test",
+    "build:contracts": "cd packages/contracts && npm run build"
   },
   "devDependencies": {
     "@types/node": "~25.0.3",
