@@ -1,16 +1,16 @@
-import { EnvelopePolicy } from "./PolicyTypes";
+import type { EnvelopePolicy } from "./PolicyTypes";
 
 export function verifyPolicy(
   policy: EnvelopePolicy | undefined,
   requestedCapabilities: string[]
-): { valid: boolean; reason?: string } {
-  if (!policy) return { valid: true };
+): { allowed: boolean } {
+  if (!policy) return { allowed: true };
 
   for (const cap of requestedCapabilities) {
     if (!policy.allowedCapabilities.includes(cap)) {
-      return { valid: false, reason: "CAPABILITY_NOT_ALLOWED" };
+      return { allowed: false };
     }
   }
 
-  return { valid: true };
+  return { allowed: true };
 }
