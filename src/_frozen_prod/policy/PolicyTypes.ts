@@ -1,7 +1,6 @@
-export type LicenseTier = "CORE" | "PRO" | "ENTERPRISE";
-
-export interface EnvelopePolicy {
-  licenseTier: LicenseTier;
+export type EnvelopePolicyV1 = {
+  version: "v1";
   allowedCapabilities: string[];
-  issuedForTenant: string;
-}
+};
+
+export type EnvelopePolicy = EnvelopePolicyV1;
