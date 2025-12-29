@@ -1,5 +1,4 @@
 import { verifyResultEnvelope } from "./verifyResultEnvelope";
-import { verifyPolicy } from "../policy/verifyPolicy";
 
 export function verifyResultEnvelopeWithPolicy(
   envelope: any,
@@ -10,9 +9,16 @@ export function verifyResultEnvelopeWithPolicy(
   }
 
   const policy = envelope.policy;
-  const result = verifyPolicy(policy, requestedCapabilities);
 
-  if (!result.valid) {
+  if (!policy || !policy.allowedCapabilities) {
+    return { status: "VALID" };
+  }
+
+  const allowed = requestedCapabilities.every(cap =>
+    policy.allowedCapabilities.includes(cap)
+  );
+
+  if (!allowed) {
     return { status: "INVALID_POLICY" };
   }
 
