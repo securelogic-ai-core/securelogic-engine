@@ -1,6 +1,5 @@
 import { verifyResultEnvelope } from "./verifyResultEnvelope";
 import { verifyPolicy } from "../policy/verifyPolicy";
-import type { EnvelopePolicy } from "../policy/PolicyTypes";
 
 export function verifyResultEnvelopeWithPolicy(
   envelope: any,
@@ -10,15 +9,10 @@ export function verifyResultEnvelopeWithPolicy(
     return { status: "INVALID_INTEGRITY" };
   }
 
-  const policy: EnvelopePolicy | undefined = envelope.policy;
-
-  if (!policy) {
-    return { status: "VALID" };
-  }
-
+  const policy = envelope.policy;
   const result = verifyPolicy(policy, requestedCapabilities);
 
-  if (!result.allowed) {
+  if (!result.valid) {
     return { status: "INVALID_POLICY" };
   }
 
