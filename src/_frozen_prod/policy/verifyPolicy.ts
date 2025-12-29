@@ -4,8 +4,10 @@ export function verifyPolicy(
   policy: EnvelopePolicy | undefined,
   requestedCapabilities: string[]
 ): { allowed: boolean; valid: boolean } {
-  if (!policy) {
-    return { allowed: true, valid: true };
+  if (!policy) return { allowed: true, valid: true };
+
+  if (policy.version !== "v1") {
+    return { allowed: false, valid: false };
   }
 
   for (const cap of requestedCapabilities) {
