@@ -6,32 +6,19 @@ export function verifyResultEnvelopeWithPolicy(
   envelope: any,
   requestedCapabilities: string[]
 ) {
-  // Integrity only (no replay)
   if (!verifyResultEnvelope(envelope)) {
     return { status: "INVALID_INTEGRITY" };
   }
 
-  // Locate policy (tests embed in payload)
-  const rawPolicy =
-    envelope.payload?.policy ??
-    envelope.payload?.meta?.policy ??
-    envelope.policy;
+  const policy: EnvelopePolicy | undefined = envelope.policy;
 
-  // NO POLICY = NO RESTRICTION
-  if (!rawPolicy) {
+  if (!policy) {
     return { status: "VALID" };
   }
 
-  const policy: EnvelopePolicy = {
-    allowedCapabilities:
-      rawPolicy.allowedCapabilities ??
-      rawPolicy.capabilities ??
-      [],
-  };
-
   const result = verifyPolicy(policy, requestedCapabilities);
 
-  if (!result.valid) {
+  if (!result.allowed) {
     return { status: "INVALID_POLICY" };
   }
 
