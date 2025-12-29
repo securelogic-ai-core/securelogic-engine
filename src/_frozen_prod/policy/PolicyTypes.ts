@@ -1,6 +1,6 @@
-export type EnvelopePolicyV1 = {
-  version: "v1";
+export type EnvelopePolicy = {
   allowedCapabilities: string[];
+  licenseTier?: string;
+  issuedForTenant?: string;
+  version?: string;
 };
-
-export type EnvelopePolicy = EnvelopePolicyV1;
