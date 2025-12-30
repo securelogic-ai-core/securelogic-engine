@@ -1,28 +1,21 @@
 import crypto from "crypto";
-import type { EnvelopePolicy } from "../../policy/PolicyTypes";
+import type { ResultEnvelopeV1 } from "./ResultEnvelope.v1";
+import { signResultEnvelope } from "../../signing/signResultEnvelope";
 
 export function createResultEnvelopeV1(
-  payload: any,
-  policy?: EnvelopePolicy
-) {
-  const payloadJson = JSON.stringify(payload);
+  payload: unknown,
+  policy?: ResultEnvelopeV1["policy"]
+): ResultEnvelopeV1 {
+  const payloadHash = crypto
+    .createHash("sha256")
+    .update(JSON.stringify(payload))
+    .digest("hex");
 
-  return {
+  return signResultEnvelope({
     version: "v1",
     payload,
-    payloadHash: crypto
-      .createHash("sha256")
-      .update(payloadJson)
-      .digest("hex"),
-    issuedAt: new Date().toISOString(),
+    payloadHash,
     signatures: [],
-    policy: policy
-      ? {
-          allowedCapabilities: [...policy.allowedCapabilities],
-          licenseTier: policy.licenseTier,
-          issuedForTenant: policy.issuedForTenant,
-          version: policy.version,
-        }
-      : undefined,
-  };
+    policy,
+  });
 }

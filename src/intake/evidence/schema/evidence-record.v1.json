@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Prism Evidence Record V1",
+  "type": "object",
+  "required": [
+    "version",
+    "evidenceId",
+    "questionId",
+    "uploadedBy",
+    "uploadedAt",
+    "filename",
+    "contentType",
+    "sizeBytes",
+    "checksumSha256",
+    "evidenceType",
+    "storageRef"
+  ],
+  "properties": {
+    "version": { "const": "V1" },
+    "evidenceId": { "type": "string" },
+    "questionId": { "type": "string" },
+    "uploadedBy": { "type": "string" },
+    "uploadedAt": { "type": "string", "format": "date-time" },
+    "filename": { "type": "string" },
+    "contentType": { "type": "string" },
+    "sizeBytes": { "type": "integer", "minimum": 1 },
+    "checksumSha256": { "type": "string" },
+    "evidenceType": { "type": "string" },
+    "storageRef": { "type": "string" }
+  }
+}

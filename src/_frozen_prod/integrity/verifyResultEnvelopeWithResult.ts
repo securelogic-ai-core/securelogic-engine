@@ -1,12 +1,17 @@
-import { checkReplay } from "./replayCache";
+import type { ResultEnvelopeV1 } from "../product/envelope/ResultEnvelope.v1";
 import { verifyResultEnvelope } from "./verifyResultEnvelope";
 
-export function verifyResultEnvelopeWithResult(envelope: any) {
-  if (checkReplay(envelope.nonce)) {
-    return { status: "INVALID_REPLAY" };
+const seen = new Set<string>();
+
+export function verifyResultEnvelopeWithResult(envelope: ResultEnvelopeV1) {
+  if (!verifyResultEnvelope(envelope)) {
+    return { status: "INVALID_SIGNATURE" as const };
   }
 
-  return verifyResultEnvelope(envelope)
-    ? { status: "VALID" }
-    : { status: "INVALID" };
+  if (seen.has(envelope.payloadHash)) {
+    return { status: "INVALID_REPLAY" as const };
+  }
+
+  seen.add(envelope.payloadHash);
+  return { status: "VALID" as const };
 }

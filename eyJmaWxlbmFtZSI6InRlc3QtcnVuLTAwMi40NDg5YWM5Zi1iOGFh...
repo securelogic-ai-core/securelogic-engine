@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Error: MISSING_LICENSE_TIER<br> &nbsp; &nbsp;at &lt;anonymous&gt; (/app/src/intake/api/server.ts:24:27)<br> &nbsp; &nbsp;at Layer.handleRequest (/app/node_modules/router/lib/layer.js:152:17)<br> &nbsp; &nbsp;at trimPrefix (/app/node_modules/router/index.js:342:13)<br> &nbsp; &nbsp;at /app/node_modules/router/index.js:297:9<br> &nbsp; &nbsp;at processParams (/app/node_modules/router/index.js:582:12)<br> &nbsp; &nbsp;at next (/app/node_modules/router/index.js:291:5)<br> &nbsp; &nbsp;at read (/app/node_modules/body-parser/lib/read.js:54:5)<br> &nbsp; &nbsp;at jsonParser (/app/node_modules/body-parser/lib/types/json.js:90:5)<br> &nbsp; &nbsp;at Layer.handleRequest (/app/node_modules/router/lib/layer.js:152:17)<br> &nbsp; &nbsp;at trimPrefix (/app/node_modules/router/index.js:342:13)</pre>
+</body>
+</html>

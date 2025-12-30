@@ -1,47 +1,28 @@
-import { enforceEntitlements } from "../entitlement/enforceEntitlements";
-import type { AuditSprintResultV1 } from "../contracts/result";
-import type { Entitlements } from "../contracts/entitlement/Entitlements";
+import { gateEntitlements } from "../entitlements/gateEntitlements";
+import type { AuditSprintResultV1 } from "../result/AuditSprintResult.v1";
 
-describe("Entitlement enforcement", () => {
-  const baseResult = {
-    meta: {
-      version: "audit-sprint-result-v1",
-      generatedAt: "2025-01-01",
-      licenseTier: "CORE"
-    },
-    executionContext: {} as any,
-    scoring: {} as any,
-    executiveSummary: {} as any,
-    findings: [],
-    riskRollup: {} as any,
-    remediationPlan: {} as any,
-    controlTraces: [],
-    evidence: [],
-    evidenceLinks: [],
-    attestations: []
-  };
-
-  it("removes gated fields for CORE tier", () => {
-    const entitlements: Entitlements = {
-      executiveSummary: true,
-      findings: true,
-      riskRollup: true,
-      remediationPlan: false,
-      evidence: false,
-      evidenceLinks: false,
-      controlTraces: false,
-      attestations: false,
-      export: { pdf: false, json: false }
+describe("Entitlement gating", () => {
+  it("blocks write actions for CORE", () => {
+    const baseResult: AuditSprintResultV1 = {
+      kind: "AuditSprintResult",
+      version: "v1",
+      meta: { licenseTier: "CORE" },
+      executionContext: {},
+      scoring: {},
+      executiveSummary: {},
+      findings: [],
+      riskRollup: {},
+      remediationPlan: {},
+      controlTraces: [],
+      domains: [],
+      summary: {},
+      evidence: [],
+      evidenceLinks: [],
+      attestations: [],
+      integrity: {}
     };
 
-    const gated = enforceEntitlements(
-      baseResult as Omit<AuditSprintResultV1, "integrity">,
-      entitlements
-    );
-
-    expect("remediationPlan" in gated).toBe(false);
-    expect("controlTraces" in gated).toBe(false);
-    expect("evidence" in gated).toBe(false);
-    expect("attestations" in gated).toBe(false);
+    const result = gateEntitlements(baseResult, ["write"]);
+    expect(result.allowed).toBe(false);
   });
 });

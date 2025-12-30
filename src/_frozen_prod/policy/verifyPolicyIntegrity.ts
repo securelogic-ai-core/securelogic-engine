@@ -1,7 +1,7 @@
 import crypto from "crypto";
-import type { EnvelopePolicy } from "./PolicyTypes";
+import type { EnvelopePolicy } from "./EnvelopePolicy";
 
-export function verifyPolicyIntegrity(policy: EnvelopePolicy): { valid: boolean } {
+export function verifyPolicyIntegrity(policy?: EnvelopePolicy) {
   if (!policy || !policy.signature || !policy.payloadHash) {
     return { valid: false };
   }
@@ -10,9 +10,9 @@ export function verifyPolicyIntegrity(policy: EnvelopePolicy): { valid: boolean 
     .createHash("sha256")
     .update(
       JSON.stringify({
-        version: policy.version,
         licenseTier: policy.licenseTier,
         issuedForTenant: policy.issuedForTenant,
+        requestedCapabilities: policy.requestedCapabilities,
         allowedCapabilities: policy.allowedCapabilities,
       })
     )

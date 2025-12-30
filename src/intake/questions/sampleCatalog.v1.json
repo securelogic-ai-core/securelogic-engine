@@ -1,0 +1,18 @@
+{
+  "version": "V1",
+  "questions": [
+    {
+      "questionId": "AC-01",
+      "domain": "ACCESS_CONTROL",
+      "text": "Are user access reviews performed at least quarterly?",
+      "intent": "Ensure least privilege and timely access removal",
+      "applicableFrameworks": ["SOC2-CC6.1", "NIST-AC-2"],
+      "expectedEvidence": {
+        "required": true,
+        "acceptedTypes": ["REPORT", "SCREENSHOT"]
+      },
+      "riskWeight": 4,
+      "allowedAnswers": ["YES", "NO", "PARTIAL"]
+    }
+  ]
+}

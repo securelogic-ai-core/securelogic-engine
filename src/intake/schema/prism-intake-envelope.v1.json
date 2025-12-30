@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Prism Intake Envelope V1",
+  "type": "object",
+  "required": [
+    "header",
+    "organization",
+    "engagement",
+    "license",
+    "scope",
+    "responses",
+    "evidence",
+    "attestations"
+  ],
+  "properties": {
+    "header": {
+      "type": "object",
+      "required": ["envelopeId", "schemaVersion", "createdAt", "submittedAt"],
+      "properties": {
+        "envelopeId": { "type": "string" },
+        "schemaVersion": { "const": "V1" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "submittedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

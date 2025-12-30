@@ -1,15 +1,23 @@
 import crypto from "crypto";
+import type { ResultEnvelopeV1 } from "../product/envelope/ResultEnvelope.v1";
+import { getEnvelopePrivateKey } from "./resultEnvelopeKey";
 
-export function signResultEnvelope(envelope: any) {
-  const hash = crypto
-    .createHash("sha256")
-    .update(JSON.stringify(envelope.payload))
-    .digest("hex");
+export function signResultEnvelope(
+  envelope: ResultEnvelopeV1
+): ResultEnvelopeV1 {
+  const sig = crypto.sign(
+    null,
+    Buffer.from(envelope.payloadHash),
+    getEnvelopePrivateKey()
+  );
 
-  envelope.signatures.push({
-    algorithm: "sha256",
-    value: hash
-  });
-
-  return envelope;
+  return {
+    ...envelope,
+    signatures: [
+      {
+        value: sig.toString("base64"),
+        algorithm: "ed25519",
+      },
+    ],
+  };
 }

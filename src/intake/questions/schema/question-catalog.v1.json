@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Prism Question Catalog V1",
+  "type": "object",
+  "required": ["version", "questions"],
+  "properties": {
+    "version": { "const": "V1" },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "questionId",
+          "domain",
+          "text",
+          "intent",
+          "applicableFrameworks",
+          "expectedEvidence",
+          "riskWeight",
+          "allowedAnswers"
+        ],
+        "properties": {
+          "questionId": { "type": "string" },
+          "domain": { "type": "string" },
+          "text": { "type": "string" },
+          "intent": { "type": "string" },
+          "applicableFrameworks": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "expectedEvidence": {
+            "type": "object",
+            "required": ["required", "acceptedTypes"],
+            "properties": {
+              "required": { "type": "boolean" },
+              "acceptedTypes": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          },
+          "riskWeight": { "type": "integer", "minimum": 1, "maximum": 5 },
+          "allowedAnswers": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}
