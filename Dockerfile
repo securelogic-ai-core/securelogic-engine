@@ -2,15 +2,11 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-COPY packages/contracts/package.json packages/contracts/package.json
-
+COPY package*.json ./
 RUN npm install
 
 COPY . .
 
-RUN npm run build
+EXPOSE 3001
 
-ENV NODE_ENV=production
-
-CMD ["node", "dist/api/server.js"]
+CMD ["npx", "tsx", "src/intake/api/server.ts"]

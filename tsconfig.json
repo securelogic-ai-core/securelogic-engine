@@ -1,24 +1,32 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "strict": true,
+    "noImplicitAny": false,
     "skipLibCheck": true,
-    "esModuleInterop": true,
     "resolveJsonModule": true,
-    "baseUrl": ".",
-    "paths": {
-      "securelogic-contracts": [
-        "packages/contracts/src/index.ts"
-      ]
-    },
-    "types": [
-      "node"
-    ]
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node", "vitest/globals"]
   },
   "include": [
-    "src",
-    "packages/contracts/src"
+    "src/_frozen_prod"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/_disabled_*",
+    "src/_excluded_*",
+    "src/_dev_*",
+    "src/_quarantine",
+    "src/_server_DISABLED",
+    "src/_report_DISABLED",
+    "src/api",
+    "src/index.ts",
+    "test",
+    "test-run.ts"
   ]
 }

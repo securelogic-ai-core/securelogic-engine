@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h2>PRISM Intake</h2>
+
+<form id="intakeForm">
+  <input name="orgId" placeholder="Organization ID" required /><br/><br/>
+
+  <select name="tier">
+    <option value="CORE">CORE</option>
+    <option value="PRO">PRO</option>
+  </select><br/><br/>
+
+  <input type="file" name="evidence" multiple /><br/><br/>
+
+  <button type="submit">Submit</button>
+</form>
+
+<pre id="output"></pre>
+
+<script>
+const form = document.getElementById("intakeForm");
+const output = document.getElementById("output");
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const formData = new FormData(form);
+
+  const res = await fetch("http://localhost:3001/intake", {
+    method: "POST",
+    body: formData
+  });
+
+  const json = await res.json();
+  output.textContent = JSON.stringify(json, null, 2);
+});
+</script>
+</body>
+</html>

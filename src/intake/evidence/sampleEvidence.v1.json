@@ -1,0 +1,13 @@
+{
+  "version": "V1",
+  "evidenceId": "ev-001",
+  "questionId": "AC-01",
+  "uploadedBy": "user-123",
+  "uploadedAt": "2025-01-01T12:00:00Z",
+  "filename": "access-review-q4.pdf",
+  "contentType": "application/pdf",
+  "sizeBytes": 245761,
+  "checksumSha256": "abc123deadbeef",
+  "evidenceType": "REPORT",
+  "storageRef": "s3://prism-evidence/ac-01/access-review-q4.pdf"
+}

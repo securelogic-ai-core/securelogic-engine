@@ -1,24 +1,23 @@
 import crypto from "crypto";
+import type { ResultEnvelopeV1 } from "../product/envelope/ResultEnvelope.v1";
+import { getEnvelopePublicKey } from "../signing/resultEnvelopeKey";
 
-export function verifyResultEnvelope(envelope: any): boolean {
-  // 1. Verify payload immutability
-  const recomputed = crypto
+export function verifyResultEnvelope(envelope: ResultEnvelopeV1): boolean {
+  const recomputedHash = crypto
     .createHash("sha256")
     .update(JSON.stringify(envelope.payload))
     .digest("hex");
 
-  if (recomputed !== envelope.payloadHash) {
-    return false;
-  }
+  if (recomputedHash !== envelope.payloadHash) return false;
+  if (!envelope.signatures || envelope.signatures.length !== 1) return false;
 
-  // 2. Verify signature integrity (if present)
-  if (Array.isArray(envelope.signatures)) {
-    for (const sig of envelope.signatures) {
-      if (sig.algorithm !== "sha256") {
-        return false;
-      }
-    }
-  }
+  const sig = envelope.signatures[0];
+  if (sig.algorithm !== "ed25519") return false;
 
-  return true;
+  return crypto.verify(
+    null,
+    Buffer.from(envelope.payloadHash),
+    getEnvelopePublicKey(),
+    Buffer.from(sig.value, "base64")
+  );
 }

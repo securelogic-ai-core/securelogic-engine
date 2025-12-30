@@ -1,0 +1,12 @@
+[
+  {
+    "runId": "test-run-002",
+    "artifactId": "4489ac9f-b8aa-45a6-a44b-d4f28ef68095",
+    "type": "PDF",
+    "filename": "test-run-002.4489ac9f-b8aa-45a6-a44b-d4f28ef68095.pdf",
+    "path": "/workspaces/securelogic-engine/artifacts/test-run-002.4489ac9f-b8aa-45a6-a44b-d4f28ef68095.pdf",
+    "size": 1299,
+    "checksum": "524e18898851116c18c8f12af91c50a253689149178f6b6cda3c901116f34f73",
+    "createdAt": "2025-12-30T14:51:58.736Z"
+  }
+]

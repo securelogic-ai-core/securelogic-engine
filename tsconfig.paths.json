@@ -1,7 +1,1 @@
-{
-  "compilerOptions": {
-    "paths": {
-      "@securelogic-ai/product": ["src/product/index.ts"]
-    }
-  }
-}
+{ "extends": "./tsconfig.json" }

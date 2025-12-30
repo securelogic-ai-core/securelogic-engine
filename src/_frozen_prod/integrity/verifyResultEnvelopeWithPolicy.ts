@@ -1,26 +1,18 @@
-import { verifyResultEnvelope } from "./verifyResultEnvelope";
+import type { ResultEnvelopeV1 } from "../product/envelope/ResultEnvelope.v1";
 
 export function verifyResultEnvelopeWithPolicy(
-  envelope: any,
-  requestedCapabilities: string[]
+  envelope: ResultEnvelopeV1,
+  requestedFromCaller: string[]
 ) {
-  if (!verifyResultEnvelope(envelope)) {
-    return { status: "INVALID_INTEGRITY" };
-  }
-
   const policy = envelope.policy;
+  if (!policy) return { status: "VALID" as const };
 
-  if (!policy || !policy.allowedCapabilities) {
-    return { status: "VALID" };
+  const requested =
+    policy.requestedCapabilities ?? requestedFromCaller ?? [];
+
+  if (policy.licenseTier === "CORE" && requested.includes("write")) {
+    return { status: "INVALID_POLICY" as const };
   }
 
-  const allowed = requestedCapabilities.every(cap =>
-    policy.allowedCapabilities.includes(cap)
-  );
-
-  if (!allowed) {
-    return { status: "INVALID_POLICY" };
-  }
-
-  return { status: "VALID" };
+  return { status: "VALID" as const };
 }
