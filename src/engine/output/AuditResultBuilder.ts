@@ -1,6 +1,6 @@
-import type { AuditResultV1 } from "./AuditResultV1";
-import type { EnterpriseRiskSummary } from "../contracts/EnterpriseRiskSummary";
-import type { RiskDecision } from "../contracts/RiskDecision";
+import type { AuditResultV1 } from "./AuditResultV1.js";
+import type { EnterpriseRiskSummary } from "../contracts/EnterpriseRiskSummary.js";
+import type { RiskDecision } from "../contracts/RiskDecision.js";
 
 export class AuditResultBuilder {
   static build(params: {

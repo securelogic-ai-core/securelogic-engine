@@ -1,5 +1,5 @@
-import { ControlRegistry } from "../registry/ControlRegistry";
-import { ControlStateFactory } from "../factories/ControlStateFactory";
+import { ControlRegistry } from "../registry/ControlRegistry.js";
+import { ControlStateFactory } from "../factories/ControlStateFactory.js";
 
 function extractPaths(obj: any, prefix = ""): string[] {
   return Object.entries(obj).flatMap(([k, v]) =>

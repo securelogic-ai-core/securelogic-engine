@@ -1,7 +1,7 @@
-import type { ExecutiveRiskReportV2 } from "../contracts/ExecutiveRiskReportV2";
-import type { EnterpriseRiskSummary } from "../../engine/contracts/EnterpriseRiskSummary";
-import { BillableComplexityEngine } from "../../engine/scoring/BillableComplexityEngine";
-import { RiskDecisionEngine } from "../../engine/RiskDecisionEngine";
+import type { ExecutiveRiskReportV2 } from "../contracts/ExecutiveRiskReportV2.js";
+import type { EnterpriseRiskSummary } from "../../engine/contracts/EnterpriseRiskSummary.js";
+import { BillableComplexityEngine } from "../../engine/scoring/BillableComplexityEngine.js";
+import { RiskDecisionEngine } from "../../engine/RiskDecisionEngine.js";
 
 export class ExecutiveRiskReportV2Builder {
   static build(

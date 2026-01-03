@@ -1,2 +1,1 @@
-export { runScoring } from "./runScoring";
-export type { ScoringOutputV1 } from "../contracts/scoring";
+export { runScoring } from "./runScoring.js";

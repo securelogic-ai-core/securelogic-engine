@@ -1,6 +1,6 @@
-import { PolicyExtractor } from "./policyExtractor";
-import { ControlDetector } from "./controlDetector";
-import { RiskIndicatorMapper } from "./riskIndicatorMapper";
+import { PolicyExtractor } from "./policyExtractor.js";
+import { ControlDetector } from "./controlDetector.js";
+import { RiskIndicatorMapper } from "./riskIndicatorMapper.js";
 
 export class IngestionEngine {
   static processDocument(text: string) {

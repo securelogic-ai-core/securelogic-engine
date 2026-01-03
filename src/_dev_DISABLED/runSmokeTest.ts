@@ -1,6 +1,6 @@
 
-import { RunnerEngine } from "../engine/RunnerEngine";
-import type { AuditSprintInput } from "../engine/contracts/AuditSprintInput";
+import { RunnerEngine } from "../engine/RunnerEngine.js";
+import type { AuditSprintInput } from "../engine/contracts/AuditSprintInput.js";
 
 const input: AuditSprintInput = {
   email: "test@securelogic.ai",

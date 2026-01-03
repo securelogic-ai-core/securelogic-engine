@@ -1,6 +1,6 @@
-import { ControlRegistry } from "../registry/ControlRegistry";
-import type { DeepPartial } from "../types/DeepPartial";
-import type { ControlState } from "../contracts/ControlState";
+import { ControlRegistry } from "../registry/ControlRegistry.js";
+import type { DeepPartial } from "../types/DeepPartial.js";
+import type { ControlState } from "../contracts/ControlState.js";
 
 function setPath(obj: any, path: string, value: any) {
   const parts = path.split(".");

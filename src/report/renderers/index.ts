@@ -1,1 +1,1 @@
-export * from "./RiskDecisionPdfRenderer";
+export * from "./RiskDecisionPdfRenderer.js";

@@ -1,7 +1,7 @@
-import type { IPCv1Document } from "../IPC_v1";
-import { parsePDF } from "../parsers/pdfParser";
-import { parseDocx } from "../parsers/docxParser";
-import { parseText } from "../parsers/textParser";
+import type { IPCv1Document } from "../IPC_v1.js";
+import { parsePDF } from "../parsers/pdfParser.js";
+import { parseDocx } from "../parsers/docxParser.js";
+import { parseText } from "../parsers/textParser.js";
 
 export async function routeDocument(doc: IPCv1Document) {
   switch (doc.type.toLowerCase()) {

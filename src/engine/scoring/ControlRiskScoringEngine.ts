@@ -1,7 +1,7 @@
-import type { RiskScore } from "../contracts/RiskScore";
-import type { ControlAssessment } from "../contracts/ControlAssessment";
-import { ControlRegistry } from "../registry/ControlRegistry";
-import type { ScoringInput } from "../contracts/ScoringInput";
+import type { RiskScore } from "../contracts/RiskScore.js";
+import type { ControlAssessment } from "../contracts/ControlAssessment.js";
+import { ControlRegistry } from "../registry/ControlRegistry.js";
+import type { ScoringInput } from "../contracts/ScoringInput.js";
 
 export class ControlRiskScoringEngine {
   static score(

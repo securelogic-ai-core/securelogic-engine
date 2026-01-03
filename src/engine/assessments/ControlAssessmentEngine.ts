@@ -1,6 +1,6 @@
-import type { ScoringInput } from "../contracts/ScoringInput";
-import type { ControlAssessment } from "../contracts/ControlAssessment";
-import { ControlRegistry } from "../registry/ControlRegistry";
+import type { ScoringInput } from "../contracts/ScoringInput.js";
+import type { ControlAssessment } from "../contracts/ControlAssessment.js";
+import { ControlRegistry } from "../registry/ControlRegistry.js";
 
 export class ControlAssessmentEngine {
   static assess(_input: ScoringInput): ControlAssessment[] {

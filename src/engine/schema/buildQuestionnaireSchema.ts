@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ControlRegistry } from "../registry/ControlRegistry";
+import { ControlRegistry } from "../registry/ControlRegistry.js";
 
 function buildControlsSchema() {
   const shape: any = {};

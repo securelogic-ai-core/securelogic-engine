@@ -1,4 +1,4 @@
-import type { ControlDefinition } from "../../contracts/ControlDefinition";
+import type { ControlDefinition } from "../../contracts/ControlDefinition.js";
 
 export const DataQualityControls: Record<string, ControlDefinition> = {
   "dataQuality.dataLineage": {

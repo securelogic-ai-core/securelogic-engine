@@ -1,5 +1,5 @@
-import type { RiskSeverity} from "../../contracts/RiskSeverity";
-import { RISK_SEVERITY } from "../../contracts/RiskSeverity";
+import type { RiskSeverity} from "../../contracts/RiskSeverity.js";
+import { RISK_SEVERITY } from "../../contracts/RiskSeverity.js";
 
 /**
  * Single source of truth for severity escalation and normalization.

@@ -1,4 +1,4 @@
-import type { RunnerEngine } from "../engine/RunnerEngine";
+import type { RunnerEngine } from "../engine/RunnerEngine.js";
 
 export type AuditSprintResponseV1 = {
   version: "v1";

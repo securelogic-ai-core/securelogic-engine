@@ -1,28 +1,10 @@
-import { SeverityNormalizationEngine } from "../normalization/SeverityNormalizationEngine";
-
-import type { EnterpriseRiskSummary } from "../../contracts/EnterpriseRiskSummary";
-import { RiskSeverity, RISK_SEVERITY } from "../../contracts/RiskSeverity";
+export type RiskSeverity = "Low" | "Medium" | "High" | "Critical";
 
 export class EnterpriseEscalationPolicy {
-  static apply(summary: EnterpriseRiskSummary): EnterpriseRiskSummary {
-    const exceptionCount = summary.topRiskDrivers.filter(
-      d => d === "Unmitigated control exception"
-    ).length;
-
-    if (exceptionCount >= 2) {
-      return {
-        ...summary,
-        severity:
-          summary.severity === RISK_SEVERITY.Critical
-            ? RISK_SEVERITY.Critical
-            : RISK_SEVERITY.High,
-        severityRationale: [
-          ...(summary.severityRationale ?? []),
-          "Multiple unmitigated control exceptions triggered enterprise escalation"
-        ]
-      };
-    }
-
-    return summary;
+  static escalate(severities: RiskSeverity[]): RiskSeverity {
+    if (severities.includes("Critical")) return "Critical";
+    if (severities.includes("High")) return "High";
+    if (severities.includes("Medium")) return "Medium";
+    return "Low";
   }
 }

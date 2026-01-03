@@ -1,28 +1,55 @@
 {
   "compilerOptions": {
+    /* Language + Runtime */
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "lib": ["ES2022"],
+
+    /* Paths */
+    "rootDir": "src",
+    "outDir": "dist",
+
+    /* ESM correctness */
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+
+    /* Safety */
     "strict": true,
+    "noEmitOnError": true,
     "skipLibCheck": true,
-    "esModuleInterop": true,
-    "resolveJsonModule": true,
-    "types": [
-      "node"
-    ]
+
+    /* Output */
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+
+    /* Interop */
+    "esModuleInterop": false,
+    "allowSyntheticDefaultImports": false,
+
+    /* Hygiene */
+    "resolveJsonModule": true
   },
+
   "include": [
-    "src/product/**/*",
-    "packages/contracts/src/**/*"
+    "src/index.ts",
+    "src/engine/**/*",
+    "src/product/**/*"
   ],
+
   "exclude": [
-    "src/_excluded_prod/**",
-    "**/_disabled/**",
-    "**/_server_DISABLED/**",
-    "**/_report_DISABLED/**",
-    "**/_dev_DISABLED/**",
-    "**/__tests__/**",
-    "src/api/**",
-    "src/index.ts"
+    "node_modules",
+    "dist",
+
+    "src/_server_DISABLED",
+    "src/_report_DISABLED",
+    "src/_product_DISABLED",
+    "src/_excluded_prod",
+    "src/_disabled",
+    "src/_dev_DISABLED",
+    "src/_frozen_prod",
+    "packages"
   ]
 }

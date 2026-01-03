@@ -1,6 +1,6 @@
-import type { EnterpriseRiskSummary } from "../../contracts/EnterpriseRiskSummary";
-import type { RiskSeverity} from "../../contracts/RiskSeverity";
-import { RISK_SEVERITY } from "../../contracts/RiskSeverity";
+import type { EnterpriseRiskSummary } from "../../contracts/EnterpriseRiskSummary.js";
+import type { RiskSeverity} from "../../contracts/RiskSeverity.js";
+import { RISK_SEVERITY } from "../../contracts/RiskSeverity.js";
 
 const MATERIALITY_THRESHOLDS: Record<string, number> = {
   Governance: 0.30,

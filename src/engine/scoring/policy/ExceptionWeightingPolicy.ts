@@ -1,4 +1,4 @@
-import type { RiskScore } from "../../contracts/RiskScore";
+import type { RiskScore } from "../../contracts/RiskScore.js";
 
 export class ExceptionWeightingPolicy {
   static apply(scores: RiskScore[]): RiskScore[] {

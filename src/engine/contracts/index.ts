@@ -8,8 +8,7 @@
  * 2) Explicit migration layer
  */
 
-export * from "./ControlState";
-export * from "./ControlAssessment";
-export * from "./ScoringInput";
+export * from "./ControlState.js";
+export * from "./ControlAssessment.js";
+export * from "./ScoringInput.js";
 
-export * from "./scoring";

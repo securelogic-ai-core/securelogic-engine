@@ -1,4 +1,4 @@
-import type { ExecutiveRiskReportV2 } from "../contracts/ExecutiveRiskReportV2";
+import type { ExecutiveRiskReportV2 } from "../contracts/ExecutiveRiskReportV2.js";
 
 export class ExecutiveRiskReportV2PdfRenderer {
   static render(report: ExecutiveRiskReportV2): string {

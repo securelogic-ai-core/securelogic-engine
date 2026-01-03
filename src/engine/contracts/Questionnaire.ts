@@ -1,5 +1,5 @@
-import type { ControlState } from "./ControlState";
-import type { ControlAssessment } from "./ControlAssessment";
+import type { ControlState } from "./ControlState.js";
+import type { ControlAssessment } from "./ControlAssessment.js";
 
 export interface Questionnaire {
   orgProfile: {

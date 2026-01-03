@@ -1,5 +1,5 @@
-import type { RiskDomain } from "./RiskDomain";
-import type { RiskLevel } from "./RiskLevel";
+import type { RiskDomain } from "./RiskDomain.js";
+import type { RiskLevel } from "./RiskLevel.js";
 
 export interface RiskFinding {
   domain: RiskDomain;

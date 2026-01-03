@@ -1,5 +1,5 @@
-import type { RiskSeverity} from "../contracts/RiskSeverity";
-import { RISK_SEVERITY } from "../contracts/RiskSeverity";
+import type { RiskSeverity} from "../contracts/RiskSeverity.js";
+import { RISK_SEVERITY } from "../contracts/RiskSeverity.js";
 
 export class RiskSeverityEngine {
   static fromScore(score: number): RiskSeverity {
