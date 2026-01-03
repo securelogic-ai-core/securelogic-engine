@@ -1,13 +1,13 @@
-import type { RiskScore } from "../contracts/RiskScore";
+import type { RiskScore } from "../contracts/RiskScore.js";
 import type {
   EnterpriseRiskSummary,
   CategoryRiskScore,
   DomainRiskScore,
   RemediationAction
-} from "../contracts/EnterpriseRiskSummary";
-import { RiskSeverityEngine } from "./RiskSeverityEngine";
-import { ControlRegistry } from "../registry/ControlRegistry";
-import { DOMAIN_WEIGHTS } from "../policy/DomainWeightPolicy";
+} from "../contracts/EnterpriseRiskSummary.js";
+import { RiskSeverityEngine } from "./RiskSeverityEngine.js";
+import { ControlRegistry } from "../registry/ControlRegistry.js";
+import { DOMAIN_WEIGHTS } from "../policy/DomainWeightPolicy.js";
 
 export class EnterpriseRiskAggregationEngine {
   static aggregate(scores: RiskScore[]): EnterpriseRiskSummary {

@@ -1,1 +1,1 @@
-export * from "./ExecutiveRiskReportV2Builder";
+export * from "./ExecutiveRiskReportV2Builder.js";

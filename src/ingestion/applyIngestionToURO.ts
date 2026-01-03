@@ -1,5 +1,5 @@
-import { IngestionEngine } from "./ingestionEngine";
-import type { UnifiedRiskObject } from "../types/URO";
+import { IngestionEngine } from "./ingestionEngine.js";
+import type { UnifiedRiskObject } from "../types/URO.js";
 
 export function applyIngestionToURO(uro: UnifiedRiskObject): UnifiedRiskObject {
   if (!uro.documents || uro.documents.length === 0) {

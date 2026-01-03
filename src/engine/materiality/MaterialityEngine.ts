@@ -1,5 +1,5 @@
-import type { RiskSeverity } from "../contracts/RiskSeverity";
-import type { EnterpriseRiskSummary } from "../contracts/EnterpriseRiskSummary";
+import type { RiskSeverity } from "../contracts/RiskSeverity.js";
+import type { EnterpriseRiskSummary } from "../contracts/EnterpriseRiskSummary.js";
 
 export type MaterialRisk = {
   id: string;

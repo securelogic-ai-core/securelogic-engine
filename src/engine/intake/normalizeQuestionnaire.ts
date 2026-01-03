@@ -1,4 +1,4 @@
-import type { Questionnaire } from "../contracts/Questionnaire";
+import type { Questionnaire } from "../contracts/Questionnaire.js";
 
 export function normalizeQuestionnaire(parsed: any): Questionnaire {
   return {

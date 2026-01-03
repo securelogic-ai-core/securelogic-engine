@@ -4,13 +4,13 @@ import type {
   ApprovalStatus,
   HeatMapPoint,
   RemediationDecision
-} from "../contracts/RiskDecision";
+} from "../contracts/RiskDecision.js";
 
 import type {
   EnterpriseRiskSummary,
   DomainRiskScore,
   RemediationAction
-} from "../engine/contracts/EnterpriseRiskSummary";
+} from "../engine/contracts/EnterpriseRiskSummary.js";
 
 export class RiskDecisionEngine {
   static generate(summary: EnterpriseRiskSummary): RiskDecision {

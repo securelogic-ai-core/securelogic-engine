@@ -1,6 +1,6 @@
-import type { RiskDecision } from "../../engine/contracts/RiskDecision";
-import type { RemediationDecision } from "../../engine/contracts/RiskDecision";
-import type { EnterpriseRiskSummary } from "../../engine/contracts/EnterpriseRiskSummary";
+import type { RiskDecision } from "../../engine/contracts/RiskDecision.js";
+import type { RemediationDecision } from "../../engine/contracts/RiskDecision.js";
+import type { EnterpriseRiskSummary } from "../../engine/contracts/EnterpriseRiskSummary.js";
 
 export interface ExecutiveRiskReportV2Readonly {
   assessment: {

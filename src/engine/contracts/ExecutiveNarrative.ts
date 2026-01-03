@@ -1,5 +1,5 @@
-import type { RiskSeverity} from "./RiskSeverity";
-import { RISK_SEVERITY } from "./RiskSeverity";
+import type { RiskSeverity} from "./RiskSeverity.js";
+import { RISK_SEVERITY } from "./RiskSeverity.js";
 
 export interface ExecutiveNarrative {
   severity: RiskSeverity;

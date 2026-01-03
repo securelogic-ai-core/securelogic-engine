@@ -1,2 +1,2 @@
-import { handleAuditSprint } from "./auditSprint";
+import { handleAuditSprint } from "./auditSprint.js";
 export { handleAuditSprint };

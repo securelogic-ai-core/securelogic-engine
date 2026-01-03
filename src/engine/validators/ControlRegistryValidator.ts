@@ -1,6 +1,6 @@
-import { ControlRegistry } from "../registry/ControlRegistry";
-import { ControlStateFactory } from "../factories/ControlStateFactory";
-import { extractControlPaths } from "../utils/extractControlPaths";
+import { ControlRegistry } from "../registry/ControlRegistry.js";
+import { ControlStateFactory } from "../factories/ControlStateFactory.js";
+import { extractControlPaths } from "../utils/extractControlPaths.js";
 
 export class ControlRegistryValidator {
   static validate(): void {

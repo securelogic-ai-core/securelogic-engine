@@ -1,24 +1,13 @@
-import type { ResultEnvelope } from "securelogic-contracts";
-import type { AuditSprintResultV1 } from "securelogic-contracts";
-import { canonicalize } from "./canonicalize.js";
-import { createHash } from "crypto";
+export type ResultEnvelope = {
+  version: "v1";
+  createdAt: string;
+  result: unknown;
+};
 
-export function createResultEnvelopeV1(payload: unknown): ResultEnvelope {
-  const payloadHash = createHash("sha256")
-    .update(JSON.stringify(canonicalize(payload)))
-    .digest("hex");
-
-  const envelope = {
-    version: "result-envelope-v1",
-    issuedAt: new Date().toISOString(),
-    result: payload as AuditSprintResultV1,
-
-    // test + integrity alias (NOT part of contract)
-    payload,
-    payloadHash,
-
-    signatures: [],
+export function createResultEnvelopeV1(result: unknown): ResultEnvelope {
+  return {
+    version: "v1",
+    result,
+    createdAt: new Date().toISOString()
   };
-
-  return envelope as unknown as ResultEnvelope;
 }

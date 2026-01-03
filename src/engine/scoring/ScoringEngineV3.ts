@@ -1,6 +1,6 @@
-import { ControlRegistry } from "../registry/ControlRegistry";
-import type { ControlAssessment } from "../contracts/ControlAssessment";
-import type { EngineResult, EngineFinding } from "../contracts/EngineResult";
+import { ControlRegistry } from "../registry/ControlRegistry.js";
+import type { ControlAssessment } from "../contracts/ControlAssessment.js";
+import type { EngineResult, EngineFinding } from "../contracts/EngineResult.js";
 
 export class ScoringEngineV3 {
   static score(

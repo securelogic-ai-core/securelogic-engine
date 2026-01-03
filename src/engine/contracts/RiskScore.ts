@@ -1,4 +1,4 @@
-import type { EvidenceTrail } from "./EvidenceTrail";
+import type { EvidenceTrail } from "./EvidenceTrail.js";
 
 export interface RiskScore {
   controlId: string;

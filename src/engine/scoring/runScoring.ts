@@ -1,26 +1,27 @@
-import type { ScoringInput } from "../contracts/ScoringInput";
-import type { ScoringOutputV1, DomainScore } from "../contracts/scoring";
+export type DomainScore = {
+  domain: string;
+  score: number;
+};
 
-import { scoreControlState } from "./scoreControlState";
+export type ScoringInput = {
+  controlState: Record<string, Record<string, boolean>>;
+};
+
+export type ScoringOutputV1 = {
+  domainScores: DomainScore[];
+  generatedAt: string;
+};
 
 export function runScoring(input: ScoringInput): ScoringOutputV1 {
-  const overallRiskScore = scoreControlState(input.controlState);
-
   const domainScores: DomainScore[] = Object.entries(input.controlState).map(
-    ([domain, state]) => ({
+    ([domain, controls]) => ({
       domain,
-      score: state ? 0 : 100
+      score: Object.values(controls).filter(v => v === true).length
     })
   );
 
   return {
-    version: "scoring-output-v1",
-    overallRiskScore,
     domainScores,
-    orgProfile: {
-      industry: input.orgProfile.industry,
-      size: input.orgProfile.size
-    },
     generatedAt: new Date().toISOString()
   };
 }

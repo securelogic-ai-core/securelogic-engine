@@ -1,4 +1,4 @@
-import type { ControlState } from "../contracts/ControlState";
+import type { ControlState } from "../contracts/ControlState.js";
 
 /**
  * Scores control implementation completeness.
