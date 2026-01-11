@@ -1,0 +1,9 @@
+[
+  {
+    "id": "F-001",
+    "controlId": "AC-2",
+    "title": "No MFA for admin accounts",
+    "severity": "HIGH",
+    "evidence": "Vendor confirmed MFA not enforced"
+  }
+]

@@ -1,0 +1,67 @@
+import crypto from "crypto";
+import type { RiskContext } from "../context/RiskContext.js";
+import type { Decision } from "./Decision.js";
+import type { Finding } from "../findings/Finding.js";
+import { scoreFindings } from "./DecisionScoringEngine.js";
+import { evaluatePolicies } from "../policy/PolicyEvaluator.js";
+import { defaultPolicySet } from "../policy/defaultPolicySet.js";
+import { writeDecisionLineage } from "./lineage/store/writeDecisionLineage.js";
+import { writePolicyVersion } from "../policy/versioning/store/writePolicyVersion.js";
+
+export function synthesizeDecision(context: any, findings: any, policyOverride?: any, dryRun?: boolean) {
+  context: RiskContext,
+  findings: Finding[]
+): Decision {
+
+  const policyVersionId = crypto.randomUUID();
+
+  writePolicyVersion({
+    versionId: policyVersionId,
+    name: "default-policy-set",
+    createdAt: new Date().toISOString(),
+    policies: defaultPolicySet
+  });
+
+  const policyResults = evaluatePolicies(defaultPolicySet, { context, findings });
+  const riskRating = scoreFindings(findings);
+
+  let outcome: Decision["outcome"] = "APPROVED";
+  const conditions: Decision["conditions"] = [];
+
+  for (const r of policyResults) {
+    if (r.effect === "DENY") outcome = "REJECTED";
+    if (r.effect === "REQUIRE_REVIEW" && outcome !== "REJECTED") outcome = "NEEDS_REVIEW";
+    for (const reason of r.reasons) {
+      conditions.push({
+        id: "COND-1",
+        description: reason,
+        severity: "MEDIUM"
+      });
+    }
+  }
+
+  const decision: Decision = {
+    decisionId: crypto.randomUUID(),
+    contextId: context.contextId,
+    policyVersionId,
+    outcome,
+    riskRating,
+    conditions,
+    createdAt: new Date().toISOString()
+  };
+
+  writeDecisionLineage({
+    decisionId: decision.decisionId,
+    contextId: context.contextId,
+    policyResults,
+    findingsSnapshot: findings.map(f => ({
+      id: f.id,
+      title: f.title,
+      severity: f.severity,
+      controlId: f.controlId
+    })),
+    createdAt: decision.createdAt
+  });
+
+  return decision;
+}
