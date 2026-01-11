@@ -1,0 +1,77 @@
+import fs from "fs";
+import path from "path";
+import { synthesizeDecision } from "../src/decision/DecisionSynthesisEngine.js";
+
+// ---- Load lineage file ----
+const lineageFile = process.argv[2];
+if (!lineageFile) {
+  console.error("Usage: npx tsx scripts/replayDecision.ts <decision.lineage.json>");
+  process.exit(1);
+}
+
+if (!fs.existsSync(lineageFile)) {
+  throw new Error(`Lineage file not found: ${lineageFile}`);
+}
+
+const lineage = JSON.parse(fs.readFileSync(lineageFile, "utf-8"));
+
+// ---- Load context + findings ----
+const contextPath = path.join("runs", `${lineage.contextId}.context.json`);
+const findingsPath = path.join("runs", `${lineage.contextId}.findings.json`);
+
+if (!fs.existsSync(contextPath) || !fs.existsSync(findingsPath)) {
+  throw new Error(
+    `Missing run inputs for ${lineage.contextId}\nExpected:\n  - ${contextPath}\n  - ${findingsPath}`
+  );
+}
+
+const context = JSON.parse(fs.readFileSync(contextPath, "utf-8"));
+const findings = JSON.parse(fs.readFileSync(findingsPath, "utf-8"));
+
+// ---- Load policy bundle by ID ----
+const bundlePath = path.join(
+  "policy-bundles",
+  `${lineage.policyBundleId}.bundle.json`
+);
+
+if (!fs.existsSync(bundlePath)) {
+  throw new Error(`Missing policy bundle file: ${bundlePath}`);
+}
+
+const bundle = JSON.parse(fs.readFileSync(bundlePath, "utf-8"));
+
+// ---- Resolve bundle hash robustly ----
+const actualHash =
+  bundle.bundleHash ||
+  bundle.hash ||
+  bundle.fingerprint ||
+  bundle.manifest?.hash;
+
+if (!actualHash) {
+  throw new Error("Bundle file does not contain a hash field!");
+}
+
+// ---- Verify hash matches lineage ----
+if (actualHash !== lineage.policyBundleHash) {
+  throw new Error(
+    `Policy bundle hash mismatch!\nExpected: ${lineage.policyBundleHash}\nActual:   ${actualHash}`
+  );
+}
+
+console.log("✅ Loaded policy bundle:", lineage.policyBundleId);
+console.log("✅ Hash verified");
+
+// ---- Replay decision (dry run) ----
+const newDecision = synthesizeDecision(
+  context,
+  findings,
+  {
+    bundleId: bundle.id || bundle.bundleId,
+    bundleHash: actualHash,
+    policies: bundle.policies
+  },
+  true // dryRun = true (do NOT write new lineage)
+);
+
+console.log("=== REPLAYED DECISION ===");
+console.log(JSON.stringify(newDecision, null, 2));

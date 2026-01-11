@@ -1,0 +1,61 @@
+import fs from "fs";
+import path from "path";
+import { synthesizeDecision } from "../src/decision/DecisionSynthesisEngine.js";
+
+// Use a FIXED test run id that exists on disk
+const runId = "test";
+
+// Paths
+const contextPath = path.join("runs", `${runId}.context.json`);
+const findingsPath = path.join("runs", `${runId}.findings.json`);
+
+// Validate inputs exist
+if (!fs.existsSync(contextPath) || !fs.existsSync(findingsPath)) {
+  throw new Error(`Missing test inputs for ${runId}. Expected:
+  - ${contextPath}
+  - ${findingsPath}`);
+}
+
+// Load inputs
+const context = JSON.parse(fs.readFileSync(contextPath, "utf-8"));
+const findings = JSON.parse(fs.readFileSync(findingsPath, "utf-8"));
+
+// Load policy bundle (should be exactly ONE)
+if (!fs.existsSync("policy-bundles")) {
+  throw new Error("policy-bundles folder missing. Run snapshotDefaultPolicy.ts first.");
+}
+
+const bundles = fs.readdirSync("policy-bundles").filter(f => f.endsWith(".bundle.json"));
+
+if (bundles.length === 0) {
+  throw new Error("No policy bundles found. Run snapshotDefaultPolicy.ts first.");
+}
+
+if (bundles.length > 1) {
+  console.warn("⚠️ More than one bundle found. Using the first one:", bundles[0]);
+}
+
+const bundlePath = path.join("policy-bundles", bundles[0]);
+const bundle = JSON.parse(fs.readFileSync(bundlePath, "utf-8"));
+
+// 🧨 HARD ASSERT: prove bundle shape is what we expect
+if (!bundle.bundleId || !bundle.bundleHash || !bundle.policies) {
+  throw new Error(
+    "Invalid bundle format. Expected fields: bundleId, bundleHash, policies. Got:\n" +
+      JSON.stringify(bundle, null, 2)
+  );
+}
+
+// 🔥 CRITICAL: execute the decision (this writes lineage)
+synthesizeDecision(
+  context,
+  findings,
+  {
+    bundleId: bundle.bundleId,
+    bundleHash: bundle.bundleHash,
+    policies: bundle.policies
+  },
+  false // NOT dry run → writes lineage
+);
+
+console.log("Generated decision + lineage for run:", runId);

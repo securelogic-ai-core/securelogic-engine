@@ -1,0 +1,10 @@
+{
+  "contextId": "test",
+  "subjectType": "VENDOR",
+  "subjectName": "Test Vendor Inc",
+  "businessCriticality": "HIGH",
+  "dataSensitivity": "CONFIDENTIAL",
+  "exposure": "EXTERNAL_DEPENDENCY",
+  "intendedUse": "Production SaaS",
+  "regulatoryDrivers": ["SOC2", "ISO27001"]
+}

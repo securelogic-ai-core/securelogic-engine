@@ -1,0 +1,29 @@
+{
+  "bundleId": "fce2b57a-25de-4506-a696-c6af00eac153",
+  "bundleHash": "625d4296d734e67401e844eb550213f045fad865071f31bc5eddb9cfb0862c54",
+  "name": "default",
+  "version": "1.0.0",
+  "createdAt": "2026-01-11T02:37:45.461Z",
+  "policies": [
+    {
+      "policyId": "POL-001",
+      "name": "Deny Critical Findings",
+      "appliesTo": [
+        "VENDOR",
+        "SYSTEM",
+        "AI_MODEL",
+        "ENVIRONMENT"
+      ]
+    },
+    {
+      "policyId": "POL-002",
+      "name": "Review High Risk",
+      "appliesTo": [
+        "VENDOR",
+        "SYSTEM",
+        "AI_MODEL",
+        "ENVIRONMENT"
+      ]
+    }
+  ]
+}
