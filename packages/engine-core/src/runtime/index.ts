@@ -5,3 +5,7 @@ export * from "./LineageVerifier.js";
 export * from "./DeterministicReplayEngine.js";
 export * from "./ExecutionStore.js";
 export * from "./ExecutionStore.js";
+export * from "./ReplayVerifier.js";
+export * from "./ReplayVerifier.js";
+export * from "./ReplayCertificate.js";
+export * from "./ReplayCertificationEngine.js";
