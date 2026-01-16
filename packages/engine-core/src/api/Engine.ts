@@ -2,7 +2,9 @@ import { snapshotDefaultPolicySet } from "../policy/snapshotDefaultPolicySet.js"
 import { synthesizeDecision } from "../decision/DecisionSynthesisEngine.js";
 import { replayDecision as _replayDecision } from "../decision/DecisionReplayEngine.js";
 
-import type { RiskContext } from "../context/RiskContext.js";
+import { ExecutionLedger } from "../runtime/ExecutionLedger.js";
+
+import type { RiskContext, EngineExecutionRecord } from "securelogic-contracts";
 import type { Finding } from "../findings/Finding.js";
 
 /**
@@ -24,9 +26,29 @@ export class SecureLogicEngine {
   static runDecision(
     context: RiskContext,
     findings: Finding[],
-    policyBundle: any
-  ) {
-    return synthesizeDecision(context, findings, policyBundle);
+    policyBundle: unknown
+  ): { decision: unknown; execution: EngineExecutionRecord } {
+
+    // Create execution ledger
+    const ledger = new ExecutionLedger();
+
+    // Bind inputs
+    ledger.begin(context);
+    ledger.setPolicyBundle(policyBundle);
+
+    // Execute
+    const decision = synthesizeDecision(context, findings, policyBundle, ledger);
+
+    // Finalize ledger
+    ledger.finalize(decision);
+
+    // Produce immutable execution record
+    const execution = ledger.build();
+
+    return {
+      decision,
+      execution
+    };
   }
 
   /**
