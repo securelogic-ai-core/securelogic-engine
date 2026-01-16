@@ -1,4 +1,5 @@
 import { hashObject } from "../utils/hasher.js";
+import { hashLineage } from "../utils/lineageHasher.js";
 import type { RiskContext, RiskDecision, EngineExecutionRecord } from "securelogic-contracts";
 
 export class ExecutionLedger {
@@ -28,7 +29,7 @@ export class ExecutionLedger {
     if (!this.policyBundleHash) throw new Error("Missing policy bundle hash");
     if (!this.finalDecision) throw new Error("Missing final decision");
 
-    return {
+    const record = {
       engineVersion: "0.3.2",
       policyBundleHash: this.policyBundleHash,
       inputHash: this.contextHash,
@@ -36,5 +37,12 @@ export class ExecutionLedger {
       finalDecision: this.finalDecision,
       finalDecisionHash: hashObject(this.finalDecision)
     };
+
+    const sealedHash = hashLineage(record);
+
+    return {
+      ...record,
+      lineageHash: sealedHash
+    } as EngineExecutionRecord & { lineageHash: string };
   }
 }
