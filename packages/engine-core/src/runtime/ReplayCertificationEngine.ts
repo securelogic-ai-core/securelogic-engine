@@ -1,5 +1,5 @@
 import type { ExecutionRecord } from "./ExecutionRecord.js";
-import crypto from "crypto";
+import { canonicalHash } from "./canonicalHash.js";
 
 export function certifyExecution(
   execution: ExecutionRecord,
@@ -14,12 +14,7 @@ export function certifyExecution(
   if (!Array.isArray(execution.signatures) || execution.signatures.length === 0) return false;
 
   // ---- PAYLOAD HASH VERIFICATION ----
-  const payloadJson = JSON.stringify(execution.payload);
-  const recomputedPayloadHash = crypto
-    .createHash("sha256")
-    .update(payloadJson)
-    .digest("hex");
-
+  const recomputedPayloadHash = canonicalHash(execution.payload);
   if (recomputedPayloadHash !== execution.payloadHash) {
     return false;
   }
@@ -28,14 +23,12 @@ export function certifyExecution(
   if (previous) {
     if (typeof execution.previousHash !== "string") return false;
 
-    const prevJson = JSON.stringify(previous);
-    const prevHash = crypto.createHash("sha256").update(prevJson).digest("hex");
-
+    const prevHash = canonicalHash(previous);
     if (execution.previousHash !== prevHash) {
       return false;
     }
   }
 
-  // ---- SIGNATURE PRESENCE CHECK (CRYPTO COMES NEXT PHASE) ----
+  // ---- SIGNATURE CHECK (CRYPTO COMES IN PHASE 3) ----
   return true;
 }

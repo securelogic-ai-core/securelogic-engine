@@ -1,3 +1,4 @@
+import { canonicalHash } from "./canonicalHash.js";
 import type { ExecutionRecord } from "./ExecutionRecord.js";
 import type { ExecutionRecord } from "./ExecutionRecord.js";
 import { hashCanonical } from "../crypto/Hash.js";
