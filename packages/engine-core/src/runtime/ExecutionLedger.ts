@@ -1,19 +1,26 @@
-import { hashObject } from "../utils/hasher.js";
-import { hashLineage } from "../utils/lineageHasher.js";
+import type { ExecutionRecord } from "./ExecutionRecord.js";
+import type { ExecutionRecord } from "./ExecutionRecord.js";
+import { hashCanonical } from "../crypto/Hash.js";
+import { signPayload } from "../crypto/Signature.js";
+import { KeyStore } from "../crypto/KeyStore.js";
+import { executionStore, getLastExecutionHash } from "./ExecutionStore.js";
+
+import { ENGINE_VERSION, ENGINE_VERSION_HASH } from "../version.js";
+
 import type { RiskContext, RiskDecision, EngineExecutionRecord } from "securelogic-contracts";
 
 export class ExecutionLedger {
   private phases: any[] = [];
-  private contextHash?: string;
-  private policyBundleHash?: string;
-  private finalDecision?: RiskDecision;
+  private contextHash!: string;
+  private policyBundleHash!: string;
+  private finalDecision!: RiskDecision;
 
   begin(context: RiskContext) {
-    this.contextHash = hashObject(context);
+    this.contextHash = hashCanonical(context);
   }
 
-  setPolicyBundle(bundle: unknown) {
-    this.policyBundleHash = hashObject(bundle);
+  setPolicyBundle(bundle: { hash: string }) {
+    this.policyBundleHash = bundle.hash;
   }
 
   recordPhase(phase: { name: string; inputHash: string; outputHash: string; timestamp: string }) {
@@ -25,24 +32,37 @@ export class ExecutionLedger {
   }
 
   build(): EngineExecutionRecord {
-    if (!this.contextHash) throw new Error("Missing context hash");
-    if (!this.policyBundleHash) throw new Error("Missing policy bundle hash");
-    if (!this.finalDecision) throw new Error("Missing final decision");
-
-    const record = {
-      engineVersion: "0.3.2",
+    return {
+      engineVersion: ENGINE_VERSION,
+      engineVersionHash: ENGINE_VERSION_HASH,
       policyBundleHash: this.policyBundleHash,
       inputHash: this.contextHash,
       phases: this.phases,
       finalDecision: this.finalDecision,
-      finalDecisionHash: hashObject(this.finalDecision)
+      finalDecisionHash: hashCanonical(this.finalDecision)
+    };
+  }
+
+  seal(): ExecutionRecord {
+    const payload = this.build();
+    const payloadHash = hashCanonical(payload);
+
+    const previousHash = getLastExecutionHash();
+
+    const keys = KeyStore.generate();
+
+    const signature = signPayload(payloadHash, keys.privateKey);
+
+    const envelope: ExecutionEnvelope = {
+      payload,
+      payloadHash,
+      previousHash,
+      signature,
+      publicKey: keys.publicKey
     };
 
-    const sealedHash = hashLineage(record);
+    executionStore.append(envelope);
 
-    return {
-      ...record,
-      lineageHash: sealedHash
-    } as EngineExecutionRecord & { lineageHash: string };
+    return envelope;
   }
 }
