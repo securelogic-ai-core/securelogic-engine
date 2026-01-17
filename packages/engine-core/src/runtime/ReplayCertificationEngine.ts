@@ -1,24 +1,41 @@
-import type { ExecutionEnvelope } from "./ExecutionEnvelope.js";
-import type { ReplayCertificate } from "./ReplayCertificate.js";
-import { verifyReplay } from "./ReplayVerifier.js";
-import { hashObject } from "../utils/hasher.js";
+import type { ExecutionRecord } from "./ExecutionRecord.js";
+import crypto from "crypto";
 
-export function certifyReplay(
-  envelope: ExecutionEnvelope,
-  context: any,
-  findings: any[],
-  policyBundle: any
-): ReplayCertificate {
-  const result = verifyReplay(
-    envelope.record,
-    context,
-    findings,
-    policyBundle
-  );
+export function certifyExecution(
+  execution: ExecutionRecord,
+  previous: ExecutionRecord | null
+): boolean {
 
-  return {
-    executionHash: hashObject(envelope.record),
-    verified: result.matches,
-    timestamp: new Date().toISOString()
-  };
+  // ---- HARD SHAPE VALIDATION ----
+  if (!execution || typeof execution !== "object") return false;
+  if (!execution.payload || typeof execution.payload !== "object") return false;
+  if (typeof execution.payloadHash !== "string") return false;
+  if (typeof execution.policyBundleHash !== "string") return false;
+  if (!Array.isArray(execution.signatures) || execution.signatures.length === 0) return false;
+
+  // ---- PAYLOAD HASH VERIFICATION ----
+  const payloadJson = JSON.stringify(execution.payload);
+  const recomputedPayloadHash = crypto
+    .createHash("sha256")
+    .update(payloadJson)
+    .digest("hex");
+
+  if (recomputedPayloadHash !== execution.payloadHash) {
+    return false;
+  }
+
+  // ---- CHAIN VERIFICATION ----
+  if (previous) {
+    if (typeof execution.previousHash !== "string") return false;
+
+    const prevJson = JSON.stringify(previous);
+    const prevHash = crypto.createHash("sha256").update(prevJson).digest("hex");
+
+    if (execution.previousHash !== prevHash) {
+      return false;
+    }
+  }
+
+  // ---- SIGNATURE PRESENCE CHECK (CRYPTO COMES NEXT PHASE) ----
+  return true;
 }
