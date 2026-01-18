@@ -1,8 +1,7 @@
 export type RunReceipt = {
   runId: string;
-  engineVersion: string;
-  runHash: string;
+  recordHash: string;
   signature: string;
-  signedAt: string;
-  signedBy: string;
+  keyId: string;
+  createdAt: string;
 };
