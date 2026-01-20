@@ -2,13 +2,13 @@ import type { ReceiptStore } from "../ReceiptStore.js";
 import type { RunReceipt } from "../../receipt/RunReceipt.js";
 
 export class InMemoryReceiptStore implements ReceiptStore {
-  private map = new Map<string, RunReceipt>();
+  private receipts = new Map<string, RunReceipt>();
 
-  async save(receipt: RunReceipt) {
-    this.map.set(receipt.runId, receipt);
+  async save(receipt: RunReceipt): Promise<void> {
+    this.receipts.set(receipt.runId, receipt);
   }
 
-  async getReceipt(runId: string) {
-    return this.map.get(runId) ?? null;
+  async getReceipt(runId: string): Promise<RunReceipt | null> {
+    return this.receipts.get(runId) ?? null;
   }
 }

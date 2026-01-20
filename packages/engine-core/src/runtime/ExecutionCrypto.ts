@@ -1,46 +1,39 @@
-import sodium from "libsodium-wrappers";
-import { canonicalHash } from "./canonicalHash.js";
-import type { ExecutionRecord } from "./ExecutionRecord.js";
+import { generateKeyPairSync, sign, verify } from "crypto";
 
-function signingView(execution: ExecutionRecord) {
-  const { signatures, ...rest } = execution;
-  return rest;
-}
+/**
+ * Real Ed25519 keypair generator
+ */
+export function generateKeypair(): {
+  publicKey: string;
+  privateKey: string;
+} {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
 
-export async function generateKeypair() {
-  await sodium.ready;
-  const kp = sodium.crypto_sign_keypair();
   return {
-    publicKey: Buffer.from(kp.publicKey).toString("base64"),
-    privateKey: Buffer.from(kp.privateKey).toString("base64"),
+    publicKey: publicKey.export({ type: "spki", format: "pem" }).toString(),
+    privateKey: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
   };
 }
 
-export async function signExecution(
-  execution: ExecutionRecord,
-  privateKeyBase64: string
-): Promise<string> {
-  await sodium.ready;
-
-  const privateKey = Buffer.from(privateKeyBase64, "base64");
-  const messageHash = canonicalHash(signingView(execution));
-  const message = Buffer.from(messageHash, "hex");
-
-  const sig = sodium.crypto_sign_detached(message, privateKey);
-  return Buffer.from(sig).toString("base64");
+function normalizePayload(payload: string): Buffer {
+  return Buffer.from(payload, "utf8");
 }
 
-export async function verifyExecutionSignature(
-  execution: ExecutionRecord,
+export function signHash(
+  hash: string,
+  privateKey: any
+): string {
+  if (!privateKey) throw new Error("No key provided to sign");
+
+  const sig = sign(null, normalizePayload(hash), privateKey);
+  return sig.toString("base64");
+}
+
+export function verifySignatureBytes(
+  hash: string,
   signatureBase64: string,
-  publicKeyBase64: string
-): Promise<boolean> {
-  await sodium.ready;
-
-  const publicKey = Buffer.from(publicKeyBase64, "base64");
-  const signature = Buffer.from(signatureBase64, "base64");
-  const messageHash = canonicalHash(signingView(execution));
-  const message = Buffer.from(messageHash, "hex");
-
-  try { return sodium.crypto_sign_verify_detached(signature, message, publicKey); } catch { return false; }
+  publicKey: any
+): boolean {
+  const sig = Buffer.from(signatureBase64, "base64");
+  return verify(null, normalizePayload(hash), publicKey, sig);
 }

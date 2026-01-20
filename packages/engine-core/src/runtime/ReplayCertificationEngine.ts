@@ -1,34 +1,33 @@
-import type { ExecutionRecord } from "./ExecutionRecord.js";
 import { canonicalHash } from "./canonicalHash.js";
+import { verifySignatureBytes } from "./ExecutionCrypto.js";
 
-export function certifyExecution(
-  execution: ExecutionRecord,
-  previous: ExecutionRecord | null
-): boolean {
+export async function certifyExecution(exec: any, previous: any | null): Promise<boolean> {
+  try {
+    // 1. Payload hash must match
+    const expectedHash = canonicalHash(exec.payload);
+    if (exec.payloadHash !== expectedHash) return false;
 
-  // ---- HARD SHAPE VALIDATION ----
-  if (!execution || typeof execution !== "object") return false;
-  if (!execution.payload || typeof execution.payload !== "object") return false;
-  if (typeof execution.payloadHash !== "string") return false;
-  if (typeof execution.policyBundleHash !== "string") return false;
-  if (!Array.isArray(execution.signatures) || execution.signatures.length === 0) return false;
+    // 2. Must have signatures
+    if (!Array.isArray(exec.signatures) || exec.signatures.length === 0) return false;
+    if (!exec.signerPublicKey) return false;
 
-  // ---- PAYLOAD HASH VERIFICATION ----
-  const recomputedPayloadHash = canonicalHash(execution.payload);
-  if (recomputedPayloadHash !== execution.payloadHash) {
+    const pub = Uint8Array.from(Buffer.from(exec.signerPublicKey, "base64"));
+
+    // 3. Verify each signature
+    for (const sig of exec.signatures) {
+      if (typeof sig !== "string") return false;
+      const sigBytes = Uint8Array.from(Buffer.from(sig, "base64"));
+      const ok = await verifySignatureBytes(pub, sigBytes, exec.payloadHash);
+      if (!ok) return false;
+    }
+
+    // 4. Chain check
+    if (previous) {
+      if (exec.previousHash !== previous.payloadHash) return false;
+    }
+
+    return true;
+  } catch {
     return false;
   }
-
-  // ---- CHAIN VERIFICATION ----
-  if (previous) {
-    if (typeof execution.previousHash !== "string") return false;
-
-    const prevHash = canonicalHash(previous);
-    if (execution.previousHash !== prevHash) {
-      return false;
-    }
-  }
-
-  // ---- SIGNATURE CHECK (CRYPTO COMES IN PHASE 3) ----
-  return true;
 }
