@@ -6,7 +6,7 @@ import { InMemoryTrustStore } from "../runtime/trust/memory/InMemoryTrustStore.j
 import { ExecutionPipeline } from "../runtime/run/ExecutionPipeline.js";
 import { RuntimeExecutionService } from "../runtime/service/RuntimeExecutionService.js";
 import { RuntimeRunVerificationService } from "../runtime/verify/RuntimeRunVerificationService.js";
-import { generateTestKeypair } from "./helpers/testCrypto.js";
+import { generateTestKeypair } from "./helpers/testCrypto";
 
 describe("Runtime integrity (golden path)", () => {
   it("creates a run + receipt + transparency that verify", async () => {
@@ -29,7 +29,7 @@ describe("Runtime integrity (golden path)", () => {
 
     const svc = new RuntimeExecutionService(
       "1.0.0",
-      { keyId: "test", privateKey: kp.privateKey },
+      { keyId: "test", privateKeyPem: kp.privateKey },
       runStore,
       receiptStore,
       transparencyStore
@@ -67,7 +67,7 @@ describe("Runtime integrity (golden path)", () => {
 
     const svc = new RuntimeExecutionService(
       "1.0.0",
-      { keyId: "test", privateKey: kp.privateKey },
+      { keyId: "test", privateKeyPem: kp.privateKey },
       runStore,
       receiptStore,
       transparencyStore
