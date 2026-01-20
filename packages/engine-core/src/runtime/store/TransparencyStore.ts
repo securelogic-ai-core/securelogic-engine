@@ -1,6 +1,4 @@
-import type { TransparencyEntry } from "../transparency/TransparencyChain.js";
-
-export interface TransparencyStore {
-  append(entry: TransparencyEntry): Promise<void>;
-  getAll(): Promise<TransparencyEntry[]>;
+export interface TransparencyStore<T = any> {
+  append(entry: T): Promise<void>;
+  getLatest(): Promise<T | null>;
 }

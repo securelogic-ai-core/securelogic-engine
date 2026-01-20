@@ -17,26 +17,24 @@ export class RuntimeRunVerificationService {
     receipt: RunReceipt,
     transparency: TransparencyEntry
   ): Promise<RunVerificationResult> {
-    // 1. Verify run hash
+
     const computedRunHash = hashRun(run);
+
     if (computedRunHash !== receipt.runHash) {
       return { ok: false, error: "Run hash mismatch" };
     }
 
-    // 2. Verify transparency root
     if (receipt.transparencyRoot !== transparency.root) {
       return { ok: false, error: "Transparency root mismatch" };
     }
 
-    // 3. Verify signer is trusted
     const trustedKey = await trustStore.getKey(receipt.signedBy);
     if (!trustedKey || trustedKey.status !== "active") {
       return { ok: false, error: "Signing key is not trusted" };
     }
 
-    // 4. Verify signature
     const sigOk = verifySignatureBytes(
-      receipt.signedPayload,
+      receipt.runHash,
       receipt.signature,
       trustedKey.publicKey
     );
@@ -48,3 +46,4 @@ export class RuntimeRunVerificationService {
     return { ok: true };
   }
 }
+    
