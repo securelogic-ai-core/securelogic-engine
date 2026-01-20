@@ -1,8 +1,8 @@
 import { DeterministicReplayEngine } from "../runtime/DeterministicReplayEngine.js";
-import type { EngineExecutionRecord, RiskContext, Finding } from "securelogic-contracts";
+import type { ExecutionRecord, RiskContext, Finding } from "securelogic-contracts";
 
 export function replayExecution(
-  record: EngineExecutionRecord & { lineageHash: string },
+  record: ExecutionRecord & { lineageHash: string },
   context: RiskContext,
   findings: Finding[],
   policyBundle: unknown

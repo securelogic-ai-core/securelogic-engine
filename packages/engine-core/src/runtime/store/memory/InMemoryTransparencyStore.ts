@@ -1,4 +1,4 @@
-import type { TransparencyStore } from "../TransparencyStore.js";
+import type { TransparencyStore } from "../../store/TransparencyStore.js";
 import type { TransparencyEntry } from "../../transparency/TransparencyChain.js";
 
 export class InMemoryTransparencyStore implements TransparencyStore {
@@ -8,7 +8,11 @@ export class InMemoryTransparencyStore implements TransparencyStore {
     this.entries.push(entry);
   }
 
-  async getAll() {
+  async getLatest(): Promise<TransparencyEntry | null> {
+    return this.entries.length ? this.entries[this.entries.length - 1] : null;
+  }
+
+  async getAll(): Promise<TransparencyEntry[]> {
     return [...this.entries];
   }
 }

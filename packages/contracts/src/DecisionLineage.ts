@@ -1,17 +1,13 @@
-type DecisionLineage = {
-  // ---- Schema & Engine Identity ----
+export type DecisionLineage = {
   schemaVersion: "1.0";
   engineVersion: string;
 
-  // ---- Decision Identity ----
   decisionId: string;
   contextId: string;
 
-  // ---- Policy Provenance (CRITICAL) ----
   policyBundleId: string;
-  policyBundleHash: string; // cryptographic fingerprint of the executed policy bundle
+  policyBundleHash: string;
 
-  // ---- Evidence Snapshot ----
   findingsSnapshot: {
     id: string;
     controlId: string;
@@ -20,26 +16,22 @@ type DecisionLineage = {
     evidence?: string;
   }[];
 
-  // ---- Policy Execution Trace ----
   policyEvaluations: {
     policyId: string;
     effect: "ALLOW" | "DENY" | "REQUIRE_REVIEW";
     reason: string | null;
   }[];
 
-  // ---- Risk Computation Trace ----
   riskComputation: {
-    method: string;       // e.g. "scoreFindings()"
+    method: string;
     finalRisk: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   };
 
-  // ---- Aggregation / Decision Logic Trace ----
   aggregation: {
-    rule: string;         // e.g. "RiskScore + PolicyOverrides"
+    rule: string;
     finalOutcome: "APPROVED" | "APPROVED_WITH_CONDITIONS" | "REJECTED" | "NEEDS_REVIEW";
     finalRisk: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   };
 
-  // ---- Timestamp ----
-  createdAt: string; // ISO timestamp
+  createdAt: string;
 };
