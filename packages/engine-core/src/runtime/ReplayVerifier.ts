@@ -1,4 +1,4 @@
-import type { EngineExecutionRecord } from "securelogic-contracts";
+import type { ExecutionRecord } from "securelogic-contracts";
 import { synthesizeDecision } from "../decision/DecisionSynthesisEngine.js";
 import { hashObject } from "../utils/hasher.js";
 
@@ -9,7 +9,7 @@ export interface ReplayVerificationResult {
 }
 
 export function verifyReplay(
-  record: EngineExecutionRecord,
+  record: ExecutionRecord,
   context: any,
   findings: any[],
   policyBundle: any

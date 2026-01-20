@@ -1,31 +1,50 @@
 import { canonicalHash } from "../canonicalHash.js";
 
 export type TransparencyEntry = {
-  index: number;
-  previousHash: string | null;
-  payloadHash: string;
-  entryHash: string;
-  createdAt: string;
+  root: string;
+  runHash: string;
+  previousRoot: string | null;
 };
 
+/**
+ * Builds the next transparency entry
+ */
 export function buildTransparencyEntry(
   previous: TransparencyEntry | null,
-  payloadHash: string
+  runHash: string
 ): TransparencyEntry {
-  const index = previous ? previous.index + 1 : 0;
-  const previousHash = previous ? previous.entryHash : null;
+  const previousRoot = previous ? previous.root : null;
 
-  const entryCore = {
-    index,
-    previousHash,
-    payloadHash,
-    createdAt: new Date().toISOString(),
-  };
-
-  const entryHash = canonicalHash(entryCore);
+  const root = canonicalHash({
+    previousRoot,
+    runHash
+  });
 
   return {
-    ...entryCore,
-    entryHash,
+    root,
+    runHash,
+    previousRoot
   };
+}
+
+/**
+ * Verifies a full transparency chain
+ */
+export function verifyChain(entries: TransparencyEntry[]): boolean {
+  let prev: TransparencyEntry | null = null;
+
+  for (const e of entries) {
+    if (prev && e.previousRoot !== prev.root) return false;
+
+    const recomputed = canonicalHash({
+      previousRoot: e.previousRoot,
+      runHash: e.runHash
+    });
+
+    if (recomputed !== e.root) return false;
+
+    prev = e;
+  }
+
+  return true;
 }

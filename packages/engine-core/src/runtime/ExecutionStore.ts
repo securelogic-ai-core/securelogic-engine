@@ -1,5 +1,5 @@
 import { HashChainStore } from "./artifacts/HashChainStore.js";
-import type { EngineExecutionRecord } from "securelogic-contracts";
+import type { ExecutionRecord } from "securelogic-contracts";
 import type { ExecutionEnvelope } from "./ExecutionEnvelope.js";
 
 import { signObject } from "./crypto/signing.js";
@@ -9,7 +9,7 @@ export const executionStore = new HashChainStore<ExecutionEnvelope>(
   "./execution-ledger"
 );
 
-export function storeExecution(record: EngineExecutionRecord) {
+export function storeExecution(record: ExecutionRecord) {
   const privateKey = loadPrivateKey();
   const publicKey = loadPublicKey();
 

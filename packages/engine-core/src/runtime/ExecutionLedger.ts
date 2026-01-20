@@ -1,69 +1,54 @@
-import { canonicalHash } from "./canonicalHash.js";
-import type { ExecutionRecord } from "./ExecutionRecord.js";
-import type { ExecutionRecord } from "./ExecutionRecord.js";
-import { hashCanonical } from "../crypto/Hash.js";
-import { signPayload } from "../crypto/Signature.js";
-import { KeyStore } from "../crypto/KeyStore.js";
-import { executionStore, getLastExecutionHash } from "./ExecutionStore.js";
-
-import { ENGINE_VERSION, ENGINE_VERSION_HASH } from "../version.js";
-
-import type { RiskContext, RiskDecision, EngineExecutionRecord } from "securelogic-contracts";
+import type { RiskContext, Decision, ExecutionRecord } from "securelogic-contracts";
 
 export class ExecutionLedger {
-  private phases: any[] = [];
-  private contextHash!: string;
+  private context!: RiskContext;
+  private policyBundleId!: string;
   private policyBundleHash!: string;
-  private finalDecision!: RiskDecision;
+  private decision!: Decision;
 
   begin(context: RiskContext) {
-    this.contextHash = hashCanonical(context);
+    this.context = context;
   }
 
-  setPolicyBundle(bundle: { hash: string }) {
-    this.policyBundleHash = bundle.hash;
+  setPolicyBundle(bundle: { bundleId: string; bundleHash: string }) {
+    this.policyBundleId = bundle.bundleId;
+    this.policyBundleHash = bundle.bundleHash;
   }
 
-  recordPhase(phase: { name: string; inputHash: string; outputHash: string; timestamp: string }) {
-    this.phases.push(phase);
+  finalize(decision: Decision) {
+    this.decision = decision;
   }
 
-  finalize(decision: RiskDecision) {
-    this.finalDecision = decision;
-  }
-
-  build(): EngineExecutionRecord {
+  build(): ExecutionRecord {
     return {
-      engineVersion: ENGINE_VERSION,
-      engineVersionHash: ENGINE_VERSION_HASH,
+      schemaVersion: "1.0",
+      executionId: crypto.randomUUID(),
+      context: this.context,
+      policyBundleId: this.policyBundleId,
       policyBundleHash: this.policyBundleHash,
-      inputHash: this.contextHash,
-      phases: this.phases,
-      finalDecision: this.finalDecision,
-      finalDecisionHash: hashCanonical(this.finalDecision)
+      decision: this.decision,
+      lineage: {
+        schemaVersion: "1.0",
+        engineVersion: "engine-core",
+        decisionId: crypto.randomUUID(),
+        contextId: "context",
+        policyBundleId: this.policyBundleId,
+        policyBundleHash: this.policyBundleHash,
+        findingsSnapshot: [],
+        policyEvaluations: [],
+        riskComputation: {
+          method: "deterministic",
+          finalRisk: this.decision.risk
+        },
+        aggregation: {
+          rule: "default",
+          finalOutcome: this.decision.outcome,
+          finalRisk: this.decision.risk
+        },
+        createdAt: new Date().toISOString()
+      },
+      producedAt: new Date().toISOString(),
+      engineVersion: "engine-core"
     };
-  }
-
-  seal(): ExecutionRecord {
-    const payload = this.build();
-    const payloadHash = hashCanonical(payload);
-
-    const previousHash = getLastExecutionHash();
-
-    const keys = KeyStore.generate();
-
-    const signature = signPayload(payloadHash, keys.privateKey);
-
-    const envelope: ExecutionEnvelope = {
-      payload,
-      payloadHash,
-      previousHash,
-      signature,
-      publicKey: keys.publicKey
-    };
-
-    executionStore.append(envelope);
-
-    return envelope;
   }
 }

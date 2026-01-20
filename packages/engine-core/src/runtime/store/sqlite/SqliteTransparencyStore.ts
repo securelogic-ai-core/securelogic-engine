@@ -3,9 +3,11 @@ import type { TransparencyStore } from "../TransparencyStore";
 import type { TransparencyEntry } from "../../transparency/TransparencyChain";
 
 export class SqliteTransparencyStore implements TransparencyStore {
+  private db;
+
   constructor(dbPath: string) {
-    const db = SqliteDatabase.open(dbPath);
-    db.exec(`
+    this.db = SqliteDatabase.open(dbPath);
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS transparency (
         idx INTEGER PRIMARY KEY AUTOINCREMENT,
         root TEXT NOT NULL,
@@ -15,18 +17,36 @@ export class SqliteTransparencyStore implements TransparencyStore {
     `);
   }
 
-  async getLatest(): Promise<TransparencyEntry | null> {
-    const db = SqliteDatabase.open("");
-    const row = db.prepare("SELECT * FROM transparency ORDER BY idx DESC LIMIT 1").get();
-    return row ?? null;
+  async append(entry: TransparencyEntry) {
+    const stmt = this.db.prepare(
+      "INSERT INTO transparency (root, run_hash, previous_root) VALUES (?, ?, ?)"
+    );
+    stmt.run(entry.root, entry.runHash, entry.previousRoot);
   }
 
-  async append(entry: TransparencyEntry) {
-    const db = SqliteDatabase.open("");
-    const stmt = db.prepare(`
-      INSERT INTO transparency (root, run_hash, previous_root)
-      VALUES (?, ?, ?)
-    `);
-    stmt.run(entry.root, entry.runHash, entry.previousRoot);
+  async getLatest(): Promise<TransparencyEntry | null> {
+    const row = this.db
+      .prepare("SELECT root, run_hash, previous_root FROM transparency ORDER BY idx DESC LIMIT 1")
+      .get();
+
+    if (!row) return null;
+
+    return {
+      root: row.root,
+      runHash: row.run_hash,
+      previousRoot: row.previous_root
+    };
+  }
+
+  async getAll(): Promise<TransparencyEntry[]> {
+    const rows = this.db
+      .prepare("SELECT root, run_hash, previous_root FROM transparency ORDER BY idx ASC")
+      .all();
+
+    return rows.map((r: any) => ({
+      root: r.root,
+      runHash: r.run_hash,
+      previousRoot: r.previous_root
+    }));
   }
 }

@@ -5,6 +5,7 @@ export * from "./ControlState.js";
 export * from "./DecisionLineage.js";
 export * from "./Decision.js";
 export * from "./EngineResult.js";
+export * from "./ExecutionRecord.js";
 export * from "./EnterpriseRiskSummary.js";
 export * from "./EvidenceTrail.js";
 export * from "./ExecutablePolicy.js";

@@ -1,11 +1,11 @@
 import { verifyLineage } from "./LineageVerifier.js";
 import { synthesizeDecision } from "../decision/DecisionSynthesisEngine.js";
-import type { EngineExecutionRecord, RiskContext, Finding } from "securelogic-contracts";
+import type { ExecutionRecord, RiskContext, Finding } from "securelogic-contracts";
 
 export class DeterministicReplayEngine {
 
   static replay(
-    record: EngineExecutionRecord & { lineageHash: string },
+    record: ExecutionRecord & { lineageHash: string },
     context: RiskContext,
     findings: Finding[],
     policyBundle: unknown

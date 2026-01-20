@@ -1,9 +1,9 @@
 import { hashObject } from "../utils/hasher.js";
-import type { RiskContext, RiskDecision } from "securelogic-contracts";
+import type { RiskContext, Decision } from "securelogic-contracts";
 import type { ExecutionLedger } from "./ExecutionLedger.js";
 
 export class PhaseRunner {
-  async runAll(context: RiskContext, ledger: ExecutionLedger): Promise<RiskDecision> {
+  async runAll(context: RiskContext, ledger: ExecutionLedger): Promise<Decision> {
     let current: unknown = context;
 
     const phases = [
@@ -27,6 +27,6 @@ export class PhaseRunner {
       current = output;
     }
 
-    return current as RiskDecision;
+    return current as Decision;
   }
 }
