@@ -11,18 +11,16 @@ export type ControlDefinition = {
   severity: "Low" | "Moderate" | "High" | "Critical";
   baseWeight: number;
 
-  // UX / Assessment
+  // Assessment UX
   question?: string;
 
-  // Framework mapping
+  // 🔴 MULTI-FRAMEWORK MAPPING (THIS IS THE CORE)
   frameworks?: Record<string, string>;
 
-  // Risk weighting
+  // Risk tuning
   dynamicModifiers?: Record<string, number>;
 
   // Maturity guidance
   maturityHint?: string;
-
-  // Finding narrative template
   rationaleTemplate?: string;
 };

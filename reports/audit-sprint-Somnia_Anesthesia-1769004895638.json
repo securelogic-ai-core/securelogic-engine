@@ -4,8 +4,8 @@
     "industry": "Healthcare",
     "assessmentType": "AI Audit Sprint",
     "scope": "Clinical + Administrative AI Usage",
-    "generatedAt": "2026-01-21T13:49:19.334Z",
-    "ledgerHash": "a8b0edb8a89e66972eb95c7b7f4fa69807c81946f2c5ca19739dd133dd07520a"
+    "generatedAt": "2026-01-21T14:14:55.637Z",
+    "ledgerHash": "a50b489e80642b4c13566df549ab121f4affcacd1fad76c5c5a2a87c026bbf4b"
   },
   "executiveSummary": {
     "overallRisk": "Critical",
@@ -40,61 +40,126 @@
   ],
   "findings": [
     {
-      "framework": "Unified",
       "id": "GOV-101",
       "title": "AI Governance Policy",
       "severity": "High",
       "domain": "Governance",
+      "mappedFrameworks": [
+        "iso42001",
+        "nistAiRmf"
+      ],
+      "evidenceItems": [
+        {
+          "source": "Questionnaire",
+          "reference": "GOV-101",
+          "note": "Marked as not implemented in assessment response"
+        }
+      ],
+      "confidence": "High",
       "businessImpact": "Increased regulatory and operational risk.",
       "evidence": "Control evaluated as not implemented.",
       "recommendation": "Implement and formalize this control."
     },
     {
-      "framework": "Unified",
       "id": "GOV-102",
       "title": "AI Risk Ownership Defined",
       "severity": "High",
       "domain": "Governance",
+      "mappedFrameworks": [
+        "iso42001",
+        "nistAiRmf"
+      ],
+      "evidenceItems": [
+        {
+          "source": "Questionnaire",
+          "reference": "GOV-102",
+          "note": "Marked as not implemented in assessment response"
+        }
+      ],
+      "confidence": "High",
       "businessImpact": "Increased regulatory and operational risk.",
       "evidence": "Control evaluated as not implemented.",
       "recommendation": "Implement and formalize this control."
     },
     {
-      "framework": "Unified",
       "id": "MON-001",
       "title": "Model Monitoring",
       "severity": "High",
       "domain": "Monitoring",
+      "mappedFrameworks": [
+        "iso42001",
+        "nistAiRmf"
+      ],
+      "evidenceItems": [
+        {
+          "source": "Questionnaire",
+          "reference": "MON-001",
+          "note": "Marked as not implemented in assessment response"
+        }
+      ],
+      "confidence": "High",
       "businessImpact": "Increased regulatory and operational risk.",
       "evidence": "Control evaluated as not implemented.",
       "recommendation": "Implement and formalize this control."
     },
     {
-      "framework": "Unified",
       "id": "DQ-001",
       "title": "Data Lineage Tracked",
       "severity": "High",
       "domain": "DataQuality",
+      "mappedFrameworks": [
+        "iso42001",
+        "nistAiRmf"
+      ],
+      "evidenceItems": [
+        {
+          "source": "Questionnaire",
+          "reference": "DQ-001",
+          "note": "Marked as not implemented in assessment response"
+        }
+      ],
+      "confidence": "High",
       "businessImpact": "Increased regulatory and operational risk.",
       "evidence": "Control evaluated as not implemented.",
       "recommendation": "Implement and formalize this control."
     },
     {
-      "framework": "Unified",
       "id": "MD-001",
       "title": "Model Validation Testing",
       "severity": "High",
       "domain": "ModelDevelopment",
+      "mappedFrameworks": [
+        "iso42001",
+        "nistAiRmf"
+      ],
+      "evidenceItems": [
+        {
+          "source": "Questionnaire",
+          "reference": "MD-001",
+          "note": "Marked as not implemented in assessment response"
+        }
+      ],
+      "confidence": "High",
       "businessImpact": "Increased regulatory and operational risk.",
       "evidence": "Control evaluated as not implemented.",
       "recommendation": "Implement and formalize this control."
     },
     {
-      "framework": "Unified",
       "id": "BC-006",
       "title": "Recovery Point Objective Defined",
       "severity": "Moderate",
       "domain": "BusinessContinuity",
+      "mappedFrameworks": [
+        "soc2"
+      ],
+      "evidenceItems": [
+        {
+          "source": "Questionnaire",
+          "reference": "BC-006",
+          "note": "Marked as not implemented in assessment response"
+        }
+      ],
+      "confidence": "High",
       "businessImpact": "Increased regulatory and operational risk.",
       "evidence": "Control evaluated as not implemented.",
       "recommendation": "Implement and formalize this control."

@@ -1,11 +1,30 @@
+// src/reporting/ReportSchema.ts
+
 export type RiskLevel = "Low" | "Moderate" | "High" | "Critical";
 
+export type ConfidenceLevel = "Low" | "Medium" | "High";
+
+export type EvidenceItem = {
+  source: "Questionnaire" | "Interview" | "Document" | "SystemScan";
+  reference?: string;
+  note?: string;
+};
+
 export type Finding = {
-  framework: string;
   id: string;
   title: string;
   severity: RiskLevel;
   domain: string;
+
+  // 🔴 MULTI-FRAMEWORK ATTRIBUTION
+  mappedFrameworks: string[];
+
+  // 🔴 AUDIT-GRADE EVIDENCE
+  evidenceItems: EvidenceItem[];
+
+  // 🔴 CONFIDENCE IN THE FINDING
+  confidence: ConfidenceLevel;
+
   businessImpact: string;
   evidence: string;
   recommendation: string;
