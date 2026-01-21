@@ -1,6 +1,6 @@
 export type SeverityLevel =
   | "Low"
-  | "Medium"
+  | "Moderate"
   | "High"
   | "Critical";
 

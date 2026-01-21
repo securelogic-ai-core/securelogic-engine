@@ -28,7 +28,7 @@ export interface RemediationDecision {
   id: string;
   description: string;
   estimatedRiskReduction: number; // 0–100
-  priority: "Low" | "Medium" | "High" | "Critical";
+  priority: "Low" | "Moderate" | "High" | "Critical";
 }
 
 export interface RiskDecisionOutput {

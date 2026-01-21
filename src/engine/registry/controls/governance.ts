@@ -10,7 +10,6 @@ export const governanceControls: Record<string, ControlDefinition> = {
     riskCategory: "Governance",
 
     severity: "High",
-    controlType: "Preventive",
 
     baseWeight: 5,
 
@@ -32,7 +31,6 @@ export const governanceControls: Record<string, ControlDefinition> = {
     riskCategory: "Governance",
 
     severity: "High",
-    controlType: "Preventive",
 
     baseWeight: 5,
 

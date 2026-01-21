@@ -1,52 +1,44 @@
 import type { ControlDefinition } from "../contracts/ControlDefinition.js";
 
-export const ControlRegistry: {
-  controls: Record<string, ControlDefinition>;
-} = {
-  controls: {
-    "governance.aiGovernancePolicy": {
-      id: "GOV-001",
-      title: "AI Governance Policy Documented",
-      description:
-        "Formal AI governance policy covering lifecycle oversight and accountability.",
+import { governanceControls } from "./controls/governance.js";
+import { MonitoringControls } from "./controls/monitoring.js";
+import { DataQualityControls } from "./controls/dataQuality.js";
+import { ModelDevelopmentControls } from "./controls/modelDevelopment.js";
+import { BusinessContinuityControls } from "./controls/businessContinuity.js";
 
-      domain: "Governance",
-      riskCategory: "Governance",
+/**
+ * Canonical framework grouping
+ */
+export const byFramework: Record<string, ControlDefinition[]> = {
+  "AI-Governance": [
+    ...Object.values(governanceControls)
+  ],
+  "NIST-AI-RMF": [
+    ...Object.values(MonitoringControls),
+    ...Object.values(DataQualityControls),
+    ...Object.values(ModelDevelopmentControls),
+    ...Object.values(BusinessContinuityControls)
+  ]
+};
 
-      severity: "High",
-      controlType: "Preventive",
+/**
+ * Legacy flat map (DO NOT BREAK)
+ */
+export const controls: Record<string, ControlDefinition> = {
+  ...governanceControls,
+  ...MonitoringControls,
+  ...DataQualityControls,
+  ...ModelDevelopmentControls,
+  ...BusinessContinuityControls
+};
 
-      baseWeight: 5
-    },
+/**
+ * Flat list
+ */
+export const list: ControlDefinition[] = Object.values(controls);
 
-    "monitoring.modelMonitoring": {
-      id: "MON-001",
-      title: "Model Monitoring",
-      description:
-        "Ongoing monitoring of AI models for drift, performance, and failures.",
-
-      domain: "Monitoring",
-      riskCategory: "Operational",
-
-      severity: "High",
-      controlType: "Detective",
-
-      baseWeight: 5
-    },
-
-    "businessContinuity.recoveryPlan": {
-      id: "BC-006",
-      title: "Recovery Point Objective Defined",
-      description:
-        "Defined recovery objectives for AI-supported systems.",
-
-      domain: "Business Continuity",
-      riskCategory: "Operational Resilience",
-
-      severity: "Medium",
-      controlType: "Corrective",
-
-      baseWeight: 4
-    }
-  }
+export const ControlRegistry = {
+  controls,
+  list,
+  byFramework
 };

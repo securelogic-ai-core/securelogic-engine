@@ -6,11 +6,10 @@ export const BusinessContinuityControls: Record<string, ControlDefinition> = {
     title: "Recovery Point Objective Defined",
     description: "RPO targets are defined for AI systems.",
 
-    domain: "Business Continuity",
-    riskCategory: "Business Continuity",
+    domain: "BusinessContinuity",
+    riskCategory: "BusinessContinuity",
 
-    severity: "Medium",
-    controlType: "Corrective",
+    severity: "Moderate",
 
     baseWeight: 4,
 

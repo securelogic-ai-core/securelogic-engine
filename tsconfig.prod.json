@@ -1,55 +1,40 @@
 {
   "compilerOptions": {
-    /* Language + Runtime */
     "target": "ES2022",
     "module": "Node16",
     "moduleResolution": "Node16",
     "lib": ["ES2022"],
 
-    /* Paths */
     "rootDir": "src",
     "outDir": "dist",
 
-    /* ESM correctness */
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true,
 
-    /* Safety */
     "strict": true,
     "noEmitOnError": true,
     "skipLibCheck": true,
 
-    /* Output */
     "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-
-    /* Interop */
-    "esModuleInterop": false,
-    "allowSyntheticDefaultImports": false,
-
-    /* Hygiene */
-    "resolveJsonModule": true
+    "sourceMap": true
   },
 
   "include": [
     "src/index.ts",
     "src/engine/**/*",
-    "src/product/**/*"
+    "src/report/**/*",
+    "src/runtime/**/*"
   ],
 
   "exclude": [
+    "src/api/**",
+    "src/cli.ts",
+    "src/_*",
+    "src/dev/**",
+    "src/product/**",
     "node_modules",
     "dist",
-
-    "src/_server_DISABLED",
-    "src/_report_DISABLED",
-    "src/_product_DISABLED",
-    "src/_excluded_prod",
-    "src/_disabled",
-    "src/_dev_DISABLED",
-    "src/_frozen_prod",
     "packages"
   ]
 }

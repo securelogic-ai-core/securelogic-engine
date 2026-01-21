@@ -3,7 +3,7 @@
  * Not part of public contract surface.
  */
 
-type RiskLevel = "Low" | "Medium" | "High" | "Critical";
+type RiskLevel = "Low" | "Moderate" | "High" | "Critical";
 
 type RiskFinding = {
   id: string;

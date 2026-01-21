@@ -25,8 +25,8 @@ export class ScoringEngineV3 {
         ? "Critical"
         : findings.some(f => f.severity === "High")
         ? "High"
-        : findings.some(f => f.severity === "Medium")
-        ? "Medium"
+        : findings.some(f => f.severity === "Moderate")
+        ? "Moderate"
         : "Low";
 
     return {

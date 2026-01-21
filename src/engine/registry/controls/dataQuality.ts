@@ -6,12 +6,11 @@ export const DataQualityControls: Record<string, ControlDefinition> = {
     title: "Data Lineage Tracked",
     description: "Lineage from data source through model output is documented.",
 
-    domain: "Data Quality",
-    riskCategory: "Data Quality",
+    domain: "DataQuality",
+    riskCategory: "DataQuality",
 
     severity: "High",
 
-    controlType: "Preventive",
     frameworks: { iso42001: "A.6.2", nistAiRmf: "MAP-1" },
     baseWeight: 4,
     maturityHint: "Implement automated lineage tracking where possible.",
