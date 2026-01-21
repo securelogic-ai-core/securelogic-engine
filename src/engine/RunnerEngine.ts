@@ -9,6 +9,8 @@ import { MultiFrameworkOrchestrator } from "./orchestrator/MultiFrameworkOrchest
 import { AIGovFramework } from "./frameworks/AIGovFramework.js";
 import { NISTFramework } from "./frameworks/NISTFramework.js";
 
+import { FindingNormalizer } from "./adapters/FindingNormalizer.js";
+
 export type EngineInput = {
   client: {
     name: string;
@@ -29,6 +31,7 @@ export class RunnerEngine {
   private ledger = new ExecutionLedger();
 
   async run(input: EngineInput) {
+    // 1) Run all frameworks
     const orchestrator = new MultiFrameworkOrchestrator([
       new AIGovFramework(),
       new NISTFramework()
@@ -36,13 +39,19 @@ export class RunnerEngine {
 
     const frameworkResults = await orchestrator.runAll(input);
 
-    const allFindings = frameworkResults.flatMap(r => r.findings);
+    // 2) Collect raw findings from all frameworks
+    const rawFindings = frameworkResults.flatMap(r => r.findings);
 
+    // 3) Normalize / deduplicate / merge severities & framework mappings
+    const allFindings = FindingNormalizer.normalize(rawFindings);
+
+    // 4) Aggregate domain risk
     const domainProfiles = DomainRiskAggregationEngine.aggregate(
       allFindings,
       input.context
     );
 
+    // 5) Aggregate overall risk
     const overall = OverallRiskAggregationEngine.aggregate(domainProfiles);
 
     const decision = {
@@ -50,11 +59,13 @@ export class RunnerEngine {
       drivers: overall.drivers
     };
 
+    // 6) Append to execution ledger (immutability + auditability)
     const ledgerHash = this.ledger.append(input, {
       decision,
       frameworks: frameworkResults.map(f => f.framework)
     });
 
+    // 7) Build report from normalized findings
     const report = ReportBuilder.build(
       input.client,
       input,
@@ -63,6 +74,7 @@ export class RunnerEngine {
       allFindings
     );
 
+    // 8) Export report
     ReportExporter.exportToJson(report);
 
     return { decision, report };

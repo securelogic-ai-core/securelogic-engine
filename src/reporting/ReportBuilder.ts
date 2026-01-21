@@ -17,6 +17,7 @@ export class ReportBuilder {
     findings: Finding[]
   ): AuditSprintReport {
 
+    // Recompute domain profiles from the FINAL normalized findings
     const domainProfiles = DomainRiskAggregationEngine.aggregate(
       findings,
       input.context
@@ -33,15 +34,19 @@ export class ReportBuilder {
         generatedAt: new Date().toISOString(),
         ledgerHash
       },
+
       executiveSummary: {
         overallRisk,
-        narrative: "This assessment provides an initial view of the organization's AI governance posture and risk exposure."
+        narrative:
+          "This assessment provides an initial view of the organization's AI governance posture and risk exposure."
       },
+
       domainScores: domainProfiles.map(d => ({
         domain: d.domain,
         rating: d.severity,
         notes: `${d.findingCount} finding(s), score ${d.finalScore} (base ${d.baseScore}, x${(1 + d.contextFactor).toFixed(2)})`
       })),
+
       findings
     };
   }
