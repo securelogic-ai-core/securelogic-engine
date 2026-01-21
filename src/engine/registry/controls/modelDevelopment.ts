@@ -6,12 +6,11 @@ export const ModelDevelopmentControls: Record<string, ControlDefinition> = {
     title: "Model Validation Testing",
     description: "Models are validated prior to deployment.",
 
-    domain: "Model Development",
-    riskCategory: "Model Development",
+    domain: "ModelDevelopment",
+    riskCategory: "ModelDevelopment",
 
     severity: "High",
 
-    controlType: "Preventive",
     frameworks: { iso42001: "A.7.3", nistAiRmf: "MEASURE-2" },
     baseWeight: 5,
     maturityHint: "Standardize validation gates before promotion.",

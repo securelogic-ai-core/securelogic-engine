@@ -7,7 +7,7 @@ export interface AuditSprintReportV1 {
   };
 
   executiveSummary: {
-    overallRisk: "Low" | "Medium" | "High";
+    overallRisk: "Low" | "Moderate" | "High";
     enterpriseRiskScore: number;
     approvalStatus: "Approved" | "Conditional" | "Rejected";
     narrative: string;
@@ -15,14 +15,14 @@ export interface AuditSprintReportV1 {
 
   enterpriseOverview: {
     totalRiskScore: number;
-    severity: "Low" | "Medium" | "High";
+    severity: "Low" | "Moderate" | "High";
     topRiskDomains: string[];
   };
 
   materialRisks: Array<{
     id: string;
     title: string;
-    severity: "Low" | "Medium" | "High";
+    severity: "Low" | "Moderate" | "High";
     contributionPercent: number;
     whyItMatters: string;
   }>;

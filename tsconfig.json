@@ -13,9 +13,7 @@
         "packages/contracts/src/index.ts"
       ]
     },
-    "types": [
-      "node"
-    ]
+    "types": ["node"]
   },
   "include": [
     "src",

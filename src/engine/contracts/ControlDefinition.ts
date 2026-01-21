@@ -1,37 +1,28 @@
-export type ControlType =
-  | "Preventive"
-  | "Detective"
-  | "Corrective";
+import type { CanonicalDomain } from "../taxonomy/Domains.js";
 
-export interface ControlFrameworkMap {
-  iso42001?: string;
-  nistAiRmf?: string;
-  soc2?: string;
-}
-
-export interface ControlDynamicModifiers {
-  genAIUsage?: number;
-  sensitiveData?: number;
-  highRiskIndustry?: number;
-  enterpriseScale?: number;
-}
-
-export interface ControlDefinition {
+export type ControlDefinition = {
   id: string;
   title: string;
   description: string;
 
-  domain: string;
+  domain: CanonicalDomain;
+
   riskCategory: string;
-
-  severity: "Low" | "Medium" | "High" | "Critical";
-  controlType: ControlType;
-
+  severity: "Low" | "Moderate" | "High" | "Critical";
   baseWeight: number;
 
-  maturityHint?: string;
-  rationaleTemplate?: string;
+  // UX / Assessment
+  question?: string;
 
-  frameworks?: ControlFrameworkMap;
-  dynamicModifiers?: ControlDynamicModifiers;
-}
+  // Framework mapping
+  frameworks?: Record<string, string>;
+
+  // Risk weighting
+  dynamicModifiers?: Record<string, number>;
+
+  // Maturity guidance
+  maturityHint?: string;
+
+  // Finding narrative template
+  rationaleTemplate?: string;
+};

@@ -1,1 +1,1 @@
-export type HeatmapScale = "Low" | "Medium" | "High";
+export type HeatmapScale = "Low" | "Moderate" | "High";

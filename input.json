@@ -1,0 +1,9 @@
+{
+  "context": { "system": "test" },
+  "findings": [],
+  "policyBundle": {
+    "bundleId": "test-bundle",
+    "bundleHash": "hash123",
+    "policies": []
+  }
+}

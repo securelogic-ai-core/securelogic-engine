@@ -2,7 +2,7 @@ import type { EngineFinding, SeverityLevel, EngineResult } from "../contracts/En
 
 const severityOrder: Record<SeverityLevel, number> = {
   Low: 1,
-  Medium: 2,
+  Moderate: 2,
   High: 3,
   Critical: 4
 };
@@ -10,7 +10,7 @@ const severityOrder: Record<SeverityLevel, number> = {
 export function buildEngineResult(findings: EngineFinding[]): EngineResult {
   const severityBreakdown: Record<SeverityLevel, number> = {
     Low: 0,
-    Medium: 0,
+    Moderate: 0,
     High: 0,
     Critical: 0
   };

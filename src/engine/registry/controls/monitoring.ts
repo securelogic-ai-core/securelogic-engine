@@ -8,7 +8,6 @@ export const MonitoringControls: Record<string, ControlDefinition> = {
 
     domain: "Monitoring",
     severity: "High",
-    controlType: "Detective",
     riskCategory: "Monitoring",
     frameworks: { iso42001: "A.8.1", nistAiRmf: "MONITOR-1" },
     baseWeight: 5,

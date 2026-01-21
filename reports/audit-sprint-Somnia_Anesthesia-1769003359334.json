@@ -1,0 +1,103 @@
+{
+  "meta": {
+    "clientName": "Somnia Anesthesia",
+    "industry": "Healthcare",
+    "assessmentType": "AI Audit Sprint",
+    "scope": "Clinical + Administrative AI Usage",
+    "generatedAt": "2026-01-21T13:49:19.334Z",
+    "ledgerHash": "a8b0edb8a89e66972eb95c7b7f4fa69807c81946f2c5ca19739dd133dd07520a"
+  },
+  "executiveSummary": {
+    "overallRisk": "Critical",
+    "narrative": "This assessment provides an initial view of the organization's AI governance posture and risk exposure."
+  },
+  "domainScores": [
+    {
+      "domain": "Governance",
+      "rating": "Critical",
+      "notes": "2 finding(s), score 92 (base 71, x1.30)"
+    },
+    {
+      "domain": "Monitoring",
+      "rating": "Critical",
+      "notes": "1 finding(s), score 87 (base 67, x1.30)"
+    },
+    {
+      "domain": "DataQuality",
+      "rating": "Critical",
+      "notes": "1 finding(s), score 87 (base 67, x1.30)"
+    },
+    {
+      "domain": "ModelDevelopment",
+      "rating": "Critical",
+      "notes": "1 finding(s), score 87 (base 67, x1.30)"
+    },
+    {
+      "domain": "BusinessContinuity",
+      "rating": "Moderate",
+      "notes": "1 finding(s), score 55 (base 42, x1.30)"
+    }
+  ],
+  "findings": [
+    {
+      "framework": "Unified",
+      "id": "GOV-101",
+      "title": "AI Governance Policy",
+      "severity": "High",
+      "domain": "Governance",
+      "businessImpact": "Increased regulatory and operational risk.",
+      "evidence": "Control evaluated as not implemented.",
+      "recommendation": "Implement and formalize this control."
+    },
+    {
+      "framework": "Unified",
+      "id": "GOV-102",
+      "title": "AI Risk Ownership Defined",
+      "severity": "High",
+      "domain": "Governance",
+      "businessImpact": "Increased regulatory and operational risk.",
+      "evidence": "Control evaluated as not implemented.",
+      "recommendation": "Implement and formalize this control."
+    },
+    {
+      "framework": "Unified",
+      "id": "MON-001",
+      "title": "Model Monitoring",
+      "severity": "High",
+      "domain": "Monitoring",
+      "businessImpact": "Increased regulatory and operational risk.",
+      "evidence": "Control evaluated as not implemented.",
+      "recommendation": "Implement and formalize this control."
+    },
+    {
+      "framework": "Unified",
+      "id": "DQ-001",
+      "title": "Data Lineage Tracked",
+      "severity": "High",
+      "domain": "DataQuality",
+      "businessImpact": "Increased regulatory and operational risk.",
+      "evidence": "Control evaluated as not implemented.",
+      "recommendation": "Implement and formalize this control."
+    },
+    {
+      "framework": "Unified",
+      "id": "MD-001",
+      "title": "Model Validation Testing",
+      "severity": "High",
+      "domain": "ModelDevelopment",
+      "businessImpact": "Increased regulatory and operational risk.",
+      "evidence": "Control evaluated as not implemented.",
+      "recommendation": "Implement and formalize this control."
+    },
+    {
+      "framework": "Unified",
+      "id": "BC-006",
+      "title": "Recovery Point Objective Defined",
+      "severity": "Moderate",
+      "domain": "BusinessContinuity",
+      "businessImpact": "Increased regulatory and operational risk.",
+      "evidence": "Control evaluated as not implemented.",
+      "recommendation": "Implement and formalize this control."
+    }
+  ]
+}
