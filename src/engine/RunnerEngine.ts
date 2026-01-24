@@ -61,9 +61,12 @@ export class RunnerEngine {
 
       const overallV2 = OverallRiskAggregationEngineV2.aggregate(domainProfilesV2);
 
+      // 🔥 Flatten driversByDomain -> string[]
+      const flattenedDrivers = Object.values(overallV2.driversByDomain).flat();
+
       decision = {
         severity: overallV2.severity,
-        drivers: overallV2.drivers
+        drivers: flattenedDrivers
       };
     } else {
       const domainProfilesV1 = DomainRiskAggregationEngine.aggregate(

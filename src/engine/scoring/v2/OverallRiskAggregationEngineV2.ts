@@ -1,13 +1,6 @@
 import type { RiskLevel } from "../../contracts/RiskLevel.js";
 import type { DomainRiskProfileV2 } from "./DomainRiskAggregationEngineV2.js";
 
-const SEVERITY_WEIGHT: Record<RiskLevel, number> = {
-  Low: 10,
-  Moderate: 35,
-  High: 70,
-  Critical: 95
-};
-
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
@@ -23,7 +16,7 @@ export type OverallRiskSummaryV2 = {
   severity: RiskLevel;
   score: number;
   rationale: string;
-  drivers: string[];
+  driversByDomain: Record<string, string[]>;
 };
 
 export class OverallRiskAggregationEngineV2 {
@@ -33,18 +26,16 @@ export class OverallRiskAggregationEngineV2 {
         severity: "Low",
         score: 0,
         rationale: "No domains present",
-        drivers: []
+        driversByDomain: {}
       };
     }
 
     const sorted = [...domains].sort((a, b) => b.finalScore - a.finalScore);
-
     const top = sorted[0]!;
 
+    const weights = [1.0, 0.6, 0.3];
     let weightedSum = 0;
     let weightTotal = 0;
-
-    const weights = [1.0, 0.6, 0.3];
 
     for (let i = 0; i < Math.min(sorted.length, 3); i++) {
       weightedSum += sorted[i]!.finalScore * weights[i]!;
@@ -54,11 +45,19 @@ export class OverallRiskAggregationEngineV2 {
     const finalScore = clamp(weightedSum / weightTotal, 0, 100);
     const severity = scoreToSeverity(finalScore);
 
+    const driversByDomain: Record<string, string[]> = {};
+
+    for (const domain of sorted.slice(0, 3)) {
+      if (domain.drivers.length > 0) {
+        driversByDomain[domain.domain] = [...domain.drivers];
+      }
+    }
+
     return {
       severity,
       score: Math.round(finalScore),
       rationale: `Overall risk driven primarily by ${top.domain}`,
-      drivers: sorted.slice(0, 3).flatMap(d => d.drivers).slice(0, 5)
+      driversByDomain
     };
   }
 }
