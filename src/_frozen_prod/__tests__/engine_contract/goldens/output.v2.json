@@ -1,0 +1,273 @@
+{
+  "decision": {
+    "severity": "Critical",
+    "drivers": [
+      "AI Governance Policy",
+      "AI Risk Ownership Defined",
+      "Model Monitoring",
+      "Data Lineage Tracked"
+    ]
+  },
+  "report": {
+    "meta": {
+      "clientName": "Acme Corp",
+      "industry": "Finance",
+      "assessmentType": "AI",
+      "scope": "Full",
+      "generatedAt": "2026-01-24T21:50:52.016Z",
+      "ledgerHash": "ae45946fd33f5dd7ecf77dc945ae5717febdb0ee4b558f51ef3cc7e55e7a619f",
+      "evidenceSummary": {
+        "totalEvidenceItems": 6,
+        "bySource": {
+          "Questionnaire": 6
+        },
+        "averageConfidenceScore": 26,
+        "confidenceDistribution": {
+          "Low": 6,
+          "Medium": 0,
+          "High": 0,
+          "Very High": 0
+        },
+        "narrative": "Total evidence items attached: 6. Average confidence score: 26. Top evidence sources: Questionnaire: 6. Evidence is primarily self-attested questionnaire responses; confidence will remain low until validated with artifacts (policies, configs, logs, tickets)."
+      },
+      "policyViolations": [
+        {
+          "code": "EVIDENCE_REQUIRED_FOR_HIGH_RISK",
+          "severity": "Blocker",
+          "message": "High/Critical findings are supported only by questionnaire self-attestation. Add artifacts (policy, config, logs, tickets, screenshots) or downgrade confidence.",
+          "findingIds": [
+            "GOV-101",
+            "GOV-102",
+            "MON-001",
+            "DQ-001",
+            "MD-001"
+          ]
+        },
+        {
+          "code": "LOW_CONFIDENCE_HIGH_RISK_REVIEW",
+          "severity": "Warning",
+          "message": "High/Critical findings are low-confidence. Treat as preliminary until validated with evidence artifacts.",
+          "findingIds": [
+            "GOV-101",
+            "GOV-102",
+            "MON-001",
+            "DQ-001",
+            "MD-001"
+          ]
+        }
+      ]
+    },
+    "executiveSummary": {
+      "overallRisk": "Critical",
+      "narrative": "This assessment provides an initial view of the organization's AI governance posture and risk exposure."
+    },
+    "domainScores": [
+      {
+        "domain": "Governance",
+        "rating": "Critical",
+        "notes": "2 finding(s), score 85 (base 71, x1.20)"
+      },
+      {
+        "domain": "Monitoring",
+        "rating": "High",
+        "notes": "1 finding(s), score 80 (base 67, x1.20)"
+      },
+      {
+        "domain": "DataQuality",
+        "rating": "High",
+        "notes": "1 finding(s), score 80 (base 67, x1.20)"
+      },
+      {
+        "domain": "ModelDevelopment",
+        "rating": "High",
+        "notes": "1 finding(s), score 80 (base 67, x1.20)"
+      },
+      {
+        "domain": "BusinessContinuity",
+        "rating": "Moderate",
+        "notes": "1 finding(s), score 50 (base 42, x1.20)"
+      }
+    ],
+    "findings": [
+      {
+        "id": "GOV-101",
+        "title": "AI Governance Policy",
+        "domain": "Governance",
+        "severity": "High",
+        "businessImpact": "Increased regulatory and operational risk.",
+        "recommendation": "Implement and formalize this control.",
+        "confidence": "Low",
+        "confidenceScore": 26,
+        "confidenceRationale": "Based on 1 evidence item(s), trust-weighted model, severity High, strictness x0.85, reusePenalty x1.00",
+        "evidence": "Control evaluated as not implemented.",
+        "evidenceItems": [
+          {
+            "artifactType": "Other",
+            "source": "Questionnaire",
+            "provider": "Internal",
+            "trustLevel": "SelfAttested",
+            "reviewStatus": "Draft",
+            "reference": "GOV-101",
+            "coversControls": [
+              "GOV-101"
+            ],
+            "note": "Marked as not implemented in assessment response"
+          }
+        ],
+        "mappedFrameworks": [
+          "iso42001",
+          "nistAiRmf"
+        ]
+      },
+      {
+        "id": "GOV-102",
+        "title": "AI Risk Ownership Defined",
+        "domain": "Governance",
+        "severity": "High",
+        "businessImpact": "Increased regulatory and operational risk.",
+        "recommendation": "Implement and formalize this control.",
+        "confidence": "Low",
+        "confidenceScore": 26,
+        "confidenceRationale": "Based on 1 evidence item(s), trust-weighted model, severity High, strictness x0.85, reusePenalty x1.00",
+        "evidence": "Control evaluated as not implemented.",
+        "evidenceItems": [
+          {
+            "artifactType": "Other",
+            "source": "Questionnaire",
+            "provider": "Internal",
+            "trustLevel": "SelfAttested",
+            "reviewStatus": "Draft",
+            "reference": "GOV-102",
+            "coversControls": [
+              "GOV-102"
+            ],
+            "note": "Marked as not implemented in assessment response"
+          }
+        ],
+        "mappedFrameworks": [
+          "iso42001",
+          "nistAiRmf"
+        ]
+      },
+      {
+        "id": "MON-001",
+        "title": "Model Monitoring",
+        "domain": "Monitoring",
+        "severity": "High",
+        "businessImpact": "Increased regulatory and operational risk.",
+        "recommendation": "Implement and formalize this control.",
+        "confidence": "Low",
+        "confidenceScore": 26,
+        "confidenceRationale": "Based on 1 evidence item(s), trust-weighted model, severity High, strictness x0.85, reusePenalty x1.00",
+        "evidence": "Control evaluated as not implemented.",
+        "evidenceItems": [
+          {
+            "artifactType": "Other",
+            "source": "Questionnaire",
+            "provider": "Internal",
+            "trustLevel": "SelfAttested",
+            "reviewStatus": "Draft",
+            "reference": "MON-001",
+            "coversControls": [
+              "MON-001"
+            ],
+            "note": "Marked as not implemented in assessment response"
+          }
+        ],
+        "mappedFrameworks": [
+          "iso42001",
+          "nistAiRmf"
+        ]
+      },
+      {
+        "id": "DQ-001",
+        "title": "Data Lineage Tracked",
+        "domain": "DataQuality",
+        "severity": "High",
+        "businessImpact": "Increased regulatory and operational risk.",
+        "recommendation": "Implement and formalize this control.",
+        "confidence": "Low",
+        "confidenceScore": 26,
+        "confidenceRationale": "Based on 1 evidence item(s), trust-weighted model, severity High, strictness x0.85, reusePenalty x1.00",
+        "evidence": "Control evaluated as not implemented.",
+        "evidenceItems": [
+          {
+            "artifactType": "Other",
+            "source": "Questionnaire",
+            "provider": "Internal",
+            "trustLevel": "SelfAttested",
+            "reviewStatus": "Draft",
+            "reference": "DQ-001",
+            "coversControls": [
+              "DQ-001"
+            ],
+            "note": "Marked as not implemented in assessment response"
+          }
+        ],
+        "mappedFrameworks": [
+          "iso42001",
+          "nistAiRmf"
+        ]
+      },
+      {
+        "id": "MD-001",
+        "title": "Model Validation Testing",
+        "domain": "ModelDevelopment",
+        "severity": "High",
+        "businessImpact": "Increased regulatory and operational risk.",
+        "recommendation": "Implement and formalize this control.",
+        "confidence": "Low",
+        "confidenceScore": 26,
+        "confidenceRationale": "Based on 1 evidence item(s), trust-weighted model, severity High, strictness x0.85, reusePenalty x1.00",
+        "evidence": "Control evaluated as not implemented.",
+        "evidenceItems": [
+          {
+            "artifactType": "Other",
+            "source": "Questionnaire",
+            "provider": "Internal",
+            "trustLevel": "SelfAttested",
+            "reviewStatus": "Draft",
+            "reference": "MD-001",
+            "coversControls": [
+              "MD-001"
+            ],
+            "note": "Marked as not implemented in assessment response"
+          }
+        ],
+        "mappedFrameworks": [
+          "iso42001",
+          "nistAiRmf"
+        ]
+      },
+      {
+        "id": "BC-006",
+        "title": "Recovery Point Objective Defined",
+        "domain": "BusinessContinuity",
+        "severity": "Moderate",
+        "businessImpact": "Increased regulatory and operational risk.",
+        "recommendation": "Implement and formalize this control.",
+        "confidence": "Low",
+        "confidenceScore": 28,
+        "confidenceRationale": "Based on 1 evidence item(s), trust-weighted model, severity Moderate, strictness x0.92, reusePenalty x1.00",
+        "evidence": "Control evaluated as not implemented.",
+        "evidenceItems": [
+          {
+            "artifactType": "Other",
+            "source": "Questionnaire",
+            "provider": "Internal",
+            "trustLevel": "SelfAttested",
+            "reviewStatus": "Draft",
+            "reference": "BC-006",
+            "coversControls": [
+              "BC-006"
+            ],
+            "note": "Marked as not implemented in assessment response"
+          }
+        ],
+        "mappedFrameworks": [
+          "soc2"
+        ]
+      }
+    ]
+  }
+}
