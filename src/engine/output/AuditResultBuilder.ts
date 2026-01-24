@@ -1,23 +1,23 @@
-import type { AuditResultV1 } from "./AuditResultV1.js";
-import type { EnterpriseRiskSummary } from "../contracts/EnterpriseRiskSummary.js";
-import type { RiskDecision } from "../contracts/RiskDecision.js";
+import type { Clock } from "../runtime/Clock.js";
 
 export class AuditResultBuilder {
-  static build(params: {
-    auditId: string;
-    engineVersion: string;
-    summary: EnterpriseRiskSummary;
-    decision: RiskDecision;
-  }): AuditResultV1 {
+  static build(
+    client: any,
+    input: any,
+    decision: any,
+    ledgerHash: string,
+    findings: any[],
+    clock: Clock
+  ) {
     return {
-      version: "v1",
-      metadata: {
-        auditId: params.auditId,
-        generatedAt: new Date().toISOString(),
-        engineVersion: params.engineVersion
-      },
-      enterpriseSummary: params.summary,
-      riskDecision: params.decision
+      client,
+      decision,
+      report: {
+        industry: client.industry,
+        generatedAt: clock.now(),
+        ledgerHash,
+        findings
+      }
     };
   }
 }

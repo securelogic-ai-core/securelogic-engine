@@ -1,5 +1,6 @@
 import type { FrameworkRunner, FrameworkResult } from "./FrameworkRunner.js";
-import type { EngineInput } from "../RunnerEngine.js";
+import type { EngineInput } from "../contracts/EngineInput.js";
+import type { Clock } from "../runtime/Clock.js";
 
 import { ControlEvaluationEngine } from "../evaluation/ControlEvaluationEngine.js";
 import { FindingGenerator } from "../adapters/FindingGenerator.js";
@@ -7,10 +8,10 @@ import { FindingGenerator } from "../adapters/FindingGenerator.js";
 export class AIGovFramework implements FrameworkRunner {
   name = "AI-Governance";
 
-  async run(input: EngineInput): Promise<FrameworkResult> {
+  async run(input: EngineInput, clock: Clock): Promise<FrameworkResult> {
     const controlResults = ControlEvaluationEngine.evaluate(input.answers);
 
-    const findings = FindingGenerator.fromControlResults(controlResults);
+    const findings = FindingGenerator.fromControlResults(controlResults, clock);
 
     return {
       framework: this.name,

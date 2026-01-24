@@ -1,4 +1,4 @@
-import { RunnerEngine } from "./engine/RunnerEngine.js";
+import { RunnerEngine } from "./engine/contracts/EngineInput.js";
 import type { ScoringInput } from "./engine/contracts/ScoringInput.js";
 
 export function runEngine(input: ScoringInput) {

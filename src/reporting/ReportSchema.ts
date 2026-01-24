@@ -1,40 +1,77 @@
-// src/reporting/ReportSchema.ts
-
+export type ConfidenceLevel = "Low" | "Medium" | "High" | "Very High";
 export type RiskLevel = "Low" | "Moderate" | "High" | "Critical";
 
-export type ConfidenceLevel = "Low" | "Medium" | "High";
+/* =========================
+   Evidence Trust System
+========================= */
+
+export type EvidenceTrustLevel = "SelfAttested" | "Internal" | "System" | "Independent";
+export type EvidenceArtifactType = "Policy" | "Config" | "Log" | "Ticket" | "Screenshot" | "Other";
+export type EvidenceReviewStatus = "Draft" | "Reviewed" | "Approved";
 
 export type EvidenceItem = {
-  source: "Questionnaire" | "Interview" | "Document" | "SystemScan";
-  reference?: string;
+  source: string;
+
+  trustLevel: EvidenceTrustLevel;
+  artifactType: EvidenceArtifactType;
+  reviewStatus: EvidenceReviewStatus;
+
+  reference: string;
   note?: string;
+  provider: string;
+
+  date: string;
+  coversControls: string[];
 };
+
+/* =========================
+   Findings
+========================= */
 
 export type Finding = {
   id: string;
   title: string;
   severity: RiskLevel;
   domain: string;
-
-  // 🔴 MULTI-FRAMEWORK ATTRIBUTION
   mappedFrameworks: string[];
 
-  // 🔴 AUDIT-GRADE EVIDENCE
   evidenceItems: EvidenceItem[];
 
-  // 🔴 CONFIDENCE IN THE FINDING
   confidence: ConfidenceLevel;
+  confidenceScore: number;
+  confidenceRationale: string;
 
   businessImpact: string;
   evidence: string;
   recommendation: string;
 };
 
-export type DomainScore = {
-  domain: string;
-  rating: RiskLevel;
-  notes: string;
+/* =========================
+   Evidence Summary
+========================= */
+
+export type EvidenceSummary = {
+  totalEvidenceItems: number;
+  bySource: Record<string, number>;
+  averageConfidenceScore: number;
+  confidenceDistribution: Record<ConfidenceLevel, number>;
+  narrative: string;
 };
+
+/* =========================
+   Policy Violations
+========================= */
+
+export type PolicyViolation = {
+  code: string;
+  severity: "Warning" | "Blocker";
+  message: string;
+  findingIds: string[];
+};
+
+/* =========================
+   Report
+========================= */
 
 export type AuditSprintReport = {
   meta: {
@@ -44,11 +81,20 @@ export type AuditSprintReport = {
     scope: string;
     generatedAt: string;
     ledgerHash: string;
+    evidenceSummary?: EvidenceSummary;
+    policyViolations?: PolicyViolation[];
   };
+
   executiveSummary: {
     overallRisk: RiskLevel;
     narrative: string;
   };
-  domainScores: DomainScore[];
+
+  domainScores: {
+    domain: string;
+    rating: RiskLevel;
+    notes: string;
+  }[];
+
   findings: Finding[];
 };

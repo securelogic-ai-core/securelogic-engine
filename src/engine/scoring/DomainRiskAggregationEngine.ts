@@ -1,6 +1,6 @@
 import type { Finding, RiskLevel } from "../../reporting/ReportSchema.js";
 import { computeContextFactor } from "./ContextRiskWeights.js";
-import type { EngineInput } from "../RunnerEngine.js";
+import type { EngineInput } from "../contracts/EngineInput.js";
 
 const WEIGHTS: Record<RiskLevel, number> = {
   Critical: 90,
@@ -52,7 +52,7 @@ export class DomainRiskAggregationEngine {
         baseScore: Math.round(baseScore),
         finalScore: Math.round(finalScore),
         contextFactor,
-        drivers: domainFindings.map(f => f.title)
+        drivers: [domain]
       });
     }
 

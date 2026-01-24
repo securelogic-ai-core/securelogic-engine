@@ -1,5 +1,5 @@
 
-import { RunnerEngine } from "../engine/RunnerEngine.js";
+import { RunnerEngine } from "../contracts/EngineInput.js";
 import type { AuditSprintInput } from "../engine/contracts/AuditSprintInput.js";
 
 const input: AuditSprintInput = {

@@ -1,4 +1,4 @@
-import { RunnerEngine } from "../engine/RunnerEngine.js";
+import { RunnerEngine } from "../contracts/EngineInput.js";
 import { ControlStateFactory } from "../engine/factories/ControlStateFactory.js";
 import type { ScoringInput } from "../engine/contracts/ScoringInput.js";
 

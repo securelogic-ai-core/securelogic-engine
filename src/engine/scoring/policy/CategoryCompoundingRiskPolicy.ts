@@ -1,54 +1,22 @@
-import type { EnterpriseRiskSummary } from "../../contracts/EnterpriseRiskSummary.js";
-
-const COMPOUNDING_RULES = [
-  {
-    categories: ["Governance", "Monitoring"],
-    minSeverity: "Moderate",
-    escalateTo: "High",
-    rationale: "Governance and Monitoring weaknesses compound systemic AI risk"
-  },
-  {
-    categories: ["Governance", "Business Continuity"],
-    minSeverity: "Moderate",
-    escalateTo: "High",
-    rationale: "Governance and resilience gaps create compounding operational risk"
-  }
-];
+import type { RiskFinding } from "../../contracts/RiskFinding.js";
+import type { RiskLevel } from "../../contracts/RiskLevel.js";
 
 export class CategoryCompoundingRiskPolicy {
-  static apply(summary: EnterpriseRiskSummary): EnterpriseRiskSummary {
-    const categoryMap = new Map(
-      summary.categoryScores.map(c => [c.category, c.severity])
-    );
+  static apply(findings: RiskFinding[]): RiskFinding[] {
+    const categoryMap = new Map<string, RiskLevel>();
 
-    const rationales: string[] = [];
-
-    for (const rule of COMPOUNDING_RULES) {
-      const [a, b] = rule.categories;
-      const sevA = categoryMap.get(a);
-      const sevB = categoryMap.get(b);
-
-      if (!sevA || !sevB) continue;
-
-      const qualifies =
-        (sevA === "High" || sevA === rule.minSeverity) &&
-        (sevB === "High" || sevB === rule.minSeverity);
-
-      if (qualifies) {
-        rationales.push(rule.rationale);
+    for (const f of findings) {
+      const existing = categoryMap.get(f.domain);
+      if (!existing || this.compare(f.level, existing) > 0) {
+        categoryMap.set(f.domain, f.level);
       }
     }
 
-    if (rationales.length === 0) {
-      return summary;
-    }
+    return findings;
+  }
 
-    return {
-      ...summary,
-      severityRationale: [
-        ...(summary.severityRationale ?? []),
-        ...rationales
-      ]
-    };
+  private static compare(a: RiskLevel, b: RiskLevel): number {
+    const order: RiskLevel[] = ["Low", "Moderate", "High", "Critical"];
+    return order.indexOf(a) - order.indexOf(b);
   }
 }

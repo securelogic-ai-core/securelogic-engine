@@ -1,9 +1,9 @@
-import { ExecutionLedger } from "../runtime/ledger/ExecutionLedger.js";
-import { ReportBuilder } from "../reporting/ReportBuilder.js";
-import { ReportExporter } from "../reporting/ReportExporter.js";
+import type { EngineInput } from "./contracts/EngineInput.js";
+import type { RiskLevel } from "./contracts/RiskLevel.js";
 
-import { DomainRiskAggregationEngine } from "./scoring/DomainRiskAggregationEngine.js";
-import { OverallRiskAggregationEngine } from "./scoring/OverallRiskAggregationEngine.js";
+import { ExecutionLedger } from "../runtime/ledger/ExecutionLedger.js";
+import { SystemClock } from "./runtime/Clock.js";
+import type { Clock } from "./runtime/Clock.js";
 
 import { MultiFrameworkOrchestrator } from "./orchestrator/MultiFrameworkOrchestrator.js";
 import { AIGovFramework } from "./frameworks/AIGovFramework.js";
@@ -11,61 +11,79 @@ import { NISTFramework } from "./frameworks/NISTFramework.js";
 
 import { FindingNormalizer } from "./adapters/FindingNormalizer.js";
 
-export type EngineInput = {
-  client: {
-    name: string;
-    industry: string;
-    assessmentType: string;
-    scope: string;
-  };
-  context: {
-    regulated: boolean;
-    safetyCritical: boolean;
-    handlesPII: boolean;
-    scale: "Small" | "Medium" | "Enterprise";
-  };
-  answers: Record<string, boolean>;
+import { DomainRiskAggregationEngine } from "./scoring/DomainRiskAggregationEngine.js";
+import { OverallRiskAggregationEngine } from "./scoring/OverallRiskAggregationEngine.js";
+
+import { DomainRiskAggregationEngineV2 } from "./scoring/v2/DomainRiskAggregationEngineV2.js";
+import { OverallRiskAggregationEngineV2 } from "./scoring/v2/OverallRiskAggregationEngineV2.js";
+
+import { ReportBuilder } from "../reporting/ReportBuilder.js";
+import { ReportExporter } from "../reporting/ReportExporter.js";
+
+import { DEFAULT_ENGINE_MODE, type EngineMode } from "./EngineMode.js";
+
+type Decision = {
+  severity: RiskLevel;
+  drivers: string[];
 };
 
 export class RunnerEngine {
   private ledger = new ExecutionLedger();
+  private clock: Clock;
+  private mode: EngineMode;
+
+  constructor(
+    clock: Clock = new SystemClock(),
+    mode: EngineMode = DEFAULT_ENGINE_MODE
+  ) {
+    this.clock = clock;
+    this.mode = mode;
+  }
 
   async run(input: EngineInput) {
-    // 1) Run all frameworks
     const orchestrator = new MultiFrameworkOrchestrator([
       new AIGovFramework(),
       new NISTFramework()
     ]);
 
-    const frameworkResults = await orchestrator.runAll(input);
+    const frameworkResults = await orchestrator.runAll(input, this.clock);
 
-    // 2) Collect raw findings from all frameworks
     const rawFindings = frameworkResults.flatMap(r => r.findings);
-
-    // 3) Normalize / deduplicate / merge severities & framework mappings
     const allFindings = FindingNormalizer.normalize(rawFindings);
 
-    // 4) Aggregate domain risk
-    const domainProfiles = DomainRiskAggregationEngine.aggregate(
-      allFindings,
-      input.context
-    );
+    let decision: Decision;
 
-    // 5) Aggregate overall risk
-    const overall = OverallRiskAggregationEngine.aggregate(domainProfiles);
+    if (this.mode === "V2") {
+      const domainProfilesV2 = DomainRiskAggregationEngineV2.aggregate(
+        allFindings,
+        input.context
+      );
 
-    const decision = {
-      severity: overall.severity,
-      drivers: overall.drivers
-    };
+      const overallV2 = OverallRiskAggregationEngineV2.aggregate(domainProfilesV2);
 
-    // 6) Append to execution ledger (immutability + auditability)
+      decision = {
+        severity: overallV2.severity,
+        drivers: overallV2.drivers
+      };
+    } else {
+      const domainProfilesV1 = DomainRiskAggregationEngine.aggregate(
+        allFindings,
+        input.context
+      );
+
+      const overallV1 = OverallRiskAggregationEngine.aggregate(domainProfilesV1);
+
+      decision = {
+        severity: overallV1.severity,
+        drivers: overallV1.drivers
+      };
+    }
+
     const ledgerHash = this.ledger.append(input, {
       decision,
       frameworks: frameworkResults.map(f => f.framework)
     });
 
-    // 7) Build report from normalized findings
     const report = ReportBuilder.build(
       input.client,
       input,
@@ -74,7 +92,6 @@ export class RunnerEngine {
       allFindings
     );
 
-    // 8) Export report
     ReportExporter.exportToJson(report);
 
     return { decision, report };
