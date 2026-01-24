@@ -31,12 +31,12 @@ export class ExecutionLedger {
 
     const inputHash = this.hash(inputPayload);
 
-    // 🔒 CRITICAL: only hash the deterministic decision, not the envelope
+    // 🔒 Only hash deterministic decision
     const decision = (outputPayload as any).decision;
     const outputHash = this.hash(decision);
 
-    const previousHash =
-      this.chain.length === 0 ? null : this.chain[this.chain.length - 1].entryHash;
+    const last = this.chain.length > 0 ? this.chain[this.chain.length - 1]! : null;
+    const previousHash = last ? last.entryHash : null;
 
     const entryHash = this.hash({
       timestamp,
@@ -76,13 +76,14 @@ export class ExecutionLedger {
     return entryHash;
   }
 
-  getChain() {
+  getChain(): LedgerEntry[] {
     return [...this.chain];
   }
 
   verify(): boolean {
     for (let i = 0; i < this.chain.length; i++) {
-      const entry = this.chain[i];
+      const entry = this.chain[i]!;
+      const prev = i > 0 ? this.chain[i - 1]! : null;
 
       const recomputed = this.hash({
         timestamp: entry.timestamp,
@@ -113,7 +114,7 @@ export class ExecutionLedger {
       if (i === 0) {
         if (entry.previousHash !== null) return false;
       } else {
-        if (entry.previousHash !== this.chain[i - 1].entryHash) return false;
+        if (!prev || entry.previousHash !== prev.entryHash) return false;
       }
     }
 

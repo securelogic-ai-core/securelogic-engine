@@ -1,4 +1,4 @@
-import type { EngineInput } from "../RunnerEngine.js";
+import type { EngineInput } from "../contracts/EngineInput.js";
 
 /**
  * Returns a bounded context factor between -0.3 and +0.3

@@ -1,37 +1,36 @@
+import type { RiskFinding } from "../contracts/RiskFinding.js";
+import type { RiskLevel } from "../contracts/RiskLevel.js";
 import { ControlRegistry } from "../registry/ControlRegistry.js";
-import type { ControlAssessment } from "../contracts/ControlAssessment.js";
-import type { EngineResult, EngineFinding } from "../contracts/EngineResult.js";
+
+const SCORE_BY_LEVEL: Record<RiskLevel, number> = {
+  Low: 10,
+  Moderate: 40,
+  High: 70,
+  Critical: 90
+};
 
 export class ScoringEngineV3 {
-  static score(
-    assessments: ControlAssessment[]
-  ): EngineResult {
-    const findings: EngineFinding[] = assessments.map(assessment => {
-      const definition =
-        ControlRegistry.controls[assessment.controlPath];
+  static score(controlAssessments: any[]): RiskFinding[] {
+    const findings: RiskFinding[] = [];
 
-      return {
-        id: definition.id,
-        title: definition.title,
-        severity: assessment.satisfied ? "Low" : "High",
-        likelihood: assessment.satisfied ? "Unlikely" : "Possible",
-        framework: "Internal AI Risk Framework",
-        rationale: `Risk derived from control ${definition.id} (${definition.title})`
-      };
-    });
+    for (const assessment of controlAssessments) {
+      if (assessment.satisfied) continue;
 
-    const overallRiskLevel =
-      findings.some(f => f.severity === "Critical")
-        ? "Critical"
-        : findings.some(f => f.severity === "High")
-        ? "High"
-        : findings.some(f => f.severity === "Moderate")
-        ? "Moderate"
-        : "Low";
+      const definition = ControlRegistry.controls[assessment.controlPath];
+      if (!definition) continue;
 
-    return {
-      overallRiskLevel,
-      findings
-    };
+      // TODO: real logic later — for now default
+      const level: RiskLevel = "Moderate";
+
+      findings.push({
+        domain: definition.domain,
+        level,
+        score: SCORE_BY_LEVEL[level],
+        summary: `Control ${definition.id} not implemented`,
+        evidenceCount: assessment.evidenceProvided ? 1 : 0
+      });
+    }
+
+    return findings;
   }
 }

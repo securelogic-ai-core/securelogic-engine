@@ -3,3 +3,14 @@
 dist/
 dist/
 node_modules/
+
+# Local artifacts
+reports/*.json
+test.db
+test.db-*
+*.sqlite
+*.sqlite-*
+
+# WAL/SHM
+*-wal
+*-shm

@@ -1,12 +1,12 @@
-import type { EngineInput } from "../RunnerEngine.js";
-import type { Finding } from "../../reporting/ReportSchema.js";
+import type { EngineInput } from "../contracts/EngineInput.js";
+import type { Clock } from "../runtime/Clock.js";
 
 export type FrameworkResult = {
   framework: string;
-  findings: Finding[];
+  findings: any[];
 };
 
 export interface FrameworkRunner {
   name: string;
-  run(input: EngineInput): Promise<FrameworkResult>;
+  run(input: EngineInput, clock: Clock): Promise<FrameworkResult>;
 }

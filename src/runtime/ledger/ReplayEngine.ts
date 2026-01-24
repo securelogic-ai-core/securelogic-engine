@@ -14,7 +14,7 @@ export class ReplayEngine {
     const engine = new RunnerEngine();
 
     for (let i = 0; i < chain.length; i++) {
-      const entry = chain[i];
+      const entry = chain[i]!; // non-null: loop guarantees this exists
 
       // Re-run engine with original input
       const result = await engine.run(entry.inputPayload as any);
