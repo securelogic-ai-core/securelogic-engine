@@ -1,6 +1,8 @@
 import type { ControlResult } from "../evaluation/ControlEvaluationEngine.js";
 import type { Clock } from "../runtime/Clock.js";
 
+const EXPLAIN_MODE = process.env.SECURELOGIC_EXPLAIN === "1";
+
 export class FindingGenerator {
   static fromControlResults(results: ControlResult[], clock: Clock) {
     const findings: any[] = [];
@@ -25,7 +27,7 @@ export class FindingGenerator {
         `Based on ${evidenceCount} evidence item(s), trust-weighted model, severity ${c.severity}, ` +
         `strictness x${strictness.toFixed(2)}, reusePenalty x1.00`;
 
-      findings.push({
+      const finding: any = {
         id: c.id,
         title: c.title,
         domain: c.domain,
@@ -53,7 +55,28 @@ export class FindingGenerator {
         ],
 
         mappedFrameworks: c.frameworks ? Object.keys(c.frameworks) : []
-      });
+      };
+
+      // Hidden explain block (does not affect prod outputs)
+      if (EXPLAIN_MODE) {
+        finding.__explain = {
+          confidence: {
+            model: "legacy-frozen",
+            inputs: {
+              evidenceCount,
+              severity: c.severity
+            },
+            components: {
+              strictnessFactor: strictness,
+              reusePenalty: 1.0
+            },
+            finalScore: confidenceScore,
+            note: "This is the legacy frozen confidence model. Real engine explainability will replace this."
+          }
+        };
+      }
+
+      findings.push(finding);
     }
 
     return findings;
