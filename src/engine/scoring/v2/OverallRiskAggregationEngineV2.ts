@@ -17,17 +17,49 @@ export type OverallRiskSummaryV2 = {
   score: number;
   rationale: string;
   driversByDomain: Record<string, string[]>;
+  __explain?: {
+    rule: string;
+    inputs: {
+      domains: {
+        domain: string;
+        finalScore: number;
+        severity: RiskLevel;
+      }[];
+    };
+    weights: number[];
+    calculation: {
+      weightedSum: number;
+      weightTotal: number;
+      rawScore: number;
+      finalScore: number;
+    };
+    chosen: {
+      topDomain: string;
+      topSeverity: RiskLevel;
+      driversByDomain: Record<string, string[]>;
+    };
+  };
 };
+
+const EXPLAIN_MODE = process.env.SECURELOGIC_EXPLAIN === "1";
 
 export class OverallRiskAggregationEngineV2 {
   static aggregate(domains: DomainRiskProfileV2[]): OverallRiskSummaryV2 {
     if (domains.length === 0) {
-      return {
+      const empty: OverallRiskSummaryV2 = {
         severity: "Low",
         score: 0,
         rationale: "No domains present",
         driversByDomain: {}
       };
+
+      if (EXPLAIN_MODE) {
+        (empty as any).__explain = {
+          reason: "No domains provided"
+        };
+      }
+
+      return empty;
     }
 
     const sorted = [...domains].sort((a, b) => b.finalScore - a.finalScore);
@@ -42,7 +74,8 @@ export class OverallRiskAggregationEngineV2 {
       weightTotal += weights[i]!;
     }
 
-    const finalScore = clamp(weightedSum / weightTotal, 0, 100);
+    const rawScore = weightedSum / weightTotal;
+    const finalScore = clamp(rawScore, 0, 100);
     const severity = scoreToSeverity(finalScore);
 
     const driversByDomain: Record<string, string[]> = {};
@@ -53,11 +86,39 @@ export class OverallRiskAggregationEngineV2 {
       }
     }
 
-    return {
+    const result: OverallRiskSummaryV2 = {
       severity,
       score: Math.round(finalScore),
       rationale: `Overall risk driven primarily by ${top.domain}`,
       driversByDomain
     };
+
+    // Hidden explain block
+    if (EXPLAIN_MODE) {
+      (result as any).__explain = {
+        rule: "Weighted average of top 3 domains (weights 1.0, 0.6, 0.3), then map to severity",
+        inputs: {
+          domains: sorted.map(d => ({
+            domain: d.domain,
+            finalScore: d.finalScore,
+            severity: d.severity
+          }))
+        },
+        weights,
+        calculation: {
+          weightedSum,
+          weightTotal,
+          rawScore,
+          finalScore
+        },
+        chosen: {
+          topDomain: top.domain,
+          topSeverity: top.severity,
+          driversByDomain
+        }
+      };
+    }
+
+    return result;
   }
 }
