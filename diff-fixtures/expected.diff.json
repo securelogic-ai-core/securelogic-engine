@@ -1,0 +1,30 @@
+{
+  "severityChanged": true,
+  "fromSeverity": "High",
+  "toSeverity": "Critical",
+  "addedDrivers": [
+    "AI Risk Ownership Defined",
+    "Data Lineage Tracked",
+    "Recovery Point Objective Defined"
+  ],
+  "removedDrivers": [
+    "Governance",
+    "DataQuality",
+    "BusinessContinuity"
+  ],
+  "domainScoreChanges": [
+    {
+      "domain": "Governance",
+      "to": 100
+    },
+    {
+      "domain": "DataQuality",
+      "to": 100
+    },
+    {
+      "domain": "BusinessContinuity",
+      "to": 80
+    }
+  ],
+  "summary": "Overall severity changed from High to Critical. Drivers changed. Domain scores changed in 3 domains."
+}
