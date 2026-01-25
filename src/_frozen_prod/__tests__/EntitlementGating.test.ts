@@ -1,3 +1,5 @@
+import { describe, it, expect } from "vitest";
+
 import { enforceEntitlements } from "../entitlement/enforceEntitlements";
 import type { AuditSprintResultV1 } from "../contracts/result";
 import type { Entitlements } from "../contracts/entitlement/Entitlements";

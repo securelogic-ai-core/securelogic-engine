@@ -1,0 +1,8 @@
+{
+  "severity": "Critical",
+  "drivers": [
+    "AI Risk Ownership Defined",
+    "Data Lineage Tracked",
+    "Recovery Point Objective Defined"
+  ]
+}
