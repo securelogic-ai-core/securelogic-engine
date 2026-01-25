@@ -15,6 +15,31 @@ export type DomainRiskProfileV2 = {
   contextMultiplier: number;
   finalScore: number;        // 0–100
   drivers: string[];
+  __explain?: {
+    inputs: {
+      findingIds: string[];
+      severities: RiskLevel[];
+      context: EngineInput["context"];
+    };
+    policy: {
+      severityWeights: Record<string, number>;
+      accumulation: {
+        perFindingBoost: number;
+        maxBoost: number;
+      };
+      contextMultipliers: any;
+    };
+    components: {
+      maxWeight: number;
+      accumulationFactor: number;
+      accumulationBoost: number;
+      baseScoreRaw: number;
+      normalizedBase: number;
+      contextMultiplier: number;
+      finalScoreRaw: number;
+    };
+    rule: string;
+  };
 };
 
 function clamp(n: number, min: number, max: number) {
@@ -27,6 +52,8 @@ function scoreToSeverity(score: number): RiskLevel {
   if (score >= 40) return "Moderate";
   return "Low";
 }
+
+const EXPLAIN_MODE = process.env.SECURELOGIC_EXPLAIN === "1";
 
 export class DomainRiskAggregationEngineV2 {
   static aggregate(
@@ -70,14 +97,14 @@ export class DomainRiskAggregationEngineV2 {
         policy.accumulation.maxBoost
       );
 
-      const baseScore = maxWeight + accumulationBoost;
+      const baseScoreRaw = maxWeight + accumulationBoost;
 
-      const normalizedBase = clamp(baseScore, 0, 100);
-      const finalScore = clamp(normalizedBase * contextMultiplier, 0, 100);
+      const normalizedBase = clamp(baseScoreRaw, 0, 100);
+      const finalScoreRaw = clamp(normalizedBase * contextMultiplier, 0, 100);
 
-      const severity = scoreToSeverity(finalScore);
+      const severity = scoreToSeverity(finalScoreRaw);
 
-      results.push({
+      const profile: DomainRiskProfileV2 = {
         domain,
         severity,
         findingCount: domainFindings.length,
@@ -85,9 +112,37 @@ export class DomainRiskAggregationEngineV2 {
         baseScore: Math.round(normalizedBase),
         normalizedScore: Math.round(normalizedBase),
         contextMultiplier: Number(contextMultiplier.toFixed(2)),
-        finalScore: Math.round(finalScore),
+        finalScore: Math.round(finalScoreRaw),
         drivers: domainFindings.map(f => f.title)
-      });
+      };
+
+      // Hidden explain block (does not affect prod outputs)
+      if (EXPLAIN_MODE) {
+        profile.__explain = {
+          inputs: {
+            findingIds: domainFindings.map(f => f.id),
+            severities: domainFindings.map(f => f.severity),
+            context
+          },
+          policy: {
+            severityWeights: policy.severityWeights as any,
+            accumulation: policy.accumulation,
+            contextMultipliers: policy.contextMultipliers
+          },
+          components: {
+            maxWeight,
+            accumulationFactor,
+            accumulationBoost,
+            baseScoreRaw,
+            normalizedBase,
+            contextMultiplier,
+            finalScoreRaw
+          },
+          rule: "max(severityWeight) + accumulationBoost, clamp 0–100, then * contextMultiplier"
+        };
+      }
+
+      results.push(profile);
     }
 
     return results.sort((a, b) => b.finalScore - a.finalScore);

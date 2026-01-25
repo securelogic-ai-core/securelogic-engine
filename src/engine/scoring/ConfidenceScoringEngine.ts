@@ -2,10 +2,26 @@ import type { EvidenceItem, ConfidenceLevel, RiskLevel } from "../../reporting/R
 import { EvidenceWeightingEngine } from "./EvidenceWeightingEngine.js";
 import { ConfidenceScoringContext } from "./ConfidenceScoringContext.js";
 
+export type ConfidenceScoreExplanation = {
+  model: "trust-weighted";
+  inputs: {
+    evidenceCount: number;
+    severity: RiskLevel;
+  };
+  components: {
+    avgTrust: number;
+    strictnessFactor: number;
+    reusePenalty: number;
+  };
+  rawScore: number;
+  finalScore: number;
+};
+
 export type ConfidenceScoreResult = {
   level: ConfidenceLevel;
   score: number;
   rationale: string;
+  __explain?: ConfidenceScoreExplanation;
 };
 
 export class ConfidenceScoringEngine {
@@ -20,14 +36,25 @@ export class ConfidenceScoringEngine {
       return {
         level: "Low",
         score: 0,
-        rationale: "No evidence provided."
+        rationale: "No evidence provided.",
+        __explain: {
+          model: "trust-weighted",
+          inputs: { evidenceCount: 0, severity },
+          components: {
+            avgTrust: 0,
+            strictnessFactor: 0,
+            reusePenalty: 0
+          },
+          rawScore: 0,
+          finalScore: 0
+        }
       };
     }
 
     const avgTrust = EvidenceWeightingEngine.averageWeight(evidenceItems);
 
     // Base trust score scaled to 0–100
-    let score = avgTrust * 100;
+    let rawScore = avgTrust * 100;
 
     // --- Evidence Reuse Penalty (Progressive Decay) ---
     let reusePenalty = 1.0;
@@ -51,21 +78,35 @@ export class ConfidenceScoringEngine {
       severity === "Moderate" ? 0.92 :
       1.0;
 
-    score = score * strictnessFactor * reusePenalty;
+    rawScore = rawScore * strictnessFactor * reusePenalty;
 
     // Clamp
-    score = Math.max(0, Math.min(100, Math.round(score)));
+    const finalScore = Math.max(0, Math.min(100, Math.round(rawScore)));
 
     const level: ConfidenceLevel =
-      score >= 85 ? "Very High" :
-      score >= 70 ? "High" :
-      score >= 45 ? "Medium" :
+      finalScore >= 85 ? "Very High" :
+      finalScore >= 70 ? "High" :
+      finalScore >= 45 ? "Medium" :
       "Low";
 
     return {
       level,
-      score,
-      rationale: `Based on ${evidenceCount} evidence item(s), trust-weighted model, severity ${severity}, strictness x${strictnessFactor.toFixed(2)}, reusePenalty x${reusePenalty.toFixed(2)}`
+      score: finalScore,
+      rationale: `Based on ${evidenceCount} evidence item(s), trust-weighted model, severity ${severity}, strictness x${strictnessFactor.toFixed(2)}, reusePenalty x${reusePenalty.toFixed(2)}`,
+      __explain: {
+        model: "trust-weighted",
+        inputs: {
+          evidenceCount,
+          severity
+        },
+        components: {
+          avgTrust,
+          strictnessFactor,
+          reusePenalty
+        },
+        rawScore,
+        finalScore
+      }
     };
   }
 }
