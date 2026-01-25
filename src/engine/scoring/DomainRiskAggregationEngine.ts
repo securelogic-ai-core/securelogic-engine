@@ -24,7 +24,25 @@ export type DomainRiskProfile = {
   finalScore: number;
   contextFactor: number;
   drivers: string[];
+  __explain?: {
+    inputs: {
+      findingIds: string[];
+      severities: RiskLevel[];
+      contextFactor: number;
+    };
+    components: {
+      maxWeight: number;
+      densityBoost: number;
+    };
+    calculation: {
+      baseScore: number;
+      finalScore: number;
+    };
+    rule: "max(severityWeight) + densityBoost, then * (1 + contextFactor)";
+  };
 };
+
+const EXPLAIN_MODE = process.env.SECURELOGIC_EXPLAIN === "1";
 
 export class DomainRiskAggregationEngine {
   static aggregate(findings: Finding[], context: EngineInput["context"]): DomainRiskProfile[] {
@@ -42,18 +60,43 @@ export class DomainRiskAggregationEngine {
       const maxWeight = Math.max(...domainFindings.map(f => WEIGHTS[f.severity]));
       const densityBoost = Math.log(domainFindings.length + 1) * 10;
 
-      const baseScore = maxWeight + densityBoost;
-      const finalScore = baseScore * (1 + contextFactor);
+      const baseScoreRaw = maxWeight + densityBoost;
+      const finalScoreRaw = baseScoreRaw * (1 + contextFactor);
 
-      results.push({
+      const baseScore = Math.round(baseScoreRaw);
+      const finalScore = Math.round(finalScoreRaw);
+
+      const profile: DomainRiskProfile = {
         domain,
         severity: scoreToRisk(finalScore),
         findingCount: domainFindings.length,
-        baseScore: Math.round(baseScore),
-        finalScore: Math.round(finalScore),
+        baseScore,
+        finalScore,
         contextFactor,
         drivers: [domain]
-      });
+      };
+
+      // Hidden explain block (does not affect prod outputs)
+      if (EXPLAIN_MODE) {
+        profile.__explain = {
+          inputs: {
+            findingIds: domainFindings.map(f => f.id),
+            severities: domainFindings.map(f => f.severity),
+            contextFactor
+          },
+          components: {
+            maxWeight,
+            densityBoost
+          },
+          calculation: {
+            baseScore: baseScoreRaw,
+            finalScore: finalScoreRaw
+          },
+          rule: "max(severityWeight) + densityBoost, then * (1 + contextFactor)"
+        };
+      }
+
+      results.push(profile);
     }
 
     return results;
