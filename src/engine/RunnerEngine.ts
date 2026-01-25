@@ -25,6 +25,7 @@ import { DEFAULT_ENGINE_MODE, type EngineMode } from "./EngineMode.js";
 type Decision = {
   severity: RiskLevel;
   drivers: string[];
+  trace?: unknown;
 };
 
 export class RunnerEngine {
@@ -61,13 +62,30 @@ export class RunnerEngine {
 
       const overallV2 = OverallRiskAggregationEngineV2.aggregate(domainProfilesV2);
 
-      // 🔥 Flatten driversByDomain -> string[]
-      const flattenedDrivers = Object.values(overallV2.driversByDomain).flat();
+            // 🔥 Flatten driversByDomain -> string[]
+            const flattenedDrivers = Object.values(overallV2.driversByDomain).flat();
 
-      decision = {
-        severity: overallV2.severity,
-        drivers: flattenedDrivers
-      };
+            const traceV2 = {
+              engineVersion: "V2" as const,
+              context: input.context,
+              domains: domainProfilesV2,
+              overall: overallV2,
+              explanation: {
+                method: "weighted-top-3-domains",
+                notes: "Final score is computed as weighted average of top 3 domains (weights 1.0, 0.6, 0.3), then mapped to severity"
+              }
+            };
+
+            decision = (process.env.SECURELOGIC_EXPLAIN
+  ? {
+      severity: overallV2.severity,
+      drivers: flattenedDrivers,
+      trace: traceV2
+    }
+  : {
+      severity: overallV2.severity,
+      drivers: flattenedDrivers
+    });
     } else {
       const domainProfilesV1 = DomainRiskAggregationEngine.aggregate(
         allFindings,

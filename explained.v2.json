@@ -1,0 +1,470 @@
+{
+  "decision": {
+    "severity": "Critical",
+    "drivers": [
+      "AI Risk Ownership Defined",
+      "Data Lineage Tracked",
+      "Recovery Point Objective Defined"
+    ],
+    "trace": {
+      "engineVersion": "V2",
+      "context": {
+        "regulated": true,
+        "handlesPII": true,
+        "safetyCritical": false,
+        "scale": "Enterprise"
+      },
+      "domains": [
+        {
+          "domain": "Governance",
+          "severity": "Critical",
+          "findingCount": 1,
+          "maxSeverity": "High",
+          "baseScore": 85,
+          "normalizedScore": 85,
+          "contextMultiplier": 1.6,
+          "finalScore": 100,
+          "drivers": [
+            "AI Risk Ownership Defined"
+          ],
+          "__explain": {
+            "inputs": {
+              "findingIds": [
+                "GOV-102"
+              ],
+              "severities": [
+                "High"
+              ],
+              "context": {
+                "regulated": true,
+                "handlesPII": true,
+                "safetyCritical": false,
+                "scale": "Enterprise"
+              }
+            },
+            "policy": {
+              "severityWeights": {
+                "Low": 10,
+                "Moderate": 35,
+                "High": 70,
+                "Critical": 95
+              },
+              "accumulation": {
+                "perFindingBoost": 15,
+                "maxBoost": 30
+              },
+              "contextMultipliers": {
+                "regulated": 0.2,
+                "safetyCritical": 0.3,
+                "handlesPII": 0.2,
+                "scale": {
+                  "Small": 0,
+                  "Medium": 0.1,
+                  "Enterprise": 0.2
+                }
+              }
+            },
+            "components": {
+              "maxWeight": 70,
+              "accumulationFactor": 1,
+              "accumulationBoost": 15,
+              "baseScoreRaw": 85,
+              "normalizedBase": 85,
+              "contextMultiplier": 1.5999999999999999,
+              "finalScoreRaw": 100
+            },
+            "rule": "max(severityWeight) + accumulationBoost, clamp 0–100, then * contextMultiplier"
+          }
+        },
+        {
+          "domain": "DataQuality",
+          "severity": "Critical",
+          "findingCount": 1,
+          "maxSeverity": "High",
+          "baseScore": 85,
+          "normalizedScore": 85,
+          "contextMultiplier": 1.6,
+          "finalScore": 100,
+          "drivers": [
+            "Data Lineage Tracked"
+          ],
+          "__explain": {
+            "inputs": {
+              "findingIds": [
+                "DQ-001"
+              ],
+              "severities": [
+                "High"
+              ],
+              "context": {
+                "regulated": true,
+                "handlesPII": true,
+                "safetyCritical": false,
+                "scale": "Enterprise"
+              }
+            },
+            "policy": {
+              "severityWeights": {
+                "Low": 10,
+                "Moderate": 35,
+                "High": 70,
+                "Critical": 95
+              },
+              "accumulation": {
+                "perFindingBoost": 15,
+                "maxBoost": 30
+              },
+              "contextMultipliers": {
+                "regulated": 0.2,
+                "safetyCritical": 0.3,
+                "handlesPII": 0.2,
+                "scale": {
+                  "Small": 0,
+                  "Medium": 0.1,
+                  "Enterprise": 0.2
+                }
+              }
+            },
+            "components": {
+              "maxWeight": 70,
+              "accumulationFactor": 1,
+              "accumulationBoost": 15,
+              "baseScoreRaw": 85,
+              "normalizedBase": 85,
+              "contextMultiplier": 1.5999999999999999,
+              "finalScoreRaw": 100
+            },
+            "rule": "max(severityWeight) + accumulationBoost, clamp 0–100, then * contextMultiplier"
+          }
+        },
+        {
+          "domain": "BusinessContinuity",
+          "severity": "High",
+          "findingCount": 1,
+          "maxSeverity": "Low",
+          "baseScore": 50,
+          "normalizedScore": 50,
+          "contextMultiplier": 1.6,
+          "finalScore": 80,
+          "drivers": [
+            "Recovery Point Objective Defined"
+          ],
+          "__explain": {
+            "inputs": {
+              "findingIds": [
+                "BC-006"
+              ],
+              "severities": [
+                "Moderate"
+              ],
+              "context": {
+                "regulated": true,
+                "handlesPII": true,
+                "safetyCritical": false,
+                "scale": "Enterprise"
+              }
+            },
+            "policy": {
+              "severityWeights": {
+                "Low": 10,
+                "Moderate": 35,
+                "High": 70,
+                "Critical": 95
+              },
+              "accumulation": {
+                "perFindingBoost": 15,
+                "maxBoost": 30
+              },
+              "contextMultipliers": {
+                "regulated": 0.2,
+                "safetyCritical": 0.3,
+                "handlesPII": 0.2,
+                "scale": {
+                  "Small": 0,
+                  "Medium": 0.1,
+                  "Enterprise": 0.2
+                }
+              }
+            },
+            "components": {
+              "maxWeight": 35,
+              "accumulationFactor": 1,
+              "accumulationBoost": 15,
+              "baseScoreRaw": 50,
+              "normalizedBase": 50,
+              "contextMultiplier": 1.5999999999999999,
+              "finalScoreRaw": 80
+            },
+            "rule": "max(severityWeight) + accumulationBoost, clamp 0–100, then * contextMultiplier"
+          }
+        }
+      ],
+      "overall": {
+        "severity": "Critical",
+        "score": 97,
+        "rationale": "Overall risk driven primarily by Governance",
+        "driversByDomain": {
+          "Governance": [
+            "AI Risk Ownership Defined"
+          ],
+          "DataQuality": [
+            "Data Lineage Tracked"
+          ],
+          "BusinessContinuity": [
+            "Recovery Point Objective Defined"
+          ]
+        },
+        "__explain": {
+          "rule": "Weighted average of top 3 domains (weights 1.0, 0.6, 0.3), then map to severity",
+          "inputs": {
+            "domains": [
+              {
+                "domain": "Governance",
+                "finalScore": 100,
+                "severity": "Critical"
+              },
+              {
+                "domain": "DataQuality",
+                "finalScore": 100,
+                "severity": "Critical"
+              },
+              {
+                "domain": "BusinessContinuity",
+                "finalScore": 80,
+                "severity": "High"
+              }
+            ]
+          },
+          "weights": [
+            1,
+            0.6,
+            0.3
+          ],
+          "calculation": {
+            "weightedSum": 184,
+            "weightTotal": 1.9000000000000001,
+            "rawScore": 96.84210526315789,
+            "finalScore": 96.84210526315789
+          },
+          "chosen": {
+            "topDomain": "Governance",
+            "topSeverity": "Critical",
+            "driversByDomain": {
+              "Governance": [
+                "AI Risk Ownership Defined"
+              ],
+              "DataQuality": [
+                "Data Lineage Tracked"
+              ],
+              "BusinessContinuity": [
+                "Recovery Point Objective Defined"
+              ]
+            }
+          }
+        }
+      },
+      "explanation": {
+        "method": "weighted-top-3-domains",
+        "notes": "Final score is computed as weighted average of top 3 domains (weights 1.0, 0.6, 0.3), then mapped to severity"
+      }
+    }
+  },
+  "report": {
+    "meta": {
+      "clientName": "Sample Corp",
+      "generatedAt": "2026-01-25T12:46:09.463Z",
+      "ledgerHash": "26a6c4f65160791d1f11d78581156f334007f2693685ca626cb69b5201b775ca",
+      "evidenceSummary": {
+        "totalEvidenceItems": 3,
+        "bySource": {
+          "Questionnaire": 3
+        },
+        "averageConfidenceScore": 27,
+        "confidenceDistribution": {
+          "Low": 3,
+          "Medium": 0,
+          "High": 0,
+          "Very High": 0
+        },
+        "narrative": "Total evidence items attached: 3. Average confidence score: 27. Top evidence sources: Questionnaire: 3. Evidence is primarily self-attested questionnaire responses; confidence will remain low until validated with artifacts (policies, configs, logs, tickets)."
+      },
+      "policyViolations": [
+        {
+          "code": "EVIDENCE_REQUIRED_FOR_HIGH_RISK",
+          "severity": "Blocker",
+          "message": "High/Critical findings are supported only by questionnaire self-attestation. Add artifacts (policy, config, logs, tickets, screenshots) or downgrade confidence.",
+          "findingIds": [
+            "GOV-102",
+            "DQ-001"
+          ]
+        },
+        {
+          "code": "LOW_CONFIDENCE_HIGH_RISK_REVIEW",
+          "severity": "Warning",
+          "message": "High/Critical findings are low-confidence. Treat as preliminary until validated with evidence artifacts.",
+          "findingIds": [
+            "GOV-102",
+            "DQ-001"
+          ]
+        }
+      ]
+    },
+    "executiveSummary": {
+      "overallRisk": "Critical",
+      "narrative": "This assessment provides an initial view of the organization's AI governance posture and risk exposure."
+    },
+    "domainScores": [
+      {
+        "domain": "Governance",
+        "rating": "High",
+        "notes": "1 finding(s), score 80 (base 67, x1.20)"
+      },
+      {
+        "domain": "DataQuality",
+        "rating": "High",
+        "notes": "1 finding(s), score 80 (base 67, x1.20)"
+      },
+      {
+        "domain": "BusinessContinuity",
+        "rating": "Moderate",
+        "notes": "1 finding(s), score 50 (base 42, x1.20)"
+      }
+    ],
+    "findings": [
+      {
+        "id": "GOV-102",
+        "title": "AI Risk Ownership Defined",
+        "domain": "Governance",
+        "severity": "High",
+        "businessImpact": "Increased regulatory and operational risk.",
+        "recommendation": "Implement and formalize this control.",
+        "confidence": "Low",
+        "confidenceScore": 26,
+        "confidenceRationale": "Based on 1 evidence item(s), trust-weighted model, severity High, strictness x0.85, reusePenalty x1.00",
+        "evidence": "Control evaluated as not implemented.",
+        "evidenceItems": [
+          {
+            "artifactType": "Other",
+            "source": "Questionnaire",
+            "provider": "Internal",
+            "trustLevel": "SelfAttested",
+            "reviewStatus": "Draft",
+            "reference": "GOV-102",
+            "coversControls": [
+              "GOV-102"
+            ],
+            "note": "Marked as not implemented in assessment response"
+          }
+        ],
+        "mappedFrameworks": [
+          "iso42001",
+          "nistAiRmf"
+        ],
+        "__explain": {
+          "confidence": {
+            "model": "legacy-frozen",
+            "inputs": {
+              "evidenceCount": 1,
+              "severity": "High"
+            },
+            "components": {
+              "strictnessFactor": 0.85,
+              "reusePenalty": 1
+            },
+            "finalScore": 26,
+            "note": "This is the legacy frozen confidence model. Real engine explainability will replace this."
+          }
+        }
+      },
+      {
+        "id": "DQ-001",
+        "title": "Data Lineage Tracked",
+        "domain": "DataQuality",
+        "severity": "High",
+        "businessImpact": "Increased regulatory and operational risk.",
+        "recommendation": "Implement and formalize this control.",
+        "confidence": "Low",
+        "confidenceScore": 26,
+        "confidenceRationale": "Based on 1 evidence item(s), trust-weighted model, severity High, strictness x0.85, reusePenalty x1.00",
+        "evidence": "Control evaluated as not implemented.",
+        "evidenceItems": [
+          {
+            "artifactType": "Other",
+            "source": "Questionnaire",
+            "provider": "Internal",
+            "trustLevel": "SelfAttested",
+            "reviewStatus": "Draft",
+            "reference": "DQ-001",
+            "coversControls": [
+              "DQ-001"
+            ],
+            "note": "Marked as not implemented in assessment response"
+          }
+        ],
+        "mappedFrameworks": [
+          "iso42001",
+          "nistAiRmf"
+        ],
+        "__explain": {
+          "confidence": {
+            "model": "legacy-frozen",
+            "inputs": {
+              "evidenceCount": 1,
+              "severity": "High"
+            },
+            "components": {
+              "strictnessFactor": 0.85,
+              "reusePenalty": 1
+            },
+            "finalScore": 26,
+            "note": "This is the legacy frozen confidence model. Real engine explainability will replace this."
+          }
+        }
+      },
+      {
+        "id": "BC-006",
+        "title": "Recovery Point Objective Defined",
+        "domain": "BusinessContinuity",
+        "severity": "Moderate",
+        "businessImpact": "Increased regulatory and operational risk.",
+        "recommendation": "Implement and formalize this control.",
+        "confidence": "Low",
+        "confidenceScore": 28,
+        "confidenceRationale": "Based on 1 evidence item(s), trust-weighted model, severity Moderate, strictness x0.92, reusePenalty x1.00",
+        "evidence": "Control evaluated as not implemented.",
+        "evidenceItems": [
+          {
+            "artifactType": "Other",
+            "source": "Questionnaire",
+            "provider": "Internal",
+            "trustLevel": "SelfAttested",
+            "reviewStatus": "Draft",
+            "reference": "BC-006",
+            "coversControls": [
+              "BC-006"
+            ],
+            "note": "Marked as not implemented in assessment response"
+          }
+        ],
+        "mappedFrameworks": [
+          "soc2"
+        ],
+        "__explain": {
+          "confidence": {
+            "model": "legacy-frozen",
+            "inputs": {
+              "evidenceCount": 1,
+              "severity": "Moderate"
+            },
+            "components": {
+              "strictnessFactor": 0.92,
+              "reusePenalty": 1
+            },
+            "finalScore": 28,
+            "note": "This is the legacy frozen confidence model. Real engine explainability will replace this."
+          }
+        }
+      }
+    ]
+  }
+}

@@ -1,8 +1,8 @@
 import fs from "fs";
 import { describe, it, expect } from "vitest";
-import { DecisionDiffEngine } from "../DecisionDiffEngine.js";
+import { DecisionDiffEngine } from "../../../engine/explain/DecisionDiffEngine.js";
 
-describe("DecisionDiffEngine", () => {
+describe("DecisionDiffEngine (frozen contract)", () => {
   it("produces a stable, explainable diff between two decisions", () => {
     const before = JSON.parse(
       fs.readFileSync("diff-fixtures/before.json", "utf-8")
@@ -15,7 +15,6 @@ describe("DecisionDiffEngine", () => {
     );
 
     const actual = DecisionDiffEngine.diff(before, after);
-
     expect(actual).toEqual(expected);
   });
 });

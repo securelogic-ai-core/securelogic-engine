@@ -1,0 +1,208 @@
+{
+  "decision": {
+    "severity": "High",
+    "drivers": [
+      "Governance",
+      "DataQuality",
+      "BusinessContinuity"
+    ]
+  },
+  "report": {
+    "meta": {
+      "clientName": "Sample Corp",
+      "generatedAt": "2026-01-25T12:46:09.461Z",
+      "ledgerHash": "630e42d07907166d21c7e81e792994c5101fe05470a8551180da2c635594b385",
+      "evidenceSummary": {
+        "totalEvidenceItems": 3,
+        "bySource": {
+          "Questionnaire": 3
+        },
+        "averageConfidenceScore": 27,
+        "confidenceDistribution": {
+          "Low": 3,
+          "Medium": 0,
+          "High": 0,
+          "Very High": 0
+        },
+        "narrative": "Total evidence items attached: 3. Average confidence score: 27. Top evidence sources: Questionnaire: 3. Evidence is primarily self-attested questionnaire responses; confidence will remain low until validated with artifacts (policies, configs, logs, tickets)."
+      },
+      "policyViolations": [
+        {
+          "code": "EVIDENCE_REQUIRED_FOR_HIGH_RISK",
+          "severity": "Blocker",
+          "message": "High/Critical findings are supported only by questionnaire self-attestation. Add artifacts (policy, config, logs, tickets, screenshots) or downgrade confidence.",
+          "findingIds": [
+            "GOV-102",
+            "DQ-001"
+          ]
+        },
+        {
+          "code": "LOW_CONFIDENCE_HIGH_RISK_REVIEW",
+          "severity": "Warning",
+          "message": "High/Critical findings are low-confidence. Treat as preliminary until validated with evidence artifacts.",
+          "findingIds": [
+            "GOV-102",
+            "DQ-001"
+          ]
+        }
+      ]
+    },
+    "executiveSummary": {
+      "overallRisk": "High",
+      "narrative": "This assessment provides an initial view of the organization's AI governance posture and risk exposure."
+    },
+    "domainScores": [
+      {
+        "domain": "Governance",
+        "rating": "High",
+        "notes": "1 finding(s), score 80 (base 67, x1.20)"
+      },
+      {
+        "domain": "DataQuality",
+        "rating": "High",
+        "notes": "1 finding(s), score 80 (base 67, x1.20)"
+      },
+      {
+        "domain": "BusinessContinuity",
+        "rating": "Moderate",
+        "notes": "1 finding(s), score 50 (base 42, x1.20)"
+      }
+    ],
+    "findings": [
+      {
+        "id": "GOV-102",
+        "title": "AI Risk Ownership Defined",
+        "domain": "Governance",
+        "severity": "High",
+        "businessImpact": "Increased regulatory and operational risk.",
+        "recommendation": "Implement and formalize this control.",
+        "confidence": "Low",
+        "confidenceScore": 26,
+        "confidenceRationale": "Based on 1 evidence item(s), trust-weighted model, severity High, strictness x0.85, reusePenalty x1.00",
+        "evidence": "Control evaluated as not implemented.",
+        "evidenceItems": [
+          {
+            "artifactType": "Other",
+            "source": "Questionnaire",
+            "provider": "Internal",
+            "trustLevel": "SelfAttested",
+            "reviewStatus": "Draft",
+            "reference": "GOV-102",
+            "coversControls": [
+              "GOV-102"
+            ],
+            "note": "Marked as not implemented in assessment response"
+          }
+        ],
+        "mappedFrameworks": [
+          "iso42001",
+          "nistAiRmf"
+        ],
+        "__explain": {
+          "confidence": {
+            "model": "legacy-frozen",
+            "inputs": {
+              "evidenceCount": 1,
+              "severity": "High"
+            },
+            "components": {
+              "strictnessFactor": 0.85,
+              "reusePenalty": 1
+            },
+            "finalScore": 26,
+            "note": "This is the legacy frozen confidence model. Real engine explainability will replace this."
+          }
+        }
+      },
+      {
+        "id": "DQ-001",
+        "title": "Data Lineage Tracked",
+        "domain": "DataQuality",
+        "severity": "High",
+        "businessImpact": "Increased regulatory and operational risk.",
+        "recommendation": "Implement and formalize this control.",
+        "confidence": "Low",
+        "confidenceScore": 26,
+        "confidenceRationale": "Based on 1 evidence item(s), trust-weighted model, severity High, strictness x0.85, reusePenalty x1.00",
+        "evidence": "Control evaluated as not implemented.",
+        "evidenceItems": [
+          {
+            "artifactType": "Other",
+            "source": "Questionnaire",
+            "provider": "Internal",
+            "trustLevel": "SelfAttested",
+            "reviewStatus": "Draft",
+            "reference": "DQ-001",
+            "coversControls": [
+              "DQ-001"
+            ],
+            "note": "Marked as not implemented in assessment response"
+          }
+        ],
+        "mappedFrameworks": [
+          "iso42001",
+          "nistAiRmf"
+        ],
+        "__explain": {
+          "confidence": {
+            "model": "legacy-frozen",
+            "inputs": {
+              "evidenceCount": 1,
+              "severity": "High"
+            },
+            "components": {
+              "strictnessFactor": 0.85,
+              "reusePenalty": 1
+            },
+            "finalScore": 26,
+            "note": "This is the legacy frozen confidence model. Real engine explainability will replace this."
+          }
+        }
+      },
+      {
+        "id": "BC-006",
+        "title": "Recovery Point Objective Defined",
+        "domain": "BusinessContinuity",
+        "severity": "Moderate",
+        "businessImpact": "Increased regulatory and operational risk.",
+        "recommendation": "Implement and formalize this control.",
+        "confidence": "Low",
+        "confidenceScore": 28,
+        "confidenceRationale": "Based on 1 evidence item(s), trust-weighted model, severity Moderate, strictness x0.92, reusePenalty x1.00",
+        "evidence": "Control evaluated as not implemented.",
+        "evidenceItems": [
+          {
+            "artifactType": "Other",
+            "source": "Questionnaire",
+            "provider": "Internal",
+            "trustLevel": "SelfAttested",
+            "reviewStatus": "Draft",
+            "reference": "BC-006",
+            "coversControls": [
+              "BC-006"
+            ],
+            "note": "Marked as not implemented in assessment response"
+          }
+        ],
+        "mappedFrameworks": [
+          "soc2"
+        ],
+        "__explain": {
+          "confidence": {
+            "model": "legacy-frozen",
+            "inputs": {
+              "evidenceCount": 1,
+              "severity": "Moderate"
+            },
+            "components": {
+              "strictnessFactor": 0.92,
+              "reusePenalty": 1
+            },
+            "finalScore": 28,
+            "note": "This is the legacy frozen confidence model. Real engine explainability will replace this."
+          }
+        }
+      }
+    ]
+  }
+}
