@@ -10,7 +10,7 @@
     "typecheck": "npx tsc -p tsconfig.ci.json",
     "lint": "eslint \"src/**/*.{ts,tsx,js}\"",
     "test": "vitest run",
-    "test:prod": "vitest run src/_frozen_prod/__tests__/**/*.test.ts",
+    "test:prod": "vitest run src/_frozen_prod/__tests__",
     "check": "bash scripts/guard-imports.sh && npm run lint && npm run typecheck && npm run build && npm run test:prod",
     "ci": "bash scripts/check-contract-version.sh && npm run typecheck && npm run build",
     "build:contracts": "cd packages/contracts && npm run build"

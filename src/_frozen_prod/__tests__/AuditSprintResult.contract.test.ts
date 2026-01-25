@@ -1,3 +1,5 @@
+import { describe, it, expect } from "vitest";
+
 import type { AuditSprintResultV1 } from "../contracts/result";
 
 describe("AuditSprintResultV1 public contract", () => {

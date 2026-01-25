@@ -1,0 +1,20 @@
+{
+  "client": {
+    "name": "Sample Corp",
+    "id": "sample-corp-001"
+  },
+  "context": {
+    "regulated": true,
+    "handlesPII": true,
+    "safetyCritical": false,
+    "scale": "Enterprise"
+  },
+  "answers": {
+    "GOV-101": true,
+    "GOV-102": false,
+    "MON-001": true,
+    "DQ-001": false,
+    "MD-001": true,
+    "BC-006": false
+  }
+}
