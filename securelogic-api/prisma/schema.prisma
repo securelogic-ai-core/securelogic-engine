@@ -4,6 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model Tenant {
@@ -57,6 +58,9 @@ model Finding {
   evidence   String?
   domain     String
   framework  String
+
+  riskScore Float
+  riskBand  String
 
   run   Run   @relation(fields: [runId], references: [id])
   runId String

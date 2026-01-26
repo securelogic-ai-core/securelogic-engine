@@ -49,6 +49,8 @@ CREATE TABLE "Finding" (
     "evidence" TEXT,
     "domain" TEXT NOT NULL,
     "framework" TEXT NOT NULL,
+    "riskScore" DOUBLE PRECISION NOT NULL,
+    "riskBand" TEXT NOT NULL,
     "runId" TEXT NOT NULL,
 
     CONSTRAINT "Finding_pkey" PRIMARY KEY ("id","runId")
