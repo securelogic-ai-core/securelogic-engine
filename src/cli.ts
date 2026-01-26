@@ -1,42 +1,40 @@
-import * as fs from "node:fs";
-import * as process from "node:process";
-import { SecureLogicEngine } from "./engine/api/Engine.js";
+#!/usr/bin/env node
 
-function fail(msg: string): never {
-  console.error("ERROR:", msg);
-  process.exit(1);
+import fs from "fs";
+import path from "path";
+import { pathToFileURL } from "url";
+import { RunnerEngine } from "./engine/RunnerEngine.js";
+
+async function main() {
+  const args = process.argv.slice(2);
+
+  if (args.length < 1) {
+    console.error("Usage: securelogic-engine <input.json> [V1|V2]");
+    process.exit(1);
+  }
+
+  const inputArg = args[0];
+  const version = args[1] === "V2" ? "V2" : "V1";
+
+  if (!inputArg) {
+    throw new Error("Missing input file path");
+  }
+
+  const inputPath = path.resolve(process.cwd(), inputArg);
+
+  const raw = fs.readFileSync(inputPath, "utf-8");
+  const input = JSON.parse(raw);
+
+  const engine = new RunnerEngine(undefined, version);
+  const result = await engine.run(input);
+
+  process.stdout.write(JSON.stringify(result, null, 2));
 }
 
-const inputPath = process.argv[2];
-if (!inputPath) {
-  fail("Usage: node cli.js <input.json>");
-}
-
-if (!fs.existsSync(inputPath)) {
-  fail(`Input file not found: ${inputPath}`);
-}
-
-let input: any;
-try {
-  input = JSON.parse(fs.readFileSync(inputPath, "utf-8"));
-} catch {
-  fail("Invalid JSON input file");
-}
-
-if (!input.context || !input.findings || !input.policyBundle) {
-  fail("Input must contain: { context, findings, policyBundle }");
-}
-
-try {
-  const result = SecureLogicEngine.runDecision(
-    input.context,
-    input.findings,
-    input.policyBundle
-  );
-
-  console.log(JSON.stringify(result, null, 2));
-} catch (e: any) {
-  console.error("Execution failed:");
-  console.error(e?.stack || e);
-  process.exit(2);
+// Only run if this file is the actual entrypoint
+if (import.meta.url === pathToFileURL(process.argv[1]!).href) {
+  main().catch(err => {
+    console.error(err);
+    process.exit(1);
+  });
 }

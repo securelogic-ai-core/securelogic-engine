@@ -8,7 +8,7 @@ function makeDomain(
   score: number,
   severity: RiskLevel
 ): DomainRiskProfileV2 {
-  return {
+  const profile: DomainRiskProfileV2 = {
     domain: name,
     severity,
     findingCount: 1,
@@ -17,8 +17,16 @@ function makeDomain(
     normalizedScore: score,
     contextMultiplier: 1,
     finalScore: score,
+
+    // New risk model fields (for invariants tests these can be simple mirrors)
+    inherentScore: score,
+    residualScore: score,
+    controlEffectiveness: 0,
+
     drivers: [`${name} driver`]
   };
+
+  return profile;
 }
 
 describe("OverallRiskAggregationEngineV2 invariants", () => {

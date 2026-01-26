@@ -15,7 +15,7 @@ export type DomainRiskProfileV2 = {
   contextMultiplier: number;
   finalScore: number;
 
-  // New risk model fields
+  // New V2 risk model fields
   inherentScore: number;
   residualScore: number;
   controlEffectiveness: number; // 0–1
@@ -90,14 +90,14 @@ export class DomainRiskAggregationEngineV2 {
     const results: DomainRiskProfileV2[] = [];
 
     for (const [domain, domainFindings] of byDomain.entries()) {
+      // --- Max severity weight ---
       let maxWeight = 0;
-
       for (const f of domainFindings) {
         const w = policy.severityWeights[f.severity];
         if (w > maxWeight) maxWeight = w;
       }
 
-      // --- Base score: peak risk + accumulation ---
+      // --- Accumulation ---
       const accumulationFactor = Math.log2(domainFindings.length + 1);
       const accumulationBoost = Math.min(
         accumulationFactor * policy.accumulation.perFindingBoost,
@@ -105,11 +105,10 @@ export class DomainRiskAggregationEngineV2 {
       );
 
       const baseScoreRaw = maxWeight + accumulationBoost;
-
       const normalizedBase = clamp(baseScoreRaw, 0, 100);
       const finalScoreRaw = clamp(normalizedBase * contextMultiplier, 0, 100);
 
-      // --- Inherent / Residual / Effectiveness ---
+      // --- V2 Risk Model ---
       const inherentScore = normalizedBase;
       const residualScore = finalScoreRaw;
       const controlEffectiveness =
@@ -136,9 +135,9 @@ export class DomainRiskAggregationEngineV2 {
         drivers: domainFindings.map(f => f.title)
       };
 
-      // Hidden explain block (does not affect prod outputs)
+      // --- Explain mode ---
       if (EXPLAIN_MODE) {
-        (profile as any).__explain = {
+        profile.__explain = {
           inputs: {
             findingIds: domainFindings.map(f => f.id),
             severities: domainFindings.map(f => f.severity),

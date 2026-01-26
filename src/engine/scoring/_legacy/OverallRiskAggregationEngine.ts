@@ -1,3 +1,9 @@
+/**
+ * ⚠️ LEGACY V1 ENGINE
+ * Do not modify.
+ * Kept only for regression testing and decision diffing.
+ * New production code must use V2.
+ */
 import type { DomainRiskProfile } from "./DomainRiskAggregationEngine.js";
 import type { OverallRiskSummary } from "../contracts/OverallRiskSummary.js";
 

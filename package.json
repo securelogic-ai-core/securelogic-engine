@@ -1,19 +1,33 @@
 {
   "name": "securelogic-engine",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "securelogic-engine": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
+    "clean": "rm -rf dist",
     "build": "npx tsc -p tsconfig.prod.json",
     "typecheck": "npx tsc -p tsconfig.ci.json",
     "lint": "eslint \"src/**/*.{ts,tsx,js}\"",
     "test": "vitest run",
     "test:prod": "vitest run src/_frozen_prod/__tests__",
     "check": "bash scripts/guard-imports.sh && npm run lint && npm run typecheck && npm run build && npm run test:prod",
-    "ci": "bash scripts/check-contract-version.sh && npm run typecheck && npm run build",
-    "build:contracts": "cd packages/contracts && npm run build"
+    "ci": "bash scripts/check-contract-version.sh && npm run typecheck && npm run build"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
@@ -33,8 +47,5 @@
     "pdfkit": "^0.17.2",
     "securelogic-contracts": "^0.1.2",
     "zod": "^4.3.4"
-  },
-  "workspaces": [
-    "packages/*"
-  ]
+  }
 }
