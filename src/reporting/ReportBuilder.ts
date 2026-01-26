@@ -1,7 +1,7 @@
 import type { AuditSprintReport, RiskLevel, Finding } from "./ReportSchema.js";
 import type { EngineInput } from "../engine/contracts/EngineInput.js";
 
-import { DomainRiskAggregationEngine } from "../engine/scoring/DomainRiskAggregationEngine.js";
+import { DomainRiskAggregationEngineV2 } from "../engine/scoring/v2/DomainRiskAggregationEngineV2.js";
 import { EvidenceCollector } from "../engine/adapters/EvidenceCollector.js";
 import { ConfidencePolicyEnforcer } from "../engine/scoring/ConfidencePolicyEnforcer.js";
 
@@ -18,7 +18,12 @@ export class ReportBuilder {
     ledgerHash: string,
     findings: Finding[]
   ): AuditSprintReport {
-    const domainProfiles = DomainRiskAggregationEngine.aggregate(findings, input.context);
+    // Recompute domain scores using V2 engine (canonical)
+    const domainProfiles = DomainRiskAggregationEngineV2.aggregate(
+      findings,
+      input.context
+    );
+
     const overallRisk: RiskLevel = result.severity;
 
     const evidenceSummary = EvidenceCollector.summarize(findings);
@@ -39,16 +44,19 @@ export class ReportBuilder {
         evidenceSummary,
         policyViolations
       },
+
       executiveSummary: {
         overallRisk,
         narrative:
           "This assessment provides an initial view of the organization's AI governance posture and risk exposure."
       },
+
       domainScores: domainProfiles.map(d => ({
         domain: d.domain,
         rating: d.severity,
-        notes: `${d.findingCount} finding(s), score ${d.finalScore} (base ${d.baseScore}, x${(1 + d.contextFactor).toFixed(2)})`
+        notes: `${d.findingCount} finding(s), score ${d.finalScore} (inherent ${d.inherentScore}, residual ${d.residualScore}, control effectiveness ${d.controlEffectiveness})`
       })),
+
       findings
     };
   }

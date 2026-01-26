@@ -22,6 +22,7 @@
 
   "include": [
     "src/index.ts",
+    "src/cli.ts",
     "src/engine/**/*",
     "src/report/**/*",
     "src/runtime/**/*"
@@ -29,10 +30,10 @@
 
   "exclude": [
     "src/api/**",
-    "src/cli.ts",
     "src/_*",
     "src/dev/**",
     "src/product/**",
+    "src/engine/scoring/_legacy/**",
     "node_modules",
     "dist",
     "packages"

@@ -14,8 +14,8 @@
       "industry": "Finance",
       "assessmentType": "AI",
       "scope": "Full",
-      "generatedAt": "2026-01-24T21:33:03.917Z",
-      "ledgerHash": "4a0122e6bb1e389258fe7a00fca841b49eb76acfc2601de9641c341ec7a6d6e3",
+      "generatedAt": "2026-01-25T22:18:30.245Z",
+      "ledgerHash": "18e25ad672d8a43fffb8404b3faaef97a58accb8ec9e0be9c0c95e81f09fb95f",
       "evidenceSummary": {
         "totalEvidenceItems": 6,
         "bySource": {
@@ -65,27 +65,27 @@
       {
         "domain": "Governance",
         "rating": "Critical",
-        "notes": "2 finding(s), score 85 (base 71, x1.20)"
+        "notes": "2 finding(s), score 100 (inherent 94, residual 100, control effectiveness 0)"
       },
       {
         "domain": "Monitoring",
-        "rating": "High",
-        "notes": "1 finding(s), score 80 (base 67, x1.20)"
+        "rating": "Critical",
+        "notes": "1 finding(s), score 100 (inherent 85, residual 100, control effectiveness 0)"
       },
       {
         "domain": "DataQuality",
-        "rating": "High",
-        "notes": "1 finding(s), score 80 (base 67, x1.20)"
+        "rating": "Critical",
+        "notes": "1 finding(s), score 100 (inherent 85, residual 100, control effectiveness 0)"
       },
       {
         "domain": "ModelDevelopment",
-        "rating": "High",
-        "notes": "1 finding(s), score 80 (base 67, x1.20)"
+        "rating": "Critical",
+        "notes": "1 finding(s), score 100 (inherent 85, residual 100, control effectiveness 0)"
       },
       {
         "domain": "BusinessContinuity",
-        "rating": "Moderate",
-        "notes": "1 finding(s), score 50 (base 42, x1.20)"
+        "rating": "High",
+        "notes": "1 finding(s), score 80 (inherent 50, residual 80, control effectiveness 0)"
       }
     ],
     "findings": [

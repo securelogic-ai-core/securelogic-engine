@@ -1,0 +1,65 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+
+  users       User[]
+  assessments Assessment[]
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  tenantId String
+}
+
+model Assessment {
+  id        String   @id @default(uuid())
+  name      String
+  framework String
+  createdAt DateTime @default(now())
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  tenantId String
+
+  runs Run[]
+}
+
+model Run {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  version   String
+
+  assessment   Assessment @relation(fields: [assessmentId], references: [id])
+  assessmentId String
+
+  findings Finding[]
+}
+
+model Finding {
+  id         String
+  title      String
+  severity   String
+  confidence Int
+  evidence   String?
+  domain     String
+  framework  String
+
+  run   Run   @relation(fields: [runId], references: [id])
+  runId String
+
+  @@id([id, runId])
+}
