@@ -40,12 +40,16 @@
     "vitest": "~4.0.16"
   },
   "dependencies": {
+    "@prisma/client": "^7.3.0",
     "ajv": "~8.17.1",
     "ajv-formats": "~3.0.1",
     "better-sqlite3": "^12.6.2",
+    "dotenv": "^17.2.3",
     "json-canonicalize": "^2.0.0",
     "pdfkit": "^0.17.2",
+    "prisma": "^7.3.0",
     "securelogic-contracts": "^0.1.2",
+    "tsx": "^4.21.0",
     "zod": "^4.3.4"
   }
 }
