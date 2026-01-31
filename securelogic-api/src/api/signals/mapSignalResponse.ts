@@ -3,7 +3,7 @@ import { PublicSignal } from "../dto/PublicSignal";
 import { PaidSignal } from "../dto/PaidSignal";
 import { AccessTier } from "../../signals/filter/FilterPolicy";
 
-export function mapToPublicSignal(
+export function mapSignalResponse(
   signal: ProvenancedSignal,
   tier: AccessTier
 ): PublicSignal | PaidSignal {
@@ -13,14 +13,17 @@ export function mapToPublicSignal(
       title: signal.title,
       publishedAt: signal.publishedAt,
       source: signal.source,
+
       severity: signal.severity,
       confidence: signal.confidence,
       occurrences: signal.occurrences,
+
       risk: signal.risk,
       provenance: signal.provenance
     };
   }
 
+  // FREE (public-safe)
   return {
     id: signal.id,
     headline: `[${signal.risk.band}] ${signal.title}`,

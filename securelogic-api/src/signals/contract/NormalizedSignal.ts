@@ -1,16 +1,9 @@
-import { SignalStatus } from "./SignalStatus";
-import { SignalSource } from "./Signal";
+import { Signal } from "./Signal.js";
+import { SignalStatus } from "./SignalStatus.js";
 
-export interface NormalizedSignal {
-  id: string;
-  source: SignalSource;
-  title: string;
-  publishedAt: string;
-  status: SignalStatus;
-
-  severity: number;      // 1–10
-  confidence: number;    // 0–1
+export interface NormalizedSignal extends Signal {
+  severity: number;
+  confidence: number;
   dedupeHash: string;
-
-  metadata: Record<string, unknown>;
+  status: SignalStatus;
 }

@@ -6,13 +6,12 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "start": "node dist/app.js",
     "dev": "tsx watch src/app.ts",
     "signals:test": "tsx src/signals/testPipeline.ts",
     "smoke": "tsx scripts/smoke.ts"
   },
   "devDependencies": {
-    "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }

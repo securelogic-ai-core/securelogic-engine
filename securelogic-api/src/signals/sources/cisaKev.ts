@@ -1,5 +1,5 @@
-import { SignalStatus } from "../contract/SignalStatus";
-import { Signal } from "../contract/Signal";
+import { Signal } from "../contract/Signal.js";
+import { SignalStatus } from "../contract/SignalStatus.js";
 
 export async function ingestCisaKev(): Promise<Signal[]> {
   return [

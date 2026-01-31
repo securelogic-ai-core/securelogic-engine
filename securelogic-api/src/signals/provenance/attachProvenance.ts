@@ -1,17 +1,14 @@
-import { ScoredSignal } from "../contract/ScoredSignal";
-import { ProvenancedSignal } from "../contract/ProvenancedSignal";
-import { ENGINE_VERSION } from "../engineVersion";
+import { ScoredSignal } from "../contract/ScoredSignal.js";
+import { ProvenancedSignal } from "../contract/ProvenancedSignal.js";
+import { ENGINE_VERSION } from "../engineVersion.js";
 
-export function attachProvenance(
-  signal: ScoredSignal
-): ProvenancedSignal {
+export function attachProvenance(signal: ScoredSignal): ProvenancedSignal {
   const now = new Date().toISOString();
-
   return {
     ...signal,
     provenance: {
       sourceSystem: signal.source,
-      ingestedAt: signal.publishedAt,
+      ingestedAt: now,
       qualifiedAt: now,
       normalizedAt: now,
       scoredAt: now,
