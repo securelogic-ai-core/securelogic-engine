@@ -1,22 +1,16 @@
-import { ingestCisaKev } from "./sources/cisaKev";
-import { qualifySignal } from "./qualify/qualifySignal";
-import { normalizeSignal } from "./normalize/normalizeSignal";
-import { dedupeSignals } from "./dedupe/dedupeSignals";
-import { scoreSignal } from "./score/scoreSignal";
-import { attachProvenance } from "./provenance/attachProvenance";
-import { ProvenancedSignal } from "./contract/ProvenancedSignal";
+import { ingestCisaKev } from "./sources/cisaKev.js";
+import { normalizeSignal } from "./normalize/normalizeSignal.js";
+import { qualifySignal } from "./qualify/qualifySignal.js";
+import { dedupeSignals } from "./dedupe/dedupeSignals.js";
+import { scoreSignal } from "./score/scoreSignal.js";
+import { attachProvenance } from "./provenance/attachProvenance.js";
+import { ProvenancedSignal } from "./contract/ProvenancedSignal.js";
 
 export async function runSignalPipeline(): Promise<ProvenancedSignal[]> {
-  const rawSignals = await ingestCisaKev();
+  const raw = await ingestCisaKev();
 
-  const qualified = rawSignals
-    .map(qualifySignal)
-    .filter(s => s.status === "QUALIFIED");
-
-  const normalized = qualified.map(normalizeSignal);
-
+  const normalized = raw.map(normalizeSignal).map(qualifySignal);
   const deduped = dedupeSignals(normalized);
-
   const scored = deduped.map(scoreSignal);
 
   return scored.map(attachProvenance);

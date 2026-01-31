@@ -1,20 +1,14 @@
 import express from "express";
-import { runSignalPipeline } from "../../signals/runSignalPipeline";
-import { mapToPublicSignal } from "../signals/mapToPublicSignal";
-import { AccessTier } from "../../signals/filter/FilterPolicy";
+import { getSignals } from "../signals/getSignals.js";
 
 const router = express.Router();
 
 router.get("/", async (req, res) => {
-  const tier = (req.query.tier as AccessTier) || "FREE";
+  const tier =
+    req.query.tier === "PAID" ? "PAID" : "FREE";
 
-  const signals = await runSignalPipeline();
-
-  const output = signals.map(s =>
-    mapToPublicSignal(s, tier)
-  );
-
-  res.json(output);
+  const signals = await getSignals(tier);
+  res.json(signals);
 });
 
 export default router;

@@ -1,4 +1,4 @@
-import { NormalizedSignal } from "./NormalizedSignal";
+import { NormalizedSignal } from "./NormalizedSignal.js";
 
 export interface DedupedSignal extends NormalizedSignal {
   occurrences: number;

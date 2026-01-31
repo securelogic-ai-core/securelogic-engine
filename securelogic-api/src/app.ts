@@ -1,9 +1,8 @@
 import express from "express";
-import signalsRouter from "./api/routes/signals";
+import signalsRouter from "./api/routes/signals.js";
 
 const app = express();
-
-app.use(express.json());
+const port = process.env.PORT || 3000;
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
@@ -11,8 +10,6 @@ app.get("/health", (_req, res) => {
 
 app.use("/api/signals", signalsRouter);
 
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log(`SecureLogic API running on port ${PORT}`);
+app.listen(port, () => {
+  console.log(`SecureLogic API listening on port ${port}`);
 });

@@ -1,5 +1,5 @@
-import { ScoredSignal } from "./ScoredSignal";
-import { Provenance } from "./Provenance";
+import { ScoredSignal } from "./ScoredSignal.js";
+import { Provenance } from "./Provenance.js";
 
 export interface ProvenancedSignal extends ScoredSignal {
   provenance: Provenance;
