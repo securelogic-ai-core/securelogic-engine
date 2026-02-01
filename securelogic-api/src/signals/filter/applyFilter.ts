@@ -1,24 +1,18 @@
-import { ScoredSignal } from "../contract/ScoredSignal";
-import { FilterPolicy } from "./FilterPolicy";
+import { ScoredSignal } from "../contract/ScoredSignal.js";
+import { FilterPolicy } from "./FilterPolicy.js";
 
-const bandRank: Record<"LOW" | "MEDIUM" | "HIGH" | "CRITICAL", number> = {
+const bandRank = {
   LOW: 1,
   MEDIUM: 2,
   HIGH: 3,
   CRITICAL: 4
-};
+} as const;
 
 export function applyFilter(
   signals: ScoredSignal[],
   policy: FilterPolicy
 ): ScoredSignal[] {
-  const filtered = signals.filter(
+  return signals.filter(
     s => bandRank[s.risk.band] >= bandRank[policy.minRiskBand]
   );
-
-  if (policy.maxItems !== undefined) {
-    return filtered.slice(0, policy.maxItems);
-  }
-
-  return filtered;
 }
