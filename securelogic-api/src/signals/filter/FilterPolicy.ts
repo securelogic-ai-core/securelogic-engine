@@ -1,7 +1,5 @@
-export type AccessTier = "FREE" | "PAID";
+export type AccessTier = "PAID" | "PREVIEW";
 
 export interface FilterPolicy {
-  tier: AccessTier;
   minRiskBand: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-  maxItems?: number;
 }

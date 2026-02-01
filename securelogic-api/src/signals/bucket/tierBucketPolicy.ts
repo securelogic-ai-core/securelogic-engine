@@ -1,7 +1,7 @@
-import { AccessTier } from "../filter/FilterPolicy";
-import { TimeBucket } from "./TimeBucket";
+import { AccessTier } from "../filter/FilterPolicy.js";
+import { TimeBucket } from "./TimeBucket.js";
 
 export const TIER_BUCKET: Record<AccessTier, TimeBucket> = {
-  FREE: "WEEKLY",
+  PREVIEW: "WEEKLY",
   PAID: "DAILY"
 };

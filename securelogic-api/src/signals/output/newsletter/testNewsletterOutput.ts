@@ -1,9 +1,18 @@
-import { runNewsletterOutput } from "./runNewsletterOutput";
+import { runNewsletterOutput } from "./runNewsletterOutput.js";
 
-const free = await runNewsletterOutput("FREE");
-const paid = await runNewsletterOutput("PAID");
+async function test() {
+  const preview = await runNewsletterOutput("PREVIEW");
+  const paid = await runNewsletterOutput("PAID");
 
-console.log("FREE count:", free.length);
-console.log("PAID count:", paid.length);
-console.log("FREE sample:", free[0]);
-console.log("PAID sample:", paid[0]);
+  if (!preview.length) {
+    throw new Error("Preview output empty");
+  }
+
+  if (!paid.length) {
+    throw new Error("Paid output empty");
+  }
+
+  console.log("Newsletter output tests passed");
+}
+
+test();
