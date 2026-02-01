@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -e
 
-echo "==> Building securelogic-api only"
-cd securelogic-api
-npm ci
+echo "==> Building securelogic-api"
+
+npm install
 npm run build

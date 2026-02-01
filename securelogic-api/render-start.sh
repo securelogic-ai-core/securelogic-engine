@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -e
 
 echo "==> Starting securelogic-api"
-cd securelogic-api
+
 npm start
