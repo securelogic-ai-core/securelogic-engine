@@ -1,4 +1,4 @@
-import { SignalStatus } from "./SignalStatus";
+import { SignalStatus } from "./SignalStatus.js";
 
 export type SignalSource = "CISA_KEV" | "NVD";
 

@@ -1,4 +1,4 @@
-import { ScoredSignal } from "../contract/ScoredSignal";
+import { ScoredSignal } from "../contract/ScoredSignal.js";
 
 export interface SignalOutput {
   id: string;

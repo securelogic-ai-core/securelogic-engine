@@ -1,5 +1,5 @@
-import { ScoredSignal } from "../contract/ScoredSignal";
-import { TimeBucket } from "./TimeBucket";
+import { ScoredSignal } from "../contract/ScoredSignal.js";
+import { TimeBucket } from "./TimeBucket.js";
 
 export function applyBucket(
   signals: ScoredSignal[],

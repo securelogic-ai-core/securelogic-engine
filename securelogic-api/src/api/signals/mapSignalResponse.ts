@@ -1,7 +1,7 @@
-import { ProvenancedSignal } from "../../signals/contract/ProvenancedSignal";
-import { PublicSignal } from "../dto/PublicSignal";
-import { PaidSignal } from "../dto/PaidSignal";
-import { AccessTier } from "../../signals/filter/FilterPolicy";
+import { ProvenancedSignal } from "../../signals/contract/ProvenancedSignal.js";
+import { PublicSignal } from "../dto/PublicSignal.js";
+import { PaidSignal } from "../dto/PaidSignal.js";
+import { AccessTier } from "../../signals/filter/FilterPolicy.js";
 
 export function mapSignalResponse(
   signal: ProvenancedSignal,

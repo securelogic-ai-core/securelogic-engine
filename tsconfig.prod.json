@@ -22,17 +22,22 @@
 
   "include": [
     "src/index.ts",
-    "src/engine/**/*",
-    "src/report/**/*",
-    "src/runtime/**/*"
+    "src/api/server.ts",
+    "src/api/issues/**/*.ts",
+    "src/engine/**/*.ts",
+    "src/runtime/**/*.ts",
+    "src/report/**/*.ts",
+    "src/contracts/**/*.ts"
   ],
 
   "exclude": [
-    "src/api/**",
-    "src/cli.ts",
-    "src/_*",
-    "src/dev/**",
+    "src/api/v1/**",
     "src/product/**",
+    "src/reports/AuditSprintPdf.ts",
+    "src/runEngine.ts",
+    "src/cli.ts",
+    "src/dev/**",
+    "src/_*",
     "node_modules",
     "dist",
     "packages"

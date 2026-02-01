@@ -1,4 +1,4 @@
-import { runSignalPipeline } from "./runSignalPipeline";
+import { runSignalPipeline } from "./runSignalPipeline.js";
 
 const signals = await runSignalPipeline();
 
