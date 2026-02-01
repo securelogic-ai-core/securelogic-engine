@@ -1,0 +1,26 @@
+{
+  "issueNumber": 1,
+  "title": "Issue #1 — Credential-Based Systemic Failure",
+  "executiveSummary": "\nA systemic governance failure disrupted mission-critical operations.\nThis was not a tooling failure.\nThis was a risk visibility failure.\n",
+  "domains": [
+    "Operational Resilience",
+    "Third-Party Risk",
+    "Identity"
+  ],
+  "riskTable": [
+    {
+      "domain": "Operational Resilience",
+      "rating": "CRITICAL"
+    },
+    {
+      "domain": "Third-Party Risk",
+      "rating": "CRITICAL"
+    },
+    {
+      "domain": "Identity",
+      "rating": "CRITICAL"
+    }
+  ],
+  "confidence": "HIGH",
+  "publishedAt": "2026-02-01T13:50:42.006Z"
+}

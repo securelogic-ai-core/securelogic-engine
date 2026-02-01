@@ -1,4 +1,4 @@
-import { Provenance } from "../../signals/contract/Provenance";
+import { Provenance } from "../../signals/contract/Provenance.js";
 
 export interface PaidSignal {
   id: string;

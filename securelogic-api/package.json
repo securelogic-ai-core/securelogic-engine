@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/app.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/app.js",
@@ -11,13 +11,16 @@
     "signals:test": "tsx src/signals/testPipeline.ts",
     "smoke": "tsx scripts/smoke.ts"
   },
+  "dependencies": {
+    "express": "^5.2.1"
+  },
   "devDependencies": {
     "@types/express": "^5.0.6",
-    "@types/node": "^25.1.0",
+    "@types/node": "^20.11.30",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
-  "dependencies": {
-    "express": "^5.2.1"
+  "engines": {
+    "node": ">=20"
   }
 }

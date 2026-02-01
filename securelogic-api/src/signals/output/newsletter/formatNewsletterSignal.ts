@@ -1,5 +1,5 @@
-import { ScoredSignal } from "../../contract/ScoredSignal";
-import { SignalOutput } from "../SignalOutput";
+import { ScoredSignal } from "../../contract/ScoredSignal.js";
+import { SignalOutput } from "../SignalOutput.js";
 
 export function formatNewsletterSignal(
   signal: ScoredSignal

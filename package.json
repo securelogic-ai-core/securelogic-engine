@@ -7,6 +7,7 @@
   },
   "scripts": {
     "build": "npx tsc -p tsconfig.prod.json",
+    "start": "node dist/api/server.js",
     "typecheck": "npx tsc -p tsconfig.ci.json",
     "lint": "eslint \"src/**/*.{ts,tsx,js}\"",
     "test": "vitest run",
@@ -15,8 +16,19 @@
     "ci": "bash scripts/check-contract-version.sh && npm run typecheck && npm run build",
     "build:contracts": "cd packages/contracts && npm run build"
   },
+  "dependencies": {
+    "ajv": "~8.17.1",
+    "ajv-formats": "~3.0.1",
+    "better-sqlite3": "^12.6.2",
+    "express": "^5.2.1",
+    "json-canonicalize": "^2.0.0",
+    "pdfkit": "^0.17.2",
+    "securelogic-contracts": "^0.1.2",
+    "zod": "^4.3.4"
+  },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
     "@types/node": "~25.0.3",
     "@typescript-eslint/eslint-plugin": "^8.53.1",
     "@typescript-eslint/parser": "^8.53.1",
@@ -24,15 +36,6 @@
     "eslint-plugin-boundaries": "^5.3.1",
     "typescript": "~5.9.3",
     "vitest": "~4.0.16"
-  },
-  "dependencies": {
-    "ajv": "~8.17.1",
-    "ajv-formats": "~3.0.1",
-    "better-sqlite3": "^12.6.2",
-    "json-canonicalize": "^2.0.0",
-    "pdfkit": "^0.17.2",
-    "securelogic-contracts": "^0.1.2",
-    "zod": "^4.3.4"
   },
   "workspaces": [
     "packages/*"

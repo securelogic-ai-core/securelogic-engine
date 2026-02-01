@@ -1,12 +1,15 @@
-import { ProvenancedSignal } from "../../signals/contract/ProvenancedSignal";
-import { PublicSignal } from "../dto/PublicSignal";
-import { PaidSignal } from "../dto/PaidSignal";
-import { AccessTier } from "../../signals/filter/FilterPolicy";
+import { ProvenancedSignal } from "../../signals/contract/ProvenancedSignal.js";
+import { PaidSignal } from "../dto/PaidSignal.js";
+import { PreviewSignal } from "../dto/PreviewSignal.js";
+import { AccessTier } from "../../signals/filter/FilterPolicy.js";
+
+const PREVIEW_DISCLAIMER =
+  "Preview data — not licensed for operational use";
 
 export function mapToPublicSignal(
   signal: ProvenancedSignal,
   tier: AccessTier
-): PublicSignal | PaidSignal {
+): PaidSignal | PreviewSignal {
   if (tier === "PAID") {
     return {
       id: signal.id,
@@ -27,7 +30,7 @@ export function mapToPublicSignal(
     summary: `Risk score ${signal.risk.score}. Source: ${signal.source}.`,
     riskBand: signal.risk.band,
     score: signal.risk.score,
-    publishedAt: signal.publishedAt,
-    source: signal.source
+    preview: true,
+    disclaimer: PREVIEW_DISCLAIMER
   };
 }
