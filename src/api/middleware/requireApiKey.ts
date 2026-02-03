@@ -6,16 +6,23 @@ export function requireApiKey(
   res: Response,
   next: NextFunction
 ) {
-  // 🔎 PROOF LOG
-  logger.info(
-    {
-      headers: req.headers,
-      apiKeyHeader: req.headers["x-api-key"]
-    },
-    "requireApiKey check"
-  );
+  /**
+   * IMPORTANT:
+   * - Header names are ALWAYS lower-cased in Node
+   * - Render + Cloudflare do NOT alter custom headers
+   */
 
-  const apiKey = req.headers["x-api-key"] as string | undefined;
+  const apiKey =
+    (req.headers["x-api-key"] as string | undefined) ??
+    (req.headers["X-API-KEY"] as string | undefined);
+
+  logger.debug(
+    {
+      apiKeyPresent: Boolean(apiKey),
+      envKeysPresent: Boolean(process.env.SECURELOGIC_API_KEYS),
+    },
+    "API key middleware check"
+  );
 
   if (!apiKey) {
     res.status(401).json({ error: "API key required" });
@@ -24,13 +31,22 @@ export function requireApiKey(
 
   const allowedKeys = process.env.SECURELOGIC_API_KEYS
     ?.split(",")
-    .map(k => k.trim());
+    .map(k => k.trim())
+    .filter(Boolean);
 
-  if (!allowedKeys?.includes(apiKey)) {
+  if (!allowedKeys || allowedKeys.length === 0) {
+    logger.error("SECURELOGIC_API_KEYS is empty or malformed");
+    res.status(500).json({ error: "Server configuration error" });
+    return;
+  }
+
+  if (!allowedKeys.includes(apiKey)) {
     res.status(403).json({ error: "Invalid API key" });
     return;
   }
 
+  // Attach for downstream middleware
   (req as any).apiKey = apiKey;
+
   next();
 }
