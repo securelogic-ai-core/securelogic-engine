@@ -1,31 +1,27 @@
 import type { Request, Response, NextFunction } from "express";
 
-const VALID_KEYS = new Set(
-  (process.env.SECURELOGIC_API_KEYS ?? "")
-    .split(",")
-    .map((k) => k.trim())
-    .filter(Boolean)
-);
-
 export function requireApiKey(
   req: Request,
   res: Response,
   next: NextFunction
-): void {
-  const key = req.header("x-securelogic-key");
+) {
+  const apiKey =
+    req.headers["x-api-key"] as string | undefined;
 
-  if (!key) {
+  if (!apiKey) {
     res.status(401).json({ error: "API key required" });
     return;
   }
 
-  if (!VALID_KEYS.has(key)) {
+  const allowedKeys = process.env.SECURELOGIC_API_KEYS
+    ?.split(",")
+    .map(k => k.trim());
+
+  if (!allowedKeys?.includes(apiKey)) {
     res.status(403).json({ error: "Invalid API key" });
     return;
   }
 
-  // 🔒 CONTRACT: attach validated identity
-  (req as any).apiKey = key;
-
+  (req as any).apiKey = apiKey;
   next();
 }
