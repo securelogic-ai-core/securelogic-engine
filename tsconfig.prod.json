@@ -1,8 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "Node16",
-    "moduleResolution": "Node16",
+
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
     "lib": ["ES2022"],
 
     "rootDir": "src",
@@ -21,9 +23,7 @@
   },
 
   "include": [
-    "src/index.ts",
-    "src/api/server.ts",
-    "src/api/issues/**/*.ts",
+    "src/api/**/*.ts",
     "src/engine/**/*.ts",
     "src/runtime/**/*.ts",
     "src/report/**/*.ts",
@@ -32,12 +32,11 @@
 
   "exclude": [
     "src/api/v1/**",
+    "src/api/_disabled_v1/**",
     "src/product/**",
-    "src/reports/AuditSprintPdf.ts",
-    "src/runEngine.ts",
-    "src/cli.ts",
     "src/dev/**",
     "src/_*",
+    "src/cli.ts",
     "node_modules",
     "dist",
     "packages"
