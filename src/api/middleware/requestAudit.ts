@@ -29,21 +29,25 @@ export function requestAudit(
   _res: Response,
   next: NextFunction
 ): void {
-  const key = req.header("x-securelogic-key") ?? "anonymous";
+  const apiKey =
+    (req as any).identity?.apiKey ??
+    (req as any).apiKey ??
+    "unknown";
+
   const store = ensureStore();
 
-  if (!store[key]) {
-    store[key] = {
+  if (!store[apiKey]) {
+    store[apiKey] = {
       count: 0,
       lastSeen: new Date().toISOString()
     };
   }
 
-  store[key].count += 1;
-  store[key].lastSeen = new Date().toISOString();
+  store[apiKey].count += 1;
+  store[apiKey].lastSeen = new Date().toISOString();
 
   fs.writeFileSync(METER_FILE, JSON.stringify(store, null, 2), "utf-8");
 
-  (req as any).meter = store[key];
+  (req as any).meter = store[apiKey];
   next();
-}
+}0

@@ -9,7 +9,7 @@ const LIMITS: Record<Tier, number> = {
   admin: Number.POSITIVE_INFINITY
 };
 
-const WINDOW_SECONDS = 60; // per minute
+const WINDOW_SECONDS = 60;
 
 export async function tierRateLimit(
   req: Request,
@@ -23,7 +23,7 @@ export async function tierRateLimit(
     return;
   }
 
-  const apiKey = (req as any).apiKey;
+  const apiKey = (req as any).identity?.apiKey;
   if (!apiKey) {
     res.status(401).json({ error: "Missing API key" });
     return;

@@ -8,10 +8,12 @@ import { validateEnv } from "./startup/validateEnv.js";
 import { runSelfTest } from "./startup/selfTest.js";
 
 import { redis } from "./infra/redis.js";
+import { httpLogger } from "./infra/httpLogger.js";
 
 import { requestId } from "./middleware/requestId.js";
 import { requireApiKey } from "./middleware/requireApiKey.js";
 import { resolveEntitlement } from "./middleware/resolveEntitlement.js";
+import { requireRedis } from "./middleware/requireRedis.js";
 import { requestAudit } from "./middleware/requestAudit.js";
 import { enforceUsageCap } from "./middleware/enforceUsageCap.js";
 import { requireSubscription } from "./middleware/requireSubscription.js";
@@ -33,13 +35,19 @@ const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
 /* =========================================================
-   REQUEST CORRELATION (PHASE 7.1)
+   REQUEST CORRELATION
    ========================================================= */
 
 app.use(requestId);
 
 /* =========================================================
-   IN-FLIGHT REQUEST TRACKING (PHASE 6.2)
+   HTTP REQUEST LOGGING (PHASE 6.1)
+   ========================================================= */
+
+app.use(httpLogger);
+
+/* =========================================================
+   IN-FLIGHT REQUEST TRACKING
    ========================================================= */
 
 let activeRequests = 0;
@@ -78,13 +86,13 @@ app.post(
 );
 
 /* =========================================================
-   GLOBAL MIDDLEWARE
+   GLOBAL BODY PARSER
    ========================================================= */
 
 app.use(express.json());
 
 /* =========================================================
-   HEALTH CHECK (DEPENDENCY-AWARE — HARD GATE)
+   HEALTH CHECK (NO AUTH — INTENTIONAL)
    ========================================================= */
 
 app.get("/health", async (_req: Request, res: Response) => {
@@ -110,14 +118,15 @@ app.get("/health", async (_req: Request, res: Response) => {
 });
 
 /* =========================================================
-   API SECURITY CHAIN (ORDER IS LOCKED)
+   🔒 API SECURITY CHAIN (ORDER IS NON-NEGOTIABLE)
    ========================================================= */
 
-app.use(requireApiKey);
-app.use(resolveEntitlement);
-app.use(requestAudit);
-app.use(enforceUsageCap);
-app.use(tierRateLimit);
+app.use("/issues", requireApiKey);
+app.use("/issues", resolveEntitlement);
+app.use("/issues", requireRedis); // Phase 6 runtime hard gate
+app.use("/issues", requestAudit);
+app.use("/issues", enforceUsageCap);
+app.use("/issues", tierRateLimit);
 
 /* =========================================================
    DATA DIRECTORY
@@ -185,7 +194,7 @@ const server = app.listen(PORT, "0.0.0.0", () => {
 });
 
 /* =========================================================
-   GRACEFUL SHUTDOWN + DRAIN (PHASE 6.2)
+   GRACEFUL SHUTDOWN
    ========================================================= */
 
 let isShuttingDown = false;
@@ -204,15 +213,11 @@ const shutdown = async (signal: string) => {
   const drainInterval = setInterval(async () => {
     if (activeRequests === 0) {
       clearInterval(drainInterval);
-      console.log("✅ All in-flight requests completed");
 
       try {
         if (redis.isOpen) {
           await redis.quit();
-          console.log("🔌 Redis connection closed");
         }
-      } catch (err) {
-        console.error("❌ Error closing Redis:", err);
       } finally {
         process.exit(0);
       }
@@ -220,7 +225,6 @@ const shutdown = async (signal: string) => {
   }, 100);
 
   setTimeout(() => {
-    console.error("⏱️ Forced shutdown after 10s");
     process.exit(1);
   }, 10_000).unref();
 };
