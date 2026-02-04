@@ -1,7 +1,5 @@
 import express from "express";
 import type { Request, Response } from "express";
-import fs from "fs";
-import path from "path";
 import bodyParser from "body-parser";
 
 import { validateEnv } from "./startup/validateEnv.js";
@@ -14,6 +12,7 @@ import { verifyIssueSignature } from "./infra/verifyIssueSignature.js";
 import { requestId } from "./middleware/requestId.js";
 import { requireApiKey } from "./middleware/requireApiKey.js";
 import { resolveEntitlement } from "./middleware/resolveEntitlement.js";
+
 // ⛔ infra gates TEMPORARILY DISABLED
 // import { requireRedis } from "./middleware/requireRedis.js";
 // import { requestAudit } from "./middleware/requestAudit.js";
@@ -26,6 +25,8 @@ import { errorHandler } from "./middleware/errorHandler.js";
 
 import { isSignedIssue } from "./contracts/signedIssue.schema.js";
 import type { SignedIssue } from "./contracts/signedIssue.schema.js";
+
+import { getLatestIssueId, getIssueArtifact } from "./infra/issueStore.js";
 
 /* =========================================================
    BOOT-TIME GUARDS
@@ -70,6 +71,7 @@ app.use((req, res, next) => {
 
   activeRequests++;
   res.on("finish", () => activeRequests--);
+
   next();
 });
 
@@ -105,6 +107,7 @@ app.get("/health", (_req: Request, res: Response) => {
     res.status(503).json({ status: "unhealthy", dependency: "redis" });
     return;
   }
+
   res.status(200).json({ status: "ok" });
 });
 
@@ -122,51 +125,39 @@ app.use("/issues", resolveEntitlement);
 // app.use("/issues", tierRateLimit);
 
 /* =========================================================
-   DATA DIRECTORY
-   ========================================================= */
-
-const ISSUES_DIR = path.resolve("data/issues");
-
-/* =========================================================
    ROUTES
    ========================================================= */
 
-app.get("/issues/latest", (_req: Request, res: Response) => {
-  if (!fs.existsSync(ISSUES_DIR)) {
+app.get("/issues/latest", async (_req: Request, res: Response) => {
+  const latestId = await getLatestIssueId();
+
+  if (!latestId) {
     res.status(404).json({ error: "No issues published" });
     return;
   }
 
-  const files = fs
-    .readdirSync(ISSUES_DIR)
-    .filter(f => f.startsWith("issue-") && f.endsWith(".json"))
-    .sort((a, b) => {
-      const aNum = Number(a.replace("issue-", "").replace(".json", ""));
-      const bNum = Number(b.replace("issue-", "").replace(".json", ""));
-      return bNum - aNum;
-    });
+  const raw = await getIssueArtifact(latestId);
 
-  if (files.length === 0) {
-    res.status(404).json({ error: "No issues found" });
+  if (!raw) {
+    res.status(404).json({ error: "No issues published" });
     return;
   }
 
-  const filePath = path.join(ISSUES_DIR, files[0]);
+  let parsed: unknown;
 
-  let raw: unknown;
   try {
-    raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    parsed = JSON.parse(raw);
   } catch {
-    res.status(500).json({ error: "Issue file corrupted" });
+    res.status(500).json({ error: "Issue artifact corrupted" });
     return;
   }
 
-  if (!isSignedIssue(raw)) {
+  if (!isSignedIssue(parsed)) {
     res.status(500).json({ error: "Unsigned or invalid issue artifact" });
     return;
   }
 
-  const artifact = raw as SignedIssue;
+  const artifact = parsed as SignedIssue;
 
   if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
     res.status(500).json({ error: "Issue signature verification failed" });
@@ -176,28 +167,36 @@ app.get("/issues/latest", (_req: Request, res: Response) => {
   res.json(artifact.issue);
 });
 
-app.get("/issues/:id", requireSubscription, (req, res) => {
-  const filePath = path.join(ISSUES_DIR, `issue-${req.params.id}.json`);
+app.get("/issues/:id", requireSubscription, async (req: Request, res: Response) => {
+  const idNum = Number(req.params.id);
 
-  if (!fs.existsSync(filePath)) {
+  if (!Number.isFinite(idNum) || idNum <= 0) {
+    res.status(400).json({ error: "Invalid issue id" });
+    return;
+  }
+
+  const raw = await getIssueArtifact(idNum);
+
+  if (!raw) {
     res.status(404).json({ error: "Issue not found" });
     return;
   }
 
-  let raw: unknown;
+  let parsed: unknown;
+
   try {
-    raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    parsed = JSON.parse(raw);
   } catch {
-    res.status(500).json({ error: "Issue file corrupted" });
+    res.status(500).json({ error: "Issue artifact corrupted" });
     return;
   }
 
-  if (!isSignedIssue(raw)) {
+  if (!isSignedIssue(parsed)) {
     res.status(500).json({ error: "Unsigned or invalid issue artifact" });
     return;
   }
 
-  const artifact = raw as SignedIssue;
+  const artifact = parsed as SignedIssue;
 
   if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
     res.status(500).json({ error: "Issue signature verification failed" });
