@@ -9,7 +9,12 @@ const LIMITS: Record<Tier, number> = {
   admin: Number.POSITIVE_INFINITY
 };
 
-const WINDOW_SECONDS = 60;
+const WINDOW_SECONDS = 60; // per minute
+
+function getApiKey(req: Request): string {
+  // 🔒 Phase 6.2: canonical identity ONLY
+  return ((req as any).identity?.apiKey as string | undefined) ?? "";
+}
 
 export async function tierRateLimit(
   req: Request,
@@ -23,7 +28,7 @@ export async function tierRateLimit(
     return;
   }
 
-  const apiKey = (req as any).identity?.apiKey;
+  const apiKey = getApiKey(req);
   if (!apiKey) {
     res.status(401).json({ error: "Missing API key" });
     return;
