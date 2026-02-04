@@ -1,19 +1,30 @@
 {
-  "schemaVersion": "1.0",
-  "id": "issue-0001",
-  "issueNumber": 1,
-  "title": "Issue #1 — Credential-Based Systemic Failure",
-  "executiveSummary": "A systemic governance failure disrupted mission-critical operations. This was not a tooling failure. This was a risk visibility failure.",
-  "domains": [
-    "Operational Resilience",
-    "Third-Party Risk",
-    "Identity"
-  ],
-  "riskTable": [
-    { "domain": "Operational Resilience", "rating": "CRITICAL" },
-    { "domain": "Third-Party Risk", "rating": "CRITICAL" },
-    { "domain": "Identity", "rating": "CRITICAL" }
-  ],
-  "confidence": "HIGH",
-  "publishedAt": "2026-02-01T13:50:42.006Z"
+  "issue": {
+    "issueNumber": 1,
+    "title": "Issue #1 — Credential-Based Systemic Failure",
+    "executiveSummary": "A systemic governance failure disrupted mission-critical operations.",
+    "domains": [
+      "Operational Resilience",
+      "Third-Party Risk",
+      "Identity"
+    ],
+    "riskTable": [
+      {
+        "domain": "Operational Resilience",
+        "rating": "CRITICAL"
+      },
+      {
+        "domain": "Third-Party Risk",
+        "rating": "CRITICAL"
+      },
+      {
+        "domain": "Identity",
+        "rating": "CRITICAL"
+      }
+    ],
+    "confidence": "HIGH",
+    "publishedAt": "2026-02-04T03:55:00.000Z"
+  },
+  "signature": "FRGoSxv5M72HDdGOI8AyOnC/hfmgkuNwex1/laHB5oCeArx1Q+EaPxDZj+UmapjTs1sJ9yXhFM+oRzaH3sq22oPKkDLMBWTevKRlkYo8q9r6yuLYdT3J3iREhsFdlXSnFA94L/HC2aI6Pjjurli5OCup/v4/c1CkIKnYDIK4eeNYwKDORVKmUuizemyvJSVkwCX2zuK3kH5Av5Zz8Mt/wrOqypCBTAG7pnP2ayZEq4McgRdRYlJbVZY01Rv0PFV2bTUwISm/n4HefrqpEA8fPsKU7ZjGDTO4hDXL+ZyIjdmDCbH8VnYdtttRBmjHbOfH0jsZR0wDxK7Q7Op7rb8h0xNI2WpRfU3SA+/jrxNIsyL+nADPBN2LGj8L2jXFw4jUNK47lBOYXLQufheJw9en9g/Y3HvcEmu+U/Jz7N/6QDWVZHz/Ko4mpXGwiljxi617ucZ6UlBL+eHnnk3uX6i/hnmLGXwtv0B6/BYZv09xKy4SQrC/wbVn37hJ8SHFIJUNjOdZMwuJ5FZrUs55u2w4S/qRY17hEefSKRtwh5uWZ7f1qsEVvsSwOoLBlei2eKlp4jeNgQcqLyQ+iLqMcs2yRLZSg/t/T4gCHxE48qJoIoOWZm7+gHWYqFNsU7RSukVj/mniUUGUtjD9PYlbLCMzar+8JekNdZzo6TUhfW88Fc0=",
+  "signedAt": "2026-02-04T04:21:32.703Z"
 }
