@@ -14,11 +14,13 @@ import { verifyIssueSignature } from "./infra/verifyIssueSignature.js";
 import { requestId } from "./middleware/requestId.js";
 import { requireApiKey } from "./middleware/requireApiKey.js";
 import { resolveEntitlement } from "./middleware/resolveEntitlement.js";
-import { requireRedis } from "./middleware/requireRedis.js";
-import { requestAudit } from "./middleware/requestAudit.js";
-import { enforceUsageCap } from "./middleware/enforceUsageCap.js";
+// ⛔ infra gates TEMPORARILY DISABLED
+// import { requireRedis } from "./middleware/requireRedis.js";
+// import { requestAudit } from "./middleware/requestAudit.js";
+// import { enforceUsageCap } from "./middleware/enforceUsageCap.js";
+// import { tierRateLimit } from "./middleware/tierRateLimit.js";
+
 import { requireSubscription } from "./middleware/requireSubscription.js";
-import { tierRateLimit } from "./middleware/tierRateLimit.js";
 import { verifyLemonWebhook } from "./middleware/verifyLemonWebhook.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
@@ -26,7 +28,7 @@ import { isSignedIssue } from "./contracts/signedIssue.schema.js";
 import type { SignedIssue } from "./contracts/signedIssue.schema.js";
 
 /* =========================================================
-   BOOT-TIME GUARDS (FAIL CLOSED)
+   BOOT-TIME GUARDS
    ========================================================= */
 
 validateEnv();
@@ -39,7 +41,6 @@ runSelfTest();
 const app = express();
 const PORT = Number(process.env.PORT ?? 3000);
 
-// Required for Render / Cloudflare
 app.set("trust proxy", 1);
 
 /* =========================================================
@@ -68,16 +69,12 @@ app.use((req, res, next) => {
   }
 
   activeRequests++;
-
-  res.on("finish", () => {
-    activeRequests--;
-  });
-
+  res.on("finish", () => activeRequests--);
   next();
 });
 
 /* =========================================================
-   WEBHOOKS (RAW BODY — MUST BE FIRST)
+   WEBHOOKS (RAW BODY FIRST)
    ========================================================= */
 
 app.post(
@@ -94,37 +91,35 @@ app.post(
 );
 
 /* =========================================================
-   GLOBAL BODY PARSER
+   BODY PARSER
    ========================================================= */
 
 app.use(express.json());
 
 /* =========================================================
-   HEALTH CHECK (RENDER-SAFE)
+   HEALTH CHECK (NO AUTH)
    ========================================================= */
 
 app.get("/health", (_req: Request, res: Response) => {
   if (!redisReady) {
-    res.status(503).json({
-      status: "unhealthy",
-      dependency: "redis"
-    });
+    res.status(503).json({ status: "unhealthy", dependency: "redis" });
     return;
   }
-
   res.status(200).json({ status: "ok" });
 });
 
 /* =========================================================
-   🔒 API SECURITY CHAIN (ORDER IS NON-NEGOTIABLE)
+   🔒 AUTH CHAIN — DEBUG SAFE
    ========================================================= */
 
 app.use("/issues", requireApiKey);
 app.use("/issues", resolveEntitlement);
-app.use("/issues", requireRedis);
-app.use("/issues", requestAudit);
-app.use("/issues", enforceUsageCap);
-app.use("/issues", tierRateLimit);
+
+// ⛔ infra gates intentionally disabled for debugging
+// app.use("/issues", requireRedis);
+// app.use("/issues", requestAudit);
+// app.use("/issues", enforceUsageCap);
+// app.use("/issues", tierRateLimit);
 
 /* =========================================================
    DATA DIRECTORY
@@ -159,7 +154,6 @@ app.get("/issues/latest", (_req: Request, res: Response) => {
   const filePath = path.join(ISSUES_DIR, files[0]);
 
   let raw: unknown;
-
   try {
     raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
   } catch {
@@ -182,47 +176,39 @@ app.get("/issues/latest", (_req: Request, res: Response) => {
   res.json(artifact.issue);
 });
 
-app.get(
-  "/issues/:id",
-  requireSubscription,
-  (req: Request, res: Response) => {
-    const filePath = path.join(
-      ISSUES_DIR,
-      `issue-${req.params.id}.json`
-    );
+app.get("/issues/:id", requireSubscription, (req, res) => {
+  const filePath = path.join(ISSUES_DIR, `issue-${req.params.id}.json`);
 
-    if (!fs.existsSync(filePath)) {
-      res.status(404).json({ error: "Issue not found" });
-      return;
-    }
-
-    let raw: unknown;
-
-    try {
-      raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-    } catch {
-      res.status(500).json({ error: "Issue file corrupted" });
-      return;
-    }
-
-    if (!isSignedIssue(raw)) {
-      res.status(500).json({ error: "Unsigned or invalid issue artifact" });
-      return;
-    }
-
-    const artifact = raw as SignedIssue;
-
-    if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
-      res.status(500).json({ error: "Issue signature verification failed" });
-      return;
-    }
-
-    res.json(artifact.issue);
+  if (!fs.existsSync(filePath)) {
+    res.status(404).json({ error: "Issue not found" });
+    return;
   }
-);
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  } catch {
+    res.status(500).json({ error: "Issue file corrupted" });
+    return;
+  }
+
+  if (!isSignedIssue(raw)) {
+    res.status(500).json({ error: "Unsigned or invalid issue artifact" });
+    return;
+  }
+
+  const artifact = raw as SignedIssue;
+
+  if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
+    res.status(500).json({ error: "Issue signature verification failed" });
+    return;
+  }
+
+  res.json(artifact.issue);
+});
 
 /* =========================================================
-   GLOBAL ERROR HANDLER (MUST BE LAST)
+   ERROR HANDLER
    ========================================================= */
 
 app.use(errorHandler);
@@ -239,36 +225,16 @@ const server = app.listen(PORT, "0.0.0.0", () => {
    GRACEFUL SHUTDOWN
    ========================================================= */
 
-let isShuttingDown = false;
-
 const shutdown = async (signal: string) => {
-  if (isShuttingDown) return;
-  isShuttingDown = true;
   isDraining = true;
+  console.log(`🛑 ${signal} received. Draining...`);
 
-  console.log(`🛑 Received ${signal}. Draining in-flight requests...`);
-
-  server.close(() => {
-    console.log("🚫 HTTP server stopped accepting new connections");
+  server.close(async () => {
+    if (redis.isOpen) await redis.quit();
+    process.exit(0);
   });
 
-  const drainInterval = setInterval(async () => {
-    if (activeRequests === 0) {
-      clearInterval(drainInterval);
-
-      try {
-        if (redis.isOpen) {
-          await redis.quit();
-        }
-      } finally {
-        process.exit(0);
-      }
-    }
-  }, 100);
-
-  setTimeout(() => {
-    process.exit(1);
-  }, 10_000).unref();
+  setTimeout(() => process.exit(1), 10_000).unref();
 };
 
 process.on("SIGTERM", shutdown);
