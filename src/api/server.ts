@@ -37,7 +37,10 @@ runSelfTest();
    ========================================================= */
 
 const app = express();
-const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
+const PORT = Number(process.env.PORT ?? 3000);
+
+// Required for Render / Cloudflare
+app.set("trust proxy", 1);
 
 /* =========================================================
    REQUEST CORRELATION
