@@ -1,59 +1,52 @@
-import { createPublicKey, verify } from "crypto";
+import crypto from "node:crypto";
+import { logger } from "./logger.js";
 
-function loadIssuePublicKeyPem(): string | null {
-  // Option A: direct PEM in env
-  const pem = process.env.ISSUE_PUBLIC_KEY_PEM;
-  if (pem && pem.trim().length > 0) return pem;
+function getVerifyKey(): string | null {
+  const key = process.env.SECURELOGIC_ISSUE_VERIFY_KEY;
+  if (!key) return null;
 
-  // Option B: base64-encoded PEM in env (common for Render)
-  const b64 = process.env.ISSUE_PUBLIC_KEY_PEM_B64;
-  if (b64 && b64.trim().length > 0) {
-    try {
-      return Buffer.from(b64, "base64").toString("utf8");
-    } catch {
-      return null;
-    }
-  }
-
-  // Option C: file path to PEM (if you mount it / bake it in)
-  const filePath = process.env.ISSUE_PUBLIC_KEY_PATH;
-  if (filePath && filePath.trim().length > 0) {
-    try {
-      // dynamic import to avoid bundler issues; Node runtime only
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const fs = require("fs") as typeof import("fs");
-      return fs.readFileSync(filePath, "utf8");
-    } catch {
-      return null;
-    }
-  }
-
-  return null;
+  const trimmed = key.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
-/**
- * Verify the signed issue payload using RSA/ECDSA public key.
- * Fail closed: if the public key is missing/unreadable, return false.
- */
-export function verifyIssueSignature(issue: unknown, signatureB64: string): boolean {
-  const pem = loadIssuePublicKeyPem();
-  if (!pem) return false;
+export function verifyIssueSignature(payload: unknown, signatureB64: string): boolean {
+  const verifyKey = getVerifyKey();
+
+  // FAIL CLOSED: if key is missing, verification must fail
+  if (!verifyKey) {
+    logger.error(
+      { hasKey: false },
+      "verifyIssueSignature: SECURELOGIC_ISSUE_VERIFY_KEY missing/empty"
+    );
+    return false;
+  }
+
+  // Basic signature sanity
+  if (!signatureB64 || signatureB64.trim().length === 0) {
+    logger.warn("verifyIssueSignature: missing signature");
+    return false;
+  }
 
   let sig: Buffer;
   try {
     sig = Buffer.from(signatureB64, "base64");
   } catch {
+    logger.warn("verifyIssueSignature: invalid base64 signature");
     return false;
   }
 
-  // Your signing code likely uses canonical JSON.
-  // If you already canonicalize elsewhere, keep it consistent.
-  const payload = Buffer.from(JSON.stringify(issue), "utf8");
+  // Canonicalize payload deterministically
+  const msg = Buffer.from(JSON.stringify(payload), "utf8");
 
   try {
-    const key = createPublicKey(pem);
-    return verify("sha256", payload, key, sig);
-  } catch {
+    return crypto.verify(
+      "sha256",
+      msg,
+      verifyKey, // <- now guaranteed string, not undefined
+      sig
+    );
+  } catch (err) {
+    logger.error({ err }, "verifyIssueSignature: crypto.verify threw");
     return false;
   }
 }
