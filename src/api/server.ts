@@ -7,8 +7,9 @@ import bodyParser from "body-parser";
 import { validateEnv } from "./startup/validateEnv.js";
 import { runSelfTest } from "./startup/selfTest.js";
 
-import { redis } from "./infra/redis.js";
+import { redis, redisReady } from "./infra/redis.js";
 import { httpLogger } from "./infra/httpLogger.js";
+import { verifyIssueSignature } from "./infra/verifyIssueSignature.js";
 
 import { requestId } from "./middleware/requestId.js";
 import { requireApiKey } from "./middleware/requireApiKey.js";
@@ -21,7 +22,8 @@ import { tierRateLimit } from "./middleware/tierRateLimit.js";
 import { verifyLemonWebhook } from "./middleware/verifyLemonWebhook.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
-import { isIssue } from "./contracts/issue.schema.js";
+import { isSignedIssue } from "./contracts/signedIssue.schema.js";
+import type { SignedIssue } from "./contracts/signedIssue.schema.js";
 
 /* =========================================================
    BOOT-TIME GUARDS (FAIL CLOSED)
@@ -95,29 +97,19 @@ app.post(
 app.use(express.json());
 
 /* =========================================================
-   HEALTH CHECK (NO AUTH)
+   HEALTH CHECK (RENDER-SAFE)
    ========================================================= */
 
-app.get("/health", async (_req: Request, res: Response) => {
-  try {
-    await Promise.race([
-      redis.ping(),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("redis_timeout")), 500)
-      )
-    ]);
-
-    res.status(200).json({
-      status: "ok",
-      redis: "reachable"
-    });
-  } catch {
+app.get("/health", (_req: Request, res: Response) => {
+  if (!redisReady) {
     res.status(503).json({
       status: "unhealthy",
-      dependency: "redis",
-      error: "redis_unreachable"
+      dependency: "redis"
     });
+    return;
   }
+
+  res.status(200).json({ status: "ok" });
 });
 
 /* =========================================================
@@ -163,58 +155,66 @@ app.get("/issues/latest", (_req: Request, res: Response) => {
 
   const filePath = path.join(ISSUES_DIR, files[0]);
 
-  let parsed: unknown;
+  let raw: unknown;
 
   try {
-    parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
   } catch {
-    res.status(500).json({
-      error: "Issue file is corrupted",
-      file: files[0]
-    });
+    res.status(500).json({ error: "Issue file corrupted" });
     return;
   }
 
-  if (!isIssue(parsed)) {
-    res.status(500).json({
-      error: "Issue schema violation",
-      file: files[0]
-    });
+  if (!isSignedIssue(raw)) {
+    res.status(500).json({ error: "Unsigned or invalid issue artifact" });
     return;
   }
 
-  res.json(parsed);
+  const artifact = raw as SignedIssue;
+
+  if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
+    res.status(500).json({ error: "Issue signature verification failed" });
+    return;
+  }
+
+  res.json(artifact.issue);
 });
 
 app.get(
   "/issues/:id",
   requireSubscription,
   (req: Request, res: Response) => {
-    const file = path.join(
+    const filePath = path.join(
       ISSUES_DIR,
       `issue-${req.params.id}.json`
     );
 
-    if (!fs.existsSync(file)) {
+    if (!fs.existsSync(filePath)) {
       res.status(404).json({ error: "Issue not found" });
       return;
     }
 
-    let parsed: unknown;
+    let raw: unknown;
 
     try {
-      parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
+      raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
     } catch {
       res.status(500).json({ error: "Issue file corrupted" });
       return;
     }
 
-    if (!isIssue(parsed)) {
-      res.status(500).json({ error: "Issue schema violation" });
+    if (!isSignedIssue(raw)) {
+      res.status(500).json({ error: "Unsigned or invalid issue artifact" });
       return;
     }
 
-    res.json(parsed);
+    const artifact = raw as SignedIssue;
+
+    if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
+      res.status(500).json({ error: "Issue signature verification failed" });
+      return;
+    }
+
+    res.json(artifact.issue);
   }
 );
 

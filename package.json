@@ -38,6 +38,7 @@
     "@typescript-eslint/parser": "^8.53.1",
     "eslint": "^9.39.2",
     "eslint-plugin-boundaries": "^5.3.1",
+    "tsx": "^4.21.0",
     "typescript": "~5.9.3",
     "vitest": "~4.0.16"
   }

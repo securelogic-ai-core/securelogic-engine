@@ -46,7 +46,7 @@ export function requireApiKey(
     return;
   }
 
-  // 🔒 Phase 5: canonical request identity
+  // 🔒 Canonical request identity (used by downstream middleware)
   (req as any).identity = {
     apiKey
   };
