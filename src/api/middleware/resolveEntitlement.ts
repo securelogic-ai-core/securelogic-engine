@@ -14,7 +14,6 @@ export function resolveEntitlement(
   res: Response,
   next: NextFunction
 ): void {
-  // 🔒 Phase 6.2: consume canonical identity ONLY
   const apiKey = (req as any).identity?.apiKey as string | undefined;
 
   if (!apiKey) {

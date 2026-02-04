@@ -19,6 +19,9 @@ import { enforceUsageCap } from "./middleware/enforceUsageCap.js";
 import { requireSubscription } from "./middleware/requireSubscription.js";
 import { tierRateLimit } from "./middleware/tierRateLimit.js";
 import { verifyLemonWebhook } from "./middleware/verifyLemonWebhook.js";
+import { errorHandler } from "./middleware/errorHandler.js";
+
+import { isIssue } from "./contracts/issue.schema.js";
 
 /* =========================================================
    BOOT-TIME GUARDS (FAIL CLOSED)
@@ -41,7 +44,7 @@ const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 app.use(requestId);
 
 /* =========================================================
-   HTTP REQUEST LOGGING (PHASE 6.1)
+   HTTP REQUEST LOGGING
    ========================================================= */
 
 app.use(httpLogger);
@@ -92,7 +95,7 @@ app.post(
 app.use(express.json());
 
 /* =========================================================
-   HEALTH CHECK (NO AUTH — INTENTIONAL)
+   HEALTH CHECK (NO AUTH)
    ========================================================= */
 
 app.get("/health", async (_req: Request, res: Response) => {
@@ -123,7 +126,7 @@ app.get("/health", async (_req: Request, res: Response) => {
 
 app.use("/issues", requireApiKey);
 app.use("/issues", resolveEntitlement);
-app.use("/issues", requireRedis); // Phase 6 runtime hard gate
+app.use("/issues", requireRedis);
 app.use("/issues", requestAudit);
 app.use("/issues", enforceUsageCap);
 app.use("/issues", tierRateLimit);
@@ -146,7 +149,7 @@ app.get("/issues/latest", (_req: Request, res: Response) => {
 
   const files = fs
     .readdirSync(ISSUES_DIR)
-    .filter((f) => f.startsWith("issue-") && f.endsWith(".json"))
+    .filter(f => f.startsWith("issue-") && f.endsWith(".json"))
     .sort((a, b) => {
       const aNum = Number(a.replace("issue-", "").replace(".json", ""));
       const bNum = Number(b.replace("issue-", "").replace(".json", ""));
@@ -158,12 +161,29 @@ app.get("/issues/latest", (_req: Request, res: Response) => {
     return;
   }
 
-  const latest = fs.readFileSync(
-    path.join(ISSUES_DIR, files[0]),
-    "utf-8"
-  );
+  const filePath = path.join(ISSUES_DIR, files[0]);
 
-  res.json(JSON.parse(latest));
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  } catch {
+    res.status(500).json({
+      error: "Issue file is corrupted",
+      file: files[0]
+    });
+    return;
+  }
+
+  if (!isIssue(parsed)) {
+    res.status(500).json({
+      error: "Issue schema violation",
+      file: files[0]
+    });
+    return;
+  }
+
+  res.json(parsed);
 });
 
 app.get(
@@ -180,10 +200,29 @@ app.get(
       return;
     }
 
-    const data = fs.readFileSync(file, "utf-8");
-    res.json(JSON.parse(data));
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
+    } catch {
+      res.status(500).json({ error: "Issue file corrupted" });
+      return;
+    }
+
+    if (!isIssue(parsed)) {
+      res.status(500).json({ error: "Issue schema violation" });
+      return;
+    }
+
+    res.json(parsed);
   }
 );
+
+/* =========================================================
+   GLOBAL ERROR HANDLER (MUST BE LAST)
+   ========================================================= */
+
+app.use(errorHandler);
 
 /* =========================================================
    START SERVER

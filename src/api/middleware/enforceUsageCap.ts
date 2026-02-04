@@ -9,17 +9,7 @@ const LIMITS: Record<Tier, number> = {
   admin: Number.POSITIVE_INFINITY
 };
 
-// Daily usage window
 const WINDOW_SECONDS = 60 * 60 * 24;
-
-function getTier(req: Request): Tier {
-  return ((req as any).entitlement as Tier) ?? "free";
-}
-
-function getApiKey(req: Request): string {
-  // 🔒 Phase 6.2: canonical identity ONLY
-  return ((req as any).identity?.apiKey as string | undefined) ?? "";
-}
 
 export async function enforceUsageCap(
   req: Request,
@@ -27,35 +17,31 @@ export async function enforceUsageCap(
   next: NextFunction
 ): Promise<void> {
   try {
-    const tier = getTier(req);
+    const tier = (req as any).entitlement as Tier;
+    const apiKey = (req as any).identity?.apiKey as string | undefined;
 
-    // Admins are uncapped and do not consume counters
+    if (!apiKey) {
+      res.status(401).json({ error: "API key required" });
+      return;
+    }
+
     if (tier === "admin") {
       next();
       return;
     }
 
-    const apiKey = getApiKey(req);
-    if (!apiKey) {
-      res.status(401).json({ error: "Missing API key" });
-      return;
-    }
-
-    const limit = LIMITS[tier];
     const key = `usage:${tier}:${apiKey}`;
-
     const used = await redis.incr(key);
 
-    // First hit sets the daily TTL
     if (used === 1) {
       await redis.expire(key, WINDOW_SECONDS);
     }
 
-    if (used > limit) {
+    if (used > LIMITS[tier]) {
       res.status(402).json({
         error: "Usage cap exceeded",
         tier,
-        limit
+        limit: LIMITS[tier]
       });
       return;
     }

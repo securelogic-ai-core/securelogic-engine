@@ -1,4 +1,5 @@
 const REQUIRED_ENV = [
+  "NODE_ENV",
   "SECURELOGIC_API_KEYS",
   "SECURELOGIC_ENTITLEMENTS",
   "REDIS_URL"
@@ -14,6 +15,13 @@ export function validateEnv(): void {
     for (const key of missing) {
       console.error(`   - ${key}`);
     }
+    process.exit(1); // FAIL CLOSED
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    console.error(
+      `❌ NODE_ENV must be "production" (got "${process.env.NODE_ENV}")`
+    );
     process.exit(1); // FAIL CLOSED
   }
 }
