@@ -31,7 +31,6 @@ export function requestAudit(
 ): void {
   const apiKey =
     (req as any).identity?.apiKey ??
-    (req as any).apiKey ??
     "unknown";
 
   const store = ensureStore();
@@ -50,4 +49,4 @@ export function requestAudit(
 
   (req as any).meter = store[apiKey];
   next();
-}0
+}
