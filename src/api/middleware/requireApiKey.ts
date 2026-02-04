@@ -3,30 +3,28 @@ import { logger } from "../infra/logger.js";
 
 /**
  * Canonical API key enforcement middleware
- * - Single source of truth: x-api-key
- * - Establishes request identity for downstream middleware
- * - NO other middleware may read headers
+ * - Uses Authorization: Bearer <key>
+ * - Cloudflare / Render safe
+ * - FAIL CLOSED
  */
 export function requireApiKey(
   req: Request,
   res: Response,
   next: NextFunction
 ): void {
-  // 🔒 Canonical header (LOCKED)
-  const apiKey = req.get("x-api-key");
+  const authHeader = req.get("authorization");
 
-  if (!apiKey) {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
     logger.warn(
-      {
-        path: req.originalUrl,
-        method: req.method
-      },
-      "API key missing"
+      { path: req.originalUrl, method: req.method },
+      "Authorization header missing or malformed"
     );
 
     res.status(401).json({ error: "API key required" });
     return;
   }
+
+  const apiKey = authHeader.replace("Bearer ", "").trim();
 
   const allowedKeys = process.env.SECURELOGIC_API_KEYS
     ?.split(",")
@@ -35,10 +33,7 @@ export function requireApiKey(
 
   if (!allowedKeys || !allowedKeys.includes(apiKey)) {
     logger.warn(
-      {
-        path: req.originalUrl,
-        method: req.method
-      },
+      { path: req.originalUrl, method: req.method },
       "Invalid API key"
     );
 
@@ -46,10 +41,6 @@ export function requireApiKey(
     return;
   }
 
-  // 🔒 Canonical request identity (used by downstream middleware)
-  (req as any).identity = {
-    apiKey
-  };
-
+  (req as any).identity = { apiKey };
   next();
 }
