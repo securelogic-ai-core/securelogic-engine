@@ -5,7 +5,7 @@ import bodyParser from "body-parser";
 import { validateEnv } from "./startup/validateEnv.js";
 import { runSelfTest } from "./startup/selfTest.js";
 
-import { redis, redisReady } from "./infra/redis.js";
+import { redis } from "./infra/redis.js";
 import { httpLogger } from "./infra/httpLogger.js";
 import { verifyIssueSignature } from "./infra/verifyIssueSignature.js";
 
@@ -23,10 +23,16 @@ import { requireSubscription } from "./middleware/requireSubscription.js";
 import { verifyLemonWebhook } from "./middleware/verifyLemonWebhook.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
+import { requireAdminKey } from "./middleware/requireAdminKey.js";
+
 import { isSignedIssue } from "./contracts/signedIssue.schema.js";
 import type { SignedIssue } from "./contracts/signedIssue.schema.js";
 
-import { getLatestIssueId, getIssueArtifact } from "./infra/issueStore.js";
+import {
+  getLatestIssueId,
+  getIssueArtifact,
+  publishIssueArtifact
+} from "./infra/issueStore.js";
 
 /* =========================================================
    BOOT-TIME GUARDS
@@ -103,13 +109,78 @@ app.use(express.json());
    ========================================================= */
 
 app.get("/health", (_req: Request, res: Response) => {
-  if (!redisReady) {
-    res.status(503).json({ status: "unhealthy", dependency: "redis" });
+  // Render cold-starts can make Redis connect late.
+  // Health should NOT fail hard unless the server itself is broken.
+  if (!redis.isOpen) {
+    res.status(200).json({
+      status: "degraded",
+      dependency: "redis",
+      redisConnected: false
+    });
     return;
   }
 
-  res.status(200).json({ status: "ok" });
+  res.status(200).json({
+    status: "ok",
+    redisConnected: true
+  });
 });
+
+/* =========================================================
+   VERSION CHECK (DEPLOY VERIFICATION)
+   ========================================================= */
+
+app.get("/version", (_req: Request, res: Response) => {
+  res.status(200).json({
+    commit: process.env.RENDER_GIT_COMMIT ?? "unknown",
+    service: "securelogic-engine",
+    timestamp: new Date().toISOString()
+  });
+});
+
+/* =========================================================
+   🔒 ADMIN ROUTES (NO USER API KEY)
+   ========================================================= */
+
+app.post(
+  "/admin/issues/publish",
+  requireAdminKey,
+  async (req: Request, res: Response) => {
+    try {
+      const parsed = req.body as unknown;
+
+      if (!isSignedIssue(parsed)) {
+        res.status(400).json({ error: "Invalid signed issue artifact" });
+        return;
+      }
+
+      const artifact = parsed as SignedIssue;
+
+      if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
+        res.status(400).json({ error: "Issue signature verification failed" });
+        return;
+      }
+
+      const issueNumber = artifact.issue.issueNumber;
+
+      if (!Number.isFinite(issueNumber) || issueNumber <= 0) {
+        res.status(400).json({ error: "Invalid issueNumber" });
+        return;
+      }
+
+      // Store the artifact in Redis + update latest pointer
+      await publishIssueArtifact(issueNumber, JSON.stringify(artifact));
+
+      res.status(200).json({
+        ok: true,
+        published: issueNumber
+      });
+    } catch (err) {
+      console.error("❌ /admin/issues/publish failed:", err);
+      res.status(500).json({ error: "internal_error" });
+    }
+  }
+);
 
 /* =========================================================
    🔒 AUTH CHAIN — DEBUG SAFE
@@ -129,82 +200,96 @@ app.use("/issues", resolveEntitlement);
    ========================================================= */
 
 app.get("/issues/latest", async (_req: Request, res: Response) => {
-  const latestId = await getLatestIssueId();
-
-  if (!latestId) {
-    res.status(404).json({ error: "No issues published" });
-    return;
-  }
-
-  const raw = await getIssueArtifact(latestId);
-
-  if (!raw) {
-    res.status(404).json({ error: "No issues published" });
-    return;
-  }
-
-  let parsed: unknown;
-
   try {
-    parsed = JSON.parse(raw);
-  } catch {
-    res.status(500).json({ error: "Issue artifact corrupted" });
-    return;
+    const latestId = await getLatestIssueId();
+
+    if (!latestId) {
+      res.status(404).json({ error: "No issues published" });
+      return;
+    }
+
+    const raw = await getIssueArtifact(latestId);
+
+    if (!raw) {
+      res.status(404).json({ error: "No issues published" });
+      return;
+    }
+
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      res.status(500).json({ error: "Issue artifact corrupted" });
+      return;
+    }
+
+    if (!isSignedIssue(parsed)) {
+      res.status(500).json({ error: "Unsigned or invalid issue artifact" });
+      return;
+    }
+
+    const artifact = parsed as SignedIssue;
+
+    if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
+      res.status(500).json({ error: "Issue signature verification failed" });
+      return;
+    }
+
+    res.json(artifact.issue);
+  } catch (err) {
+    console.error("❌ /issues/latest failed:", err);
+    res.status(500).json({ error: "internal_error" });
   }
-
-  if (!isSignedIssue(parsed)) {
-    res.status(500).json({ error: "Unsigned or invalid issue artifact" });
-    return;
-  }
-
-  const artifact = parsed as SignedIssue;
-
-  if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
-    res.status(500).json({ error: "Issue signature verification failed" });
-    return;
-  }
-
-  res.json(artifact.issue);
 });
 
-app.get("/issues/:id", requireSubscription, async (req: Request, res: Response) => {
-  const idNum = Number(req.params.id);
+app.get(
+  "/issues/:id",
+  requireSubscription,
+  async (req: Request, res: Response) => {
+    try {
+      const idNum = Number(req.params.id);
 
-  if (!Number.isFinite(idNum) || idNum <= 0) {
-    res.status(400).json({ error: "Invalid issue id" });
-    return;
+      if (!Number.isFinite(idNum) || idNum <= 0) {
+        res.status(400).json({ error: "Invalid issue id" });
+        return;
+      }
+
+      const raw = await getIssueArtifact(idNum);
+
+      if (!raw) {
+        res.status(404).json({ error: "Issue not found" });
+        return;
+      }
+
+      let parsed: unknown;
+
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        res.status(500).json({ error: "Issue artifact corrupted" });
+        return;
+      }
+
+      if (!isSignedIssue(parsed)) {
+        res.status(500).json({ error: "Unsigned or invalid issue artifact" });
+        return;
+      }
+
+      const artifact = parsed as SignedIssue;
+
+      if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
+        res.status(500).json({ error: "Issue signature verification failed" });
+        return;
+      }
+
+      res.json(artifact.issue);
+    } catch (err) {
+      console.error("❌ /issues/:id failed:", err);
+      res.status(500).json({ error: "internal_error" });
+    }
   }
-
-  const raw = await getIssueArtifact(idNum);
-
-  if (!raw) {
-    res.status(404).json({ error: "Issue not found" });
-    return;
-  }
-
-  let parsed: unknown;
-
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    res.status(500).json({ error: "Issue artifact corrupted" });
-    return;
-  }
-
-  if (!isSignedIssue(parsed)) {
-    res.status(500).json({ error: "Unsigned or invalid issue artifact" });
-    return;
-  }
-
-  const artifact = parsed as SignedIssue;
-
-  if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
-    res.status(500).json({ error: "Issue signature verification failed" });
-    return;
-  }
-
-  res.json(artifact.issue);
-});
+);
 
 /* =========================================================
    ERROR HANDLER
