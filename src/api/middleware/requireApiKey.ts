@@ -1,75 +1,31 @@
-import type { Request, Response, NextFunction } from "express";
-import { logger } from "../infra/logger.js";
-
-function extractApiKey(req: Request): { key: string | null; source: "authorization" | "x-api-key" | "none" } {
-  const auth = req.header("authorization");
-  if (auth) {
+function extractApiKey(req: Request): {
+  key: string | null;
+  source: "authorization" | "x-api-key" | "x-securelogic-key" | "query" | "none";
+} {
+  // 1) Authorization: Bearer <key>
+  const auth = req.headers["authorization"];
+  if (typeof auth === "string" && auth.length > 0) {
     const m = auth.match(/^Bearer\s+(.+)$/i);
     if (m?.[1]) return { key: m[1].trim(), source: "authorization" };
   }
 
-  const x = req.header("x-api-key");
-  if (x) return { key: x.trim(), source: "x-api-key" };
+  // 2) X-API-Key
+  const xApiKey = req.headers["x-api-key"];
+  if (typeof xApiKey === "string" && xApiKey.trim()) {
+    return { key: xApiKey.trim(), source: "x-api-key" };
+  }
+
+  // 3) X-SecureLogic-Key (recommended for Render/Cloudflare)
+  const xSecureLogicKey = req.headers["x-securelogic-key"];
+  if (typeof xSecureLogicKey === "string" && xSecureLogicKey.trim()) {
+    return { key: xSecureLogicKey.trim(), source: "x-securelogic-key" };
+  }
+
+  // 4) Last-resort: query param (keep for debugging only)
+  const q = req.query?.api_key;
+  if (typeof q === "string" && q.trim()) {
+    return { key: q.trim(), source: "query" };
+  }
 
   return { key: null, source: "none" };
-}
-
-function loadAllowedKeys(): Set<string> {
-  const raw = process.env.SECURELOGIC_API_KEYS ?? "";
-  const keys = raw
-    .split(",")
-    .map(s => s.trim())
-    .filter(Boolean);
-
-  return new Set(keys);
-}
-
-export function requireApiKey(req: Request, res: Response, next: NextFunction): void {
-  const { key, source } = extractApiKey(req);
-
-  // SAFE debug: do not log secrets, only presence + which headers exist
-  const hasAuthHeader = Boolean(req.header("authorization"));
-  const hasXApiKeyHeader = Boolean(req.header("x-api-key"));
-
-  if (!key) {
-    logger.warn(
-      {
-        source,
-        hasAuthHeader,
-        hasXApiKeyHeader,
-        path: req.originalUrl
-      },
-      "requireApiKey: missing api key"
-    );
-    res.status(401).json({ error: "API key required" });
-    return;
-  }
-
-  const allowed = loadAllowedKeys();
-
-  if (allowed.size === 0) {
-    logger.error(
-      { path: req.originalUrl },
-      "requireApiKey: SECURELOGIC_API_KEYS missing/empty"
-    );
-    res.status(503).json({ error: "auth_misconfigured" });
-    return;
-  }
-
-  if (!allowed.has(key)) {
-    logger.warn(
-      {
-        source,
-        hasAuthHeader,
-        hasXApiKeyHeader,
-        path: req.originalUrl
-      },
-      "requireApiKey: invalid api key"
-    );
-    res.status(403).json({ error: "API key invalid" });
-    return;
-  }
-
-  (req as any).apiKey = key;
-  next();
 }
