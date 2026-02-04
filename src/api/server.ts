@@ -31,7 +31,7 @@ import type { SignedIssue } from "./contracts/signedIssue.schema.js";
 import {
   getLatestIssueId,
   getIssueArtifact,
-  publishIssueArtifact
+  putIssueArtifact
 } from "./infra/issueStore.js";
 
 /* =========================================================
@@ -169,7 +169,7 @@ app.post(
       }
 
       // Store the artifact in Redis + update latest pointer
-      await publishIssueArtifact(issueNumber, JSON.stringify(artifact));
+      await putIssueArtifact(issueNumber, JSON.stringify(artifact));
 
       res.status(200).json({
         ok: true,
