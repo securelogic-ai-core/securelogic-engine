@@ -1,21 +1,10 @@
-import fs from "fs";
-import path from "path";
 import crypto from "crypto";
 import type { Issue } from "../contracts/issue.schema.js";
 
-const PUBLIC_KEY_PATH = path.resolve("keys/issue.public.pem");
+const PUBLIC_KEY = process.env.ISSUE_PUBLIC_KEY;
 
-let cachedPublicKey: string | null = null;
-
-function getPublicKey(): string {
-  if (cachedPublicKey) return cachedPublicKey;
-
-  if (!fs.existsSync(PUBLIC_KEY_PATH)) {
-    throw new Error("issue_public_key_missing");
-  }
-
-  cachedPublicKey = fs.readFileSync(PUBLIC_KEY_PATH, "utf-8");
-  return cachedPublicKey;
+if (!PUBLIC_KEY) {
+  throw new Error("ISSUE_PUBLIC_KEY is not set");
 }
 
 export function verifyIssueSignature(
@@ -27,7 +16,7 @@ export function verifyIssueSignature(
     verifier.update(JSON.stringify(issue));
     verifier.end();
 
-    return verifier.verify(getPublicKey(), signature, "base64");
+    return verifier.verify(PUBLIC_KEY, signature, "base64");
   } catch {
     return false;
   }
