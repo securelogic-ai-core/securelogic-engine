@@ -1,10 +1,19 @@
+# =========================
+# ENV FILES (SECRETS)
+# =========================
 .env
 .env.*
-dist/
+!.env.example
+
+# =========================
+# BUILD OUTPUT
+# =========================
 dist/
 node_modules/
 
-# Local artifacts
+# =========================
+# LOCAL ARTIFACTS
+# =========================
 reports/*.json
 test.db
 test.db-*
@@ -14,3 +23,24 @@ test.db-*
 # WAL/SHM
 *-wal
 *-shm
+
+# =========================
+# SECRETS / KEYS
+# =========================
+keys/
+*.pem
+
+# =========================
+# REDIS DUMP
+# =========================
+dump.rdb
+
+# =========================
+# GENERATED ISSUE ARTIFACTS
+# =========================
+data/issues/
+
+# =========================
+# LOCAL SCRIPTS
+# =========================
+scripts/generate-issue.ts
