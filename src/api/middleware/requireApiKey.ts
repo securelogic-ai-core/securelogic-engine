@@ -1,46 +1,75 @@
 import type { Request, Response, NextFunction } from "express";
 import { logger } from "../infra/logger.js";
 
-/**
- * Canonical API key enforcement middleware
- * - Uses Authorization: Bearer <key>
- * - Cloudflare / Render safe
- * - FAIL CLOSED
- */
-export function requireApiKey(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void {
-  const authHeader = req.get("authorization");
+function extractApiKey(req: Request): { key: string | null; source: "authorization" | "x-api-key" | "none" } {
+  const auth = req.header("authorization");
+  if (auth) {
+    const m = auth.match(/^Bearer\s+(.+)$/i);
+    if (m?.[1]) return { key: m[1].trim(), source: "authorization" };
+  }
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  const x = req.header("x-api-key");
+  if (x) return { key: x.trim(), source: "x-api-key" };
+
+  return { key: null, source: "none" };
+}
+
+function loadAllowedKeys(): Set<string> {
+  const raw = process.env.SECURELOGIC_API_KEYS ?? "";
+  const keys = raw
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  return new Set(keys);
+}
+
+export function requireApiKey(req: Request, res: Response, next: NextFunction): void {
+  const { key, source } = extractApiKey(req);
+
+  // SAFE debug: do not log secrets, only presence + which headers exist
+  const hasAuthHeader = Boolean(req.header("authorization"));
+  const hasXApiKeyHeader = Boolean(req.header("x-api-key"));
+
+  if (!key) {
     logger.warn(
-      { path: req.originalUrl, method: req.method },
-      "Authorization header missing or malformed"
+      {
+        source,
+        hasAuthHeader,
+        hasXApiKeyHeader,
+        path: req.originalUrl
+      },
+      "requireApiKey: missing api key"
     );
-
     res.status(401).json({ error: "API key required" });
     return;
   }
 
-  const apiKey = authHeader.replace("Bearer ", "").trim();
+  const allowed = loadAllowedKeys();
 
-  const allowedKeys = process.env.SECURELOGIC_API_KEYS
-    ?.split(",")
-    .map(k => k.trim())
-    .filter(Boolean);
-
-  if (!allowedKeys || !allowedKeys.includes(apiKey)) {
-    logger.warn(
-      { path: req.originalUrl, method: req.method },
-      "Invalid API key"
+  if (allowed.size === 0) {
+    logger.error(
+      { path: req.originalUrl },
+      "requireApiKey: SECURELOGIC_API_KEYS missing/empty"
     );
-
-    res.status(403).json({ error: "Invalid API key" });
+    res.status(503).json({ error: "auth_misconfigured" });
     return;
   }
 
-  (req as any).identity = { apiKey };
+  if (!allowed.has(key)) {
+    logger.warn(
+      {
+        source,
+        hasAuthHeader,
+        hasXApiKeyHeader,
+        path: req.originalUrl
+      },
+      "requireApiKey: invalid api key"
+    );
+    res.status(403).json({ error: "API key invalid" });
+    return;
+  }
+
+  (req as any).apiKey = key;
   next();
 }
