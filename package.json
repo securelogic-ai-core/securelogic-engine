@@ -6,9 +6,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "npx tsc -p tsconfig.prod.json",
+    "build": "tsc -p tsconfig.prod.json",
     "start": "node dist/api/server.js",
-    "typecheck": "npx tsc -p tsconfig.ci.json",
+    "typecheck": "tsc -p tsconfig.ci.json",
     "lint": "eslint \"src/**/*.{ts,tsx,js}\"",
     "test": "vitest run",
     "test:prod": "vitest run src/_frozen_prod/__tests__",
@@ -28,7 +28,8 @@
     "pino-http": "^11.0.0",
     "redis": "^5.10.0",
     "securelogic-contracts": "^0.1.2",
-    "zod": "^4.3.4"
+    "zod": "^4.3.4",
+    "typescript": "~5.9.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
@@ -39,7 +40,6 @@
     "eslint": "^9.39.2",
     "eslint-plugin-boundaries": "^5.3.1",
     "tsx": "^4.21.0",
-    "typescript": "~5.9.3",
     "vitest": "~4.0.16"
   }
 }
