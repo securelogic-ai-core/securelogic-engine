@@ -5,33 +5,91 @@ import { createClient } from "redis";
 const REDIS_URL = process.env.REDIS_URL;
 if (!REDIS_URL) throw new Error("REDIS_URL missing");
 
-const id = Number(process.argv[2] ?? "1");
-if (!Number.isFinite(id) || id <= 0) {
-  throw new Error("Usage: node scripts/publish-issue.mjs <issueId>");
+const args = process.argv.slice(2);
+
+const useStdin = args.includes("--stdin");
+const idArg = args.find((a) => /^\d+$/.test(a));
+const issueId = idArg ? Number(idArg) : null;
+
+const client = createClient({ url: REDIS_URL });
+
+await client.connect();
+
+const readStdin = async () => {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    process.stdin.setEncoding("utf8");
+
+    process.stdin.on("data", (chunk) => (data += chunk));
+    process.stdin.on("end", () => resolve(data));
+    process.stdin.on("error", reject);
+  });
+};
+
+let artifactRaw = null;
+let resolvedIssueId = issueId;
+
+if (useStdin) {
+  artifactRaw = await readStdin();
+
+  if (!artifactRaw || artifactRaw.trim().length === 0) {
+    throw new Error("No stdin data received");
+  }
+
+  // try to extract issueNumber from stdin artifact
+  try {
+    const parsed = JSON.parse(artifactRaw);
+    const n = parsed?.issue?.issueNumber;
+
+    if (typeof n === "number" && Number.isFinite(n) && n > 0) {
+      resolvedIssueId = n;
+    }
+  } catch {
+    // ignore, we’ll validate later
+  }
+} else {
+  if (!issueId) {
+    throw new Error("Usage: node scripts/publish-issue.mjs <issueNumber> OR --stdin");
+  }
+
+  const filePath = path.resolve("data/issues", `issue-${issueId}.json`);
+
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`Issue artifact not found: ${filePath}`);
+  }
+
+  artifactRaw = fs.readFileSync(filePath, "utf8");
 }
 
-const filePath = path.resolve(`data/issues/issue-${id}.json`);
+if (!artifactRaw) throw new Error("No artifact payload loaded");
+if (!resolvedIssueId) throw new Error("Could not determine issueNumber");
 
-if (!fs.existsSync(filePath)) {
-  throw new Error(`Issue artifact not found: ${filePath}`);
+// Validate JSON
+let parsedArtifact;
+try {
+  parsedArtifact = JSON.parse(artifactRaw);
+} catch {
+  throw new Error("Artifact is not valid JSON");
 }
 
-const artifactJson = fs.readFileSync(filePath, "utf-8");
+if (!parsedArtifact.issue || !parsedArtifact.signature) {
+  throw new Error("Artifact missing required fields: issue + signature");
+}
 
-const KEY_LATEST = "issues:latest";
-const KEY_PREFIX = "issues:artifact:";
+if (parsedArtifact.issue.issueNumber !== resolvedIssueId) {
+  throw new Error(
+    `Issue mismatch: stdin/file issueNumber=${parsedArtifact.issue.issueNumber} but resolved=${resolvedIssueId}`
+  );
+}
 
-const redis = createClient({ url: REDIS_URL });
+// Store issue payload
+await client.set(`issue:${resolvedIssueId}`, artifactRaw);
 
-redis.on("error", (err) => console.error("Redis error:", err));
+// Store latest pointer
+await client.set("issue:latest", String(resolvedIssueId));
 
-await redis.connect();
+console.log(`✅ Published issue #${resolvedIssueId} to Redis`);
+console.log(`   issue:${resolvedIssueId}`);
+console.log(`   issue:latest -> ${resolvedIssueId}`);
 
-await redis.set(`${KEY_PREFIX}${id}`, artifactJson);
-await redis.set(KEY_LATEST, String(id));
-
-console.log(`✅ Published issue ${id} to Redis`);
-console.log(`- ${KEY_LATEST} = ${id}`);
-console.log(`- ${KEY_PREFIX}${id} = <artifact json>`);
-
-await redis.quit();
+await client.quit();
