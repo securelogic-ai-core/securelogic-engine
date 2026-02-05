@@ -16,11 +16,16 @@ export async function tierRateLimit(
   res: Response,
   next: NextFunction
 ): Promise<void> {
-  const tier = (req as any).entitlement as Tier;
-  const apiKey = (req as any).identity?.apiKey as string | undefined;
+  const tier = (req as any).entitlement as Tier | undefined;
+  const apiKey = (req as any).apiKey as string | undefined;
 
   if (!apiKey) {
-    res.status(401).json({ error: "API key required" });
+    res.status(401).json({ error: "API key required (tierRateLimit)" });
+    return;
+  }
+
+  if (!tier || !["free", "paid", "admin"].includes(tier)) {
+    res.status(500).json({ error: "Missing entitlement tier" });
     return;
   }
 
@@ -30,20 +35,28 @@ export async function tierRateLimit(
   }
 
   const key = `rate:${tier}:${apiKey}`;
-  const count = await redis.incr(key);
 
-  if (count === 1) {
-    await redis.expire(key, WINDOW_SECONDS);
+  try {
+    const count = await redis.incr(key);
+
+    if (count === 1) {
+      await redis.expire(key, WINDOW_SECONDS);
+    }
+
+    if (count > LIMITS[tier]) {
+      res.status(429).json({
+        error: "Rate limit exceeded",
+        tier,
+        limit: LIMITS[tier],
+        windowSeconds: WINDOW_SECONDS
+      });
+      return;
+    }
+
+    next();
+  } catch (err) {
+    // Fail open for rate limit (don’t take down the API if Redis is flaky)
+    console.error("⚠️ tierRateLimit Redis unavailable — allowing request:", err);
+    next();
   }
-
-  if (count > LIMITS[tier]) {
-    res.status(429).json({
-      error: "Rate limit exceeded",
-      tier,
-      limit: LIMITS[tier]
-    });
-    return;
-  }
-
-  next();
 }

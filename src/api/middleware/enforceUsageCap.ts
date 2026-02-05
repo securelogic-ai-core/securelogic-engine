@@ -9,28 +9,34 @@ const LIMITS: Record<Tier, number> = {
   admin: Number.POSITIVE_INFINITY
 };
 
-const WINDOW_SECONDS = 60 * 60 * 24;
+const WINDOW_SECONDS = 60 * 60 * 24; // 24 hours
 
 export async function enforceUsageCap(
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> {
+  const tier = (req as any).entitlement as Tier | undefined;
+  const apiKey = (req as any).apiKey as string | undefined;
+
+  if (!apiKey) {
+    res.status(401).json({ error: "API key required (enforceUsageCap)" });
+    return;
+  }
+
+  if (!tier || !["free", "paid", "admin"].includes(tier)) {
+    res.status(500).json({ error: "Missing entitlement tier" });
+    return;
+  }
+
+  if (tier === "admin") {
+    next();
+    return;
+  }
+
+  const key = `usage:${tier}:${apiKey}`;
+
   try {
-    const tier = (req as any).entitlement as Tier;
-    const apiKey = (req as any).identity?.apiKey as string | undefined;
-
-    if (!apiKey) {
-      res.status(401).json({ error: "API key required" });
-      return;
-    }
-
-    if (tier === "admin") {
-      next();
-      return;
-    }
-
-    const key = `usage:${tier}:${apiKey}`;
     const used = await redis.incr(key);
 
     if (used === 1) {
@@ -38,17 +44,25 @@ export async function enforceUsageCap(
     }
 
     if (used > LIMITS[tier]) {
+      const ttl = await redis.ttl(key);
+
       res.status(402).json({
         error: "Usage cap exceeded",
         tier,
-        limit: LIMITS[tier]
+        limit: LIMITS[tier],
+        windowSeconds: WINDOW_SECONDS,
+        resetSeconds: ttl > 0 ? ttl : null
       });
       return;
     }
 
     next();
   } catch (err) {
-    console.error("❌ Usage cap enforcement failed:", err);
-    res.status(500).json({ error: "Usage enforcement failed" });
+    console.error("❌ enforceUsageCap failed:", err);
+
+    res.status(503).json({
+      error: "redis_unavailable",
+      dependency: "redis"
+    });
   }
 }
