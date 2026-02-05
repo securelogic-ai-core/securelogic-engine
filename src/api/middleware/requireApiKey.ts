@@ -23,35 +23,18 @@ export function requireApiKey(
   res: Response,
   next: NextFunction
 ): void {
-  const key =
-    getHeader(req, "x-securelogic-key") ??
-    getHeader(req, "x-api-key") ??
-    (() => {
-      const auth = getHeader(req, "authorization");
-      if (!auth) return null;
-      const m = auth.match(/^Bearer\s+(.+)$/i);
-      return m?.[1]?.trim() ?? null;
-    })();
+  const auth = getHeader(req, "authorization");
 
-  logger.info(
-    {
-      extractedKeyPresent: Boolean(key),
-      keySource: key
-        ? getHeader(req, "x-securelogic-key")
-          ? "x-securelogic-key"
-          : getHeader(req, "x-api-key")
-            ? "x-api-key"
-            : "authorization"
-        : "none",
-      headersSeen: Object.keys(req.headers),
-      xSecurelogicKeyRaw: getHeader(req, "x-securelogic-key"),
-      xApiKeyRaw: getHeader(req, "x-api-key"),
-      authorizationRaw: getHeader(req, "authorization")
-    },
-    "requireApiKey: header inspection"
-  );
+  const key = auth?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null;
 
   if (!key) {
+    logger.warn(
+      {
+        headersSeen: Object.keys(req.headers),
+        authorizationPresent: Boolean(auth)
+      },
+      "requireApiKey: missing Bearer token"
+    );
     res.status(401).json({ error: "API key required" });
     return;
   }
@@ -67,17 +50,12 @@ export function requireApiKey(
     return;
   }
 
-  const trimmed = key.trim();
-
-  if (!allowed.has(trimmed)) {
-    logger.warn(
-      { key: trimmed, allowed: Array.from(allowed) },
-      "requireApiKey: KEY NOT ALLOWED"
-    );
+  if (!allowed.has(key)) {
+    logger.warn({ key }, "requireApiKey: KEY NOT ALLOWED");
     res.status(403).json({ error: "API key invalid" });
     return;
   }
 
-  (req as any).apiKey = trimmed;
+  (req as any).apiKey = key;
   next();
 }
