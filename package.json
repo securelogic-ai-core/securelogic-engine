@@ -9,7 +9,7 @@
     "dev": "tsx watch src/api/server.ts",
     "start:dev": "tsx src/api/server.ts",
     "clean": "rm -rf dist",
-    "build": "tsc -p tsconfig.prod.json",
+    "build": "rm -rf dist && tsc -p tsconfig.prod.json",
     "start": "node dist/api/server.js",
     "typecheck": "tsc -p tsconfig.ci.json",
     "lint": "eslint \"src/**/*.{ts,tsx,js}\"",
