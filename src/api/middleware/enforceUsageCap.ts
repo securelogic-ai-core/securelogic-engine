@@ -1,68 +1,35 @@
 import type { Request, Response, NextFunction } from "express";
-import { redis } from "../infra/redis.js";
+import { ensureRedisConnected, redisReady } from "../infra/redis.js";
 
-type Tier = "free" | "paid" | "admin";
+const WINDOW_SECONDS = 60;
 
-const LIMITS: Record<Tier, number> = {
-  free: 50,
-  paid: 10_000,
-  admin: Number.POSITIVE_INFINITY
-};
+export function enforceUsageCap(limitPerMinute: number) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (!redisReady) {
+      return res.status(503).json({ error: "Redis not configured" });
+    }
 
-const WINDOW_SECONDS = 60 * 60 * 24; // 24 hours
+    const apiKey = (req as any).apiKey as string | undefined;
+    if (!apiKey) return res.status(401).json({ error: "API key required" });
 
-export async function enforceUsageCap(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  const tier = (req as any).entitlement as Tier | undefined;
-  const apiKey = (req as any).apiKey as string | undefined;
+    const redis = await ensureRedisConnected();
 
-  if (!apiKey) {
-    res.status(401).json({ error: "API key required (enforceUsageCap)" });
-    return;
-  }
+    const key = `usage:${apiKey}:${Math.floor(Date.now() / 1000 / WINDOW_SECONDS)}`;
 
-  if (!tier || !["free", "paid", "admin"].includes(tier)) {
-    res.status(500).json({ error: "Missing entitlement tier" });
-    return;
-  }
-
-  if (tier === "admin") {
-    next();
-    return;
-  }
-
-  const key = `usage:${tier}:${apiKey}`;
-
-  try {
     const used = await redis.incr(key);
 
     if (used === 1) {
       await redis.expire(key, WINDOW_SECONDS);
     }
 
-    if (used > LIMITS[tier]) {
+    if (used > limitPerMinute) {
       const ttl = await redis.ttl(key);
-
-      res.status(402).json({
+      return res.status(429).json({
         error: "Usage cap exceeded",
-        tier,
-        limit: LIMITS[tier],
-        windowSeconds: WINDOW_SECONDS,
-        resetSeconds: ttl > 0 ? ttl : null
+        retryAfterSeconds: ttl > 0 ? ttl : WINDOW_SECONDS
       });
-      return;
     }
 
     next();
-  } catch (err) {
-    console.error("❌ enforceUsageCap failed:", err);
-
-    res.status(503).json({
-      error: "redis_unavailable",
-      dependency: "redis"
-    });
-  }
+  };
 }
