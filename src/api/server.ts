@@ -1,7 +1,6 @@
 import "dotenv/config";
 
-import express from "express";
-import type { Request, Response } from "express";
+import express, { type Request, type Response } from "express";
 import bodyParser from "body-parser";
 
 import { validateEnv } from "./startup/validateEnv.js";
@@ -64,10 +63,9 @@ app.use(requestId);
 app.use(httpLogger);
 
 /* =========================================================
-   IN-FLIGHT REQUEST TRACKING + DRAIN MODE
+   DRAIN MODE (GRACEFUL SHUTDOWN)
    ========================================================= */
 
-let activeRequests = 0;
 let isDraining = false;
 
 app.use((req, res, next) => {
@@ -75,9 +73,6 @@ app.use((req, res, next) => {
     res.status(503).json({ error: "server_shutting_down" });
     return;
   }
-
-  activeRequests++;
-  res.on("finish", () => activeRequests--);
 
   next();
 });
