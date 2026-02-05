@@ -147,9 +147,7 @@ app.post(
     try {
       // Hard fail if Redis isn't connected
       if (!redis.isOpen) {
-        res.status(503).json({
-          error: "redis_unavailable"
-        });
+        res.status(503).json({ error: "redis_unavailable" });
         return;
       }
 
@@ -197,9 +195,11 @@ app.get(
   requireAdminKey,
   async (_req: Request, res: Response) => {
     try {
-      const latest = await redis.get("issues:latest");
-      const issue1 = await redis.get("issues:artifact:1");
-      const issue2 = await redis.get("issues:artifact:2");
+      const [latest, issue1, issue2] = await Promise.all([
+        redis.get("issues:latest"),
+        redis.get("issues:artifact:1"),
+        redis.get("issues:artifact:2")
+      ]);
 
       res.status(200).json({
         redisOpen: redis.isOpen,
