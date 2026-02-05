@@ -147,6 +147,7 @@ app.get("/debug/headers", (req: Request, res: Response) => {
 
 /* =========================================================
    DEBUG: ISSUE AUTH HEADER CHECK (NO AUTH)
+   MUST BE ABOVE app.use("/issues", requireApiKey)
    ========================================================= */
 
 app.get("/issues/_debug_key", (req: Request, res: Response) => {
