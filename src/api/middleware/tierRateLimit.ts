@@ -1,62 +1,35 @@
 import type { Request, Response, NextFunction } from "express";
-import { redis } from "../infra/redis.js";
-
-type Tier = "free" | "paid" | "admin";
-
-const LIMITS: Record<Tier, number> = {
-  free: 50,
-  paid: 5000,
-  admin: Number.POSITIVE_INFINITY
-};
+import { ensureRedisConnected, redisReady } from "../infra/redis.js";
 
 const WINDOW_SECONDS = 60;
 
-export async function tierRateLimit(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  const tier = (req as any).entitlement as Tier | undefined;
-  const apiKey = (req as any).apiKey as string | undefined;
+export function tierRateLimit(limitPerMinute: number) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (!redisReady) {
+      return res.status(503).json({ error: "Redis not configured" });
+    }
 
-  if (!apiKey) {
-    res.status(401).json({ error: "API key required (tierRateLimit)" });
-    return;
-  }
+    const apiKey = (req as any).apiKey as string | undefined;
+    if (!apiKey) return res.status(401).json({ error: "API key required" });
 
-  if (!tier || !["free", "paid", "admin"].includes(tier)) {
-    res.status(500).json({ error: "Missing entitlement tier" });
-    return;
-  }
+    const redis = await ensureRedisConnected();
 
-  if (tier === "admin") {
-    next();
-    return;
-  }
+    const key = `rate:${apiKey}:${Math.floor(Date.now() / 1000 / WINDOW_SECONDS)}`;
 
-  const key = `rate:${tier}:${apiKey}`;
-
-  try {
     const count = await redis.incr(key);
 
     if (count === 1) {
       await redis.expire(key, WINDOW_SECONDS);
     }
 
-    if (count > LIMITS[tier]) {
-      res.status(429).json({
+    if (count > limitPerMinute) {
+      const ttl = await redis.ttl(key);
+      return res.status(429).json({
         error: "Rate limit exceeded",
-        tier,
-        limit: LIMITS[tier],
-        windowSeconds: WINDOW_SECONDS
+        retryAfterSeconds: ttl > 0 ? ttl : WINDOW_SECONDS
       });
-      return;
     }
 
     next();
-  } catch (err) {
-    // Fail open for rate limit (don’t take down the API if Redis is flaky)
-    console.error("⚠️ tierRateLimit Redis unavailable — allowing request:", err);
-    next();
-  }
+  };
 }
