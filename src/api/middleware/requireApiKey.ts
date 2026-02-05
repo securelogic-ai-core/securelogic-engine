@@ -30,13 +30,29 @@ export function requireApiKey(
   res: Response,
   next: NextFunction
 ): void {
+  // 🔥 CRITICAL: prove which file is running in Render
+  logger.info(
+    {
+      file: import.meta.url,
+      path: process.cwd()
+    },
+    "requireApiKey loaded"
+  );
+
   const key = extractApiKey(req);
 
   if (!key) {
     logger.warn(
-      { headersSeen: Object.keys(req.headers) },
+      {
+        file: import.meta.url,
+        headersSeen: Object.keys(req.headers),
+        xSecurelogicKey: req.get("x-securelogic-key") ?? null,
+        xApiKey: req.get("x-api-key") ?? null,
+        authorization: req.get("authorization") ?? null
+      },
       "requireApiKey: missing api key"
     );
+
     res.status(401).json({ error: "API key required" });
     return;
   }
@@ -53,7 +69,13 @@ export function requireApiKey(
   }
 
   if (!allowed.has(key)) {
-    logger.warn({ key }, "requireApiKey: KEY NOT ALLOWED");
+    logger.warn(
+      {
+        file: import.meta.url,
+        key
+      },
+      "requireApiKey: KEY NOT ALLOWED"
+    );
     res.status(403).json({ error: "API key invalid" });
     return;
   }
