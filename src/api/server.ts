@@ -31,7 +31,8 @@ import type { SignedIssue } from "./contracts/signedIssue.schema.js";
 import {
   getLatestIssueId,
   getIssueArtifact,
-  putIssueArtifact
+  publishIssueArtifact,
+  setLatestIssueId
 } from "./infra/issueStore.js";
 
 /* =========================================================
@@ -109,8 +110,6 @@ app.use(express.json());
    ========================================================= */
 
 app.get("/health", (_req: Request, res: Response) => {
-  // Render cold-starts can make Redis connect late.
-  // Health should NOT fail hard unless the server itself is broken.
   if (!redis.isOpen) {
     res.status(200).json({
       status: "degraded",
@@ -168,8 +167,11 @@ app.post(
         return;
       }
 
-      // Store the artifact in Redis + update latest pointer
-      await putIssueArtifact(issueNumber, JSON.stringify(artifact));
+      // ✅ Store artifact
+      await publishIssueArtifact(issueNumber, JSON.stringify(artifact));
+
+      // ✅ FORCE latest pointer update (this is the fix)
+      await setLatestIssueId(issueNumber);
 
       res.status(200).json({
         ok: true,
@@ -188,12 +190,6 @@ app.post(
 
 app.use("/issues", requireApiKey);
 app.use("/issues", resolveEntitlement);
-
-// ⛔ infra gates intentionally disabled for debugging
-// app.use("/issues", requireRedis);
-// app.use("/issues", requestAudit);
-// app.use("/issues", enforceUsageCap);
-// app.use("/issues", tierRateLimit);
 
 /* =========================================================
    ROUTES
