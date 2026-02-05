@@ -133,6 +133,19 @@ app.get("/version", (_req: Request, res: Response) => {
 });
 
 /* =========================================================
+   DEBUG: HEADER INSPECTION (NO AUTH)
+   ========================================================= */
+
+app.get("/debug/headers", (req: Request, res: Response) => {
+  res.status(200).json({
+    headers: req.headers,
+    authorization: req.get("authorization") ?? null,
+    xSecurelogicKey: req.get("x-securelogic-key") ?? null,
+    xApiKey: req.get("x-api-key") ?? null
+  });
+});
+
+/* =========================================================
    🔒 ADMIN ROUTES
    ========================================================= */
 
