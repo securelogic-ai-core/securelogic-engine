@@ -25,7 +25,9 @@ export function requireApiKey(
     logger.warn(
       {
         headersSeen: Object.keys(req.headers),
-        authorizationPresent: Boolean(req.get("authorization"))
+        authorizationPresent: Boolean(req.get("authorization")),
+        xSecurelogicPresent: Boolean(req.get("x-securelogic-key")),
+        xApiKeyPresent: Boolean(req.get("x-api-key"))
       },
       "requireApiKey: NO KEY EXTRACTED"
     );
@@ -44,15 +46,17 @@ export function requireApiKey(
     return;
   }
 
-  if (!allowed.has(key.trim())) {
+  const trimmed = key.trim();
+
+  if (!allowed.has(trimmed)) {
     logger.warn(
-      { key, allowedCount: allowed.size },
+      { key: trimmed, allowedCount: allowed.size },
       "requireApiKey: KEY NOT ALLOWED"
     );
     res.status(403).json({ error: "API key invalid" });
     return;
   }
 
-  (req as any).apiKey = key.trim();
+  (req as any).apiKey = trimmed;
   next();
 }
