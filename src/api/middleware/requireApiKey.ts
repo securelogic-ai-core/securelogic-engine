@@ -11,25 +11,40 @@ function loadAllowedKeys(): Set<string> {
   );
 }
 
+function getHeader(req: Request, name: string): string | null {
+  const v = req.headers[name.toLowerCase()];
+  if (!v) return null;
+  if (Array.isArray(v)) return v[0] ?? null;
+  return String(v);
+}
+
+function extractApiKey(req: Request): string | null {
+  const fromSecurelogic = getHeader(req, "x-securelogic-key");
+  if (fromSecurelogic?.trim()) return fromSecurelogic.trim();
+
+  const fromApiKey = getHeader(req, "x-api-key");
+  if (fromApiKey?.trim()) return fromApiKey.trim();
+
+  const auth = getHeader(req, "authorization");
+  const bearer = auth?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null;
+  if (bearer?.trim()) return bearer.trim();
+
+  return null;
+}
+
 export function requireApiKey(
   req: Request,
   res: Response,
   next: NextFunction
 ): void {
-  const key =
-    req.get("x-securelogic-key") ??
-    req.get("x-api-key") ??
-    (req.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null);
+  const key = extractApiKey(req);
 
   if (!key) {
     logger.warn(
       {
-        headersSeen: Object.keys(req.headers),
-        authorizationPresent: Boolean(req.get("authorization")),
-        xSecurelogicPresent: Boolean(req.get("x-securelogic-key")),
-        xApiKeyPresent: Boolean(req.get("x-api-key"))
+        headersSeen: Object.keys(req.headers)
       },
-      "requireApiKey: NO KEY EXTRACTED"
+      "requireApiKey: missing api key"
     );
     res.status(401).json({ error: "API key required" });
     return;
@@ -46,17 +61,12 @@ export function requireApiKey(
     return;
   }
 
-  const trimmed = key.trim();
-
-  if (!allowed.has(trimmed)) {
-    logger.warn(
-      { key: trimmed, allowedCount: allowed.size },
-      "requireApiKey: KEY NOT ALLOWED"
-    );
+  if (!allowed.has(key)) {
+    logger.warn({ key }, "requireApiKey: KEY NOT ALLOWED");
     res.status(403).json({ error: "API key invalid" });
     return;
   }
 
-  (req as any).apiKey = trimmed;
+  (req as any).apiKey = key;
   next();
 }
