@@ -3,7 +3,6 @@ import { logger } from "../infra/logger.js";
 
 function loadAllowedKeys(): Set<string> {
   const raw = process.env.SECURELOGIC_API_KEYS ?? "";
-
   return new Set(
     raw
       .split(",")
@@ -12,24 +11,11 @@ function loadAllowedKeys(): Set<string> {
   );
 }
 
-function extractApiKey(req: Request): { key: string | null; source: string } {
-  // Express lowercases all header keys in req.headers
-  const h = req.headers;
-
-  const securelogicKey = (h["x-securelogic-key"] as string | undefined)?.trim();
-  if (securelogicKey) return { key: securelogicKey, source: "x-securelogic-key" };
-
-  const apiKey = (h["x-api-key"] as string | undefined)?.trim();
-  if (apiKey) return { key: apiKey, source: "x-api-key" };
-
-  const auth = (h["authorization"] as string | undefined)?.trim();
-  if (auth) {
-    const match = auth.match(/^Bearer\s+(.+)$/i);
-    const bearer = match?.[1]?.trim();
-    if (bearer) return { key: bearer, source: "authorization_bearer" };
-  }
-
-  return { key: null, source: "none" };
+function getHeader(req: Request, name: string): string | null {
+  const v = req.headers[name.toLowerCase()];
+  if (!v) return null;
+  if (Array.isArray(v)) return v[0] ?? null;
+  return v;
 }
 
 export function requireApiKey(
@@ -37,23 +23,35 @@ export function requireApiKey(
   res: Response,
   next: NextFunction
 ): void {
-  const { key, source } = extractApiKey(req);
+  const key =
+    getHeader(req, "x-securelogic-key") ??
+    getHeader(req, "x-api-key") ??
+    (() => {
+      const auth = getHeader(req, "authorization");
+      if (!auth) return null;
+      const m = auth.match(/^Bearer\s+(.+)$/i);
+      return m?.[1]?.trim() ?? null;
+    })();
 
-  // 🔥 CRITICAL DEBUG (Render / Cloudflare / Express header behavior)
-  logger.warn(
+  logger.info(
     {
-      source,
       extractedKeyPresent: Boolean(key),
-      rawHeaders: req.headers
+      keySource: key
+        ? getHeader(req, "x-securelogic-key")
+          ? "x-securelogic-key"
+          : getHeader(req, "x-api-key")
+            ? "x-api-key"
+            : "authorization"
+        : "none",
+      headersSeen: Object.keys(req.headers),
+      xSecurelogicKeyRaw: getHeader(req, "x-securelogic-key"),
+      xApiKeyRaw: getHeader(req, "x-api-key"),
+      authorizationRaw: getHeader(req, "authorization")
     },
-    "requireApiKey: DEBUG HEADER VISIBILITY"
+    "requireApiKey: header inspection"
   );
 
   if (!key) {
-    logger.error(
-      { source, headers: req.headers },
-      "requireApiKey: NO KEY EXTRACTED"
-    );
     res.status(401).json({ error: "API key required" });
     return;
   }
@@ -65,19 +63,21 @@ export function requireApiKey(
       { env: process.env.SECURELOGIC_API_KEYS },
       "SECURELOGIC_API_KEYS is empty or missing"
     );
-    res.status(500).json({ error: "server_misconfigured_no_api_keys" });
+    res.status(500).json({ error: "server_misconfigured" });
     return;
   }
 
-  if (!allowed.has(key)) {
-    logger.error(
-      { key, allowed: Array.from(allowed), source },
+  const trimmed = key.trim();
+
+  if (!allowed.has(trimmed)) {
+    logger.warn(
+      { key: trimmed, allowed: Array.from(allowed) },
       "requireApiKey: KEY NOT ALLOWED"
     );
     res.status(403).json({ error: "API key invalid" });
     return;
   }
 
-  (req as any).apiKey = key;
+  (req as any).apiKey = trimmed;
   next();
 }
