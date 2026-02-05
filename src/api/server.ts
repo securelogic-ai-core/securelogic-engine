@@ -146,6 +146,19 @@ app.get("/debug/headers", (req: Request, res: Response) => {
 });
 
 /* =========================================================
+   DEBUG: ISSUE AUTH HEADER CHECK (NO AUTH)
+   ========================================================= */
+
+app.get("/issues/_debug_key", (req: Request, res: Response) => {
+  res.status(200).json({
+    headers: req.headers,
+    authorization: req.get("authorization") ?? null,
+    xSecurelogicKey: req.get("x-securelogic-key") ?? null,
+    xApiKey: req.get("x-api-key") ?? null
+  });
+});
+
+/* =========================================================
    🔒 ADMIN ROUTES
    ========================================================= */
 
