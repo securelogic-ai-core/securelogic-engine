@@ -1,13 +1,21 @@
 import type { Request, Response, NextFunction } from "express";
 
-type Tier = "free" | "paid" | "admin";
+export type Tier = "free" | "pro" | "admin";
 
-/**
- * ENV FORMAT (JSON):
- * SECURELOGIC_ENTITLEMENTS='{"test_key_123":"free"}'
- */
+type EntitlementRecord = {
+  tier: Tier;
+  activeSubscription: boolean;
+};
+
 const RAW = process.env.SECURELOGIC_ENTITLEMENTS ?? "{}";
-const ENTITLEMENTS: Record<string, Tier> = JSON.parse(RAW);
+
+let ENTITLEMENTS: Record<string, EntitlementRecord> = {};
+
+try {
+  ENTITLEMENTS = JSON.parse(RAW);
+} catch {
+  ENTITLEMENTS = {};
+}
 
 export function resolveEntitlement(
   req: Request,
@@ -21,13 +29,13 @@ export function resolveEntitlement(
     return;
   }
 
-  const tier = ENTITLEMENTS[apiKey];
+  const entitlement = ENTITLEMENTS[apiKey];
 
-  if (!tier) {
+  if (!entitlement) {
     res.status(403).json({ error: "No entitlement assigned" });
     return;
   }
 
-  (req as any).entitlement = tier;
+  (req as any).entitlement = entitlement;
   next();
 }
