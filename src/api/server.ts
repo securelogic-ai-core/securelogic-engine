@@ -15,11 +15,10 @@ import { requestId } from "./middleware/requestId.js";
 import { requireApiKey } from "./middleware/requireApiKey.js";
 import { resolveEntitlement } from "./middleware/resolveEntitlement.js";
 
-// ⛔ infra gates TEMPORARILY DISABLED
-// import { requireRedis } from "./middleware/requireRedis.js";
-// import { requestAudit } from "./middleware/requestAudit.js";
-// import { enforceUsageCap } from "./middleware/enforceUsageCap.js";
-// import { tierRateLimit } from "./middleware/tierRateLimit.js";
+import { requireRedis } from "./middleware/requireRedis.js";
+import { requestAudit } from "./middleware/requestAudit.js";
+import { enforceUsageCap } from "./middleware/enforceUsageCap.js";
+import { tierRateLimit } from "./middleware/tierRateLimit.js";
 
 import { requireSubscription } from "./middleware/requireSubscription.js";
 import { verifyLemonWebhook } from "./middleware/verifyLemonWebhook.js";
@@ -65,7 +64,7 @@ app.use(requestId);
 app.use(httpLogger);
 
 /* =========================================================
-   IN-FLIGHT REQUEST TRACKING
+   IN-FLIGHT REQUEST TRACKING + DRAIN MODE
    ========================================================= */
 
 let activeRequests = 0;
@@ -96,12 +95,12 @@ app.post(
   },
   verifyLemonWebhook,
   (_req: Request, res: Response) => {
-    res.json({ received: true });
+    res.status(200).json({ received: true });
   }
 );
 
 /* =========================================================
-   BODY PARSER
+   BODY PARSER (MUST BE AFTER RAW WEBHOOKS)
    ========================================================= */
 
 app.use(express.json());
@@ -139,7 +138,7 @@ app.get("/version", (_req: Request, res: Response) => {
 });
 
 /* =========================================================
-   🔒 ADMIN ROUTES (NO USER API KEY)
+   🔒 ADMIN ROUTES
    ========================================================= */
 
 app.post(
@@ -147,7 +146,6 @@ app.post(
   requireAdminKey,
   async (req: Request, res: Response) => {
     try {
-      // Hard fail if Redis isn't connected
       if (!redis.isOpen) {
         res.status(503).json({ error: "redis_unavailable" });
         return;
@@ -156,25 +154,24 @@ app.post(
       const parsed = req.body as unknown;
 
       if (!isSignedIssue(parsed)) {
-        res.status(400).json({ error: "Invalid signed issue artifact" });
+        res.status(400).json({ error: "invalid_signed_issue_artifact" });
         return;
       }
 
       const artifact = parsed as SignedIssue;
 
       if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
-        res.status(400).json({ error: "Issue signature verification failed" });
+        res.status(400).json({ error: "issue_signature_invalid" });
         return;
       }
 
       const issueNumber = artifact.issue.issueNumber;
 
       if (!Number.isFinite(issueNumber) || issueNumber <= 0) {
-        res.status(400).json({ error: "Invalid issueNumber" });
+        res.status(400).json({ error: "invalid_issue_number" });
         return;
       }
 
-      // ✅ Store artifact + update latest pointer
       await publishIssueArtifact(issueNumber, JSON.stringify(artifact));
 
       res.status(200).json({
@@ -188,46 +185,17 @@ app.post(
   }
 );
 
-/**
- * TEMP: Debug endpoint so we can confirm Redis keys live on Render.
- * Remove once stable.
- */
-app.get(
-  "/admin/debug/redis",
-  requireAdminKey,
-  async (_req: Request, res: Response) => {
-    try {
-      const [latest, issue1, issue2] = await Promise.all([
-        redis.get("issues:latest"),
-        redis.get("issues:artifact:1"),
-        redis.get("issues:artifact:2")
-      ]);
-
-      res.status(200).json({
-        redisOpen: redis.isOpen,
-        latest,
-        hasIssue1: Boolean(issue1),
-        hasIssue2: Boolean(issue2)
-      });
-    } catch (err) {
-      console.error("❌ /admin/debug/redis failed:", err);
-      res.status(500).json({ error: "internal_error" });
-    }
-  }
-);
-
 /* =========================================================
-   🔒 AUTH CHAIN — DEBUG SAFE
+   🔒 AUTH CHAIN (ISSUES)
    ========================================================= */
 
 app.use("/issues", requireApiKey);
 app.use("/issues", resolveEntitlement);
 
-// ⛔ infra gates intentionally disabled for debugging
-// app.use("/issues", requireRedis);
-// app.use("/issues", requestAudit);
-// app.use("/issues", enforceUsageCap);
-// app.use("/issues", tierRateLimit);
+app.use("/issues", requireRedis);
+app.use("/issues", requestAudit);
+app.use("/issues", enforceUsageCap);
+app.use("/issues", tierRateLimit);
 
 /* =========================================================
    ROUTES
@@ -238,39 +206,38 @@ app.get("/issues/latest", async (_req: Request, res: Response) => {
     const latestId = await getLatestIssueId();
 
     if (!latestId) {
-      res.status(404).json({ error: "No issues published" });
+      res.status(404).json({ error: "no_issues_published" });
       return;
     }
 
     const raw = await getIssueArtifact(latestId);
 
     if (!raw) {
-      res.status(404).json({ error: "No issues published" });
+      res.status(404).json({ error: "no_issues_published" });
       return;
     }
 
     let parsed: unknown;
-
     try {
       parsed = JSON.parse(raw);
     } catch {
-      res.status(500).json({ error: "Issue artifact corrupted" });
+      res.status(500).json({ error: "issue_artifact_corrupted" });
       return;
     }
 
     if (!isSignedIssue(parsed)) {
-      res.status(500).json({ error: "Unsigned or invalid issue artifact" });
+      res.status(500).json({ error: "issue_artifact_invalid" });
       return;
     }
 
     const artifact = parsed as SignedIssue;
 
     if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
-      res.status(500).json({ error: "Issue signature verification failed" });
+      res.status(500).json({ error: "issue_signature_verification_failed" });
       return;
     }
 
-    res.json(artifact.issue);
+    res.status(200).json(artifact.issue);
   } catch (err) {
     console.error("❌ /issues/latest failed:", err);
     res.status(500).json({ error: "internal_error" });
@@ -285,39 +252,38 @@ app.get(
       const idNum = Number(req.params.id);
 
       if (!Number.isFinite(idNum) || idNum <= 0) {
-        res.status(400).json({ error: "Invalid issue id" });
+        res.status(400).json({ error: "invalid_issue_id" });
         return;
       }
 
       const raw = await getIssueArtifact(idNum);
 
       if (!raw) {
-        res.status(404).json({ error: "Issue not found" });
+        res.status(404).json({ error: "issue_not_found" });
         return;
       }
 
       let parsed: unknown;
-
       try {
         parsed = JSON.parse(raw);
       } catch {
-        res.status(500).json({ error: "Issue artifact corrupted" });
+        res.status(500).json({ error: "issue_artifact_corrupted" });
         return;
       }
 
       if (!isSignedIssue(parsed)) {
-        res.status(500).json({ error: "Unsigned or invalid issue artifact" });
+        res.status(500).json({ error: "issue_artifact_invalid" });
         return;
       }
 
       const artifact = parsed as SignedIssue;
 
       if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
-        res.status(500).json({ error: "Issue signature verification failed" });
+        res.status(500).json({ error: "issue_signature_verification_failed" });
         return;
       }
 
-      res.json(artifact.issue);
+      res.status(200).json(artifact.issue);
     } catch (err) {
       console.error("❌ /issues/:id failed:", err);
       res.status(500).json({ error: "internal_error" });
@@ -326,7 +292,7 @@ app.get(
 );
 
 /* =========================================================
-   ERROR HANDLER
+   ERROR HANDLER (LAST)
    ========================================================= */
 
 app.use(errorHandler);
@@ -348,8 +314,11 @@ const shutdown = async (signal: string) => {
   console.log(`🛑 ${signal} received. Draining...`);
 
   server.close(async () => {
-    if (redis.isOpen) await redis.quit();
-    process.exit(0);
+    try {
+      if (redis.isOpen) await redis.quit();
+    } finally {
+      process.exit(0);
+    }
   });
 
   setTimeout(() => process.exit(1), 10_000).unref();
