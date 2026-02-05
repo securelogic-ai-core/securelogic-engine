@@ -31,8 +31,7 @@ import type { SignedIssue } from "./contracts/signedIssue.schema.js";
 import {
   getLatestIssueId,
   getIssueArtifact,
-  publishIssueArtifact,
-  setLatestIssueId
+  publishIssueArtifact
 } from "./infra/issueStore.js";
 
 /* =========================================================
@@ -146,6 +145,14 @@ app.post(
   requireAdminKey,
   async (req: Request, res: Response) => {
     try {
+      // Hard fail if Redis isn't connected
+      if (!redis.isOpen) {
+        res.status(503).json({
+          error: "redis_unavailable"
+        });
+        return;
+      }
+
       const parsed = req.body as unknown;
 
       if (!isSignedIssue(parsed)) {
@@ -167,11 +174,8 @@ app.post(
         return;
       }
 
-      // ✅ Store artifact
+      // ✅ Store artifact + update latest pointer
       await publishIssueArtifact(issueNumber, JSON.stringify(artifact));
-
-      // ✅ FORCE latest pointer update (this is the fix)
-      await setLatestIssueId(issueNumber);
 
       res.status(200).json({
         ok: true,
@@ -184,12 +188,44 @@ app.post(
   }
 );
 
+/**
+ * TEMP: Debug endpoint so we can confirm Redis keys live on Render.
+ * Remove once stable.
+ */
+app.get(
+  "/admin/debug/redis",
+  requireAdminKey,
+  async (_req: Request, res: Response) => {
+    try {
+      const latest = await redis.get("issues:latest");
+      const issue1 = await redis.get("issues:artifact:1");
+      const issue2 = await redis.get("issues:artifact:2");
+
+      res.status(200).json({
+        redisOpen: redis.isOpen,
+        latest,
+        hasIssue1: Boolean(issue1),
+        hasIssue2: Boolean(issue2)
+      });
+    } catch (err) {
+      console.error("❌ /admin/debug/redis failed:", err);
+      res.status(500).json({ error: "internal_error" });
+    }
+  }
+);
+
 /* =========================================================
    🔒 AUTH CHAIN — DEBUG SAFE
    ========================================================= */
 
 app.use("/issues", requireApiKey);
 app.use("/issues", resolveEntitlement);
+
+// ⛔ infra gates intentionally disabled for debugging
+// app.use("/issues", requireRedis);
+// app.use("/issues", requestAudit);
+// app.use("/issues", enforceUsageCap);
+// app.use("/issues", tierRateLimit);
 
 /* =========================================================
    ROUTES
