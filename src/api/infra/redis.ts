@@ -2,31 +2,45 @@ import { createClient, type RedisClientType } from "redis";
 
 const REDIS_URL = process.env.REDIS_URL;
 
-// Render/build-safe: export flags immediately
+let redisClient: RedisClientType | null = null;
+let connectPromise: Promise<RedisClientType> | null = null;
+
 export const redisReady = Boolean(REDIS_URL);
 
-// Always export `redis` so imports don’t explode at compile time.
-// If REDIS_URL is missing, we create a “dead” client that should never be used
-// because requireRedis should block requests when redisReady=false.
-export const redis: RedisClientType = createClient({
-  url: REDIS_URL ?? "redis://invalid",
-  socket: {
-    reconnectStrategy: (retries: number) => {
-      // backoff up to 2s
-      return Math.min(retries * 100, 2000);
+export function getRedis(): RedisClientType {
+  if (!redisClient) {
+    if (!REDIS_URL) {
+      throw new Error("REDIS_URL is not set");
     }
+
+    redisClient = createClient({
+      url: REDIS_URL,
+      socket: {
+        reconnectStrategy: (retries: number) => Math.min(retries * 100, 2000)
+      }
+    });
+
+    redisClient.on("error", (err: unknown) => {
+      // eslint-disable-next-line no-console
+      console.error("Redis error", err);
+    });
   }
-});
 
-if (redisReady) {
-  redis.on("error", (err: unknown) => {
-    // eslint-disable-next-line no-console
-    console.error("Redis error", err);
-  });
+  return redisClient;
+}
 
-  // Connect at boot; requireRedis will also guard
-  redis.connect().catch((err: unknown) => {
-    // eslint-disable-next-line no-console
-    console.error("Redis connect failed", err);
-  });
+export async function ensureRedisConnected(): Promise<RedisClientType> {
+  if (!REDIS_URL) {
+    throw new Error("REDIS_URL is not set");
+  }
+
+  const client = getRedis();
+
+  if (client.isOpen) return client;
+
+  if (!connectPromise) {
+    connectPromise = client.connect().then(() => client);
+  }
+
+  return connectPromise;
 }
