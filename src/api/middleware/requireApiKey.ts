@@ -11,21 +11,14 @@ function loadAllowedKeys(): Set<string> {
   );
 }
 
-function getHeader(req: Request, name: string): string | null {
-  const v = req.headers[name.toLowerCase()];
-  if (!v) return null;
-  if (Array.isArray(v)) return v[0] ?? null;
-  return String(v);
-}
-
 function extractApiKey(req: Request): string | null {
-  const fromSecurelogic = getHeader(req, "x-securelogic-key");
+  const fromSecurelogic = req.get("x-securelogic-key");
   if (fromSecurelogic?.trim()) return fromSecurelogic.trim();
 
-  const fromApiKey = getHeader(req, "x-api-key");
+  const fromApiKey = req.get("x-api-key");
   if (fromApiKey?.trim()) return fromApiKey.trim();
 
-  const auth = getHeader(req, "authorization");
+  const auth = req.get("authorization");
   const bearer = auth?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null;
   if (bearer?.trim()) return bearer.trim();
 
@@ -41,9 +34,7 @@ export function requireApiKey(
 
   if (!key) {
     logger.warn(
-      {
-        headersSeen: Object.keys(req.headers)
-      },
+      { headersSeen: Object.keys(req.headers) },
       "requireApiKey: missing api key"
     );
     res.status(401).json({ error: "API key required" });
