@@ -1,4 +1,11 @@
-import type { Request, Response, NextFunction } from "express";
+logger.error(
+  {
+    marker: "REQUIRE_API_KEY_HIT",
+    commit: process.env.RENDER_GIT_COMMIT ?? null,
+    headers: req.headers,
+  },
+  "requireApiKey invoked"
+);import type { Request, Response, NextFunction } from "express";
 import { logger } from "../infra/logger.js";
 
 function loadAllowedKeys(): Set<string> {
