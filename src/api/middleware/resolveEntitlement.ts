@@ -23,29 +23,12 @@ function loadEntitlements(): Record<string, Entitlement> {
   }
 }
 
-function extractApiKey(req: Request): string | null {
-  const fromReq = (req as any).apiKey as string | undefined;
-  if (fromReq?.trim()) return fromReq.trim();
-
-  const fromSecurelogic = req.get("x-securelogic-key");
-  if (fromSecurelogic?.trim()) return fromSecurelogic.trim();
-
-  const fromApiKey = req.get("x-api-key");
-  if (fromApiKey?.trim()) return fromApiKey.trim();
-
-  const auth = req.get("authorization");
-  const bearer = auth?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null;
-  if (bearer?.trim()) return bearer.trim();
-
-  return null;
-}
-
 export function resolveEntitlement(
   req: Request,
   res: Response,
   next: NextFunction
 ): void {
-  const apiKey = extractApiKey(req);
+  const apiKey = (req as any).apiKey as string | undefined;
 
   if (!apiKey) {
     res.status(401).json({ error: "API key required (resolveEntitlement)" });
