@@ -1,20 +1,43 @@
 import type { Request, Response, NextFunction } from "express";
 
-export type Tier = "free" | "pro" | "admin";
+type Tier = "free" | "paid" | "admin";
 
-type EntitlementRecord = {
-  tier: Tier;
-  activeSubscription: boolean;
-};
+type Entitlement =
+  | Tier
+  | {
+      tier: Tier;
+      activeSubscription: boolean;
+    };
 
-const RAW = process.env.SECURELOGIC_ENTITLEMENTS ?? "{}";
+function loadEntitlements(): Record<string, Entitlement> {
+  const raw = process.env.SECURELOGIC_ENTITLEMENTS ?? "{}";
 
-let ENTITLEMENTS: Record<string, EntitlementRecord> = {};
+  try {
+    const parsed = JSON.parse(raw);
 
-try {
-  ENTITLEMENTS = JSON.parse(RAW);
-} catch {
-  ENTITLEMENTS = {};
+    if (!parsed || typeof parsed !== "object") return {};
+
+    return parsed as Record<string, Entitlement>;
+  } catch {
+    return {};
+  }
+}
+
+function extractApiKey(req: Request): string | null {
+  const fromReq = (req as any).apiKey as string | undefined;
+  if (fromReq?.trim()) return fromReq.trim();
+
+  const fromSecurelogic = req.get("x-securelogic-key");
+  if (fromSecurelogic?.trim()) return fromSecurelogic.trim();
+
+  const fromApiKey = req.get("x-api-key");
+  if (fromApiKey?.trim()) return fromApiKey.trim();
+
+  const auth = req.get("authorization");
+  const bearer = auth?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null;
+  if (bearer?.trim()) return bearer.trim();
+
+  return null;
 }
 
 export function resolveEntitlement(
@@ -22,20 +45,39 @@ export function resolveEntitlement(
   res: Response,
   next: NextFunction
 ): void {
-  const apiKey = (req as any).apiKey as string | undefined;
+  const apiKey = extractApiKey(req);
 
   if (!apiKey) {
-    res.status(401).json({ error: "API key required" });
+    res.status(401).json({ error: "API key required (resolveEntitlement)" });
     return;
   }
 
-  const entitlement = ENTITLEMENTS[apiKey];
+  // IMPORTANT: ensure downstream middleware ALWAYS has it
+  (req as any).apiKey = apiKey;
 
-  if (!entitlement) {
+  const entitlements = loadEntitlements();
+  const rawEntitlement = entitlements[apiKey];
+
+  if (!rawEntitlement) {
     res.status(403).json({ error: "No entitlement assigned" });
     return;
   }
 
-  (req as any).entitlement = entitlement;
+  let tier: Tier;
+  let activeSubscription: boolean;
+
+  // Case 1: "test_key_123": "paid"
+  if (typeof rawEntitlement === "string") {
+    tier = rawEntitlement as Tier;
+    activeSubscription = tier !== "free";
+  } else {
+    // Case 2: "test_key_123": { tier: "paid", activeSubscription: true }
+    tier = rawEntitlement.tier;
+    activeSubscription = rawEntitlement.activeSubscription;
+  }
+
+  (req as any).entitlement = tier;
+  (req as any).activeSubscription = activeSubscription;
+
   next();
 }
