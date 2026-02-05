@@ -29,3 +29,15 @@ export async function putIssueArtifact(
 export async function getIssueArtifact(id: number): Promise<string | null> {
   return await redis.get(`${KEY_PREFIX}${id}`);
 }
+
+/**
+ * Publish = store artifact AND update "latest" pointer.
+ * This is what your Render admin route should call.
+ */
+export async function publishIssueArtifact(
+  id: number,
+  artifactJson: string
+): Promise<void> {
+  await putIssueArtifact(id, artifactJson);
+  await setLatestIssueId(id);
+}
