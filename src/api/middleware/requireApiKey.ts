@@ -1,11 +1,4 @@
-logger.error(
-  {
-    marker: "REQUIRE_API_KEY_HIT",
-    commit: process.env.RENDER_GIT_COMMIT ?? null,
-    headers: req.headers,
-  },
-  "requireApiKey invoked"
-);import type { Request, Response, NextFunction } from "express";
+import type { Request, Response, NextFunction } from "express";
 import { logger } from "../infra/logger.js";
 
 function loadAllowedKeys(): Set<string> {
@@ -18,29 +11,23 @@ function loadAllowedKeys(): Set<string> {
   );
 }
 
-function getHeader(req: Request, name: string): string | null {
-  const v = req.headers[name.toLowerCase()];
-  if (!v) return null;
-  if (Array.isArray(v)) return v[0] ?? null;
-  return v;
-}
-
 export function requireApiKey(
   req: Request,
   res: Response,
   next: NextFunction
 ): void {
-  const auth = getHeader(req, "authorization");
-
-  const key = auth?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null;
+  const key =
+    req.get("x-securelogic-key") ??
+    req.get("x-api-key") ??
+    (req.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null);
 
   if (!key) {
     logger.warn(
       {
         headersSeen: Object.keys(req.headers),
-        authorizationPresent: Boolean(auth)
+        authorizationPresent: Boolean(req.get("authorization"))
       },
-      "requireApiKey: missing Bearer token"
+      "requireApiKey: NO KEY EXTRACTED"
     );
     res.status(401).json({ error: "API key required" });
     return;
@@ -57,12 +44,15 @@ export function requireApiKey(
     return;
   }
 
-  if (!allowed.has(key)) {
-    logger.warn({ key }, "requireApiKey: KEY NOT ALLOWED");
+  if (!allowed.has(key.trim())) {
+    logger.warn(
+      { key, allowedCount: allowed.size },
+      "requireApiKey: KEY NOT ALLOWED"
+    );
     res.status(403).json({ error: "API key invalid" });
     return;
   }
 
-  (req as any).apiKey = key;
+  (req as any).apiKey = key.trim();
   next();
 }
