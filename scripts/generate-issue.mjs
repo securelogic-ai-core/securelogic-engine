@@ -5,12 +5,19 @@ import crypto from "crypto";
 const secret = process.env.SECURELOGIC_SIGNING_SECRET;
 if (!secret) throw new Error("SECURELOGIC_SIGNING_SECRET missing");
 
+const arg = process.argv[2];
+const issueNumber = Number(arg);
+
+if (!Number.isFinite(issueNumber) || issueNumber <= 0) {
+  throw new Error(`Usage: node scripts/generate-issue.mjs <issueNumber> (got: ${arg})`);
+}
+
 const ISSUES_DIR = path.resolve("data/issues");
 fs.mkdirSync(ISSUES_DIR, { recursive: true });
 
 const issue = {
-  issueNumber: 1,
-  title: "Issue #1 — Credential-Based Systemic Failure",
+  issueNumber,
+  title: `Issue #${issueNumber} — Credential-Based Systemic Failure`,
   executiveSummary: "A systemic governance failure disrupted mission-critical operations.",
   domains: ["Operational Resilience", "Third-Party Risk", "Identity"],
   riskTable: [
@@ -35,7 +42,7 @@ const artifact = {
   signedAt: new Date().toISOString()
 };
 
-const outPath = path.join(ISSUES_DIR, "issue-1.json");
+const outPath = path.join(ISSUES_DIR, `issue-${issueNumber}.json`);
 fs.writeFileSync(outPath, JSON.stringify(artifact, null, 2));
 
 console.log("✅ Issue generated:", outPath);
