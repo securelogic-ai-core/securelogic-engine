@@ -6,7 +6,7 @@ import bodyParser from "body-parser";
 import { validateEnv } from "./startup/validateEnv.js";
 import { runSelfTest } from "./startup/selfTest.js";
 
-import { redis } from "./infra/redis.js";
+import { ensureRedisConnected, redisReady } from "./infra/redis.js";
 import { httpLogger } from "./infra/httpLogger.js";
 import { verifyIssueSignature } from "./infra/verifyIssueSignature.js";
 
@@ -68,12 +68,11 @@ app.use(httpLogger);
 
 let isDraining = false;
 
-app.use((req, res, next) => {
+app.use((_req, res, next) => {
   if (isDraining) {
     res.status(503).json({ error: "server_shutting_down" });
     return;
   }
-
   next();
 });
 
@@ -104,20 +103,35 @@ app.use(express.json());
    HEALTH CHECK (NO AUTH)
    ========================================================= */
 
-app.get("/health", (_req: Request, res: Response) => {
-  if (!redis.isOpen) {
+app.get("/health", async (_req: Request, res: Response) => {
+  if (!redisReady) {
     res.status(200).json({
       status: "degraded",
       dependency: "redis",
+      redisConfigured: false,
       redisConnected: false
     });
     return;
   }
 
-  res.status(200).json({
-    status: "ok",
-    redisConnected: true
-  });
+  try {
+    const redis = await ensureRedisConnected();
+    const pong = await redis.ping();
+
+    res.status(200).json({
+      status: "ok",
+      redisConfigured: true,
+      redisConnected: true,
+      ping: pong
+    });
+  } catch {
+    res.status(200).json({
+      status: "degraded",
+      dependency: "redis",
+      redisConfigured: true,
+      redisConnected: false
+    });
+  }
 });
 
 /* =========================================================
@@ -154,10 +168,12 @@ app.post(
   requireAdminKey,
   async (req: Request, res: Response) => {
     try {
-      if (!redis.isOpen) {
-        res.status(503).json({ error: "redis_unavailable" });
+      if (!redisReady) {
+        res.status(503).json({ error: "redis_not_configured" });
         return;
       }
+
+      const redis = await ensureRedisConnected();
 
       const parsed = req.body as unknown;
 
@@ -181,6 +197,9 @@ app.post(
       }
 
       await publishIssueArtifact(issueNumber, JSON.stringify(artifact));
+
+      // extra sanity: confirm redis still responds
+      await redis.ping();
 
       res.status(200).json({
         ok: true,
@@ -215,7 +234,9 @@ app.get("/issues/_debug_key", (req: Request, res: Response) => {
     authorization: req.get("authorization") ?? null,
     xSecurelogicKey: req.get("x-securelogic-key") ?? null,
     xApiKey: req.get("x-api-key") ?? null,
-    apiKeyOnReq: (req as any).apiKey ?? null
+    apiKeyOnReq: (req as any).apiKey ?? null,
+    entitlementOnReq: (req as any).entitlement ?? null,
+    activeSubscriptionOnReq: (req as any).activeSubscription ?? null
   });
 });
 
@@ -337,7 +358,14 @@ const shutdown = async (signal: string) => {
 
   server.close(async () => {
     try {
-      if (redis.isOpen) await redis.quit();
+      if (redisReady) {
+        try {
+          const redis = await ensureRedisConnected();
+          if (redis.isOpen) await redis.quit();
+        } catch {
+          // ignore shutdown redis errors
+        }
+      }
     } finally {
       process.exit(0);
     }
