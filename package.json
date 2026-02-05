@@ -6,6 +6,9 @@
     "node": ">=20"
   },
   "scripts": {
+    "dev": "tsx watch src/api/server.ts",
+    "start:dev": "tsx src/api/server.ts",
+    "clean": "rm -rf dist",
     "build": "tsc -p tsconfig.prod.json",
     "start": "node dist/api/server.js",
     "typecheck": "tsc -p tsconfig.ci.json",
@@ -20,6 +23,7 @@
     "ajv": "~8.17.1",
     "ajv-formats": "~3.0.1",
     "better-sqlite3": "^12.6.2",
+    "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "express-rate-limit": "^8.2.1",
     "json-canonicalize": "^2.0.0",
