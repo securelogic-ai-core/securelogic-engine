@@ -297,7 +297,7 @@ app.use("/issues", requireApiKey);
 app.use("/issues", resolveEntitlement);
 
 // rate + usage must run AFTER apiKey exists
-app.use("/issues", tierRateLimit());
+app.use("/issues", tierRateLimit);
 app.use("/issues", enforceUsageCap());
 
 app.use("/issues", requestAudit);
