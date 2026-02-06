@@ -146,17 +146,19 @@ app.get("/version", (_req: Request, res: Response) => {
 });
 
 /* =========================================================
-   DEBUG: HEADER INSPECTION (NO AUTH)
+   DEBUG ROUTES (DEV ONLY)
    ========================================================= */
 
-app.get("/debug/headers", (req: Request, res: Response) => {
-  res.status(200).json({
-    headers: req.headers,
-    authorization: req.get("authorization") ?? null,
-    xSecurelogicKey: req.get("x-securelogic-key") ?? null,
-    xApiKey: req.get("x-api-key") ?? null
+if (process.env.NODE_ENV === "development") {
+  app.get("/debug/headers", (req: Request, res: Response) => {
+    res.status(200).json({
+      headers: req.headers,
+      authorization: req.get("authorization") ?? null,
+      xSecurelogicKey: req.get("x-securelogic-key") ?? null,
+      xApiKey: req.get("x-api-key") ?? null
+    });
   });
-});
+}
 
 /* =========================================================
    🔒 ADMIN ROUTES
@@ -291,25 +293,33 @@ app.use("/issues", enforceUsageCap(60));
 app.use("/issues", requestAudit);
 
 /* =========================================================
-   DEBUG: ISSUE AUTH HEADER CHECK (AUTH REQUIRED)
+   DEBUG: ISSUE AUTH HEADER CHECK (DEV ONLY)
    ========================================================= */
 
-app.get("/issues/_debug_key", (req: Request, res: Response) => {
-  res.status(200).json({
-    headers: req.headers,
-    authorization: req.get("authorization") ?? null,
-    xSecurelogicKey: req.get("x-securelogic-key") ?? null,
-    xApiKey: req.get("x-api-key") ?? null,
-    apiKeyOnReq: (req as any).apiKey ?? null,
-    entitlementOnReq: (req as any).entitlement ?? null,
-    activeSubscriptionOnReq: (req as any).activeSubscription ?? null
+if (process.env.NODE_ENV === "development") {
+  app.get("/issues/_debug_key", (req: Request, res: Response) => {
+    res.status(200).json({
+      headers: req.headers,
+      authorization: req.get("authorization") ?? null,
+      xSecurelogicKey: req.get("x-securelogic-key") ?? null,
+      xApiKey: req.get("x-api-key") ?? null,
+      apiKeyOnReq: (req as any).apiKey ?? null,
+      entitlementOnReq: (req as any).entitlement ?? null,
+      activeSubscriptionOnReq: (req as any).activeSubscription ?? null
+    });
   });
-});
+}
 
 /* =========================================================
    ROUTES
    ========================================================= */
 
+/**
+ * NOTE:
+ * This endpoint is currently a "preview" endpoint.
+ * If you want it to require a paid subscription, add:
+ *   requireSubscription
+ */
 app.get("/issues/latest", async (_req: Request, res: Response) => {
   try {
     const latestId = await getLatestIssueId();
