@@ -34,7 +34,9 @@ export function enforceUsageCap() {
 
     const redis = await ensureRedisConnected();
 
-    const key = `usage:${apiKey}:${Math.floor(Date.now() / 1000 / WINDOW_SECONDS)}`;
+    const key = `usage:${apiKey}:${Math.floor(
+      Date.now() / 1000 / WINDOW_SECONDS
+    )}`;
 
     const used = await redis.incr(key);
 
