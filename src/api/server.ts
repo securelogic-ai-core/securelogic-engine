@@ -13,9 +13,8 @@ import { verifyIssueSignature } from "./infra/verifyIssueSignature.js";
 import { requestId } from "./middleware/requestId.js";
 import { requireApiKey } from "./middleware/requireApiKey.js";
 import { resolveEntitlement } from "./middleware/resolveEntitlement.js";
-
-import { requireRedis } from "./middleware/requireRedis.js";
 import { requestAudit } from "./middleware/requestAudit.js";
+
 import { enforceUsageCap } from "./middleware/enforceUsageCap.js";
 import { tierRateLimit } from "./middleware/tierRateLimit.js";
 
@@ -198,7 +197,6 @@ app.post(
 
       await publishIssueArtifact(issueNumber, JSON.stringify(artifact));
 
-      // extra sanity: confirm redis still responds
       await redis.ping();
 
       res.status(200).json({
@@ -219,10 +217,11 @@ app.post(
 app.use("/issues", requireApiKey);
 app.use("/issues", resolveEntitlement);
 
-app.use("/issues", requireRedis);
+// rate + usage must run AFTER apiKey exists
+app.use("/issues", tierRateLimit(60));
+app.use("/issues", enforceUsageCap(60));
+
 app.use("/issues", requestAudit);
-app.use("/issues", enforceUsageCap);
-app.use("/issues", tierRateLimit);
 
 /* =========================================================
    DEBUG: ISSUE AUTH HEADER CHECK (AUTH REQUIRED)
@@ -275,9 +274,12 @@ app.get("/issues/latest", async (_req: Request, res: Response) => {
 
     const artifact = parsed as SignedIssue;
 
-    if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
-      res.status(500).json({ error: "issue_signature_verification_failed" });
-      return;
+    // STRICT IN PROD, BYPASS ONLY IN DEV
+    if (process.env.NODE_ENV !== "development") {
+      if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
+        res.status(500).json({ error: "issue_signature_verification_failed" });
+        return;
+      }
     }
 
     res.status(200).json(artifact.issue);
@@ -321,9 +323,14 @@ app.get(
 
       const artifact = parsed as SignedIssue;
 
-      if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
-        res.status(500).json({ error: "issue_signature_verification_failed" });
-        return;
+      // STRICT IN PROD, BYPASS ONLY IN DEV
+      if (process.env.NODE_ENV !== "development") {
+        if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
+          res.status(500).json({
+            error: "issue_signature_verification_failed"
+          });
+          return;
+        }
       }
 
       res.status(200).json(artifact.issue);
