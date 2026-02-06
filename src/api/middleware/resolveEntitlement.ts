@@ -1,33 +1,54 @@
 import type { Request, Response, NextFunction } from "express";
+import {
+  getEntitlementFromRedis,
+  type Tier,
+  type EntitlementRecord
+} from "../infra/entitlementStore.js";
 
-type Tier = "free" | "paid" | "admin";
-
-type Entitlement =
+type EnvEntitlement =
   | Tier
   | {
       tier: Tier;
       activeSubscription: boolean;
     };
 
-function loadEntitlements(): Record<string, Entitlement> {
+function loadEnvEntitlements(): Record<string, EnvEntitlement> {
   const raw = process.env.SECURELOGIC_ENTITLEMENTS ?? "{}";
 
   try {
     const parsed = JSON.parse(raw);
-
     if (!parsed || typeof parsed !== "object") return {};
-
-    return parsed as Record<string, Entitlement>;
+    return parsed as Record<string, EnvEntitlement>;
   } catch {
     return {};
   }
 }
 
-export function resolveEntitlement(
+function normalizeEnvEntitlement(raw: EnvEntitlement): EntitlementRecord | null {
+  if (typeof raw === "string") {
+    const tier = raw as Tier;
+    return {
+      tier,
+      activeSubscription: tier !== "free"
+    };
+  }
+
+  if (!raw || typeof raw !== "object") return null;
+
+  const tier = raw.tier;
+  const activeSubscription = raw.activeSubscription;
+
+  if (tier !== "free" && tier !== "paid" && tier !== "admin") return null;
+  if (typeof activeSubscription !== "boolean") return null;
+
+  return { tier, activeSubscription };
+}
+
+export async function resolveEntitlement(
   req: Request,
   res: Response,
   next: NextFunction
-): void {
+): Promise<void> {
   const apiKey = (req as any).apiKey as string | undefined;
 
   if (!apiKey) {
@@ -35,32 +56,37 @@ export function resolveEntitlement(
     return;
   }
 
-  // IMPORTANT: ensure downstream middleware ALWAYS has it
+  // Ensure downstream middleware ALWAYS has it
   (req as any).apiKey = apiKey;
 
-  const entitlements = loadEntitlements();
-  const rawEntitlement = entitlements[apiKey];
+  // 1) Redis entitlements (authoritative)
+  const redisEnt = await getEntitlementFromRedis(apiKey);
 
-  if (!rawEntitlement) {
+  if (redisEnt) {
+    (req as any).entitlement = redisEnt.tier;
+    (req as any).activeSubscription = redisEnt.activeSubscription;
+    next();
+    return;
+  }
+
+  // 2) Env fallback (bootstrap/dev)
+  const envEntitlements = loadEnvEntitlements();
+  const rawEnv = envEntitlements[apiKey];
+
+  if (!rawEnv) {
     res.status(403).json({ error: "No entitlement assigned" });
     return;
   }
 
-  let tier: Tier;
-  let activeSubscription: boolean;
+  const normalized = normalizeEnvEntitlement(rawEnv);
 
-  // Case 1: "test_key_123": "paid"
-  if (typeof rawEntitlement === "string") {
-    tier = rawEntitlement as Tier;
-    activeSubscription = tier !== "free";
-  } else {
-    // Case 2: "test_key_123": { tier: "paid", activeSubscription: true }
-    tier = rawEntitlement.tier;
-    activeSubscription = rawEntitlement.activeSubscription;
+  if (!normalized) {
+    res.status(403).json({ error: "Entitlement invalid" });
+    return;
   }
 
-  (req as any).entitlement = tier;
-  (req as any).activeSubscription = activeSubscription;
+  (req as any).entitlement = normalized.tier;
+  (req as any).activeSubscription = normalized.activeSubscription;
 
   next();
 }

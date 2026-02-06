@@ -24,6 +24,8 @@ import { errorHandler } from "./middleware/errorHandler.js";
 
 import { requireAdminKey } from "./middleware/requireAdminKey.js";
 
+import adminEntitlementsRouter from "./routes/adminEntitlements.js";
+
 import { isSignedIssue } from "./contracts/signedIssue.schema.js";
 import type { SignedIssue } from "./contracts/signedIssue.schema.js";
 
@@ -32,8 +34,6 @@ import {
   getIssueArtifact,
   publishIssueArtifact
 } from "./infra/issueStore.js";
-
-import adminEntitlementsRouter from "./routes/adminEntitlements.js";
 
 /* =========================================================
    BOOT-TIME GUARDS
@@ -173,12 +173,20 @@ if (process.env.NODE_ENV === "development") {
  */
 
 /**
- * Admin-only Redis debug route (LATEST POINTER).
+ * Admin entitlements routes (MUST be in prod)
+ */
+app.use(adminEntitlementsRouter);
+
+/**
+ * Admin-only Redis debug routes
  * DEV ONLY.
- * IMPORTANT: Must be declared BEFORE /:id
- * so "latest" doesn't get interpreted as a numeric id.
  */
 if (process.env.NODE_ENV === "development") {
+  /**
+   * Admin-only Redis debug route (LATEST POINTER).
+   * IMPORTANT: Must be declared BEFORE /:id
+   * so "latest" doesn't get interpreted as a numeric id.
+   */
   app.get(
     "/admin/debug/redis/issue/latest",
     requireAdminKey,
@@ -205,7 +213,6 @@ if (process.env.NODE_ENV === "development") {
 
   /**
    * Admin-only Redis debug route.
-   * DEV ONLY.
    * Lets us inspect the raw stored artifact in Redis without exposing it publicly.
    */
   app.get(
@@ -242,11 +249,6 @@ if (process.env.NODE_ENV === "development") {
     }
   );
 }
-
-/**
- * Admin entitlements routes (MUST be in prod)
- */
-app.use(adminEntitlementsRouter);
 
 app.post(
   "/admin/issues/publish",
