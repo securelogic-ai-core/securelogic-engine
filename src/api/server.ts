@@ -33,6 +33,8 @@ import {
   publishIssueArtifact
 } from "./infra/issueStore.js";
 
+import adminEntitlementsRouter from "./routes/adminEntitlements.js";
+
 /* =========================================================
    BOOT-TIME GUARDS
    ========================================================= */
@@ -165,71 +167,86 @@ if (process.env.NODE_ENV === "development") {
    ========================================================= */
 
 /**
+ * NOTE:
+ * - /admin/issues/publish MUST exist in prod.
+ * - Redis debug routes must NEVER exist in prod.
+ */
+
+/**
  * Admin-only Redis debug route (LATEST POINTER).
+ * DEV ONLY.
  * IMPORTANT: Must be declared BEFORE /:id
  * so "latest" doesn't get interpreted as a numeric id.
  */
-app.get(
-  "/admin/debug/redis/issue/latest",
-  requireAdminKey,
-  async (_req: Request, res: Response) => {
-    try {
-      if (!redisReady) {
-        res.status(503).json({ error: "redis_not_configured" });
-        return;
+if (process.env.NODE_ENV === "development") {
+  app.get(
+    "/admin/debug/redis/issue/latest",
+    requireAdminKey,
+    async (_req: Request, res: Response) => {
+      try {
+        if (!redisReady) {
+          res.status(503).json({ error: "redis_not_configured" });
+          return;
+        }
+
+        const redis = await ensureRedisConnected();
+        const latest = await redis.get("issues:latest");
+
+        res.status(200).json({
+          latest,
+          key: "issues:latest"
+        });
+      } catch (err) {
+        console.error("❌ /admin/debug/redis/issue/latest failed:", err);
+        res.status(500).json({ error: "internal_error" });
       }
-
-      const redis = await ensureRedisConnected();
-      const latest = await redis.get("issues:latest");
-
-      res.status(200).json({
-        latest,
-        key: "issues:latest"
-      });
-    } catch (err) {
-      console.error("❌ /admin/debug/redis/issue/latest failed:", err);
-      res.status(500).json({ error: "internal_error" });
     }
-  }
-);
+  );
+
+  /**
+   * Admin-only Redis debug route.
+   * DEV ONLY.
+   * Lets us inspect the raw stored artifact in Redis without exposing it publicly.
+   */
+  app.get(
+    "/admin/debug/redis/issue/:id",
+    requireAdminKey,
+    async (req: Request, res: Response) => {
+      try {
+        if (!redisReady) {
+          res.status(503).json({ error: "redis_not_configured" });
+          return;
+        }
+
+        const idNum = Number(req.params.id);
+
+        if (!Number.isFinite(idNum) || idNum <= 0) {
+          res.status(400).json({ error: "invalid_issue_id" });
+          return;
+        }
+
+        const redis = await ensureRedisConnected();
+
+        const latest = await redis.get("issues:latest");
+        const raw = await redis.get(`issues:artifact:${idNum}`);
+
+        res.status(200).json({
+          latest,
+          key: `issues:artifact:${idNum}`,
+          raw
+        });
+      } catch (err) {
+        console.error("❌ /admin/debug/redis/issue/:id failed:", err);
+        res.status(500).json({ error: "internal_error" });
+      }
+    }
+  );
+}
 
 /**
- * Admin-only Redis debug route.
- * Lets us inspect the raw stored artifact in Redis without exposing it publicly.
+ * Admin entitlements routes (MUST be in prod)
  */
-app.get(
-  "/admin/debug/redis/issue/:id",
-  requireAdminKey,
-  async (req: Request, res: Response) => {
-    try {
-      if (!redisReady) {
-        res.status(503).json({ error: "redis_not_configured" });
-        return;
-      }
-
-      const idNum = Number(req.params.id);
-
-      if (!Number.isFinite(idNum) || idNum <= 0) {
-        res.status(400).json({ error: "invalid_issue_id" });
-        return;
-      }
-
-      const redis = await ensureRedisConnected();
-
-      const latest = await redis.get("issues:latest");
-      const raw = await redis.get(`issues:artifact:${idNum}`);
-
-      res.status(200).json({
-        latest,
-        key: `issues:artifact:${idNum}`,
-        raw
-      });
-    } catch (err) {
-      console.error("❌ /admin/debug/redis/issue/:id failed:", err);
-      res.status(500).json({ error: "internal_error" });
-    }
-  }
-);
+app.use(adminEntitlementsRouter);
 
 app.post(
   "/admin/issues/publish",
@@ -287,8 +304,8 @@ app.use("/issues", requireApiKey);
 app.use("/issues", resolveEntitlement);
 
 // rate + usage must run AFTER apiKey exists
-app.use("/issues", tierRateLimit(60));
-app.use("/issues", enforceUsageCap(60));
+app.use("/issues", tierRateLimit());
+app.use("/issues", enforceUsageCap());
 
 app.use("/issues", requestAudit);
 
