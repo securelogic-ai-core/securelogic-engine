@@ -1,35 +1,127 @@
 import type { Request, Response, NextFunction } from "express";
 import { ensureRedisConnected, redisReady } from "../infra/redis.js";
 
+type Tier = "free" | "paid" | "admin";
+
 const WINDOW_SECONDS = 60;
 
-export function tierRateLimit(limitPerMinute: number) {
-  return async (req: Request, res: Response, next: NextFunction) => {
+// Hard timeout so Redis can NEVER hang the API
+const REDIS_TIMEOUT_MS = 1200;
+
+function getTierLimitPerMinute(tier: Tier): number {
+  switch (tier) {
+    case "free":
+      return 20;
+    case "paid":
+      return 120;
+    case "admin":
+      return 600;
+    default:
+      return 20;
+  }
+}
+
+/**
+ * Promise timeout wrapper.
+ * If Redis stalls, we fail-open and let the request through.
+ */
+async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return await Promise.race([
+    p,
+    new Promise<T>((_resolve, reject) => {
+      const id = setTimeout(() => {
+        clearTimeout(id);
+        reject(new Error(`redis_timeout_after_${ms}ms`));
+      }, ms).unref?.() ?? setTimeout(() => reject(new Error(`redis_timeout_after_${ms}ms`)), ms);
+    })
+  ]);
+}
+
+export async function tierRateLimit(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    /**
+     * PROD-SAFE: If Redis is not configured, fail open.
+     * Rate limiting should never take down the API.
+     */
     if (!redisReady) {
-      return res.status(503).json({ error: "Redis not configured" });
+      next();
+      return;
     }
 
     const apiKey = (req as any).apiKey as string | undefined;
-    if (!apiKey) return res.status(401).json({ error: "API key required" });
 
-    const redis = await ensureRedisConnected();
+    /**
+     * If the API key is missing, DO NOT rate limit here.
+     * requireApiKey should already have blocked the request.
+     */
+    if (!apiKey) {
+      next();
+      return;
+    }
 
-    const key = `rate:${apiKey}:${Math.floor(Date.now() / 1000 / WINDOW_SECONDS)}`;
+    const tier = ((req as any).entitlement ?? "free") as Tier;
+    const limitPerMinute = getTierLimitPerMinute(tier);
 
-    const count = await redis.incr(key);
+    const redis = await withTimeout(ensureRedisConnected(), REDIS_TIMEOUT_MS);
 
-    if (count === 1) {
-      await redis.expire(key, WINDOW_SECONDS);
+    const windowId = Math.floor(Date.now() / 1000 / WINDOW_SECONDS);
+    const key = `rate:${apiKey}:${windowId}`;
+
+    /**
+     * Use MULTI so incr + expire happen atomically.
+     * Avoid extra round trips.
+     */
+    const [incrRes, expireRes] = await withTimeout(
+      redis.multi().incr(key).expire(key, WINDOW_SECONDS).exec(),
+      REDIS_TIMEOUT_MS
+    );
+
+    const count = Number(incrRes);
+
+    /**
+     * If Redis returned something weird, fail open.
+     */
+    if (!Number.isFinite(count)) {
+      next();
+      return;
     }
 
     if (count > limitPerMinute) {
-      const ttl = await redis.ttl(key);
-      return res.status(429).json({
-        error: "Rate limit exceeded",
-        retryAfterSeconds: ttl > 0 ? ttl : WINDOW_SECONDS
+      /**
+       * Only fetch TTL when needed (rate limit exceeded).
+       * Still time-boxed.
+       */
+      let ttl = WINDOW_SECONDS;
+
+      try {
+        const ttlRes = await withTimeout(redis.ttl(key), REDIS_TIMEOUT_MS);
+        if (typeof ttlRes === "number" && ttlRes > 0) ttl = ttlRes;
+      } catch {
+        // ignore ttl failures
+      }
+
+      res.setHeader("Retry-After", String(ttl));
+
+      res.status(429).json({
+        error: "rate_limit_exceeded",
+        tier,
+        limitPerMinute,
+        retryAfterSeconds: ttl
       });
+      return;
     }
 
     next();
-  };
+  } catch (err) {
+    /**
+     * PROD-SAFE: Fail open.
+     * Rate limiting is not allowed to break the API.
+     */
+    console.error("⚠️ tierRateLimit failed (fail-open):", err);
+    next();
+  }
 }
