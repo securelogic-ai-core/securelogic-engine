@@ -356,9 +356,9 @@ if (process.env.NODE_ENV === "development") {
    ========================================================= */
 
 app.use("/issues", requireApiKey);
+app.use("/issues", resolveEntitlement);
 
 // TEMP: isolate hang (re-enable one at a time)
-// app.use("/issues", resolveEntitlement);
 // app.use("/issues", tierRateLimit);
 // app.use("/issues", enforceUsageCap());
 // app.use("/issues", requestAudit);
