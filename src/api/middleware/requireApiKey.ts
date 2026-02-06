@@ -12,17 +12,25 @@ function loadAllowedKeys(): Set<string> {
 }
 
 function extractApiKey(req: Request): string | null {
-  const fromSecurelogic = req.get("x-securelogic-key");
-  if (fromSecurelogic?.trim()) return fromSecurelogic.trim();
+  // 1) PRIMARY: Authorization: Bearer <key>
+  const auth = req.get("authorization");
+  const bearer = auth?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null;
+  if (bearer) return bearer;
 
+  // 2) Fallback: x-api-key
   const fromApiKey = req.get("x-api-key");
   if (fromApiKey?.trim()) return fromApiKey.trim();
 
-  const auth = req.get("authorization");
-  const bearer = auth?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null;
-  if (bearer?.trim()) return bearer.trim();
+  // 3) Legacy fallback: x-securelogic-key
+  const fromSecurelogic = req.get("x-securelogic-key");
+  if (fromSecurelogic?.trim()) return fromSecurelogic.trim();
 
   return null;
+}
+
+function redactKey(key: string): string {
+  if (key.length <= 8) return "********";
+  return `${key.slice(0, 4)}...${key.slice(-4)}`;
 }
 
 export function requireApiKey(
@@ -30,38 +38,36 @@ export function requireApiKey(
   res: Response,
   next: NextFunction
 ): void {
-  // 🔥 CRITICAL: prove which file is running in Render
-  logger.info(
-    {
-      file: import.meta.url,
-      path: process.cwd()
-    },
-    "requireApiKey loaded"
-  );
-
   const key = extractApiKey(req);
 
   if (!key) {
     logger.warn(
       {
-        file: import.meta.url,
         headersSeen: Object.keys(req.headers),
-        xSecurelogicKey: req.get("x-securelogic-key") ?? null,
-        xApiKey: req.get("x-api-key") ?? null,
-        authorization: req.get("authorization") ?? null
+        authHeaderPresent: Boolean(req.get("authorization")),
+        xApiKeyPresent: Boolean(req.get("x-api-key")),
+        xSecurelogicKeyPresent: Boolean(req.get("x-securelogic-key"))
       },
       "requireApiKey: missing api key"
     );
 
-    res.status(401).json({ error: "API key required" });
+    res.status(401).json({ error: "api_key_required" });
     return;
   }
 
   const allowed = loadAllowedKeys();
 
+  // DEV MODE: allow any key (for local testing ONLY)
+  if (process.env.NODE_ENV === "development") {
+    (req as any).apiKey = key;
+    next();
+    return;
+  }
+
+  // PROD MODE: MUST have explicit allowlist
   if (allowed.size === 0) {
     logger.error(
-      { env: process.env.SECURELOGIC_API_KEYS },
+      { envPresent: Boolean(process.env.SECURELOGIC_API_KEYS) },
       "SECURELOGIC_API_KEYS is empty or missing"
     );
     res.status(500).json({ error: "server_misconfigured" });
@@ -69,14 +75,8 @@ export function requireApiKey(
   }
 
   if (!allowed.has(key)) {
-    logger.warn(
-      {
-        file: import.meta.url,
-        key
-      },
-      "requireApiKey: KEY NOT ALLOWED"
-    );
-    res.status(403).json({ error: "API key invalid" });
+    logger.warn({ key: redactKey(key) }, "requireApiKey: KEY NOT ALLOWED");
+    res.status(403).json({ error: "api_key_invalid" });
     return;
   }
 
