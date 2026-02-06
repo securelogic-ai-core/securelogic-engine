@@ -290,19 +290,8 @@ app.post(
 );
 
 /* =========================================================
-   🔒 AUTH CHAIN (ISSUES)
-   ========================================================= */
-
-app.use("/issues", requireApiKey);
-
-// TEMP: isolate hang (re-enable one at a time)
-// app.use("/issues", resolveEntitlement);
-// app.use("/issues", tierRateLimit);
-// app.use("/issues", enforceUsageCap());
-// app.use("/issues", requestAudit);
-
-/* =========================================================
    DEBUG: ISSUE AUTH HEADER CHECK (DEV ONLY)
+   MUST BE BEFORE /issues middleware chain
    ========================================================= */
 
 if (process.env.NODE_ENV === "development") {
@@ -318,6 +307,18 @@ if (process.env.NODE_ENV === "development") {
     });
   });
 }
+
+/* =========================================================
+   🔒 AUTH CHAIN (ISSUES)
+   ========================================================= */
+
+app.use("/issues", requireApiKey);
+
+// TEMP: isolate hang (re-enable one at a time)
+// app.use("/issues", resolveEntitlement);
+// app.use("/issues", tierRateLimit);
+// app.use("/issues", enforceUsageCap());
+// app.use("/issues", requestAudit);
 
 /* =========================================================
    ROUTES
