@@ -294,13 +294,12 @@ app.post(
    ========================================================= */
 
 app.use("/issues", requireApiKey);
-app.use("/issues", resolveEntitlement);
 
-// rate + usage must run AFTER apiKey exists
-app.use("/issues", tierRateLimit);
-app.use("/issues", enforceUsageCap());
-
-app.use("/issues", requestAudit);
+// TEMP: isolate hang (re-enable one at a time)
+// app.use("/issues", resolveEntitlement);
+// app.use("/issues", tierRateLimit);
+// app.use("/issues", enforceUsageCap());
+// app.use("/issues", requestAudit);
 
 /* =========================================================
    DEBUG: ISSUE AUTH HEADER CHECK (DEV ONLY)
