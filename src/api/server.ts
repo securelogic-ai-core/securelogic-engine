@@ -162,6 +162,44 @@ app.get("/debug/headers", (req: Request, res: Response) => {
    🔒 ADMIN ROUTES
    ========================================================= */
 
+/**
+ * Admin-only Redis debug route.
+ * Lets us inspect the raw stored artifact in Redis without exposing it publicly.
+ */
+app.get(
+  "/admin/debug/redis/issue/:id",
+  requireAdminKey,
+  async (req: Request, res: Response) => {
+    try {
+      if (!redisReady) {
+        res.status(503).json({ error: "redis_not_configured" });
+        return;
+      }
+
+      const idNum = Number(req.params.id);
+
+      if (!Number.isFinite(idNum) || idNum <= 0) {
+        res.status(400).json({ error: "invalid_issue_id" });
+        return;
+      }
+
+      const redis = await ensureRedisConnected();
+
+      const latest = await redis.get("issues:latest");
+      const raw = await redis.get(`issues:artifact:${idNum}`);
+
+      res.status(200).json({
+        latest,
+        key: `issues:artifact:${idNum}`,
+        raw
+      });
+    } catch (err) {
+      console.error("❌ /admin/debug/redis/issue/:id failed:", err);
+      res.status(500).json({ error: "internal_error" });
+    }
+  }
+);
+
 app.post(
   "/admin/issues/publish",
   requireAdminKey,
