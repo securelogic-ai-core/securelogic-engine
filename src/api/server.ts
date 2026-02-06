@@ -202,6 +202,25 @@ if (process.env.NODE_ENV === "development") {
 app.use(adminEntitlementsRouter);
 
 /**
+ * PROD-SAFE: Admin-only debug route (works in production)
+ */
+app.get(
+  "/admin/debug/issues_key",
+  requireAdminKey,
+  (req: Request, res: Response) => {
+    res.status(200).json({
+      headers: req.headers,
+      authorization: req.get("authorization") ?? null,
+      xSecurelogicKey: req.get("x-securelogic-key") ?? null,
+      xApiKey: req.get("x-api-key") ?? null,
+      apiKeyOnReq: (req as any).apiKey ?? null,
+      entitlementOnReq: (req as any).entitlement ?? null,
+      activeSubscriptionOnReq: (req as any).activeSubscription ?? null
+    });
+  }
+);
+
+/**
  * Admin-only Redis debug routes
  * DEV ONLY.
  */
