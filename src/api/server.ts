@@ -182,11 +182,6 @@ app.use(adminEntitlementsRouter);
  * DEV ONLY.
  */
 if (process.env.NODE_ENV === "development") {
-  /**
-   * Admin-only Redis debug route (LATEST POINTER).
-   * IMPORTANT: Must be declared BEFORE /:id
-   * so "latest" doesn't get interpreted as a numeric id.
-   */
   app.get(
     "/admin/debug/redis/issue/latest",
     requireAdminKey,
@@ -211,10 +206,6 @@ if (process.env.NODE_ENV === "development") {
     }
   );
 
-  /**
-   * Admin-only Redis debug route.
-   * Lets us inspect the raw stored artifact in Redis without exposing it publicly.
-   */
   app.get(
     "/admin/debug/redis/issue/:id",
     requireAdminKey,
@@ -306,7 +297,7 @@ app.use("/issues", requireApiKey);
 app.use("/issues", resolveEntitlement);
 
 // rate + usage must run AFTER apiKey exists
-app.use("/issues", tierRateLimit);
+app.use("/issues", tierRateLimit());
 app.use("/issues", enforceUsageCap());
 
 app.use("/issues", requestAudit);
@@ -333,12 +324,6 @@ if (process.env.NODE_ENV === "development") {
    ROUTES
    ========================================================= */
 
-/**
- * NOTE:
- * This endpoint is currently a "preview" endpoint.
- * If you want it to require a paid subscription, add:
- *   requireSubscription
- */
 app.get("/issues/latest", async (_req: Request, res: Response) => {
   try {
     const latestId = await getLatestIssueId();
@@ -370,7 +355,6 @@ app.get("/issues/latest", async (_req: Request, res: Response) => {
 
     const artifact = parsed as SignedIssue;
 
-    // STRICT IN PROD, BYPASS ONLY IN DEV
     if (process.env.NODE_ENV !== "development") {
       if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
         res.status(500).json({ error: "issue_signature_verification_failed" });
@@ -419,7 +403,6 @@ app.get(
 
       const artifact = parsed as SignedIssue;
 
-      // STRICT IN PROD, BYPASS ONLY IN DEV
       if (process.env.NODE_ENV !== "development") {
         if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
           res.status(500).json({
