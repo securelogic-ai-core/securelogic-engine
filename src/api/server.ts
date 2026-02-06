@@ -160,6 +160,22 @@ if (process.env.NODE_ENV === "development") {
       xApiKey: req.get("x-api-key") ?? null
     });
   });
+
+  /**
+   * DEV-only debug route that is NOT under /issues
+   * so it does NOT get blocked by subscription middleware.
+   */
+  app.get("/debug/issues_key", (req: Request, res: Response) => {
+    res.status(200).json({
+      headers: req.headers,
+      authorization: req.get("authorization") ?? null,
+      xSecurelogicKey: req.get("x-securelogic-key") ?? null,
+      xApiKey: req.get("x-api-key") ?? null,
+      apiKeyOnReq: (req as any).apiKey ?? null,
+      entitlementOnReq: (req as any).entitlement ?? null,
+      activeSubscriptionOnReq: (req as any).activeSubscription ?? null
+    });
+  });
 }
 
 /* =========================================================
