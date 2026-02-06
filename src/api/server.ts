@@ -163,6 +163,35 @@ app.get("/debug/headers", (req: Request, res: Response) => {
    ========================================================= */
 
 /**
+ * Admin-only Redis debug route (LATEST POINTER).
+ * IMPORTANT: Must be declared BEFORE /:id
+ * so "latest" doesn't get interpreted as a numeric id.
+ */
+app.get(
+  "/admin/debug/redis/issue/latest",
+  requireAdminKey,
+  async (_req: Request, res: Response) => {
+    try {
+      if (!redisReady) {
+        res.status(503).json({ error: "redis_not_configured" });
+        return;
+      }
+
+      const redis = await ensureRedisConnected();
+      const latest = await redis.get("issues:latest");
+
+      res.status(200).json({
+        latest,
+        key: "issues:latest"
+      });
+    } catch (err) {
+      console.error("❌ /admin/debug/redis/issue/latest failed:", err);
+      res.status(500).json({ error: "internal_error" });
+    }
+  }
+);
+
+/**
  * Admin-only Redis debug route.
  * Lets us inspect the raw stored artifact in Redis without exposing it publicly.
  */
