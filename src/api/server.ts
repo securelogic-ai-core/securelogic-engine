@@ -148,6 +148,14 @@ app.get("/version", (_req: Request, res: Response) => {
 });
 
 /* =========================================================
+   NODE_ENV CHECK (DEPLOY VERIFICATION)
+   ========================================================= */
+
+app.get("/debug/node_env", (_req: Request, res: Response) => {
+  res.status(200).json({ nodeEnv: process.env.NODE_ENV ?? null });
+});
+
+/* =========================================================
    DEBUG ROUTES (DEV ONLY)
    ========================================================= */
 
