@@ -1,5 +1,4 @@
 import { Router, type Request, type Response } from "express";
-import { requireAdminKey } from "../middleware/requireAdminKey.js";
 
 import {
   type Tier,
@@ -7,6 +6,8 @@ import {
   setEntitlementInRedis,
   deleteEntitlementFromRedis
 } from "../infra/entitlementStore.js";
+
+import { ensureRedisConnected, redisReady } from "../infra/redis.js";
 
 const router = Router();
 
@@ -20,10 +21,13 @@ function isTier(value: unknown): value is Tier {
 
 /**
  * GET /admin/entitlements/:apiKey
+ *
+ * NOTE:
+ * requireAdminKey is already applied globally in server.ts:
+ *   app.use("/admin", requireAdminKey);
  */
 router.get(
   "/admin/entitlements/:apiKey",
-  requireAdminKey,
   async (req: Request<ApiKeyParams>, res: Response) => {
     try {
       const apiKey = req.params.apiKey;
@@ -54,7 +58,6 @@ router.get(
  */
 router.put(
   "/admin/entitlements/:apiKey",
-  requireAdminKey,
   async (req: Request<ApiKeyParams>, res: Response) => {
     try {
       const apiKey = req.params.apiKey;
@@ -103,7 +106,6 @@ router.put(
  */
 router.delete(
   "/admin/entitlements/:apiKey",
-  requireAdminKey,
   async (req: Request<ApiKeyParams>, res: Response) => {
     try {
       const apiKey = req.params.apiKey;
@@ -118,6 +120,58 @@ router.delete(
       res.status(200).json({ ok: true, apiKey });
     } catch (err) {
       console.error("❌ DELETE /admin/entitlements/:apiKey failed:", err);
+      res.status(500).json({ error: "internal_error" });
+    }
+  }
+);
+
+/**
+ * DEBUG: GET /admin/debug/entitlements/:apiKey
+ *
+ * This proves exactly what Redis contains for the apiKey.
+ * It checks BOTH:
+ * - entitlement:<apiKey>   (correct)
+ * - entitlements:<apiKey>  (old bug)
+ *
+ * DEV TOOL: keep temporarily until Lemon pipeline is confirmed.
+ */
+router.get(
+  "/admin/debug/entitlements/:apiKey",
+  async (req: Request<ApiKeyParams>, res: Response) => {
+    try {
+      if (!redisReady) {
+        res.status(503).json({ error: "redis_not_configured" });
+        return;
+      }
+
+      const apiKey = req.params.apiKey;
+
+      if (!apiKey || apiKey.trim().length === 0) {
+        res.status(400).json({ error: "invalid_api_key" });
+        return;
+      }
+
+      const redis = await ensureRedisConnected();
+
+      const correctKey = `entitlement:${apiKey}`;
+      const oldBugKey = `entitlements:${apiKey}`;
+
+      const correctRaw = await redis.get(correctKey);
+      const oldBugRaw = await redis.get(oldBugKey);
+
+      res.status(200).json({
+        apiKey,
+        keysChecked: {
+          correctKey,
+          oldBugKey
+        },
+        raw: {
+          correctRaw,
+          oldBugRaw
+        }
+      });
+    } catch (err) {
+      console.error("❌ GET /admin/debug/entitlements/:apiKey failed:", err);
       res.status(500).json({ error: "internal_error" });
     }
   }
