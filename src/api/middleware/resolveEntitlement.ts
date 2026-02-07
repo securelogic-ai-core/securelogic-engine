@@ -66,7 +66,16 @@ export async function resolveEntitlement(
   // Ensure downstream middleware ALWAYS has it
   (req as any).apiKey = apiKey;
 
-  // 1) Redis entitlements (authoritative)
+  /**
+   * =========================================================
+   * 1) Redis entitlements (authoritative)
+   *
+   * IMPORTANT:
+   * We support BOTH namespaces:
+   * - entitlements_v2:<apiKey>  (webhook-driven)
+   * - entitlements:<apiKey>     (legacy/admin)
+   * =========================================================
+   */
   const redisEnt = await getEntitlementFromRedis(apiKey);
 
   if (redisEnt) {
@@ -76,7 +85,11 @@ export async function resolveEntitlement(
     return;
   }
 
-  // 2) Env fallback (bootstrap/dev)
+  /**
+   * =========================================================
+   * 2) Env fallback (bootstrap/dev)
+   * =========================================================
+   */
   const envEntitlements = loadEnvEntitlements();
   const rawEnv = envEntitlements[apiKey];
 
