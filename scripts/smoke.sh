@@ -159,6 +159,26 @@ main() {
     yellow "Skipping paid key test (PAID_KEY not set)."
   fi
 
+  section "Admin rate limit: confirm 429 eventually occurs"
+  if [ -z "$ADMIN_KEY" ]; then
+    yellow "Skipping admin rate limit test (ADMIN_KEY not set)."
+  else
+    saw_429_admin=0
+    for i in $(seq 1 80); do
+      code="$(http_code GET "$BASE_URL/admin/entitlements/test" -H "X-Admin-Key: $ADMIN_KEY")"
+      if [ "$code" = "429" ]; then
+        saw_429_admin=1
+        break
+      fi
+    done
+
+    if [ "$saw_429_admin" -eq 1 ]; then
+      pass "Admin rate limit triggered (saw 429 within 80 requests)"
+    else
+      fail "Did not observe admin 429 within 80 requests (limit may be too high or disabled)"
+    fi
+  fi
+
   section "Rate limit: confirm 429 eventually occurs"
   saw_429=0
   for i in $(seq 1 "$RATE_TEST_N"); do
@@ -170,7 +190,7 @@ main() {
   done
 
   if [ "$saw_429" -eq 1 ]; then
-    pass "Rate limit triggered (saw 429 within $RATE_TEST_N requests)"
+    pass "Free tier rate limit triggered (saw 429 within $RATE_TEST_N requests)"
   else
     fail "Did not observe 429 within $RATE_TEST_N requests (rate limit may be too high or disabled)"
   fi
