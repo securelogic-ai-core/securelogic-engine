@@ -23,6 +23,8 @@ import { verifyLemonWebhook } from "./middleware/verifyLemonWebhook.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 import { requireAdminKey } from "./middleware/requireAdminKey.js";
+import { adminRateLimit } from "./middleware/adminRateLimit.js";
+import { adminAudit } from "./middleware/adminAudit.js";
 
 import adminEntitlementsRouter from "./routes/adminEntitlements.js";
 
@@ -197,6 +199,19 @@ if (process.env.NODE_ENV === "development") {
  */
 
 /**
+ * IMPORTANT:
+ * We apply requireAdminKey FIRST, then adminRateLimit, then adminAudit.
+ *
+ * Why?
+ * - If the admin key is missing/invalid, we reject immediately.
+ * - We do NOT want missing keys to generate Redis writes.
+ * - We want admin audit logs only for valid admin requests.
+ */
+app.use("/admin", requireAdminKey);
+app.use("/admin", adminRateLimit);
+app.use("/admin", adminAudit);
+
+/**
  * Admin entitlements routes (MUST be in prod)
  */
 app.use(adminEntitlementsRouter);
@@ -204,21 +219,17 @@ app.use(adminEntitlementsRouter);
 /**
  * PROD-SAFE: Admin-only debug route (works in production)
  */
-app.get(
-  "/admin/debug/issues_key",
-  requireAdminKey,
-  (req: Request, res: Response) => {
-    res.status(200).json({
-      headers: req.headers,
-      authorization: req.get("authorization") ?? null,
-      xSecurelogicKey: req.get("x-securelogic-key") ?? null,
-      xApiKey: req.get("x-api-key") ?? null,
-      apiKeyOnReq: (req as any).apiKey ?? null,
-      entitlementOnReq: (req as any).entitlement ?? null,
-      activeSubscriptionOnReq: (req as any).activeSubscription ?? null
-    });
-  }
-);
+app.get("/admin/debug/issues_key", (req: Request, res: Response) => {
+  res.status(200).json({
+    headers: req.headers,
+    authorization: req.get("authorization") ?? null,
+    xSecurelogicKey: req.get("x-securelogic-key") ?? null,
+    xApiKey: req.get("x-api-key") ?? null,
+    apiKeyOnReq: (req as any).apiKey ?? null,
+    entitlementOnReq: (req as any).entitlement ?? null,
+    activeSubscriptionOnReq: (req as any).activeSubscription ?? null
+  });
+});
 
 /**
  * Admin-only Redis debug routes
@@ -227,7 +238,6 @@ app.get(
 if (process.env.NODE_ENV === "development") {
   app.get(
     "/admin/debug/redis/issue/latest",
-    requireAdminKey,
     async (_req: Request, res: Response) => {
       try {
         if (!redisReady) {
@@ -251,7 +261,6 @@ if (process.env.NODE_ENV === "development") {
 
   app.get(
     "/admin/debug/redis/issue/:id",
-    requireAdminKey,
     async (req: Request, res: Response) => {
       try {
         if (!redisReady) {
@@ -284,53 +293,49 @@ if (process.env.NODE_ENV === "development") {
   );
 }
 
-app.post(
-  "/admin/issues/publish",
-  requireAdminKey,
-  async (req: Request, res: Response) => {
-    try {
-      if (!redisReady) {
-        res.status(503).json({ error: "redis_not_configured" });
-        return;
-      }
-
-      const redis = await ensureRedisConnected();
-
-      const parsed = req.body as unknown;
-
-      if (!isSignedIssue(parsed)) {
-        res.status(400).json({ error: "invalid_signed_issue_artifact" });
-        return;
-      }
-
-      const artifact = parsed as SignedIssue;
-
-      if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
-        res.status(400).json({ error: "issue_signature_invalid" });
-        return;
-      }
-
-      const issueNumber = artifact.issue.issueNumber;
-
-      if (!Number.isFinite(issueNumber) || issueNumber <= 0) {
-        res.status(400).json({ error: "invalid_issue_number" });
-        return;
-      }
-
-      await publishIssueArtifact(issueNumber, JSON.stringify(artifact));
-
-      await redis.ping();
-
-      res.status(200).json({
-        ok: true,
-        published: issueNumber
-      });
-    } catch (err) {
-      console.error("❌ /admin/issues/publish failed:", err);
-      res.status(500).json({ error: "internal_error" });
+app.post("/admin/issues/publish", async (req: Request, res: Response) => {
+  try {
+    if (!redisReady) {
+      res.status(503).json({ error: "redis_not_configured" });
+      return;
     }
+
+    const redis = await ensureRedisConnected();
+
+    const parsed = req.body as unknown;
+
+    if (!isSignedIssue(parsed)) {
+      res.status(400).json({ error: "invalid_signed_issue_artifact" });
+      return;
+    }
+
+    const artifact = parsed as SignedIssue;
+
+    if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
+      res.status(400).json({ error: "issue_signature_invalid" });
+      return;
+    }
+
+    const issueNumber = artifact.issue.issueNumber;
+
+    if (!Number.isFinite(issueNumber) || issueNumber <= 0) {
+      res.status(400).json({ error: "invalid_issue_number" });
+      return;
+    }
+
+    await publishIssueArtifact(issueNumber, JSON.stringify(artifact));
+
+    await redis.ping();
+
+    res.status(200).json({
+      ok: true,
+      published: issueNumber
+    });
+  } catch (err) {
+    console.error("❌ /admin/issues/publish failed:", err);
+    res.status(500).json({ error: "internal_error" });
   }
-);
+});
 
 /* =========================================================
    DEBUG: ISSUE AUTH HEADER CHECK (DEV ONLY)
