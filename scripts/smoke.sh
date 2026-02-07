@@ -3,7 +3,8 @@ set -euo pipefail
 
 # ============================================================
 # SecureLogic Engine - Production Smoke Test
-# - Runs health + auth + admin publish + gating + rate-limit
+# - Runs health + auth + admin publish + entitlement security
+#   + gating + rate-limit
 # - Prints PASS/FAIL
 # - Exits non-zero on any failure
 # ============================================================
@@ -96,6 +97,17 @@ main() {
   # If the user already triggered 429 earlier, wait now so functional tests are meaningful.
   wait_if_rate_limited
 
+  section "Option 2 security: unknown key should 403 (no entitlement)"
+  UNKNOWN_KEY="sl_unknown_$(date +%s)_$RANDOM"
+  code="$(http_code GET "$BASE_URL/issues/latest" -H "Authorization: Bearer $UNKNOWN_KEY")"
+  if [ "$code" = "403" ]; then
+    pass "Unknown key blocked (403)"
+  else
+    fail "Unknown key expected 403 got $code"
+    yellow "Response:"
+    json_get "$BASE_URL/issues/latest" -H "Authorization: Bearer $UNKNOWN_KEY" || true
+  fi
+
   section "Admin publish (optional but recommended)"
   if [ -z "$ADMIN_KEY" ]; then
     yellow "Skipping admin publish test (ADMIN_KEY not set)."
@@ -115,7 +127,7 @@ main() {
     fi
   fi
 
-  # After publish, wait again if needed (publish doesn't hit /issues, but earlier runs might have)
+  # After publish, wait again if needed
   wait_if_rate_limited
 
   section "Free key: latest issue should be accessible"
