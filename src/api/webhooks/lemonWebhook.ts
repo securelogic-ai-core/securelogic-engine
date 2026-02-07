@@ -1,5 +1,4 @@
 import type { Request, Response } from "express";
-import crypto from "crypto";
 
 import { ensureRedisConnected, redisReady } from "../infra/redis.js";
 import { logger } from "../infra/logger.js";
@@ -9,7 +8,8 @@ import { logger } from "../infra/logger.js";
  * Lemon Squeezy Webhook Handler (Production)
  *
  * Goal:
- * - When a paid purchase happens, generate a paid API key
+ * - When a paid purchase happens, activate the PAID API key
+ *   that was created at checkout (custom_data.apiKey)
  * - Store entitlement in Redis
  * - This is the monetization bridge
  * =========================================================
@@ -21,12 +21,6 @@ type Entitlement = {
   tier: EntitlementTier;
   activeSubscription: boolean;
 };
-
-function generatePaidKey(): string {
-  // 32 hex bytes -> 64 chars, consistent with your key style
-  const raw = crypto.randomBytes(16).toString("hex");
-  return `sl_paid_${raw}`;
-}
 
 /**
  * Extremely defensive parsing.
@@ -40,13 +34,18 @@ function safeGet(obj: any, path: string): any {
   }
 }
 
+function isValidPaidKey(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  if (!value.startsWith("sl_paid_")) return false;
+  if (value.length < 20) return false;
+  return true;
+}
+
 export async function lemonWebhook(req: Request, res: Response): Promise<void> {
   const startedAt = Date.now();
 
   try {
     if (!redisReady) {
-      // Revenue system depends on Redis.
-      // But we still must NOT crash.
       logger.error(
         { route: req.originalUrl },
         "lemonWebhook: redis not configured"
@@ -73,11 +72,8 @@ export async function lemonWebhook(req: Request, res: Response): Promise<void> {
       null;
 
     /**
-     * For now: we only care about events that represent
-     * a paid subscription being active.
-     *
-     * We'll tighten the exact mapping later once you confirm
-     * your Lemon event names.
+     * Paid events we accept for activation.
+     * (We can tighten this later once your Lemon event types are confirmed.)
      */
     const paidEvents = new Set([
       "subscription_created",
@@ -99,13 +95,36 @@ export async function lemonWebhook(req: Request, res: Response): Promise<void> {
     );
 
     if (!isPaidEvent) {
-      // Not an event we use for entitlements yet.
       res.status(200).json({ ok: true, ignored: true, eventName });
       return;
     }
 
-    // Generate a brand new paid key
-    const paidKey = generatePaidKey();
+    /**
+     * CRITICAL:
+     * We DO NOT generate keys here.
+     * The paid API key MUST come from checkout custom_data.
+     */
+    const paidKey =
+      safeGet(payload, "data.attributes.custom_data.apiKey") ?? null;
+
+    if (!isValidPaidKey(paidKey)) {
+      logger.warn(
+        {
+          event: "lemon_webhook_invalid_custom_data",
+          eventName,
+          paidKeyType: typeof paidKey,
+          paidKeyPreview:
+            typeof paidKey === "string" ? paidKey.slice(0, 16) : null
+        },
+        "lemonWebhook: missing/invalid custom_data.apiKey"
+      );
+
+      res.status(400).json({
+        error: "missing_or_invalid_api_key_in_custom_data",
+        eventName
+      });
+      return;
+    }
 
     const entitlement: Entitlement = {
       tier: "paid",
@@ -118,10 +137,7 @@ export async function lemonWebhook(req: Request, res: Response): Promise<void> {
      * Storage model:
      * - entitlements:<apiKey> => JSON entitlement
      * - paid_keys_by_email:<email> => latest paid key (optional)
-     *
-     * We keep it simple and production-safe.
      */
-
     await redis.set(`entitlements:${paidKey}`, JSON.stringify(entitlement));
 
     if (typeof email === "string" && email.includes("@")) {
@@ -142,15 +158,13 @@ export async function lemonWebhook(req: Request, res: Response): Promise<void> {
 
     /**
      * IMPORTANT:
-     * In production, you will NOT want to return the paid key
-     * publicly here.
-     *
-     * But for now, while you are validating the pipeline,
-     * returning it makes testing possible.
+     * This response is safe because it does NOT leak the key.
+     * (The key was already known to the buyer at checkout.)
      */
     res.status(200).json({
-      ok: true,
-      createdPaidKey: paidKey,
+      received: true,
+      updated: true,
+      apiKey: paidKey,
       entitlement
     });
   } catch (err) {
