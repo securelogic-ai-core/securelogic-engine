@@ -1,44 +1,31 @@
 import type { Request, Response } from "express";
 
-import { ensureRedisConnected, redisReady } from "../infra/redis.js";
+import { redisReady } from "../infra/redis.js";
 import { logger } from "../infra/logger.js";
+
+import {
+  setEntitlementInRedis,
+  type EntitlementRecord
+} from "../infra/entitlementStore.js";
 
 /**
  * =========================================================
  * Lemon Squeezy Webhook Handler (Production)
  *
  * Goal:
- * - When a paid purchase happens, activate the PAID API key
- *   that was created at checkout (custom_data.apiKey)
- * - Store entitlement in Redis
- * - This is the monetization bridge
+ * - When a paid purchase happens, activate entitlement for
+ *   the apiKey provided in Lemon custom_data.apiKey
+ *
+ * This is the monetization bridge.
  * =========================================================
  */
 
-type EntitlementTier = "free" | "paid" | "admin";
-
-type Entitlement = {
-  tier: EntitlementTier;
-  activeSubscription: boolean;
-};
-
-/**
- * Extremely defensive parsing.
- * Lemon payloads vary by event type.
- */
 function safeGet(obj: any, path: string): any {
   try {
     return path.split(".").reduce((acc, key) => acc?.[key], obj);
   } catch {
     return undefined;
   }
-}
-
-function isValidPaidKey(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  if (!value.startsWith("sl_paid_")) return false;
-  if (value.length < 20) return false;
-  return true;
 }
 
 export async function lemonWebhook(req: Request, res: Response): Promise<void> {
@@ -50,7 +37,6 @@ export async function lemonWebhook(req: Request, res: Response): Promise<void> {
         { route: req.originalUrl },
         "lemonWebhook: redis not configured"
       );
-
       res.status(503).json({ error: "redis_not_configured" });
       return;
     }
@@ -63,7 +49,14 @@ export async function lemonWebhook(req: Request, res: Response): Promise<void> {
       payload?.event ??
       "unknown";
 
-    // Try multiple common locations for customer email
+    // The ONLY thing we actually need for activation:
+    const apiKey =
+      safeGet(payload, "data.attributes.custom_data.apiKey") ??
+      safeGet(payload, "data.attributes.custom_data.api_key") ??
+      safeGet(payload, "data.attributes.custom_data.securelogic_api_key") ??
+      null;
+
+    // Optional: useful for logging later
     const email =
       safeGet(payload, "data.attributes.user_email") ??
       safeGet(payload, "data.attributes.customer_email") ??
@@ -71,10 +64,6 @@ export async function lemonWebhook(req: Request, res: Response): Promise<void> {
       safeGet(payload, "data.attributes.customer.email") ??
       null;
 
-    /**
-     * Paid events we accept for activation.
-     * (We can tighten this later once your Lemon event types are confirmed.)
-     */
     const paidEvents = new Set([
       "subscription_created",
       "subscription_updated",
@@ -89,82 +78,56 @@ export async function lemonWebhook(req: Request, res: Response): Promise<void> {
       {
         event: "lemon_webhook_received",
         eventName,
-        emailPresent: Boolean(email)
+        apiKeyPresent: typeof apiKey === "string",
+        emailPresent: typeof email === "string"
       },
       "lemon webhook received"
     );
 
+    // Ignore non-paid events
     if (!isPaidEvent) {
-      res.status(200).json({ ok: true, ignored: true, eventName });
+      res.status(200).json({ received: true, ignored: true, eventName });
       return;
     }
 
-    /**
-     * CRITICAL:
-     * We DO NOT generate keys here.
-     * The paid API key MUST come from checkout custom_data.
-     */
-    const paidKey =
-      safeGet(payload, "data.attributes.custom_data.apiKey") ?? null;
-
-    if (!isValidPaidKey(paidKey)) {
+    if (typeof apiKey !== "string" || !apiKey.startsWith("sl_paid_")) {
       logger.warn(
         {
-          event: "lemon_webhook_invalid_custom_data",
+          event: "lemon_webhook_missing_api_key",
           eventName,
-          paidKeyType: typeof paidKey,
-          paidKeyPreview:
-            typeof paidKey === "string" ? paidKey.slice(0, 16) : null
+          apiKey
         },
-        "lemonWebhook: missing/invalid custom_data.apiKey"
+        "lemon webhook missing valid custom_data.apiKey"
       );
 
-      res.status(400).json({
-        error: "missing_or_invalid_api_key_in_custom_data",
-        eventName
-      });
+      res.status(400).json({ error: "missing_custom_data_apiKey" });
       return;
     }
 
-    const entitlement: Entitlement = {
+    const entitlement: EntitlementRecord = {
       tier: "paid",
       activeSubscription: true
     };
 
-    const redis = await ensureRedisConnected();
-
-    /**
-     * Storage model:
-     * - entitlements:<apiKey> => JSON entitlement
-     * - paid_keys_by_email:<email> => latest paid key (optional)
-     */
-    await redis.set(`entitlements:${paidKey}`, JSON.stringify(entitlement));
-
-    if (typeof email === "string" && email.includes("@")) {
-      await redis.set(`paid_keys_by_email:${email}`, paidKey);
-    }
+    // ✅ IMPORTANT: uses entitlement:${apiKey} (singular)
+    await setEntitlementInRedis(apiKey, entitlement);
 
     const durationMs = Date.now() - startedAt;
 
     logger.info(
       {
-        event: "lemon_webhook_entitlement_created",
+        event: "lemon_webhook_entitlement_activated",
         eventName,
-        paidKeyPrefix: paidKey.slice(0, 12),
+        apiKeyPrefix: apiKey.slice(0, 14),
         durationMs
       },
-      "paid entitlement created"
+      "paid entitlement activated"
     );
 
-    /**
-     * IMPORTANT:
-     * This response is safe because it does NOT leak the key.
-     * (The key was already known to the buyer at checkout.)
-     */
     res.status(200).json({
       received: true,
       updated: true,
-      apiKey: paidKey,
+      apiKey,
       entitlement
     });
   } catch (err) {
