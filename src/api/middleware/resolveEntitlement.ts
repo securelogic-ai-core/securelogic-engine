@@ -12,6 +12,10 @@ type EnvEntitlement =
       activeSubscription: boolean;
     };
 
+function isTier(value: unknown): value is Tier {
+  return value === "free" || value === "paid" || value === "admin";
+}
+
 function loadEnvEntitlements(): Record<string, EnvEntitlement> {
   const raw = process.env.SECURELOGIC_ENTITLEMENTS ?? "{}";
 
@@ -25,20 +29,23 @@ function loadEnvEntitlements(): Record<string, EnvEntitlement> {
 }
 
 function normalizeEnvEntitlement(raw: EnvEntitlement): EntitlementRecord | null {
+  // Allow simple form: { "key": "paid" }
   if (typeof raw === "string") {
-    const tier = raw as Tier;
+    if (!isTier(raw)) return null;
+
     return {
-      tier,
-      activeSubscription: tier !== "free"
+      tier: raw,
+      activeSubscription: raw !== "free"
     };
   }
 
+  // Allow object form: { "key": { tier: "paid", activeSubscription: true } }
   if (!raw || typeof raw !== "object") return null;
 
-  const tier = raw.tier;
-  const activeSubscription = raw.activeSubscription;
+  const tier = (raw as any).tier as unknown;
+  const activeSubscription = (raw as any).activeSubscription as unknown;
 
-  if (tier !== "free" && tier !== "paid" && tier !== "admin") return null;
+  if (!isTier(tier)) return null;
   if (typeof activeSubscription !== "boolean") return null;
 
   return { tier, activeSubscription };
@@ -52,7 +59,7 @@ export async function resolveEntitlement(
   const apiKey = (req as any).apiKey as string | undefined;
 
   if (!apiKey) {
-    res.status(401).json({ error: "API key required (resolveEntitlement)" });
+    res.status(401).json({ error: "api_key_required" });
     return;
   }
 
@@ -74,14 +81,14 @@ export async function resolveEntitlement(
   const rawEnv = envEntitlements[apiKey];
 
   if (!rawEnv) {
-    res.status(403).json({ error: "No entitlement assigned" });
+    res.status(403).json({ error: "entitlement_missing" });
     return;
   }
 
   const normalized = normalizeEnvEntitlement(rawEnv);
 
   if (!normalized) {
-    res.status(403).json({ error: "Entitlement invalid" });
+    res.status(403).json({ error: "entitlement_invalid" });
     return;
   }
 
