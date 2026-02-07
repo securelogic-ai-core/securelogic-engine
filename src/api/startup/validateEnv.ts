@@ -6,6 +6,14 @@ const REQUIRED_ENV = [
 ];
 
 export function validateEnv(): void {
+  /**
+   * Tests should never hard-exit the process.
+   * They run without full API env config.
+   */
+  if (process.env.NODE_ENV === "test") {
+    return;
+  }
+
   const missing = REQUIRED_ENV.filter(
     (key) => !process.env[key] || process.env[key]?.trim() === ""
   );
