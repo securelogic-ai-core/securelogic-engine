@@ -9,6 +9,7 @@ import { runSelfTest } from "./startup/selfTest.js";
 import { ensureRedisConnected, redisReady } from "./infra/redis.js";
 import { httpLogger } from "./infra/httpLogger.js";
 import { verifyIssueSignature } from "./infra/verifyIssueSignature.js";
+import { logger } from "./infra/logger.js";
 
 import { requestId } from "./middleware/requestId.js";
 import { requireApiKey } from "./middleware/requireApiKey.js";
@@ -83,6 +84,19 @@ app.use((_req, res, next) => {
    WEBHOOKS (RAW BODY FIRST)
    ========================================================= */
 
+/**
+ * Lemon Squeezy webhook handler
+ *
+ * Production requirements:
+ * - verify signature (verifyLemonWebhook)
+ * - parse payload
+ * - extract customer API key
+ * - activate entitlement in Redis
+ *
+ * IMPORTANT:
+ * - FAIL OPEN. Webhooks should never take down the API.
+ * - Always return 200 quickly if possible (avoid retries storms).
+ */
 app.post(
   "/webhooks/lemon",
   bodyParser.raw({ type: "application/json" }),
@@ -91,8 +105,148 @@ app.post(
     next();
   },
   verifyLemonWebhook,
-  (_req: Request, res: Response) => {
-    res.status(200).json({ received: true });
+  async (req: Request, res: Response) => {
+    /**
+     * If Redis is not configured, we still accept the webhook.
+     * This prevents Lemon from retrying forever and hammering us.
+     */
+    if (!redisReady) {
+      logger.warn(
+        { route: "/webhooks/lemon" },
+        "Lemon webhook received but Redis is not configured (skipping entitlement write)"
+      );
+
+      res.status(200).json({ received: true, redisConfigured: false });
+      return;
+    }
+
+    try {
+      const rawBody = (req as any).rawBody as Buffer;
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(rawBody.toString("utf8"));
+      } catch {
+        logger.warn(
+          { route: "/webhooks/lemon" },
+          "Lemon webhook payload was not valid JSON"
+        );
+        res.status(200).json({ received: true, ignored: true });
+        return;
+      }
+
+      /**
+       * We do NOT trust Lemon payload shape.
+       * We only accept entitlement writes if we can extract a valid SecureLogic API key.
+       *
+       * We support multiple possible locations because Lemon payloads vary:
+       * - meta.custom_data.apiKey
+       * - data.attributes.custom_data.apiKey
+       * - data.attributes.user_email (fallback is NOT allowed)
+       */
+      const apiKey =
+        parsed?.meta?.custom_data?.apiKey ??
+        parsed?.data?.attributes?.custom_data?.apiKey ??
+        null;
+
+      if (typeof apiKey !== "string" || apiKey.trim() === "") {
+        logger.warn(
+          {
+            event: parsed?.meta?.event_name ?? null,
+            hasCustomData: Boolean(parsed?.meta?.custom_data),
+            route: "/webhooks/lemon"
+          },
+          "Lemon webhook missing apiKey in custom_data (ignored)"
+        );
+
+        /**
+         * We still return 200 to prevent retry storms.
+         * This is correct: Lemon retries will not magically add apiKey.
+         */
+        res.status(200).json({ received: true, ignored: true });
+        return;
+      }
+
+      /**
+       * Minimal sanity check: SecureLogic keys are expected to be sl_*
+       * (We do not hard-fail here — just avoid writing garbage.)
+       */
+      if (!apiKey.startsWith("sl_")) {
+        logger.warn(
+          { apiKeyPrefix: apiKey.slice(0, 6), route: "/webhooks/lemon" },
+          "Lemon webhook apiKey did not match expected prefix (ignored)"
+        );
+        res.status(200).json({ received: true, ignored: true });
+        return;
+      }
+
+      /**
+       * Determine entitlement based on event.
+       *
+       * NOTE:
+       * Lemon events can be:
+       * - subscription_created
+       * - subscription_updated
+       * - subscription_cancelled
+       * - subscription_expired
+       * - order_created
+       *
+       * For now: treat most events as "activate paid"
+       * unless it is clearly a cancellation/expiration.
+       */
+      const eventName =
+        parsed?.meta?.event_name ??
+        parsed?.meta?.event ??
+        parsed?.event_name ??
+        null;
+
+      const eventLower = typeof eventName === "string" ? eventName.toLowerCase() : "";
+
+      const isCancelEvent =
+        eventLower.includes("cancel") ||
+        eventLower.includes("expired") ||
+        eventLower.includes("refund");
+
+      const entitlement = {
+        tier: isCancelEvent ? "free" : "paid",
+        activeSubscription: !isCancelEvent
+      };
+
+      const redis = await ensureRedisConnected();
+
+      /**
+       * Store entitlements as JSON string in Redis.
+       *
+       * This matches the existing adminEntitlementsRouter behavior.
+       */
+      const key = `entitlements:${apiKey}`;
+      await redis.set(key, JSON.stringify(entitlement));
+
+      logger.info(
+        {
+          event: "lemon_webhook_entitlement_written",
+          lemonEvent: eventName ?? null,
+          apiKey,
+          entitlement
+        },
+        "Lemon webhook processed: entitlement updated"
+      );
+
+      res.status(200).json({
+        received: true,
+        updated: true,
+        apiKey,
+        entitlement
+      });
+    } catch (err) {
+      /**
+       * FAIL OPEN:
+       * Webhooks should never take down the API.
+       * Return 200 to prevent retry storms.
+       */
+      logger.warn({ err }, "Lemon webhook failed (fail-open)");
+      res.status(200).json({ received: true, error: "fail_open" });
+    }
   }
 );
 
