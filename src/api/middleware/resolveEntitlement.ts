@@ -1,112 +1,128 @@
 import type { Request, Response, NextFunction } from "express";
+import { logger } from "../infra/logger.js";
+
 import {
   getEntitlementFromRedis,
-  type Tier,
-  type EntitlementRecord
+  type EntitlementRecord,
+  type Tier
 } from "../infra/entitlementStore.js";
 
-type EnvEntitlement =
-  | Tier
-  | {
-      tier: Tier;
-      activeSubscription: boolean;
-    };
+/**
+ * resolveEntitlement (Enterprise-grade)
+ *
+ * RULES:
+ * - Source of truth: Redis entitlements
+ * - Never trusts client headers for tier/subscription
+ * - Never logs apiKey
+ * - Fail-open for entitlement resolution (default = free)
+ * - Admin keys are handled separately (requireAdminKey middleware)
+ */
 
 function isTier(value: unknown): value is Tier {
   return value === "free" || value === "paid" || value === "admin";
 }
 
-function loadEnvEntitlements(): Record<string, EnvEntitlement> {
-  const raw = process.env.SECURELOGIC_ENTITLEMENTS ?? "{}";
-
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-    return parsed as Record<string, EnvEntitlement>;
-  } catch {
-    return {};
-  }
+function safeTier(value: unknown): Tier {
+  return isTier(value) ? value : "free";
 }
 
-function normalizeEnvEntitlement(raw: EnvEntitlement): EntitlementRecord | null {
-  // Allow simple form: { "key": "paid" }
-  if (typeof raw === "string") {
-    if (!isTier(raw)) return null;
+function safeBool(value: unknown): boolean {
+  return value === true;
+}
 
-    return {
-      tier: raw,
-      activeSubscription: raw !== "free"
-    };
+function normalizeEntitlement(raw: EntitlementRecord | null): EntitlementRecord {
+  if (!raw) {
+    return { tier: "free", activeSubscription: false };
   }
 
-  // Allow object form: { "key": { tier: "paid", activeSubscription: true } }
-  if (!raw || typeof raw !== "object") return null;
+  const tier = safeTier(raw.tier);
+  const activeSubscription = safeBool(raw.activeSubscription);
 
-  const tier = (raw as any).tier as unknown;
-  const activeSubscription = (raw as any).activeSubscription as unknown;
+  /**
+   * Enterprise invariants:
+   * - free => activeSubscription must be false
+   * - paid/admin => activeSubscription must be true
+   */
+  if (tier === "free") {
+    return { tier: "free", activeSubscription: false };
+  }
 
-  if (!isTier(tier)) return null;
-  if (typeof activeSubscription !== "boolean") return null;
-
-  return { tier, activeSubscription };
+  return { tier, activeSubscription: true };
 }
 
 export async function resolveEntitlement(
   req: Request,
-  res: Response,
+  _res: Response,
   next: NextFunction
 ): Promise<void> {
-  const apiKey = (req as any).apiKey as string | undefined;
+  try {
+    const apiKey = (req as any).apiKey as string | undefined;
 
-  if (!apiKey) {
-    res.status(401).json({ error: "api_key_required" });
-    return;
-  }
+    /**
+     * If apiKey is missing, do nothing.
+     * requireApiKey should have blocked already.
+     */
+    if (!apiKey) {
+      (req as any).entitlement = "free";
+      (req as any).activeSubscription = false;
+      next();
+      return;
+    }
 
-  // Ensure downstream middleware ALWAYS has it
-  (req as any).apiKey = apiKey;
+    /**
+     * Default: free.
+     * This is fail-open for entitlement lookup.
+     */
+    let resolved: EntitlementRecord = {
+      tier: "free",
+      activeSubscription: false
+    };
 
-  /**
-   * =========================================================
-   * 1) Redis entitlements (authoritative)
-   *
-   * IMPORTANT:
-   * We support BOTH namespaces:
-   * - entitlements_v2:<apiKey>  (webhook-driven)
-   * - entitlements:<apiKey>     (legacy/admin)
-   * =========================================================
-   */
-  const redisEnt = await getEntitlementFromRedis(apiKey);
+    try {
+      const fromRedis = await getEntitlementFromRedis(apiKey);
+      resolved = normalizeEntitlement(fromRedis);
+    } catch (err) {
+      /**
+       * Fail-open:
+       * If Redis fails, we treat as free.
+       * Subscription gating happens later in requireSubscription.
+       */
+      logger.warn(
+        {
+          err,
+          route: req.originalUrl,
+          method: req.method
+        },
+        "resolveEntitlement: redis lookup failed (defaulting to free)"
+      );
+    }
 
-  if (redisEnt) {
-    (req as any).entitlement = redisEnt.tier;
-    (req as any).activeSubscription = redisEnt.activeSubscription;
+    /**
+     * Attach normalized fields.
+     * IMPORTANT:
+     * req.entitlement is the TIER, not the full record.
+     */
+    (req as any).entitlement = resolved.tier;
+    (req as any).activeSubscription = resolved.activeSubscription;
+
     next();
-    return;
+  } catch (err) {
+    /**
+     * Absolute fail-open:
+     * entitlement resolution must never crash request flow.
+     */
+    logger.warn(
+      {
+        err,
+        route: req.originalUrl,
+        method: req.method
+      },
+      "resolveEntitlement failed (fail-open)"
+    );
+
+    (req as any).entitlement = "free";
+    (req as any).activeSubscription = false;
+
+    next();
   }
-
-  /**
-   * =========================================================
-   * 2) Env fallback (bootstrap/dev)
-   * =========================================================
-   */
-  const envEntitlements = loadEnvEntitlements();
-  const rawEnv = envEntitlements[apiKey];
-
-  if (!rawEnv) {
-    res.status(403).json({ error: "entitlement_missing" });
-    return;
-  }
-
-  const normalized = normalizeEnvEntitlement(rawEnv);
-
-  if (!normalized) {
-    res.status(403).json({ error: "entitlement_invalid" });
-    return;
-  }
-
-  (req as any).entitlement = normalized.tier;
-  (req as any).activeSubscription = normalized.activeSubscription;
-
-  next();
 }

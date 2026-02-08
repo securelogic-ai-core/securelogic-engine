@@ -3,6 +3,12 @@ import "dotenv/config";
 import express, { type Request, type Response } from "express";
 import bodyParser from "body-parser";
 
+import helmet from "helmet";
+import cors from "cors";
+import rateLimit from "express-rate-limit";
+import slowDown from "express-slow-down";
+import hpp from "hpp";
+
 import { validateEnv } from "./startup/validateEnv.js";
 import { runSelfTest } from "./startup/selfTest.js";
 
@@ -23,6 +29,7 @@ import { requireSubscription } from "./middleware/requireSubscription.js";
 import { verifyLemonWebhook } from "./middleware/verifyLemonWebhook.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
+import { requireAdminNetwork } from "./middleware/requireAdminNetwork.js";
 import { requireAdminKey } from "./middleware/requireAdminKey.js";
 import { adminRateLimit } from "./middleware/adminRateLimit.js";
 import { adminAudit } from "./middleware/adminAudit.js";
@@ -38,6 +45,8 @@ import {
   publishIssueArtifact
 } from "./infra/issueStore.js";
 
+import { lemonWebhook } from "./webhooks/lemonWebhook.js";
+
 /* =========================================================
    BOOT-TIME GUARDS
    ========================================================= */
@@ -52,7 +61,87 @@ runSelfTest();
 const app = express();
 const PORT = Number(process.env.PORT ?? 3000);
 
+const isDev = process.env.NODE_ENV === "development";
+
+/**
+ * Enterprise:
+ * - We are deployed behind a proxy (Render / Cloud)
+ * - Needed for correct IP + rate limit behavior
+ */
 app.set("trust proxy", 1);
+
+/* =========================================================
+   ENTERPRISE SECURITY BASELINE (PROD SAFE)
+   ========================================================= */
+
+/**
+ * 1) Standard hardening headers
+ */
+app.use(
+  helmet({
+    contentSecurityPolicy: false, // API-only service (no HTML)
+    crossOriginEmbedderPolicy: false
+  })
+);
+
+/**
+ * 2) Prevent HTTP parameter pollution
+ */
+app.use(hpp());
+
+/**
+ * 3) Strict CORS
+ *
+ * Enterprise rule:
+ * - Default deny (no browser access)
+ * - This is an API service
+ */
+app.use(
+  cors({
+    origin: false,
+    credentials: false,
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Admin-Key",
+      "X-Api-Key",
+      "X-Securelogic-Key",
+      "X-Request-Id"
+    ],
+    maxAge: 86400
+  })
+);
+
+/**
+ * 4) Global abuse throttling (layer 1)
+ */
+const globalLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+const globalSlowdown = slowDown({
+  windowMs: 60_000,
+  delayAfter: 100,
+  delayMs: () => 250
+});
+
+app.use(globalSlowdown);
+app.use(globalLimiter);
+
+/**
+ * 5) Enterprise: disable caching for API responses
+ * (especially auth + entitlements + issues)
+ */
+app.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  next();
+});
 
 /* =========================================================
    REQUEST CORRELATION
@@ -85,177 +174,32 @@ app.use((_req, res, next) => {
    ========================================================= */
 
 /**
- * Lemon Squeezy webhook handler
- *
- * Production requirements:
- * - verify signature (verifyLemonWebhook)
- * - parse payload
- * - extract customer API key
- * - activate entitlement in Redis
- *
  * IMPORTANT:
- * - FAIL OPEN. Webhooks should never take down the API.
- * - Always return 200 quickly if possible (avoid retries storms).
+ * This route MUST use raw body, otherwise HMAC validation fails.
+ * We attach rawBody for verifyLemonWebhook middleware.
  */
 app.post(
   "/webhooks/lemon",
-  bodyParser.raw({ type: "application/json" }),
+  bodyParser.raw({ type: "application/json", limit: "256kb" }),
   (req, _res, next) => {
     (req as any).rawBody = req.body;
     next();
   },
   verifyLemonWebhook,
-  async (req: Request, res: Response) => {
-    /**
-     * If Redis is not configured, we still accept the webhook.
-     * This prevents Lemon from retrying forever and hammering us.
-     */
-    if (!redisReady) {
-      logger.warn(
-        { route: "/webhooks/lemon" },
-        "Lemon webhook received but Redis is not configured (skipping entitlement write)"
-      );
-
-      res.status(200).json({ received: true, redisConfigured: false });
-      return;
-    }
-
-    try {
-      const rawBody = (req as any).rawBody as Buffer;
-
-      let parsed: any;
-      try {
-        parsed = JSON.parse(rawBody.toString("utf8"));
-      } catch {
-        logger.warn(
-          { route: "/webhooks/lemon" },
-          "Lemon webhook payload was not valid JSON"
-        );
-        res.status(200).json({ received: true, ignored: true });
-        return;
-      }
-
-      /**
-       * We do NOT trust Lemon payload shape.
-       * We only accept entitlement writes if we can extract a valid SecureLogic API key.
-       *
-       * We support multiple possible locations because Lemon payloads vary:
-       * - meta.custom_data.apiKey
-       * - data.attributes.custom_data.apiKey
-       * - data.attributes.user_email (fallback is NOT allowed)
-       */
-      const apiKey =
-        parsed?.meta?.custom_data?.apiKey ??
-        parsed?.data?.attributes?.custom_data?.apiKey ??
-        null;
-
-      if (typeof apiKey !== "string" || apiKey.trim() === "") {
-        logger.warn(
-          {
-            event: parsed?.meta?.event_name ?? null,
-            hasCustomData: Boolean(parsed?.meta?.custom_data),
-            route: "/webhooks/lemon"
-          },
-          "Lemon webhook missing apiKey in custom_data (ignored)"
-        );
-
-        /**
-         * We still return 200 to prevent retry storms.
-         * This is correct: Lemon retries will not magically add apiKey.
-         */
-        res.status(200).json({ received: true, ignored: true });
-        return;
-      }
-
-      /**
-       * Minimal sanity check: SecureLogic keys are expected to be sl_*
-       * (We do not hard-fail here — just avoid writing garbage.)
-       */
-      if (!apiKey.startsWith("sl_")) {
-        logger.warn(
-          { apiKeyPrefix: apiKey.slice(0, 6), route: "/webhooks/lemon" },
-          "Lemon webhook apiKey did not match expected prefix (ignored)"
-        );
-        res.status(200).json({ received: true, ignored: true });
-        return;
-      }
-
-      /**
-       * Determine entitlement based on event.
-       *
-       * NOTE:
-       * Lemon events can be:
-       * - subscription_created
-       * - subscription_updated
-       * - subscription_cancelled
-       * - subscription_expired
-       * - order_created
-       *
-       * For now: treat most events as "activate paid"
-       * unless it is clearly a cancellation/expiration.
-       */
-      const eventName =
-        parsed?.meta?.event_name ??
-        parsed?.meta?.event ??
-        parsed?.event_name ??
-        null;
-
-      const eventLower =
-        typeof eventName === "string" ? eventName.toLowerCase() : "";
-
-      const isCancelEvent =
-        eventLower.includes("cancel") ||
-        eventLower.includes("expired") ||
-        eventLower.includes("refund");
-
-      const entitlement = {
-        tier: isCancelEvent ? "free" : "paid",
-        activeSubscription: !isCancelEvent
-      };
-
-      const redis = await ensureRedisConnected();
-
-      /**
-       * Store entitlements as JSON string in Redis.
-       *
-       * This matches the existing adminEntitlementsRouter behavior.
-       */
-      const key = `entitlement:${apiKey}`;
-      await redis.set(key, JSON.stringify(entitlement));
-
-      logger.info(
-        {
-          event: "lemon_webhook_entitlement_written",
-          lemonEvent: eventName ?? null,
-          apiKey,
-          entitlement
-        },
-        "Lemon webhook processed: entitlement updated"
-      );
-
-      res.status(200).json({
-        received: true,
-        updated: true,
-        apiKey,
-        entitlement
-      });
-    } catch (err) {
-      /**
-       * FAIL OPEN:
-       * Webhooks should never take down the API.
-       * Return 200 to prevent retry storms.
-       */
-      logger.warn({ err }, "Lemon webhook failed (fail-open)");
-      res.status(200).json({ received: true, error: "fail_open" });
-    }
-  }
+  lemonWebhook
 );
 
 /* =========================================================
    BODY PARSER (MUST BE AFTER RAW WEBHOOKS)
    ========================================================= */
 
-app.use(express.json());
+/**
+ * Enterprise rule:
+ * - strict JSON limit
+ * - prevent JSON bombs
+ */
+app.use(express.json({ limit: "256kb" }));
+app.use(express.urlencoded({ extended: false, limit: "256kb" }));
 
 /* =========================================================
    HEALTH CHECK (NO AUTH)
@@ -305,18 +249,14 @@ app.get("/version", (_req: Request, res: Response) => {
 });
 
 /* =========================================================
-   NODE_ENV CHECK (DEPLOY VERIFICATION)
-   ========================================================= */
-
-app.get("/debug/node_env", (_req: Request, res: Response) => {
-  res.status(200).json({ nodeEnv: process.env.NODE_ENV ?? null });
-});
-
-/* =========================================================
    DEBUG ROUTES (DEV ONLY)
    ========================================================= */
 
-if (process.env.NODE_ENV === "development") {
+if (isDev) {
+  app.get("/debug/node_env", (_req: Request, res: Response) => {
+    res.status(200).json({ nodeEnv: process.env.NODE_ENV ?? null });
+  });
+
   app.get("/debug/headers", (req: Request, res: Response) => {
     res.status(200).json({
       headers: req.headers,
@@ -326,10 +266,6 @@ if (process.env.NODE_ENV === "development") {
     });
   });
 
-  /**
-   * DEV-only debug route that is NOT under /issues
-   * so it does NOT get blocked by subscription middleware.
-   */
   app.get("/debug/issues_key", (req: Request, res: Response) => {
     res.status(200).json({
       headers: req.headers,
@@ -344,53 +280,28 @@ if (process.env.NODE_ENV === "development") {
 }
 
 /* =========================================================
-   🔒 ADMIN ROUTES
+   🔒 ADMIN ROUTES (ENTERPRISE)
    ========================================================= */
 
 /**
- * NOTE:
- * - /admin/issues/publish MUST exist in prod.
- * - Redis debug routes must NEVER exist in prod.
+ * Enterprise admin chain (defense-in-depth):
+ * 1) requireAdminNetwork  (where request comes from)
+ * 2) requireAdminKey      (what you know)
+ * 3) adminRateLimit       (abuse prevention)
+ * 4) adminAudit           (audit trail)
  */
-
-/**
- * IMPORTANT:
- * We apply requireAdminKey FIRST, then adminRateLimit, then adminAudit.
- *
- * Why?
- * - If the admin key is missing/invalid, we reject immediately.
- * - We do NOT want missing keys to generate Redis writes.
- * - We want admin audit logs only for valid admin requests.
- */
+app.use("/admin", requireAdminNetwork);
 app.use("/admin", requireAdminKey);
 app.use("/admin", adminRateLimit);
 app.use("/admin", adminAudit);
 
-/**
- * Admin entitlements routes (MUST be in prod)
- */
 app.use(adminEntitlementsRouter);
-
-/**
- * PROD-SAFE: Admin-only debug route (works in production)
- */
-app.get("/admin/debug/issues_key", (req: Request, res: Response) => {
-  res.status(200).json({
-    headers: req.headers,
-    authorization: req.get("authorization") ?? null,
-    xSecurelogicKey: req.get("x-securelogic-key") ?? null,
-    xApiKey: req.get("x-api-key") ?? null,
-    apiKeyOnReq: (req as any).apiKey ?? null,
-    entitlementOnReq: (req as any).entitlement ?? null,
-    activeSubscriptionOnReq: (req as any).activeSubscription ?? null
-  });
-});
 
 /**
  * Admin-only Redis debug routes
  * DEV ONLY.
  */
-if (process.env.NODE_ENV === "development") {
+if (isDev) {
   app.get(
     "/admin/debug/redis/issue/latest",
     async (_req: Request, res: Response) => {
@@ -446,6 +357,22 @@ if (process.env.NODE_ENV === "development") {
       }
     }
   );
+
+  /**
+   * DEV ONLY: Admin debug issues key route
+   * (This is not allowed in production.)
+   */
+  app.get("/admin/debug/issues_key", (req: Request, res: Response) => {
+    res.status(200).json({
+      headers: req.headers,
+      authorization: req.get("authorization") ?? null,
+      xSecurelogicKey: req.get("x-securelogic-key") ?? null,
+      xApiKey: req.get("x-api-key") ?? null,
+      apiKeyOnReq: (req as any).apiKey ?? null,
+      entitlementOnReq: (req as any).entitlement ?? null,
+      activeSubscriptionOnReq: (req as any).activeSubscription ?? null
+    });
+  });
 }
 
 app.post("/admin/issues/publish", async (req: Request, res: Response) => {
@@ -454,8 +381,6 @@ app.post("/admin/issues/publish", async (req: Request, res: Response) => {
       res.status(503).json({ error: "redis_not_configured" });
       return;
     }
-
-    const redis = await ensureRedisConnected();
 
     const parsed = req.body as unknown;
 
@@ -480,8 +405,6 @@ app.post("/admin/issues/publish", async (req: Request, res: Response) => {
 
     await publishIssueArtifact(issueNumber, JSON.stringify(artifact));
 
-    await redis.ping();
-
     res.status(200).json({
       ok: true,
       published: issueNumber
@@ -494,10 +417,9 @@ app.post("/admin/issues/publish", async (req: Request, res: Response) => {
 
 /* =========================================================
    DEBUG: ISSUE AUTH HEADER CHECK (DEV ONLY)
-   MUST BE BEFORE /issues middleware chain
    ========================================================= */
 
-if (process.env.NODE_ENV === "development") {
+if (isDev) {
   app.get("/issues/_debug_key", (req: Request, res: Response) => {
     res.status(200).json({
       headers: req.headers,
@@ -556,7 +478,7 @@ app.get("/issues/latest", async (_req: Request, res: Response) => {
 
     const artifact = parsed as SignedIssue;
 
-    if (process.env.NODE_ENV !== "development") {
+    if (!isDev) {
       if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
         res.status(500).json({ error: "issue_signature_verification_failed" });
         return;
@@ -604,7 +526,7 @@ app.get(
 
       const artifact = parsed as SignedIssue;
 
-      if (process.env.NODE_ENV !== "development") {
+      if (!isDev) {
         if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
           res.status(500).json({
             error: "issue_signature_verification_failed"
@@ -622,6 +544,17 @@ app.get(
 );
 
 /* =========================================================
+   404 HANDLER (ENTERPRISE)
+   ========================================================= */
+
+app.use((req: Request, res: Response) => {
+  res.status(404).json({
+    error: "not_found",
+    path: req.originalUrl
+  });
+});
+
+/* =========================================================
    ERROR HANDLER (LAST)
    ========================================================= */
 
@@ -632,7 +565,7 @@ app.use(errorHandler);
    ========================================================= */
 
 const server = app.listen(PORT, "0.0.0.0", () => {
-  console.log(`SecureLogic Issue API listening on port ${PORT}`);
+  logger.info({ port: PORT }, "SecureLogic Issue API started");
 });
 
 /* =========================================================
@@ -641,7 +574,7 @@ const server = app.listen(PORT, "0.0.0.0", () => {
 
 const shutdown = async (signal: string) => {
   isDraining = true;
-  console.log(`🛑 ${signal} received. Draining...`);
+  logger.warn({ signal }, "Shutdown signal received. Draining...");
 
   server.close(async () => {
     try {
