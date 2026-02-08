@@ -200,7 +200,8 @@ app.post(
         parsed?.event_name ??
         null;
 
-      const eventLower = typeof eventName === "string" ? eventName.toLowerCase() : "";
+      const eventLower =
+        typeof eventName === "string" ? eventName.toLowerCase() : "";
 
       const isCancelEvent =
         eventLower.includes("cancel") ||
@@ -219,7 +220,7 @@ app.post(
        *
        * This matches the existing adminEntitlementsRouter behavior.
        */
-      const key = `entitlements:${apiKey}`;
+      const key = `entitlement:${apiKey}`;
       await redis.set(key, JSON.stringify(entitlement));
 
       logger.info(
