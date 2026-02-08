@@ -2,7 +2,8 @@ const REQUIRED_ENV_PROD = [
   "NODE_ENV",
   "REDIS_URL",
   "SECURELOGIC_ADMIN_KEY",
-  "LEMON_WEBHOOK_SECRET"
+  "LEMON_WEBHOOK_SECRET",
+  "SECURELOGIC_ADMIN_ALLOWED_IPS"
 ] as const;
 
 const OPTIONAL_ENV = [
@@ -19,6 +20,15 @@ function mustBePresentInProd(key: string): void {
   const v = process.env[key];
   if (!isNonEmptyString(v)) {
     throw new Error(`Missing required env var in production: ${key}`);
+  }
+}
+
+function assertMaxLength(key: string, max: number): void {
+  const v = process.env[key];
+  if (!isNonEmptyString(v)) return;
+
+  if (v.length > max) {
+    throw new Error(`${key} must be <= ${max} characters`);
   }
 }
 
@@ -90,6 +100,43 @@ function validateWebhookSecret(): void {
   }
 }
 
+function validateAdminAllowlist(): void {
+  const raw = process.env.SECURELOGIC_ADMIN_ALLOWED_IPS;
+
+  if (!isNonEmptyString(raw)) return;
+
+  const parts = raw
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    throw new Error(
+      "SECURELOGIC_ADMIN_ALLOWED_IPS is present but empty after parsing"
+    );
+  }
+
+  /**
+   * Hard ban: open-to-world CIDR.
+   * This is not a “warning”. This is forbidden.
+   */
+  for (const p of parts) {
+    const lower = p.toLowerCase();
+
+    if (lower === "0.0.0.0/0") {
+      throw new Error(
+        "SECURELOGIC_ADMIN_ALLOWED_IPS contains 0.0.0.0/0 (FORBIDDEN)"
+      );
+    }
+
+    if (lower === "::/0") {
+      throw new Error(
+        "SECURELOGIC_ADMIN_ALLOWED_IPS contains ::/0 (FORBIDDEN)"
+      );
+    }
+  }
+}
+
 function validateDevEntitlementsJson(): void {
   // DEV ONLY
   if (process.env.NODE_ENV !== "development") return;
@@ -122,9 +169,19 @@ export function validateEnv(): void {
 
   try {
     validateNodeEnv();
+
+    /**
+     * Prevent absurdly oversized envs (header/env abuse / misconfig).
+     */
+    assertMaxLength("SECURELOGIC_ADMIN_KEY", 4096);
+    assertMaxLength("LEMON_WEBHOOK_SECRET", 4096);
+    assertMaxLength("SECURELOGIC_ADMIN_ALLOWED_IPS", 4096);
+    assertMaxLength("REDIS_URL", 4096);
+
     validateRedisUrl();
     validateAdminKey();
     validateWebhookSecret();
+    validateAdminAllowlist();
     validateDevEntitlementsJson();
 
     const isProd = process.env.NODE_ENV === "production";

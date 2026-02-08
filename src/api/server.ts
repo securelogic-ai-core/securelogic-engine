@@ -62,6 +62,26 @@ const app = express();
 const PORT = Number(process.env.PORT ?? 3000);
 
 const isDev = process.env.NODE_ENV === "development";
+const isProd = process.env.NODE_ENV === "production";
+
+/**
+ * Enterprise:
+ * Debug routes must NEVER be controlled by NODE_ENV alone.
+ * They require an explicit opt-in flag.
+ */
+const debugEnabled =
+  isDev && (process.env.ENABLE_DEBUG_ROUTES ?? "").trim() === "true";
+
+/**
+ * Enterprise:
+ * Emergency kill switch.
+ * When true:
+ * - Public /issues API is disabled
+ * - Admin endpoints remain available (for recovery)
+ */
+const publicApiDisabled =
+  (process.env.SECURELOGIC_DISABLE_PUBLIC_API ?? "").trim().toLowerCase() ===
+  "true";
 
 /**
  * Enterprise:
@@ -69,6 +89,139 @@ const isDev = process.env.NODE_ENV === "development";
  * - Needed for correct IP + rate limit behavior
  */
 app.set("trust proxy", 1);
+
+/* =========================================================
+   DRAIN MODE (GRACEFUL SHUTDOWN + FAIL CLOSED)
+   ========================================================= */
+
+let isDraining = false;
+
+/**
+ * Enterprise fatal error handler.
+ * If the process enters an unsafe state, we:
+ * - log fatal
+ * - enter drain mode
+ * - exit after a short timeout
+ */
+function enterDrainAndExit(reason: string, err?: unknown): void {
+  if (isDraining) return;
+
+  isDraining = true;
+
+  logger.fatal(
+    {
+      reason,
+      err
+    },
+    "Fatal runtime error (entering drain mode)"
+  );
+
+  // Ensure fatal is visible even if logging breaks
+  console.error("❌ Fatal runtime error:", reason, err);
+
+  setTimeout(() => process.exit(1), 2000).unref();
+}
+
+/**
+ * Enterprise-grade crash hardening:
+ * - NEVER ignore unhandled promise rejections
+ * - NEVER ignore uncaught exceptions
+ */
+process.on("unhandledRejection", (err) => {
+  enterDrainAndExit("unhandledRejection", err);
+});
+
+process.on("uncaughtException", (err) => {
+  enterDrainAndExit("uncaughtException", err);
+});
+
+/* =========================================================
+   ENTERPRISE REQUEST TIMEOUT (FAIL CLOSED)
+   ========================================================= */
+
+/**
+ * Enterprise rule:
+ * - A request must never hang forever
+ * - This prevents slowloris + stuck handlers
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
+
+app.use((req, res, next) => {
+  res.setTimeout(REQUEST_TIMEOUT_MS, () => {
+    logger.warn(
+      {
+        event: "request_timeout",
+        method: req.method,
+        path: req.originalUrl
+      },
+      "Request timed out"
+    );
+
+    if (!res.headersSent) {
+      res.status(504).json({ error: "request_timeout" });
+    }
+  });
+
+  next();
+});
+
+/* =========================================================
+   MAX HEADER SIZE GUARD (ENTERPRISE)
+   ========================================================= */
+
+/**
+ * Enterprise rule:
+ * - Kill header abuse before it hits auth
+ * - Prevent oversized Authorization / API key headers
+ *
+ * NOTE:
+ * Node has server-level limits, but we enforce here too.
+ */
+const MAX_HEADER_BYTES = 8 * 1024;
+
+app.use((req, res, next) => {
+  try {
+    let total = 0;
+
+    for (const [k, v] of Object.entries(req.headers)) {
+      total += Buffer.byteLength(k, "utf8");
+
+      if (Array.isArray(v)) {
+        for (const part of v) total += Buffer.byteLength(part, "utf8");
+      } else if (typeof v === "string") {
+        total += Buffer.byteLength(v, "utf8");
+      }
+    }
+
+    if (total > MAX_HEADER_BYTES) {
+      logger.warn(
+        {
+          event: "blocked_oversized_headers",
+          method: req.method,
+          path: req.originalUrl,
+          headerBytes: total,
+          maxAllowed: MAX_HEADER_BYTES
+        },
+        "Blocked request with oversized headers"
+      );
+
+      res.status(431).json({ error: "request_header_fields_too_large" });
+      return;
+    }
+
+    next();
+  } catch (err) {
+    logger.error(
+      {
+        event: "header_size_guard_failed",
+        err
+      },
+      "Header size guard failed"
+    );
+
+    res.status(400).json({ error: "bad_request" });
+  }
+});
 
 /* =========================================================
    ENTERPRISE SECURITY BASELINE (PROD SAFE)
@@ -83,6 +236,20 @@ app.use(
     crossOriginEmbedderPolicy: false
   })
 );
+
+/**
+ * 1b) Explicit API security headers (enterprise expectations)
+ * Helmet covers many of these, but we enforce them explicitly.
+ */
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader(
+    "Permissions-Policy",
+    "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+  );
+  next();
+});
 
 /**
  * 2) Prevent HTTP parameter pollution
@@ -144,6 +311,61 @@ app.use((_req, res, next) => {
 });
 
 /* =========================================================
+   STRICT CONTENT-TYPE ENFORCEMENT (ENTERPRISE)
+   ========================================================= */
+
+/**
+ * Enterprise rule:
+ * - Reject garbage Content-Type headers
+ * - Only accept JSON for POST/PUT/PATCH unless explicitly raw webhook
+ */
+app.use((req, res, next) => {
+  const method = req.method.toUpperCase();
+
+  const isBodyMethod =
+    method === "POST" || method === "PUT" || method === "PATCH";
+
+  // Webhook uses raw body parser, must not be blocked here
+  if (req.originalUrl.startsWith("/webhooks/lemon")) {
+    next();
+    return;
+  }
+
+  if (!isBodyMethod) {
+    next();
+    return;
+  }
+
+  const ct = req.headers["content-type"] ?? "";
+
+  // allow empty (some clients send no body)
+  if (typeof ct !== "string" || ct.trim().length === 0) {
+    next();
+    return;
+  }
+
+  const normalized = ct.toLowerCase();
+
+  // only accept json payloads
+  if (!normalized.startsWith("application/json")) {
+    logger.warn(
+      {
+        event: "blocked_invalid_content_type",
+        method: req.method,
+        route: req.originalUrl,
+        contentType: ct
+      },
+      "Blocked request with invalid Content-Type"
+    );
+
+    res.status(415).json({ error: "unsupported_media_type" });
+    return;
+  }
+
+  next();
+});
+
+/* =========================================================
    REQUEST CORRELATION
    ========================================================= */
 
@@ -156,10 +378,8 @@ app.use(requestId);
 app.use(httpLogger);
 
 /* =========================================================
-   DRAIN MODE (GRACEFUL SHUTDOWN)
+   DRAIN MODE (REQUEST BLOCKING)
    ========================================================= */
-
-let isDraining = false;
 
 app.use((_req, res, next) => {
   if (isDraining) {
@@ -249,12 +469,15 @@ app.get("/version", (_req: Request, res: Response) => {
 });
 
 /* =========================================================
-   DEBUG ROUTES (DEV ONLY)
+   DEBUG ROUTES (DEV ONLY, EXPLICIT OPT-IN REQUIRED)
    ========================================================= */
 
-if (isDev) {
+if (debugEnabled) {
   app.get("/debug/node_env", (_req: Request, res: Response) => {
-    res.status(200).json({ nodeEnv: process.env.NODE_ENV ?? null });
+    res.status(200).json({
+      nodeEnv: process.env.NODE_ENV ?? null,
+      debugEnabled: true
+    });
   });
 
   app.get("/debug/headers", (req: Request, res: Response) => {
@@ -283,13 +506,6 @@ if (isDev) {
    🔒 ADMIN ROUTES (ENTERPRISE)
    ========================================================= */
 
-/**
- * Enterprise admin chain (defense-in-depth):
- * 1) requireAdminNetwork  (where request comes from)
- * 2) requireAdminKey      (what you know)
- * 3) adminRateLimit       (abuse prevention)
- * 4) adminAudit           (audit trail)
- */
 app.use("/admin", requireAdminNetwork);
 app.use("/admin", requireAdminKey);
 app.use("/admin", adminRateLimit);
@@ -297,11 +513,11 @@ app.use("/admin", adminAudit);
 
 app.use(adminEntitlementsRouter);
 
-/**
- * Admin-only Redis debug routes
- * DEV ONLY.
- */
-if (isDev) {
+/* =========================================================
+   ADMIN DEBUG ROUTES (DEV ONLY, EXPLICIT OPT-IN REQUIRED)
+   ========================================================= */
+
+if (debugEnabled) {
   app.get(
     "/admin/debug/redis/issue/latest",
     async (_req: Request, res: Response) => {
@@ -319,7 +535,14 @@ if (isDev) {
           key: "issues:latest"
         });
       } catch (err) {
-        console.error("❌ /admin/debug/redis/issue/latest failed:", err);
+        logger.error(
+          {
+            event: "admin_debug_latest_issue_failed",
+            err
+          },
+          "/admin/debug/redis/issue/latest failed"
+        );
+
         res.status(500).json({ error: "internal_error" });
       }
     }
@@ -352,16 +575,19 @@ if (isDev) {
           raw
         });
       } catch (err) {
-        console.error("❌ /admin/debug/redis/issue/:id failed:", err);
+        logger.error(
+          {
+            event: "admin_debug_issue_lookup_failed",
+            err
+          },
+          "/admin/debug/redis/issue/:id failed"
+        );
+
         res.status(500).json({ error: "internal_error" });
       }
     }
   );
 
-  /**
-   * DEV ONLY: Admin debug issues key route
-   * (This is not allowed in production.)
-   */
   app.get("/admin/debug/issues_key", (req: Request, res: Response) => {
     res.status(200).json({
       headers: req.headers,
@@ -374,6 +600,10 @@ if (isDev) {
     });
   });
 }
+
+/* =========================================================
+   ADMIN ISSUE PUBLISH
+   ========================================================= */
 
 app.post("/admin/issues/publish", async (req: Request, res: Response) => {
   try {
@@ -410,16 +640,23 @@ app.post("/admin/issues/publish", async (req: Request, res: Response) => {
       published: issueNumber
     });
   } catch (err) {
-    console.error("❌ /admin/issues/publish failed:", err);
+    logger.error(
+      {
+        event: "admin_issue_publish_failed",
+        err
+      },
+      "/admin/issues/publish failed"
+    );
+
     res.status(500).json({ error: "internal_error" });
   }
 });
 
 /* =========================================================
-   DEBUG: ISSUE AUTH HEADER CHECK (DEV ONLY)
+   DEBUG: ISSUE AUTH HEADER CHECK (DEV ONLY, EXPLICIT OPT-IN)
    ========================================================= */
 
-if (isDev) {
+if (debugEnabled) {
   app.get("/issues/_debug_key", (req: Request, res: Response) => {
     res.status(200).json({
       headers: req.headers,
@@ -446,6 +683,22 @@ app.use("/issues", requestAudit);
 /* =========================================================
    ROUTES
    ========================================================= */
+
+/**
+ * Kill switch: disable public API during incident response.
+ * Admin routes remain available.
+ */
+app.use("/issues", (_req, res, next) => {
+  if (!publicApiDisabled) {
+    next();
+    return;
+  }
+
+  res.status(503).json({
+    error: "service_unavailable",
+    reason: "public_api_disabled"
+  });
+});
 
 app.get("/issues/latest", async (_req: Request, res: Response) => {
   try {
@@ -487,7 +740,14 @@ app.get("/issues/latest", async (_req: Request, res: Response) => {
 
     res.status(200).json(artifact.issue);
   } catch (err) {
-    console.error("❌ /issues/latest failed:", err);
+    logger.error(
+      {
+        event: "issues_latest_failed",
+        err
+      },
+      "/issues/latest failed"
+    );
+
     res.status(500).json({ error: "internal_error" });
   }
 });
@@ -537,7 +797,14 @@ app.get(
 
       res.status(200).json(artifact.issue);
     } catch (err) {
-      console.error("❌ /issues/:id failed:", err);
+      logger.error(
+        {
+          event: "issues_get_by_id_failed",
+          err
+        },
+        "/issues/:id failed"
+      );
+
       res.status(500).json({ error: "internal_error" });
     }
   }
@@ -565,7 +832,16 @@ app.use(errorHandler);
    ========================================================= */
 
 const server = app.listen(PORT, "0.0.0.0", () => {
-  logger.info({ port: PORT }, "SecureLogic Issue API started");
+  logger.info(
+    {
+      port: PORT,
+      nodeEnv: process.env.NODE_ENV ?? null,
+      isProd,
+      debugEnabled,
+      publicApiDisabled
+    },
+    "SecureLogic Issue API started"
+  );
 });
 
 /* =========================================================
@@ -582,8 +858,8 @@ const shutdown = async (signal: string) => {
         try {
           const redis = await ensureRedisConnected();
           if (redis.isOpen) await redis.quit();
-        } catch {
-          // ignore shutdown redis errors
+        } catch (err) {
+          logger.error({ err }, "Redis shutdown failed");
         }
       }
     } finally {
