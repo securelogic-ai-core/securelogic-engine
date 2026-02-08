@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { ensureRedisConnected, redisReady } from "../infra/redis.js";
+import { logger } from "../infra/logger.js";
 
 type Tier = "free" | "paid" | "admin";
 
@@ -23,18 +24,23 @@ function getTierLimitPerMinute(tier: Tier): number {
 
 /**
  * Promise timeout wrapper.
- * If Redis stalls, we fail-open and let the request through.
+ * If Redis stalls, we FAIL OPEN and let the request through.
  */
-async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return await Promise.race([
-    p,
-    new Promise<T>((_resolve, reject) => {
-      const id = setTimeout(() => {
-        clearTimeout(id);
-        reject(new Error(`redis_timeout_after_${ms}ms`));
-      }, ms).unref?.() ?? setTimeout(() => reject(new Error(`redis_timeout_after_${ms}ms`)), ms);
-    })
-  ]);
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timeoutId: NodeJS.Timeout;
+
+  const timeoutPromise = new Promise<T>((_resolve, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`redis_timeout_after_${ms}ms`));
+    }, ms);
+
+    // Prevent holding the event loop open
+    timeoutId.unref?.();
+  });
+
+  return Promise.race([p, timeoutPromise]).finally(() => {
+    clearTimeout(timeoutId);
+  });
 }
 
 export async function tierRateLimit(
@@ -44,8 +50,9 @@ export async function tierRateLimit(
 ): Promise<void> {
   try {
     /**
-     * PROD-SAFE: If Redis is not configured, fail open.
-     * Rate limiting should never take down the API.
+     * Enterprise rule:
+     * Rate limiting should NEVER take down the API.
+     * If Redis is not configured, fail open.
      */
     if (!redisReady) {
       next();
@@ -72,15 +79,24 @@ export async function tierRateLimit(
     const key = `rate:${apiKey}:${windowId}`;
 
     /**
-     * Use MULTI so incr + expire happen atomically.
-     * Avoid extra round trips.
+     * Atomic INCR + EXPIRE.
+     *
+     * IMPORTANT:
+     * - exec() returns an array of results
+     * - For node-redis, each item is the raw value
      */
-    const [incrRes, expireRes] = await withTimeout(
+    const multiRes = await withTimeout(
       redis.multi().incr(key).expire(key, WINDOW_SECONDS).exec(),
       REDIS_TIMEOUT_MS
     );
 
-    const count = Number(incrRes);
+    if (!Array.isArray(multiRes) || multiRes.length < 1) {
+      next(); // fail open
+      return;
+    }
+
+    const incrValue = multiRes[0];
+    const count = typeof incrValue === "number" ? incrValue : Number(incrValue);
 
     /**
      * If Redis returned something weird, fail open.
@@ -93,7 +109,6 @@ export async function tierRateLimit(
     if (count > limitPerMinute) {
       /**
        * Only fetch TTL when needed (rate limit exceeded).
-       * Still time-boxed.
        */
       let ttl = WINDOW_SECONDS;
 
@@ -118,10 +133,18 @@ export async function tierRateLimit(
     next();
   } catch (err) {
     /**
-     * PROD-SAFE: Fail open.
-     * Rate limiting is not allowed to break the API.
+     * Enterprise rule:
+     * Rate limiting must FAIL OPEN.
      */
-    console.error("⚠️ tierRateLimit failed (fail-open):", err);
+    logger.warn(
+      {
+        err,
+        route: req.originalUrl,
+        method: req.method
+      },
+      "tierRateLimit failed (fail-open)"
+    );
+
     next();
   }
 }

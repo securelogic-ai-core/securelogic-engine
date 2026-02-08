@@ -10,13 +10,14 @@ import {
 
 /**
  * =========================================================
- * Lemon Squeezy Webhook Handler (Production)
+ * Lemon Squeezy Webhook Handler (Enterprise / Production)
  *
- * Goal:
- * - When a paid purchase happens, activate entitlement for
- *   the apiKey provided in Lemon custom_data.apiKey
- *
- * This is the monetization bridge.
+ * Rules:
+ * - NEVER trust payload shape
+ * - NEVER log secrets (apiKey, email, raw payload)
+ * - ALWAYS return 200 to Lemon (prevents retry storms)
+ * - Fail-closed on entitlement writes if Redis unavailable
+ * - Only accept SecureLogic API keys with strict format
  * =========================================================
  */
 
@@ -28,110 +29,169 @@ function safeGet(obj: any, path: string): any {
   }
 }
 
+function normalizeEventName(value: unknown): string {
+  if (typeof value !== "string") return "unknown";
+  const v = value.trim().toLowerCase();
+  return v.length ? v : "unknown";
+}
+
+/**
+ * Enterprise key format.
+ * - Strict
+ * - ASCII only
+ * - Prevents weird unicode / abuse
+ */
+function isValidSecureLogicApiKey(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const k = value.trim();
+
+  // Hard length bounds
+  if (k.length < 16 || k.length > 128) return false;
+
+  // Must be sl_*
+  if (!k.startsWith("sl_")) return false;
+
+  // Strict charset (enterprise)
+  if (!/^sl_[a-z0-9]{16,64}$/i.test(k)) return false;
+
+  return true;
+}
+
+function classifyEntitlementFromEvent(
+  eventName: string
+): EntitlementRecord | null {
+  /**
+   * Enterprise rule:
+   * Only a known set of events may change entitlement.
+   * Everything else is ignored.
+   */
+
+  const paidEvents = new Set([
+    "subscription_created",
+    "subscription_updated",
+    "subscription_resumed",
+    "subscription_payment_success",
+    "order_created"
+  ]);
+
+  const cancelEvents = new Set([
+    "subscription_cancelled",
+    "subscription_expired",
+    "subscription_refunded",
+    "order_refunded"
+  ]);
+
+  if (paidEvents.has(eventName)) {
+    return { tier: "paid", activeSubscription: true };
+  }
+
+  if (cancelEvents.has(eventName)) {
+    return { tier: "free", activeSubscription: false };
+  }
+
+  return null;
+}
+
 export async function lemonWebhook(req: Request, res: Response): Promise<void> {
   const startedAt = Date.now();
 
+  /**
+   * IMPORTANT:
+   * In production, this route is mounted behind verifyLemonWebhook middleware.
+   * This handler assumes signature is already validated.
+   */
   try {
     if (!redisReady) {
       logger.error(
-        { route: req.originalUrl },
-        "lemonWebhook: redis not configured"
+        { route: "/webhooks/lemon" },
+        "lemonWebhook: redis not configured (fail-closed)"
       );
-      res.status(503).json({ error: "redis_not_configured" });
+
+      // Still return 200 to Lemon (no retry storm)
+      res.status(200).json({ received: true, updated: false });
       return;
     }
 
     const payload = req.body as any;
 
-    const eventName =
-      payload?.meta?.event_name ??
-      payload?.event_name ??
-      payload?.event ??
-      "unknown";
+    const eventName = normalizeEventName(
+      payload?.meta?.event_name ?? payload?.event_name ?? payload?.event
+    );
 
-    // The ONLY thing we actually need for activation:
+    /**
+     * Extract apiKey from known Lemon custom_data locations.
+     */
     const apiKey =
+      safeGet(payload, "meta.custom_data.apiKey") ??
       safeGet(payload, "data.attributes.custom_data.apiKey") ??
       safeGet(payload, "data.attributes.custom_data.api_key") ??
       safeGet(payload, "data.attributes.custom_data.securelogic_api_key") ??
       null;
 
-    // Optional: useful for logging later
-    const email =
-      safeGet(payload, "data.attributes.user_email") ??
-      safeGet(payload, "data.attributes.customer_email") ??
-      safeGet(payload, "data.attributes.email") ??
-      safeGet(payload, "data.attributes.customer.email") ??
-      null;
-
-    const paidEvents = new Set([
-      "subscription_created",
-      "subscription_updated",
-      "subscription_resumed",
-      "subscription_payment_success",
-      "order_created"
-    ]);
-
-    const isPaidEvent = paidEvents.has(String(eventName));
+    const entitlement = classifyEntitlementFromEvent(eventName);
 
     logger.info(
       {
         event: "lemon_webhook_received",
         eventName,
         apiKeyPresent: typeof apiKey === "string",
-        emailPresent: typeof email === "string"
+        entitlementAction: entitlement ? entitlement.tier : "ignored"
       },
       "lemon webhook received"
     );
 
-    // Ignore non-paid events
-    if (!isPaidEvent) {
-      res.status(200).json({ received: true, ignored: true, eventName });
+    /**
+     * If we don't recognize the event, ignore it.
+     */
+    if (!entitlement) {
+      res.status(200).json({ received: true, ignored: true });
       return;
     }
 
-    if (typeof apiKey !== "string" || !apiKey.startsWith("sl_paid_")) {
+    /**
+     * If apiKey missing/invalid, ignore (but return 200).
+     */
+    if (!isValidSecureLogicApiKey(apiKey)) {
       logger.warn(
         {
-          event: "lemon_webhook_missing_api_key",
-          eventName,
-          apiKey
+          event: "lemon_webhook_invalid_api_key",
+          eventName
         },
-        "lemon webhook missing valid custom_data.apiKey"
+        "lemon webhook ignored: missing/invalid apiKey"
       );
 
-      res.status(400).json({ error: "missing_custom_data_apiKey" });
+      res.status(200).json({ received: true, ignored: true });
       return;
     }
 
-    const entitlement: EntitlementRecord = {
-      tier: "paid",
-      activeSubscription: true
-    };
-
-    // ✅ IMPORTANT: uses entitlement:${apiKey} (singular)
+    /**
+     * Enterprise: entitlement write is the only side effect.
+     */
     await setEntitlementInRedis(apiKey, entitlement);
 
     const durationMs = Date.now() - startedAt;
 
     logger.info(
       {
-        event: "lemon_webhook_entitlement_activated",
+        event: "lemon_webhook_entitlement_written",
         eventName,
-        apiKeyPrefix: apiKey.slice(0, 14),
+        apiKeyPrefix: apiKey.slice(0, 6),
+        tier: entitlement.tier,
         durationMs
       },
-      "paid entitlement activated"
+      "lemon webhook processed: entitlement updated"
     );
 
     res.status(200).json({
       received: true,
-      updated: true,
-      apiKey,
-      entitlement
+      updated: true
     });
   } catch (err) {
+    /**
+     * FAIL OPEN (webhook stability):
+     * We return 200 to prevent Lemon retry storms.
+     */
     logger.error({ err }, "lemonWebhook failed");
-    res.status(500).json({ error: "internal_error" });
+    res.status(200).json({ received: true, updated: false });
   }
 }
