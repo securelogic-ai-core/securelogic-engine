@@ -1,6 +1,11 @@
 import type { Request, Response, NextFunction } from "express";
 import crypto from "node:crypto";
 
+import {
+  recordAdminAuthFailure,
+  clearAdminAuthFailures
+} from "./adminLockout.js";
+
 const MAX_ADMIN_KEY_LENGTH = 256;
 const MIN_ADMIN_KEY_LENGTH = 16;
 const MAX_ROTATED_KEYS = 10;
@@ -68,11 +73,11 @@ function readSingleAdminHeader(req: Request): string | null {
   return trimmed;
 }
 
-export function requireAdminKey(
+export async function requireAdminKey(
   req: Request,
   res: Response,
   next: NextFunction
-): void {
+): Promise<void> {
   const adminKeys = loadAdminKeys();
 
   /**
@@ -91,6 +96,7 @@ export function requireAdminKey(
    * Never reveal missing vs invalid.
    */
   if (!got) {
+    await recordAdminAuthFailure(req);
     res.status(401).json({ error: "admin_unauthorized" });
     return;
   }
@@ -99,6 +105,7 @@ export function requireAdminKey(
    * DoS / header abuse defense.
    */
   if (got.length < MIN_ADMIN_KEY_LENGTH || got.length > MAX_ADMIN_KEY_LENGTH) {
+    await recordAdminAuthFailure(req);
     res.status(401).json({ error: "admin_unauthorized" });
     return;
   }
@@ -123,9 +130,16 @@ export function requireAdminKey(
   }
 
   if (!match) {
+    await recordAdminAuthFailure(req);
     res.status(401).json({ error: "admin_unauthorized" });
     return;
   }
+
+  /**
+   * Success path:
+   * Clear any accumulated failures for this IP.
+   */
+  await clearAdminAuthFailures(req);
 
   next();
 }

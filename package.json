@@ -6,8 +6,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "tsx watch src/api/server.ts",
-    "start:dev": "tsx src/api/server.ts",
+    "dev": "./scripts/dev-up.sh",
+    "dev:server": "tsx watch src/api/server.ts",
+    "start:dev": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx src/api/server.ts'",
     "clean": "rm -rf dist",
     "build": "rm -rf dist && tsc -p tsconfig.prod.json",
     "start": "node dist/api/server.js",

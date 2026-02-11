@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
-import crypto from "crypto";
+import crypto from "node:crypto";
 
 import { ensureRedisConnected, redisReady } from "../infra/redis.js";
 import { logger } from "../infra/logger.js";
@@ -12,7 +12,7 @@ const ADMIN_LIMIT_PER_MINUTE = 60;
 
 /**
  * Promise timeout wrapper.
- * If Redis stalls, we FAIL OPEN and let the request through.
+ * If Redis stalls, we FAIL CLOSED for /admin routes.
  */
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   let timeoutId: NodeJS.Timeout | null = null;
@@ -58,6 +58,10 @@ function extractIncrResult(raw: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function failClosed(res: Response): void {
+  res.status(503).json({ error: "service_unavailable" });
+}
+
 export async function adminRateLimit(
   req: Request,
   res: Response,
@@ -65,28 +69,32 @@ export async function adminRateLimit(
 ): Promise<void> {
   try {
     /**
-     * Enterprise rule:
-     * Rate limiting must NEVER take down the API.
-     * If Redis isn't configured, fail open.
+     * ENTERPRISE RULE:
+     * Admin rate limiting MUST be enforced.
+     * If Redis is not ready, fail closed.
      */
     if (!redisReady) {
-      next();
+      logger.error(
+        {
+          event: "admin_rate_limit_redis_not_ready",
+          route: req.originalUrl,
+          method: req.method
+        },
+        "adminRateLimit: redis not ready (fail-closed)"
+      );
+
+      failClosed(res);
       return;
     }
 
     /**
-     * NOTE:
      * requireAdminKey already runs BEFORE this middleware.
-     * But we still avoid assuming it for safety.
+     * But we still avoid assuming it.
      */
     const rawAdminKey = (req.get("x-admin-key") ?? "").trim();
 
     /**
      * Never store raw admin keys in Redis keyspace.
-     * Hashing prevents accidental leakage in:
-     * - Redis dumps
-     * - logs
-     * - key enumeration
      */
     const adminKeyHash = sha256(rawAdminKey || "missing_admin_key");
 
@@ -105,8 +113,21 @@ export async function adminRateLimit(
 
     const count = extractIncrResult(execRes);
 
+    /**
+     * ENTERPRISE RULE:
+     * If Redis returns unexpected results, fail closed.
+     */
     if (count === null) {
-      next(); // fail open
+      logger.error(
+        {
+          event: "admin_rate_limit_unexpected_redis_response",
+          route: req.originalUrl,
+          method: req.method
+        },
+        "adminRateLimit: could not parse Redis response (fail-closed)"
+      );
+
+      failClosed(res);
       return;
     }
 
@@ -143,18 +164,19 @@ export async function adminRateLimit(
     next();
   } catch (err) {
     /**
-     * Enterprise rule:
-     * Fail open. Admin rate limiting must never block prod.
+     * ENTERPRISE RULE:
+     * Fail closed for /admin.
      */
-    logger.warn(
+    logger.error(
       {
         err,
         route: req.originalUrl,
-        method: req.method
+        method: req.method,
+        event: "admin_rate_limit_failed"
       },
-      "adminRateLimit failed (fail-open)"
+      "adminRateLimit failed (fail-closed)"
     );
 
-    next();
+    failClosed(res);
   }
 }

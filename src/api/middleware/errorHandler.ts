@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { logger } from "../infra/logger.js";
+import { internalError } from "../infra/httpResponses.js";
 
 const MAX_ID_LEN = 128;
 
@@ -31,11 +32,7 @@ type NormalizedError = {
 };
 
 function normalizeError(err: unknown): NormalizedError {
-  /**
-   * Enterprise rule:
-   * Never trust err shape.
-   * Never assume message is safe.
-   */
+  // Enterprise rule: never trust err shape, ever.
   if (err instanceof Error) {
     const anyErr = err as any;
 
@@ -48,10 +45,8 @@ function normalizeError(err: unknown): NormalizedError {
       out.stack = err.stack;
     }
 
-    if (typeof anyErr.code === "string") {
-      const code = safeTrimString(anyErr.code, 80);
-      if (code) out.code = code;
-    }
+    const code = safeTrimString(anyErr?.code, 80);
+    if (code) out.code = code;
 
     return out;
   }
@@ -88,7 +83,8 @@ function normalizeError(err: unknown): NormalizedError {
  * - Must be last middleware
  * - Never leaks stack traces to clients
  * - Never logs secrets (avoid dumping req headers/body)
- * - In production: do NOT log stack traces by default
+ * - In production: no stack traces by default
+ * - Response body MUST follow src/api/infra/httpResponses.ts contract
  */
 export function errorHandler(
   err: unknown,
@@ -96,22 +92,15 @@ export function errorHandler(
   res: Response,
   _next: NextFunction
 ): void {
-  /**
-   * If response already started, we cannot safely write JSON.
-   */
+  // If response already started, Express expects us to delegate.
+  // But we can't safely write JSON at this point.
   if (res.headersSent) return;
 
   const requestId = getRequestId(req);
   const normalized = normalizeError(err);
 
-  const statusCode = 500;
   const isDev = process.env.NODE_ENV === "development";
 
-  /**
-   * Enterprise logging rules:
-   * - In prod: no stack by default
-   * - In dev: include stack for debugging
-   */
   const errForLog: NormalizedError = isDev
     ? normalized
     : {
@@ -120,20 +109,27 @@ export function errorHandler(
         ...(normalized.code ? { code: normalized.code } : {})
       };
 
-  logger.error(
-    {
-      event: "unhandled_request_error",
+  try {
+    logger.error(
+      {
+        event: "unhandled_request_error",
+        requestId,
+        method: req.method,
+        path: req.originalUrl,
+        err: errForLog
+      },
+      "Unhandled request error"
+    );
+  } catch {
+    // Last-ditch fallback: never throw from the error handler.
+    console.error("Unhandled request error (logger failed):", {
       requestId,
       method: req.method,
       path: req.originalUrl,
-      statusCode,
       err: errForLog
-    },
-    "Unhandled request error"
-  );
+    });
+  }
 
-  res.status(statusCode).json({
-    error: "internal_server_error",
-    requestId
-  });
+  // MUST align to ErrorCode union + jsonError() contract.
+  internalError(res);
 }
