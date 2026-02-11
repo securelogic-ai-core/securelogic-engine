@@ -1,19 +1,22 @@
 import { createClient } from "redis";
 import { logger } from "./logger.js";
 
-const REDIS_URL = process.env.REDIS_URL ?? "";
+const RAW_REDIS_URL = process.env.REDIS_URL ?? "";
+const REDIS_URL = RAW_REDIS_URL.trim();
 
 /**
  * redisReady means:
  * - configuration exists
  * - NOT that Redis is reachable
  */
-export const redisReady = REDIS_URL.trim().length > 0;
+export const redisReady = REDIS_URL.length > 0;
 
 export type RedisClient = ReturnType<typeof createClient>;
 
 let redisClient: RedisClient | null = null;
 let connectPromise: Promise<RedisClient> | null = null;
+
+const CONNECT_TIMEOUT_MS = 1500;
 
 function buildRedisClient(): RedisClient {
   if (!redisReady) {
@@ -62,10 +65,22 @@ export function getRedis(): RedisClient {
   return redisClient;
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error("Redis connect timeout"));
+      }, timeoutMs).unref();
+    })
+  ]);
+}
+
 /**
  * Enterprise-grade:
- * - single connect promise
- * - retries are controlled by redis reconnectStrategy
+ * - single connect promise (prevents stampede)
+ * - bounded retries controlled by reconnectStrategy
+ * - hard timeout prevents request hangs / 504s
  * - connect errors reset connectPromise so future attempts can retry
  */
 export async function ensureRedisConnected(): Promise<RedisClient> {
@@ -78,9 +93,7 @@ export async function ensureRedisConnected(): Promise<RedisClient> {
   if (client.isOpen) return client;
 
   if (!connectPromise) {
-    connectPromise = client
-      .connect()
-      .then(() => client)
+    connectPromise = withTimeout(client.connect().then(() => client), CONNECT_TIMEOUT_MS)
       .catch((err) => {
         connectPromise = null;
         logger.error({ err }, "Redis connect failed");

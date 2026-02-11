@@ -8,7 +8,7 @@ const KEY_ARTIFACT_PREFIX = "issues:artifact:";
  * Enterprise safety limits
  */
 const MAX_ISSUE_ID = 10_000_000;
-const MAX_ARTIFACT_BYTES = 512_000; // 512 KB hard cap (adjust later if needed)
+const MAX_ARTIFACT_BYTES = 512_000; // 512 KB hard cap
 const REDIS_TIMEOUT_MS = 1200;
 
 function isProd(): boolean {
@@ -28,13 +28,10 @@ function isValidIssueNumber(n: unknown): n is number {
 function safeNumberFromRedis(raw: string | null): number | null {
   if (!raw) return null;
 
-  // Redis could contain garbage. We only accept digits.
   const v = raw.trim();
-
   if (!/^\d+$/.test(v)) return null;
 
   const n = Number(v);
-
   if (!isValidIssueNumber(n)) return null;
 
   return n;
@@ -46,7 +43,7 @@ function artifactKey(issueNumber: number): string {
 
 /**
  * Promise timeout wrapper.
- * If Redis stalls, we FAIL CLOSED (for issues) because this is core business data.
+ * For issues data we FAIL CLOSED on publish, but on reads we degrade gracefully.
  */
 async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   let timeoutId: NodeJS.Timeout | null = null;
@@ -65,20 +62,98 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 }
 
 /**
+ * Enterprise: Validate that stored artifact is:
+ * - valid JSON
+ * - object
+ * - contains expected top-level keys
+ *
+ * We do NOT validate full schema here — that's done in routes.
+ * But we prevent garbage strings from ever being stored.
+ */
+function validateArtifactJsonOrThrow(artifactJson: string): void {
+  if (typeof artifactJson !== "string") {
+    throw new Error("invalid_artifact_json");
+  }
+
+  const trimmed = artifactJson.trim();
+  if (trimmed.length === 0) {
+    throw new Error("invalid_artifact_json");
+  }
+
+  // Must be JSON object (not a partial fragment)
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    throw new Error("artifact_not_json_object");
+  }
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new Error("artifact_invalid_json");
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("artifact_invalid_shape");
+  }
+
+  /**
+   * Minimal structural check:
+   * must contain { issue: ..., signature: ... }
+   */
+  const obj = parsed as Record<string, unknown>;
+
+  if (!("issue" in obj) || !("signature" in obj)) {
+    throw new Error("artifact_missing_required_fields");
+  }
+
+  if (typeof obj.signature !== "string" || obj.signature.trim().length < 16) {
+    throw new Error("artifact_signature_invalid");
+  }
+
+  if (!obj.issue || typeof obj.issue !== "object") {
+    throw new Error("artifact_issue_invalid");
+  }
+}
+
+/**
+ * Enterprise: node-redis multi().exec() can return:
+ * - modern: [res1, res2]
+ * - old: [[null,res1],[null,res2]]
+ *
+ * We validate we got at least 2 results and they look OK.
+ */
+function isValidMultiExecResult(raw: unknown, expectedLen: number): boolean {
+  if (!Array.isArray(raw)) return false;
+  if (raw.length < expectedLen) return false;
+
+  // If old shape, each item is [err, res]
+  const first = raw[0];
+  if (Array.isArray(first) && first.length >= 2) {
+    for (const item of raw) {
+      if (!Array.isArray(item) || item.length < 2) return false;
+      const err = item[0];
+      if (err) return false;
+    }
+    return true;
+  }
+
+  // If modern shape, we assume redis threw if it failed.
+  return true;
+}
+
+/**
  * issues:latest -> "4"
  * issues:artifact:4 -> "{...signedIssueArtifactJson...}"
  *
  * Enterprise rules:
  * - In production, Redis must be configured.
  * - Redis calls must be time-boxed.
- * - All Redis data must be validated.
+ * - Redis data must be validated.
+ * - Publish must be atomic.
  */
 
 export async function getLatestIssueId(): Promise<number> {
-  /**
-   * Enterprise rule:
-   * If Redis is missing in production, this engine is not safe to run.
-   */
   if (!redisReady) {
     if (isProd()) {
       logger.error(
@@ -88,26 +163,18 @@ export async function getLatestIssueId(): Promise<number> {
       return 0;
     }
 
-    // dev/test convenience
     return 0;
   }
 
   try {
     const redis = await withTimeout(ensureRedisConnected(), REDIS_TIMEOUT_MS);
-
     const raw = await withTimeout(redis.get(KEY_LATEST), REDIS_TIMEOUT_MS);
 
     const latest = safeNumberFromRedis(raw);
-
     if (!latest) return 0;
 
     return latest;
   } catch (err) {
-    /**
-     * Enterprise rule:
-     * If Redis fails, we do NOT throw.
-     * We return 0 and let the route return 404 "no issues published".
-     */
     logger.error(
       { err, component: "issueStore", fn: "getLatestIssueId" },
       "Redis read failed"
@@ -144,10 +211,7 @@ export async function getIssueArtifact(
 
     if (!raw) return null;
 
-    /**
-     * Enterprise safety:
-     * Prevent returning absurd payload sizes.
-     */
+    // Hard cap payload size
     const bytes = Buffer.byteLength(raw, "utf8");
     if (bytes > MAX_ARTIFACT_BYTES) {
       logger.error(
@@ -162,12 +226,33 @@ export async function getIssueArtifact(
       return null;
     }
 
+    /**
+     * Enterprise: validate artifact is valid JSON before returning.
+     * If corrupted, treat as missing.
+     */
+    try {
+      validateArtifactJsonOrThrow(raw);
+    } catch (err) {
+      logger.error(
+        {
+          err,
+          component: "issueStore",
+          fn: "getIssueArtifact",
+          issueNumber
+        },
+        "Issue artifact was corrupted / invalid JSON"
+      );
+
+      return null;
+    }
+
     return raw;
   } catch (err) {
     logger.error(
       { err, component: "issueStore", fn: "getIssueArtifact", issueNumber },
       "Redis read failed"
     );
+
     return null;
   }
 }
@@ -180,37 +265,35 @@ export async function publishIssueArtifact(
     throw new Error("invalid_issue_number");
   }
 
+  if (!redisReady) {
+    throw new Error("redis_not_configured");
+  }
+
   if (typeof artifactJson !== "string" || artifactJson.trim() === "") {
     throw new Error("invalid_artifact_json");
   }
 
-  /**
-   * Enterprise safety:
-   * Hard cap payload size.
-   */
+  // Hard cap payload size
   const bytes = Buffer.byteLength(artifactJson, "utf8");
   if (bytes > MAX_ARTIFACT_BYTES) {
     throw new Error("artifact_too_large");
   }
 
-  if (!redisReady) {
-    /**
-     * Publishing without Redis is NOT allowed.
-     */
-    throw new Error("redis_not_configured");
-  }
+  /**
+   * 🚨 CRITICAL ENTERPRISE FIX:
+   * Validate JSON BEFORE storing.
+   * This prevents corrupted artifacts from ever being published.
+   */
+  validateArtifactJsonOrThrow(artifactJson);
 
   const redis = await withTimeout(ensureRedisConnected(), REDIS_TIMEOUT_MS);
 
   /**
-   * Enterprise rule:
    * Atomic publish:
    * - write artifact
    * - update latest pointer
-   *
-   * This prevents a state where latest points to a missing artifact.
    */
-  const resMulti = await withTimeout(
+  const execRes = await withTimeout(
     redis
       .multi()
       .set(artifactKey(issueNumber), artifactJson)
@@ -219,10 +302,27 @@ export async function publishIssueArtifact(
     REDIS_TIMEOUT_MS
   );
 
-  /**
-   * If Redis returns weird results, fail closed.
-   */
-  if (!Array.isArray(resMulti) || resMulti.length < 2) {
+  if (!isValidMultiExecResult(execRes, 2)) {
+    logger.error(
+      {
+        component: "issueStore",
+        fn: "publishIssueArtifact",
+        issueNumber,
+        execResType: typeof execRes
+      },
+      "Redis multi exec returned invalid result"
+    );
+
     throw new Error("redis_publish_failed");
   }
+
+  logger.info(
+    {
+      component: "issueStore",
+      fn: "publishIssueArtifact",
+      issueNumber,
+      bytes
+    },
+    "Issue artifact published"
+  );
 }

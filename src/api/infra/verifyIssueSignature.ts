@@ -4,31 +4,59 @@ import { logger } from "./logger.js";
 /**
  * Enterprise hard limits
  */
-const MAX_SIGNATURE_B64_LENGTH = 256; // plenty for base64 HMAC
+const MAX_SIGNATURE_B64_LENGTH = 256; // enough for HMAC-SHA256 base64
 const MAX_PAYLOAD_BYTES = 512_000; // 512 KB max signed issue payload
+const MIN_SECRET_LENGTH = 16;
+const MAX_SECRET_LENGTH = 512;
+const MAX_ROTATED_SECRETS = 5;
 
+/**
+ * Helpers
+ */
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
 }
 
-function getSigningSecret(): string | null {
-  const secret = process.env.SECURELOGIC_SIGNING_SECRET;
-  if (!isNonEmptyString(secret)) return null;
+/**
+ * Enterprise:
+ * Support secret rotation.
+ *
+ * Format:
+ *   SECURELOGIC_SIGNING_SECRET="secret_new,secret_old"
+ *
+ * RULES:
+ * - FAIL CLOSED if missing/invalid
+ * - Newest secret should be first
+ * - Hard cap number of secrets
+ */
+function getSigningSecrets(): string[] {
+  const raw = process.env.SECURELOGIC_SIGNING_SECRET;
 
-  const trimmed = secret.trim();
+  if (!isNonEmptyString(raw)) return [];
 
-  // Prevent weak secrets
-  if (trimmed.length < 16) return null;
+  const secrets = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 
-  return trimmed;
+  if (secrets.length === 0) return [];
+
+  if (secrets.length > MAX_ROTATED_SECRETS) return [];
+
+  for (const s of secrets) {
+    if (s.length < MIN_SECRET_LENGTH) return [];
+    if (s.length > MAX_SECRET_LENGTH) return [];
+  }
+
+  return secrets;
 }
 
 /**
  * Canonical JSON stringify.
- * This prevents signature mismatch caused by object key ordering.
+ * Prevents signature mismatch caused by object key ordering.
  *
  * RULE:
- * - Only supports JSON-safe values (which is correct for this engine).
+ * - Only supports JSON-safe values.
  */
 function canonicalize(value: unknown): string {
   const seen = new WeakSet<object>();
@@ -48,7 +76,6 @@ function canonicalize(value: unknown): string {
 
     if (t === "object") {
       if (seen.has(v)) {
-        // cyclic -> not signable safely
         throw new Error("payload_not_serializable_cyclic");
       }
 
@@ -85,8 +112,8 @@ function normalizeSignatureB64(raw: unknown): string | null {
   if (!/^[A-Za-z0-9+/=]+$/.test(trimmed)) return null;
 
   /**
-   * base64 length should be divisible by 4 (or close if missing padding).
-   * We enforce correct padding because we want strict input.
+   * Enforce correct padding.
+   * base64 length must be divisible by 4.
    */
   if (trimmed.length % 4 !== 0) return null;
 
@@ -106,17 +133,33 @@ function safeEqualBase64(aB64: string, bB64: string): boolean {
   }
 }
 
+function computeHmacB64(secret: string, msg: string): string {
+  return crypto
+    .createHmac("sha256", secret)
+    .update(msg, "utf8")
+    .digest("base64");
+}
+
+/**
+ * verifyIssueSignature (Enterprise-grade)
+ *
+ * RULES:
+ * - FAIL CLOSED if secret missing/invalid
+ * - Accepts secret rotation list
+ * - Never reveals "missing vs invalid signature"
+ * - Constant-time compare
+ */
 export function verifyIssueSignature(
   payload: unknown,
   signatureB64: string
 ): boolean {
-  const secret = getSigningSecret();
+  const secrets = getSigningSecrets();
 
   /**
    * FAIL CLOSED.
    * If secret is missing/weak, nothing can be trusted.
    */
-  if (!secret) {
+  if (secrets.length === 0) {
     logger.error(
       { component: "verifyIssueSignature", hasSecret: false },
       "SECURELOGIC_SIGNING_SECRET missing/invalid"
@@ -163,12 +206,26 @@ export function verifyIssueSignature(
   }
 
   /**
-   * Compute expected signature (HMAC-SHA256 base64)
+   * Rotation support:
+   * - Compute signature for every secret
+   * - Constant-time compare
+   * - No early return
    */
-  const expected = crypto
-    .createHmac("sha256", secret)
-    .update(msg, "utf8")
-    .digest("base64");
+  let match = false;
 
-  return safeEqualBase64(expected, normalizedSig);
+  for (const secret of secrets) {
+    const expected = computeHmacB64(secret, msg);
+
+    if (safeEqualBase64(expected, normalizedSig)) {
+      match = true;
+    } else {
+      /**
+       * Side-channel reduction:
+       * Do work even on mismatch.
+       */
+      safeEqualBase64(expected, expected);
+    }
+  }
+
+  return match;
 }

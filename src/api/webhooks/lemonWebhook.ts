@@ -12,18 +12,26 @@ import {
  * =========================================================
  * Lemon Squeezy Webhook Handler (Enterprise / Production)
  *
- * Rules:
+ * Design Goals:
  * - NEVER trust payload shape
  * - NEVER log secrets (apiKey, email, raw payload)
  * - ALWAYS return 200 to Lemon (prevents retry storms)
  * - Fail-closed on entitlement writes if Redis unavailable
  * - Only accept SecureLogic API keys with strict format
+ * - Only allow a known set of events to modify entitlements
+ * - Minimal leakage in logs (prefix only)
  * =========================================================
  */
 
-function safeGet(obj: any, path: string): any {
+/**
+ * Safe nested getter:
+ * safeGet(obj, "a.b.c") => obj?.a?.b?.c
+ */
+function safeGet(obj: unknown, path: string): unknown {
+  if (!obj || typeof obj !== "object") return undefined;
+
   try {
-    return path.split(".").reduce((acc, key) => acc?.[key], obj);
+    return path.split(".").reduce((acc: any, key) => acc?.[key], obj as any);
   } catch {
     return undefined;
   }
@@ -36,13 +44,15 @@ function normalizeEventName(value: unknown): string {
 }
 
 /**
- * Enterprise key format.
- * - Strict
- * - ASCII only
- * - Prevents weird unicode / abuse
+ * Enterprise key format:
+ * - Must start with sl_
+ * - Strict charset
+ * - Hard length bounds
+ * - Prevents unicode abuse
  */
 function isValidSecureLogicApiKey(value: unknown): value is string {
   if (typeof value !== "string") return false;
+
   const k = value.trim();
 
   // Hard length bounds
@@ -51,18 +61,22 @@ function isValidSecureLogicApiKey(value: unknown): value is string {
   // Must be sl_*
   if (!k.startsWith("sl_")) return false;
 
-  // Strict charset (enterprise)
+  // Strict charset
+  // NOTE: this allows sl_ + 16-64 alphanumeric characters
   if (!/^sl_[a-z0-9]{16,64}$/i.test(k)) return false;
 
   return true;
 }
 
+/**
+ * Event → entitlement mapping (strict allow-list)
+ */
 function classifyEntitlementFromEvent(
   eventName: string
 ): EntitlementRecord | null {
   /**
    * Enterprise rule:
-   * Only a known set of events may change entitlement.
+   * Only these events can change entitlement.
    * Everything else is ignored.
    */
 
@@ -92,56 +106,81 @@ function classifyEntitlementFromEvent(
   return null;
 }
 
+/**
+ * Extract SecureLogic API key from Lemon payload.
+ * This is intentionally defensive: Lemon payload formats vary.
+ */
+function extractApiKeyFromPayload(payload: any): unknown {
+  return (
+    safeGet(payload, "meta.custom_data.apiKey") ??
+    safeGet(payload, "meta.custom_data.api_key") ??
+    safeGet(payload, "data.attributes.custom_data.apiKey") ??
+    safeGet(payload, "data.attributes.custom_data.api_key") ??
+    safeGet(payload, "data.attributes.custom_data.securelogic_api_key") ??
+    safeGet(payload, "data.attributes.custom_data.securelogicApiKey") ??
+    null
+  );
+}
+
+/**
+ * Extract event name from Lemon payload.
+ */
+function extractEventName(payload: any): string {
+  return normalizeEventName(
+    payload?.meta?.event_name ?? payload?.event_name ?? payload?.event ?? null
+  );
+}
+
+/**
+ * =========================================================
+ * Main handler
+ * =========================================================
+ */
 export async function lemonWebhook(req: Request, res: Response): Promise<void> {
   const startedAt = Date.now();
 
   /**
    * IMPORTANT:
-   * In production, this route is mounted behind verifyLemonWebhook middleware.
+   * In production, this route MUST be mounted behind verifyLemonWebhook middleware.
    * This handler assumes signature is already validated.
    */
   try {
+    /**
+     * Fail-closed on entitlement writes if Redis is not ready.
+     * Still return 200 to Lemon to prevent retry storms.
+     */
     if (!redisReady) {
       logger.error(
         { route: "/webhooks/lemon" },
-        "lemonWebhook: redis not configured (fail-closed)"
+        "lemonWebhook: redis not ready (entitlement update blocked)"
       );
 
-      // Still return 200 to Lemon (no retry storm)
       res.status(200).json({ received: true, updated: false });
       return;
     }
 
     const payload = req.body as any;
 
-    const eventName = normalizeEventName(
-      payload?.meta?.event_name ?? payload?.event_name ?? payload?.event
-    );
-
-    /**
-     * Extract apiKey from known Lemon custom_data locations.
-     */
-    const apiKey =
-      safeGet(payload, "meta.custom_data.apiKey") ??
-      safeGet(payload, "data.attributes.custom_data.apiKey") ??
-      safeGet(payload, "data.attributes.custom_data.api_key") ??
-      safeGet(payload, "data.attributes.custom_data.securelogic_api_key") ??
-      null;
+    const eventName = extractEventName(payload);
+    const apiKeyCandidate = extractApiKeyFromPayload(payload);
 
     const entitlement = classifyEntitlementFromEvent(eventName);
 
+    /**
+     * Minimal logging (no secrets, no raw payload).
+     */
     logger.info(
       {
         event: "lemon_webhook_received",
         eventName,
-        apiKeyPresent: typeof apiKey === "string",
+        apiKeyPresent: typeof apiKeyCandidate === "string",
         entitlementAction: entitlement ? entitlement.tier : "ignored"
       },
       "lemon webhook received"
     );
 
     /**
-     * If we don't recognize the event, ignore it.
+     * If event isn't recognized, ignore.
      */
     if (!entitlement) {
       res.status(200).json({ received: true, ignored: true });
@@ -149,9 +188,9 @@ export async function lemonWebhook(req: Request, res: Response): Promise<void> {
     }
 
     /**
-     * If apiKey missing/invalid, ignore (but return 200).
+     * If apiKey missing or invalid, ignore.
      */
-    if (!isValidSecureLogicApiKey(apiKey)) {
+    if (!isValidSecureLogicApiKey(apiKeyCandidate)) {
       logger.warn(
         {
           event: "lemon_webhook_invalid_api_key",
@@ -164,8 +203,10 @@ export async function lemonWebhook(req: Request, res: Response): Promise<void> {
       return;
     }
 
+    const apiKey = apiKeyCandidate;
+
     /**
-     * Enterprise: entitlement write is the only side effect.
+     * Enterprise: entitlement write is the ONLY side effect.
      */
     await setEntitlementInRedis(apiKey, entitlement);
 
@@ -188,8 +229,8 @@ export async function lemonWebhook(req: Request, res: Response): Promise<void> {
     });
   } catch (err) {
     /**
-     * FAIL OPEN (webhook stability):
-     * We return 200 to prevent Lemon retry storms.
+     * FAIL OPEN:
+     * Always return 200 to Lemon to prevent retry storms.
      */
     logger.error({ err }, "lemonWebhook failed");
     res.status(200).json({ received: true, updated: false });

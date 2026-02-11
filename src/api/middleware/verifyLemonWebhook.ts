@@ -53,27 +53,14 @@ function extractSignature(req: Request): {
   return { sig: present[0] ?? null, sourcesSeen: 1 };
 }
 
-/**
- * Compute HMAC over raw bytes.
- * Default: sha256 hex.
- *
- * If Lemon uses a different format in your setup, adjust ONLY here.
- */
 function computeExpectedSignature(rawBody: Buffer, secret: string): Buffer {
   return crypto.createHmac("sha256", secret).update(rawBody).digest();
 }
 
 function decodeProvidedSignature(sig: string): Buffer | null {
-  /**
-   * We support:
-   *  - hex (common)
-   *  - base64 (some providers)
-   *
-   * We do NOT accept random formats.
-   */
   const s = sig.trim();
 
-  // Hex signature (even length, hex chars)
+  // Hex signature
   if (/^[0-9a-fA-F]+$/.test(s) && s.length % 2 === 0) {
     try {
       return Buffer.from(s, "hex");
@@ -102,7 +89,6 @@ export function verifyLemonWebhook(
   try {
     const secret = getSecret();
 
-    // FAIL CLOSED if secret missing
     if (!secret) {
       logger.error(
         { route: "/webhooks/lemon", hasSecret: false },
@@ -114,7 +100,6 @@ export function verifyLemonWebhook(
 
     const { sig, sourcesSeen } = extractSignature(req);
 
-    // Multiple signature headers is an ambiguity attack => hard reject
     if (sourcesSeen > 1) {
       logger.warn(
         { route: "/webhooks/lemon" },
@@ -133,7 +118,6 @@ export function verifyLemonWebhook(
       return;
     }
 
-    // DoS defense
     if (sig.length > MAX_SIG_LENGTH) {
       logger.warn(
         { route: "/webhooks/lemon", sigLength: sig.length },
@@ -145,7 +129,6 @@ export function verifyLemonWebhook(
 
     const raw = (req as any).rawBody as unknown;
 
-    // Must be Buffer
     if (!Buffer.isBuffer(raw)) {
       logger.error(
         { route: "/webhooks/lemon" },
@@ -176,7 +159,6 @@ export function verifyLemonWebhook(
       return;
     }
 
-    // Constant-time compare (bytes)
     const ok = crypto.timingSafeEqual(provided, expected);
 
     if (!ok) {
@@ -190,7 +172,6 @@ export function verifyLemonWebhook(
 
     next();
   } catch (err) {
-    // FAIL CLOSED
     logger.error({ err, route: "/webhooks/lemon" }, "verifyLemonWebhook failed");
     res.status(401).json({ error: "webhook_unauthorized" });
   }
