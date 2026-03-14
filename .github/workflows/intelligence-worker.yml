@@ -1,0 +1,31 @@
+name: SecureLogic Intelligence Worker
+
+on:
+  schedule:
+    - cron: "0 13 * * MON"
+  workflow_dispatch:
+
+jobs:
+  run-worker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: services/intelligence-worker
+
+      - name: Run SecureLogic worker
+        run: npx tsx src/runner.ts
+        working-directory: services/intelligence-worker
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          NEWSLETTER_FROM_EMAIL: ${{ secrets.NEWSLETTER_FROM_EMAIL }}
+          NEWSLETTER_TO_EMAIL: ${{ secrets.NEWSLETTER_TO_EMAIL }}
