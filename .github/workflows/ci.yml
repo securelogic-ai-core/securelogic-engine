@@ -1,3 +1,5 @@
+name: Disabled CI
+on: workflow_dispatch
 name: SecureLogic CI
 
 on:
