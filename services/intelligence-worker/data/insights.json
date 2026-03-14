@@ -1,0 +1,112 @@
+[
+  {
+    "id": "INS-SIG-REG-001",
+    "signalId": "SIG-REG-001",
+    "category": "REGULATION",
+    "title": "EU AI Act implementation guidance released",
+    "analysis": "The development reported in \"EU AI Act implementation guidance released\" may increase regulatory expectations around AI governance, documentation, and accountability. Organizations using AI in business processes should evaluate whether current governance controls and policy frameworks align with emerging requirements.",
+    "recommendation": "Review AI governance policies, model inventory documentation, risk assessments, and accountability structures to determine whether regulatory or policy updates are required.",
+    "riskLevel": "medium",
+    "audience": [
+      "Compliance Teams",
+      "Legal Teams",
+      "Risk Teams",
+      "Executive Leadership"
+    ],
+    "createdAt": "2026-03-14T18:05:27.492Z"
+  },
+  {
+    "id": "INS-SIG-SEC-0",
+    "signalId": "SIG-SEC-0",
+    "category": "AI_GOVERNANCE",
+    "title": "OpenClaw AI Agent Flaws Could Enable Prompt Injection and Data Exfiltration",
+    "analysis": "The development reported in \"OpenClaw AI Agent Flaws Could Enable Prompt Injection and Data Exfiltration\" may affect enterprise governance, security, or compliance posture.",
+    "recommendation": "Security and risk teams should review the development and determine whether internal controls, threat monitoring, or governance processes need to be updated.",
+    "riskLevel": "low",
+    "audience": [
+      "AI Governance Leaders",
+      "Compliance Teams",
+      "Risk Teams",
+      "Executive Leadership"
+    ],
+    "createdAt": "2026-03-14T18:05:27.500Z"
+  },
+  {
+    "id": "INS-SIG-SEC-1",
+    "signalId": "SIG-SEC-1",
+    "category": "SECURITY_INCIDENT",
+    "title": "GlassWorm Supply-Chain Attack Abuses 72 Open VSX Extensions to Target Developers",
+    "analysis": "The development reported in \"GlassWorm Supply-Chain Attack Abuses 72 Open VSX Extensions to Target Developers\" may affect enterprise governance, security, or compliance posture.",
+    "recommendation": "Security and risk teams should review the development and determine whether internal controls, threat monitoring, or governance processes need to be updated.",
+    "riskLevel": "low",
+    "audience": [
+      "Security Leaders",
+      "Risk Teams",
+      "IT Administrators"
+    ],
+    "createdAt": "2026-03-14T18:05:27.505Z"
+  },
+  {
+    "id": "INS-SIG-SEC-2",
+    "signalId": "SIG-SEC-2",
+    "category": "SECURITY_INCIDENT",
+    "title": "Chinese Hackers Target Southeast Asian Militaries with AppleChris and MemFun Malware",
+    "analysis": "The event reported in \"Chinese Hackers Target Southeast Asian Militaries with AppleChris and MemFun Malware\" reflects active malicious tradecraft that could affect enterprise users, identities, or systems if similar techniques are reused more broadly. This is especially relevant where credential security, endpoint protection, and user-driven software downloads are weak points.",
+    "recommendation": "Review endpoint detection coverage, validate email and web filtering controls, and assess whether credential monitoring, MFA enforcement, and threat-hunting content should be updated.",
+    "riskLevel": "high",
+    "audience": [
+      "Security Operations",
+      "IT Administrators",
+      "Security Leaders",
+      "Risk Teams"
+    ],
+    "createdAt": "2026-03-14T18:05:27.514Z"
+  },
+  {
+    "id": "INS-SIG-SEC-3",
+    "signalId": "SIG-SEC-3",
+    "category": "SECURITY_INCIDENT",
+    "title": "Meta to Shut Down Instagram End-to-End Encrypted Chat Support Starting May 2026",
+    "analysis": "The development reported in \"Meta to Shut Down Instagram End-to-End Encrypted Chat Support Starting May 2026\" may change privacy, monitoring, and data-protection assumptions for organizations relying on consumer messaging ecosystems. It is more of a security architecture and communications risk issue than a direct threat event.",
+    "recommendation": "Review whether any business communications, customer interactions, or policy assumptions rely on the affected platform’s encryption posture and update guidance accordingly.",
+    "riskLevel": "medium",
+    "audience": [
+      "Security Leaders",
+      "Risk Teams",
+      "IT Administrators"
+    ],
+    "createdAt": "2026-03-14T18:05:27.528Z"
+  },
+  {
+    "id": "INS-SIG-SEC-4",
+    "signalId": "SIG-SEC-4",
+    "category": "SECURITY_INCIDENT",
+    "title": "INTERPOL Dismantles 45,000 Malicious IPs, Arrests 94 in Global Cybercrime",
+    "analysis": "The event reported in \"INTERPOL Dismantles 45,000 Malicious IPs, Arrests 94 in Global Cybercrime\" reflects active malicious tradecraft that could affect enterprise users, identities, or systems if similar techniques are reused more broadly. This is especially relevant where credential security, endpoint protection, and user-driven software downloads are weak points.",
+    "recommendation": "Review endpoint detection coverage, validate email and web filtering controls, and assess whether credential monitoring, MFA enforcement, and threat-hunting content should be updated.",
+    "riskLevel": "high",
+    "audience": [
+      "Security Operations",
+      "IT Administrators",
+      "Security Leaders",
+      "Risk Teams"
+    ],
+    "createdAt": "2026-03-14T18:05:27.533Z"
+  },
+  {
+    "id": "INS-SIG-AI-001",
+    "signalId": "SIG-AI-001",
+    "category": "AI_GOVERNANCE",
+    "title": "New open-source AI model raises governance questions",
+    "analysis": "The development reported in \"New open-source AI model raises governance questions\" highlights governance questions around model usage, transparency, and control. Enterprises adopting new AI capabilities should evaluate oversight, acceptable use boundaries, and downstream business risk.",
+    "recommendation": "Confirm that AI usage policies, approval workflows, model evaluation criteria, and monitoring expectations are defined before broader deployment.",
+    "riskLevel": "medium",
+    "audience": [
+      "AI Governance Leaders",
+      "Compliance Teams",
+      "Risk Teams",
+      "Executive Leadership"
+    ],
+    "createdAt": "2026-03-14T18:05:27.539Z"
+  }
+]
