@@ -1,4 +1,4 @@
-import "dotenv/config";
+[import "dotenv/config";
 
 import express, { type Request, type Response } from "express";
 import bodyParser from "body-parser";
@@ -422,4 +422,4 @@ const shutdown = async (signal: string) => {
 };
 
 process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.on("SIGINT", shutdown);]
