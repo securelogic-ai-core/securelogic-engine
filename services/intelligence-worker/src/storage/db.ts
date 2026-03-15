@@ -45,4 +45,20 @@ CREATE TABLE IF NOT EXISTS newsletter_issues (
   status TEXT,
   created_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS subscribers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT UNIQUE,
+  tier TEXT,
+  status TEXT,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS newsletter_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  issue_id INTEGER,
+  subscriber_email TEXT,
+  delivered_at TEXT,
+  status TEXT
+);
 `);
