@@ -26,6 +26,6 @@ jobs:
         run: npx tsx src/runner.ts
         working-directory: services/intelligence-worker
         env:
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          NEWSLETTER_FROM_EMAIL: ${{ secrets.NEWSLETTER_FROM_EMAIL }}
-          NEWSLETTER_TO_EMAIL: ${{ secrets.NEWSLETTER_TO_EMAIL }}
+          RESEND_API_KEY: \${{ secrets.RESEND_API_KEY }}
+          NEWSLETTER_FROM_EMAIL: \${{ secrets.NEWSLETTER_FROM_EMAIL }}
+          NEWSLETTER_TO_EMAIL: \${{ secrets.NEWSLETTER_TO_EMAIL }}
