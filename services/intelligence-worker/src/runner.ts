@@ -26,3 +26,8 @@ async function main() {
 }
 
 main();
+
+import { runPipeline } from "./pipeline/runPipeline";
+
+await runPipeline();
+
