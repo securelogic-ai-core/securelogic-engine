@@ -8,9 +8,12 @@
   "scripts": {
     "dev": "./scripts/dev-up.sh",
     "dev:server": "tsx watch src/api/server.ts",
-    "start:dev": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx src/api/server.ts'",
+    "start:dev": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx src/api/server.ts",
     "portal": "tsx src/portal/server.ts",
     "intelligence-api": "tsx services/intelligence-worker/src/api/server.ts",
+
+    "migrate": "tsx scripts/runMigrations.ts",
+
     "clean": "rm -rf dist",
     "build": "rm -rf dist && tsc -p tsconfig.prod.json",
     "start": "node dist/api/server.js",

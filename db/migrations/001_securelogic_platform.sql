@@ -110,8 +110,7 @@ CREATE TABLE signals (
   priority NUMERIC(10,2),
   processed BOOLEAN NOT NULL DEFAULT FALSE,
   provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (source, COALESCE(external_id, ''), COALESCE(source_url, ''))
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE insights (
@@ -199,6 +198,9 @@ CREATE TABLE worker_runs (
   error_message TEXT,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb
 );
+
+CREATE UNIQUE INDEX uq_signals_source_dedupe
+  ON signals (source, COALESCE(external_id, ''), COALESCE(source_url, ''));
 
 CREATE INDEX idx_users_org ON users(organization_id);
 CREATE INDEX idx_vendors_org ON vendors(organization_id);
