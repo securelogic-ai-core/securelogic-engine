@@ -1,0 +1,23 @@
+<html>
+<head>
+<title>SecureLogic Intelligence</title>
+</head>
+
+<body>
+
+<h1>SecureLogic Intelligence Briefings</h1>
+
+<ul>
+<% issues.forEach(function(issue){ %>
+
+<li>
+<a href="/intelligence/<%= issue.id %>">
+<%= issue.title %>
+</a>
+</li>
+
+<% }) %>
+</ul>
+
+</body>
+</html>

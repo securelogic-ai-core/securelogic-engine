@@ -9,15 +9,23 @@
     "dev": "./scripts/dev-up.sh",
     "dev:server": "tsx watch src/api/server.ts",
     "start:dev": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx src/api/server.ts'",
+
+    "portal": "tsx src/portal/server.ts",
+    "intelligence-api": "tsx services/intelligence-worker/src/api/server.ts",
+
     "clean": "rm -rf dist",
     "build": "rm -rf dist && tsc -p tsconfig.prod.json",
     "start": "node dist/api/server.js",
+
     "typecheck": "tsc -p tsconfig.ci.json",
     "lint": "eslint \"src/**/*.{ts,tsx,js}\"",
+
     "test": "vitest run",
     "test:prod": "vitest run src/_frozen_prod/__tests__",
+
     "check": "bash scripts/guard-imports.sh && npm run lint && npm run typecheck && npm run build && npm run test:prod",
     "ci": "bash scripts/check-contract-version.sh && npm run typecheck && npm run build",
+
     "build:contracts": "cd packages/contracts && npm run build"
   },
   "dependencies": {
@@ -26,6 +34,7 @@
     "better-sqlite3": "^12.8.0",
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
+    "ejs": "^5.0.1",
     "express": "^5.2.1",
     "express-rate-limit": "^8.2.1",
     "express-slow-down": "^3.0.1",
