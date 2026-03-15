@@ -24,7 +24,8 @@ jobs:
         run: npm ci
 
       - name: Run SecureLogic worker
-        run: npx tsx services/intelligence-worker/src/runner.ts
+        run: npx tsx src/runner.ts
+        working-directory: services/intelligence-worker
         env:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           NEWSLETTER_FROM_EMAIL: ${{ secrets.NEWSLETTER_FROM_EMAIL }}
