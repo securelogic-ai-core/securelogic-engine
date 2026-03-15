@@ -36,6 +36,8 @@
     "pino": "^10.3.0",
     "pino-http": "^11.0.0",
     "redis": "^5.10.0",
+    "resend": "^6.9.3",
+    "rss-parser": "^3.13.0",
     "securelogic-contracts": "^0.1.2",
     "typescript": "~5.9.3",
     "zod": "^4.3.4"
