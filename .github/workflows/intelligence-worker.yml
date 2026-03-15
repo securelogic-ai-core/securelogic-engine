@@ -11,21 +11,21 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Node
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        run: npm install
-        working-directory: services/intelligence-worker
+        run: npm ci
 
       - name: Run SecureLogic worker
-        run: npx tsx src/runner.ts
-        working-directory: services/intelligence-worker
+        run: npx tsx services/intelligence-worker/src/runner.ts
         env:
-          RESEND_API_KEY: \${{ secrets.RESEND_API_KEY }}
-          NEWSLETTER_FROM_EMAIL: \${{ secrets.NEWSLETTER_FROM_EMAIL }}
-          NEWSLETTER_TO_EMAIL: \${{ secrets.NEWSLETTER_TO_EMAIL }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          NEWSLETTER_FROM_EMAIL: ${{ secrets.NEWSLETTER_FROM_EMAIL }}
+          NEWSLETTER_TO_EMAIL: ${{ secrets.NEWSLETTER_TO_EMAIL }}
