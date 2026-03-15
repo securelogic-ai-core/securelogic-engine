@@ -1,4 +1,4 @@
-[import "dotenv/config";
+import "dotenv/config";
 
 import express, { type Request, type Response } from "express";
 import bodyParser from "body-parser";
@@ -11,6 +11,7 @@ import hpp from "hpp";
 
 import { validateEnv } from "./startup/validateEnv.js";
 import { runSelfTest } from "./startup/selfTest.js";
+import { connectDatabase } from "./startup/connectDatabase.js";
 
 import { ensureRedisConnected, redisReady } from "./infra/redis.js";
 import { httpLogger } from "./infra/httpLogger.js";
@@ -31,7 +32,6 @@ import { errorHandler } from "./middleware/errorHandler.js";
 
 import { lemonWebhook } from "./webhooks/lemonWebhook.js";
 import { buildRoutes } from "./routes/index.js";
-import { connectDatabase } from "./startup/connectDatabase";
 
 /* =========================================================
    BOOT-TIME GUARDS
@@ -383,9 +383,9 @@ app.use(errorHandler);
    START SERVER
    ========================================================= */
 
-const server = await connectDatabase();
+await connectDatabase();
 
-app.listen(PORT, "0.0.0.0", () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
   logger.info(
     {
       port: PORT,
@@ -424,5 +424,10 @@ const shutdown = async (signal: string) => {
   setTimeout(() => process.exit(1), 10_000).unref();
 };
 
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);]
+process.on("SIGTERM", () => {
+  void shutdown("SIGTERM");
+});
+
+process.on("SIGINT", () => {
+  void shutdown("SIGINT");
+});
