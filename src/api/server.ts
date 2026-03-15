@@ -31,6 +31,7 @@ import { errorHandler } from "./middleware/errorHandler.js";
 
 import { lemonWebhook } from "./webhooks/lemonWebhook.js";
 import { buildRoutes } from "./routes/index.js";
+import { connectDatabase } from "./startup/connectDatabase";
 
 /* =========================================================
    BOOT-TIME GUARDS
@@ -382,7 +383,9 @@ app.use(errorHandler);
    START SERVER
    ========================================================= */
 
-const server = app.listen(PORT, "0.0.0.0", () => {
+const server = await connectDatabase();
+
+app.listen(PORT, "0.0.0.0", () => {
   logger.info(
     {
       port: PORT,
