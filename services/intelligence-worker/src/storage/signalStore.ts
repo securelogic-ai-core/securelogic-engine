@@ -1,13 +1,22 @@
-import fs from "fs/promises";
+import { db } from "./db";
 
-const FILE = "./data/signals.json";
+export function saveSignal(signal: any) {
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO signals
+    (source, title, url, published_at, normalized_score, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
 
-export async function saveSignal(signal: any) {
+  stmt.run(
+    signal.source,
+    signal.title,
+    signal.url,
+    signal.publishedAt,
+    signal.score || 0,
+    new Date().toISOString()
+  );
+}
 
-  const raw = await fs.readFile(FILE, "utf8");
-  const signals = JSON.parse(raw);
-
-  signals.push(signal);
-
-  await fs.writeFile(FILE, JSON.stringify(signals, null, 2));
+export function getSignals() {
+  return db.prepare("SELECT * FROM signals ORDER BY created_at DESC").all();
 }

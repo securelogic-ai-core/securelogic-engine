@@ -1,17 +1,18 @@
-import fs from "fs/promises";
+import { db } from "./db";
 
-const FILE = "./data/insights.json";
+export function saveInsight(signalId: number, insight: string, riskScore: number) {
+  const stmt = db.prepare(`
+    INSERT INTO insights
+    (signal_id, insight, risk_score, created_at)
+    VALUES (?, ?, ?, ?)
+  `);
 
-export async function saveInsight(insight: any) {
+  stmt.run(signalId, insight, riskScore, new Date().toISOString());
+}
 
-  let insights = [];
-
-  try {
-    const raw = await fs.readFile(FILE, "utf8");
-    insights = JSON.parse(raw);
-  } catch {}
-
-  insights.push(insight);
-
-  await fs.writeFile(FILE, JSON.stringify(insights, null, 2));
+export function getInsights() {
+  return db.prepare(`
+    SELECT * FROM insights
+    ORDER BY created_at DESC
+  `).all();
 }

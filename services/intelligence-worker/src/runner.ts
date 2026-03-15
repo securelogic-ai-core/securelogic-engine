@@ -1,6 +1,28 @@
-import { runWorker } from "./worker.js";
+import { startRun, completeRun, failRun } from "./storage/runStore";
+import { runWorker } from "./worker";
 
-runWorker().catch((error) => {
-  console.error("Worker failure:", error);
-  process.exit(1);
-});
+async function main() {
+
+  const runId = startRun();
+
+  try {
+
+    console.log("SecureLogic Intelligence Worker starting...");
+
+    const result = await runWorker();
+
+    completeRun(runId, result.signals, result.insights);
+
+    console.log("Worker completed successfully");
+
+  } catch (err: any) {
+
+    console.error("Worker failure:", err);
+
+    failRun(runId, err.message);
+
+    process.exit(1);
+  }
+}
+
+main();
