@@ -23,6 +23,7 @@ import adminEmailProviderEventsRouter from "./adminEmailProviderEvents.js";
 import adminDeliveryMetricsRouter from "./adminDeliveryMetrics.js";
 import adminIssueDeliveryMetricsRouter from "./adminIssueDeliveryMetrics.js";
 import adminOpsOverviewRouter from "./adminOpsOverview.js";
+import adminOpsHealthRouter from "./adminOpsHealth.js";
 
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { resolveEntitlement } from "../middleware/resolveEntitlement.js";
@@ -121,6 +122,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/admin", adminDeliveryMetricsRouter);
   router.use("/admin", adminIssueDeliveryMetricsRouter);
   router.use("/admin", adminOpsOverviewRouter);
+  router.use("/admin", adminOpsHealthRouter);
 
   router.post("/admin/issues/publish", async (req: Request, res: Response) => {
     try {
