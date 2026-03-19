@@ -1,5 +1,7 @@
 import { Router, type Request, type Response } from "express";
 
+import adminDeliveryMetricsRouter from "./adminDeliveryMetrics.js";
+
 import newsletterIssuesRouter from "./newsletterIssues.js";
 import newsletterDeliveriesRouter from "./newsletterDeliveries.js";
 import subscribersRouter from "./subscribers.js";
@@ -115,6 +117,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/admin", adminCreateEmailSuppressionRouter);
   router.use("/admin", adminDeleteEmailSuppressionRouter);
   router.use("/admin", adminEmailProviderEventsRouter);
+  router.use("/admin", adminDeliveryMetricsRouter);
 
   router.post("/admin/issues/publish", async (req: Request, res: Response) => {
     try {
