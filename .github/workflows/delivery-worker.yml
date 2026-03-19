@@ -31,4 +31,5 @@ jobs:
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           SECURELOGIC_ADMIN_KEY: ${{ secrets.SECURELOGIC_ADMIN_KEY }}
           SECURELOGIC_SIGNING_SECRET: ${{ secrets.SECURELOGIC_SIGNING_SECRET }}
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
         run: npx tsx services/delivery-worker/src/runner.ts
