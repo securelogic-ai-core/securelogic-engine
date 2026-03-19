@@ -1,5 +1,19 @@
 import { Router, type Request, type Response } from "express";
 
+import newsletterIssuesRouter from "./newsletterIssues.js";
+import newsletterDeliveriesRouter from "./newsletterDeliveries.js";
+import subscribersRouter from "./subscribers.js";
+
+import adminEntitlementsRouter from "./adminEntitlements.js";
+import adminSubscribersRouter from "./adminSubscribers.js";
+import adminNewsletterIssuesRouter from "./adminNewsletterIssues.js";
+import adminCreateNewsletterIssueRouter from "./adminCreateNewsletterIssue.js";
+import adminUpdateNewsletterIssueRouter from "./adminUpdateNewsletterIssue.js";
+import adminDeleteNewsletterIssueRouter from "./adminDeleteNewsletterIssue.js";
+import adminPromoteNewsletterIssueRouter from "./adminPromoteNewsletterIssue.js";
+import adminCancelNewsletterIssueRouter from "./adminCancelNewsletterIssue.js";
+import adminDeadLetterNewsletterDeliveriesRouter from "./adminDeadLetterNewsletterDeliveries.js";
+
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { resolveEntitlement } from "../middleware/resolveEntitlement.js";
 import { requestAudit } from "../middleware/requestAudit.js";
@@ -14,8 +28,6 @@ import { adminLockout } from "../middleware/adminLockout.js";
 import { requireAdminKey } from "../middleware/requireAdminKey.js";
 import { adminRateLimit } from "../middleware/adminRateLimit.js";
 import { adminAudit } from "../middleware/adminAudit.js";
-
-import adminEntitlementsRouter from "./adminEntitlements.js";
 
 import { isSignedIssue } from "../contracts/signedIssue.schema.js";
 import type { SignedIssue } from "../contracts/signedIssue.schema.js";
@@ -70,19 +82,17 @@ export function buildRoutes(opts: RoutesOptions): Router {
   });
 
   /* =========================================================
-     🔒 ADMIN ROUTES (ENTERPRISE)
+     NEWSLETTER READ ROUTES
      ========================================================= */
 
-  /**
-   * CRITICAL ENTERPRISE RULE:
-   * All /admin endpoints MUST inherit these middleware layers.
-   * Defense in depth:
-   *  1) Network allowlist
-   *  2) Lockout
-   *  3) Admin key
-   *  4) Rate limiting
-   *  5) Audit logging
-   */
+  router.use("/api", newsletterIssuesRouter);
+  router.use("/api", newsletterDeliveriesRouter);
+  router.use("/api", subscribersRouter);
+
+  /* =========================================================
+     ADMIN ROUTES (ENTERPRISE)
+     ========================================================= */
+
   const adminChain = [
     requireAdminNetwork,
     adminLockout,
@@ -93,20 +103,16 @@ export function buildRoutes(opts: RoutesOptions): Router {
 
   router.use("/admin", ...adminChain);
 
-  /**
-   * Admin subrouters MUST be mounted under /admin
-   */
   router.use("/admin", adminEntitlementsRouter);
+  router.use("/admin", adminSubscribersRouter);
+  router.use("/admin", adminNewsletterIssuesRouter);
+  router.use("/admin", adminCreateNewsletterIssueRouter);
+  router.use("/admin", adminUpdateNewsletterIssueRouter);
+  router.use("/admin", adminDeleteNewsletterIssueRouter);
+  router.use("/admin", adminPromoteNewsletterIssueRouter);
+  router.use("/admin", adminCancelNewsletterIssueRouter);
+  router.use("/admin", adminDeadLetterNewsletterDeliveriesRouter);
 
-  /**
-   * POST /admin/issues/publish
-   *
-   * Enterprise rules:
-   * - Always verify signature
-   * - Fail closed
-   * - Never trust caller even though admin
-   * - Never persist malformed artifacts
-   */
   router.post("/admin/issues/publish", async (req: Request, res: Response) => {
     try {
       const parsed = req.body as unknown;
@@ -118,10 +124,6 @@ export function buildRoutes(opts: RoutesOptions): Router {
 
       const artifact = parsed as SignedIssue;
 
-      /**
-       * Always verify signature.
-       * If signing secret is missing, verifyIssueSignature FAILS CLOSED.
-       */
       if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
         res.status(400).json({ error: "issue_signature_invalid" });
         return;
@@ -134,9 +136,6 @@ export function buildRoutes(opts: RoutesOptions): Router {
         return;
       }
 
-      /**
-       * Persist full artifact (issue + signature + signedAt).
-       */
       await publishIssueArtifact(issueNumber, JSON.stringify(artifact));
 
       res.status(200).json({
@@ -165,7 +164,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   });
 
   /* =========================================================
-     🔒 ISSUES AUTH CHAIN
+     ISSUES AUTH CHAIN
      ========================================================= */
 
   router.use("/issues", requireApiKey);
@@ -174,9 +173,6 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/issues", enforceUsageCap());
   router.use("/issues", requestAudit);
 
-  /**
-   * Public API kill switch
-   */
   router.use("/issues", (_req, res, next) => {
     if (!opts.publicApiDisabled) {
       next();
@@ -227,17 +223,11 @@ export function buildRoutes(opts: RoutesOptions): Router {
 
         const artifact = parsed as SignedIssue;
 
-        /**
-         * Enterprise:
-         * In production we MUST verify signature.
-         * In dev we still verify on publish, so this is redundant,
-         * but we keep it for defense in depth.
-         */
         if (!opts.isDev) {
           if (!verifyIssueSignature(artifact.issue, artifact.signature)) {
-            res
-              .status(500)
-              .json({ error: "issue_signature_verification_failed" });
+            res.status(500).json({
+              error: "issue_signature_verification_failed"
+            });
             return;
           }
         }
