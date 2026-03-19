@@ -1,8 +1,5 @@
 import { Router, type Request, type Response } from "express";
 
-import adminDeliveryMetricsRouter from "./adminDeliveryMetrics.js";
-import adminIssueDeliveryMetricsRouter from "./adminIssueDeliveryMetrics.js";
-
 import newsletterIssuesRouter from "./newsletterIssues.js";
 import newsletterDeliveriesRouter from "./newsletterDeliveries.js";
 import subscribersRouter from "./subscribers.js";
@@ -23,6 +20,9 @@ import adminEmailSuppressionsRouter from "./adminEmailSuppressions.js";
 import adminCreateEmailSuppressionRouter from "./adminCreateEmailSuppression.js";
 import adminDeleteEmailSuppressionRouter from "./adminDeleteEmailSuppression.js";
 import adminEmailProviderEventsRouter from "./adminEmailProviderEvents.js";
+import adminDeliveryMetricsRouter from "./adminDeliveryMetrics.js";
+import adminIssueDeliveryMetricsRouter from "./adminIssueDeliveryMetrics.js";
+import adminOpsOverviewRouter from "./adminOpsOverview.js";
 
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { resolveEntitlement } from "../middleware/resolveEntitlement.js";
@@ -120,6 +120,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/admin", adminEmailProviderEventsRouter);
   router.use("/admin", adminDeliveryMetricsRouter);
   router.use("/admin", adminIssueDeliveryMetricsRouter);
+  router.use("/admin", adminOpsOverviewRouter);
 
   router.post("/admin/issues/publish", async (req: Request, res: Response) => {
     try {
