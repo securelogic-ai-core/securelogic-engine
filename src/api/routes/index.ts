@@ -3,6 +3,7 @@ import { Router, type Request, type Response } from "express";
 import newsletterIssuesRouter from "./newsletterIssues.js";
 import newsletterDeliveriesRouter from "./newsletterDeliveries.js";
 import subscribersRouter from "./subscribers.js";
+import emailProviderWebhookRouter from "./emailProviderWebhook.js";
 
 import adminEntitlementsRouter from "./adminEntitlements.js";
 import adminSubscribersRouter from "./adminSubscribers.js";
@@ -13,6 +14,12 @@ import adminDeleteNewsletterIssueRouter from "./adminDeleteNewsletterIssue.js";
 import adminPromoteNewsletterIssueRouter from "./adminPromoteNewsletterIssue.js";
 import adminCancelNewsletterIssueRouter from "./adminCancelNewsletterIssue.js";
 import adminDeadLetterNewsletterDeliveriesRouter from "./adminDeadLetterNewsletterDeliveries.js";
+import adminRequeueNewsletterDeliveryRouter from "./adminRequeueNewsletterDelivery.js";
+import adminRequeueNewsletterDeliveriesByIssueRouter from "./adminRequeueNewsletterDeliveriesByIssue.js";
+import adminEmailSuppressionsRouter from "./adminEmailSuppressions.js";
+import adminCreateEmailSuppressionRouter from "./adminCreateEmailSuppression.js";
+import adminDeleteEmailSuppressionRouter from "./adminDeleteEmailSuppression.js";
+import adminEmailProviderEventsRouter from "./adminEmailProviderEvents.js";
 
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { resolveEntitlement } from "../middleware/resolveEntitlement.js";
@@ -49,10 +56,6 @@ type RoutesOptions = {
 export function buildRoutes(opts: RoutesOptions): Router {
   const router = Router();
 
-  /* =========================================================
-     HEALTH + VERSION (NO AUTH)
-     ========================================================= */
-
   router.get("/health", (_req: Request, res: Response) => {
     res.status(200).json({ status: "ok" });
   });
@@ -81,17 +84,11 @@ export function buildRoutes(opts: RoutesOptions): Router {
     });
   });
 
-  /* =========================================================
-     NEWSLETTER READ ROUTES
-     ========================================================= */
+  router.use("/", emailProviderWebhookRouter);
 
   router.use("/api", newsletterIssuesRouter);
   router.use("/api", newsletterDeliveriesRouter);
   router.use("/api", subscribersRouter);
-
-  /* =========================================================
-     ADMIN ROUTES (ENTERPRISE)
-     ========================================================= */
 
   const adminChain = [
     requireAdminNetwork,
@@ -112,6 +109,12 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/admin", adminPromoteNewsletterIssueRouter);
   router.use("/admin", adminCancelNewsletterIssueRouter);
   router.use("/admin", adminDeadLetterNewsletterDeliveriesRouter);
+  router.use("/admin", adminRequeueNewsletterDeliveryRouter);
+  router.use("/admin", adminRequeueNewsletterDeliveriesByIssueRouter);
+  router.use("/admin", adminEmailSuppressionsRouter);
+  router.use("/admin", adminCreateEmailSuppressionRouter);
+  router.use("/admin", adminDeleteEmailSuppressionRouter);
+  router.use("/admin", adminEmailProviderEventsRouter);
 
   router.post("/admin/issues/publish", async (req: Request, res: Response) => {
     try {
@@ -163,10 +166,6 @@ export function buildRoutes(opts: RoutesOptions): Router {
     });
   });
 
-  /* =========================================================
-     ISSUES AUTH CHAIN
-     ========================================================= */
-
   router.use("/issues", requireApiKey);
   router.use("/issues", resolveEntitlement);
   router.use("/issues", tierRateLimit);
@@ -184,10 +183,6 @@ export function buildRoutes(opts: RoutesOptions): Router {
       reason: "public_api_disabled"
     });
   });
-
-  /* =========================================================
-     ISSUES ROUTES
-     ========================================================= */
 
   router.get(
     "/issues/latest",
