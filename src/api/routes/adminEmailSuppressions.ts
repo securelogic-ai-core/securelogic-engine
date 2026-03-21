@@ -25,7 +25,7 @@ function parseCursorPart(value: unknown): string | null {
   return raw || null;
 }
 
-router.get("/email-provider-events", async (req, res) => {
+router.get("/email-suppressions", async (req, res) => {
   try {
     const limit = parseLimit(req.query.limit);
     const beforeCreatedAt = parseCursorPart(req.query.beforeCreatedAt);
@@ -38,12 +38,11 @@ router.get("/email-provider-events", async (req, res) => {
           `
           SELECT
             id,
-            provider,
-            provider_event_id,
-            event_type,
             email,
+            reason,
+            source,
             created_at
-          FROM email_provider_events
+          FROM email_suppressions
           WHERE (created_at, id) < ($2::timestamptz, $3::uuid)
           ORDER BY created_at DESC, id DESC
           LIMIT $1
@@ -54,23 +53,22 @@ router.get("/email-provider-events", async (req, res) => {
           `
           SELECT
             id,
-            provider,
-            provider_event_id,
-            event_type,
             email,
+            reason,
+            source,
             created_at
-          FROM email_provider_events
+          FROM email_suppressions
           ORDER BY created_at DESC, id DESC
           LIMIT $1
           `,
           [limit]
         );
 
-    const events = result.rows;
-    const last = events.length > 0 ? events[events.length - 1] : null;
+    const suppressions = result.rows;
+    const last = suppressions.length > 0 ? suppressions[suppressions.length - 1] : null;
 
     res.status(200).json({
-      count: events.length,
+      count: suppressions.length,
       limit,
       beforeCreatedAt: useCursor ? beforeCreatedAt : null,
       beforeId: useCursor ? beforeId : null,
@@ -80,11 +78,11 @@ router.get("/email-provider-events", async (req, res) => {
             id: last.id
           }
         : null,
-      events
+      suppressions
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "admin_email_provider_events_query_failed" });
+    res.status(500).json({ error: "admin_email_suppressions_query_failed" });
   }
 });
 
