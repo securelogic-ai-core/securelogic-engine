@@ -8,12 +8,11 @@
   "scripts": {
     "dev": "./scripts/dev-up.sh",
     "dev:server": "tsx watch src/api/server.ts",
-    "start:dev": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx src/api/server.ts",
+    "start:dev": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx src/api/server.ts'",
     "portal": "tsx src/portal/server.ts",
     "intelligence-api": "tsx services/intelligence-worker/src/api/server.ts",
-
     "migrate": "tsx scripts/runMigrations.ts",
-
+    "test:pg-stores": "tsx services/intelligence-worker/src/storage/testPostgresStores.ts",
     "clean": "rm -rf dist",
     "build": "rm -rf dist && tsc -p tsconfig.prod.json",
     "start": "node dist/api/server.js",
@@ -38,6 +37,7 @@
     "helmet": "^8.1.0",
     "hpp": "^0.2.3",
     "json-canonicalize": "^2.0.0",
+    "nodemailer": "^8.0.2",
     "pdfkit": "^0.17.2",
     "pg": "^8.20.0",
     "pino": "^10.3.0",
@@ -46,6 +46,7 @@
     "resend": "^6.9.3",
     "rss-parser": "^3.13.0",
     "securelogic-contracts": "^0.1.2",
+    "svix": "^1.89.0",
     "typescript": "~5.9.3",
     "zod": "^4.3.4"
   },

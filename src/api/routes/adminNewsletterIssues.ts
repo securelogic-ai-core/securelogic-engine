@@ -25,72 +25,64 @@ function parseCursorPart(value: unknown): string | null {
   return raw || null;
 }
 
-router.get("/dead-letter/newsletter-deliveries", async (req, res) => {
+router.get("/newsletter-issues", async (req, res) => {
   try {
     const limit = parseLimit(req.query.limit);
-    const beforeDeadLetteredAt = parseCursorPart(req.query.beforeDeadLetteredAt);
+    const beforeCreatedAt = parseCursorPart(req.query.beforeCreatedAt);
     const beforeId = parseCursorPart(req.query.beforeId);
 
-    const useCursor = Boolean(beforeDeadLetteredAt && beforeId);
+    const useCursor = Boolean(beforeCreatedAt && beforeId);
 
     const result = useCursor
       ? await pg.query(
           `
           SELECT
             id,
-            issue_id,
-            subscriber_email,
+            organization_id,
+            title,
             status,
-            retry_count,
-            last_error,
-            dead_lettered_at,
             created_at
-          FROM newsletter_deliveries
-          WHERE dead_lettered_at IS NOT NULL
-            AND (dead_lettered_at, id) < ($2::timestamptz, $3::uuid)
-          ORDER BY dead_lettered_at DESC, id DESC
+          FROM newsletter_issues
+          WHERE (created_at, id) < ($2::timestamptz, $3::uuid)
+          ORDER BY created_at DESC, id DESC
           LIMIT $1
           `,
-          [limit, beforeDeadLetteredAt, beforeId]
+          [limit, beforeCreatedAt, beforeId]
         )
       : await pg.query(
           `
           SELECT
             id,
-            issue_id,
-            subscriber_email,
+            organization_id,
+            title,
             status,
-            retry_count,
-            last_error,
-            dead_lettered_at,
             created_at
-          FROM newsletter_deliveries
-          WHERE dead_lettered_at IS NOT NULL
-          ORDER BY dead_lettered_at DESC, id DESC
+          FROM newsletter_issues
+          ORDER BY created_at DESC, id DESC
           LIMIT $1
           `,
           [limit]
         );
 
-    const deliveries = result.rows;
-    const last = deliveries.length > 0 ? deliveries[deliveries.length - 1] : null;
+    const issues = result.rows;
+    const last = issues.length > 0 ? issues[issues.length - 1] : null;
 
     res.status(200).json({
-      count: deliveries.length,
+      count: issues.length,
       limit,
-      beforeDeadLetteredAt: useCursor ? beforeDeadLetteredAt : null,
+      beforeCreatedAt: useCursor ? beforeCreatedAt : null,
       beforeId: useCursor ? beforeId : null,
       nextCursor: last
         ? {
-            dead_lettered_at: last.dead_lettered_at,
+            created_at: last.created_at,
             id: last.id
           }
         : null,
-      deliveries
+      issues
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "admin_dead_letter_deliveries_query_failed" });
+    res.status(500).json({ error: "admin_newsletter_issues_query_failed" });
   }
 });
 

@@ -32,6 +32,23 @@ import { errorHandler } from "./middleware/errorHandler.js";
 
 import { lemonWebhook } from "./webhooks/lemonWebhook.js";
 import { buildRoutes } from "./routes/index.js";
+import signalsRouter from "./routes/signals.js";
+import insightsRouter from "./routes/insights.js";
+import trendsRouter from "./routes/trends.js";
+import topRisksRouter from "./routes/topRisks.js";
+import topRisksSummaryRouter from "./routes/topRisksSummary.js";
+
+/* =========================================================
+   TYPE AUGMENTATION
+   ========================================================= */
+
+declare global {
+  namespace Express {
+    interface Request {
+      rawBody?: string | Buffer;
+    }
+  }
+}
 
 /* =========================================================
    BOOT-TIME GUARDS
@@ -46,39 +63,19 @@ runSelfTest();
 
 const app = express();
 
-/**
- * Enterprise default:
- * Keep PORT stable and explicit.
- */
 const PORT = Number(process.env.PORT ?? 4000);
 
 const nodeEnv = (process.env.NODE_ENV ?? "").trim();
 const isDev = nodeEnv === "development";
 const isProd = nodeEnv === "production";
 
-/**
- * Enterprise:
- * Debug routes must NEVER be controlled by NODE_ENV alone.
- * They require an explicit opt-in flag.
- */
 const debugEnabled =
   isDev && (process.env.ENABLE_DEBUG_ROUTES ?? "").trim() === "true";
 
-/**
- * Enterprise:
- * Emergency kill switch.
- * When true:
- * - Public /issues API is disabled
- * - Admin endpoints remain available (for recovery)
- */
 const publicApiDisabled =
   (process.env.SECURELOGIC_DISABLE_PUBLIC_API ?? "").trim().toLowerCase() ===
   "true";
 
-/**
- * Enterprise:
- * We are deployed behind a proxy (Render / Cloudflare).
- */
 app.set("trust proxy", 1);
 
 /* =========================================================
@@ -169,34 +166,11 @@ app.use((_req, res, next) => {
 
 app.use(hpp());
 
-/**
- * Block unexpected OPTIONS requests.
- */
 app.use(rejectUnexpectedOptions);
-
-/**
- * Block HTTP method override attacks early.
- */
 app.use(rejectInvalidMethodOverride);
-
-/**
- * Block absurd request headers early.
- */
 app.use(rejectOversizedHeaders);
-
-/**
- * Block absurd URL length early.
- */
 app.use(rejectOversizedUrl);
-
-/**
- * Enterprise: Fail closed on chunked request bodies.
- */
 app.use(rejectChunkedBodies);
-
-/**
- * Block absurd request body size early (before JSON parse).
- */
 app.use(rejectOversizedBody);
 
 app.use(
@@ -247,14 +221,13 @@ app.use((_req, res, next) => {
 
 app.use((req, res, next) => {
   const method = req.method.toUpperCase();
-
   const isBodyMethod =
     method === "POST" || method === "PUT" || method === "PATCH";
 
-  /**
-   * Webhooks MUST be excluded because they are raw-body verified.
-   */
-  if (req.originalUrl.startsWith("/webhooks/lemon")) {
+  if (
+    req.originalUrl.startsWith("/webhooks/lemon") ||
+    req.originalUrl.startsWith("/webhooks/email/resend")
+  ) {
     next();
     return;
   }
@@ -326,7 +299,7 @@ app.post(
     limit: "256kb"
   }),
   (req, _res, next) => {
-    (req as any).rawBody = req.body;
+    req.rawBody = req.body;
     next();
   },
   verifyLemonWebhook,
@@ -337,30 +310,34 @@ app.post(
    BODY PARSER (MUST BE AFTER RAW WEBHOOKS)
    ========================================================= */
 
-app.use(express.json({ limit: "256kb" }));
+app.use(
+  express.json({
+    limit: "256kb",
+    verify: (req, _res, buf) => {
+      req.rawBody = buf.toString("utf8");
+    }
+  })
+);
 
-/**
- * MUST be immediately after express.json()
- * so invalid JSON becomes a clean 400.
- */
 app.use(rejectInvalidJson);
-
 app.use(express.urlencoded({ extended: false, limit: "256kb" }));
 
 /* =========================================================
    ROUTES (ENTERPRISE)
    ========================================================= */
 
-/**
- * All routing is centralized in routes/index.ts.
- * server.ts should never mount /admin or /issues directly.
- */
 app.use(
   buildRoutes({
     isDev,
     publicApiDisabled
   })
 );
+
+app.use("/api", signalsRouter);
+app.use("/api", insightsRouter);
+app.use("/api", trendsRouter);
+app.use("/api", topRisksRouter);
+app.use("/api", topRisksSummaryRouter);
 
 /* =========================================================
    404 HANDLER (ENTERPRISE)
@@ -394,7 +371,7 @@ const server = app.listen(PORT, "0.0.0.0", () => {
       debugEnabled,
       publicApiDisabled
     },
-    "SecureLogic Issue API started"
+    "SecureLogic Engine API started"
   );
 });
 

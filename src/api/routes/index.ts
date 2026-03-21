@@ -1,5 +1,8 @@
 import { Router, type Request, type Response } from "express";
 
+import adminOpsDashboardRouter from "./adminOpsDashboard.js";
+import unsubscribeRouter from "./unsubscribe.js";
+
 import newsletterIssuesRouter from "./newsletterIssues.js";
 import newsletterDeliveriesRouter from "./newsletterDeliveries.js";
 import subscribersRouter from "./subscribers.js";
@@ -20,6 +23,7 @@ import adminEmailSuppressionsRouter from "./adminEmailSuppressions.js";
 import adminCreateEmailSuppressionRouter from "./adminCreateEmailSuppression.js";
 import adminDeleteEmailSuppressionRouter from "./adminDeleteEmailSuppression.js";
 import adminEmailProviderEventsRouter from "./adminEmailProviderEvents.js";
+import adminEmailProviderEventByIdRouter from "./adminEmailProviderEventById.js";
 import adminDeliveryMetricsRouter from "./adminDeliveryMetrics.js";
 import adminIssueDeliveryMetricsRouter from "./adminIssueDeliveryMetrics.js";
 import adminOpsOverviewRouter from "./adminOpsOverview.js";
@@ -89,10 +93,13 @@ export function buildRoutes(opts: RoutesOptions): Router {
   });
 
   router.use("/", emailProviderWebhookRouter);
+  router.use("/", unsubscribeRouter);
 
   router.use("/api", newsletterIssuesRouter);
   router.use("/api", newsletterDeliveriesRouter);
   router.use("/api", subscribersRouter);
+
+  router.use("/admin/ops/dashboard", adminOpsDashboardRouter);
 
   const adminChain = [
     requireAdminNetwork,
@@ -119,6 +126,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/admin", adminCreateEmailSuppressionRouter);
   router.use("/admin", adminDeleteEmailSuppressionRouter);
   router.use("/admin", adminEmailProviderEventsRouter);
+  router.use("/admin", adminEmailProviderEventByIdRouter);
   router.use("/admin", adminDeliveryMetricsRouter);
   router.use("/admin", adminIssueDeliveryMetricsRouter);
   router.use("/admin", adminOpsOverviewRouter);
