@@ -92,7 +92,8 @@ export async function runPipeline(): Promise<PipelineResult> {
   }
 
   try {
-    newslettersCreated = await generateNewsletter();
+    const newsletters = await generateNewsletter();
+    newslettersCreated = Array.isArray(newsletters) ? newsletters.length : 0;
   } catch (err) {
     console.error("Newsletter generation failed");
     console.error(err);
