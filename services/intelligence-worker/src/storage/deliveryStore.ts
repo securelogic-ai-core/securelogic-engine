@@ -1,17 +1,16 @@
-import { db } from "./db";
+import { pg } from "../../../../src/api/infra/postgres.js";
 
-export function recordDelivery(issueId: number, email: string, status: string) {
-
-  const stmt = db.prepare(`
+export async function recordDelivery(
+  issueId: number,
+  email: string,
+  status: string
+) {
+  await pg.query(
+    `
     INSERT INTO newsletter_deliveries
     (issue_id, subscriber_email, delivered_at, status)
-    VALUES (?, ?, ?, ?)
-  `);
-
-  stmt.run(
-    issueId,
-    email,
-    new Date().toISOString(),
-    status
+    VALUES ($1, $2, $3, $4)
+    `,
+    [issueId, email, new Date().toISOString(), status]
   );
 }
