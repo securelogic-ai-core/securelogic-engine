@@ -1,27 +1,29 @@
 import { pg } from "../../../../src/api/infra/postgres.js";
 
 export type PostgresSignalInput = {
-  organizationId?: string | null
-  category: string
-  title: string
-  source: string
-  sourceUrl: string
-  summary?: string | null
-  rawContent?: string | null
-  tags?: string[]
-  externalId?: string
-  sourceSystem?: string
-  publishedAt?: string
-  processed?: boolean
-  impactScore?: number | null
-  noveltyScore?: number | null
-  relevanceScore?: number | null
-  priority?: number | null
-}
+  organizationId?: string | null;
+  category: string;
+  title: string;
+  source: string;
+  sourceUrl: string;
+  summary?: string | null;
+  rawContent?: string | null;
+  tags?: string[];
+  externalId?: string;
+  sourceSystem?: string;
+  publishedAt?: string;
+  processed?: boolean;
+  impactScore?: number | null;
+  noveltyScore?: number | null;
+  relevanceScore?: number | null;
+  priority?: number | null;
+};
 
 function normalizeTags(tags?: string[]): string[] {
-  if (!Array.isArray(tags)) return []
-  return tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0)
+  if (!Array.isArray(tags)) return [];
+  return tags.filter(
+    (tag): tag is string => typeof tag === "string" && tag.trim().length > 0
+  );
 }
 
 async function getDefaultOrganizationId(): Promise<string> {
@@ -30,20 +32,20 @@ async function getDefaultOrganizationId(): Promise<string> {
     FROM organizations
     ORDER BY created_at ASC
     LIMIT 1
-  `)
+  `);
 
-  const organizationId = result.rows[0]?.id as string | undefined
+  const organizationId = result.rows[0]?.id as string | undefined;
 
   if (!organizationId) {
-    throw new Error("No organization found for signal storage")
+    throw new Error("No organization found for signal storage");
   }
 
-  return organizationId
+  return organizationId;
 }
 
 export async function saveSignal(signal: PostgresSignalInput) {
-  const normalizedTags = normalizeTags(signal.tags)
-  const organizationId = signal.organizationId ?? await getDefaultOrganizationId()
+  const normalizedTags = normalizeTags(signal.tags);
+  const organizationId = signal.organizationId ?? (await getDefaultOrganizationId());
 
   if (signal.externalId) {
     const existing = await pg.query(
@@ -54,10 +56,10 @@ export async function saveSignal(signal: PostgresSignalInput) {
       LIMIT 1
       `,
       [signal.externalId]
-    )
+    );
 
     if (existing.rows.length > 0) {
-      const existingId = existing.rows[0].id as string
+      const existingId = existing.rows[0].id as string;
 
       await pg.query(
         `
@@ -98,9 +100,9 @@ export async function saveSignal(signal: PostgresSignalInput) {
           signal.relevanceScore ?? null,
           signal.priority ?? null
         ]
-      )
+      );
 
-      return existingId
+      return existingId;
     }
   }
 
@@ -145,7 +147,21 @@ export async function saveSignal(signal: PostgresSignalInput) {
       signal.relevanceScore ?? null,
       signal.priority ?? null
     ]
-  )
+  );
 
-  return result.rows[0]?.id ?? null
+  return result.rows[0]?.id ?? null;
+}
+
+export async function getSignals(limit = 100) {
+  const result = await pg.query(
+    `
+    SELECT *
+    FROM signals
+    ORDER BY created_at DESC
+    LIMIT $1
+    `,
+    [limit]
+  );
+
+  return result.rows;
 }

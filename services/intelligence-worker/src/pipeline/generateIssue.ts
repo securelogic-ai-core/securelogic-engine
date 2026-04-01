@@ -1,25 +1,36 @@
-import { db } from "../storage/db";
+import { createIssue } from "../storage/postgresIssueStore.js";
 
-export function generateIssue(insights:any[]) {
-
+export async function generateIssue(insights: any[]) {
   const title = "SecureLogic Weekly Intelligence #" + Date.now();
 
-  const content = insights.map(i => `
-  <h3>${i.title}</h3>
-  <p>${i.summary}</p>
+  const contentHtml = insights
+    .map(
+      (i) => `
+  <h3>${i.title ?? "Untitled Insight"}</h3>
+  <p>${i.summary ?? i.analysis ?? ""}</p>
   <hr/>
-  `).join("");
+  `
+    )
+    .join("");
 
-  const result = db.prepare(`
-    INSERT INTO newsletter_issues
-    (title,content_html,created_at,status)
-    VALUES (?,?,?,?)
-  `).run(
+  const contentMd = insights
+    .map(
+      (i) => `
+### ${i.title ?? "Untitled Insight"}
+
+${i.summary ?? i.analysis ?? ""}
+`
+    )
+    .join("\n");
+
+  const issueId = await createIssue({
     title,
-    content,
-    new Date().toISOString(),
-    "draft"
-  );
+    contentHtml,
+    contentMd,
+    status: "draft",
+    audienceTier: "free",
+    summary: "Generated newsletter issue"
+  });
 
-  return result.lastInsertRowid;
+  return issueId;
 }
