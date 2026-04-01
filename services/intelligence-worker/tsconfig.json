@@ -3,14 +3,14 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Node",
-    "outDir": "dist-intelligence-worker",
+    "outDir": "../../dist-intelligence-worker",
     "rootDir": "../..",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true
   },
   "include": [
-    "services/intelligence-worker/src",
-    "src/api/infra"
+    "src",
+    "../../src/api/infra"
   ]
 }
