@@ -1,11 +1,5 @@
-import { db } from "../storage/db";
+import { markIssueSent } from "../storage/postgresIssueStore.js";
 
-export function publishIssue(issueId:number){
-
-  db.prepare(`
-    UPDATE newsletter_issues
-    SET status='sent'
-    WHERE id=?
-  `).run(issueId);
-
+export async function publishIssue(issueId: string) {
+  await markIssueSent(issueId);
 }

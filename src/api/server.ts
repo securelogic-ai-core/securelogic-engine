@@ -1,5 +1,9 @@
 import "dotenv/config";
 
+import session from "express-session";
+
+import cookieParser from "cookie-parser";
+
 import express, { type Request, type Response } from "express";
 import bodyParser from "body-parser";
 
@@ -321,6 +325,38 @@ app.use(
 
 app.use(rejectInvalidJson);
 app.use(express.urlencoded({ extended: false, limit: "256kb" }));
+
+/* =========================================================
+   COOKIE PARSER
+   ========================================================= */
+
+app.use(cookieParser());
+
+/* =========================================================
+   SESSION (CRITICAL FOR ADMIN AUTH)
+   ========================================================= */
+
+const sessionSecret = process.env.SESSION_SECRET || "dev-secret";
+
+app.use(
+  session({
+    name: "securelogic.sid",
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+
+      // 🔥 REQUIRED for github.dev (cross-site iframe/domain)
+      sameSite: "none",
+
+      // 🔥 REQUIRED when sameSite = none
+      secure: true,
+
+      maxAge: 1000 * 60 * 60 * 4 // 4 hours
+    }
+  })
+);
 
 /* =========================================================
    ROUTES (ENTERPRISE)

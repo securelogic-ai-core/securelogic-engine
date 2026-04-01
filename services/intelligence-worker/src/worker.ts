@@ -4,8 +4,8 @@ import { generateInsight } from "./pipeline/generateInsight.js";
 
 import { sendNewsletter } from "./delivery/sendNewsletter.js";
 
-import { saveSignal } from "./storage/signalStore.js";
-import { saveInsight } from "./storage/insightStore.js";
+import { saveSignal } from "./storage/postgresSignalStore.js";
+import { saveInsight } from "./storage/postgresInsightStore.js";
 
 import { publishInsight } from "./publishers/publishInsight.js";
 
@@ -16,18 +16,50 @@ import { fetchAIGovernanceSignals } from "./sources/aiGovernanceFeed.js";
 import { isDuplicateSignal } from "./utils/dedupe.js";
 
 import { buildNewsletterIssue } from "./newsletter/newsletterBuilder.js";
-import { saveNewsletter } from "./newsletter/newsletterStore.js";
+import { createIssue } from "./storage/postgresIssueStore.js";
 import { renderNewsletter } from "./render/renderNewsletter.js";
 import { renderNewsletterHtml } from "./render/renderNewsletterHtml.js";
 
 async function processSignal(event: any) {
   const signal = normalizeSignal(event);
-  await saveSignal(signal);
+
+  const signalId = await saveSignal({
+    category: signal.category ?? "general",
+    title: signal.title,
+    source: signal.source ?? "unknown",
+    sourceUrl: signal.url ?? signal.sourceUrl ?? "",
+    summary: signal.summary ?? null,
+    rawContent: signal.rawContent ?? null,
+    tags: signal.tags ?? [],
+    externalId: signal.externalId ?? signal.url ?? undefined,
+    sourceSystem: signal.sourceSystem ?? signal.source ?? null,
+    publishedAt: signal.publishedAt ?? null,
+    processed: true,
+    impactScore: signal.impactScore ?? null,
+    noveltyScore: signal.noveltyScore ?? null,
+    relevanceScore: signal.relevanceScore ?? null,
+    priority: signal.priority ?? null
+  });
 
   const scored = scoreSignal(signal);
   const insight = await generateInsight(scored);
 
-  await saveInsight(insight);
+  if (!signalId) {
+    throw new Error("Failed to persist signal before saving insight");
+  }
+
+  await saveInsight({
+    signalId: String(signalId),
+    title: insight.title ?? signal.title,
+    analysis: insight.analysis ?? insight.summary ?? "",
+    riskImplication: insight.riskImplication ?? null,
+    recommendation: insight.recommendation ?? null,
+    riskLevel: insight.riskLevel ?? null,
+    audience: insight.audience ?? null,
+    published: false,
+    linkedSources: insight.linkedSources ?? []
+  });
+
   await publishInsight(insight);
 }
 
@@ -44,7 +76,7 @@ export async function runWorker() {
     ...aiSignals
   ];
 
-  console.log(`Signals fetched: ${signals.length}`);
+  console.log(\`Signals fetched: \${signals.length}\`);
 
   let processedCount = 0;
   let skippedCount = 0;
@@ -59,8 +91,8 @@ export async function runWorker() {
     processedCount += 1;
   }
 
-  console.log(`Signals processed: ${processedCount}`);
-  console.log(`Signals skipped as duplicates: ${skippedCount}`);
+  console.log(\`Signals processed: \${processedCount}\`);
+  console.log(\`Signals skipped as duplicates: \${skippedCount}\`);
 
   if (processedCount === 0) {
     console.log("No new signals detected. Newsletter rebuild skipped.");
@@ -69,21 +101,34 @@ export async function runWorker() {
   }
 
   const issue = await buildNewsletterIssue();
-  await saveNewsletter(issue);
   await renderNewsletter(issue);
   await renderNewsletterHtml(issue);
 
-/* Weekly send guard */
-const today = new Date().getUTCDay(); // 0=Sunday, 1=Monday
+  const issueId = await createIssue({
+    title: issue.title,
+    contentMd: issue.content_md ?? issue.contentMd ?? "",
+    contentHtml: issue.content_html ?? issue.contentHtml ?? "",
+    status: "draft",
+    audienceTier: issue.audienceTier ?? "free",
+    summary: issue.summary ?? "Generated newsletter issue",
+    sectionsJson: issue.sections ?? []
+  });
 
-if (today === 1) {
-  console.log("Weekly send window detected. Sending newsletter.");
-  await sendNewsletter();
-} else {
-  console.log("Newsletter generated but not sent (weekly schedule guard).");
-}
+  const persistedIssue = {
+    ...issue,
+    id: issueId
+  };
 
-  console.log("Newsletter issue built:", issue.title);
+  const today = new Date().getUTCDay();
+
+  if (today === 1) {
+    console.log("Weekly send window detected. Sending newsletter.");
+    await sendNewsletter(persistedIssue);
+  } else {
+    console.log("Newsletter generated but not sent (weekly schedule guard).");
+  }
+
+  console.log("Newsletter issue built:", persistedIssue.title);
   console.log("Newsletter markdown rendered.");
   console.log("Newsletter HTML rendered.");
   console.log("Newsletter delivery step completed.");
