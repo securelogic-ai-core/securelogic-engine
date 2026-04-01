@@ -1,22 +1,32 @@
-import { db } from "./db";
+import { pg } from "../../../../src/api/infra/postgres.js";
 
-export function saveSignal(signal: any) {
-  const stmt = db.prepare(`
-    INSERT OR IGNORE INTO signals
+export async function saveSignal(signal: any) {
+  await pg.query(
+    `
+    INSERT INTO signals
     (source, title, url, published_at, normalized_score, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-
-  stmt.run(
-    signal.source,
-    signal.title,
-    signal.url,
-    signal.publishedAt,
-    signal.score || 0,
-    new Date().toISOString()
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (url) DO NOTHING
+    `,
+    [
+      signal.source,
+      signal.title,
+      signal.url,
+      signal.publishedAt,
+      signal.score || 0,
+      new Date().toISOString()
+    ]
   );
 }
 
-export function getSignals() {
-  return db.prepare("SELECT * FROM signals ORDER BY created_at DESC").all();
+export async function getSignals() {
+  const result = await pg.query(
+    `
+    SELECT *
+    FROM signals
+    ORDER BY created_at DESC
+    `
+  );
+
+  return result.rows;
 }
