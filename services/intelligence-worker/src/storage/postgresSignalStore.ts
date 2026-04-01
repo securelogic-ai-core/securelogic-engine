@@ -26,6 +26,12 @@ function normalizeTags(tags?: string[]): string[] {
   );
 }
 
+function normalizeText(value?: string | null): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 async function getDefaultOrganizationId(): Promise<string> {
   const result = await pg.query(`
     SELECT id
@@ -47,64 +53,10 @@ export async function saveSignal(signal: PostgresSignalInput) {
   const normalizedTags = normalizeTags(signal.tags);
   const organizationId = signal.organizationId ?? (await getDefaultOrganizationId());
 
-  if (signal.externalId) {
-    const existing = await pg.query(
-      `
-      SELECT id
-      FROM signals
-      WHERE external_id = $1
-      LIMIT 1
-      `,
-      [signal.externalId]
-    );
-
-    if (existing.rows.length > 0) {
-      const existingId = existing.rows[0].id as string;
-
-      await pg.query(
-        `
-        UPDATE signals
-        SET
-          organization_id = $2,
-          category = $3,
-          title = $4,
-          source = $5,
-          source_url = $6,
-          summary = $7,
-          raw_content = $8,
-          tags = $9::jsonb,
-          source_system = $10,
-          published_at = $11,
-          processed = $12,
-          impact_score = $13,
-          novelty_score = $14,
-          relevance_score = $15,
-          priority = $16
-        WHERE id = $1
-        `,
-        [
-          existingId,
-          organizationId,
-          signal.category,
-          signal.title,
-          signal.source,
-          signal.sourceUrl,
-          signal.summary ?? null,
-          signal.rawContent ?? null,
-          JSON.stringify(normalizedTags),
-          signal.sourceSystem ?? null,
-          signal.publishedAt ?? null,
-          signal.processed ?? false,
-          signal.impactScore ?? null,
-          signal.noveltyScore ?? null,
-          signal.relevanceScore ?? null,
-          signal.priority ?? null
-        ]
-      );
-
-      return existingId;
-    }
-  }
+  const externalId = normalizeText(signal.externalId);
+  const sourceUrl = normalizeText(signal.sourceUrl);
+  const sourceSystem = normalizeText(signal.sourceSystem);
+  const publishedAt = normalizeText(signal.publishedAt);
 
   const result = await pg.query(
     `
@@ -127,6 +79,21 @@ export async function saveSignal(signal: PostgresSignalInput) {
       priority
     )
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16)
+    ON CONFLICT (source, COALESCE(external_id, ''), COALESCE(source_url, ''))
+    DO UPDATE SET
+      organization_id = EXCLUDED.organization_id,
+      category = EXCLUDED.category,
+      title = EXCLUDED.title,
+      summary = EXCLUDED.summary,
+      raw_content = EXCLUDED.raw_content,
+      tags = EXCLUDED.tags,
+      source_system = EXCLUDED.source_system,
+      published_at = EXCLUDED.published_at,
+      processed = EXCLUDED.processed,
+      impact_score = EXCLUDED.impact_score,
+      novelty_score = EXCLUDED.novelty_score,
+      relevance_score = EXCLUDED.relevance_score,
+      priority = EXCLUDED.priority
     RETURNING id
     `,
     [
@@ -134,13 +101,13 @@ export async function saveSignal(signal: PostgresSignalInput) {
       signal.category,
       signal.title,
       signal.source,
-      signal.sourceUrl,
+      sourceUrl,
       signal.summary ?? null,
       signal.rawContent ?? null,
       JSON.stringify(normalizedTags),
-      signal.externalId ?? null,
-      signal.sourceSystem ?? null,
-      signal.publishedAt ?? null,
+      externalId,
+      sourceSystem,
+      publishedAt,
       signal.processed ?? false,
       signal.impactScore ?? null,
       signal.noveltyScore ?? null,
