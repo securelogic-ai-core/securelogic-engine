@@ -1,0 +1,15 @@
+{
+  "name": "intelligence-worker",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/runner.js"
+  },
+  "dependencies": {
+    "pg": "^8.11.0",
+    "redis": "^4.6.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
