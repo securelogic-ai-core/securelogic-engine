@@ -1,7 +1,7 @@
 import { db } from "./db.js";
 
 export async function saveInsight(insight: any) {
-  const result = await db.query(
+  const result = await db.execute(
     `
     INSERT INTO insights (
       signal_id,
@@ -34,11 +34,11 @@ export async function saveInsight(insight: any) {
     ]
   );
 
-  return result.rows[0]?.id ?? null;
+  return result?.rows?.[0]?.id ?? null;
 }
 
 export async function getInsights(limit = 100) {
-  const result = await db.query(
+  const result = await db.execute(
     `
     SELECT *
     FROM insights
@@ -48,5 +48,5 @@ export async function getInsights(limit = 100) {
     [limit]
   );
 
-  return result.rows;
+  return result?.rows ?? [];
 }
