@@ -1,6 +1,4 @@
-import fs from "fs/promises";
-
-const INSIGHTS_FILE = "./data/insights.json";
+import { getInsights } from "../storage/postgresInsightStore.js";
 
 function riskRank(level: string) {
   if (level === "high") return 3;
@@ -12,7 +10,7 @@ function dedupeInsights(insights: any[]) {
   const seen = new Map<string, any>();
 
   for (const insight of insights) {
-    const key = insight.signalId || insight.id;
+    const key = insight.signal_id || insight.signalId || insight.id;
     if (!key) continue;
 
     const existing = seen.get(key);
@@ -21,8 +19,8 @@ function dedupeInsights(insights: any[]) {
       continue;
     }
 
-    const existingRank = riskRank(existing.riskLevel);
-    const currentRank = riskRank(insight.riskLevel);
+    const existingRank = riskRank(existing.risk_level || existing.riskLevel || "low");
+    const currentRank = riskRank(insight.risk_level || insight.riskLevel || "low");
 
     if (currentRank >= existingRank) {
       seen.set(key, insight);
@@ -33,7 +31,11 @@ function dedupeInsights(insights: any[]) {
 }
 
 function sortByPriority(items: any[]) {
-  return items.sort((a, b) => riskRank(b.riskLevel) - riskRank(a.riskLevel));
+  return items.sort(
+    (a, b) =>
+      riskRank(b.risk_level || b.riskLevel || "low") -
+      riskRank(a.risk_level || a.riskLevel || "low")
+  );
 }
 
 function groupByCategory(insights: any[]) {
@@ -68,8 +70,13 @@ function buildSectionSummary(title: string, items: any[]) {
     return `No significant ${title.toLowerCase()} signals were detected in this cycle.`;
   }
 
-  const high = items.filter((i) => i.riskLevel === "high").length;
-  const medium = items.filter((i) => i.riskLevel === "medium").length;
+  const high = items.filter(
+    (i) => (i.risk_level || i.riskLevel) === "high"
+  ).length;
+
+  const medium = items.filter(
+    (i) => (i.risk_level || i.riskLevel) === "medium"
+  ).length;
 
   if (title === "Security Incidents") {
     if (high > 0) {
@@ -98,7 +105,10 @@ function buildSectionSummary(title: string, items: any[]) {
 }
 
 function buildExecutiveHeadline(grouped: Record<string, any[]>) {
-  const securityHigh = grouped.SECURITY_INCIDENT.filter((i) => i.riskLevel === "high").length;
+  const securityHigh = grouped.SECURITY_INCIDENT.filter(
+    (i) => (i.risk_level || i.riskLevel) === "high"
+  ).length;
+
   const regulationCount = grouped.REGULATION.length;
   const aiCount = grouped.AI_GOVERNANCE.length;
 
@@ -122,10 +132,17 @@ function buildTopSignals(insights: any[]) {
 }
 
 export async function buildNewsletterIssue() {
-  const raw = await fs.readFile(INSIGHTS_FILE, "utf8");
-  const insights = JSON.parse(raw);
+  const insights = await getInsights(100);
 
-  const deduped = dedupeInsights(insights);
+  const normalized = insights.map((insight: any) => ({
+    ...insight,
+    signalId: insight.signal_id ?? insight.signalId,
+    riskLevel: insight.risk_level ?? insight.riskLevel,
+    category: insight.category ?? "GENERAL",
+    summary: insight.analysis ?? insight.summary ?? ""
+  }));
+
+  const deduped = dedupeInsights(normalized);
   const grouped = groupByCategory(deduped);
 
   return {
