@@ -114,13 +114,13 @@ export async function runWorker() {
   }
 
   const issue = (await buildNewsletterIssue()) as any;
-  await renderNewsletter(issue);
-  await renderNewsletterHtml(issue);
+  const markdown = await renderNewsletter(issue);
+  const html = await renderNewsletterHtml(issue);
 
   const issueId = await createIssue({
     title: issue.title,
-    contentMd: JSON.stringify(issue, null, 2),
-    contentHtml: `<pre>${JSON.stringify(issue, null, 2)}</pre>`,
+    contentMd: markdown,
+    contentHtml: html,
     status: "draft",
     audienceTier: "free",
     summary: issue.executiveHeadline ?? "Generated newsletter issue",
@@ -130,7 +130,8 @@ export async function runWorker() {
   const persistedIssue = {
     ...issue,
     id: issueId,
-    content_html: `<pre>${JSON.stringify(issue, null, 2)}</pre>`
+    content_html: html,
+    content_md: markdown
   };
 
   const today = new Date().getUTCDay();
