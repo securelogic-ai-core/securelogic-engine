@@ -1,6 +1,5 @@
 import { Signal } from "../models/Signal.js";
 import { SignalIngestedEvent } from "../types/events.js";
-import { cleanText } from "../utils/contentSanitizer.js";
 import { classifyCategory } from "./classifyCategory.js";
 
 export function normalizeSignal(event: SignalIngestedEvent): Signal {
@@ -9,15 +8,15 @@ export function normalizeSignal(event: SignalIngestedEvent): Signal {
       ? event.payload
       : JSON.stringify(event.payload);
 
-  const cleaned = cleanText(raw);
+  const classification = classifyCategory(event.title, raw);
 
   return {
     id: event.signalId,
-    title: cleanText(event.title),
+    title: event.title,
     source: event.source,
-    category: classifyCategory(event.title, cleaned),
-    summary: cleaned.slice(0, 200),
-    rawContent: cleaned,
+    category: classification.primary,
+    summary: raw.slice(0, 200),
+    rawContent: raw,
     tags: [],
     timestamp: event.timestamp,
     processed: false

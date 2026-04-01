@@ -1,35 +1,52 @@
-import { cleanText } from "../utils/contentSanitizer.js";
-import { pool } from "./db.js";
+import { db } from "./db.js";
 
 export async function saveInsight(insight: any) {
-  const query = `
+  const result = await db.query(
+    `
     INSERT INTO insights (
       signal_id,
       title,
       analysis,
+      risk_implication,
       recommendation,
       risk_level,
       audience,
-      category,
       published,
-      linked_sources
+      linked_sources,
+      category
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
     RETURNING id
-  `;
+    `,
+    [
+      insight.signalId,
+      insight.title,
+      insight.analysis ?? "",
+      insight.riskImplication ?? null,
+      insight.recommendation ?? null,
+      insight.riskLevel ?? "low",
+      Array.isArray(insight.audience)
+        ? insight.audience.join(", ")
+        : insight.audience ?? null,
+      insight.published ?? false,
+      insight.linkedSources ?? [],
+      insight.category ?? "GENERAL"
+    ]
+  );
 
-  const values = [
-    insight.signalId,
-    cleanText(insight.title),
-    cleanText(insight.analysis),
-    cleanText(insight.recommendation),
-    insight.riskLevel,
-    insight.audience,
-    insight.category,
-    false,
-    insight.linkedSources || []
-  ];
+  return result.rows[0]?.id ?? null;
+}
 
-  const result = await pool.query(query, values);
-  return result.rows[0].id;
+export async function getInsights(limit = 100) {
+  const result = await db.query(
+    `
+    SELECT *
+    FROM insights
+    ORDER BY created_at DESC
+    LIMIT $1
+    `,
+    [limit]
+  );
+
+  return result.rows;
 }

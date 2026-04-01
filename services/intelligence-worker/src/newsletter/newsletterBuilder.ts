@@ -1,6 +1,4 @@
 import { getInsights } from "../storage/postgresInsightStore.js";
-import { cleanText } from "../utils/contentSanitizer.js";
-import { normalizeCategory } from "../utils/categoryMapper.js";
 
 function riskRank(level: string) {
   if (level === "high") return 3;
@@ -8,11 +6,24 @@ function riskRank(level: string) {
   return 1;
 }
 
+function normalizeCategory(value: unknown): string {
+  const raw = String(value ?? "").trim().toUpperCase();
+
+  if (!raw) return "GENERAL";
+  if (raw.includes("AI")) return "AI_GOVERNANCE";
+  if (raw.includes("SECURITY")) return "SECURITY_INCIDENT";
+  if (raw.includes("REGULATION")) return "REGULATION";
+  if (raw.includes("VENDOR")) return "VENDOR_RISK";
+  if (raw.includes("COMPLIANCE")) return "COMPLIANCE_UPDATE";
+
+  return "GENERAL";
+}
+
 function dedupeInsights(insights: any[]) {
   const seen = new Map<string, any>();
 
   for (const insight of insights) {
-    const key = insight.signalId || insight.id;
+    const key = insight.signal_id || insight.signalId || insight.id;
     if (!key) continue;
 
     const existing = seen.get(key);
@@ -21,8 +32,8 @@ function dedupeInsights(insights: any[]) {
       continue;
     }
 
-    const existingRank = riskRank(existing.riskLevel || "low");
-    const currentRank = riskRank(insight.riskLevel || "low");
+    const existingRank = riskRank(existing.risk_level || existing.riskLevel || "low");
+    const currentRank = riskRank(insight.risk_level || insight.riskLevel || "low");
 
     if (currentRank >= existingRank) {
       seen.set(key, insight);
@@ -35,8 +46,8 @@ function dedupeInsights(insights: any[]) {
 function sortByPriority(items: any[]) {
   return items.sort(
     (a, b) =>
-      riskRank(b.riskLevel || "low") -
-      riskRank(a.riskLevel || "low")
+      riskRank(b.risk_level || b.riskLevel || "low") -
+      riskRank(a.risk_level || a.riskLevel || "low")
   );
 }
 
@@ -71,8 +82,13 @@ function buildSectionSummary(title: string, items: any[]) {
     return `No significant ${title.toLowerCase()} signals were detected in this cycle.`;
   }
 
-  const high = items.filter(i => i.riskLevel === "high").length;
-  const medium = items.filter(i => i.riskLevel === "medium").length;
+  const high = items.filter(
+    (i) => (i.risk_level || i.riskLevel) === "high"
+  ).length;
+
+  const medium = items.filter(
+    (i) => (i.risk_level || i.riskLevel) === "medium"
+  ).length;
 
   if (title === "Security Incidents") {
     if (high > 0) {
@@ -101,7 +117,10 @@ function buildSectionSummary(title: string, items: any[]) {
 }
 
 function buildExecutiveHeadline(grouped: Record<string, any[]>) {
-  const securityHigh = grouped.SECURITY_INCIDENT.filter(i => i.riskLevel === "high").length;
+  const securityHigh = grouped.SECURITY_INCIDENT.filter(
+    (i) => (i.risk_level || i.riskLevel) === "high"
+  ).length;
+
   const regulationCount = grouped.REGULATION.length;
   const aiCount = grouped.AI_GOVERNANCE.length;
 
@@ -128,14 +147,11 @@ export async function buildNewsletterIssue() {
   const insights = await getInsights(100);
 
   const normalized = insights.map((insight: any) => ({
+    ...insight,
     signalId: insight.signal_id ?? insight.signalId,
-    riskLevel: insight.risk_level ?? insight.riskLevel ?? "low",
+    riskLevel: insight.risk_level ?? insight.riskLevel,
     category: normalizeCategory(insight.category),
-    title: cleanText(insight.title || ""),
-    summary: cleanText(insight.analysis ?? insight.summary ?? ""),
-    recommendation: cleanText(insight.recommendation || ""),
-    audience: insight.audience ?? "",
-    ...insight
+    summary: insight.analysis ?? insight.summary ?? ""
   }));
 
   const deduped = dedupeInsights(normalized);
@@ -145,11 +161,8 @@ export async function buildNewsletterIssue() {
     id: `NEWS-${Date.now()}`,
     title: "SecureLogic Intelligence Brief",
     createdAt: new Date().toISOString(),
-
     executiveHeadline: buildExecutiveHeadline(grouped),
-
     topSignals: buildTopSignals(deduped),
-
     summaries: {
       aiGovernance: buildSectionSummary("AI Governance", grouped.AI_GOVERNANCE),
       securityIncidents: buildSectionSummary("Security Incidents", grouped.SECURITY_INCIDENT),
@@ -158,7 +171,6 @@ export async function buildNewsletterIssue() {
       compliance: buildSectionSummary("Compliance", grouped.COMPLIANCE_UPDATE),
       general: buildSectionSummary("General", grouped.GENERAL)
     },
-
     sections: {
       aiGovernance: grouped.AI_GOVERNANCE.slice(0, 3),
       securityIncidents: grouped.SECURITY_INCIDENT.slice(0, 5),
