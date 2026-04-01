@@ -1,7 +1,7 @@
-import { db } from "./db.js";
+import { pg } from "../../../../src/api/infra/postgres.js";
 
 export async function saveInsight(insight: any) {
-  const result = await db.execute(
+  const result = await pg.query(
     `
     INSERT INTO insights (
       signal_id,
@@ -11,16 +11,16 @@ export async function saveInsight(insight: any) {
       recommendation,
       risk_level,
       audience,
+      category,
       published,
-      linked_sources,
-      category
+      linked_sources
     )
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
     RETURNING id
     `,
     [
       insight.signalId,
-      insight.title,
+      insight.title ?? "",
       insight.analysis ?? "",
       insight.riskImplication ?? null,
       insight.recommendation ?? null,
@@ -28,17 +28,17 @@ export async function saveInsight(insight: any) {
       Array.isArray(insight.audience)
         ? insight.audience.join(", ")
         : insight.audience ?? null,
+      insight.category ?? "GENERAL",
       insight.published ?? false,
-      insight.linkedSources ?? [],
-      insight.category ?? "GENERAL"
+      insight.linkedSources ?? []
     ]
   );
 
-  return result?.rows?.[0]?.id ?? null;
+  return result.rows[0]?.id ?? null;
 }
 
 export async function getInsights(limit = 100) {
-  const result = await db.execute(
+  const result = await pg.query(
     `
     SELECT *
     FROM insights
@@ -48,5 +48,5 @@ export async function getInsights(limit = 100) {
     [limit]
   );
 
-  return result?.rows ?? [];
+  return result.rows;
 }
