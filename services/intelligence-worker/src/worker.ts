@@ -16,7 +16,10 @@ import { fetchAIGovernanceSignals } from "./sources/aiGovernanceFeed.js";
 import { isDuplicateSignal } from "./utils/dedupe.js";
 
 import { buildNewsletterIssue } from "./newsletter/newsletterBuilder.js";
-import { createIssue } from "./storage/postgresIssueStore.js";
+import {
+  createIssue,
+  getRecentDraftIssue
+} from "./storage/postgresIssueStore.js";
 import { renderNewsletter } from "./render/renderNewsletter.js";
 import { renderNewsletterHtml } from "./render/renderNewsletterHtml.js";
 
@@ -102,6 +105,14 @@ export async function runWorker() {
     return;
   }
 
+  const recentDraft = await getRecentDraftIssue(60);
+
+  if (recentDraft) {
+    console.log("Recent draft already exists. Skipping new draft creation.");
+    console.log("Worker cycle complete.");
+    return;
+  }
+
   const issue = (await buildNewsletterIssue()) as any;
   await renderNewsletter(issue);
   await renderNewsletterHtml(issue);
@@ -137,4 +148,5 @@ export async function runWorker() {
   console.log("Newsletter delivery step completed.");
   console.log("Worker cycle complete.");
 }
-  void runWorker();
+
+void runWorker();
