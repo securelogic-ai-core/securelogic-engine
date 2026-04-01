@@ -42,6 +42,36 @@ export async function createIssue(issue: PostgresIssueInput) {
   return result.rows[0].id as string;
 }
 
+export async function getLatestDraftIssue() {
+  const result = await pg.query(
+    `
+    SELECT *
+    FROM newsletter_issues
+    WHERE status = 'draft'
+    ORDER BY created_at DESC
+    LIMIT 1
+    `
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function getRecentDraftIssue(minutes = 60) {
+  const result = await pg.query(
+    `
+    SELECT *
+    FROM newsletter_issues
+    WHERE status = 'draft'
+      AND created_at >= NOW() - ($1::text || ' minutes')::interval
+    ORDER BY created_at DESC
+    LIMIT 1
+    `,
+    [String(minutes)]
+  );
+
+  return result.rows[0] ?? null;
+}
+
 export async function markIssueSent(issueId: string) {
   await pg.query(
     `
