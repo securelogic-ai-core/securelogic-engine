@@ -137,3 +137,4 @@ export async function runWorker() {
   console.log("Newsletter delivery step completed.");
   console.log("Worker cycle complete.");
 }
+  void runWorker();
