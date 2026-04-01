@@ -1,117 +1,89 @@
-import fs from "fs/promises";
+function renderAudience(audience: unknown) {
+  if (Array.isArray(audience)) {
+    return `- Audience: ${audience.join(", ")}\n`;
+  }
 
-const FILE = "./data/newsletter.md";
+  if (typeof audience === "string" && audience.trim().length > 0) {
+    return `- Audience: ${audience}\n`;
+  }
 
-function getAllItems(issue: any) {
-  return [
-    ...issue.sections.aiGovernance,
-    ...issue.sections.securityIncidents,
-    ...issue.sections.regulations,
-    ...issue.sections.vendorRisk,
-    ...issue.sections.compliance,
-    ...issue.sections.general
-  ];
-}
-
-function countRisk(items: any[], level: string) {
-  return items.filter((i) => i.riskLevel === level).length;
-}
-
-function renderRiskSnapshot(issue: any) {
-  const items = getAllItems(issue);
-
-  const high = countRisk(items, "high");
-  const medium = countRisk(items, "medium");
-  const low = countRisk(items, "low");
-
-  return `
-## Risk Snapshot
-
-- High Risk Signals: ${high}
-- Medium Risk Signals: ${medium}
-- Low Risk Signals: ${low}
-
-`;
-}
-
-function renderAudience(audience: string[]) {
-  if (!audience || audience.length === 0) return "";
-  return `- Audience: ${audience.join(", ")}\n`;
+  return "";
 }
 
 function renderTopSignals(topSignals: any[]) {
-  let md = `## Top Priority Signals\n\n`;
-
-  if (!topSignals.length) {
-    md += "_No priority signals identified._\n\n";
-    return md;
+  if (!Array.isArray(topSignals) || topSignals.length === 0) {
+    return "## Top Signals\n\nNo top signals available.\n";
   }
 
-  for (const item of topSignals) {
-    md += `### ${item.title}\n`;
-    md += `- Risk Level: ${item.riskLevel}\n`;
-    md += `- Category: ${item.category}\n`;
-    md += renderAudience(item.audience);
-    md += `- Analysis: ${item.analysis}\n\n`;
-  }
+  const items = topSignals
+    .map((signal) => {
+      const title = signal.title ?? "Untitled";
+      const category = signal.category ?? "GENERAL";
+      const riskLevel = signal.riskLevel ?? signal.risk_level ?? "low";
+      const analysis = signal.analysis ?? signal.summary ?? "";
+      const recommendation = signal.recommendation ?? "";
 
-  return md;
+      return [
+        `### ${title}`,
+        `- Category: ${category}`,
+        `- Risk Level: ${riskLevel}`,
+        renderAudience(signal.audience),
+        analysis ? `- Analysis: ${analysis}` : "",
+        recommendation ? `- Recommendation: ${recommendation}` : "",
+        ""
+      ]
+        .filter(Boolean)
+        .join("\n");
+    })
+    .join("\n");
+
+  return `## Top Signals\n\n${items}\n`;
 }
 
-function removeTopSignals(sectionItems: any[], topSignals: any[]) {
-  const ids = new Set(topSignals.map((s) => s.signalId));
-
-  return sectionItems.filter((item) => !ids.has(item.signalId));
-}
-
-function renderSection(title: string, summary: string, items: any[]) {
-  let md = `## ${title}\n\n${summary}\n\n`;
-
-  if (!items.length) {
-    md += "_No additional items in this section._\n\n";
-    return md;
+function renderSection(title: string, items: any[]) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return `## ${title}\n\nNo items in this section.\n`;
   }
 
-  for (const item of items) {
-    md += `### ${item.title}\n`;
-    md += `- Risk Level: ${item.riskLevel}\n`;
-    md += renderAudience(item.audience);
-    md += `- Analysis: ${item.analysis}\n`;
-    md += `- Recommendation: ${item.recommendation}\n\n`;
-  }
+  const body = items
+    .map((item) => {
+      const itemTitle = item.title ?? "Untitled";
+      const riskLevel = item.riskLevel ?? item.risk_level ?? "low";
+      const analysis = item.analysis ?? item.summary ?? "";
+      const recommendation = item.recommendation ?? "";
 
-  return md;
+      return [
+        `### ${itemTitle}`,
+        `- Risk Level: ${riskLevel}`,
+        renderAudience(item.audience),
+        analysis ? `- Analysis: ${analysis}` : "",
+        recommendation ? `- Recommendation: ${recommendation}` : "",
+        ""
+      ]
+        .filter(Boolean)
+        .join("\n");
+    })
+    .join("\n");
+
+  return `## ${title}\n\n${body}\n`;
 }
 
 export async function renderNewsletter(issue: any) {
+  const sections = issue.sections ?? {};
 
-  const aiGovernance = removeTopSignals(issue.sections.aiGovernance, issue.topSignals);
-  const security = removeTopSignals(issue.sections.securityIncidents, issue.topSignals);
-  const regulations = removeTopSignals(issue.sections.regulations, issue.topSignals);
-  const vendorRisk = removeTopSignals(issue.sections.vendorRisk, issue.topSignals);
-  const compliance = removeTopSignals(issue.sections.compliance, issue.topSignals);
-  const general = removeTopSignals(issue.sections.general, issue.topSignals);
+  const markdown = [
+    `# ${issue.title ?? "SecureLogic Intelligence Brief"}`,
+    "",
+    issue.executiveHeadline ?? "",
+    "",
+    renderTopSignals(issue.topSignals ?? []),
+    renderSection("AI Governance", sections.aiGovernance ?? []),
+    renderSection("Security Incidents", sections.securityIncidents ?? []),
+    renderSection("Regulations", sections.regulations ?? []),
+    renderSection("Vendor Risk", sections.vendorRisk ?? []),
+    renderSection("Compliance", sections.compliance ?? []),
+    renderSection("General", sections.general ?? [])
+  ].join("\n");
 
-  let md = `# ${issue.title}\n\n`;
-  md += `**Created:** ${issue.createdAt}\n\n`;
-
-  md += renderRiskSnapshot(issue);
-
-  md += `## Executive Headline\n\n${issue.executiveHeadline}\n\n`;
-
-  md += renderTopSignals(issue.topSignals);
-
-  md += renderSection("AI Governance", issue.summaries.aiGovernance, aiGovernance);
-
-  md += renderSection("Security Incidents", issue.summaries.securityIncidents, security);
-
-  md += renderSection("Regulations", issue.summaries.regulations, regulations);
-
-  md += renderSection("Vendor Risk", issue.summaries.vendorRisk, vendorRisk);
-
-  md += renderSection("Compliance", issue.summaries.compliance, compliance);
-
-  md += renderSection("General", issue.summaries.general, general);
-
-  await fs.writeFile(FILE, md);
+  return markdown;
 }
