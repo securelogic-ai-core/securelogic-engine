@@ -1,26 +1,20 @@
-export type SignalCategory =
-  | "AI_GOVERNANCE"
-  | "VENDOR_RISK"
-  | "SECURITY_INCIDENT"
-  | "REGULATION"
-  | "COMPLIANCE_UPDATE"
-  | "GENERAL";
-
-export type Signal = {
+export interface Signal {
   id: string;
   title: string;
   source: string;
-  category: SignalCategory;
+  category: string;
+  categories?: string[];
+  categoryReason?: string;
   summary: string;
   rawContent: string;
   tags: string[];
   timestamp: string;
   processed: boolean;
-};
+}
 
-export type ScoredSignal = Signal & {
+export interface ScoredSignal extends Signal {
   impactScore: number;
   noveltyScore: number;
   relevanceScore: number;
   priority: number;
-};
+}
