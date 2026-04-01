@@ -13,9 +13,8 @@ app.get("/intelligence", async (_req, res) => {
   try {
     const result = await pg.query(
       `
-      SELECT id, title, created_at
+      SELECT id, title, status, created_at
       FROM newsletter_issues
-      WHERE status = 'sent'
       ORDER BY created_at DESC
       `
     );
