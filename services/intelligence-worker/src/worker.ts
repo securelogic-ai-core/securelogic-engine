@@ -53,6 +53,7 @@ async function processSignal(event: any) {
 
   await saveInsight({
     signalId: String(signalId),
+    category: insight.category ?? signal.category ?? "GENERAL",
     title: insight.title ?? signal.title,
     analysis: insight.analysis ?? "",
     riskImplication: insight.riskImplication ?? null,

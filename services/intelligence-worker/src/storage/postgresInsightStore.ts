@@ -2,6 +2,7 @@ import { pg } from "../../../../src/api/infra/postgres.js";
 
 export type PostgresInsightInput = {
   signalId: string;
+  category?: string | null;
   title: string;
   analysis: string;
   riskImplication?: string | null;
@@ -17,6 +18,7 @@ export async function saveInsight(insight: PostgresInsightInput) {
     `
     INSERT INTO insights (
       signal_id,
+      category,
       title,
       analysis,
       risk_implication,
@@ -26,11 +28,12 @@ export async function saveInsight(insight: PostgresInsightInput) {
       published,
       linked_sources
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
     RETURNING id
     `,
     [
       insight.signalId,
+      insight.category ?? "GENERAL",
       insight.title,
       insight.analysis,
       insight.riskImplication ?? null,
