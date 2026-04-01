@@ -21,28 +21,28 @@ import { renderNewsletter } from "./render/renderNewsletter.js";
 import { renderNewsletterHtml } from "./render/renderNewsletterHtml.js";
 
 async function processSignal(event: any) {
-  const signal = normalizeSignal(event);
+  const signal = normalizeSignal(event) as any;
 
   const signalId = await saveSignal({
     category: signal.category ?? "general",
     title: signal.title,
     source: signal.source ?? "unknown",
-    sourceUrl: signal.url ?? signal.sourceUrl ?? "",
+    sourceUrl: signal.url ?? "",
     summary: signal.summary ?? null,
     rawContent: signal.rawContent ?? null,
     tags: signal.tags ?? [],
-    externalId: signal.externalId ?? signal.url ?? undefined,
-    sourceSystem: signal.sourceSystem ?? signal.source ?? null,
-    publishedAt: signal.publishedAt ?? null,
+    externalId: signal.url ?? undefined,
+    sourceSystem: signal.source ?? null,
+    publishedAt: signal.published_at ?? signal.publishedAt ?? null,
     processed: true,
-    impactScore: signal.impactScore ?? null,
+    impactScore: signal.impactScore ?? signal.score ?? null,
     noveltyScore: signal.noveltyScore ?? null,
     relevanceScore: signal.relevanceScore ?? null,
     priority: signal.priority ?? null
   });
 
   const scored = scoreSignal(signal);
-  const insight = await generateInsight(scored);
+  const insight = (await generateInsight(scored)) as any;
 
   if (!signalId) {
     throw new Error("Failed to persist signal before saving insight");
@@ -51,11 +51,13 @@ async function processSignal(event: any) {
   await saveInsight({
     signalId: String(signalId),
     title: insight.title ?? signal.title,
-    analysis: insight.analysis ?? insight.summary ?? "",
+    analysis: insight.analysis ?? "",
     riskImplication: insight.riskImplication ?? null,
     recommendation: insight.recommendation ?? null,
     riskLevel: insight.riskLevel ?? null,
-    audience: insight.audience ?? null,
+    audience: Array.isArray(insight.audience)
+      ? insight.audience.join(", ")
+      : insight.audience ?? null,
     published: false,
     linkedSources: insight.linkedSources ?? []
   });
@@ -100,23 +102,24 @@ export async function runWorker() {
     return;
   }
 
-  const issue = await buildNewsletterIssue();
+  const issue = (await buildNewsletterIssue()) as any;
   await renderNewsletter(issue);
   await renderNewsletterHtml(issue);
 
   const issueId = await createIssue({
     title: issue.title,
-    contentMd: issue.content_md ?? issue.contentMd ?? "",
-    contentHtml: issue.content_html ?? issue.contentHtml ?? "",
+    contentMd: JSON.stringify(issue, null, 2),
+    contentHtml: `<pre>${JSON.stringify(issue, null, 2)}</pre>`,
     status: "draft",
-    audienceTier: issue.audienceTier ?? "free",
-    summary: issue.summary ?? "Generated newsletter issue",
-    sectionsJson: issue.sections ?? []
+    audienceTier: "free",
+    summary: issue.executiveHeadline ?? "Generated newsletter issue",
+    sectionsJson: [issue.sections ?? {}]
   });
 
   const persistedIssue = {
     ...issue,
-    id: issueId
+    id: issueId,
+    content_html: `<pre>${JSON.stringify(issue, null, 2)}</pre>`
   };
 
   const today = new Date().getUTCDay();
