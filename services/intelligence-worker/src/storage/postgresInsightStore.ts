@@ -1,63 +1,35 @@
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { cleanText } from "../utils/contentSanitizer.js";
+import { pool } from "./db.js";
 
-export type PostgresInsightInput = {
-  signalId: string;
-  category?: string | null;
-  title: string;
-  analysis: string;
-  riskImplication?: string | null;
-  recommendation?: string | null;
-  riskLevel?: string | null;
-  audience?: string | null;
-  published?: boolean;
-  linkedSources?: string[];
-};
-
-export async function saveInsight(insight: PostgresInsightInput) {
-  const result = await pg.query(
-    `
+export async function saveInsight(insight: any) {
+  const query = `
     INSERT INTO insights (
       signal_id,
-      category,
       title,
       analysis,
-      risk_implication,
       recommendation,
       risk_level,
       audience,
+      category,
       published,
       linked_sources
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
     RETURNING id
-    `,
-    [
-      insight.signalId,
-      insight.category ?? "GENERAL",
-      insight.title,
-      insight.analysis,
-      insight.riskImplication ?? null,
-      insight.recommendation ?? null,
-      insight.riskLevel ?? null,
-      insight.audience ?? null,
-      insight.published ?? false,
-      JSON.stringify(insight.linkedSources ?? [])
-    ]
-  );
+  `;
 
-  return result.rows[0].id as string;
-}
+  const values = [
+    insight.signalId,
+    cleanText(insight.title),
+    cleanText(insight.analysis),
+    cleanText(insight.recommendation),
+    insight.riskLevel,
+    insight.audience,
+    insight.category,
+    false,
+    insight.linkedSources || []
+  ];
 
-export async function getInsights(limit = 100) {
-  const result = await pg.query(
-    `
-    SELECT *
-    FROM insights
-    ORDER BY created_at DESC
-    LIMIT $1
-    `,
-    [limit]
-  );
-
-  return result.rows;
+  const result = await pool.query(query, values);
+  return result.rows[0].id;
 }
