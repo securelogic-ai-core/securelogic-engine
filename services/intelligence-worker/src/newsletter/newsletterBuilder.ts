@@ -6,6 +6,20 @@ function riskRank(level: string) {
   return 1;
 }
 
+function normalizeCategory(value: unknown): string {
+  const raw = String(value ?? "").trim().toUpperCase();
+
+  if (!raw) return "GENERAL";
+
+  if (raw.includes("AI")) return "AI_GOVERNANCE";
+  if (raw.includes("SECURITY")) return "SECURITY_INCIDENT";
+  if (raw.includes("REGULATION")) return "REGULATION";
+  if (raw.includes("VENDOR")) return "VENDOR_RISK";
+  if (raw.includes("COMPLIANCE")) return "COMPLIANCE_UPDATE";
+
+  return "GENERAL";
+}
+
 function dedupeInsights(insights: any[]) {
   const seen = new Map<string, any>();
 
@@ -49,13 +63,12 @@ function groupByCategory(insights: any[]) {
   };
 
   for (const insight of insights) {
-    const category = insight.category || "GENERAL";
+    const category = normalizeCategory(insight.category);
 
-    if (!grouped[category]) {
-      grouped[category] = [];
-    }
-
-    grouped[category].push(insight);
+    grouped[category].push({
+      ...insight,
+      category
+    });
   }
 
   for (const key of Object.keys(grouped)) {
@@ -138,7 +151,7 @@ export async function buildNewsletterIssue() {
     ...insight,
     signalId: insight.signal_id ?? insight.signalId,
     riskLevel: insight.risk_level ?? insight.riskLevel,
-    category: insight.category ?? "GENERAL",
+    category: normalizeCategory(insight.category),
     summary: insight.analysis ?? insight.summary ?? ""
   }));
 
