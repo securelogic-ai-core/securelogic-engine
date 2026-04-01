@@ -9,15 +9,11 @@ function escapeHtml(value: unknown) {
 
 function renderAudience(audience: unknown) {
   if (Array.isArray(audience)) {
-    return `
-      <div><strong>Audience:</strong> ${escapeHtml(audience.join(", "))}</div>
-    `;
+    return `<div><strong>Audience:</strong> ${escapeHtml(audience.join(", "))}</div>`;
   }
 
   if (typeof audience === "string" && audience.trim().length > 0) {
-    return `
-      <div><strong>Audience:</strong> ${escapeHtml(audience)}</div>
-    `;
+    return `<div><strong>Audience:</strong> ${escapeHtml(audience)}</div>`;
   }
 
   return "";

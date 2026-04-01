@@ -71,7 +71,7 @@ function renderSection(title: string, items: any[]) {
 export async function renderNewsletter(issue: any) {
   const sections = issue.sections ?? {};
 
-  const markdown = [
+  return [
     `# ${issue.title ?? "SecureLogic Intelligence Brief"}`,
     "",
     issue.executiveHeadline ?? "",
@@ -84,6 +84,4 @@ export async function renderNewsletter(issue: any) {
     renderSection("Compliance", sections.compliance ?? []),
     renderSection("General", sections.general ?? [])
   ].join("\n");
-
-  return markdown;
 }
