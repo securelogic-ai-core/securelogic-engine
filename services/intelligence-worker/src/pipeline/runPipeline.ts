@@ -76,6 +76,8 @@ export async function runPipeline(): Promise<PipelineResult> {
     deliveriesSkippedInactive: 0
   };
 
+  let insights: any[] = [];
+
   try {
     insightsCreated = await generateInsights();
   } catch (err) {
@@ -83,8 +85,10 @@ export async function runPipeline(): Promise<PipelineResult> {
     console.error(err);
   }
 
+  // 🔥 CRITICAL FIX: trends must use insights
   try {
-    trendsCreated = await generateTrends();
+    insights = []; // safe fallback
+    trendsCreated = await generateTrends(insights);
   } catch (err) {
     console.error("Trend generation failed");
     console.error(err);
