@@ -5,6 +5,14 @@ import { pg } from "../../../../src/api/infra/postgres.js";
 const app = express();
 app.use(express.json());
 
+app.get("/", (_req, res) => {
+  res.status(200).json({
+    service: "securelogic-intelligence-api",
+    status: "ok",
+    endpoints: ["/health", "/intelligence", "/intelligence/:id", "/subscribe"]
+  });
+});
+
 app.get("/health", (_req, res) => {
   res.status(200).json({ status: "ok" });
 });
@@ -16,6 +24,7 @@ app.get("/intelligence", async (_req, res) => {
       SELECT id, title, status, created_at
       FROM newsletter_issues
       ORDER BY created_at DESC
+      LIMIT 10
       `
     );
 
@@ -23,6 +32,28 @@ app.get("/intelligence", async (_req, res) => {
   } catch (err) {
     console.error("GET /intelligence failed:", err);
     res.status(500).json({ error: "intelligence_list_failed" });
+  }
+});
+
+app.get("/intelligence/latest", async (_req, res) => {
+  try {
+    const result = await pg.query(
+      `
+      SELECT *
+      FROM newsletter_issues
+      ORDER BY created_at DESC
+      LIMIT 1
+      `
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "issue_not_found" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("GET /intelligence/latest failed:", err);
+    res.status(500).json({ error: "intelligence_latest_failed" });
   }
 });
 
