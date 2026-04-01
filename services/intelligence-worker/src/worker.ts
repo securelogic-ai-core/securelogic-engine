@@ -76,7 +76,7 @@ export async function runWorker() {
     ...aiSignals
   ];
 
-  console.log(\`Signals fetched: \${signals.length}\`);
+  console.log(`Signals fetched: ${signals.length}`);
 
   let processedCount = 0;
   let skippedCount = 0;
@@ -91,8 +91,8 @@ export async function runWorker() {
     processedCount += 1;
   }
 
-  console.log(\`Signals processed: \${processedCount}\`);
-  console.log(\`Signals skipped as duplicates: \${skippedCount}\`);
+  console.log(`Signals processed: ${processedCount}`);
+  console.log(`Signals skipped as duplicates: ${skippedCount}`);
 
   if (processedCount === 0) {
     console.log("No new signals detected. Newsletter rebuild skipped.");
