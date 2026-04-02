@@ -1,36 +1,42 @@
+import { pg } from "../../../../src/api/infra/postgres.js";
 import { createIssue } from "../storage/postgresIssueStore.js";
 
-export async function generateIssue(insights: any[]) {
-  const title = "SecureLogic Weekly Intelligence #" + Date.now();
+async function getDefaultOrganizationId(): Promise<string> {
+  const result = await pg.query(`
+    SELECT id
+    FROM organizations
+    ORDER BY created_at ASC
+    LIMIT 1
+  `);
 
-  const contentHtml = insights
-    .map(
-      (i) => `
-  <h3>${i.title ?? "Untitled Insight"}</h3>
-  <p>${i.summary ?? i.analysis ?? ""}</p>
-  <hr/>
-  `
-    )
-    .join("");
+  const organizationId = result.rows[0]?.id as string | undefined;
 
-  const contentMd = insights
-    .map(
-      (i) => `
-### ${i.title ?? "Untitled Insight"}
+  if (!organizationId) {
+    throw new Error("No organization found for issue generation");
+  }
 
-${i.summary ?? i.analysis ?? ""}
-`
-    )
-    .join("\n");
+  return organizationId;
+}
 
-  const issueId = await createIssue({
-    title,
-    contentHtml,
-    contentMd,
-    status: "draft",
-    audienceTier: "free",
-    summary: "Generated newsletter issue"
+export async function generateIssue(input: {
+  title: string;
+  contentHtml: string;
+  contentMd: string;
+  status?: string;
+  audienceTier?: string;
+  summary?: string | null;
+  sectionsJson?: unknown;
+}) {
+  const organizationId = await getDefaultOrganizationId();
+
+  return createIssue({
+    organizationId,
+    title: input.title,
+    contentHtml: input.contentHtml,
+    contentMd: input.contentMd,
+    status: input.status ?? "draft",
+    audienceTier: input.audienceTier ?? "free",
+    summary: input.summary ?? null,
+    sectionsJson: input.sectionsJson ?? {}
   });
-
-  return issueId;
 }
