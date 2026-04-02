@@ -1,4 +1,4 @@
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { pg } from "../../../src/api/infra/postgres.js";
 
 import { normalizeSignal } from "./pipeline/normalizeSignal.js";
 import { scoreSignal } from "./pipeline/scoreSignal.js";
