@@ -1,3 +1,5 @@
+import { pg } from "../../../../src/api/infra/postgres.js";
+
 import { normalizeSignal } from "./pipeline/normalizeSignal.js";
 import { scoreSignal } from "./pipeline/scoreSignal.js";
 import { generateInsight } from "./pipeline/generateInsight.js";
@@ -22,6 +24,23 @@ import {
 } from "./storage/postgresIssueStore.js";
 import { renderNewsletter } from "./render/renderNewsletter.js";
 import { renderNewsletterHtml } from "./render/renderNewsletterHtml.js";
+
+async function getDefaultOrganizationId(): Promise<string> {
+  const result = await pg.query(`
+    SELECT id
+    FROM organizations
+    ORDER BY created_at ASC
+    LIMIT 1
+  `);
+
+  const orgId = result.rows[0]?.id as string | undefined;
+
+  if (!orgId) {
+    throw new Error("No organization found for worker execution");
+  }
+
+  return orgId;
+}
 
 async function processSignal(event: any) {
   const signal = normalizeSignal(event) as any;
@@ -72,6 +91,8 @@ async function processSignal(event: any) {
 export async function runWorker() {
   console.log("SecureLogic Intelligence Worker starting...");
 
+  const organizationId = await getDefaultOrganizationId();
+
   const regulatorySignals = await fetchRegulatorySignals();
   const securitySignals = await fetchSecuritySignals();
   const aiSignals = await fetchAIGovernanceSignals();
@@ -106,7 +127,7 @@ export async function runWorker() {
     return;
   }
 
-  const recentDraft = await getRecentDraftIssue(60);
+  const recentDraft = await getRecentDraftIssue(organizationId, 60);
 
   if (recentDraft) {
     console.log("Recent draft already exists. Skipping new draft creation.");
@@ -119,18 +140,20 @@ export async function runWorker() {
   const html = await renderNewsletterHtml(issue);
 
   const issueId = await createIssue({
+    organizationId,
     title: issue.title,
     contentMd: markdown,
     contentHtml: html,
     status: "draft",
     audienceTier: "free",
     summary: issue.executiveHeadline ?? "Generated newsletter issue",
-    sectionsJson: [issue.sections ?? {}]
+    sectionsJson: issue.sections ?? {}
   });
 
   const persistedIssue = {
     ...issue,
     id: issueId,
+    organization_id: organizationId,
     content_html: html,
     content_md: markdown
   };
