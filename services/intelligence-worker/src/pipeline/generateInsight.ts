@@ -2,86 +2,68 @@ import { analyzeSignal } from "./aiAnalysis.js";
 
 function buildAudience(signal: any) {
   const category = signal.category || "GENERAL";
-  const title = String(signal.title || "").toLowerCase();
-  const text = `${title} ${signal.rawContent || signal.payload || ""}`.toLowerCase();
 
   if (category === "SECURITY_INCIDENT") {
-    if (
-      text.includes("credential") ||
-      text.includes("phishing") ||
-      text.includes("trojan") ||
-      text.includes("malware") ||
-      text.includes("ransomware") ||
-      text.includes("exploit")
-    ) {
-      return [
-        "Security Operations",
-        "IT Administrators",
-        "Security Leaders",
-        "Risk Teams"
-      ];
-    }
-
-    if (
-      text.includes("hackers") ||
-      text.includes("espionage") ||
-      text.includes("state-sponsored")
-    ) {
-      return [
-        "Threat Intelligence Teams",
-        "Security Leaders",
-        "Risk Teams",
-        "Executive Leadership"
-      ];
-    }
-
-    return [
-      "Security Leaders",
-      "Risk Teams",
-      "IT Administrators"
-    ];
+    return ["Security Operations", "IT", "Security Leadership"];
   }
 
   if (category === "REGULATION") {
-    return [
-      "Compliance Teams",
-      "Legal Teams",
-      "Risk Teams",
-      "Executive Leadership"
-    ];
+    return ["Compliance", "Legal", "Executive Leadership"];
   }
 
   if (category === "AI_GOVERNANCE") {
-    return [
-      "AI Governance Leaders",
-      "Compliance Teams",
-      "Risk Teams",
-      "Executive Leadership"
-    ];
+    return ["AI Governance", "Risk", "Executive Leadership"];
   }
 
   if (category === "VENDOR_RISK") {
-    return [
-      "Third-Party Risk Teams",
-      "Procurement",
-      "Security Leaders",
-      "Risk Teams"
-    ];
+    return ["TPRM", "Procurement", "Security Leadership"];
   }
 
-  if (category === "COMPLIANCE_UPDATE") {
-    return [
-      "Compliance Teams",
-      "Internal Audit",
-      "Risk Teams",
-      "Executive Leadership"
-    ];
+  return ["Security Leadership", "Risk"];
+}
+
+function normalizeRisk(level: string | undefined) {
+  const l = String(level || "").toLowerCase();
+
+  if (l.includes("critical")) return "critical";
+  if (l.includes("high")) return "high";
+  if (l.includes("medium")) return "medium";
+
+  return "low";
+}
+
+function buildExecutiveImpact(signal: any, riskLevel: string) {
+  const title = String(signal.title || "").toLowerCase();
+
+  if (riskLevel === "critical") {
+    return "Immediate enterprise exposure likely. Requires urgent validation and response.";
   }
 
-  return [
-    "Security Leaders",
-    "Risk Teams"
-  ];
+  if (riskLevel === "high") {
+    return "High likelihood of exploitation or business impact if unaddressed.";
+  }
+
+  if (title.includes("zero-day")) {
+    return "Active exploitation with limited defensive coverage.";
+  }
+
+  if (title.includes("phishing") || title.includes("credential")) {
+    return "Increased likelihood of credential compromise across enterprise users.";
+  }
+
+  return "Potential operational or security impact depending on exposure.";
+}
+
+function enforceRecommendation(rec: string, riskLevel: string) {
+  if (!rec || rec.length < 20) {
+    if (riskLevel === "critical" || riskLevel === "high") {
+      return "Validate exposure immediately, enforce controls, and initiate monitoring or response actions.";
+    }
+
+    return "Review applicability and ensure appropriate controls are in place.";
+  }
+
+  return rec;
 }
 
 export async function generateInsight(signal: any) {
@@ -89,15 +71,34 @@ export async function generateInsight(signal: any) {
 
   const signalId = signal.signalId || signal.id || `SIG-${Date.now()}`;
 
+  const riskLevel = normalizeRisk(ai.riskLevel);
+
+  const analysis = ai.analysis || signal.summary || "";
+
+  const recommendation = enforceRecommendation(
+    ai.recommendation,
+    riskLevel
+  );
+
+  const executiveImpact = buildExecutiveImpact(signal, riskLevel);
+
   return {
     id: `INS-${signalId}`,
     signalId,
     category: signal.category || "GENERAL",
     title: signal.title,
-    analysis: ai.analysis,
-    recommendation: ai.recommendation,
-    riskLevel: ai.riskLevel,
+
+    // CORE INTELLIGENCE
+    analysis,
+    recommendation,
+    riskLevel,
+
+    // WHAT YOU WERE MISSING
+    executiveImpact,
+
+    // TARGETING
     audience: buildAudience(signal),
+
     createdAt: new Date().toISOString()
   };
 }
