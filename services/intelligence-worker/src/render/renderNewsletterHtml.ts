@@ -7,56 +7,52 @@ function escapeHtml(value: unknown) {
     .replace(/'/g, "&#39;");
 }
 
-function renderAudience(audience: unknown) {
-  if (Array.isArray(audience)) {
-    return `<div><strong>Audience:</strong> ${escapeHtml(audience.join(", "))}</div>`;
-  }
-
-  if (typeof audience === "string" && audience.trim().length > 0) {
-    return `<div><strong>Audience:</strong> ${escapeHtml(audience)}</div>`;
-  }
-
-  return "";
+function riskColor(level: string) {
+  const l = (level || "").toLowerCase();
+  if (l === "critical") return "#dc2626";
+  if (l === "high") return "#ea580c";
+  if (l === "medium") return "#ca8a04";
+  return "#16a34a";
 }
 
-function renderItemCard(item: any) {
-  const title = item.title ?? "Untitled";
-  const riskLevel = item.riskLevel ?? item.risk_level ?? "low";
-  const analysis = item.analysis ?? item.summary ?? "";
-  const recommendation = item.recommendation ?? "";
+function renderCard(item: any) {
+  const risk = item.riskLevel ?? item.risk_level ?? "low";
 
   return `
-    <div style="border:1px solid #d1d5db;border-radius:8px;padding:12px;margin-bottom:12px;">
-      <div style="font-weight:700;font-size:16px;margin-bottom:8px;">
-        ${escapeHtml(title)}
-      </div>
-      <div><strong>Risk Level:</strong> ${escapeHtml(riskLevel)}</div>
-      ${renderAudience(item.audience)}
-      ${
-        analysis
-          ? `<div style="margin-top:8px;"><strong>Analysis:</strong> ${escapeHtml(analysis)}</div>`
-          : ""
-      }
-      ${
-        recommendation
-          ? `<div style="margin-top:8px;"><strong>Recommendation:</strong> ${escapeHtml(recommendation)}</div>`
-          : ""
-      }
+  <div style="border-left:4px solid ${riskColor(risk)};padding:16px;margin-bottom:16px;background:#f9fafb;">
+    <div style="font-size:18px;font-weight:700;margin-bottom:6px;">
+      ${escapeHtml(item.title)}
     </div>
+
+    <div style="font-size:12px;color:#6b7280;margin-bottom:8px;">
+      ${escapeHtml(item.category ?? "GENERAL")} • ${escapeHtml(risk.toUpperCase())}
+    </div>
+
+    ${
+      item.analysis
+        ? `<div style="margin-bottom:8px;"><strong>Why it matters:</strong> ${escapeHtml(item.analysis)}</div>`
+        : ""
+    }
+
+    ${
+      item.recommendation
+        ? `<div><strong>Action:</strong> ${escapeHtml(item.recommendation)}</div>`
+        : ""
+    }
+  </div>
   `;
 }
 
 function renderSection(title: string, items: any[]) {
-  if (!Array.isArray(items) || items.length === 0) {
-    return `
-      <h2>${escapeHtml(title)}</h2>
-      <p>No items in this section.</p>
-    `;
-  }
+  if (!items?.length) return "";
 
   return `
-    <h2>${escapeHtml(title)}</h2>
-    ${items.map((item) => renderItemCard(item)).join("")}
+    <div style="margin-top:32px;">
+      <div style="font-size:20px;font-weight:700;border-bottom:2px solid #e5e7eb;margin-bottom:12px;">
+        ${escapeHtml(title)}
+      </div>
+      ${items.map(renderCard).join("")}
+    </div>
   `;
 }
 
@@ -65,25 +61,38 @@ export async function renderNewsletterHtml(issue: any) {
 
   return `
 <!doctype html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="utf-8" />
-  <title>${escapeHtml(issue.title ?? "SecureLogic Intelligence Brief")}</title>
+<meta charset="utf-8" />
 </head>
-<body style="font-family:Arial,sans-serif;line-height:1.5;color:#111827;max-width:900px;margin:0 auto;padding:24px;">
-  <h1>${escapeHtml(issue.title ?? "SecureLogic Intelligence Brief")}</h1>
-  <p>${escapeHtml(issue.executiveHeadline ?? "")}</p>
 
-  <h2>Top Signals</h2>
-  ${(issue.topSignals ?? []).map((item: any) => renderItemCard(item)).join("")}
+<body style="font-family:-apple-system,system-ui;padding:32px;max-width:900px;margin:auto;color:#111827;">
 
-  ${renderSection("AI Governance", sections.aiGovernance ?? [])}
-  ${renderSection("Security Incidents", sections.securityIncidents ?? [])}
-  ${renderSection("Regulations", sections.regulations ?? [])}
-  ${renderSection("Vendor Risk", sections.vendorRisk ?? [])}
-  ${renderSection("Compliance", sections.compliance ?? [])}
-  ${renderSection("General", sections.general ?? [])}
+  <div style="margin-bottom:24px;">
+    <div style="font-size:28px;font-weight:800;">
+      ${escapeHtml(issue.title || "SecureLogic Intelligence")}
+    </div>
+
+    <div style="margin-top:8px;font-size:16px;color:#374151;">
+      ${escapeHtml(issue.executiveHeadline || "")}
+    </div>
+  </div>
+
+  <div style="background:#111827;color:white;padding:16px;border-radius:8px;margin-bottom:24px;">
+    <div style="font-size:14px;opacity:.7;">Executive Takeaway</div>
+    <div style="font-size:16px;font-weight:600;">
+      ${escapeHtml(issue.executiveSummary || issue.executiveHeadline || "")}
+    </div>
+  </div>
+
+  ${renderSection("Top Risks", issue.topSignals || [])}
+
+  ${renderSection("AI Governance", sections.aiGovernance)}
+  ${renderSection("Security Incidents", sections.securityIncidents)}
+  ${renderSection("Regulatory Changes", sections.regulations)}
+  ${renderSection("Vendor Risk", sections.vendorRisk)}
+
 </body>
 </html>
-  `.trim();
+`.trim();
 }
