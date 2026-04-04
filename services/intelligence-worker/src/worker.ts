@@ -24,6 +24,7 @@ import {
 } from "./storage/postgresIssueStore.js";
 import { renderNewsletter } from "./render/renderNewsletter.js";
 import { renderNewsletterHtml } from "./render/renderNewsletterHtml.js";
+import { applyExecutiveEditorialPass } from "./editorial/executiveWriter.js";
 
 async function getDefaultOrganizationId(): Promise<string> {
   const result = await pg.query(`
@@ -75,8 +76,8 @@ async function processSignal(event: any) {
     category: insight.category ?? signal.category ?? "GENERAL",
     title: insight.title ?? signal.title,
     analysis: insight.analysis ?? "",
-    riskImplication: insight.riskImplication ?? null,
-    recommendation: insight.recommendation ?? null,
+    riskImplication: insight.riskImplication ?? insight.executiveImpact ?? null,
+    recommendation: insight.recommendation ?? insight.recommendedAction ?? null,
     riskLevel: insight.riskLevel ?? null,
     audience: Array.isArray(insight.audience)
       ? insight.audience.join(", ")
@@ -135,7 +136,9 @@ export async function runWorker() {
     return;
   }
 
-  const issue = (await buildNewsletterIssue()) as any;
+  const rawIssue = (await buildNewsletterIssue()) as any;
+  const issue = applyExecutiveEditorialPass(rawIssue);
+
   const markdown = await renderNewsletter(issue);
   const html = await renderNewsletterHtml(issue);
 
