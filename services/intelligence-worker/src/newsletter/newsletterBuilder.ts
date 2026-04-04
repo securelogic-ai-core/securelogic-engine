@@ -52,16 +52,45 @@ function sortByPriority(items: any[]) {
   );
 }
 
-function buildWhyItMatters(insight: any): string {
-  const text = `${insight.title || ""} ${insight.summary || ""} ${insight.analysis || ""}`.toLowerCase();
-  const risk = String(insight.riskLevel || insight.risk_level || "low").toLowerCase();
+function sourceTextForRules(insight: any): string {
+  return `${insight.title || ""} ${insight.summary || ""}`.toLowerCase();
+}
 
-  if (text.includes("zero-day") || text.includes("actively exploited") || text.includes("exploit")) {
-    return "Active exploitation risk increases the likelihood of immediate enterprise exposure if vulnerable systems are present.";
+function buildWhyItMatters(insight: any): string {
+  const text = sourceTextForRules(insight);
+  const risk = String(insight.riskLevel || insight.risk_level || "low").toLowerCase();
+  const category = normalizeCategory(insight.category);
+
+  if (
+    text.includes("zero-day") ||
+    text.includes("actively exploited") ||
+    text.includes("under active exploitation") ||
+    text.includes("exploit")
+  ) {
+    return "Active exploitation risk increases the likelihood of immediate enterprise exposure if affected systems are present.";
+  }
+
+  if (
+    text.includes("wallet") ||
+    text.includes("recovery phrase") ||
+    text.includes("seed phrase") ||
+    text.includes("crypto")
+  ) {
+    return "Indicates theft of high-value recovery data that can result in irreversible asset loss and broader trust impact if enterprise or customer devices are affected.";
+  }
+
+  if (
+    text.includes("ios") ||
+    text.includes("android") ||
+    text.includes("mobile app") ||
+    text.includes("app store") ||
+    text.includes("play store")
+  ) {
+    return "Highlights mobile supply chain and endpoint trust risk, especially where employees install consumer or unvetted applications on enterprise-accessible devices.";
   }
 
   if (text.includes("credential") || text.includes("phishing")) {
-    return "Elevates risk of account compromise and unauthorized access across enterprise environments.";
+    return "Elevates risk of credential theft, account compromise, and downstream unauthorized access across enterprise environments.";
   }
 
   if (
@@ -73,24 +102,11 @@ function buildWhyItMatters(insight: any): string {
     return "Reflects active malicious tradecraft that could drive endpoint compromise, lateral movement, or operational disruption.";
   }
 
-  if (
-    text.includes("artificial intelligence") ||
-    text.includes(" ai ") ||
-    text.includes("open-source ai") ||
-    text.includes("open source ai") ||
-    text.includes("ai model") ||
-    text.includes("ai governance")
-  ) {
+  if (category === "AI_GOVERNANCE") {
     return "Introduces governance, oversight, documentation, and policy alignment risk as enterprise AI adoption expands.";
   }
 
-  if (
-    text.includes("regulation") ||
-    text.includes("guidance") ||
-    text.includes("regulator") ||
-    text.includes("enforcement") ||
-    text.includes("eu ai act")
-  ) {
+  if (category === "REGULATION") {
     return "May increase compliance obligations and introduce audit, enforcement, or governance exposure.";
   }
 
@@ -106,11 +122,36 @@ function buildWhyItMatters(insight: any): string {
 }
 
 function buildRecommendedAction(insight: any): string {
-  const text = `${insight.title || ""} ${insight.summary || ""} ${insight.analysis || ""}`.toLowerCase();
+  const text = sourceTextForRules(insight);
   const risk = String(insight.riskLevel || insight.risk_level || "low").toLowerCase();
+  const category = normalizeCategory(insight.category);
 
-  if (text.includes("zero-day") || text.includes("patch")) {
-    return "Identify affected systems immediately, prioritize remediation, and monitor for exploitation attempts.";
+  if (
+    text.includes("wallet") ||
+    text.includes("recovery phrase") ||
+    text.includes("seed phrase") ||
+    text.includes("crypto")
+  ) {
+    return "Review mobile application allowlisting, restrict untrusted app installation where feasible, and alert users to the risk of wallet or recovery-phrase theft through malicious apps.";
+  }
+
+  if (
+    text.includes("ios") ||
+    text.includes("android") ||
+    text.includes("mobile app") ||
+    text.includes("app store") ||
+    text.includes("play store")
+  ) {
+    return "Validate mobile device management controls, review enterprise app trust policies, and determine whether affected apps or platforms require blocking, removal, or user notification.";
+  }
+
+  if (
+    text.includes("zero-day") ||
+    text.includes("patch") ||
+    text.includes("actively exploited") ||
+    text.includes("under active exploitation")
+  ) {
+    return "Identify affected systems immediately, prioritize remediation, and monitor for active exploitation attempts.";
   }
 
   if (text.includes("credential") || text.includes("phishing")) {
@@ -126,24 +167,11 @@ function buildRecommendedAction(insight: any): string {
     return "Validate endpoint coverage, review detections, and confirm response readiness for compromise scenarios tied to this activity.";
   }
 
-  if (
-    text.includes("artificial intelligence") ||
-    text.includes(" ai ") ||
-    text.includes("open-source ai") ||
-    text.includes("open source ai") ||
-    text.includes("ai model") ||
-    text.includes("ai governance")
-  ) {
+  if (category === "AI_GOVERNANCE") {
     return "Review AI governance policies, approval workflows, model oversight, and acceptable use controls before broader deployment.";
   }
 
-  if (
-    text.includes("regulation") ||
-    text.includes("guidance") ||
-    text.includes("regulator") ||
-    text.includes("enforcement") ||
-    text.includes("eu ai act")
-  ) {
+  if (category === "REGULATION") {
     return "Assess whether policies, governance documentation, reporting obligations, or control evidence should be updated.";
   }
 
@@ -162,6 +190,8 @@ function normalizeAudience(audience: unknown): string | string[] {
 
 function enrichInsight(insight: any) {
   const normalizedRisk = String(insight.riskLevel || insight.risk_level || "low").toLowerCase();
+  const whyItMatters = buildWhyItMatters(insight);
+  const recommendedAction = buildRecommendedAction(insight);
 
   return {
     ...insight,
@@ -170,11 +200,12 @@ function enrichInsight(insight: any) {
     risk_level: normalizedRisk,
     summary: insight.summary ?? insight.analysis ?? "",
     audience: normalizeAudience(insight.audience),
-    whyItMatters: buildWhyItMatters(insight),
-    recommendedAction: buildRecommendedAction(insight),
-    executiveImpact: buildWhyItMatters(insight),
-    riskImplication: buildWhyItMatters(insight),
-    risk_implication: buildWhyItMatters(insight)
+    whyItMatters,
+    recommendedAction,
+    executiveImpact: whyItMatters,
+    riskImplication: whyItMatters,
+    risk_implication: whyItMatters,
+    recommendation: recommendedAction
   };
 }
 
