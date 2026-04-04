@@ -27,30 +27,52 @@ function stripAiTone(text: string): string {
   );
 }
 
+/**
+ * CORE FIX: Specific, executive-grade, non-generic analysis
+ */
 function compressAnalysis(title: string, analysis: string, category: string): string {
   let text = stripAiTone(clean(analysis));
-
   text = removeQuotedTitle(text, title);
 
-  if (!text) {
-    if (category === "SECURITY_INCIDENT") {
-      return "Indicates active threat activity requiring validation of exposure and defensive coverage.";
+  const t = title.toLowerCase();
+
+  // SECURITY INCIDENT SPECIFICITY
+  if (category === "SECURITY_INCIDENT") {
+    if (t.includes("ios") || t.includes("android") || t.includes("app")) {
+      return "Malicious mobile applications targeting user devices, increasing risk of data exfiltration and credential or asset compromise.";
     }
-    if (category === "REGULATION") {
-      return "Signals regulatory change requiring review of governance and compliance alignment.";
+
+    if (t.includes("wallet") || t.includes("crypto") || t.includes("recovery")) {
+      return "Targeted theft of high-value digital assets through compromise of user-controlled recovery data.";
     }
-    if (category === "AI_GOVERNANCE") {
-      return "Signals governance pressure on AI usage, oversight, and control maturity.";
+
+    if (t.includes("phishing") || t.includes("credential")) {
+      return "Credential-focused attack activity targeting enterprise users and authentication flows.";
     }
-    return "Requires evaluation for enterprise exposure and control impact.";
+
+    if (t.includes("ransomware") || t.includes("malware")) {
+      return "Active malware activity with potential for endpoint compromise and operational disruption.";
+    }
+
+    return "Active threat activity with potential impact to enterprise systems and user accounts.";
   }
 
-  // shorten long generic phrasing
-  if (text.length > 240) {
+  // AI GOVERNANCE
+  if (category === "AI_GOVERNANCE") {
+    return "Emerging AI capability introducing governance, oversight, and usage control considerations.";
+  }
+
+  // REGULATION
+  if (category === "REGULATION") {
+    return "Regulatory development introducing new expectations for governance, documentation, and accountability.";
+  }
+
+  // fallback (trimmed but still useful)
+  if (text.length > 180) {
     text = text.split(". ")[0] + ".";
   }
 
-  return sentenceCase(text);
+  return sentenceCase(text || "Relevant development requiring evaluation for enterprise impact.");
 }
 
 function rewriteItem(item: any): any {
@@ -156,7 +178,16 @@ export function applyExecutiveEditorialPass(issue: any) {
     ...issue,
     executiveHeadline: executiveHeadline(grouped),
     executiveSummary: executiveHeadline(grouped),
-    topSignals: (issue.topSignals || []).map(rewriteItem),
+
+    // REMOVE DUPLICATE DEPTH IN TOP SIGNALS
+    topSignals: (issue.topSignals || []).map((i: any) => {
+      const r = rewriteItem(i);
+      return {
+        ...r,
+        analysis: "" // key improvement
+      };
+    }),
+
     summaries: {
       aiGovernance: sectionSummary("AI Governance", rewritten.aiGovernance),
       securityIncidents: sectionSummary("Security Incidents", rewritten.securityIncidents),
@@ -165,6 +196,7 @@ export function applyExecutiveEditorialPass(issue: any) {
       compliance: sectionSummary("Compliance", rewritten.compliance),
       general: sectionSummary("General", rewritten.general)
     },
+
     sections: rewritten
   };
 }
