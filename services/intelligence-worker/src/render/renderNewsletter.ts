@@ -1,13 +1,54 @@
+function normalizeText(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
 function renderAudience(audience: unknown) {
-  if (Array.isArray(audience)) {
-    return `- Audience: ${audience.join(", ")}\n`;
+  if (Array.isArray(audience) && audience.length > 0) {
+    return `Audience: ${audience.join(", ")}`;
   }
 
   if (typeof audience === "string" && audience.trim().length > 0) {
-    return `- Audience: ${audience}\n`;
+    return `Audience: ${audience.trim()}`;
   }
 
   return "";
+}
+
+function renderRiskLine(item: any) {
+  const category = normalizeText(item.category || "GENERAL");
+  const riskLevel = normalizeText(item.riskLevel || item.risk_level || "low");
+
+  return `Risk Level: ${riskLevel} | Category: ${category}`;
+}
+
+function renderInsightBlock(item: any) {
+  const title = normalizeText(item.title || "Untitled");
+  const analysis = normalizeText(item.analysis || item.summary || "");
+  const riskImplication = normalizeText(
+    item.executiveImpact ||
+    item.riskImplication ||
+    item.risk_implication ||
+    item.whyItMatters ||
+    ""
+  );
+  const recommendation = normalizeText(
+    item.recommendation ||
+    item.recommendedAction ||
+    ""
+  );
+  const audience = renderAudience(item.audience);
+
+  return [
+    `### ${title}`,
+    renderRiskLine(item),
+    audience,
+    analysis ? `Analysis: ${analysis}` : "",
+    riskImplication ? `Why it matters: ${riskImplication}` : "",
+    recommendation ? `Recommended action: ${recommendation}` : "",
+    ""
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function renderTopSignals(topSignals: any[]) {
@@ -15,73 +56,54 @@ function renderTopSignals(topSignals: any[]) {
     return "## Top Signals\n\nNo top signals available.\n";
   }
 
-  const items = topSignals
-    .map((signal) => {
-      const title = signal.title ?? "Untitled";
-      const category = signal.category ?? "GENERAL";
-      const riskLevel = signal.riskLevel ?? signal.risk_level ?? "low";
-      const analysis = signal.analysis ?? signal.summary ?? "";
-      const recommendation = signal.recommendation ?? "";
-
-      return [
-        `### ${title}`,
-        `- Category: ${category}`,
-        `- Risk Level: ${riskLevel}`,
-        renderAudience(signal.audience),
-        analysis ? `- Analysis: ${analysis}` : "",
-        recommendation ? `- Recommendation: ${recommendation}` : "",
-        ""
-      ]
-        .filter(Boolean)
-        .join("\n");
-    })
-    .join("\n");
-
-  return `## Top Signals\n\n${items}\n`;
+  return [
+    "## Top Signals",
+    "",
+    "The following developments represent the highest-priority items in the current intelligence cycle.",
+    "",
+    ...topSignals.map((signal) => renderInsightBlock(signal))
+  ].join("\n");
 }
 
 function renderSection(title: string, items: any[]) {
   if (!Array.isArray(items) || items.length === 0) {
-    return `## ${title}\n\nNo items in this section.\n`;
+    return [
+      `## ${title}`,
+      "",
+      "No items in this section.",
+      ""
+    ].join("\n");
   }
 
-  const body = items
-    .map((item) => {
-      const itemTitle = item.title ?? "Untitled";
-      const riskLevel = item.riskLevel ?? item.risk_level ?? "low";
-      const analysis = item.analysis ?? item.summary ?? "";
-      const recommendation = item.recommendation ?? "";
-
-      return [
-        `### ${itemTitle}`,
-        `- Risk Level: ${riskLevel}`,
-        renderAudience(item.audience),
-        analysis ? `- Analysis: ${analysis}` : "",
-        recommendation ? `- Recommendation: ${recommendation}` : "",
-        ""
-      ]
-        .filter(Boolean)
-        .join("\n");
-    })
-    .join("\n");
-
-  return `## ${title}\n\n${body}\n`;
+  return [
+    `## ${title}`,
+    "",
+    ...items.map((item) => renderInsightBlock(item))
+  ].join("\n");
 }
 
 export async function renderNewsletter(issue: any) {
   const sections = issue.sections ?? {};
 
   return [
-    `# ${issue.title ?? "SecureLogic Intelligence Brief"}`,
+    `# ${normalizeText(issue.title || "SecureLogic Intelligence Brief")}`,
     "",
-    issue.executiveHeadline ?? "",
+    normalizeText(issue.executiveHeadline || ""),
     "",
     renderTopSignals(issue.topSignals ?? []),
+    "",
     renderSection("AI Governance", sections.aiGovernance ?? []),
+    "",
     renderSection("Security Incidents", sections.securityIncidents ?? []),
+    "",
     renderSection("Regulations", sections.regulations ?? []),
+    "",
     renderSection("Vendor Risk", sections.vendorRisk ?? []),
+    "",
     renderSection("Compliance", sections.compliance ?? []),
+    "",
     renderSection("General", sections.general ?? [])
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
