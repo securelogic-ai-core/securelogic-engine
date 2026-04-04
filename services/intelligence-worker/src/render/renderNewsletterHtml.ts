@@ -7,16 +7,42 @@ function escapeHtml(value: unknown) {
     .replace(/'/g, "&#39;");
 }
 
+function normalizeText(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
 function riskColor(level: string) {
-  const l = (level || "").toLowerCase();
+  const l = normalizeText(level).toLowerCase();
   if (l === "critical") return "#dc2626";
   if (l === "high") return "#ea580c";
   if (l === "medium") return "#ca8a04";
   return "#16a34a";
 }
 
+function resolveWhyItMatters(item: any): string {
+  return normalizeText(
+    item.whyItMatters ||
+    item.executiveImpact ||
+    item.riskImplication ||
+    item.risk_implication ||
+    item.analysis ||
+    item.summary ||
+    ""
+  );
+}
+
+function resolveAction(item: any): string {
+  return normalizeText(
+    item.recommendedAction ||
+    item.recommendation ||
+    ""
+  );
+}
+
 function renderCard(item: any) {
-  const risk = item.riskLevel ?? item.risk_level ?? "low";
+  const risk = normalizeText(item.riskLevel ?? item.risk_level ?? "low");
+  const whyItMatters = resolveWhyItMatters(item);
+  const action = resolveAction(item);
 
   return `
   <div style="border-left:4px solid ${riskColor(risk)};padding:16px;margin-bottom:16px;background:#f9fafb;">
@@ -29,14 +55,14 @@ function renderCard(item: any) {
     </div>
 
     ${
-      item.analysis
-        ? `<div style="margin-bottom:8px;"><strong>Why it matters:</strong> ${escapeHtml(item.analysis)}</div>`
+      whyItMatters
+        ? `<div style="margin-bottom:8px;"><strong>Why it matters:</strong> ${escapeHtml(whyItMatters)}</div>`
         : ""
     }
 
     ${
-      item.recommendation
-        ? `<div><strong>Action:</strong> ${escapeHtml(item.recommendation)}</div>`
+      action
+        ? `<div><strong>Action:</strong> ${escapeHtml(action)}</div>`
         : ""
     }
   </div>
