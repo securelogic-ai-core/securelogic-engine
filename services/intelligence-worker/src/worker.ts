@@ -8,8 +8,10 @@ import { sendNewsletter } from "./delivery/sendNewsletter.js";
 
 import { saveSignal } from "./storage/postgresSignalStore.js";
 import { saveInsight } from "./storage/postgresInsightStore.js";
+import { startRun, completeRun, failRun } from "./storage/postgresRunStore.js";
 
 import { publishInsight } from "./publishers/publishInsight.js";
+import { assessSignal } from "./pipeline/assessSignal.js";
 
 import { fetchRegulatorySignals } from "./sources/regulatoryFeed.js";
 import { fetchSecuritySignals } from "./sources/securityNewsFeed.js";
@@ -45,14 +47,15 @@ async function getDefaultOrganizationId(): Promise<string> {
   return orgId;
 }
 
-async function processSignal(event: any) {
+async function processSignal(event: any, organizationId: string) {
   const signal = normalizeSignal(event) as any;
 
   const signalId = await saveSignal({
+    organizationId,
     category: signal.category ?? "general",
     title: signal.title,
     source: signal.source ?? "unknown",
-    sourceUrl: signal.url ?? "",
+    sourceUrl: signal.url ?? null,
     summary: signal.summary ?? null,
     rawContent: signal.rawContent ?? null,
     tags: signal.tags ?? [],
@@ -66,14 +69,15 @@ async function processSignal(event: any) {
     priority: signal.priority ?? null
   });
 
-  const scored = scoreSignal(signal);
-  const insight = (await generateInsight(scored)) as any;
-
   if (!signalId) {
     throw new Error("Failed to persist signal before saving insight");
   }
 
+  const scored = scoreSignal(signal);
+  const insight = (await generateInsight(scored)) as any;
+
   await saveInsight({
+    organizationId,
     signalId: String(signalId),
     category: insight.category ?? signal.category ?? "GENERAL",
     title: insight.title ?? signal.title,
@@ -89,101 +93,111 @@ async function processSignal(event: any) {
   });
 
   await publishInsight(insight);
+
+  // Run the core engine against the scored signal and persist the
+  // resulting risk assessment. Fail-open — one bad assessment never
+  // stops the rest of the signal batch from being processed.
+  await assessSignal(organizationId, scored);
 }
 
 export async function runWorker() {
   console.log("SecureLogic Intelligence Worker starting...");
 
-  const organizationId = await getDefaultOrganizationId();
+  const runId = await startRun("intelligence-worker");
 
-  const regulatorySignals = await fetchRegulatorySignals();
-  const securitySignals = await fetchSecuritySignals();
-  const aiSignals = await fetchAIGovernanceSignals();
+  try {
+    const organizationId = await getDefaultOrganizationId();
 
-  const signals = [
-    ...regulatorySignals,
-    ...securitySignals,
-    ...aiSignals
-  ];
+    const regulatorySignals = await fetchRegulatorySignals();
+    const securitySignals = await fetchSecuritySignals();
+    const aiSignals = await fetchAIGovernanceSignals();
 
-  console.log(`Signals fetched: ${signals.length}`);
+    const signals = [
+      ...regulatorySignals,
+      ...securitySignals,
+      ...aiSignals
+    ];
 
-  let processedCount = 0;
-  let skippedCount = 0;
+    console.log(`Signals fetched: ${signals.length}`);
 
-  for (const event of signals) {
-    if (await isDuplicateSignal(event)) {
-      skippedCount += 1;
-      continue;
+    let processedCount = 0;
+    let skippedCount = 0;
+
+    for (const event of signals) {
+      if (await isDuplicateSignal(event)) {
+        skippedCount += 1;
+        continue;
+      }
+
+      await processSignal(event, organizationId);
+      processedCount += 1;
     }
 
-    await processSignal(event);
-    processedCount += 1;
-  }
+    console.log(`Signals processed: ${processedCount}`);
+    console.log(`Signals skipped as duplicates: ${skippedCount}`);
 
-  console.log(`Signals processed: ${processedCount}`);
-  console.log(`Signals skipped as duplicates: ${skippedCount}`);
+    let issuesGenerated = 0;
 
-  if (processedCount === 0) {
-    console.log("No new signals detected. Newsletter rebuild skipped.");
+    if (processedCount === 0) {
+      console.log("No new signals detected. Newsletter rebuild skipped.");
+    } else {
+      const recentDraft = await getRecentDraftIssue(organizationId, 60);
+
+      if (recentDraft) {
+        console.log("Recent draft already exists. Skipping new draft creation.");
+      } else {
+        const rawIssue = (await buildNewsletterIssue(organizationId)) as any;
+        const issue = applyExecutiveEditorialPass(rawIssue);
+
+        console.log("Editorial pass applied.");
+
+        const markdown = await renderNewsletter(issue);
+        const html = await renderNewsletterHtml(issue);
+
+        console.log("Rendered markdown + HTML.");
+
+        const issueId = await createIssue({
+          organizationId,
+          title: issue.title,
+          contentMd: markdown,
+          contentHtml: html,
+          status: "draft",
+          audienceTier: "free",
+          summary: issue.executiveSummary ?? "Generated newsletter issue",
+          sectionsJson: issue.sections ?? {}
+        });
+
+        issuesGenerated = 1;
+
+        const persistedIssue = {
+          ...issue,
+          id: issueId,
+          organization_id: organizationId,
+          content_html: html,
+          content_md: markdown
+        };
+
+        console.log("Issue persisted:", issueId);
+
+        const today = new Date().getUTCDay();
+
+        if (today === 1) {
+          console.log("Weekly send window detected. Sending newsletter.");
+          await sendNewsletter(persistedIssue);
+        } else {
+          console.log("Newsletter generated but not sent (weekly schedule guard).");
+        }
+      }
+    }
+
+    await completeRun(runId, signals.length, processedCount, issuesGenerated);
     console.log("Worker cycle complete.");
-    return;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await failRun(runId, message);
+    console.error("Worker cycle failed:", err);
+    throw err;
   }
-
-  const recentDraft = await getRecentDraftIssue(organizationId, 60);
-
-  if (recentDraft) {
-    console.log("Recent draft already exists. Skipping new draft creation.");
-    console.log("Worker cycle complete.");
-    return;
-  }
-
-  // BUILD RAW ISSUE
-  const rawIssue = (await buildNewsletterIssue()) as any;
-
-  // APPLY YOUR ENGINE (THIS WAS YOUR MISSING LINK)
-  const issue = applyExecutiveEditorialPass(rawIssue);
-
-  console.log("Editorial pass applied.");
-
-  // RENDER USING ENHANCED ISSUE
-  const markdown = await renderNewsletter(issue);
-  const html = await renderNewsletterHtml(issue);
-
-  console.log("Rendered markdown + HTML.");
-
-  // SAVE ENHANCED ISSUE
-  const issueId = await createIssue({
-    organizationId,
-    title: issue.title,
-    contentMd: markdown,
-    contentHtml: html,
-    status: "draft",
-    audienceTier: "free",
-    summary: issue.executiveSummary ?? "Generated newsletter issue",
-    sectionsJson: issue.sections ?? {}
-  });
-
-  const persistedIssue = {
-    ...issue,
-    id: issueId,
-    organization_id: organizationId,
-    content_html: html,
-    content_md: markdown
-  };
-
-  console.log("Issue persisted:", issueId);
-
-  const today = new Date().getUTCDay();
-
-  if (today === 1) {
-    console.log("Weekly send window detected. Sending newsletter.");
-    await sendNewsletter(persistedIssue);
-  } else {
-    console.log("Newsletter generated but not sent (weekly schedule guard).");
-  }
-
-  console.log("Worker cycle complete.");
 }
 
 void runWorker();

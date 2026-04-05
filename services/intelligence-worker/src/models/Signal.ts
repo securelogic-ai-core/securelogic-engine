@@ -2,6 +2,7 @@ export interface Signal {
   id: string;
   title: string;
   source: string;
+  url?: string;
   category: string;
   categories?: string[];
   categoryReason?: string;

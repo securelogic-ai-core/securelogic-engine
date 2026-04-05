@@ -27,9 +27,13 @@ import adminDeliveryMetricsRouter from "./adminDeliveryMetrics.js";
 import adminIssueDeliveryMetricsRouter from "./adminIssueDeliveryMetrics.js";
 import adminOpsOverviewRouter from "./adminOpsOverview.js";
 import adminOpsHealthRouter from "./adminOpsHealth.js";
+import adminApiKeysRouter from "./adminApiKeys.js";
+import adminOrganizationsRouter from "./adminOrganizations.js";
+import issuesRouter from "./issues.js";
 
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { resolveEntitlement } from "../middleware/resolveEntitlement.js";
+import { requireSubscription } from "../middleware/requireSubscription.js";
 import { requestAudit } from "../middleware/requestAudit.js";
 
 import { enforceUsageCap } from "../middleware/enforceUsageCap.js";
@@ -141,6 +145,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/admin", adminIssueDeliveryMetricsRouter);
   router.use("/admin", adminOpsOverviewRouter);
   router.use("/admin", adminOpsHealthRouter);
+  router.use("/admin", adminApiKeysRouter);
+  router.use("/admin", adminOrganizationsRouter);
 
   // =========================================================
   // ISSUE PUBLISH
@@ -196,6 +202,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
 
   router.use("/issues", requireApiKey);
   router.use("/issues", resolveEntitlement);
+  router.use("/issues", requireSubscription);
   router.use("/issues", tierRateLimit);
   router.use("/issues", enforceUsageCap());
   router.use("/issues", requestAudit);
@@ -208,6 +215,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
       reason: "public_api_disabled"
     });
   });
+
+  router.use("/issues", issuesRouter);
 
   return router;
 }

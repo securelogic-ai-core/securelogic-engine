@@ -5,4 +5,5 @@ export type SignalIngestedEvent = {
   title: string;
   timestamp: string;
   payload: unknown;
+  url?: string;
 };
