@@ -55,13 +55,13 @@ export function enforceUsageCap() {
         return;
       }
 
-      const apiKey = (req as any).apiKey as string | undefined;
+      const apiKeyRow = (req as any).apiKey as Record<string, unknown> | undefined;
 
       /**
-       * If the API key is missing, DO NOT enforce here.
+       * If the API key row is missing or has no id, DO NOT enforce here.
        * requireApiKey should already have blocked the request.
        */
-      if (!apiKey) {
+      if (!apiKeyRow || typeof apiKeyRow.id !== "string") {
         next();
         return;
       }
@@ -72,7 +72,7 @@ export function enforceUsageCap() {
       const redis = await withTimeout(ensureRedisConnected(), REDIS_TIMEOUT_MS);
 
       const windowId = Math.floor(Date.now() / 1000 / WINDOW_SECONDS);
-      const key = `usage:${apiKey}:${windowId}`;
+      const key = `usage:${apiKeyRow.id}:${windowId}`;
 
       /**
        * Atomic INCR + EXPIRE

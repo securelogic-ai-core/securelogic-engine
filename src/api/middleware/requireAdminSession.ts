@@ -1,7 +1,8 @@
+import type { Request, Response, NextFunction } from "express";
 import { getSession } from "../auth/sessionStore.js";
 import { findAdminById } from "../auth/adminStore.js";
 
-export async function requireAdminSession(req, res, next) {
+export async function requireAdminSession(req: Request, res: Response, next: NextFunction) {
   const sessionId = req.cookies?.sl_admin_session;
 
   if (!sessionId) {

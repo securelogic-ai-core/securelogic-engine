@@ -35,7 +35,8 @@ import { requestAudit } from "../middleware/requestAudit.js";
 import { enforceUsageCap } from "../middleware/enforceUsageCap.js";
 import { tierRateLimit } from "../middleware/tierRateLimit.js";
 
-import { requireAdminToken } from "../middleware/requireAdminToken.js";
+import { adminLockout } from "../middleware/adminLockout.js";
+import { requireAdminKey } from "../middleware/requireAdminKey.js";
 import { adminRateLimit } from "../middleware/adminRateLimit.js";
 import { adminAudit } from "../middleware/adminAudit.js";
 
@@ -105,11 +106,12 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/admin/ops/dashboard", adminOpsDashboardRouter);
 
   // =========================================================
-  // ADMIN SECURITY (TOKEN-BASED)
+  // ADMIN SECURITY
   // =========================================================
 
   const adminChain = [
-    requireAdminToken,
+    adminLockout,      // pre-checks IP lockout, attaches lockout context; fails closed if Redis down
+    requireAdminKey,   // timing-safe comparison, rotation support, records failures for lockout
     adminRateLimit,
     adminAudit
   ];

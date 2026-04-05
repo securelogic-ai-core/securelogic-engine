@@ -50,7 +50,15 @@ declare global {
   namespace Express {
     interface Request {
       rawBody?: string | Buffer;
+      adminUser?: import("./auth/adminStore.js").AdminUser;
     }
+  }
+}
+
+// The express.json() verify callback receives http.IncomingMessage, not Express.Request
+declare module "http" {
+  interface IncomingMessage {
+    rawBody?: string | Buffer;
   }
 }
 

@@ -1,4 +1,4 @@
-import { db } from "../infra/db.ts";
+import { db } from "../infra/db.js";
 
 export type AdminUser = {
   id: string;
@@ -8,17 +8,17 @@ export type AdminUser = {
 };
 
 export function findAdminByEmail(email: string): AdminUser | null {
-  return db.prepare(`
+  return (db.prepare(`
     SELECT id, email, password_hash, role
     FROM admin_users
     WHERE email = ?
-  `).get(email) ?? null;
+  `).get(email) as AdminUser | undefined) ?? null;
 }
 
 export function findAdminById(id: string): AdminUser | null {
-  return db.prepare(`
+  return (db.prepare(`
     SELECT id, email, password_hash, role
     FROM admin_users
     WHERE id = ?
-  `).get(id) ?? null;
+  `).get(id) as AdminUser | undefined) ?? null;
 }
