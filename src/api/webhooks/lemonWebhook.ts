@@ -1,12 +1,83 @@
 import type { Request, Response } from "express";
 
 import { redisReady } from "../infra/redis.js";
+import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 
 import {
   setEntitlementInRedis,
   type EntitlementRecord
 } from "../infra/entitlementStore.js";
+
+/**
+ * Maps the Redis/Lemon tier vocabulary to the DB entitlement_level vocabulary.
+ *
+ * Lemon tiers:  free | paid | admin
+ * DB levels:    starter | standard | premium
+ *
+ * paid  → premium  (full access to all API routes)
+ * free  → starter  (basic access only)
+ * admin → premium  (treated as full access; admin keys bypass requireEntitlement anyway)
+ */
+function toDbEntitlementLevel(tier: EntitlementRecord["tier"]): string {
+  switch (tier) {
+    case "paid":
+    case "admin":
+      return "premium";
+    case "free":
+    default:
+      return "starter";
+  }
+}
+
+/**
+ * Best-effort update of api_keys.entitlement_level in Postgres.
+ *
+ * RULES:
+ * - Errors are logged but never thrown — the webhook must always return 200.
+ * - No rows updated (key not found) is a warning, not an error.
+ * - Never logs the raw apiKey.
+ */
+async function syncEntitlementToDb(
+  apiKey: string,
+  entitlement: EntitlementRecord
+): Promise<void> {
+  try {
+    const level = toDbEntitlementLevel(entitlement.tier);
+
+    const result = await pg.query(
+      `UPDATE api_keys SET entitlement_level = $1 WHERE key_hash = $2`,
+      [level, apiKey]
+    );
+
+    const rowsUpdated = result.rowCount ?? 0;
+
+    if (rowsUpdated === 0) {
+      logger.warn(
+        {
+          event: "lemon_webhook_db_sync_no_match",
+          apiKeyPrefix: apiKey.slice(0, 6),
+          level
+        },
+        "lemonWebhook: api_keys row not found for key — DB entitlement not updated"
+      );
+    } else {
+      logger.info(
+        {
+          event: "lemon_webhook_db_sync_ok",
+          apiKeyPrefix: apiKey.slice(0, 6),
+          level
+        },
+        "lemonWebhook: api_keys.entitlement_level updated"
+      );
+    }
+  } catch (err) {
+    logger.error(
+      { event: "lemon_webhook_db_sync_failed", err },
+      "lemonWebhook: failed to sync entitlement_level to DB (non-fatal)"
+    );
+  }
+}
 
 /**
  * =========================================================
@@ -206,9 +277,15 @@ export async function lemonWebhook(req: Request, res: Response): Promise<void> {
     const apiKey = apiKeyCandidate;
 
     /**
-     * Enterprise: entitlement write is the ONLY side effect.
+     * Write entitlement to Redis (primary, fast path).
+     * Then sync to Postgres api_keys.entitlement_level (best-effort).
+     *
+     * Both writes are needed:
+     * - Redis: read by resolveEntitlement → requireSubscription (/issues)
+     * - Postgres: read by requireEntitlement (/signals, /insights, /trends, etc.)
      */
     await setEntitlementInRedis(apiKey, entitlement);
+    await syncEntitlementToDb(apiKey, entitlement);
 
     const durationMs = Date.now() - startedAt;
 

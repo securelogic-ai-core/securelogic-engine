@@ -56,13 +56,21 @@ export async function resolveEntitlement(
   next: NextFunction
 ): Promise<void> {
   try {
-    const apiKey = (req as any).apiKey as string | undefined;
+    const apiKeyRow = (req as any).apiKey as Record<string, unknown> | undefined;
 
     /**
-     * If apiKey is missing, do nothing.
+     * Extract the raw key string (stored as key_hash in the DB row).
+     * requireApiKey sets req.apiKey to the full DB row, not a string.
+     * The Redis entitlement store is keyed by the raw API key string.
+     */
+    const keyHash =
+      typeof apiKeyRow?.key_hash === "string" ? apiKeyRow.key_hash : undefined;
+
+    /**
+     * If the key row or raw key is missing, do nothing.
      * requireApiKey should have blocked already.
      */
-    if (!apiKey) {
+    if (!keyHash) {
       (req as any).entitlement = "free";
       (req as any).activeSubscription = false;
       next();
@@ -79,7 +87,7 @@ export async function resolveEntitlement(
     };
 
     try {
-      const fromRedis = await getEntitlementFromRedis(apiKey);
+      const fromRedis = await getEntitlementFromRedis(keyHash);
       resolved = normalizeEntitlement(fromRedis);
     } catch (err) {
       /**
