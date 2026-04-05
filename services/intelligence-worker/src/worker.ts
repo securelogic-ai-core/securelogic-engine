@@ -22,8 +22,10 @@ import {
   createIssue,
   getRecentDraftIssue
 } from "./storage/postgresIssueStore.js";
+
 import { renderNewsletter } from "./render/renderNewsletter.js";
 import { renderNewsletterHtml } from "./render/renderNewsletterHtml.js";
+
 import { applyExecutiveEditorialPass } from "./editorial/executiveWriter.js";
 
 async function getDefaultOrganizationId(): Promise<string> {
@@ -136,12 +138,21 @@ export async function runWorker() {
     return;
   }
 
+  // BUILD RAW ISSUE
   const rawIssue = (await buildNewsletterIssue()) as any;
+
+  // APPLY YOUR ENGINE (THIS WAS YOUR MISSING LINK)
   const issue = applyExecutiveEditorialPass(rawIssue);
 
+  console.log("Editorial pass applied.");
+
+  // RENDER USING ENHANCED ISSUE
   const markdown = await renderNewsletter(issue);
   const html = await renderNewsletterHtml(issue);
 
+  console.log("Rendered markdown + HTML.");
+
+  // SAVE ENHANCED ISSUE
   const issueId = await createIssue({
     organizationId,
     title: issue.title,
@@ -149,7 +160,7 @@ export async function runWorker() {
     contentHtml: html,
     status: "draft",
     audienceTier: "free",
-    summary: issue.executiveHeadline ?? "Generated newsletter issue",
+    summary: issue.executiveSummary ?? "Generated newsletter issue",
     sectionsJson: issue.sections ?? {}
   });
 
@@ -161,6 +172,8 @@ export async function runWorker() {
     content_md: markdown
   };
 
+  console.log("Issue persisted:", issueId);
+
   const today = new Date().getUTCDay();
 
   if (today === 1) {
@@ -170,10 +183,6 @@ export async function runWorker() {
     console.log("Newsletter generated but not sent (weekly schedule guard).");
   }
 
-  console.log("Newsletter issue built:", persistedIssue.title);
-  console.log("Newsletter markdown rendered.");
-  console.log("Newsletter HTML rendered.");
-  console.log("Newsletter delivery step completed.");
   console.log("Worker cycle complete.");
 }
 
