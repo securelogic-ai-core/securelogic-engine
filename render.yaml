@@ -1,0 +1,45 @@
+services:
+  - type: web
+    name: securelogic-engine
+    env: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm run migrate && npm start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Database — provision a Render Postgres instance or supply an external URL
+      - key: DATABASE_URL
+        sync: false
+
+      # Redis — provision a Render Redis instance or supply an external URL
+      - key: REDIS_URL
+        sync: false
+
+      # Admin access (min 16 chars; rotation: "key1,key2")
+      - key: SECURELOGIC_ADMIN_KEY
+        sync: false
+
+      # IP allowlist for /admin routes (CIDR, comma-separated; 0.0.0.0/0 is forbidden)
+      # On Render internal network, 10.0.0.0/8 covers private traffic.
+      # Set this to match your actual ingress range before deploying.
+      - key: SECURELOGIC_ADMIN_ALLOWED_IPS
+        sync: false
+
+      # Issue signing secret (min 16 chars; single value only — rotation not yet supported)
+      - key: SECURELOGIC_SIGNING_SECRET
+        sync: false
+
+      # LemonSqueezy webhook secret (min 16 chars)
+      - key: LEMON_WEBHOOK_SECRET
+        sync: false
+
+      # Session secret — must be set; defaults to "dev-secret" if omitted
+      - key: SESSION_SECRET
+        sync: false
+
+      # Base URL for unsubscribe links (e.g. https://app.example.com)
+      - key: APP_BASE_URL
+        sync: false

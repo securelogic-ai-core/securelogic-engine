@@ -82,7 +82,7 @@ router.get(
         filtered.length > 0
           ? Number(
               (
-                filtered.reduce((sum, item) => sum + item.numeric_score, 0) /
+                filtered.reduce((sum, item) => sum + (item.numeric_score ?? 0), 0) /
                 filtered.length
               ).toFixed(2)
             )

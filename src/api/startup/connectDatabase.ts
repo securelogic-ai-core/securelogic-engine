@@ -1,4 +1,4 @@
-import { pg } from "../infra/postgres";
+import { pg } from "../infra/postgres.js";
 
 export async function connectDatabase(): Promise<void> {
   const client = await pg.connect();

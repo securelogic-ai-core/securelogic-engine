@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 
-export const db = new Database("securelogic.db");
+export const db: InstanceType<typeof Database> = new Database("securelogic.db");
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS admin_users (
