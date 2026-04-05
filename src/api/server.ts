@@ -41,6 +41,8 @@ import insightsRouter from "./routes/insights.js";
 import trendsRouter from "./routes/trends.js";
 import topRisksRouter from "./routes/topRisks.js";
 import topRisksSummaryRouter from "./routes/topRisksSummary.js";
+import assessRouter from "./routes/assess.js";
+import assessmentsRouter from "./routes/assessments.js";
 
 /* =========================================================
    TYPE AUGMENTATION
@@ -377,6 +379,8 @@ app.use(
   })
 );
 
+app.use("/api", assessRouter);
+app.use("/api", assessmentsRouter);
 app.use("/api", signalsRouter);
 app.use("/api", insightsRouter);
 app.use("/api", trendsRouter);

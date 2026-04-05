@@ -14,6 +14,7 @@ export function normalizeSignal(event: SignalIngestedEvent): Signal {
     id: event.signalId,
     title: event.title,
     source: event.source,
+    url: event.url,
     category: classification.primary,
     summary: raw.slice(0, 200),
     rawContent: raw,

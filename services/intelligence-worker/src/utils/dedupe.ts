@@ -1,39 +1,51 @@
-import fs from "fs/promises";
+import { pg } from "../../../../src/api/infra/postgres.js";
 
-const SIGNALS_FILE = "./data/signals.json";
+/**
+ * Check whether a signal has already been ingested into Postgres.
+ *
+ * Matching strategy (first match wins):
+ * 1. external_id match — stable hash-based signal ID from the source feed
+ * 2. source + title match — fallback for signals without a URL
+ *
+ * Replaces the previous filesystem-based check (data/signals.json) which
+ * never worked in production because Render's filesystem is ephemeral.
+ */
+export async function isDuplicateSignal(event: any): Promise<boolean> {
+  const externalId: string | null =
+    typeof event.signalId === "string" && event.signalId.trim()
+      ? event.signalId.trim()
+      : null;
 
-function fingerprint(title: string) {
-  return title.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
+  const source: string | null =
+    typeof event.source === "string" && event.source.trim()
+      ? event.source.trim()
+      : null;
 
-export async function isDuplicateSignal(signal: any) {
-  const currentId = signal.signalId || signal.id || "";
-  const currentTitle = signal.title || "";
+  const title: string | null =
+    typeof event.title === "string" && event.title.trim()
+      ? event.title.trim()
+      : null;
 
-  let existingSignals: any[] = [];
+  if (!externalId && !title) return false;
 
   try {
-    const raw = await fs.readFile(SIGNALS_FILE, "utf8");
-    existingSignals = JSON.parse(raw);
+    const result = await pg.query(
+      `
+      SELECT 1
+      FROM signals
+      WHERE
+        ($1::text IS NOT NULL AND external_id = $1)
+        OR
+        ($2::text IS NOT NULL AND $3::text IS NOT NULL AND source = $2 AND title = $3)
+      LIMIT 1
+      `,
+      [externalId, source, title]
+    );
+
+    return (result.rowCount ?? 0) > 0;
   } catch {
-    existingSignals = [];
+    // Fail-open: if the DB check fails, treat as non-duplicate so signals
+    // aren't silently dropped. The ON CONFLICT in saveSignal is the safety net.
+    return false;
   }
-
-  const currentFingerprint = fingerprint(currentTitle);
-
-  for (const existing of existingSignals) {
-    const existingId = existing.id || existing.signalId || "";
-    const existingTitle = existing.title || "";
-    const existingFingerprint = fingerprint(existingTitle);
-
-    if (currentId && existingId === currentId) {
-      return true;
-    }
-
-    if (currentFingerprint && existingFingerprint === currentFingerprint) {
-      return true;
-    }
-  }
-
-  return false;
 }

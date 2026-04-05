@@ -1,9 +1,24 @@
 import { pg } from "../../../../src/api/infra/postgres.js";
 
-export async function saveInsight(insight: any) {
+export type PostgresInsightInput = {
+  organizationId: string;
+  signalId: string;
+  category?: string;
+  title: string;
+  analysis: string;
+  riskImplication?: string | null;
+  recommendation?: string | null;
+  riskLevel?: string | null;
+  audience?: string | null;
+  published?: boolean;
+  linkedSources?: unknown[];
+};
+
+export async function saveInsight(insight: PostgresInsightInput): Promise<string | null> {
   const result = await pg.query(
     `
     INSERT INTO insights (
+      organization_id,
       signal_id,
       title,
       analysis,
@@ -15,37 +30,52 @@ export async function saveInsight(insight: any) {
       published,
       linked_sources
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    ON CONFLICT (organization_id, signal_id)
+    WHERE organization_id IS NOT NULL
+    DO UPDATE SET
+      title          = EXCLUDED.title,
+      analysis       = EXCLUDED.analysis,
+      risk_implication = EXCLUDED.risk_implication,
+      recommendation = EXCLUDED.recommendation,
+      risk_level     = EXCLUDED.risk_level,
+      audience       = EXCLUDED.audience,
+      category       = EXCLUDED.category,
+      published      = EXCLUDED.published,
+      linked_sources = EXCLUDED.linked_sources,
+      updated_at     = NOW()
     RETURNING id
     `,
     [
+      insight.organizationId,
       insight.signalId,
       insight.title ?? "",
       insight.analysis ?? "",
       insight.riskImplication ?? null,
       insight.recommendation ?? null,
-      insight.riskLevel ?? "low",
+      insight.riskLevel ?? null,
       Array.isArray(insight.audience)
-        ? insight.audience.join(", ")
+        ? (insight.audience as string[]).join(", ")
         : insight.audience ?? null,
       insight.category ?? "GENERAL",
       insight.published ?? false,
-      insight.linkedSources ?? []
+      JSON.stringify(insight.linkedSources ?? [])
     ]
   );
 
   return result.rows[0]?.id ?? null;
 }
 
-export async function getInsights(limit = 100) {
+export async function getInsights(organizationId: string, limit = 100) {
   const result = await pg.query(
     `
     SELECT *
     FROM insights
+    WHERE organization_id = $1
     ORDER BY created_at DESC
-    LIMIT $1
+    LIMIT $2
     `,
-    [limit]
+    [organizationId, limit]
   );
 
   return result.rows;
