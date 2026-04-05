@@ -17,56 +17,40 @@ function renderAudience(audience: unknown) {
 function renderRiskLine(item: any) {
   const category = normalizeText(item.category || "GENERAL");
   const riskLevel = normalizeText(item.riskLevel || item.risk_level || "low");
-
   return `Risk Level: ${riskLevel} | Category: ${category}`;
 }
 
-/**
- * EXECUTIVE PRIORITY BLOCK (CORE UPGRADE)
- */
 function renderPriority(item: any) {
   const tier = normalizeText(item.priorityTier || "MONITOR");
   const score = item.priorityScore ?? "-";
-
   return `Priority: ${tier} (${score})`;
 }
 
-/**
- * DECISION DIRECTIVE (MOST IMPORTANT LINE)
- */
 function renderDirective(item: any) {
-  const directive = normalizeText(item.directive);
-
-  if (!directive) return "";
-
-  return `Directive: ${directive}`;
+  const value = normalizeText(item.directive);
+  return value ? `Directive: ${value}` : "";
 }
 
-/**
- * FULL EXECUTIVE INSIGHT BLOCK
- */
-function renderInsightBlock(item: any) {
+function renderInsightBlock(item: any, options?: { compact?: boolean }) {
+  const compact = options?.compact ?? false;
+
   const title = normalizeText(item.title || "Untitled");
-
   const analysis = normalizeText(item.analysis || item.summary || "");
-
-  const riskImplication = normalizeText(
+  const whyItMatters = normalizeText(
     item.executiveImpact ||
-    item.riskImplication ||
-    item.risk_implication ||
-    item.whyItMatters ||
-    ""
+      item.riskImplication ||
+      item.risk_implication ||
+      item.whyItMatters ||
+      ""
   );
-
   const recommendation = normalizeText(
     item.recommendation ||
-    item.recommendedAction ||
-    ""
+      item.recommendedAction ||
+      ""
   );
-
   const audience = renderAudience(item.audience);
 
-  return [
+  const lines = [
     `### ${title}`,
     "",
     renderPriority(item),
@@ -74,19 +58,27 @@ function renderInsightBlock(item: any) {
     audience,
     "",
     renderDirective(item),
-    "",
-    analysis ? `Analysis: ${analysis}` : "",
-    riskImplication ? `Why it matters: ${riskImplication}` : "",
-    recommendation ? `Recommended action: ${recommendation}` : "",
     ""
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ];
+
+  if (compact) {
+    lines.push(
+      whyItMatters ? `Why it matters: ${whyItMatters}` : "",
+      recommendation ? `Recommended action: ${recommendation}` : "",
+      ""
+    );
+  } else {
+    lines.push(
+      analysis ? `Analysis: ${analysis}` : "",
+      whyItMatters ? `Why it matters: ${whyItMatters}` : "",
+      recommendation ? `Recommended action: ${recommendation}` : "",
+      ""
+    );
+  }
+
+  return lines.filter(Boolean).join("\n");
 }
 
-/**
- * TOP SIGNALS (NO FILLER TEXT)
- */
 function renderTopSignals(topSignals: any[]) {
   if (!Array.isArray(topSignals) || topSignals.length === 0) {
     return "## Top Signals\n\nNo top signals available.\n";
@@ -95,7 +87,7 @@ function renderTopSignals(topSignals: any[]) {
   return [
     "## Top Signals",
     "",
-    ...topSignals.map((signal) => renderInsightBlock(signal))
+    ...topSignals.map((signal) => renderInsightBlock(signal, { compact: true }))
   ].join("\n");
 }
 
