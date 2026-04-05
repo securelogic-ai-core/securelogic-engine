@@ -12,20 +12,22 @@
 -- - The partial unique index on insights(organization_id, signal_id) WHERE
 --   organization_id IS NOT NULL supports the ON CONFLICT clause in
 --   insightGenerator.ts without conflicting on legacy null-org rows.
+-- - All statements use IF NOT EXISTS so this migration is safe to re-run
+--   against a database that already has some of these columns or indexes.
 
 ALTER TABLE insights
-  ADD COLUMN organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
-  ADD COLUMN category TEXT;
+  ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+  ADD COLUMN IF NOT EXISTS category TEXT;
 
-CREATE UNIQUE INDEX uq_insights_org_signal
+CREATE UNIQUE INDEX IF NOT EXISTS uq_insights_org_signal
   ON insights (organization_id, signal_id)
   WHERE organization_id IS NOT NULL;
 
-CREATE INDEX idx_insights_organization_id
+CREATE INDEX IF NOT EXISTS idx_insights_organization_id
   ON insights (organization_id);
 
 ALTER TABLE trends
-  ADD COLUMN organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE;
+  ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE;
 
-CREATE INDEX idx_trends_organization_id
+CREATE INDEX IF NOT EXISTS idx_trends_organization_id
   ON trends (organization_id);
