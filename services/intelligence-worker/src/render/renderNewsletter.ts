@@ -21,9 +21,35 @@ function renderRiskLine(item: any) {
   return `Risk Level: ${riskLevel} | Category: ${category}`;
 }
 
+/**
+ * EXECUTIVE PRIORITY BLOCK (CORE UPGRADE)
+ */
+function renderPriority(item: any) {
+  const tier = normalizeText(item.priorityTier || "MONITOR");
+  const score = item.priorityScore ?? "-";
+
+  return `Priority: ${tier} (${score})`;
+}
+
+/**
+ * DECISION DIRECTIVE (MOST IMPORTANT LINE)
+ */
+function renderDirective(item: any) {
+  const directive = normalizeText(item.directive);
+
+  if (!directive) return "";
+
+  return `Directive: ${directive}`;
+}
+
+/**
+ * FULL EXECUTIVE INSIGHT BLOCK
+ */
 function renderInsightBlock(item: any) {
   const title = normalizeText(item.title || "Untitled");
+
   const analysis = normalizeText(item.analysis || item.summary || "");
+
   const riskImplication = normalizeText(
     item.executiveImpact ||
     item.riskImplication ||
@@ -31,17 +57,24 @@ function renderInsightBlock(item: any) {
     item.whyItMatters ||
     ""
   );
+
   const recommendation = normalizeText(
     item.recommendation ||
     item.recommendedAction ||
     ""
   );
+
   const audience = renderAudience(item.audience);
 
   return [
     `### ${title}`,
+    "",
+    renderPriority(item),
     renderRiskLine(item),
     audience,
+    "",
+    renderDirective(item),
+    "",
     analysis ? `Analysis: ${analysis}` : "",
     riskImplication ? `Why it matters: ${riskImplication}` : "",
     recommendation ? `Recommended action: ${recommendation}` : "",
@@ -51,6 +84,9 @@ function renderInsightBlock(item: any) {
     .join("\n");
 }
 
+/**
+ * TOP SIGNALS (NO FILLER TEXT)
+ */
 function renderTopSignals(topSignals: any[]) {
   if (!Array.isArray(topSignals) || topSignals.length === 0) {
     return "## Top Signals\n\nNo top signals available.\n";
@@ -58,8 +94,6 @@ function renderTopSignals(topSignals: any[]) {
 
   return [
     "## Top Signals",
-    "",
-    "The following developments represent the highest-priority items in the current intelligence cycle.",
     "",
     ...topSignals.map((signal) => renderInsightBlock(signal))
   ].join("\n");
@@ -88,7 +122,7 @@ export async function renderNewsletter(issue: any) {
   return [
     `# ${normalizeText(issue.title || "SecureLogic Intelligence Brief")}`,
     "",
-    normalizeText(issue.executiveHeadline || ""),
+    normalizeText(issue.executiveSummary || issue.executiveHeadline || ""),
     "",
     renderTopSignals(issue.topSignals ?? []),
     "",
