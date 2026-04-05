@@ -1,12 +1,13 @@
 import { pg } from "../../../../src/api/infra/postgres.js";
 
 export async function saveSignal(signal: any) {
-  await pg.query(
+  const result = await pg.query(
     `
     INSERT INTO signals
     (source, title, url, published_at, normalized_score, created_at)
     VALUES ($1, $2, $3, $4, $5, $6)
     ON CONFLICT (url) DO NOTHING
+    RETURNING id
     `,
     [
       signal.source,
@@ -17,6 +18,8 @@ export async function saveSignal(signal: any) {
       new Date().toISOString()
     ]
   );
+
+  return result.rows[0]?.id ?? null;
 }
 
 export async function getSignals() {
