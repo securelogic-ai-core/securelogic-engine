@@ -42,8 +42,8 @@ import topRisksSummaryRouter from "./topRisksSummary.js";
 import billingRouter from "./billing.js";
 
 import { requireApiKey } from "../middleware/requireApiKey.js";
-import { resolveEntitlement } from "../middleware/resolveEntitlement.js";
-import { requireSubscription } from "../middleware/requireSubscription.js";
+import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { requireEntitlement } from "../middleware/requireEntitlement.js";
 
 import { enforceUsageCap } from "../middleware/enforceUsageCap.js";
 import { tierRateLimit } from "../middleware/tierRateLimit.js";
@@ -211,8 +211,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
   // =========================================================
 
   router.use("/issues", requireApiKey);
-  router.use("/issues", resolveEntitlement);
-  router.use("/issues", requireSubscription);
+  router.use("/issues", attachOrganizationContext);
+  router.use("/issues", requireEntitlement("standard"));
   router.use("/issues", tierRateLimit);
   router.use("/issues", enforceUsageCap());
 
