@@ -189,6 +189,10 @@ function validateStripeEnv(): void {
     logger.warn({ event: "stripe_partial_config", missing: "STRIPE_SECRET_KEY" }, "STRIPE_WEBHOOK_SECRET is set but STRIPE_SECRET_KEY is missing — Stripe billing will not function");
   }
 
+  if (hasKey && !process.env.STRIPE_PORTAL_RETURN_URL?.trim()) {
+    logger.warn({ event: "stripe_partial_config", missing: "STRIPE_PORTAL_RETURN_URL" }, "STRIPE_SECRET_KEY is set but STRIPE_PORTAL_RETURN_URL is missing — billing portal will return 503");
+  }
+
   if (key && key.length > 512) {
     throw new Error("STRIPE_SECRET_KEY must be <= 512 characters");
   }
