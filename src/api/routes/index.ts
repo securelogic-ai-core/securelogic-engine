@@ -3,6 +3,7 @@ import { Router, type Request, type Response } from "express";
 import adminOpsDashboardRouter from "./adminOpsDashboard.js";
 import unsubscribeRouter from "./unsubscribe.js";
 import registerRouter from "./register.js";
+import accountRouter from "./account.js";
 
 import newsletterIssuesRouter from "./newsletterIssues.js";
 import newsletterDeliveriesRouter from "./newsletterDeliveries.js";
@@ -112,6 +113,9 @@ export function buildRoutes(opts: RoutesOptions): Router {
 
   // Self-service registration — public, rate-limited (5/IP/hour)
   router.use("/api", registerRouter);
+
+  // Account status — requireApiKey is inline; no entitlement gate (free tier must see own status)
+  router.use("/api", accountRouter);
 
   router.use("/api", newsletterIssuesRouter);
   router.use("/api", newsletterDeliveriesRouter);
