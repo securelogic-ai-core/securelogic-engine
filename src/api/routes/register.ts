@@ -132,6 +132,18 @@ router.post("/register", registrationLimiter, async (req, res) => {
 
       keyId = keyResult.rows[0].id as string;
 
+      // Enroll the registrant as a free-tier newsletter subscriber.
+      // ON CONFLICT DO NOTHING preserves an existing paid tier if the email
+      // was already subscribed before registration.
+      await client.query(
+        `
+        INSERT INTO subscribers (email, tier, status, created_at)
+        VALUES ($1, 'free', 'active', NOW())
+        ON CONFLICT (email) DO NOTHING
+        `,
+        [email]
+      );
+
       await client.query("COMMIT");
     } catch (err) {
       await client.query("ROLLBACK");
