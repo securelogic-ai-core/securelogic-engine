@@ -32,26 +32,9 @@ function normalizeText(value?: string | null): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-async function getDefaultOrganizationId(): Promise<string> {
-  const result = await pg.query(`
-    SELECT id
-    FROM organizations
-    ORDER BY created_at ASC
-    LIMIT 1
-  `);
-
-  const organizationId = result.rows[0]?.id as string | undefined;
-
-  if (!organizationId) {
-    throw new Error("No organization found for signal storage");
-  }
-
-  return organizationId;
-}
-
 export async function saveSignal(signal: PostgresSignalInput) {
   const normalizedTags = normalizeTags(signal.tags);
-  const organizationId = signal.organizationId ?? (await getDefaultOrganizationId());
+  const organizationId = signal.organizationId ?? null;
 
   const externalId = normalizeText(signal.externalId);
   const sourceUrl = normalizeText(signal.sourceUrl);

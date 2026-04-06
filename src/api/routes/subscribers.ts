@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -45,7 +46,7 @@ router.get(
         subscribers: result.rows
       });
     } catch (err) {
-      console.error("subscribers_query_failed", err);
+      logger.error({ event: "subscribers_query_failed", err }, "GET /api/subscribers failed");
       res.status(500).json({ error: "subscribers_query_failed" });
     }
   }

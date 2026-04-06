@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
 import {
   classifyConfidence,
   classifySeverity,
@@ -38,7 +39,7 @@ router.get(
           metadata,
           created_at
         FROM trends
-        WHERE organization_id = $1
+        WHERE (organization_id = $1 OR organization_id IS NULL)
         ORDER BY score DESC, created_at DESC
         LIMIT 50
         `,
@@ -105,7 +106,7 @@ router.get(
         newestHighRisk
       })
     } catch (err) {
-      console.error("top_risks_summary_api_error", err)
+      logger.error({ event: "top_risks_summary_api_error", err }, "GET /api/top-risks/summary failed")
 
       res.status(500).json({
         error: "top_risks_summary_query_failed"

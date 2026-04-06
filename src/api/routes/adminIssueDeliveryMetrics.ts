@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -126,7 +127,7 @@ router.get("/delivery-metrics/issues/:id", async (req, res) => {
       deliveries: deliveries.map(({ created_at_cursor, ...row }) => row)
     });
   } catch (err) {
-    console.error(err);
+    logger.error({ event: "admin_issue_delivery_metrics_failed", err }, "GET /admin/issue-delivery-metrics failed");
     res.status(500).json({ error: "admin_issue_delivery_metrics_query_failed" });
   }
 });

@@ -1,69 +1,25 @@
 import express from "express";
-import { Client } from "pg";
 import { pg } from "../../../../src/api/infra/postgres.js";
+import { logger } from "../../../../src/api/infra/logger.js";
+import { requestId } from "../../../../src/api/middleware/requestId.js";
+import { requestAudit } from "../../../../src/api/middleware/requestAudit.js";
+import { requireApiKey } from "../../../../src/api/middleware/requireApiKey.js";
+import { requireEntitlement } from "../../../../src/api/middleware/requireEntitlement.js";
+import { errorHandler } from "../../../../src/api/middleware/errorHandler.js";
 
 const app = express();
 app.use(express.json());
+app.use(requestId);
+app.use(requestAudit);
 
 /**
- * Subscriber middleware (paid access only)
- */
-async function requireSubscriber(req: any, res: any, next: any) {
-  try {
-    const emailHeader = req.headers["x-user-email"];
-    const email =
-      typeof emailHeader === "string" ? emailHeader.trim().toLowerCase() : "";
-
-    if (!email) {
-      return res.status(401).json({ error: "missing_subscriber_identity" });
-    }
-
-    const client = new Client({
-      connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false }
-    });
-
-    await client.connect();
-
-    const result = await client.query(
-      `
-      SELECT id, email, status
-      FROM subscribers
-      WHERE LOWER(email) = LOWER($1)
-      LIMIT 1
-      `,
-      [email]
-    );
-
-    await client.end();
-
-    if (result.rows.length === 0) {
-      return res.status(403).json({ error: "subscriber_not_found" });
-    }
-
-    const subscriber = result.rows[0];
-
-    if (subscriber.status !== "active") {
-      return res.status(403).json({ error: "inactive_subscription" });
-    }
-
-    res.locals.subscriber = subscriber;
-
-    next();
-  } catch (err) {
-    console.error("Subscriber check failed:", err);
-    return res.status(500).json({ error: "subscriber_check_failed" });
-  }
-}
-
-/**
- * Base routes
+ * Base routes — unauthenticated
  */
 app.get("/", (_req, res) => {
   res.status(200).json({
     service: "securelogic-intelligence-api",
     status: "ok",
-    endpoints: ["/health", "/intelligence", "/intelligence/:id"]
+    endpoints: ["/health", "/intelligence", "/intelligence/latest", "/intelligence/:id"]
   });
 });
 
@@ -73,78 +29,94 @@ app.get("/health", (_req, res) => {
 
 /**
  * PROTECTED INTELLIGENCE ROUTES
+ * Gated by API key + standard entitlement (paid tier).
+ *
+ * Tenant isolation: each query is scoped to the requesting org.
+ * Platform issues (organization_id IS NULL) are visible to all authenticated callers.
+ * Org-specific issues are only visible to the org that owns them.
  */
-app.get("/intelligence", requireSubscriber, async (_req, res) => {
+app.get("/intelligence", requireApiKey, requireEntitlement("standard"), async (req, res, next) => {
   try {
+    const apiKey = (req as any).apiKey as Record<string, unknown>;
+    const orgId = typeof apiKey.organization_id === "string" ? apiKey.organization_id : null;
+
     const result = await pg.query(
       `
       SELECT id, title, status, created_at
       FROM newsletter_issues
+      WHERE (organization_id IS NOT DISTINCT FROM $1 OR organization_id IS NULL)
       ORDER BY created_at DESC
       LIMIT 10
-      `
+      `,
+      [orgId]
     );
 
     res.json(result.rows);
   } catch (err) {
-    console.error("GET /intelligence failed:", err);
-    res.status(500).json({ error: "intelligence_list_failed" });
+    next(err);
   }
 });
 
-app.get("/intelligence/latest", requireSubscriber, async (_req, res) => {
+app.get("/intelligence/latest", requireApiKey, requireEntitlement("standard"), async (req, res, next) => {
   try {
+    const apiKey = (req as any).apiKey as Record<string, unknown>;
+    const orgId = typeof apiKey.organization_id === "string" ? apiKey.organization_id : null;
+
     const result = await pg.query(
       `
       SELECT *
       FROM newsletter_issues
+      WHERE (organization_id IS NOT DISTINCT FROM $1 OR organization_id IS NULL)
       ORDER BY created_at DESC
       LIMIT 1
-      `
+      `,
+      [orgId]
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: "issue_not_found" });
+      res.status(404).json({ error: "issue_not_found" });
+      return;
     }
 
     res.json(result.rows[0]);
   } catch (err) {
-    console.error("GET /intelligence/latest failed:", err);
-    res.status(500).json({ error: "intelligence_latest_failed" });
+    next(err);
   }
 });
 
-app.get("/intelligence/:id", requireSubscriber, async (req, res) => {
+app.get("/intelligence/:id", requireApiKey, requireEntitlement("standard"), async (req, res, next) => {
   try {
+    const apiKey = (req as any).apiKey as Record<string, unknown>;
+    const orgId = typeof apiKey.organization_id === "string" ? apiKey.organization_id : null;
+
     const result = await pg.query(
       `
       SELECT *
       FROM newsletter_issues
       WHERE id = $1
+        AND (organization_id IS NOT DISTINCT FROM $2 OR organization_id IS NULL)
       LIMIT 1
       `,
-      [req.params.id]
+      [req.params["id"], orgId]
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: "issue_not_found" });
+      res.status(404).json({ error: "issue_not_found" });
+      return;
     }
 
     res.json(result.rows[0]);
   } catch (err) {
-    console.error("GET /intelligence/:id failed:", err);
-    res.status(500).json({ error: "intelligence_detail_failed" });
+    next(err);
   }
 });
 
-/**
- * NOTE:
- * Removed /subscribe route — no free tier, no manual signups
- * Stripe will control subscriber creation going forward
- */
+// Must be last — catches errors forwarded via next(err)
+app.use(errorHandler);
 
-const PORT = Number(process.env.PORT ?? 3000);
+// Default to 3001 to avoid conflicting with the main API on 3000
+const PORT = Number(process.env.INTELLIGENCE_API_PORT ?? process.env.PORT ?? 3001);
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log("SecureLogic Intelligence API running on port", PORT);
+  logger.info({ event: "intelligence_api_start", port: PORT }, "SecureLogic Intelligence API running");
 });

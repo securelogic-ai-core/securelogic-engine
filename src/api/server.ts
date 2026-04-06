@@ -30,19 +30,14 @@ import { rejectOversizedBody } from "./middleware/rejectOversizedBody.js";
 import { rejectInvalidJson } from "./middleware/rejectInvalidJson.js";
 
 import { requestId } from "./middleware/requestId.js";
+import { requestAudit } from "./middleware/requestAudit.js";
 
 import { verifyLemonWebhook } from "./middleware/verifyLemonWebhook.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 import { lemonWebhook } from "./webhooks/lemonWebhook.js";
+import { stripeWebhook } from "./webhooks/stripeWebhook.js";
 import { buildRoutes } from "./routes/index.js";
-import signalsRouter from "./routes/signals.js";
-import insightsRouter from "./routes/insights.js";
-import trendsRouter from "./routes/trends.js";
-import topRisksRouter from "./routes/topRisks.js";
-import topRisksSummaryRouter from "./routes/topRisksSummary.js";
-import assessRouter from "./routes/assess.js";
-import assessmentsRouter from "./routes/assessments.js";
 
 /* =========================================================
    TYPE AUGMENTATION
@@ -283,6 +278,7 @@ app.use((req, res, next) => {
    ========================================================= */
 
 app.use(requestId);
+app.use(requestAudit);
 
 /* =========================================================
    HTTP REQUEST LOGGING
@@ -320,6 +316,19 @@ app.post(
   lemonWebhook
 );
 
+app.post(
+  "/webhooks/stripe",
+  bodyParser.raw({
+    type: "application/json",
+    limit: "256kb"
+  }),
+  (req, _res, next) => {
+    req.rawBody = req.body;
+    next();
+  },
+  stripeWebhook
+);
+
 /* =========================================================
    BODY PARSER (MUST BE AFTER RAW WEBHOOKS)
    ========================================================= */
@@ -346,7 +355,7 @@ app.use(cookieParser());
    SESSION (CRITICAL FOR ADMIN AUTH)
    ========================================================= */
 
-const sessionSecret = process.env.SESSION_SECRET || "dev-secret";
+const sessionSecret = process.env.SESSION_SECRET ?? (isDev ? "dev-secret" : "");
 
 app.use(
   session({
@@ -378,14 +387,6 @@ app.use(
     publicApiDisabled
   })
 );
-
-app.use("/api", assessRouter);
-app.use("/api", assessmentsRouter);
-app.use("/api", signalsRouter);
-app.use("/api", insightsRouter);
-app.use("/api", trendsRouter);
-app.use("/api", topRisksRouter);
-app.use("/api", topRisksSummaryRouter);
 
 /* =========================================================
    404 HANDLER (ENTERPRISE)

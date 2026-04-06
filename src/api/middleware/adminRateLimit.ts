@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { ensureRedisConnected, redisReady } from "../infra/redis.js";
+import { logger } from "../infra/logger.js";
 
 const WINDOW_SECONDS = 60;
 const MAX_REQUESTS = 300;
@@ -35,7 +36,7 @@ export async function adminRateLimit(
 
     next();
   } catch (err) {
-    console.error("adminRateLimit error:", err);
+    logger.error({ event: "admin_rate_limit_error", err }, "adminRateLimit error");
 
     // ✅ FAIL OPEN in dev
     if (process.env.NODE_ENV !== "production") {

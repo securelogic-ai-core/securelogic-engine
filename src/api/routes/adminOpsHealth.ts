@@ -1,5 +1,6 @@
 import { Router } from "express"
 import { pg } from "../infra/postgres.js"
+import { logger } from "../infra/logger.js"
 
 const router = Router()
 
@@ -122,7 +123,7 @@ router.get("/ops/health", async (_req, res) => {
       }
     })
   } catch (err) {
-    console.error(err)
+    logger.error({ event: "admin_ops_health_failed", err }, "GET /admin/ops/health failed")
     res.status(500).json({ error: "admin_ops_health_query_failed" })
   }
 })

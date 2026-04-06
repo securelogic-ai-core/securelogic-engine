@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
 
 const router = Router();
 
@@ -147,7 +148,7 @@ router.get("/ops/overview", async (_req, res) => {
       recentIssuesSettled.status === "fulfilled" ? recentIssuesSettled.value : [];
     if (recentIssuesSettled.status !== "fulfilled") {
       warnings.push("recent_issues_unavailable");
-      console.error("recentIssues failed:", recentIssuesSettled.reason);
+      logger.error({ event: "admin_ops_overview_recent_issues_failed", err: recentIssuesSettled.reason }, "adminOpsOverview: recentIssues query failed");
     }
 
     const deliveryTotalsRow =
@@ -156,7 +157,7 @@ router.get("/ops/overview", async (_req, res) => {
         : {};
     if (deliveryTotalsSettled.status !== "fulfilled") {
       warnings.push("delivery_totals_unavailable");
-      console.error("deliveryTotals failed:", deliveryTotalsSettled.reason);
+      logger.error({ event: "admin_ops_overview_delivery_totals_failed", err: deliveryTotalsSettled.reason }, "adminOpsOverview: deliveryTotals query failed");
     }
 
     const deadLetterCountRow =
@@ -165,7 +166,7 @@ router.get("/ops/overview", async (_req, res) => {
         : {};
     if (deadLetterCountSettled.status !== "fulfilled") {
       warnings.push("dead_letter_count_unavailable");
-      console.error("deadLetterCount failed:", deadLetterCountSettled.reason);
+      logger.error({ event: "admin_ops_overview_dead_letter_count_failed", err: deadLetterCountSettled.reason }, "adminOpsOverview: deadLetterCount query failed");
     }
 
     const suppressionCountRow =
@@ -174,7 +175,7 @@ router.get("/ops/overview", async (_req, res) => {
         : {};
     if (suppressionCountSettled.status !== "fulfilled") {
       warnings.push("suppression_count_unavailable");
-      console.error("suppressionCount failed:", suppressionCountSettled.reason);
+      logger.error({ event: "admin_ops_overview_suppression_count_failed", err: suppressionCountSettled.reason }, "adminOpsOverview: suppressionCount query failed");
     }
 
     const recentProviderEvents =
@@ -183,10 +184,7 @@ router.get("/ops/overview", async (_req, res) => {
         : [];
     if (recentProviderEventsSettled.status !== "fulfilled") {
       warnings.push("recent_provider_events_unavailable");
-      console.error(
-        "recentProviderEvents failed:",
-        recentProviderEventsSettled.reason
-      );
+      logger.error({ event: "admin_ops_overview_provider_events_failed", err: recentProviderEventsSettled.reason }, "adminOpsOverview: recentProviderEvents query failed");
     }
 
     const recentWorkerRuns =
@@ -195,7 +193,7 @@ router.get("/ops/overview", async (_req, res) => {
         : [];
     if (recentWorkerRunsSettled.status !== "fulfilled") {
       warnings.push("recent_worker_runs_unavailable");
-      console.error("recentWorkerRuns failed:", recentWorkerRunsSettled.reason);
+      logger.error({ event: "admin_ops_overview_worker_runs_failed", err: recentWorkerRunsSettled.reason }, "adminOpsOverview: recentWorkerRuns query failed");
     }
 
     res.status(200).json({
@@ -225,7 +223,7 @@ router.get("/ops/overview", async (_req, res) => {
       }
     });
   } catch (err) {
-    console.error("admin_ops_overview_query_failed:", err);
+    logger.error({ event: "admin_ops_overview_query_failed", err }, "GET /admin/ops/overview failed");
     res.status(500).json({ error: "admin_ops_overview_query_failed" });
   }
 });

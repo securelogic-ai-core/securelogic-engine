@@ -1,5 +1,6 @@
 import { Router } from "express"
 import { pg } from "../infra/postgres.js"
+import { logger } from "../infra/logger.js"
 import { canCancelIssue } from "../lib/newsletterLifecycle.js"
 
 const UUID_RE =
@@ -79,7 +80,7 @@ router.post("/newsletter-issues/:id/cancel", async (req, res) => {
       issue: updateResult.rows[0] ?? null
     })
   } catch (err) {
-    console.error(err)
+    logger.error({ event: "admin_cancel_newsletter_issue_failed", err }, "POST /admin/newsletter-issues/:id/cancel failed")
     res.status(500).json({ error: "admin_newsletter_issue_cancel_failed" })
   }
 })

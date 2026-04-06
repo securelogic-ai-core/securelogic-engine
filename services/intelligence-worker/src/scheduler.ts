@@ -1,25 +1,26 @@
 import { setInterval } from "node:timers";
-import { runWorker } from "./worker.js";
+import { runWorker } from "./runner.js";
+import { logger } from "../../../src/api/infra/logger.js";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
 async function start() {
-  console.log("SecureLogic Intelligence Scheduler starting...");
+  logger.info({ event: "scheduler_start" }, "SecureLogic Intelligence Scheduler starting");
 
   await runWorker();
 
   setInterval(async () => {
     try {
-      console.log("Starting scheduled intelligence cycle...");
+      logger.info({ event: "cycle_start" }, "Starting scheduled intelligence cycle");
       await runWorker();
-      console.log("Scheduled intelligence cycle complete.");
+      logger.info({ event: "cycle_complete" }, "Scheduled intelligence cycle complete");
     } catch (error) {
-      console.error("Scheduled intelligence cycle failed:", error);
+      logger.error({ event: "cycle_failed", err: error }, "Scheduled intelligence cycle failed");
     }
   }, ONE_HOUR_MS);
 }
 
 start().catch((error) => {
-  console.error("Scheduler startup failed:", error);
+  logger.error({ event: "scheduler_startup_failed", err: error }, "Scheduler startup failed");
   process.exit(1);
 });

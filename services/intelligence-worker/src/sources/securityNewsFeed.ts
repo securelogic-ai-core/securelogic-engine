@@ -1,5 +1,6 @@
 import Parser from "rss-parser";
 import crypto from "crypto";
+import { logger } from "../../../../src/api/infra/logger.js";
 
 const parser = new Parser();
 
@@ -38,7 +39,7 @@ export async function fetchSecuritySignals() {
       }
     } catch {
       // Fail-open: one unavailable feed must not block the worker cycle
-      console.warn(`[securityNewsFeed] failed to fetch ${feed.url} — skipping`);
+      logger.warn({ event: "feed_fetch_failed", feed: feed.source, url: feed.url }, "Security news feed fetch failed — skipping");
     }
   }
 

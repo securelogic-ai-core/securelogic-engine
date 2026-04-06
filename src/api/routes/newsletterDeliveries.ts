@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -47,7 +48,7 @@ router.get(
         deliveries: result.rows
       });
     } catch (err) {
-      console.error("newsletter_deliveries_query_failed", err);
+      logger.error({ event: "newsletter_deliveries_query_failed", err }, "GET /api/newsletter-deliveries failed");
       res.status(500).json({ error: "newsletter_deliveries_query_failed" });
     }
   }

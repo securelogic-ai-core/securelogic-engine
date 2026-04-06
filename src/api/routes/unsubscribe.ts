@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
 import { verifyUnsubscribeToken } from "../infra/unsubscribeToken.js";
 
 const router = Router();
@@ -50,7 +51,7 @@ router.get("/unsubscribe", async (req, res) => {
       // ignore rollback failure
     }
 
-    console.error(err);
+    logger.error({ event: "unsubscribe_failed", err }, "GET /unsubscribe failed");
     return res.status(500).send("Unsubscribe failed");
   }
 });

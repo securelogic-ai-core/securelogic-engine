@@ -43,3 +43,22 @@ services:
       # Base URL for unsubscribe links (e.g. https://app.example.com)
       - key: APP_BASE_URL
         sync: false
+
+      # Stripe — optional; billing routes are disabled if not set
+      - key: STRIPE_SECRET_KEY
+        sync: false
+
+      # Stripe webhook signing secret (from Stripe Dashboard > Webhooks)
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+
+      # Stripe Price ID for the subscription plan
+      - key: STRIPE_PRICE_ID
+        sync: false
+
+      # URLs Stripe redirects to after checkout
+      - key: STRIPE_SUCCESS_URL
+        sync: false
+
+      - key: STRIPE_CANCEL_URL
+        sync: false

@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
 import { verifyWebhookSignature } from "../infra/verifyWebhookSignature.js";
 
 const router = Router();
@@ -141,7 +142,7 @@ router.post("/webhooks/email/resend", async (req: Request, res: Response) => {
       // ignore rollback error
     }
 
-    console.error("emailProviderWebhook error:", err);
+    logger.error({ event: "email_provider_webhook_failed", err }, "Email provider webhook handler failed");
     return res.status(500).json({ error: "email_provider_webhook_failed" });
   } finally {
     client.release();

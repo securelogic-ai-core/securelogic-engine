@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer"
 import { pg } from "../../../../src/api/infra/postgres.js"
+import { logger } from "../../../../src/api/infra/logger.js"
 
 type Delivery = {
   id: string
@@ -42,13 +43,10 @@ const transporter = nodemailer.createTransport({
 })
 
 export async function sendNewsletterEmails(): Promise<number> {
-  console.log("Newsletter email sender starting...")
-  console.log("SMTP host:", smtpHost)
-  console.log("SMTP port:", smtpPort)
-  console.log("EMAIL_FROM:", emailFrom)
+  logger.info({ event: "email_sender_start", smtpHost, smtpPort, emailFrom }, "Newsletter email sender starting")
 
   await transporter.verify()
-  console.log("SMTP transport verified")
+  logger.info({ event: "smtp_verified" }, "SMTP transport verified")
 
   let sent = 0
 
@@ -62,7 +60,7 @@ export async function sendNewsletterEmails(): Promise<number> {
 
   const deliveries: Delivery[] = deliveriesResult.rows
 
-  console.log("Queued deliveries found:", deliveries.length)
+  logger.info({ event: "deliveries_fetched", count: deliveries.length }, "Queued deliveries found")
 
   const touchedIssueIds = new Set<string>()
 
@@ -83,7 +81,7 @@ export async function sendNewsletterEmails(): Promise<number> {
       const issue: Issue | undefined = issueResult.rows[0]
 
       if (!issue) {
-        console.log("Issue not found for delivery:", delivery.id)
+        logger.warn({ event: "issue_not_found", deliveryId: delivery.id, issueId: delivery.issue_id }, "Issue not found for delivery")
 
         await pg.query(
           `
@@ -97,7 +95,7 @@ export async function sendNewsletterEmails(): Promise<number> {
         continue
       }
 
-      console.log("Sending email to:", delivery.subscriber_email)
+      logger.info({ event: "email_sending", email: delivery.subscriber_email, issueId: delivery.issue_id }, "Sending email")
 
       await transporter.sendMail({
         from: emailFrom,
@@ -116,12 +114,11 @@ export async function sendNewsletterEmails(): Promise<number> {
       )
 
       sent++
-      console.log("Email sent:", delivery.subscriber_email)
+      logger.info({ event: "email_sent", email: delivery.subscriber_email }, "Email sent")
 
       await sleep(650)
     } catch (err) {
-      console.error("Email send failed for:", delivery.subscriber_email)
-      console.error(err)
+      logger.error({ event: "email_send_failed", email: delivery.subscriber_email, err }, "Email send failed")
 
       await pg.query(
         `
@@ -161,17 +158,12 @@ export async function sendNewsletterEmails(): Promise<number> {
         [issueId]
       )
 
-      console.log("Newsletter issue marked sent:", issueId)
+      logger.info({ event: "issue_marked_sent", issueId }, "Newsletter issue marked sent")
     } else {
-      console.log(
-        "Newsletter issue remains queued due to unsent deliveries:",
-        issueId,
-        "pending:",
-        pendingCount
-      )
+      logger.info({ event: "issue_still_queued", issueId, pendingDeliveries: pendingCount }, "Newsletter issue remains queued due to unsent deliveries")
     }
   }
 
-  console.log("Newsletter email sender complete. Sent:", sent)
+  logger.info({ event: "email_sender_complete", sent }, "Newsletter email sender complete")
   return sent
 }

@@ -1,7 +1,7 @@
 import { pg } from "../../../../src/api/infra/postgres.js";
 
 export type PostgresIssueInput = {
-  organizationId: string;
+  organizationId?: string | null;
   title: string;
   publishDate?: string | null;
   status?: string;
@@ -32,7 +32,7 @@ export async function createIssue(issue: PostgresIssueInput) {
     RETURNING id
     `,
     [
-      issue.organizationId,
+      issue.organizationId ?? null,
       issue.title,
       issue.publishDate ?? null,
       issue.status ?? "draft",
@@ -47,56 +47,56 @@ export async function createIssue(issue: PostgresIssueInput) {
   return result.rows[0].id as string;
 }
 
-export async function getLatestDraftIssue(organizationId: string) {
+export async function getLatestDraftIssue(organizationId: string | null) {
   const result = await pg.query(
     `
     SELECT *
     FROM newsletter_issues
-    WHERE organization_id = $1
+    WHERE organization_id IS NOT DISTINCT FROM $1
       AND status = 'draft'
     ORDER BY created_at DESC, id DESC
     LIMIT 1
     `,
-    [organizationId]
+    [organizationId ?? null]
   );
 
   return result.rows[0] ?? null;
 }
 
 export async function getRecentDraftIssue(
-  organizationId: string,
+  organizationId: string | null,
   minutes = 60
 ) {
   const result = await pg.query(
     `
     SELECT *
     FROM newsletter_issues
-    WHERE organization_id = $1
+    WHERE organization_id IS NOT DISTINCT FROM $1
       AND status = 'draft'
       AND created_at >= NOW() - ($2::text || ' minutes')::interval
     ORDER BY created_at DESC, id DESC
     LIMIT 1
     `,
-    [organizationId, String(minutes)]
+    [organizationId ?? null, String(minutes)]
   );
 
   return result.rows[0] ?? null;
 }
 
 export async function getActiveIssue(
-  organizationId: string,
+  organizationId: string | null,
   statuses: string[] = ["draft", "queued"]
 ) {
   const result = await pg.query(
     `
     SELECT *
     FROM newsletter_issues
-    WHERE organization_id = $1
+    WHERE organization_id IS NOT DISTINCT FROM $1
       AND status = ANY($2::text[])
     ORDER BY created_at DESC, id DESC
     LIMIT 1
     `,
-    [organizationId, statuses]
+    [organizationId ?? null, statuses]
   );
 
   return result.rows[0] ?? null;
@@ -115,17 +115,17 @@ export async function markIssueSent(issueId: string) {
   );
 }
 
-export async function getLatestSentIssue(organizationId: string) {
+export async function getLatestSentIssue(organizationId: string | null) {
   const result = await pg.query(
     `
     SELECT *
     FROM newsletter_issues
-    WHERE organization_id = $1
+    WHERE organization_id IS NOT DISTINCT FROM $1
       AND status = 'sent'
     ORDER BY publish_date DESC NULLS LAST, created_at DESC, id DESC
     LIMIT 1
     `,
-    [organizationId]
+    [organizationId ?? null]
   );
 
   return result.rows[0] ?? null;

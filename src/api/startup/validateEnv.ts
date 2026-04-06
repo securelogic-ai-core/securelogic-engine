@@ -1,6 +1,10 @@
+import { logger } from "../infra/logger.js";
+
 const REQUIRED_ENV_PROD = [
   "NODE_ENV",
+  "DATABASE_URL",
   "REDIS_URL",
+  "SESSION_SECRET",
   "SECURELOGIC_ADMIN_KEY",
   "SECURELOGIC_SIGNING_SECRET",
   "LEMON_WEBHOOK_SECRET",
@@ -169,6 +173,31 @@ function validateAdminAllowlist(): void {
   }
 }
 
+function validateStripeEnv(): void {
+  const key = process.env.STRIPE_SECRET_KEY?.trim();
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
+
+  // Stripe is optional — warn if partially configured
+  const hasKey = Boolean(key);
+  const hasWebhookSecret = Boolean(webhookSecret);
+
+  if (hasKey && !hasWebhookSecret) {
+    logger.warn({ event: "stripe_partial_config", missing: "STRIPE_WEBHOOK_SECRET" }, "STRIPE_SECRET_KEY is set but STRIPE_WEBHOOK_SECRET is missing — Stripe webhooks will not verify");
+  }
+
+  if (!hasKey && hasWebhookSecret) {
+    logger.warn({ event: "stripe_partial_config", missing: "STRIPE_SECRET_KEY" }, "STRIPE_WEBHOOK_SECRET is set but STRIPE_SECRET_KEY is missing — Stripe billing will not function");
+  }
+
+  if (key && key.length > 512) {
+    throw new Error("STRIPE_SECRET_KEY must be <= 512 characters");
+  }
+
+  if (webhookSecret && webhookSecret.length > 512) {
+    throw new Error("STRIPE_WEBHOOK_SECRET must be <= 512 characters");
+  }
+}
+
 function validateDevEntitlementsJson(): void {
   // DEV ONLY
   if (process.env.NODE_ENV !== "development") return;
@@ -235,20 +264,21 @@ export function validateEnv(): void {
     validateSigningSecret();
     validateWebhookSecret();
     validateAdminAllowlist();
+    validateStripeEnv();
     validateDevEntitlementsJson();
   } catch (err) {
     const msg =
       err instanceof Error ? err.message : "Environment validation failed";
 
-    console.error("❌ Environment validation failed:");
-    console.error(`   ${msg}`);
-    console.error("");
-    console.error("Required in production:");
-    for (const k of REQUIRED_ENV_PROD) console.error(`   - ${k}`);
-
-    console.error("");
-    console.error("Optional:");
-    for (const k of OPTIONAL_ENV) console.error(`   - ${k}`);
+    logger.fatal(
+      {
+        event: "env_validation_failed",
+        reason: msg,
+        requiredInProd: REQUIRED_ENV_PROD,
+        optional: OPTIONAL_ENV
+      },
+      "Environment validation failed — process will exit"
+    );
 
     process.exit(1); // FAIL CLOSED
   }
