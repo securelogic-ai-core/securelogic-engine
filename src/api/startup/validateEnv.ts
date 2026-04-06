@@ -9,7 +9,8 @@ const REQUIRED_ENV_PROD = [
   "SECURELOGIC_SIGNING_SECRET",
   "LEMON_WEBHOOK_SECRET",
   "SECURELOGIC_ADMIN_ALLOWED_IPS",
-  "UNSUBSCRIBE_SECRET"
+  "UNSUBSCRIBE_SECRET",
+  "RESEND_WEBHOOK_SECRET"
 ] as const;
 
 const OPTIONAL_ENV = [
@@ -174,6 +175,19 @@ function validateAdminAllowlist(): void {
   }
 }
 
+function validateResendWebhookSecret(): void {
+  const raw = process.env.RESEND_WEBHOOK_SECRET?.trim();
+  if (!raw) return; // presence enforced by REQUIRED_ENV_PROD in production
+
+  if (raw.length < 16) {
+    throw new Error("RESEND_WEBHOOK_SECRET must be at least 16 characters");
+  }
+
+  if (raw.length > 512) {
+    throw new Error("RESEND_WEBHOOK_SECRET must be <= 512 characters");
+  }
+}
+
 function validateUnsubscribeSecret(): void {
   const raw = process.env.UNSUBSCRIBE_SECRET?.trim();
   if (!raw) return; // presence already enforced by REQUIRED_ENV_PROD in production
@@ -266,6 +280,7 @@ export function validateEnv(): void {
     assertMaxLength("LEMON_WEBHOOK_SECRET", 4096);
     assertMaxLength("SECURELOGIC_ADMIN_ALLOWED_IPS", 4096);
     assertMaxLength("UNSUBSCRIBE_SECRET", 4096);
+    assertMaxLength("RESEND_WEBHOOK_SECRET", 4096);
     assertMaxLength("REDIS_URL", 4096);
 
     /**
@@ -283,6 +298,7 @@ export function validateEnv(): void {
     validateSigningSecret();
     validateWebhookSecret();
     validateAdminAllowlist();
+    validateResendWebhookSecret();
     validateUnsubscribeSecret();
     validateStripeEnv();
     validateDevEntitlementsJson();
