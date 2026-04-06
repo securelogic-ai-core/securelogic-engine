@@ -2,6 +2,7 @@ import { Resend } from "resend";
 import { pg } from "../../../../src/api/infra/postgres.js";
 import { logger } from "../../../../src/api/infra/logger.js";
 import { markIssueSent } from "../storage/postgresIssueStore.js";
+import { generateUnsubscribeToken } from "../../../../src/api/infra/unsubscribeToken.js";
 
 /* =========================================================
    CONFIG
@@ -112,6 +113,44 @@ async function markDeliveryFailed(deliveryId: string): Promise<void> {
  * Returns true if the issue has no remaining queued or failed deliveries,
  * meaning all deliveries succeeded and the issue can be marked sent.
  */
+/**
+ * Builds a signed unsubscribe URL for the given email address.
+ * Returns null if APP_BASE_URL is not configured — the email still
+ * sends, but without a footer. This is logged as a warning so the
+ * operator knows to set the env var.
+ */
+function buildUnsubscribeUrl(email: string): string | null {
+  const baseUrl = process.env.APP_BASE_URL?.trim();
+  if (!baseUrl) return null;
+
+  const token = generateUnsubscribeToken(email);
+  const params = new URLSearchParams({ email, token });
+  return `${baseUrl}/unsubscribe?${params.toString()}`;
+}
+
+/**
+ * Appends a minimal CAN-SPAM compliant unsubscribe footer to the
+ * issue HTML. The footer is plain enough to render in all clients.
+ * Content is appended before </body> if present, otherwise at the end.
+ *
+ * The base content_html is not modified — a per-recipient copy is
+ * built here and never persisted back to the DB.
+ */
+function injectUnsubscribeFooter(html: string, unsubscribeUrl: string): string {
+  const footer = `
+<div style="margin-top:32px;padding-top:16px;border-top:1px solid #e0e0e0;font-family:sans-serif;font-size:12px;color:#888;text-align:center;">
+  <p style="margin:0;">You are receiving this because you subscribed to SecureLogic Intelligence.</p>
+  <p style="margin:4px 0 0;"><a href="${unsubscribeUrl}" style="color:#888;">Unsubscribe</a></p>
+</div>`;
+
+  const closeBody = html.lastIndexOf("</body>");
+  if (closeBody !== -1) {
+    return html.slice(0, closeBody) + footer + html.slice(closeBody);
+  }
+
+  return html + footer;
+}
+
 async function isIssueFullySent(issueId: string): Promise<boolean> {
   const result = await pg.query(
     `
@@ -177,13 +216,25 @@ export async function sendNewsletter(issueId: string): Promise<SendNewsletterRes
     return result;
   }
 
+  if (!process.env.APP_BASE_URL?.trim()) {
+    logger.warn(
+      { event: "newsletter_send_no_base_url", issueId },
+      "APP_BASE_URL is not set — emails will send without an unsubscribe link (CAN-SPAM risk)"
+    );
+  }
+
   for (const delivery of deliveries) {
     try {
+      const unsubscribeUrl = buildUnsubscribeUrl(delivery.subscriber_email);
+      const html = unsubscribeUrl
+        ? injectUnsubscribeFooter(issue.content_html, unsubscribeUrl)
+        : issue.content_html;
+
       await resend.emails.send({
         from,
         to: delivery.subscriber_email,
         subject: issue.title,
-        html: issue.content_html
+        html
       });
 
       await markDeliverySent(delivery.id);

@@ -107,6 +107,16 @@ services:
       - key: ALERT_WEBHOOK_URL
         sync: false
 
+      # Must match the main API service value — used to sign unsubscribe tokens
+      # that the main API verifies at GET /unsubscribe
+      - key: UNSUBSCRIBE_SECRET
+        sync: false
+
+      # Base URL of the main API (e.g. https://app.example.com) — used to build
+      # unsubscribe links appended to outbound newsletter emails
+      - key: APP_BASE_URL
+        sync: false
+
       # Optional: override log verbosity (default: info)
       - key: LOG_LEVEL
         sync: false
