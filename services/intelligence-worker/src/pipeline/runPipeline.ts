@@ -17,7 +17,10 @@ import { fetchRegulatorySignals } from "../sources/regulatoryFeed.js";
 import { fetchSecuritySignals } from "../sources/securityNewsFeed.js";
 import { fetchAIGovernanceSignals } from "../sources/aiGovernanceFeed.js";
 
-import { getLatestDraftIssue } from "../storage/postgresIssueStore.js";
+import {
+  getLatestDraftIssue,
+  promoteIssueToQueued
+} from "../storage/postgresIssueStore.js";
 import { sendNewsletter } from "../delivery/sendNewsletter.js";
 import { logger } from "../../../../src/api/infra/logger.js";
 
@@ -181,26 +184,48 @@ export async function runPipeline(): Promise<PipelineResult> {
     logger.error({ event: "newsletter_generation_failed", err }, "Newsletter generation failed");
   }
 
+  // Weekly send window: Monday UTC.
+  // Promote the draft issue to 'queued' BEFORE delivery generation so the
+  // delivery generator finds it and creates queued rows for the sender to drain.
+  const isWeeklySendDay = new Date().getUTCDay() === 1;
+  let sendIssueId: string | null = null;
+
+  if (isWeeklySendDay) {
+    try {
+      const draftIssue = await getLatestDraftIssue(null);
+
+      if (draftIssue) {
+        const promoted = await promoteIssueToQueued(draftIssue.id);
+
+        if (promoted) {
+          sendIssueId = draftIssue.id;
+          logger.info({ event: "issue_promoted", issueId: draftIssue.id }, "Draft issue promoted to queued for weekly send");
+        } else {
+          logger.warn({ event: "issue_promote_skipped", issueId: draftIssue.id }, "Issue promotion skipped — already queued or not in draft state");
+        }
+      } else {
+        logger.info({ event: "newsletter_send_skip", reason: "no_draft" }, "Weekly send window: no draft issue to promote");
+      }
+    } catch (err) {
+      logger.error({ event: "issue_promote_failed", err }, "Issue promotion failed");
+    }
+  }
+
   try {
     deliveryResult = await generateNewsletterDeliveries();
   } catch (err) {
     logger.error({ event: "delivery_generation_failed", err }, "Newsletter delivery generation failed");
   }
 
-  // Weekly send: only dispatch on Monday (UTC day 1)
-  if (new Date().getUTCDay() === 1) {
+  // Send after delivery generation so queued rows exist for the sender to drain
+  if (isWeeklySendDay && sendIssueId) {
     try {
-      const draftIssue = await getLatestDraftIssue(null);
-      if (draftIssue) {
-        logger.info({ event: "newsletter_send_start", issueId: draftIssue.id }, "Weekly send window detected. Sending newsletter");
-        await sendNewsletter(draftIssue);
-      } else {
-        logger.info({ event: "newsletter_send_skip", reason: "no_draft" }, "Weekly send window: no draft issue available to send");
-      }
+      logger.info({ event: "newsletter_send_start", issueId: sendIssueId }, "Weekly send window: dispatching newsletter");
+      await sendNewsletter(sendIssueId);
     } catch (err) {
       logger.error({ event: "newsletter_send_failed", err }, "Newsletter send failed");
     }
-  } else {
+  } else if (!isWeeklySendDay) {
     logger.info({ event: "newsletter_send_skip", reason: "schedule_guard" }, "Newsletter generated but not sent (weekly schedule guard)");
   }
 

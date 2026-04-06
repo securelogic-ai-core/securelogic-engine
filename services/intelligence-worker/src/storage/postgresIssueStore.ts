@@ -102,6 +102,21 @@ export async function getActiveIssue(
   return result.rows[0] ?? null;
 }
 
+export async function promoteIssueToQueued(issueId: string): Promise<boolean> {
+  const result = await pg.query(
+    `
+    UPDATE newsletter_issues
+    SET status     = 'queued',
+        updated_at = NOW()
+    WHERE id     = $1
+      AND status = 'draft'
+    `,
+    [issueId]
+  );
+
+  return (result.rowCount ?? 0) > 0;
+}
+
 export async function markIssueSent(issueId: string) {
   await pg.query(
     `
