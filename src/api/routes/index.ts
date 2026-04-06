@@ -32,6 +32,7 @@ import adminApiKeysRouter from "./adminApiKeys.js";
 import adminOrganizationsRouter from "./adminOrganizations.js";
 import adminAuditLogRouter from "./adminAuditLog.js";
 import issuesRouter from "./issues.js";
+import intelligenceRouter from "./intelligence.js";
 
 import assessRouter from "./assess.js";
 import assessmentsRouter from "./assessments.js";
@@ -230,6 +231,19 @@ export function buildRoutes(opts: RoutesOptions): Router {
   });
 
   router.use("/issues", issuesRouter);
+
+  // =========================================================
+  // INTELLIGENCE API
+  // Serves newsletter issues from the pipeline directly.
+  // Gated identically to /issues: API key + standard entitlement.
+  // =========================================================
+
+  router.use("/api/intelligence", requireApiKey);
+  router.use("/api/intelligence", attachOrganizationContext);
+  router.use("/api/intelligence", requireEntitlement("standard"));
+  router.use("/api/intelligence", tierRateLimit);
+  router.use("/api/intelligence", enforceUsageCap());
+  router.use("/api", intelligenceRouter);
 
   // =========================================================
   // API ROUTES (engine + intelligence)
