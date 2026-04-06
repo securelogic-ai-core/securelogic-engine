@@ -2,16 +2,67 @@ import { Router } from "express";
 import { logger } from "../infra/logger.js";
 import { getStripe } from "../infra/stripeClient.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { pg } from "../infra/postgres.js";
 
 const router = Router();
+
+/* =========================================================
+   HELPERS
+   ========================================================= */
+
+/**
+ * Returns the Stripe customer ID for the given api_keys row.
+ *
+ * If one already exists in our DB, returns it immediately (idempotent —
+ * prevents duplicate customers when checkout is called more than once).
+ *
+ * Otherwise creates a new Stripe Customer, persists the ID, and returns it.
+ * Storing the ID before checkout completes means the portal endpoint never
+ * depends on webhook delivery timing.
+ */
+async function resolveStripeCustomer(
+  apiKeyId: string,
+  apiKeyLabel: string | null
+): Promise<string> {
+  // Check whether we already have a customer for this key
+  const existing = await pg.query(
+    `SELECT stripe_customer_id FROM api_keys WHERE id = $1 LIMIT 1`,
+    [apiKeyId]
+  );
+
+  const existingCustomerId = existing.rows[0]?.stripe_customer_id as string | null;
+
+  if (existingCustomerId) {
+    return existingCustomerId;
+  }
+
+  // Create a new Stripe Customer and store it immediately
+  const customer = await getStripe().customers.create({
+    description: apiKeyLabel ?? `api_key:${apiKeyId}`,
+    metadata: { api_key_id: apiKeyId }
+  });
+
+  await pg.query(
+    `UPDATE api_keys SET stripe_customer_id = $1 WHERE id = $2`,
+    [customer.id, apiKeyId]
+  );
+
+  logger.info(
+    { event: "stripe_customer_created", apiKeyId, customerId: customer.id },
+    "Stripe customer created and stored"
+  );
+
+  return customer.id;
+}
 
 /* =========================================================
    CREATE CHECKOUT SESSION
    POST /api/billing/checkout
 
    Creates a Stripe subscription checkout session for the
-   calling API key. The key is embedded in session + subscription
-   metadata so the stripe webhook can identify who paid.
+   calling API key. A Stripe Customer is created (or reused)
+   before the session so the customer ID is durable in our DB
+   regardless of webhook delivery timing.
    ========================================================= */
 
 router.post("/billing/checkout", requireApiKey, async (req, res) => {
@@ -30,16 +81,22 @@ router.post("/billing/checkout", requireApiKey, async (req, res) => {
     }
 
     const apiKey = (req as any).apiKey as Record<string, unknown>;
-    const apiKeyId =
-      typeof apiKey.id === "string" ? apiKey.id : null;
+    const apiKeyId = typeof apiKey.id === "string" ? apiKey.id : null;
+    const apiKeyLabel = typeof apiKey.label === "string" ? apiKey.label : null;
 
     if (!apiKeyId) {
       res.status(400).json({ error: "api_key_identity_missing" });
       return;
     }
 
+    // Resolve (or create) a Stripe Customer before creating the session.
+    // This stores stripe_customer_id in our DB immediately — portal access
+    // does not depend on webhook timing.
+    const customerId = await resolveStripeCustomer(apiKeyId, apiKeyLabel);
+
     const session = await getStripe().checkout.sessions.create({
       mode: "subscription",
+      customer: customerId,
       line_items: [{ price: priceId, quantity: 1 }],
       // api_key_id flows into checkout.session.completed
       metadata: { api_key_id: apiKeyId },
@@ -59,11 +116,7 @@ router.post("/billing/checkout", requireApiKey, async (req, res) => {
     }
 
     logger.info(
-      {
-        event: "billing_checkout_created",
-        apiKeyId,
-        sessionId: session.id
-      },
+      { event: "billing_checkout_created", apiKeyId, customerId, sessionId: session.id },
       "Stripe checkout session created"
     );
 
@@ -74,6 +127,73 @@ router.post("/billing/checkout", requireApiKey, async (req, res) => {
       "POST /api/billing/checkout failed"
     );
     res.status(500).json({ error: "billing_checkout_failed" });
+  }
+});
+
+/* =========================================================
+   CREATE BILLING PORTAL SESSION
+   POST /api/billing/portal
+
+   Returns a Stripe Customer Portal URL for the calling API key.
+   The portal lets subscribers manage their plan, update payment
+   methods, and cancel. Requires a stripe_customer_id stored on
+   the key — set at checkout creation time, not at webhook time.
+   ========================================================= */
+
+router.post("/billing/portal", requireApiKey, async (req, res) => {
+  try {
+    const returnUrl = process.env.STRIPE_PORTAL_RETURN_URL?.trim();
+
+    if (!returnUrl) {
+      logger.error(
+        { event: "billing_portal_misconfigured" },
+        "POST /api/billing/portal: STRIPE_PORTAL_RETURN_URL not set"
+      );
+      res.status(503).json({ error: "billing_not_configured" });
+      return;
+    }
+
+    const apiKey = (req as any).apiKey as Record<string, unknown>;
+    const apiKeyId = typeof apiKey.id === "string" ? apiKey.id : null;
+
+    if (!apiKeyId) {
+      res.status(400).json({ error: "api_key_identity_missing" });
+      return;
+    }
+
+    const result = await pg.query(
+      `SELECT stripe_customer_id FROM api_keys WHERE id = $1 LIMIT 1`,
+      [apiKeyId]
+    );
+
+    const customerId = result.rows[0]?.stripe_customer_id as string | null;
+
+    if (!customerId) {
+      logger.warn(
+        { event: "billing_portal_no_customer", apiKeyId },
+        "POST /api/billing/portal: no stripe_customer_id — key has not been through checkout"
+      );
+      res.status(404).json({ error: "no_billing_account" });
+      return;
+    }
+
+    const portalSession = await getStripe().billingPortal.sessions.create({
+      customer: customerId,
+      return_url: returnUrl
+    });
+
+    logger.info(
+      { event: "billing_portal_created", apiKeyId, customerId },
+      "Stripe billing portal session created"
+    );
+
+    res.status(200).json({ portalUrl: portalSession.url });
+  } catch (err) {
+    logger.error(
+      { event: "billing_portal_failed", err },
+      "POST /api/billing/portal failed"
+    );
+    res.status(500).json({ error: "billing_portal_failed" });
   }
 });
 

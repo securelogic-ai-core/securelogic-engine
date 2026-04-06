@@ -94,12 +94,29 @@ function extractApiKeyId(event: Stripe.Event): string | null {
 }
 
 /**
- * Best-effort sync of entitlement level to Postgres api_keys table.
- * Errors are logged but never thrown.
+ * Extract the Stripe customer ID from a Stripe event object.
+ * Present on subscriptions and checkout sessions.
+ */
+function extractCustomerId(event: Stripe.Event): string | null {
+  const obj = event.data.object as any;
+  const id = obj?.customer;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+/**
+ * Best-effort sync of entitlement level (and optionally stripe_customer_id)
+ * to the Postgres api_keys table. Errors are logged but never thrown.
+ *
+ * stripe_customer_id is written here as a belt-and-suspenders fallback.
+ * The primary write happens at checkout creation time in billing.ts so
+ * portal access never depends on webhook delivery. This write uses
+ * ON CONFLICT DO NOTHING semantics via COALESCE to avoid overwriting
+ * an already-stored customer ID.
  */
 async function syncToDb(
   apiKeyId: string,
-  entitlement: EntitlementRecord
+  entitlement: EntitlementRecord,
+  customerId: string | null
 ): Promise<void> {
   const level =
     entitlement.tier === "paid" || entitlement.tier === "admin"
@@ -108,28 +125,26 @@ async function syncToDb(
 
   try {
     const result = await pg.query(
-      `UPDATE api_keys SET entitlement_level = $1 WHERE id = $2`,
-      [level, apiKeyId]
+      `
+      UPDATE api_keys
+      SET
+        entitlement_level   = $1,
+        stripe_customer_id  = COALESCE(stripe_customer_id, $3)
+      WHERE id = $2
+      `,
+      [level, apiKeyId, customerId]
     );
 
     const rows = result.rowCount ?? 0;
 
     if (rows === 0) {
       logger.warn(
-        {
-          event: "stripe_webhook_db_sync_no_match",
-          apiKeyId,
-          level
-        },
+        { event: "stripe_webhook_db_sync_no_match", apiKeyId, level },
         "stripeWebhook: api_keys row not found — DB entitlement not updated"
       );
     } else {
       logger.info(
-        {
-          event: "stripe_webhook_db_sync_ok",
-          apiKeyId,
-          level
-        },
+        { event: "stripe_webhook_db_sync_ok", apiKeyId, level, customerId },
         "stripeWebhook: api_keys.entitlement_level updated"
       );
     }
@@ -234,9 +249,12 @@ export async function stripeWebhook(
       return;
     }
 
+    // Extract customer ID for belt-and-suspenders DB sync
+    const customerId = extractCustomerId(event);
+
     // Write to Redis (supplementary cache) then sync to Postgres (primary)
     await setEntitlementInRedis(apiKeyId, entitlement);
-    await syncToDb(apiKeyId, entitlement);
+    await syncToDb(apiKeyId, entitlement, customerId);
 
     logger.info(
       {
