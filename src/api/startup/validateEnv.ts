@@ -10,7 +10,15 @@ const REQUIRED_ENV_PROD = [
   "LEMON_WEBHOOK_SECRET",
   "SECURELOGIC_ADMIN_ALLOWED_IPS",
   "UNSUBSCRIBE_SECRET",
-  "RESEND_WEBHOOK_SECRET"
+  "RESEND_WEBHOOK_SECRET",
+  // Stripe billing — required; billing routes return 503 without these
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+  "STRIPE_PRICE_ID",
+  "STRIPE_SUCCESS_URL",
+  "STRIPE_CANCEL_URL",
+  // Required for CAN-SPAM compliant unsubscribe links in outbound emails
+  "APP_BASE_URL"
 ] as const;
 
 const OPTIONAL_ENV = [

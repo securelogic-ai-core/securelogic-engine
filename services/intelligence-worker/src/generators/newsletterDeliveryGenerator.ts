@@ -5,6 +5,7 @@ type QueuedIssue = {
   id: string;
   organization_id: string;
   title: string;
+  audience_tier: string;
 };
 
 type Subscriber = {
@@ -29,7 +30,7 @@ export async function generateNewsletterDeliveries(): Promise<NewsletterDelivery
   let deliveriesSkippedInactive = 0;
 
   const issuesResult = await pg.query(`
-    SELECT id, organization_id, title
+    SELECT id, organization_id, title, COALESCE(audience_tier, 'free') AS audience_tier
     FROM newsletter_issues
     WHERE status = 'queued'
   `);
@@ -38,7 +39,15 @@ export async function generateNewsletterDeliveries(): Promise<NewsletterDelivery
   issuesScanned = issues.length;
 
   for (const issue of issues) {
-    // Platform issues (organization_id IS NULL) deliver to all active subscribers.
+    // Determine which subscriber tiers qualify for this issue's audience_tier.
+    // standard/premium issues: only paid subscribers.
+    // free issues: all active subscribers (free tier is universally accessible).
+    const isPaidTier =
+      issue.audience_tier === "standard" || issue.audience_tier === "premium";
+
+    const tierFilter = isPaidTier ? "AND s.tier = 'paid'" : "";
+
+    // Platform issues (organization_id IS NULL) deliver to all qualifying subscribers.
     // Org-scoped issues deliver only to subscribers belonging to that org.
     const orgFilter = issue.organization_id
       ? "AND s.organization_id = $1"
@@ -53,6 +62,7 @@ export async function generateNewsletterDeliveries(): Promise<NewsletterDelivery
         ON LOWER(es.email) = LOWER(s.email)
       WHERE s.status = 'active'
         AND es.id IS NULL
+        ${tierFilter}
         ${orgFilter}
       `,
       orgParam
@@ -65,6 +75,7 @@ export async function generateNewsletterDeliveries(): Promise<NewsletterDelivery
       JOIN email_suppressions es
         ON LOWER(es.email) = LOWER(s.email)
       WHERE s.status = 'active'
+        ${tierFilter}
         ${orgFilter}
       `,
       orgParam
@@ -75,6 +86,7 @@ export async function generateNewsletterDeliveries(): Promise<NewsletterDelivery
       SELECT COUNT(*)::int AS count
       FROM subscribers s
       WHERE s.status <> 'active'
+        ${tierFilter}
         ${orgFilter}
       `,
       orgParam

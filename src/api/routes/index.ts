@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 
 import adminOpsDashboardRouter from "./adminOpsDashboard.js";
 import unsubscribeRouter from "./unsubscribe.js";
+import registerRouter from "./register.js";
 
 import newsletterIssuesRouter from "./newsletterIssues.js";
 import newsletterDeliveriesRouter from "./newsletterDeliveries.js";
@@ -107,6 +108,9 @@ export function buildRoutes(opts: RoutesOptions): Router {
 
   router.use("/", emailProviderWebhookRouter);
   router.use("/", unsubscribeRouter);
+
+  // Self-service registration — public, rate-limited (5/IP/hour)
+  router.use("/api", registerRouter);
 
   router.use("/api", newsletterIssuesRouter);
   router.use("/api", newsletterDeliveriesRouter);

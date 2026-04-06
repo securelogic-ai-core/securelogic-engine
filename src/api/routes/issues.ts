@@ -5,14 +5,19 @@ import {
   getIssueArtifact
 } from "../infra/issueStore.js";
 import { isSignedIssue } from "../contracts/signedIssue.schema.js";
+import { verifyIssueSignature } from "../infra/verifyIssueSignature.js";
 
 const router = Router();
 
 /**
- * Parse and validate a raw artifact string from Redis.
- * Returns the issue content or null if invalid.
+ * Parse, structurally validate, and HMAC-verify a raw artifact string.
+ * Returns the signed issue or null if invalid or signature fails.
+ * Logs at error level on signature failure to surface integrity issues.
  */
-function parseArtifact(raw: string): import("../contracts/signedIssue.schema.js").SignedIssue | null {
+function parseArtifact(
+  raw: string,
+  issueNumber: number | null
+): import("../contracts/signedIssue.schema.js").SignedIssue | null {
   let parsed: unknown;
 
   try {
@@ -22,6 +27,17 @@ function parseArtifact(raw: string): import("../contracts/signedIssue.schema.js"
   }
 
   if (!isSignedIssue(parsed)) {
+    return null;
+  }
+
+  // Re-verify the HMAC signature on every read. Structural validation alone
+  // does not prove the artifact came from the signed pipeline — a tampered
+  // Redis value could pass schema checks with a forged or missing signature.
+  if (!verifyIssueSignature(parsed.issue, parsed.signature)) {
+    logger.error(
+      { event: "issues_signature_invalid", issueNumber },
+      "Issue artifact failed HMAC verification — possible integrity breach"
+    );
     return null;
   }
 
@@ -49,12 +65,12 @@ router.get("/latest", async (_req, res) => {
       return;
     }
 
-    const artifact = parseArtifact(raw);
+    const artifact = parseArtifact(raw, latestId);
 
     if (!artifact) {
       logger.error(
         { event: "issues_artifact_invalid", issueNumber: latestId },
-        "GET /issues/latest: artifact failed validation"
+        "GET /issues/latest: artifact failed validation or signature check"
       );
       res.status(500).json({ error: "issue_unavailable" });
       return;
@@ -98,12 +114,12 @@ router.get("/:issueNumber", async (req, res) => {
       return;
     }
 
-    const artifact = parseArtifact(artifact_raw);
+    const artifact = parseArtifact(artifact_raw, issueNumber);
 
     if (!artifact) {
       logger.error(
         { event: "issues_artifact_invalid", issueNumber },
-        "GET /issues/:issueNumber: artifact failed validation"
+        "GET /issues/:issueNumber: artifact failed validation or signature check"
       );
       res.status(500).json({ error: "issue_unavailable" });
       return;
