@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import crypto from "crypto";
 
 import { redisReady } from "../infra/redis.js";
 import { pg } from "../infra/postgres.js";
@@ -45,9 +46,12 @@ async function syncEntitlementToDb(
   try {
     const level = toDbEntitlementLevel(entitlement.tier);
 
+    // key_hash stores SHA-256(raw_key) — must hash before lookup
+    const keyHash = crypto.createHash("sha256").update(apiKey).digest("hex");
+
     const result = await pg.query(
       `UPDATE api_keys SET entitlement_level = $1 WHERE key_hash = $2`,
-      [level, apiKey]
+      [level, keyHash]
     );
 
     const rowsUpdated = result.rowCount ?? 0;
@@ -277,12 +281,11 @@ export async function lemonWebhook(req: Request, res: Response): Promise<void> {
     const apiKey = apiKeyCandidate;
 
     /**
-     * Write entitlement to Redis (primary, fast path).
-     * Then sync to Postgres api_keys.entitlement_level (best-effort).
+     * Write entitlement to Redis (supplementary cache).
+     * Then sync to Postgres api_keys.entitlement_level (primary, source of truth).
      *
-     * Both writes are needed:
-     * - Redis: read by resolveEntitlement → requireSubscription (/issues)
-     * - Postgres: read by requireEntitlement (/signals, /insights, /trends, etc.)
+     * All entitlement enforcement reads from Postgres — the DB row is the
+     * authoritative source. Redis is retained as a supplementary cache.
      */
     await setEntitlementInRedis(apiKey, entitlement);
     await syncEntitlementToDb(apiKey, entitlement);
