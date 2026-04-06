@@ -1,4 +1,5 @@
 import { ensureRedisConnected, redisReady } from "./redis.js";
+import { pg } from "./postgres.js";
 import { logger } from "./logger.js";
 
 const KEY_LATEST = "issues:latest";
@@ -189,70 +190,99 @@ export async function getIssueArtifact(
 ): Promise<string | null> {
   if (!isValidIssueNumber(issueNumber)) return null;
 
-  if (!redisReady) {
-    if (isProd()) {
-      logger.error(
-        { component: "issueStore", fn: "getIssueArtifact" },
-        "Redis not configured in production (fail-closed)"
-      );
-      return null;
-    }
+  // Attempt Redis first (fast path).
+  if (redisReady) {
+    try {
+      const redis = await withTimeout(ensureRedisConnected(), REDIS_TIMEOUT_MS);
 
-    return null;
+      const raw = await withTimeout(
+        redis.get(artifactKey(issueNumber)),
+        REDIS_TIMEOUT_MS
+      );
+
+      if (raw) {
+        // Hard cap payload size
+        const bytes = Buffer.byteLength(raw, "utf8");
+        if (bytes > MAX_ARTIFACT_BYTES) {
+          logger.error(
+            { component: "issueStore", fn: "getIssueArtifact", issueNumber, bytes },
+            "Issue artifact exceeded maximum allowed size"
+          );
+          return null;
+        }
+
+        try {
+          validateArtifactJsonOrThrow(raw);
+        } catch (err) {
+          logger.error(
+            { err, component: "issueStore", fn: "getIssueArtifact", issueNumber },
+            "Issue artifact was corrupted / invalid JSON"
+          );
+          return null;
+        }
+
+        return raw;
+      }
+
+      // Redis miss — fall through to Postgres backup.
+      logger.warn(
+        { component: "issueStore", fn: "getIssueArtifact", issueNumber },
+        "Redis miss for issue artifact — attempting Postgres fallback"
+      );
+    } catch (err) {
+      logger.error(
+        { err, component: "issueStore", fn: "getIssueArtifact", issueNumber },
+        "Redis read failed — attempting Postgres fallback"
+      );
+    }
+  } else if (isProd()) {
+    logger.error(
+      { component: "issueStore", fn: "getIssueArtifact" },
+      "Redis not configured in production — attempting Postgres fallback"
+    );
   }
 
+  // Postgres fallback: durable backup written at publish time.
   try {
-    const redis = await withTimeout(ensureRedisConnected(), REDIS_TIMEOUT_MS);
-
-    const raw = await withTimeout(
-      redis.get(artifactKey(issueNumber)),
-      REDIS_TIMEOUT_MS
+    const result = await pg.query(
+      `SELECT artifact_json, bytes FROM published_artifacts WHERE issue_number = $1 LIMIT 1`,
+      [issueNumber]
     );
 
-    if (!raw) return null;
+    const row = result.rows[0];
+    if (!row) return null;
 
-    // Hard cap payload size
-    const bytes = Buffer.byteLength(raw, "utf8");
-    if (bytes > MAX_ARTIFACT_BYTES) {
+    const raw = row.artifact_json as string;
+
+    if (Buffer.byteLength(raw, "utf8") > MAX_ARTIFACT_BYTES) {
       logger.error(
-        {
-          component: "issueStore",
-          fn: "getIssueArtifact",
-          issueNumber,
-          bytes
-        },
-        "Issue artifact exceeded maximum allowed size"
+        { component: "issueStore", fn: "getIssueArtifact", issueNumber },
+        "Postgres artifact exceeded maximum allowed size"
       );
       return null;
     }
 
-    /**
-     * Enterprise: validate artifact is valid JSON before returning.
-     * If corrupted, treat as missing.
-     */
     try {
       validateArtifactJsonOrThrow(raw);
     } catch (err) {
       logger.error(
-        {
-          err,
-          component: "issueStore",
-          fn: "getIssueArtifact",
-          issueNumber
-        },
-        "Issue artifact was corrupted / invalid JSON"
+        { err, component: "issueStore", fn: "getIssueArtifact", issueNumber },
+        "Postgres artifact was corrupted / invalid JSON"
       );
-
       return null;
     }
+
+    logger.info(
+      { component: "issueStore", fn: "getIssueArtifact", issueNumber },
+      "Issue artifact served from Postgres fallback"
+    );
 
     return raw;
   } catch (err) {
     logger.error(
       { err, component: "issueStore", fn: "getIssueArtifact", issueNumber },
-      "Redis read failed"
+      "Postgres fallback read failed"
     );
-
     return null;
   }
 }
@@ -323,6 +353,29 @@ export async function publishIssueArtifact(
       issueNumber,
       bytes
     },
-    "Issue artifact published"
+    "Issue artifact published to Redis"
   );
+
+  // Durable backup: write to Postgres so artifacts survive Redis restarts.
+  // Fire-and-forget — a Postgres failure must not fail the publish operation.
+  pg.query(
+    `
+    INSERT INTO published_artifacts (issue_number, artifact_json, bytes, published_at)
+    VALUES ($1, $2, $3, NOW())
+    ON CONFLICT (issue_number) DO UPDATE
+      SET artifact_json = EXCLUDED.artifact_json,
+          bytes         = EXCLUDED.bytes
+    `,
+    [issueNumber, artifactJson, bytes]
+  ).then(() => {
+    logger.info(
+      { component: "issueStore", fn: "publishIssueArtifact", issueNumber },
+      "Issue artifact backed up to Postgres"
+    );
+  }).catch((err) => {
+    logger.error(
+      { err, component: "issueStore", fn: "publishIssueArtifact", issueNumber },
+      "Postgres backup write failed (non-fatal — Redis copy is authoritative)"
+    );
+  });
 }

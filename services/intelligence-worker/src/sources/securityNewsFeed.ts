@@ -2,7 +2,19 @@ import Parser from "rss-parser";
 import crypto from "crypto";
 import { logger } from "../../../../src/api/infra/logger.js";
 
+// Hard cap per feed fetch — prevents a slow host from blocking the pipeline.
+const FEED_TIMEOUT_MS = 15_000;
+
 const parser = new Parser();
+
+function parseWithTimeout(url: string): Promise<Parser.Output<Record<string, unknown>>> {
+  return Promise.race([
+    parser.parseURL(url),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`feed_timeout: ${url}`)), FEED_TIMEOUT_MS).unref()
+    )
+  ]);
+}
 
 const FEEDS = [
   {
@@ -22,7 +34,7 @@ export async function fetchSecuritySignals() {
 
   for (const feed of FEEDS) {
     try {
-      const parsed = await parser.parseURL(feed.url);
+      const parsed = await parseWithTimeout(feed.url);
 
       const items = parsed.items.slice(0, MAX_ITEMS_PER_FEED);
 
@@ -37,9 +49,9 @@ export async function fetchSecuritySignals() {
 
         results.push(buildEvent(signalId, feed.source, title, content, publishedAt, url));
       }
-    } catch {
-      // Fail-open: one unavailable feed must not block the worker cycle
-      logger.warn({ event: "feed_fetch_failed", feed: feed.source, url: feed.url }, "Security news feed fetch failed — skipping");
+    } catch (err) {
+      // Fail-open: one unavailable or timed-out feed must not block the pipeline.
+      logger.warn({ event: "feed_fetch_failed", feed: feed.source, url: feed.url, err }, "Security news feed fetch failed — skipping");
     }
   }
 
