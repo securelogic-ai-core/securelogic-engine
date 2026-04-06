@@ -1,4 +1,5 @@
 import { pg } from "../../../../src/api/infra/postgres.js";
+import { logger } from "../../../../src/api/infra/logger.js";
 
 type QueuedIssue = {
   id: string;
@@ -37,17 +38,24 @@ export async function generateNewsletterDeliveries(): Promise<NewsletterDelivery
   issuesScanned = issues.length;
 
   for (const issue of issues) {
+    // Platform issues (organization_id IS NULL) deliver to all active subscribers.
+    // Org-scoped issues deliver only to subscribers belonging to that org.
+    const orgFilter = issue.organization_id
+      ? "AND s.organization_id = $1"
+      : "";
+    const orgParam = issue.organization_id ? [issue.organization_id] : [];
+
     const activeSubscribersResult = await pg.query(
       `
       SELECT s.email
       FROM subscribers s
       LEFT JOIN email_suppressions es
         ON LOWER(es.email) = LOWER(s.email)
-      WHERE s.organization_id = $1
-        AND s.status = 'active'
+      WHERE s.status = 'active'
         AND es.id IS NULL
+        ${orgFilter}
       `,
-      [issue.organization_id]
+      orgParam
     );
 
     const suppressedCountResult = await pg.query(
@@ -56,20 +64,20 @@ export async function generateNewsletterDeliveries(): Promise<NewsletterDelivery
       FROM subscribers s
       JOIN email_suppressions es
         ON LOWER(es.email) = LOWER(s.email)
-      WHERE s.organization_id = $1
-        AND s.status = 'active'
+      WHERE s.status = 'active'
+        ${orgFilter}
       `,
-      [issue.organization_id]
+      orgParam
     );
 
     const inactiveCountResult = await pg.query(
       `
       SELECT COUNT(*)::int AS count
       FROM subscribers s
-      WHERE s.organization_id = $1
-        AND s.status <> 'active'
+      WHERE s.status <> 'active'
+        ${orgFilter}
       `,
-      [issue.organization_id]
+      orgParam
     );
 
     const subscribers: Subscriber[] = activeSubscribersResult.rows;
@@ -104,13 +112,15 @@ export async function generateNewsletterDeliveries(): Promise<NewsletterDelivery
     }
   }
 
-  console.log("Newsletter delivery generation complete");
-  console.log("issues_scanned:", issuesScanned);
-  console.log("subscribers_scanned:", subscribersScanned);
-  console.log("deliveries_created:", deliveriesCreated);
-  console.log("deliveries_skipped_existing:", deliveriesSkippedExisting);
-  console.log("deliveries_skipped_suppressed:", deliveriesSkippedSuppressed);
-  console.log("deliveries_skipped_inactive:", deliveriesSkippedInactive);
+  logger.info({
+    event: "delivery_generation_complete",
+    issuesScanned,
+    subscribersScanned,
+    deliveriesCreated,
+    deliveriesSkippedExisting,
+    deliveriesSkippedSuppressed,
+    deliveriesSkippedInactive
+  }, "Newsletter delivery generation complete");
 
   return {
     issuesScanned,

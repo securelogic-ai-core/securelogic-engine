@@ -1,4 +1,5 @@
 import { pg } from "../../../../src/api/infra/postgres.js";
+import { logger } from "../../../../src/api/infra/logger.js";
 import { RunnerEngine } from "../../../../src/engine/RunnerEngine.js";
 import type { EngineInput } from "../../../../src/engine/contracts/EngineInput.js";
 import type { ScoredSignal } from "../models/Signal.js";
@@ -109,7 +110,7 @@ function severityToNumericScore(severity: string): number {
  * run or persist fails (non-fatal — worker cycle continues).
  */
 export async function assessSignal(
-  organizationId: string,
+  organizationId: string | null,
   signal: ScoredSignal
 ): Promise<string | null> {
   try {
@@ -225,7 +226,7 @@ export async function assessSignal(
   } catch (err) {
     // Non-fatal: log and continue. One failed assessment must not
     // stop the worker from processing the rest of the signal batch.
-    console.error(`[assessSignal] failed for signal "${signal.title}":`, err);
+    logger.error({ event: "assess_signal_failed", title: signal.title, err }, "Signal assessment failed");
     return null;
   }
 }

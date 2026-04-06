@@ -1,5 +1,6 @@
 import { Router } from "express"
 import { pg } from "../infra/postgres.js"
+import { logger } from "../infra/logger.js"
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -39,7 +40,7 @@ router.delete("/email-suppressions/:id", async (req, res) => {
       deletedSuppressionId: suppressionId
     })
   } catch (err) {
-    console.error(err)
+    logger.error({ event: "admin_delete_email_suppression_failed", err }, "DELETE /admin/email-suppressions/:id failed")
     res.status(500).json({ error: "admin_email_suppression_delete_failed" })
   }
 })

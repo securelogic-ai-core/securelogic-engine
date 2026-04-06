@@ -1,7 +1,7 @@
 import { pg } from "../../../../src/api/infra/postgres.js";
 
 export type PostgresInsightInput = {
-  organizationId: string;
+  organizationId: string | null;
   signalId: string;
   category?: string;
   title: string;
@@ -66,12 +66,12 @@ export async function saveInsight(insight: PostgresInsightInput): Promise<string
   return result.rows[0]?.id ?? null;
 }
 
-export async function getInsights(organizationId: string, limit = 100) {
+export async function getInsights(organizationId: string | null, limit = 100) {
   const result = await pg.query(
     `
     SELECT *
     FROM insights
-    WHERE organization_id = $1
+    WHERE (organization_id = $1 OR organization_id IS NULL)
     ORDER BY created_at DESC
     LIMIT $2
     `,

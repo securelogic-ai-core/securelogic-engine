@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
 
 const router = Router();
 
@@ -83,7 +84,7 @@ router.get("/email-provider-events", async (req, res) => {
       events
     });
   } catch (err) {
-    console.error(err);
+    logger.error({ event: "admin_email_provider_events_failed", err }, "GET /admin/email-provider-events failed");
     res.status(500).json({ error: "admin_email_provider_events_query_failed" });
   }
 });

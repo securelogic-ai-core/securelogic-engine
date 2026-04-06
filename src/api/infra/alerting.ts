@@ -1,3 +1,5 @@
+import { logger } from "./logger.js"
+
 export async function sendFailureAlert(
   workerName: string,
   errorMessage: string
@@ -5,7 +7,7 @@ export async function sendFailureAlert(
   const alertUrl = (process.env.ALERT_WEBHOOK_URL ?? "").trim()
 
   if (!alertUrl) {
-    console.log("ALERT_WEBHOOK_URL not set; skipping alert")
+    logger.debug({ event: "alert_skipped", worker: workerName }, "ALERT_WEBHOOK_URL not set; skipping alert")
     return
   }
 

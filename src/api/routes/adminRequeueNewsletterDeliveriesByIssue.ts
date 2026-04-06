@@ -1,5 +1,6 @@
 import { Router } from "express"
 import { pg } from "../infra/postgres.js"
+import { logger } from "../infra/logger.js"
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -66,7 +67,7 @@ router.post("/newsletter-issues/:id/requeue-deliveries", async (req, res) => {
       requeuedCount: result.rowCount ?? 0
     })
   } catch (err) {
-    console.error(err)
+    logger.error({ event: "admin_requeue_deliveries_by_issue_failed", err }, "POST /admin/newsletter-issues/:id/requeue failed")
     res.status(500).json({ error: "admin_requeue_newsletter_deliveries_failed" })
   }
 })

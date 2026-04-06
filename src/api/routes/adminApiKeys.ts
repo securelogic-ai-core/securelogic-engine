@@ -133,6 +133,7 @@ router.post("/api-keys", async (req, res) => {
     }
 
     const rawKey = generateApiKey();
+    const keyHash = crypto.createHash("sha256").update(rawKey).digest("hex");
 
     const result = await pg.query(
       `
@@ -140,7 +141,7 @@ router.post("/api-keys", async (req, res) => {
       VALUES ($1, $2, $3, $4, 'active', NOW())
       RETURNING id, organization_id, label, entitlement_level, status, created_at
       `,
-      [organizationId, label, rawKey, entitlementLevel]
+      [organizationId, label, keyHash, entitlementLevel]
     );
 
     const row = result.rows[0];

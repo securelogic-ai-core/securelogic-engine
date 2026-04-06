@@ -1,5 +1,7 @@
+import crypto from "crypto";
 import type { Request, Response, NextFunction } from "express";
 import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
 
 export async function requireApiKey(
   req: Request,
@@ -17,6 +19,8 @@ export async function requireApiKey(
       return;
     }
 
+    const hashedKey = crypto.createHash("sha256").update(presentedKey).digest("hex");
+
     const result = await pg.query(
       `
       SELECT *
@@ -24,7 +28,7 @@ export async function requireApiKey(
       WHERE key_hash = $1
       LIMIT 1
       `,
-      [presentedKey]
+      [hashedKey]
     );
 
     if (result.rows.length === 0) {
@@ -60,7 +64,7 @@ export async function requireApiKey(
     (req as any).apiKey = apiKey;
     next();
   } catch (err) {
-    console.error("require_api_key_error", err);
+    logger.error({ event: "require_api_key_error", err }, "API key validation failed");
     res.status(500).json({ error: "api_key_validation_failed" });
   }
 }

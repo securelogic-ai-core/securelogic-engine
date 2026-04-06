@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -35,7 +36,7 @@ router.get(
           metadata,
           created_at
         FROM trends
-        WHERE organization_id = $1
+        WHERE (organization_id = $1 OR organization_id IS NULL)
         ORDER BY score DESC, created_at DESC
         LIMIT 50
         `,
@@ -49,7 +50,7 @@ router.get(
         trends: result.rows
       });
     } catch (err) {
-      console.error("trends_api_error", err);
+      logger.error({ event: "trends_api_error", err }, "GET /api/trends failed");
 
       res.status(500).json({
         error: "trends_query_failed"

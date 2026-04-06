@@ -236,26 +236,7 @@ function deriveRecommendation(text: string): string {
   return "Review the development, assess direct relevance to your environment, and determine whether internal controls, monitoring priorities, or governance processes should be updated.";
 }
 
-async function getDefaultOrganizationId(): Promise<string> {
-  const result = await pg.query(`
-    SELECT id
-    FROM organizations
-    ORDER BY created_at ASC
-    LIMIT 1
-  `);
-
-  const organizationId = result.rows[0]?.id as string | undefined;
-
-  if (!organizationId) {
-    throw new Error("No organization found");
-  }
-
-  return organizationId;
-}
-
 export async function generateInsights(): Promise<number> {
-  const defaultOrganizationId = await getDefaultOrganizationId();
-
   const signalResult = await pg.query(`
     SELECT
       id,
@@ -273,7 +254,7 @@ export async function generateInsights(): Promise<number> {
   let createdOrUpdated = 0;
 
   for (const signal of signals) {
-    const organizationId = signal.organization_id ?? defaultOrganizationId;
+    const organizationId = signal.organization_id ?? null;
     const text = buildText(signal);
     const riskLevel = deriveRiskLevel(text);
     const audience = deriveAudience(text);
@@ -281,48 +262,88 @@ export async function generateInsights(): Promise<number> {
     const riskImplication = deriveRiskImplication(signal, text);
     const recommendation = deriveRecommendation(text);
 
-    await pg.query(
-      `
-      INSERT INTO insights (
-        organization_id,
-        signal_id,
-        title,
-        analysis,
-        risk_implication,
-        recommendation,
-        risk_level,
-        audience,
-        published,
-        linked_sources,
-        created_at,
-        updated_at
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,NOW(),NOW())
-      ON CONFLICT (organization_id, signal_id)
-      DO UPDATE SET
-        title = EXCLUDED.title,
-        analysis = EXCLUDED.analysis,
-        risk_implication = EXCLUDED.risk_implication,
-        recommendation = EXCLUDED.recommendation,
-        risk_level = EXCLUDED.risk_level,
-        audience = EXCLUDED.audience,
-        published = EXCLUDED.published,
-        linked_sources = EXCLUDED.linked_sources,
-        updated_at = NOW()
-      `,
-      [
-        organizationId,
-        signal.id,
-        signal.title,
-        analysis,
-        riskImplication,
-        recommendation,
-        riskLevel,
-        audience,
-        false,
-        JSON.stringify([signal.source_url])
-      ]
-    );
+    const values = [
+      organizationId,
+      signal.id,
+      signal.title,
+      analysis,
+      riskImplication,
+      recommendation,
+      riskLevel,
+      audience,
+      false,
+      JSON.stringify([signal.source_url])
+    ];
+
+    if (organizationId === null) {
+      // Platform signal: de-dupe against uq_insights_platform_signal (signal_id WHERE org IS NULL)
+      await pg.query(
+        `
+        INSERT INTO insights (
+          organization_id,
+          signal_id,
+          title,
+          analysis,
+          risk_implication,
+          recommendation,
+          risk_level,
+          audience,
+          published,
+          linked_sources,
+          created_at,
+          updated_at
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,NOW(),NOW())
+        ON CONFLICT (signal_id)
+        WHERE organization_id IS NULL
+        DO UPDATE SET
+          title = EXCLUDED.title,
+          analysis = EXCLUDED.analysis,
+          risk_implication = EXCLUDED.risk_implication,
+          recommendation = EXCLUDED.recommendation,
+          risk_level = EXCLUDED.risk_level,
+          audience = EXCLUDED.audience,
+          published = EXCLUDED.published,
+          linked_sources = EXCLUDED.linked_sources,
+          updated_at = NOW()
+        `,
+        values
+      );
+    } else {
+      // Org-scoped signal: de-dupe against uq_insights_org_signal (org, signal WHERE org IS NOT NULL)
+      await pg.query(
+        `
+        INSERT INTO insights (
+          organization_id,
+          signal_id,
+          title,
+          analysis,
+          risk_implication,
+          recommendation,
+          risk_level,
+          audience,
+          published,
+          linked_sources,
+          created_at,
+          updated_at
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,NOW(),NOW())
+        ON CONFLICT (organization_id, signal_id)
+        WHERE organization_id IS NOT NULL
+        DO UPDATE SET
+          title = EXCLUDED.title,
+          analysis = EXCLUDED.analysis,
+          risk_implication = EXCLUDED.risk_implication,
+          recommendation = EXCLUDED.recommendation,
+          risk_level = EXCLUDED.risk_level,
+          audience = EXCLUDED.audience,
+          published = EXCLUDED.published,
+          linked_sources = EXCLUDED.linked_sources,
+          updated_at = NOW()
+        `,
+        values
+      );
+    }
 
     createdOrUpdated++;
   }

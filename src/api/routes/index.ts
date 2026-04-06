@@ -31,10 +31,18 @@ import adminApiKeysRouter from "./adminApiKeys.js";
 import adminOrganizationsRouter from "./adminOrganizations.js";
 import issuesRouter from "./issues.js";
 
+import assessRouter from "./assess.js";
+import assessmentsRouter from "./assessments.js";
+import signalsRouter from "./signals.js";
+import insightsRouter from "./insights.js";
+import trendsRouter from "./trends.js";
+import topRisksRouter from "./topRisks.js";
+import topRisksSummaryRouter from "./topRisksSummary.js";
+import billingRouter from "./billing.js";
+
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { resolveEntitlement } from "../middleware/resolveEntitlement.js";
 import { requireSubscription } from "../middleware/requireSubscription.js";
-import { requestAudit } from "../middleware/requestAudit.js";
 
 import { enforceUsageCap } from "../middleware/enforceUsageCap.js";
 import { tierRateLimit } from "../middleware/tierRateLimit.js";
@@ -205,7 +213,6 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/issues", requireSubscription);
   router.use("/issues", tierRateLimit);
   router.use("/issues", enforceUsageCap());
-  router.use("/issues", requestAudit);
 
   router.use("/issues", (_req, res, next) => {
     if (!opts.publicApiDisabled) return next();
@@ -217,6 +224,21 @@ export function buildRoutes(opts: RoutesOptions): Router {
   });
 
   router.use("/issues", issuesRouter);
+
+  // =========================================================
+  // API ROUTES (engine + intelligence)
+  // Each router owns its own requireApiKey + attachOrganizationContext
+  // + requireEntitlement guards — mounted here for centralized routing.
+  // =========================================================
+
+  router.use("/api", billingRouter);
+  router.use("/api", assessRouter);
+  router.use("/api", assessmentsRouter);
+  router.use("/api", signalsRouter);
+  router.use("/api", insightsRouter);
+  router.use("/api", trendsRouter);
+  router.use("/api", topRisksRouter);
+  router.use("/api", topRisksSummaryRouter);
 
   return router;
 }

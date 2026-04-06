@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
 
 const router = Router();
 
@@ -87,7 +88,7 @@ router.get("/subscribers", async (req, res) => {
       subscribers
     });
   } catch (err) {
-    console.error(err);
+    logger.error({ event: "admin_subscribers_query_failed", err }, "GET /admin/subscribers failed");
     res.status(500).json({ error: "admin_subscribers_query_failed" });
   }
 });
@@ -150,7 +151,7 @@ router.post("/subscribers", async (req, res) => {
       subscriber: result.rows[0] ?? null
     });
   } catch (err) {
-    console.error(err);
+    logger.error({ event: "admin_subscriber_create_failed", err }, "POST /admin/subscribers failed");
     res.status(500).json({ error: "admin_subscriber_create_failed" });
   }
 });
@@ -206,7 +207,7 @@ router.patch("/subscribers/:id", async (req, res) => {
       subscriber: result.rows[0] ?? null
     });
   } catch (err) {
-    console.error(err);
+    logger.error({ event: "admin_subscriber_update_failed", err }, "PATCH /admin/subscribers/:id failed");
     res.status(500).json({ error: "admin_subscriber_update_failed" });
   }
 });
@@ -243,7 +244,7 @@ router.delete("/subscribers/:id", async (req, res) => {
       deleted: result.rows[0] ?? null
     });
   } catch (err) {
-    console.error(err);
+    logger.error({ event: "admin_subscriber_delete_failed", err }, "DELETE /admin/subscribers/:id failed");
     res.status(500).json({ error: "admin_subscriber_delete_failed" });
   }
 });

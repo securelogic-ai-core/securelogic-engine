@@ -315,7 +315,7 @@ function buildTopSignals(insights: any[]) {
     .map(enrichInsight);
 }
 
-export async function buildNewsletterIssue(organizationId: string) {
+export async function buildNewsletterIssue(organizationId: string | null) {
   const insights = await getInsights(organizationId, 100);
 
   const normalized = insights.map((insight: any) => ({

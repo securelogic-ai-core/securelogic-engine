@@ -1,144 +1,77 @@
 import type { Request, Response, NextFunction } from "express";
-import { ensureRedisConnected, redisReady } from "../infra/redis.js";
 import { logger } from "../infra/logger.js";
+import { pg } from "../infra/postgres.js";
 
-type MeterRecord = {
-  count: number;
-  lastSeen: string;
-};
+/**
+ * writeAuditLog — fire-and-forget Postgres write.
+ * Never throws; a DB failure must never block the request.
+ */
+function writeAuditLog(
+  req: Request,
+  res: Response,
+  startMs: number
+): void {
+  const apiKey = (req as any).apiKey as Record<string, unknown> | undefined;
 
-const WINDOW_SECONDS = 60 * 60 * 24; // 24 hours rolling window
-const REDIS_TIMEOUT_MS = 1200;
+  if (!apiKey) return;
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  let timeoutId: NodeJS.Timeout | null = null;
+  const organizationId =
+    typeof apiKey.organization_id === "string" ? apiKey.organization_id : null;
+  const apiKeyId =
+    typeof apiKey.id === "string" ? apiKey.id : null;
+  const actorLabel =
+    typeof apiKey.label === "string" ? apiKey.label : null;
+  const requestId =
+    (req as any).requestId ?? req.get("x-request-id") ?? null;
 
-  const timeoutPromise = new Promise<T>((_resolve, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(`redis_timeout_after_${ms}ms`));
-    }, ms);
-
-    timeoutId.unref?.();
+  pg.query(
+    `
+    INSERT INTO audit_log
+      (organization_id, api_key_id, actor_type, actor_label,
+       action, method, route, status_code, request_id, duration_ms)
+    VALUES ($1, $2, 'api_key', $3, 'api_call', $4, $5, $6, $7, $8)
+    `,
+    [
+      organizationId,
+      apiKeyId,
+      actorLabel,
+      req.method,
+      req.originalUrl,
+      res.statusCode,
+      requestId,
+      Date.now() - startMs
+    ]
+  ).catch((err) => {
+    logger.warn(
+      { event: "audit_log_write_failed", err },
+      "audit_log write failed (fail-open)"
+    );
   });
-
-  return Promise.race([p, timeoutPromise]).finally(() => {
-    if (timeoutId) clearTimeout(timeoutId);
-  });
-}
-
-function safeIsoNow(): string {
-  return new Date().toISOString();
 }
 
 /**
- * requestAudit (Enterprise-grade)
+ * requestAudit — global audit middleware.
  *
- * RULES:
- * - Never write to local disk
- * - Redis-backed, atomic
- * - Never blocks request flow
- * - Fail-open (audit must not break the API)
- * - Never logs secrets
+ * Responsibility: write a durable Postgres audit record after each
+ * authenticated request completes. The write fires on res.finish so
+ * it captures the final status code and duration.
+ *
+ * Fail-open: a failed audit write must never block the response.
+ *
+ * Redis-based usage metering is intentionally NOT done here.
+ * Metering belongs in enforceUsageCap / tierRateLimit, which run
+ * after requireApiKey when req.apiKey is available.
  */
-export async function requestAudit(
+export function requestAudit(
   req: Request,
-  _res: Response,
+  res: Response,
   next: NextFunction
-): Promise<void> {
-  try {
-    /**
-     * If Redis isn't configured, fail-open.
-     * Audit is not allowed to break the API.
-     */
-    if (!redisReady) {
-      next();
-      return;
-    }
+): void {
+  const startMs = Date.now();
 
-    const apiKey = (req as any).apiKey as string | undefined;
+  res.on("finish", () => {
+    writeAuditLog(req, res, startMs);
+  });
 
-    if (!apiKey) {
-      next();
-      return;
-    }
-
-    const redis = await withTimeout(ensureRedisConnected(), REDIS_TIMEOUT_MS);
-
-    /**
-     * Key design:
-     * - audit:<apiKey>:<yyyy-mm-dd>
-     * This prevents unbounded growth and keeps audit retrieval sane.
-     */
-    const day = safeIsoNow().slice(0, 10);
-    const key = `audit:${apiKey}:${day}`;
-
-    /**
-     * Store:
-     * - count = INCR
-     * - lastSeen = ISO timestamp
-     *
-     * Use MULTI so it is atomic and 1 round trip.
-     */
-    const now = safeIsoNow();
-
-    const resMulti = await withTimeout(
-      redis.multi().incr(`${key}:count`).set(`${key}:lastSeen`, now).exec(),
-      REDIS_TIMEOUT_MS
-    );
-
-    /**
-     * Fail-open if Redis returns weird data.
-     */
-    if (!Array.isArray(resMulti) || resMulti.length < 2) {
-      next();
-      return;
-    }
-
-    const countRaw = resMulti[0];
-    const count = typeof countRaw === "number" ? countRaw : Number(countRaw);
-
-    if (!Number.isFinite(count)) {
-      next();
-      return;
-    }
-
-    /**
-     * Expire keys (best effort)
-     */
-    try {
-      await withTimeout(
-        redis
-          .multi()
-          .expire(`${key}:count`, WINDOW_SECONDS)
-          .expire(`${key}:lastSeen`, WINDOW_SECONDS)
-          .exec(),
-        REDIS_TIMEOUT_MS
-      );
-    } catch {
-      // ignore expire failures
-    }
-
-    const meter: MeterRecord = {
-      count,
-      lastSeen: now
-    };
-
-    (req as any).meter = meter;
-    next();
-  } catch (err) {
-    /**
-     * Enterprise rule:
-     * Audit must FAIL OPEN.
-     */
-    logger.warn(
-      {
-        err,
-        route: req.originalUrl,
-        method: req.method
-      },
-      "requestAudit failed (fail-open)"
-    );
-
-    next();
-  }
+  next();
 }

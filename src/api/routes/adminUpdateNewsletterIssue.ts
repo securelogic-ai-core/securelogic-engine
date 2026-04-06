@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
 
 const router = Router();
 
@@ -89,7 +90,7 @@ router.patch("/newsletter-issues/:id", async (req, res) => {
       issue: result.rows[0] ?? null
     });
   } catch (err) {
-    console.error(err);
+    logger.error({ event: "admin_update_newsletter_issue_failed", err }, "PATCH /admin/newsletter-issues/:id failed");
     res.status(500).json({ error: "admin_newsletter_issue_update_failed" });
   }
 });

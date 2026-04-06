@@ -1,5 +1,6 @@
 import { Router } from "express"
 import { pg } from "../infra/postgres.js"
+import { logger } from "../infra/logger.js"
 
 const router = Router()
 
@@ -32,7 +33,7 @@ router.post("/email-suppressions", async (req, res) => {
       suppression: result.rows[0] ?? null
     })
   } catch (err) {
-    console.error(err)
+    logger.error({ event: "admin_create_email_suppression_failed", err }, "POST /admin/email-suppressions failed")
     res.status(500).json({ error: "admin_email_suppression_create_failed" })
   }
 })

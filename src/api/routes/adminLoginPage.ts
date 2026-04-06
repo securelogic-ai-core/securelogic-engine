@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { logger } from "../infra/logger.js";
 
 const router = Router();
 
@@ -187,7 +188,7 @@ async function loadDashboard() {
     document.getElementById("loginStatus").innerText = "Live data loaded";
 
   } catch (err) {
-    console.error(err);
+    logger.error({ event: "admin_login_failed", err }, "POST /admin/login failed");
     document.getElementById("loginStatus").innerText =
       "Failed to load data (check console)";
   }

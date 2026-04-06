@@ -6,12 +6,13 @@ import {
   completeWorkerRun
 } from "../../../src/api/infra/workerLogger.js"
 import { sendFailureAlert } from "../../../src/api/infra/alerting.js"
+import { logger } from "../../../src/api/infra/logger.js"
 
 const LOCK_KEY = 710001
 const WORKER_NAME = "intelligence-worker"
 
-async function main() {
-  console.log("Intelligence worker starting...")
+export async function runWorker() {
+  logger.info({ event: "worker_start", worker: WORKER_NAME }, "Intelligence worker starting")
 
   const run = await startWorkerRun(WORKER_NAME)
 
@@ -22,7 +23,7 @@ async function main() {
     })
 
     if (!locked.acquired) {
-      console.log("Intelligence worker skipped: advisory lock already held")
+      logger.info({ event: "worker_skipped", worker: WORKER_NAME }, "Intelligence worker skipped: advisory lock already held")
 
       await completeWorkerRun(
         run.id,
@@ -41,12 +42,11 @@ async function main() {
       locked.result ?? {}
     )
 
-    console.log("Worker completed successfully")
-    console.log(locked.result)
+    logger.info({ event: "worker_complete", worker: WORKER_NAME, result: locked.result }, "Worker completed successfully")
   } catch (err) {
     const errorMessage = err instanceof Error ? err.stack ?? err.message : String(err)
 
-    console.error("Worker failure:", errorMessage)
+    logger.error({ event: "worker_failure", worker: WORKER_NAME, err }, "Worker failure")
 
     await completeWorkerRun(
       run.id,
@@ -58,14 +58,17 @@ async function main() {
     try {
       await sendFailureAlert(WORKER_NAME, errorMessage)
     } catch (alertErr) {
-      console.error("Failure alert send failed:", alertErr)
+      logger.error({ event: "alert_send_failed", err: alertErr }, "Failure alert send failed")
     }
 
-    process.exit(1)
+    throw err
   }
 }
 
-main().catch((err) => {
-  console.error("Worker bootstrap failure:", err)
-  process.exit(1)
-})
+// Entry point when executed directly (e.g., cron / one-shot run)
+if (process.argv[1]?.endsWith("runner.js") || process.argv[1]?.endsWith("runner.ts")) {
+  runWorker().catch((err) => {
+    logger.error({ event: "worker_bootstrap_failure", err }, "Worker bootstrap failure")
+    process.exit(1)
+  })
+}

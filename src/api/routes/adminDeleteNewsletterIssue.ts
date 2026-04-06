@@ -1,5 +1,6 @@
 import { Router } from "express"
 import { pg } from "../infra/postgres.js"
+import { logger } from "../infra/logger.js"
 import { canDeleteIssue } from "../lib/newsletterLifecycle.js"
 
 const UUID_RE =
@@ -56,7 +57,7 @@ router.delete("/newsletter-issues/:id", async (req, res) => {
       deletedIssueId: issueId
     })
   } catch (err) {
-    console.error(err)
+    logger.error({ event: "admin_delete_newsletter_issue_failed", err }, "DELETE /admin/newsletter-issues/:id failed")
     res.status(500).json({ error: "admin_newsletter_issue_delete_failed" })
   }
 })

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
 
 const router = Router();
 
@@ -81,7 +82,7 @@ router.get("/email-suppressions", async (req, res) => {
       suppressions
     });
   } catch (err) {
-    console.error(err);
+    logger.error({ event: "admin_email_suppressions_failed", err }, "GET /admin/email-suppressions failed");
     res.status(500).json({ error: "admin_email_suppressions_query_failed" });
   }
 });

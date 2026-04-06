@@ -49,6 +49,7 @@
     "resend": "^6.9.3",
     "rss-parser": "^3.13.0",
     "securelogic-contracts": "^0.1.2",
+    "stripe": "^22.0.0",
     "svix": "^1.89.0",
     "typescript": "~5.9.3",
     "uuid": "^13.0.0",

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -11,9 +12,18 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (_req, res) => {
+  async (req, res) => {
     try {
-      const result = await pg.query(`
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId;
+
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const result = await pg.query(
+        `
         SELECT
           id,
           title,
@@ -27,16 +37,20 @@ router.get(
           processed,
           created_at
         FROM signals
+        WHERE (organization_id = $1 OR organization_id IS NULL)
         ORDER BY created_at DESC
         LIMIT 50
-      `);
+        `,
+        [organizationId]
+      );
 
       res.json({
         count: result.rows.length,
+        organizationId,
         signals: result.rows
       });
     } catch (err) {
-      console.error("signals_api_error", err);
+      logger.error({ event: "signals_api_error", err }, "GET /api/signals failed");
 
       res.status(500).json({
         error: "signals_query_failed"

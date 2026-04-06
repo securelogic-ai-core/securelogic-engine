@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -38,7 +39,7 @@ router.get(
           created_at,
           updated_at
         FROM insights
-        WHERE organization_id = $1
+        WHERE (organization_id = $1 OR organization_id IS NULL)
         ORDER BY created_at DESC
         LIMIT 50
         `,
@@ -52,7 +53,7 @@ router.get(
         insights: result.rows
       });
     } catch (err) {
-      console.error("insights_api_error", err);
+      logger.error({ event: "insights_api_error", err }, "GET /api/insights failed");
 
       res.status(500).json({
         error: "insights_query_failed"
