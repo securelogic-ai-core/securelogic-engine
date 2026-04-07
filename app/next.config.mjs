@@ -1,7 +1,13 @@
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // ENGINE_API_URL is server-side only (no NEXT_PUBLIC_ prefix).
-  // Accessed exclusively in Server Components and API Routes.
+  // Explicitly set the monorepo root so Next.js doesn't get confused
+  // by the repo-level package-lock.json sitting above app/.
+  outputFileTracingRoot: path.join(__dirname, ".."),
 };
 
 export default nextConfig;
