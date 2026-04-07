@@ -87,7 +87,7 @@ services:
     name: securelogic-intelligence-worker
     env: node
     plan: starter
-    buildCommand: npm install && tsc -p services/intelligence-worker/tsconfig.json
+    buildCommand: npm install --include=dev && tsc -p services/intelligence-worker/tsconfig.json
     startCommand: node dist-intelligence-worker/services/intelligence-worker/src/scheduler.js
     autoDeploy: true
     envVars:
