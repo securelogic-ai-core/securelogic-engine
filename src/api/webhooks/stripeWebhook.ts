@@ -234,9 +234,12 @@ async function syncSubscriber(
     return;
   }
 
-  const subscriberTier = entitlement.tier === "paid" || entitlement.tier === "admin"
-    ? "paid"
-    : "free";
+  const subscriberTier =
+    entitlement.tier === "paid" ||
+    entitlement.tier === "professional" ||
+    entitlement.tier === "admin"
+      ? "paid"
+      : "free";
 
   const subscriberStatus = "active";
 

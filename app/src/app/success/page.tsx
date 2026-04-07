@@ -4,36 +4,71 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
+function planDisplayName(entitlementLevel: string | null): string {
+  switch (entitlementLevel) {
+    case "premium":      return "Team";
+    case "professional": return "Professional";
+    case "admin":        return "Enterprise";
+    default:             return "Premium";
+  }
+}
+
 /**
  * /success — Post-Stripe-checkout landing page.
  *
  * Stripe redirects here after a successful payment (STRIPE_SUCCESS_URL).
- * On mount we refresh the iron-session from the engine so the dashboard
- * reflects the new entitlement immediately. We then redirect automatically
- * after a short delay to give the Stripe webhook time to complete.
+ * Polls /api/session/refresh until the entitlement upgrades from the
+ * webhook, then auto-redirects to the dashboard.
  */
 export default function SuccessPage() {
   const router = useRouter();
   const [status, setStatus] = useState<"refreshing" | "ready" | "error">("refreshing");
+  const [planName, setPlanName] = useState<string>("Premium");
 
   useEffect(() => {
     let cancelled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 8;
+    const POLL_MS = 1500;
 
-    async function refresh() {
+    async function poll() {
+      if (cancelled) return;
+
       try {
         const res = await fetch("/api/session/refresh", { method: "POST" });
 
-        if (!cancelled) {
-          setStatus(res.ok ? "ready" : "error");
+        if (cancelled) return;
+
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          const level: string | null = data?.entitlementLevel ?? null;
+          const isPaid =
+            level === "premium" ||
+            level === "professional" ||
+            level === "admin";
+
+          if (isPaid) {
+            setPlanName(planDisplayName(level));
+            setStatus("ready");
+            return;
+          }
         }
+
+        attempts++;
+        if (attempts >= MAX_ATTEMPTS) {
+          if (!cancelled) setStatus("error");
+          return;
+        }
+
+        // Entitlement not yet upgraded — webhook still in flight, retry
+        setTimeout(poll, POLL_MS);
       } catch {
         if (!cancelled) setStatus("error");
       }
     }
 
-    // Small delay so the Stripe webhook has time to reach the engine
-    // before we fetch the updated entitlement.
-    const timer = setTimeout(refresh, 1500);
+    // Initial delay so the Stripe webhook has time to reach the engine
+    const timer = setTimeout(poll, 1500);
 
     return () => {
       cancelled = true;
@@ -71,7 +106,7 @@ export default function SuccessPage() {
               </svg>
             </div>
             <h1 className="text-xl font-bold text-slate-900 mb-2">
-              Welcome to Premium
+              Welcome to {planName}
             </h1>
             <p className="text-slate-500 text-sm mb-6">
               Your subscription is active. You now have full access to the
