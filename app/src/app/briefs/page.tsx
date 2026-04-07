@@ -12,7 +12,9 @@ export default async function BriefsPage() {
 
   const data = await getIssues(session.apiKey);
   const issues = data?.issues ?? [];
-  const isPremium = session.entitlementLevel === "premium";
+  const isPremium =
+    session.entitlementLevel === "premium" ||
+    session.entitlementLevel === "professional";
   const lockedCount = issues.filter((i) => i.locked).length;
 
   return (
@@ -30,7 +32,7 @@ export default async function BriefsPage() {
         </div>
 
         {!isPremium && lockedCount > 0 && (
-          <CheckoutButton />
+          <CheckoutButton tier="team" label="Upgrade" variant="outline" />
         )}
       </div>
 
@@ -54,16 +56,27 @@ export default async function BriefsPage() {
             {lockedCount} brief{lockedCount !== 1 ? "s" : ""} locked
           </p>
           <p className="text-indigo-700 text-sm mb-4">
-            Upgrade to Premium for full access to all Intelligence Brief content.
+            Upgrade for full access to all Intelligence Brief content.
           </p>
-          <CheckoutButton variant="solid" />
+          <div className="flex items-center justify-center gap-3 flex-wrap">
+            <CheckoutButton tier="professional" label="Professional — $49/mo" variant="outline" />
+            <CheckoutButton tier="team" label="Team — $249/mo" variant="solid" />
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function CheckoutButton({ variant = "outline" }: { variant?: "outline" | "solid" }) {
+function CheckoutButton({
+  tier,
+  label,
+  variant = "outline",
+}: {
+  tier: "professional" | "team";
+  label: string;
+  variant?: "outline" | "solid";
+}) {
   const base = "font-semibold text-sm py-2 px-5 rounded-lg transition-colors";
   const styles =
     variant === "solid"
@@ -72,8 +85,9 @@ function CheckoutButton({ variant = "outline" }: { variant?: "outline" | "solid"
 
   return (
     <form action="/api/billing/checkout" method="POST">
+      <input type="hidden" name="tier" value={tier} />
       <button type="submit" className={styles}>
-        Upgrade to Premium
+        {label}
       </button>
     </form>
   );

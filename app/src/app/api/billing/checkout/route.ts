@@ -12,6 +12,8 @@ import { createCheckoutSession } from "@/lib/api";
  *
  * HTML <form method="POST"> buttons follow 303 redirects automatically —
  * no client-side JavaScript required for the happy path.
+ *
+ * Body (form-encoded): tier = "professional" | "team"
  */
 export async function POST(request: Request) {
   const origin = new URL(request.url).origin;
@@ -21,7 +23,19 @@ export async function POST(request: Request) {
     return NextResponse.redirect(`${origin}/login`, { status: 303 });
   }
 
-  const result = await createCheckoutSession(session.apiKey);
+  // Parse tier from form data. Default to "professional" so existing buttons
+  // without a tier field continue to work (forward compat).
+  let tier: "professional" | "team" = "professional";
+  try {
+    const form = await request.formData();
+    const raw = form.get("tier");
+    if (raw === "team") tier = "team";
+  } catch {
+    // formData() throws if content-type is not multipart/form-data —
+    // fall through to the default tier
+  }
+
+  const result = await createCheckoutSession(session.apiKey, tier);
 
   if (!result) {
     return NextResponse.redirect(`${origin}/account?billing_error=checkout_failed`, {

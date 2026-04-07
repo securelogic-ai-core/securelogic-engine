@@ -19,9 +19,10 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  */
 function allowedAudienceTiers(entitlementLevel: string | null): string[] {
   switch (entitlementLevel?.toLowerCase()) {
-    case "premium":  return ["free", "standard", "premium"];
-    case "standard": return ["free", "standard"];
-    default:         return ["free"]; // starter or unrecognised
+    case "premium":       return ["free", "standard", "premium"]; // Team
+    case "professional":  return ["free", "standard"];            // Professional
+    case "standard":      return ["free", "standard"];            // legacy alias
+    default:              return ["free"];                        // starter or unrecognised
   }
 }
 
