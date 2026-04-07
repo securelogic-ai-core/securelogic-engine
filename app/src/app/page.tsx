@@ -180,7 +180,7 @@ export default function LandingPage() {
             <div className="mb-6">
               <h3 className="font-bold text-slate-900 text-lg mb-1">Professional</h3>
               <div className="text-3xl font-bold text-slate-900">
-                $49
+                $39
                 <span className="text-slate-400 text-base font-normal"> / mo</span>
               </div>
             </div>
@@ -213,7 +213,7 @@ export default function LandingPage() {
             <div className="mb-6">
               <h3 className="font-bold text-lg mb-1">Team</h3>
               <div className="text-3xl font-bold">
-                $249
+                $209
                 <span className="text-indigo-300 text-base font-normal"> / mo</span>
               </div>
             </div>

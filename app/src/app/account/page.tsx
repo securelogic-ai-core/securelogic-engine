@@ -140,7 +140,7 @@ export default async function AccountPage({
                     type="submit"
                     className="w-full border border-indigo-600 text-indigo-600 hover:bg-indigo-50 text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                   >
-                    Upgrade to Professional — $49/mo
+                    Upgrade to Professional — $39/mo
                   </button>
                 </form>
                 <form action="/api/billing/checkout" method="POST">
@@ -149,7 +149,7 @@ export default async function AccountPage({
                     type="submit"
                     className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                   >
-                    Upgrade to Team — $249/mo
+                    Upgrade to Team — $209/mo
                   </button>
                 </form>
               </div>

@@ -17,7 +17,7 @@ const PLANS = [
   },
   {
     name: "Professional",
-    price: "$49",
+    price: "$39",
     period: "/ mo",
     description: "Full brief content for the individual practitioner who needs depth.",
     features: [
@@ -32,7 +32,7 @@ const PLANS = [
   },
   {
     name: "Team",
-    price: "$249",
+    price: "$209",
     period: "/ mo",
     description: "For security and risk teams that need shared access and priority support.",
     features: [
