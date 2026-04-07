@@ -15,8 +15,22 @@ import { createCheckoutSession } from "@/lib/api";
  *
  * Body (form-encoded): tier = "professional" | "team"
  */
+/**
+ * Resolves the public-facing origin from request headers.
+ *
+ * Behind Render's reverse proxy, request.url contains the internal
+ * Next.js URL (localhost:3000). The real external origin is in the
+ * x-forwarded-proto and x-forwarded-host headers.
+ */
+function getOrigin(request: Request): string {
+  const proto = request.headers.get("x-forwarded-proto") ?? "https";
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  if (host) return `${proto}://${host}`;
+  return new URL(request.url).origin;
+}
+
 export async function POST(request: Request) {
-  const origin = new URL(request.url).origin;
+  const origin = getOrigin(request);
   const session = await getSession();
 
   if (!session.apiKey) {

@@ -8,8 +8,15 @@ import { createPortalSession } from "@/lib/api";
  * Creates a Stripe billing portal session via the engine and issues a
  * 303 redirect to the Stripe-hosted portal page.
  */
+function getOrigin(request: Request): string {
+  const proto = request.headers.get("x-forwarded-proto") ?? "https";
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  if (host) return `${proto}://${host}`;
+  return new URL(request.url).origin;
+}
+
 export async function POST(request: Request) {
-  const origin = new URL(request.url).origin;
+  const origin = getOrigin(request);
   const session = await getSession();
 
   if (!session.apiKey) {
