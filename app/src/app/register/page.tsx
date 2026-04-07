@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+
+type PaidTier = "professional" | "team";
 
 type State =
   | { phase: "form" }
@@ -10,8 +12,19 @@ type State =
   | { phase: "success"; apiKey: string }
   | { phase: "error"; message: string };
 
+function parsePlanParam(raw: string | null): PaidTier | null {
+  if (raw === "professional" || raw === "team") return raw;
+  return null;
+}
+
+function planLabel(tier: PaidTier): string {
+  return tier === "team" ? "Team — $209/mo" : "Professional — $39/mo";
+}
+
 export default function RegisterPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const plan = parsePlanParam(searchParams.get("plan"));
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [state, setState] = useState<State>({ phase: "form" });
@@ -85,12 +98,24 @@ export default function RegisterPage() {
             ⚠ This key will not be shown again. Store it in a password manager or secrets vault.
           </div>
 
-          <button
-            onClick={() => router.push("/dashboard")}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-lg transition-colors"
-          >
-            Continue to Dashboard →
-          </button>
+          {plan ? (
+            <form action="/api/billing/checkout" method="POST">
+              <input type="hidden" name="tier" value={plan} />
+              <button
+                type="submit"
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-lg transition-colors"
+              >
+                Continue to {planLabel(plan)} →
+              </button>
+            </form>
+          ) : (
+            <button
+              onClick={() => router.push("/dashboard")}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-lg transition-colors"
+            >
+              Continue to Dashboard →
+            </button>
+          )}
         </div>
       </div>
     );
