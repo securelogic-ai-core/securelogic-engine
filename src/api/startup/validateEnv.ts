@@ -29,7 +29,12 @@ const OPTIONAL_ENV = [
   "PORT",
   "SECURELOGIC_DISABLE_PUBLIC_API",
   "ENABLE_DEBUG_ROUTES",
-  "ALLOW_ADMIN_TIER_ASSIGNMENT"
+  "ALLOW_ADMIN_TIER_ASSIGNMENT",
+  // Resend — required for recovery emails and newsletter delivery.
+  // Optional at startup: if absent, recovery requests are accepted but
+  // no email is sent and a warning is logged.
+  "RESEND_API_KEY",
+  "NEWSLETTER_FROM_EMAIL"
 ] as const;
 
 function isNonEmptyString(v: unknown): v is string {
