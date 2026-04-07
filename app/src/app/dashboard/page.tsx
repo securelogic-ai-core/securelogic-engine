@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getIssues } from "@/lib/api";
+import { getIssues, getMe } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 
 export default async function DashboardPage() {
@@ -11,16 +11,24 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
-  const issuesData = await getIssues(session.apiKey);
+  // Fetch live account data and issues in parallel.
+  // getMe() is the source of truth for entitlement — never rely on the
+  // session cookie alone, which may be stale after a Stripe upgrade.
+  const [me, issuesData] = await Promise.all([
+    getMe(session.apiKey),
+    getIssues(session.apiKey),
+  ]);
+
   const latestIssue = issuesData?.issues?.[0] ?? null;
-  const isPremium = session.entitlementLevel === "premium";
+  const isPremium = me?.entitlementLevel === "premium" || me?.billingActive === true;
+  const orgName = me?.organizationName ?? session.organizationName;
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-12">
       {/* Welcome */}
       <div className="mb-10">
         <h1 className="text-2xl font-bold text-slate-900 mb-1">
-          Welcome back{session.organizationName ? `, ${session.organizationName}` : ""}.
+          Welcome back{orgName ? `, ${orgName}` : ""}.
         </h1>
         <p className="text-slate-600 text-sm">
           {isPremium
@@ -69,7 +77,7 @@ export default async function DashboardPage() {
               <div>
                 <p className="text-xs text-slate-500 mb-0.5">Organization</p>
                 <p className="text-sm font-medium text-slate-900">
-                  {session.organizationName ?? "—"}
+                  {orgName ?? "—"}
                 </p>
               </div>
               <div>

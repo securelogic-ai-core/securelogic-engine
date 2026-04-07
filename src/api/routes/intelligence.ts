@@ -29,6 +29,7 @@ router.get("/intelligence", async (req, res, next) => {
       SELECT id, title, status, audience_tier, created_at
       FROM newsletter_issues
       WHERE (organization_id IS NOT DISTINCT FROM $1 OR organization_id IS NULL)
+        AND status = 'sent'
       ORDER BY created_at DESC
       LIMIT 10
       `,
@@ -60,6 +61,7 @@ router.get("/intelligence/latest", async (req, res, next) => {
              sections_json, publish_date, created_at, updated_at
       FROM newsletter_issues
       WHERE (organization_id IS NOT DISTINCT FROM $1 OR organization_id IS NULL)
+        AND status = 'sent'
       ORDER BY created_at DESC
       LIMIT 1
       `,
@@ -105,6 +107,7 @@ router.get("/intelligence/:id", async (req, res, next) => {
       FROM newsletter_issues
       WHERE id = $1
         AND (organization_id IS NOT DISTINCT FROM $2 OR organization_id IS NULL)
+        AND status = 'sent'
       LIMIT 1
       `,
       [id, orgId]
