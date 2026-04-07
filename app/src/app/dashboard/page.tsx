@@ -20,7 +20,9 @@ export default async function DashboardPage() {
   ]);
 
   const latestIssue = issuesData?.issues?.[0] ?? null;
-  const isPremium = me?.entitlementLevel === "premium" || me?.billingActive === true;
+  const entitlementLevel = me?.entitlementLevel ?? "starter";
+  const isPaid = entitlementLevel === "premium" || entitlementLevel === "professional";
+  const planName = planDisplayName(entitlementLevel);
   const orgName = me?.organizationName ?? session.organizationName;
 
   return (
@@ -31,8 +33,8 @@ export default async function DashboardPage() {
           Welcome back{orgName ? `, ${orgName}` : ""}.
         </h1>
         <p className="text-slate-600 text-sm">
-          {isPremium
-            ? "You have full access to the Intelligence Brief."
+          {isPaid
+            ? `You have ${planName} access to the Intelligence Brief.`
             : "You're on the free plan. Upgrade for complete brief content."}
         </p>
       </div>
@@ -81,22 +83,22 @@ export default async function DashboardPage() {
                 </p>
               </div>
               <div>
-                <p className="text-xs text-slate-500 mb-0.5">Access level</p>
+                <p className="text-xs text-slate-500 mb-0.5">Plan</p>
                 <span
                   className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
-                    isPremium
+                    isPaid
                       ? "bg-indigo-100 text-indigo-800"
                       : "bg-slate-100 text-slate-700"
                   }`}
                 >
-                  {isPremium ? "Premium" : "Free"}
+                  {planName}
                 </span>
               </div>
             </div>
           </div>
 
           {/* Billing CTA */}
-          {isPremium ? (
+          {isPaid ? (
             <ManageBillingButton />
           ) : (
             <UpgradeCard />
@@ -128,28 +130,43 @@ export default async function DashboardPage() {
   );
 }
 
+function planDisplayName(entitlementLevel: string): string {
+  switch (entitlementLevel) {
+    case "premium":      return "Team";
+    case "professional": return "Professional";
+    case "admin":        return "Enterprise";
+    default:             return "Free";
+  }
+}
+
 function UpgradeCard() {
   return (
     <div className="bg-indigo-600 text-white rounded-lg p-5">
       <h3 className="font-semibold text-sm mb-1">Unlock full access</h3>
       <p className="text-indigo-200 text-xs mb-4">
-        Get complete brief content, all sections, and the full archive.
+        Full brief content, all sections, and the complete archive.
       </p>
-      <CheckoutButton />
+      <div className="space-y-2">
+        <form action="/api/billing/checkout" method="POST">
+          <input type="hidden" name="tier" value="professional" />
+          <button
+            type="submit"
+            className="w-full bg-indigo-500 hover:bg-indigo-400 text-white font-semibold text-sm py-2 rounded-lg transition-colors"
+          >
+            Professional — $49/mo
+          </button>
+        </form>
+        <form action="/api/billing/checkout" method="POST">
+          <input type="hidden" name="tier" value="team" />
+          <button
+            type="submit"
+            className="w-full bg-white text-indigo-700 hover:bg-indigo-50 font-semibold text-sm py-2 rounded-lg transition-colors"
+          >
+            Team — $249/mo
+          </button>
+        </form>
+      </div>
     </div>
-  );
-}
-
-function CheckoutButton() {
-  return (
-    <form action="/api/billing/checkout" method="POST">
-      <button
-        type="submit"
-        className="w-full bg-white text-indigo-700 hover:bg-indigo-50 font-semibold text-sm py-2 rounded-lg transition-colors"
-      >
-        Upgrade to Premium →
-      </button>
-    </form>
   );
 }
 

@@ -14,7 +14,8 @@ const REQUIRED_ENV_PROD = [
   // Stripe billing — required; billing routes return 503 without these
   "STRIPE_SECRET_KEY",
   "STRIPE_WEBHOOK_SECRET",
-  "STRIPE_PRICE_ID",
+  "STRIPE_PRICE_ID_PROFESSIONAL",
+  "STRIPE_PRICE_ID_TEAM",
   "STRIPE_SUCCESS_URL",
   "STRIPE_CANCEL_URL",
   "STRIPE_PORTAL_RETURN_URL",

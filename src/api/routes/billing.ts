@@ -56,8 +56,34 @@ async function resolveStripeCustomer(
 }
 
 /* =========================================================
+   TIER → STRIPE PRICE ID MAPPING
+
+   Two paid tiers:
+     professional  →  STRIPE_PRICE_ID_PROFESSIONAL  ($49/mo)
+     team          →  STRIPE_PRICE_ID_TEAM           ($249/mo)
+
+   The tier is passed in the request body, validated here, and
+   stored in Stripe session/subscription metadata so the webhook
+   can write the correct entitlement_level on completion.
+   ========================================================= */
+
+const VALID_TIERS = new Set(["professional", "team"]);
+
+function resolvePriceId(tier: string): string | null {
+  if (tier === "professional") {
+    return process.env.STRIPE_PRICE_ID_PROFESSIONAL?.trim() ?? null;
+  }
+  if (tier === "team") {
+    return process.env.STRIPE_PRICE_ID_TEAM?.trim() ?? null;
+  }
+  return null;
+}
+
+/* =========================================================
    CREATE CHECKOUT SESSION
    POST /api/billing/checkout
+
+   Body: { tier: "professional" | "team" }
 
    Creates a Stripe subscription checkout session for the
    calling API key. A Stripe Customer is created (or reused)
@@ -67,13 +93,21 @@ async function resolveStripeCustomer(
 
 router.post("/billing/checkout", requireApiKey, async (req, res) => {
   try {
-    const priceId = process.env.STRIPE_PRICE_ID?.trim();
+    const tierRaw = typeof req.body?.tier === "string" ? req.body.tier.trim().toLowerCase() : null;
+
+    if (!tierRaw || !VALID_TIERS.has(tierRaw)) {
+      res.status(400).json({ error: "invalid_tier", valid: ["professional", "team"] });
+      return;
+    }
+
+    const tier = tierRaw as "professional" | "team";
+    const priceId = resolvePriceId(tier);
     const successUrl = process.env.STRIPE_SUCCESS_URL?.trim();
     const cancelUrl = process.env.STRIPE_CANCEL_URL?.trim();
 
     if (!priceId || !successUrl || !cancelUrl) {
       logger.error(
-        { event: "billing_checkout_misconfigured" },
+        { event: "billing_checkout_misconfigured", tier },
         "POST /api/billing/checkout: Stripe env vars not fully configured"
       );
       res.status(503).json({ error: "billing_not_configured" });
@@ -98,10 +132,10 @@ router.post("/billing/checkout", requireApiKey, async (req, res) => {
       mode: "subscription",
       customer: customerId,
       line_items: [{ price: priceId, quantity: 1 }],
-      // api_key_id flows into checkout.session.completed
-      metadata: { api_key_id: apiKeyId },
-      // api_key_id also flows into all subscription lifecycle events
-      subscription_data: { metadata: { api_key_id: apiKeyId } },
+      // tier + api_key_id flow into checkout.session.completed
+      metadata: { api_key_id: apiKeyId, tier },
+      // tier + api_key_id flow into all subscription lifecycle events
+      subscription_data: { metadata: { api_key_id: apiKeyId, tier } },
       success_url: successUrl,
       cancel_url: cancelUrl
     });
@@ -116,7 +150,7 @@ router.post("/billing/checkout", requireApiKey, async (req, res) => {
     }
 
     logger.info(
-      { event: "billing_checkout_created", apiKeyId, customerId, sessionId: session.id },
+      { event: "billing_checkout_created", apiKeyId, customerId, sessionId: session.id, tier },
       "Stripe checkout session created"
     );
 

@@ -44,12 +44,30 @@ function isValidApiKeyId(value: unknown): value is string {
 }
 
 /**
+ * Resolves the SecureLogic entitlement tier from the Stripe event metadata.
+ *
+ * - "professional" → Professional plan ($49/mo)
+ * - "team"         → Team plan ($249/mo) — stored as "paid" in Redis for backward compat
+ * - anything else  → falls back to "paid" (legacy events that predate tier metadata)
+ */
+function resolveTierFromMetadata(event: Stripe.Event): "professional" | "paid" {
+  const obj = event.data.object as any;
+  const rawTier =
+    obj?.metadata?.tier ??
+    obj?.subscription_details?.metadata?.tier ??
+    null;
+
+  return rawTier === "professional" ? "professional" : "paid";
+}
+
+/**
  * Determines whether a subscription event should grant or revoke entitlement.
  * For `customer.subscription.updated`, the subscription status is the deciding factor.
  */
 function classifySubscriptionEvent(
   eventType: string,
-  subscription: Stripe.Subscription | null
+  subscription: Stripe.Subscription | null,
+  metadataTier: "professional" | "paid"
 ): EntitlementRecord | null {
   if (REVOKE_EVENTS.has(eventType)) {
     return { tier: "free", activeSubscription: false };
@@ -58,7 +76,7 @@ function classifySubscriptionEvent(
   if (eventType === "customer.subscription.updated" && subscription) {
     const status = subscription.status;
     if (status === "active" || status === "trialing") {
-      return { tier: "paid", activeSubscription: true };
+      return { tier: metadataTier, activeSubscription: true };
     }
     if (
       status === "canceled" ||
@@ -73,7 +91,7 @@ function classifySubscriptionEvent(
   }
 
   if (GRANT_EVENTS.has(eventType)) {
-    return { tier: "paid", activeSubscription: true };
+    return { tier: metadataTier, activeSubscription: true };
   }
 
   return null;
@@ -104,6 +122,21 @@ function extractCustomerId(event: Stripe.Event): string | null {
 }
 
 /**
+ * Maps a Redis EntitlementRecord tier to the Postgres entitlement_level value.
+ *
+ * Tier → DB level:
+ *   professional → "professional"  ($49/mo — Professional plan)
+ *   paid         → "premium"       ($249/mo — Team plan, or legacy paid events)
+ *   admin        → "premium"       (enterprise/admin — full access)
+ *   free         → "starter"
+ */
+function tierToDbLevel(tier: EntitlementRecord["tier"]): string {
+  if (tier === "professional") return "professional";
+  if (tier === "paid" || tier === "admin") return "premium";
+  return "starter";
+}
+
+/**
  * Best-effort sync of entitlement level (and optionally stripe_customer_id)
  * to the Postgres api_keys table. Errors are logged but never thrown.
  *
@@ -118,10 +151,7 @@ async function syncToDb(
   entitlement: EntitlementRecord,
   customerId: string | null
 ): Promise<void> {
-  const level =
-    entitlement.tier === "paid" || entitlement.tier === "admin"
-      ? "premium"
-      : "starter";
+  const level = tierToDbLevel(entitlement.tier);
 
   try {
     const result = await pg.query(
@@ -305,7 +335,8 @@ export async function stripeWebhook(
         ? (event.data.object as Stripe.Subscription)
         : null;
 
-    const entitlement = classifySubscriptionEvent(eventType, subscription);
+    const metadataTier = resolveTierFromMetadata(event);
+    const entitlement = classifySubscriptionEvent(eventType, subscription, metadataTier);
 
     if (!entitlement) {
       respond({ received: true, ignored: true });
@@ -348,7 +379,8 @@ export async function stripeWebhook(
         event: "stripe_webhook_entitlement_written",
         stripeEventType: eventType,
         apiKeyId,
-        tier: entitlement.tier
+        redisTier: entitlement.tier,
+        dbLevel: tierToDbLevel(entitlement.tier)
       },
       "stripe webhook processed: entitlement updated"
     );

@@ -115,10 +115,14 @@ export async function getIssue(
 }
 
 export async function createCheckoutSession(
-  apiKey: string
+  apiKey: string,
+  tier: "professional" | "team"
 ): Promise<BillingCheckoutResponse | null> {
   try {
-    const res = await engineFetch("/api/billing/checkout", apiKey, { method: "POST" });
+    const res = await engineFetch("/api/billing/checkout", apiKey, {
+      method: "POST",
+      body: JSON.stringify({ tier }),
+    });
     if (!res.ok) return null;
     return res.json() as Promise<BillingCheckoutResponse>;
   } catch {

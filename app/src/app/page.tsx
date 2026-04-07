@@ -137,7 +137,7 @@ export default function LandingPage() {
       </section>
 
       {/* Pricing */}
-      <section className="max-w-4xl mx-auto px-6 py-20">
+      <section className="max-w-6xl mx-auto px-6 py-20">
         <div className="text-center mb-12">
           <h2 className="text-2xl font-bold text-slate-900 mb-3">Simple pricing</h2>
           <p className="text-slate-600">
@@ -145,9 +145,9 @@ export default function LandingPage() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-2xl mx-auto">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
           {/* Free */}
-          <div className="bg-white border border-slate-200 rounded-lg p-8">
+          <div className="bg-white border border-slate-200 rounded-lg p-7 flex flex-col">
             <div className="mb-6">
               <h3 className="font-bold text-slate-900 text-lg mb-1">Free</h3>
               <div className="text-3xl font-bold text-slate-900">
@@ -155,15 +155,17 @@ export default function LandingPage() {
                 <span className="text-slate-400 text-base font-normal"> / mo</span>
               </div>
             </div>
-            <ul className="space-y-3 mb-8">
-              {["Brief archive access", "Issue titles and summaries", "Weekly email digest"].map(
-                (f) => (
-                  <li key={f} className="flex items-center gap-2 text-sm text-slate-700">
-                    <CheckIcon />
-                    {f}
-                  </li>
-                )
-              )}
+            <ul className="space-y-2.5 mb-8 flex-1">
+              {[
+                "Brief archive access",
+                "Issue titles and summaries",
+                "Weekly email digest",
+              ].map((f) => (
+                <li key={f} className="flex items-start gap-2 text-sm text-slate-700">
+                  <CheckIcon />
+                  {f}
+                </li>
+              ))}
             </ul>
             <Link
               href="/register"
@@ -173,38 +175,97 @@ export default function LandingPage() {
             </Link>
           </div>
 
-          {/* Premium */}
-          <div className="bg-indigo-600 rounded-lg p-8 text-white relative overflow-hidden">
-            <div className="absolute top-4 right-4 bg-indigo-500 text-indigo-100 text-xs font-semibold px-2 py-0.5 rounded">
-              Full Access
-            </div>
+          {/* Professional */}
+          <div className="bg-white border border-slate-200 rounded-lg p-7 flex flex-col">
             <div className="mb-6">
-              <h3 className="font-bold text-lg mb-1">Premium</h3>
-              {/* TODO: lock in pricing before launch */}
-              <div className="text-3xl font-bold">
-                Contact us
+              <h3 className="font-bold text-slate-900 text-lg mb-1">Professional</h3>
+              <div className="text-3xl font-bold text-slate-900">
+                $49
+                <span className="text-slate-400 text-base font-normal"> / mo</span>
               </div>
             </div>
-            <ul className="space-y-3 mb-8">
+            <ul className="space-y-2.5 mb-8 flex-1">
               {[
                 "Everything in Free",
                 "Full brief content",
                 "All sections unlocked",
                 "Complete archive",
-                "Priority support",
               ].map((f) => (
-                <li key={f} className="flex items-center gap-2 text-sm text-indigo-100">
+                <li key={f} className="flex items-start gap-2 text-sm text-slate-700">
+                  <CheckIcon />
+                  {f}
+                </li>
+              ))}
+            </ul>
+            <Link
+              href="/register?plan=professional"
+              className="block text-center border border-indigo-600 text-indigo-600 hover:bg-indigo-50 font-medium py-2.5 rounded-lg transition-colors text-sm"
+            >
+              Get Started
+            </Link>
+          </div>
+
+          {/* Team */}
+          <div className="bg-indigo-600 rounded-lg p-7 text-white relative overflow-hidden flex flex-col">
+            <div className="absolute top-4 right-4 bg-indigo-500 text-indigo-100 text-xs font-semibold px-2 py-0.5 rounded">
+              Most Popular
+            </div>
+            <div className="mb-6">
+              <h3 className="font-bold text-lg mb-1">Team</h3>
+              <div className="text-3xl font-bold">
+                $249
+                <span className="text-indigo-300 text-base font-normal"> / mo</span>
+              </div>
+            </div>
+            <ul className="space-y-2.5 mb-8 flex-1">
+              {[
+                "Everything in Professional",
+                "Up to 10 seats",
+                "Priority support",
+                "Early access to new modules",
+              ].map((f) => (
+                <li key={f} className="flex items-start gap-2 text-sm text-indigo-100">
                   <CheckIconWhite />
                   {f}
                 </li>
               ))}
             </ul>
             <Link
-              href="/register"
+              href="/register?plan=team"
               className="block text-center bg-white text-indigo-700 hover:bg-indigo-50 font-medium py-2.5 rounded-lg transition-colors text-sm"
             >
               Get Started
             </Link>
+          </div>
+
+          {/* Enterprise */}
+          <div className="bg-slate-900 rounded-lg p-7 text-white flex flex-col">
+            <div className="mb-6">
+              <h3 className="font-bold text-lg mb-1">Enterprise</h3>
+              <div className="text-3xl font-bold">
+                Custom
+              </div>
+            </div>
+            <ul className="space-y-2.5 mb-8 flex-1">
+              {[
+                "Everything in Team",
+                "Unlimited seats",
+                "Custom SLA",
+                "Dedicated onboarding",
+                "Invoice billing",
+              ].map((f) => (
+                <li key={f} className="flex items-start gap-2 text-sm text-slate-300">
+                  <CheckIconWhite />
+                  {f}
+                </li>
+              ))}
+            </ul>
+            <a
+              href="mailto:sales@securelogic.ai"
+              className="block text-center border border-slate-600 hover:border-slate-400 text-slate-300 hover:text-white font-medium py-2.5 rounded-lg transition-colors text-sm"
+            >
+              Contact Us
+            </a>
           </div>
         </div>
       </section>

@@ -1,11 +1,12 @@
 import type { Request, Response, NextFunction } from "express";
 
-type EntitlementLevel = "starter" | "standard" | "premium";
+type EntitlementLevel = "starter" | "standard" | "professional" | "premium";
 
 const entitlementRank: Record<EntitlementLevel, number> = {
-  starter: 1,
-  standard: 2,
-  premium: 3
+  starter:      1,
+  standard:     2, // legacy alias for professional
+  professional: 2,
+  premium:      3  // Team
 };
 
 export function requireEntitlement(minimumLevel: EntitlementLevel) {
@@ -25,8 +26,8 @@ export function requireEntitlement(minimumLevel: EntitlementLevel) {
     const currentLevel: EntitlementLevel =
       currentLevelRaw === "premium"
         ? "premium"
-        : currentLevelRaw === "standard"
-          ? "standard"
+        : currentLevelRaw === "professional" || currentLevelRaw === "standard"
+          ? "professional"
           : "starter";
 
     if (entitlementRank[currentLevel] < entitlementRank[minimumLevel]) {

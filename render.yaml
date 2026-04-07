@@ -52,8 +52,11 @@ services:
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
 
-      # Stripe Price ID for the subscription plan
-      - key: STRIPE_PRICE_ID
+      # Stripe Price IDs — one per paid tier
+      - key: STRIPE_PRICE_ID_PROFESSIONAL
+        sync: false
+
+      - key: STRIPE_PRICE_ID_TEAM
         sync: false
 
       # URLs Stripe redirects to after checkout

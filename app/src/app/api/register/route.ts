@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getIronSession } from "iron-session";
-import { SESSION_OPTIONS, type SessionData } from "@/lib/session";
+import { getSessionOptions, type SessionData } from "@/lib/session";
 import { registerOrg, getMe } from "@/lib/api";
 
 export async function POST(request: Request) {
@@ -35,7 +35,7 @@ export async function POST(request: Request) {
 
     if (me) {
       const cookieStore = await cookies();
-      const session = await getIronSession<SessionData>(cookieStore, SESSION_OPTIONS);
+      const session = await getIronSession<SessionData>(cookieStore, getSessionOptions());
 
       session.apiKey           = result.apiKey;
       session.organizationId   = me.organizationId;

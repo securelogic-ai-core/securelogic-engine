@@ -1,6 +1,6 @@
 import { ensureRedisConnected, redisReady } from "./redis.js";
 
-export type Tier = "free" | "paid" | "admin";
+export type Tier = "free" | "professional" | "paid" | "admin";
 
 export type EntitlementRecord = {
   tier: Tier;
@@ -36,8 +36,8 @@ function isValidEntitlementRecord(value: unknown): value is EntitlementRecord {
   // - free must always be false
   if (tier === "free" && activeSubscription !== false) return false;
 
-  // - paid/admin must always be true
-  if ((tier === "paid" || tier === "admin") && activeSubscription !== true) {
+  // - paid/professional/admin must always be true
+  if ((tier === "paid" || tier === "professional" || tier === "admin") && activeSubscription !== true) {
     return false;
   }
 

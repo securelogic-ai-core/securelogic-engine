@@ -2,6 +2,15 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getMe } from "@/lib/api";
 
+function planDisplayName(entitlementLevel: string): string {
+  switch (entitlementLevel) {
+    case "premium":      return "Team";
+    case "professional": return "Professional";
+    case "admin":        return "Enterprise";
+    default:             return "Free";
+  }
+}
+
 const BILLING_ERRORS: Record<string, string> = {
   checkout_failed: "We couldn't start the checkout session. Please try again or contact support.",
   portal_failed: "We couldn't open the billing portal. Please try again or contact support.",
@@ -24,7 +33,8 @@ export default async function AccountPage({
     redirect("/login");
   }
 
-  const isPremium = me.entitlementLevel === "premium";
+  const isPaid = me.entitlementLevel === "premium" || me.entitlementLevel === "professional";
+  const planName = planDisplayName(me.entitlementLevel);
   const { billing_error: billingError } = await searchParams;
   const billingErrorMessage = billingError ? BILLING_ERRORS[billingError] ?? null : null;
 
@@ -52,7 +62,7 @@ export default async function AccountPage({
           <dl className="space-y-4">
             <Row label="Name" value={me.organizationName} />
             <Row label="Slug" value={me.organizationSlug} mono />
-            <Row label="Plan" value={me.organizationPlan} />
+            <Row label="Plan" value={planName} />
             <Row label="Status" value={me.organizationStatus} />
           </dl>
         </div>
@@ -90,22 +100,24 @@ export default async function AccountPage({
           <div className="flex items-center gap-3 mb-6">
             <span
               className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold ${
-                isPremium
+                isPaid
                   ? "bg-indigo-100 text-indigo-800"
                   : "bg-slate-100 text-slate-700"
               }`}
             >
-              {isPremium ? "Premium" : "Free"}
+              {planName}
             </span>
-            {isPremium && (
+            {isPaid && (
               <span className="text-slate-500 text-sm">Active subscription</span>
             )}
           </div>
 
-          {isPremium ? (
+          {isPaid ? (
             <div>
               <p className="text-slate-600 text-sm mb-4">
-                You have full access to all Intelligence Brief content.
+                {me.entitlementLevel === "professional"
+                  ? "You have full access to all Professional Intelligence Brief content."
+                  : "You have full access to all Intelligence Brief content."}
               </p>
               <form action="/api/billing/portal" method="POST">
                 <button
@@ -118,18 +130,29 @@ export default async function AccountPage({
             </div>
           ) : (
             <div>
-              <p className="text-slate-600 text-sm mb-4">
-                Upgrade to Premium for full brief content, all sections, and the
-                complete archive.
+              <p className="text-slate-600 text-sm mb-5">
+                Upgrade for full brief content, all sections, and the complete archive.
               </p>
-              <form action="/api/billing/checkout" method="POST">
-                <button
-                  type="submit"
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
-                >
-                  Upgrade to Premium →
-                </button>
-              </form>
+              <div className="space-y-3">
+                <form action="/api/billing/checkout" method="POST">
+                  <input type="hidden" name="tier" value="professional" />
+                  <button
+                    type="submit"
+                    className="w-full border border-indigo-600 text-indigo-600 hover:bg-indigo-50 text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
+                  >
+                    Upgrade to Professional — $49/mo
+                  </button>
+                </form>
+                <form action="/api/billing/checkout" method="POST">
+                  <input type="hidden" name="tier" value="team" />
+                  <button
+                    type="submit"
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
+                  >
+                    Upgrade to Team — $249/mo
+                  </button>
+                </form>
+              </div>
             </div>
           )}
         </div>
