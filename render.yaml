@@ -76,6 +76,14 @@ services:
       - key: RESEND_WEBHOOK_SECRET
         sync: false
 
+      # Resend — used for account recovery emails (magic-link sign-in)
+      # Optional: if not set, recovery requests are accepted but no email is sent
+      - key: RESEND_API_KEY
+        sync: false
+
+      - key: NEWSLETTER_FROM_EMAIL
+        sync: false
+
       # Webhook URL for worker failure alerts (e.g. Slack incoming webhook)
       - key: ALERT_WEBHOOK_URL
         sync: false

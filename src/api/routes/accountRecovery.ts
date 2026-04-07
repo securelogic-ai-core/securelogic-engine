@@ -143,6 +143,16 @@ router.post("/account/recovery/request", requestLimiter, async (req, res) => {
       return;
     }
 
+    // Validate Resend is configured before attempting send
+    if (!process.env.RESEND_API_KEY?.trim() || !process.env.NEWSLETTER_FROM_EMAIL?.trim()) {
+      logger.warn(
+        { event: "recovery_email_not_configured", apiKeyId },
+        "accountRecovery: RESEND_API_KEY or NEWSLETTER_FROM_EMAIL not set — recovery email not sent"
+      );
+      respond();
+      return;
+    }
+
     // Send email via Resend
     try {
       const resend = getResend();
