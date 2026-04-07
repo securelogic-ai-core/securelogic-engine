@@ -139,7 +139,7 @@ services:
     name: securelogic-app
     env: node
     plan: starter
-    buildCommand: cd app && npm install && npm run build
+    buildCommand: cd app && npm install --include=dev && npm run build
     startCommand: cd app && npm run start
     autoDeploy: true
     envVars:
