@@ -153,7 +153,7 @@ function UpgradeCard() {
             type="submit"
             className="w-full bg-indigo-500 hover:bg-indigo-400 text-white font-semibold text-sm py-2 rounded-lg transition-colors"
           >
-            Professional — $49/mo
+            Professional — $39/mo
           </button>
         </form>
         <form action="/api/billing/checkout" method="POST">
@@ -162,7 +162,7 @@ function UpgradeCard() {
             type="submit"
             className="w-full bg-white text-indigo-700 hover:bg-indigo-50 font-semibold text-sm py-2 rounded-lg transition-colors"
           >
-            Team — $249/mo
+            Team — $209/mo
           </button>
         </form>
       </div>
