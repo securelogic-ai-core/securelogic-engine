@@ -142,6 +142,42 @@ export async function createPortalSession(
   }
 }
 
+export async function requestRecovery(email: string): Promise<{ ok: boolean }> {
+  try {
+    const res = await fetch(`${ENGINE_URL}/api/account/recovery/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false };
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+}
+
+export async function claimRecovery(
+  token: string
+): Promise<{ ok: true; apiKey: string } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(`${ENGINE_URL}/api/account/recovery/claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { ok: false, error: body.error ?? "recovery_failed" };
+    }
+    const body = (await res.json()) as { apiKey: string };
+    return { ok: true, apiKey: body.apiKey };
+  } catch {
+    return { ok: false, error: "recovery_failed" };
+  }
+}
+
 export async function registerOrg(
   name: string,
   email: string

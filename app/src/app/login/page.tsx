@@ -88,15 +88,26 @@ function LoginForm() {
           </button>
         </form>
 
-        <p className="text-center text-slate-500 text-sm mt-6">
-          Don&apos;t have an account?{" "}
-          <Link
-            href="/register"
-            className="text-indigo-600 hover:text-indigo-700 font-medium"
-          >
-            Get started free
-          </Link>
-        </p>
+        <div className="mt-6 space-y-3 text-center">
+          <p className="text-slate-500 text-sm">
+            Don&apos;t have an account?{" "}
+            <Link
+              href="/register"
+              className="text-indigo-600 hover:text-indigo-700 font-medium"
+            >
+              Get started free
+            </Link>
+          </p>
+          <p className="text-slate-400 text-sm">
+            Lost your API key?{" "}
+            <Link
+              href="/recover"
+              className="text-indigo-600 hover:text-indigo-700 font-medium"
+            >
+              Send a sign-in link
+            </Link>
+          </p>
+        </div>
       </div>
     </div>
   );
