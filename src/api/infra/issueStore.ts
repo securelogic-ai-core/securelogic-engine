@@ -372,7 +372,7 @@ export async function publishIssueArtifact(
       { component: "issueStore", fn: "publishIssueArtifact", issueNumber },
       "Issue artifact backed up to Postgres"
     );
-  }).catch((err) => {
+  }).catch((err: unknown) => {
     logger.error(
       { err, component: "issueStore", fn: "publishIssueArtifact", issueNumber },
       "Postgres backup write failed (non-fatal — Redis copy is authoritative)"
