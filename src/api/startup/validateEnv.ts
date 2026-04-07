@@ -17,6 +17,7 @@ const REQUIRED_ENV_PROD = [
   "STRIPE_PRICE_ID",
   "STRIPE_SUCCESS_URL",
   "STRIPE_CANCEL_URL",
+  "STRIPE_PORTAL_RETURN_URL",
   // Required for CAN-SPAM compliant unsubscribe links in outbound emails
   "APP_BASE_URL"
 ] as const;
