@@ -126,3 +126,33 @@ services:
       # Optional: override log verbosity (default: info)
       - key: LOG_LEVEL
         sync: false
+
+  # =========================================================
+  # SECURELOGIC APP (Next.js frontend)
+  # User-facing web application: landing, registration, login,
+  # brief archive, account, and billing flows.
+  # Calls the engine API server-side; never exposes secrets
+  # or API keys to the browser.
+  # =========================================================
+
+  - type: web
+    name: securelogic-app
+    env: node
+    plan: starter
+    buildCommand: cd app && npm install && npm run build
+    startCommand: cd app && npm run start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Internal URL of the securelogic-engine service on Render.
+      # Use the private service URL (e.g. https://securelogic-engine.onrender.com)
+      # so traffic stays within the Render network.
+      - key: ENGINE_API_URL
+        sync: false
+
+      # Secret used to encrypt the iron-session cookie.
+      # Must be at least 32 characters. Generate with: openssl rand -hex 32
+      - key: SESSION_SECRET
+        sync: false
