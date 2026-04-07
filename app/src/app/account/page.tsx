@@ -2,7 +2,16 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getMe } from "@/lib/api";
 
-export default async function AccountPage() {
+const BILLING_ERRORS: Record<string, string> = {
+  checkout_failed: "We couldn't start the checkout session. Please try again or contact support.",
+  portal_failed: "We couldn't open the billing portal. Please try again or contact support.",
+};
+
+export default async function AccountPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ billing_error?: string }>;
+}) {
   const session = await getSession();
 
   if (!session.apiKey) {
@@ -16,6 +25,8 @@ export default async function AccountPage() {
   }
 
   const isPremium = me.entitlementLevel === "premium";
+  const { billing_error: billingError } = await searchParams;
+  const billingErrorMessage = billingError ? BILLING_ERRORS[billingError] ?? null : null;
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-12">
@@ -25,6 +36,12 @@ export default async function AccountPage() {
           Your organization settings and subscription status.
         </p>
       </div>
+
+      {billingErrorMessage && (
+        <div className="mb-6 bg-red-50 border border-red-200 rounded-lg px-5 py-4">
+          <p className="text-sm text-red-700">{billingErrorMessage}</p>
+        </div>
+      )}
 
       <div className="space-y-5">
         {/* Organization */}
