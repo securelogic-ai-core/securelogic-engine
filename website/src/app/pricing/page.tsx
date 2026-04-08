@@ -10,7 +10,7 @@ export default function PricingPage() {
   return (
     <>
       {/* Header */}
-      <section className="pt-16 pb-12 px-4 text-center">
+      <section className="bg-slate-50 border-b border-slate-200 pt-16 pb-14 px-4 text-center">
         <div className="max-w-2xl mx-auto">
           <h1 className="text-4xl font-bold text-slate-900 mb-4">Simple, transparent pricing</h1>
           <p className="text-lg text-slate-500 leading-relaxed">
