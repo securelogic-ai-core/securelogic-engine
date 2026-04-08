@@ -164,12 +164,12 @@ router.post("/account/recovery/request", requestLimiter, async (req, res) => {
         subject: "SecureLogic — Sign in to your account",
         html: `
 <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;">
-  <p style="font-size:16px;font-weight:600;color:#0f172a;margin:0 0 8px;">Sign in to SecureLogic Intelligence</p>
+  <p style="font-size:16px;font-weight:600;color:#0f172a;margin:0 0 8px;">Sign in to SecureLogic AI</p>
   <p style="font-size:14px;color:#475569;margin:0 0 24px;">
     Click the button below to sign in. This link expires in 15 minutes and can only be used once.
   </p>
   <a href="${recoveryUrl}"
-     style="display:inline-block;background:#4f46e5;color:#ffffff;font-size:14px;font-weight:600;
+     style="display:inline-block;background:#0d9488;color:#ffffff;font-size:14px;font-weight:600;
             text-decoration:none;padding:12px 24px;border-radius:8px;">
     Sign In to Your Account
   </a>
