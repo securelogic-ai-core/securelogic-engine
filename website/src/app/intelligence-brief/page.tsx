@@ -11,8 +11,13 @@ export default function IntelligenceBriefPage() {
   return (
     <>
       {/* Hero */}
-      <section className="bg-navy-900 text-white pt-16 pb-20 px-4">
-        <div className="max-w-3xl mx-auto text-center">
+      <section className="bg-navy-900 text-white pt-16 pb-20 px-4 relative overflow-hidden">
+        <div
+          className="absolute inset-0 pointer-events-none"
+          aria-hidden="true"
+          style={{ background: "radial-gradient(ellipse 60% 80% at 50% 120%, rgba(13,148,136,0.15) 0%, transparent 65%)" }}
+        />
+        <div className="relative max-w-3xl mx-auto text-center">
           <span className="inline-block text-xs font-semibold text-teal-400 uppercase tracking-wider mb-4">
             SecureLogic AI Product
           </span>
@@ -84,7 +89,7 @@ export default function IntelligenceBriefPage() {
                   "AI policy, EU AI Act, ISO 42001, model risk, and AI system governance developments affecting enterprise AI adoption.",
               },
             ].map((item) => (
-              <div key={item.title} className="bg-slate-50 rounded-xl border border-slate-200 p-6">
+              <div key={item.title} className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm hover:border-slate-300 hover:shadow-md transition-all">
                 <h3 className="font-semibold text-slate-900 mb-2">{item.title}</h3>
                 <p className="text-sm text-slate-500 leading-relaxed">{item.description}</p>
               </div>
