@@ -139,7 +139,7 @@ function buildUnsubscribeUrl(email: string): string | null {
 function injectUnsubscribeFooter(html: string, unsubscribeUrl: string): string {
   const footer = `
 <div style="margin-top:32px;padding-top:16px;border-top:1px solid #e0e0e0;font-family:sans-serif;font-size:12px;color:#888;text-align:center;">
-  <p style="margin:0;">You are receiving this because you subscribed to SecureLogic Intelligence.</p>
+  <p style="margin:0;">You are receiving this because you subscribed to SecureLogic AI.</p>
   <p style="margin:4px 0 0;"><a href="${unsubscribeUrl}" style="color:#888;">Unsubscribe</a></p>
 </div>`;
 

@@ -16,6 +16,7 @@ import { normalizeSignal } from "./normalizeSignal.js";
 import { fetchRegulatorySignals } from "../sources/regulatoryFeed.js";
 import { fetchSecuritySignals } from "../sources/securityNewsFeed.js";
 import { fetchAIGovernanceSignals } from "../sources/aiGovernanceFeed.js";
+import { fetchVendorRiskSignals } from "../sources/vendorRiskFeed.js";
 
 import {
   getLatestDraftIssue,
@@ -40,7 +41,7 @@ export async function runPipeline(): Promise<PipelineResult> {
   const rssSignals = await collectRssSignals();
 
   // Collect structured source feed signals (regulatory, security, AI governance)
-  const [regulatoryRaw, securityRaw, aiRaw] = await Promise.all([
+  const [regulatoryRaw, securityRaw, aiRaw, vendorRaw] = await Promise.all([
     fetchRegulatorySignals().catch((err) => {
       logger.error({ event: "feed_fetch_failed", feed: "regulatory", err }, "Regulatory feed fetch failed");
       return [];
@@ -52,13 +53,18 @@ export async function runPipeline(): Promise<PipelineResult> {
     fetchAIGovernanceSignals().catch((err) => {
       logger.error({ event: "feed_fetch_failed", feed: "ai_governance", err }, "AI governance feed fetch failed");
       return [];
+    }),
+    fetchVendorRiskSignals().catch((err) => {
+      logger.error({ event: "feed_fetch_failed", feed: "vendor_risk", err }, "Vendor risk feed fetch failed");
+      return [];
     })
   ]);
 
   const sourceFeedSignals = [
     ...regulatoryRaw,
     ...securityRaw,
-    ...aiRaw
+    ...aiRaw,
+    ...vendorRaw
   ].map((raw: any) => normalizeSignal(raw));
 
   let savedSignals = 0;
