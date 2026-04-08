@@ -138,29 +138,29 @@ function PlanCard({
   const isDark = plan.style === "dark";
 
   const cardClass = isPrimary
-    ? "bg-indigo-600 text-white rounded-lg p-7 flex flex-col relative overflow-hidden"
+    ? "bg-teal-600 text-white rounded-lg p-7 flex flex-col relative overflow-hidden"
     : isDark
     ? "bg-slate-900 text-white rounded-lg p-7 flex flex-col"
     : "bg-white border border-slate-200 rounded-lg p-7 flex flex-col";
 
   const priceClass = isPrimary || isDark ? "text-white" : "text-slate-900";
-  const periodClass = isPrimary ? "text-indigo-300" : isDark ? "text-slate-400" : "text-slate-400";
-  const featureClass = isPrimary ? "text-indigo-100" : isDark ? "text-slate-300" : "text-slate-700";
-  const descClass = isPrimary ? "text-indigo-200" : isDark ? "text-slate-400" : "text-slate-500";
+  const periodClass = isPrimary ? "text-teal-300" : isDark ? "text-slate-400" : "text-slate-400";
+  const featureClass = isPrimary ? "text-teal-100" : isDark ? "text-slate-300" : "text-slate-700";
+  const descClass = isPrimary ? "text-teal-200" : isDark ? "text-slate-400" : "text-slate-500";
 
   const ctaClass =
     isPrimary
-      ? "block text-center bg-white text-indigo-700 hover:bg-indigo-50 font-medium py-2.5 rounded-lg transition-colors text-sm"
+      ? "block text-center bg-white text-teal-700 hover:bg-teal-50 font-medium py-2.5 rounded-lg transition-colors text-sm"
       : isDark
       ? "block text-center border border-slate-600 hover:border-slate-400 text-slate-300 hover:text-white font-medium py-2.5 rounded-lg transition-colors text-sm"
       : plan.style === "outline"
-      ? "block text-center border border-indigo-600 text-indigo-600 hover:bg-indigo-50 font-medium py-2.5 rounded-lg transition-colors text-sm"
+      ? "block text-center border border-teal-600 text-teal-600 hover:bg-teal-50 font-medium py-2.5 rounded-lg transition-colors text-sm"
       : "block text-center bg-slate-900 hover:bg-slate-800 text-white font-medium py-2.5 rounded-lg transition-colors text-sm";
 
   return (
     <div className={cardClass}>
       {plan.badge && (
-        <div className="absolute top-4 right-4 bg-indigo-500 text-indigo-100 text-xs font-semibold px-2 py-0.5 rounded">
+        <div className="absolute top-4 right-4 bg-teal-500 text-teal-100 text-xs font-semibold px-2 py-0.5 rounded">
           {plan.badge}
         </div>
       )}
@@ -198,7 +198,7 @@ function PlanCard({
 function CheckIcon() {
   return (
     <svg
-      className="w-4 h-4 text-indigo-600 flex-shrink-0 mt-0.5"
+      className="w-4 h-4 text-teal-600 flex-shrink-0 mt-0.5"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
@@ -212,7 +212,7 @@ function CheckIcon() {
 function CheckIconWhite() {
   return (
     <svg
-      className="w-4 h-4 text-indigo-200 flex-shrink-0 mt-0.5"
+      className="w-4 h-4 text-teal-200 flex-shrink-0 mt-0.5"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"

@@ -123,7 +123,7 @@ function LockedContent() {
             <input type="hidden" name="tier" value="professional" />
             <button
               type="submit"
-              className="border border-indigo-600 text-indigo-600 hover:bg-indigo-50 font-semibold px-6 py-2.5 rounded-lg transition-colors text-sm"
+              className="border border-teal-600 text-teal-600 hover:bg-teal-50 font-semibold px-6 py-2.5 rounded-lg transition-colors text-sm"
             >
               Professional — $39/mo
             </button>
@@ -132,7 +132,7 @@ function LockedContent() {
             <input type="hidden" name="tier" value="team" />
             <button
               type="submit"
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-6 py-2.5 rounded-lg transition-colors text-sm"
+              className="bg-teal-600 hover:bg-teal-700 text-white font-semibold px-6 py-2.5 rounded-lg transition-colors text-sm"
             >
               Team — $209/mo
             </button>

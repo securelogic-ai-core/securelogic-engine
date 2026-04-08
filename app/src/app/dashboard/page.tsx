@@ -60,7 +60,7 @@ export default async function DashboardPage() {
             <div className="mt-4">
               <Link
                 href="/briefs"
-                className="text-indigo-600 hover:text-indigo-700 text-sm font-medium transition-colors"
+                className="text-teal-600 hover:text-teal-700 text-sm font-medium transition-colors"
               >
                 View all {issuesData.count} briefs →
               </Link>
@@ -87,7 +87,7 @@ export default async function DashboardPage() {
                 <span
                   className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
                     isPaid
-                      ? "bg-indigo-100 text-indigo-800"
+                      ? "bg-teal-100 text-teal-800"
                       : "bg-slate-100 text-slate-700"
                   }`}
                 >
@@ -112,13 +112,13 @@ export default async function DashboardPage() {
             <div className="space-y-2">
               <Link
                 href="/briefs"
-                className="block text-sm text-slate-700 hover:text-indigo-600 transition-colors"
+                className="block text-sm text-slate-700 hover:text-teal-600 transition-colors"
               >
                 → Brief archive
               </Link>
               <Link
                 href="/account"
-                className="block text-sm text-slate-700 hover:text-indigo-600 transition-colors"
+                className="block text-sm text-slate-700 hover:text-teal-600 transition-colors"
               >
                 → Account settings
               </Link>
@@ -141,9 +141,9 @@ function planDisplayName(entitlementLevel: string): string {
 
 function UpgradeCard() {
   return (
-    <div className="bg-indigo-600 text-white rounded-lg p-5">
+    <div className="bg-teal-600 text-white rounded-lg p-5">
       <h3 className="font-semibold text-sm mb-1">Unlock full access</h3>
-      <p className="text-indigo-200 text-xs mb-4">
+      <p className="text-teal-200 text-xs mb-4">
         Full brief content, all sections, and the complete archive.
       </p>
       <div className="space-y-2">
@@ -151,7 +151,7 @@ function UpgradeCard() {
           <input type="hidden" name="tier" value="professional" />
           <button
             type="submit"
-            className="w-full bg-indigo-500 hover:bg-indigo-400 text-white font-semibold text-sm py-2 rounded-lg transition-colors"
+            className="w-full bg-teal-500 hover:bg-teal-400 text-white font-semibold text-sm py-2 rounded-lg transition-colors"
           >
             Professional — $39/mo
           </button>
@@ -160,7 +160,7 @@ function UpgradeCard() {
           <input type="hidden" name="tier" value="team" />
           <button
             type="submit"
-            className="w-full bg-white text-indigo-700 hover:bg-indigo-50 font-semibold text-sm py-2 rounded-lg transition-colors"
+            className="w-full bg-white text-teal-700 hover:bg-teal-50 font-semibold text-sm py-2 rounded-lg transition-colors"
           >
             Team — $209/mo
           </button>

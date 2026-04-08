@@ -30,8 +30,8 @@ export default function RecoverPage() {
     return (
       <div className="max-w-lg mx-auto px-6 py-16">
         <div className="bg-white border border-slate-200 rounded-lg p-8 text-center">
-          <div className="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-6 h-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <div className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-6 h-6 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
             </svg>
           </div>
@@ -42,7 +42,7 @@ export default function RecoverPage() {
           </p>
           <Link
             href="/login"
-            className="text-indigo-600 hover:text-indigo-700 text-sm font-medium transition-colors"
+            className="text-teal-600 hover:text-teal-700 text-sm font-medium transition-colors"
           >
             Back to sign in
           </Link>
@@ -84,14 +84,14 @@ export default function RecoverPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@company.com"
-              className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
             />
           </div>
 
           <button
             type="submit"
             disabled={phase === "loading"}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors"
+            className="w-full bg-teal-600 hover:bg-teal-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors"
           >
             {phase === "loading" ? "Sending…" : "Send sign-in link"}
           </button>
@@ -99,7 +99,7 @@ export default function RecoverPage() {
 
         <p className="text-center text-slate-500 text-sm mt-6">
           Remember your key?{" "}
-          <Link href="/login" className="text-indigo-600 hover:text-indigo-700 font-medium">
+          <Link href="/login" className="text-teal-600 hover:text-teal-700 font-medium">
             Sign in
           </Link>
         </p>

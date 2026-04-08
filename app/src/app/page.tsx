@@ -38,7 +38,7 @@ const HOW_IT_WORKS = [
     step: "02",
     title: "Get the weekly brief",
     description:
-      "Every week, the SecureLogic Intelligence Engine processes hundreds of signals and distills them into a decision-ready brief.",
+      "Every week, the SecureLogic AI Engine processes hundreds of signals and distills them into a decision-ready brief.",
   },
   {
     step: "03",
@@ -54,19 +54,19 @@ export default function LandingPage() {
       {/* Hero */}
       <section className="bg-slate-900 text-white">
         <div className="max-w-4xl mx-auto px-6 py-24 text-center">
-          <div className="inline-flex items-center gap-2 bg-indigo-900/50 border border-indigo-700 text-indigo-300 text-xs font-medium px-3 py-1 rounded-full mb-8">
-            <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full" />
+          <div className="inline-flex items-center gap-2 bg-teal-900/50 border border-teal-700 text-teal-300 text-xs font-medium px-3 py-1 rounded-full mb-8">
+            <span className="w-1.5 h-1.5 bg-teal-400 rounded-full" />
             Intelligence Brief — Weekly
           </div>
 
           <h1 className="text-4xl sm:text-5xl font-bold leading-tight mb-6">
             Risk intelligence your team
             <br />
-            <span className="text-indigo-400">can act on.</span>
+            <span className="text-teal-400">can act on.</span>
           </h1>
 
           <p className="text-slate-400 text-lg leading-relaxed max-w-2xl mx-auto mb-10">
-            The SecureLogic Intelligence Brief delivers weekly, decision-ready risk
+            The SecureLogic AI Intelligence Brief delivers weekly, decision-ready risk
             intelligence across security threats, compliance developments, AI governance,
             and vendor risk — curated for leaders who need signal, not noise.
           </p>
@@ -74,7 +74,7 @@ export default function LandingPage() {
           <div className="flex items-center justify-center gap-4">
             <Link
               href="/register"
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-8 py-3 rounded-lg transition-colors"
+              className="bg-teal-600 hover:bg-teal-700 text-white font-semibold px-8 py-3 rounded-lg transition-colors"
             >
               Get Started Free
             </Link>
@@ -123,7 +123,7 @@ export default function LandingPage() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-10">
             {HOW_IT_WORKS.map((item) => (
               <div key={item.step}>
-                <div className="text-indigo-400 font-mono text-sm font-bold mb-3">
+                <div className="text-teal-400 font-mono text-sm font-bold mb-3">
                   {item.step}
                 </div>
                 <h3 className="font-semibold text-white mb-2">{item.title}</h3>
@@ -199,22 +199,22 @@ export default function LandingPage() {
             </ul>
             <Link
               href="/register?plan=professional"
-              className="block text-center border border-indigo-600 text-indigo-600 hover:bg-indigo-50 font-medium py-2.5 rounded-lg transition-colors text-sm"
+              className="block text-center border border-teal-600 text-teal-600 hover:bg-teal-50 font-medium py-2.5 rounded-lg transition-colors text-sm"
             >
               Get Started
             </Link>
           </div>
 
           {/* Team */}
-          <div className="bg-indigo-600 rounded-lg p-7 text-white relative overflow-hidden flex flex-col">
-            <div className="absolute top-4 right-4 bg-indigo-500 text-indigo-100 text-xs font-semibold px-2 py-0.5 rounded">
+          <div className="bg-teal-600 rounded-lg p-7 text-white relative overflow-hidden flex flex-col">
+            <div className="absolute top-4 right-4 bg-teal-500 text-teal-100 text-xs font-semibold px-2 py-0.5 rounded">
               Most Popular
             </div>
             <div className="mb-6">
               <h3 className="font-bold text-lg mb-1">Team</h3>
               <div className="text-3xl font-bold">
                 $209
-                <span className="text-indigo-300 text-base font-normal"> / mo</span>
+                <span className="text-teal-300 text-base font-normal"> / mo</span>
               </div>
             </div>
             <ul className="space-y-2.5 mb-8 flex-1">
@@ -224,7 +224,7 @@ export default function LandingPage() {
                 "Priority support",
                 "Early access to new modules",
               ].map((f) => (
-                <li key={f} className="flex items-start gap-2 text-sm text-indigo-100">
+                <li key={f} className="flex items-start gap-2 text-sm text-teal-100">
                   <CheckIconWhite />
                   {f}
                 </li>
@@ -232,7 +232,7 @@ export default function LandingPage() {
             </ul>
             <Link
               href="/register?plan=team"
-              className="block text-center bg-white text-indigo-700 hover:bg-indigo-50 font-medium py-2.5 rounded-lg transition-colors text-sm"
+              className="block text-center bg-white text-teal-700 hover:bg-teal-50 font-medium py-2.5 rounded-lg transition-colors text-sm"
             >
               Get Started
             </Link>
@@ -277,11 +277,11 @@ export default function LandingPage() {
             Ready to cut through the noise?
           </h2>
           <p className="text-slate-600 mb-8">
-            Join security and risk leaders receiving the SecureLogic Intelligence Brief.
+            Join security and risk leaders receiving the SecureLogic AI Intelligence Brief.
           </p>
           <Link
             href="/register"
-            className="inline-block bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-10 py-3 rounded-lg transition-colors"
+            className="inline-block bg-teal-600 hover:bg-teal-700 text-white font-semibold px-10 py-3 rounded-lg transition-colors"
           >
             Create Free Account
           </Link>
@@ -293,7 +293,7 @@ export default function LandingPage() {
 
 function CheckIcon() {
   return (
-    <svg className="w-4 h-4 text-indigo-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+    <svg className="w-4 h-4 text-teal-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
     </svg>
   );
@@ -301,7 +301,7 @@ function CheckIcon() {
 
 function CheckIconWhite() {
   return (
-    <svg className="w-4 h-4 text-indigo-200 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+    <svg className="w-4 h-4 text-teal-200 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
     </svg>
   );

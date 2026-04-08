@@ -4,7 +4,7 @@ import { Header } from "@/components/Header";
 import { getSession } from "@/lib/session";
 
 export const metadata: Metadata = {
-  title: "SecureLogic Intelligence",
+  title: "SecureLogic AI — Intelligence Brief",
   description:
     "Weekly risk intelligence for security, compliance, and AI governance leaders.",
 };

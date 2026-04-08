@@ -71,7 +71,7 @@ function LoginForm() {
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="sl_••••••••••••••••••••••••••••••••"
-              className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm font-mono text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm font-mono text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
             />
             <p className="text-xs text-slate-500 mt-1.5">
               Your API key starts with <code className="font-mono">sl_</code>.
@@ -82,7 +82,7 @@ function LoginForm() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors"
+            className="w-full bg-teal-600 hover:bg-teal-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors"
           >
             {loading ? "Signing in…" : "Sign In"}
           </button>
@@ -93,7 +93,7 @@ function LoginForm() {
             Don&apos;t have an account?{" "}
             <Link
               href="/register"
-              className="text-indigo-600 hover:text-indigo-700 font-medium"
+              className="text-teal-600 hover:text-teal-700 font-medium"
             >
               Get started free
             </Link>
@@ -102,7 +102,7 @@ function LoginForm() {
             Lost your API key?{" "}
             <Link
               href="/recover"
-              className="text-indigo-600 hover:text-indigo-700 font-medium"
+              className="text-teal-600 hover:text-teal-700 font-medium"
             >
               Send a sign-in link
             </Link>

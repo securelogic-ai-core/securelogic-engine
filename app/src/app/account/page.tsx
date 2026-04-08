@@ -101,7 +101,7 @@ export default async function AccountPage({
             <span
               className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold ${
                 isPaid
-                  ? "bg-indigo-100 text-indigo-800"
+                  ? "bg-teal-100 text-teal-800"
                   : "bg-slate-100 text-slate-700"
               }`}
             >
@@ -138,7 +138,7 @@ export default async function AccountPage({
                   <input type="hidden" name="tier" value="professional" />
                   <button
                     type="submit"
-                    className="w-full border border-indigo-600 text-indigo-600 hover:bg-indigo-50 text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
+                    className="w-full border border-teal-600 text-teal-600 hover:bg-teal-50 text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                   >
                     Upgrade to Professional — $39/mo
                   </button>
@@ -147,7 +147,7 @@ export default async function AccountPage({
                   <input type="hidden" name="tier" value="team" />
                   <button
                     type="submit"
-                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
+                    className="w-full bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                   >
                     Upgrade to Team — $209/mo
                   </button>
