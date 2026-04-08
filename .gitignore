@@ -9,7 +9,13 @@
 # BUILD OUTPUT
 # =========================
 dist/
+dist-*/
 node_modules/
+
+# =========================
+# TS BUILD INFO
+# =========================
+*.tsbuildinfo
 
 # =========================
 # LOCAL ARTIFACTS
