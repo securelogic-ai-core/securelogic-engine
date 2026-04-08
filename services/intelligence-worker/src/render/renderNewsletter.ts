@@ -112,7 +112,7 @@ export async function renderNewsletter(issue: any) {
   const sections = issue.sections ?? {};
 
   return [
-    `# ${normalizeText(issue.title || "SecureLogic Intelligence Brief")}`,
+    `# ${normalizeText(issue.title || "SecureLogic AI Intelligence Brief")}`,
     "",
     normalizeText(issue.executiveSummary || issue.executiveHeadline || ""),
     "",

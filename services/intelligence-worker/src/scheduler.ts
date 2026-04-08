@@ -5,7 +5,7 @@ import { logger } from "../../../src/api/infra/logger.js";
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
 async function start() {
-  logger.info({ event: "scheduler_start" }, "SecureLogic Intelligence Scheduler starting");
+  logger.info({ event: "scheduler_start" }, "SecureLogic AI Scheduler starting");
 
   await runWorker();
 

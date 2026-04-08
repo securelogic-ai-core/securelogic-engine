@@ -1,4 +1,7 @@
 import { getInsights } from "../storage/postgresInsightStore.js";
+import { pg } from "../../../../src/api/infra/postgres.js";
+import { logger } from "../../../../src/api/infra/logger.js";
+import { analyzeSignal, synthesizeBrief } from "../pipeline/llmClient.js";
 
 function riskRank(level: string) {
   if (level === "critical") return 4;
@@ -315,8 +318,77 @@ function buildTopSignals(insights: any[]) {
     .map(enrichInsight);
 }
 
+/**
+ * Returns the next sequential issue number by counting existing issues.
+ * Fails gracefully — returns null if the query fails (title will omit number).
+ */
+async function getNextIssueNumber(): Promise<number | null> {
+  try {
+    const result = await pg.query(
+      "SELECT COUNT(*)::int AS total FROM newsletter_issues"
+    );
+    const count = result.rows[0]?.total ?? 0;
+    return (count as number) + 1;
+  } catch (err) {
+    logger.warn({ event: "issue_number_query_failed", err }, "Could not fetch issue count — omitting number from title");
+    return null;
+  }
+}
+
+/**
+ * Apply LLM-generated analysis to a list of enriched insights.
+ * Processes in batches of 5 to stay within rate limits.
+ * Falls back to template values for any signal where the LLM call fails.
+ */
+async function applyLLMEnhancement(insights: any[]): Promise<any[]> {
+  if (!process.env.ANTHROPIC_API_KEY?.trim()) {
+    return insights;
+  }
+
+  const results = [...insights];
+  const BATCH_SIZE = 5;
+
+  for (let batchStart = 0; batchStart < results.length; batchStart += BATCH_SIZE) {
+    const batchEnd = Math.min(batchStart + BATCH_SIZE, results.length);
+    const batchIndices = Array.from(
+      { length: batchEnd - batchStart },
+      (_, k) => batchStart + k
+    );
+
+    await Promise.all(
+      batchIndices.map(async (idx) => {
+        const insight = results[idx];
+        const llmResult = await analyzeSignal(
+          insight.title ?? "",
+          insight.summary ?? insight.analysis ?? "",
+          insight.category ?? "GENERAL",
+          insight.source ?? ""
+        );
+
+        if (llmResult) {
+          results[idx] = {
+            ...insight,
+            analysis: llmResult.analysis,
+            whyItMatters: llmResult.whyItMatters,
+            recommendedAction: llmResult.recommendedAction,
+            recommendation: llmResult.recommendedAction,
+            executiveImpact: llmResult.whyItMatters,
+            riskImplication: llmResult.whyItMatters,
+            risk_implication: llmResult.whyItMatters
+          };
+        }
+      })
+    );
+  }
+
+  return results;
+}
+
 export async function buildNewsletterIssue(organizationId: string | null) {
-  const insights = await getInsights(organizationId, 100);
+  const [insights, issueNumber] = await Promise.all([
+    getInsights(organizationId, 100),
+    getNextIssueNumber()
+  ]);
 
   const normalized = insights.map((insight: any) => ({
     ...insight,
@@ -327,15 +399,50 @@ export async function buildNewsletterIssue(organizationId: string | null) {
   }));
 
   const deduped = dedupeInsights(normalized).map(enrichInsight);
-  const grouped = groupByCategory(deduped);
+  const enhanced = await applyLLMEnhancement(deduped);
+  const grouped = groupByCategory(enhanced);
+
+  const totalSignalCount = enhanced.length;
+  const templateHeadline = buildExecutiveHeadline(grouped);
+
+  // Categories with at least one signal for the synthesis prompt
+  const activeCategories = Object.entries(grouped)
+    .filter(([, items]) => items.length > 0)
+    .map(([cat]) =>
+      cat
+        .replace(/_/g, " ")
+        .toLowerCase()
+        .replace(/\b\w/g, (c) => c.toUpperCase())
+    );
+
+  const topForSynthesis = sortByPriority([...enhanced])
+    .slice(0, 5)
+    .map((i) => ({ title: i.title ?? "", riskLevel: i.riskLevel ?? "low" }));
+
+  // LLM brief synthesis — falls back to template headline if unavailable
+  const executiveSummary =
+    (await synthesizeBrief(topForSynthesis, activeCategories, totalSignalCount)) ??
+    templateHeadline;
+
+  const weekLabel = new Date().toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric"
+  });
+  const title =
+    issueNumber != null
+      ? `SecureLogic AI Intelligence Brief #${issueNumber} — Week of ${weekLabel}`
+      : `SecureLogic AI Intelligence Brief — Week of ${weekLabel}`;
 
   return {
     id: `NEWS-${Date.now()}`,
-    title: "SecureLogic Intelligence Brief",
+    title,
+    issueNumber: issueNumber ?? null,
+    signalCount: totalSignalCount,
     createdAt: new Date().toISOString(),
-    executiveHeadline: buildExecutiveHeadline(grouped),
-    executiveSummary: buildExecutiveHeadline(grouped),
-    topSignals: buildTopSignals(deduped),
+    executiveHeadline: templateHeadline,
+    executiveSummary,
+    topSignals: buildTopSignals(enhanced),
     summaries: {
       aiGovernance: buildSectionSummary("AI Governance", grouped.AI_GOVERNANCE),
       securityIncidents: buildSectionSummary("Security Incidents", grouped.SECURITY_INCIDENT),
@@ -345,12 +452,12 @@ export async function buildNewsletterIssue(organizationId: string | null) {
       general: buildSectionSummary("General", grouped.GENERAL)
     },
     sections: {
-      aiGovernance: grouped.AI_GOVERNANCE.slice(0, 3).map(enrichInsight),
-      securityIncidents: grouped.SECURITY_INCIDENT.slice(0, 5).map(enrichInsight),
-      regulations: grouped.REGULATION.slice(0, 3).map(enrichInsight),
-      vendorRisk: grouped.VENDOR_RISK.slice(0, 3).map(enrichInsight),
-      compliance: grouped.COMPLIANCE_UPDATE.slice(0, 3).map(enrichInsight),
-      general: grouped.GENERAL.slice(0, 3).map(enrichInsight)
+      aiGovernance: grouped.AI_GOVERNANCE.slice(0, 3),
+      securityIncidents: grouped.SECURITY_INCIDENT.slice(0, 5),
+      regulations: grouped.REGULATION.slice(0, 3),
+      vendorRisk: grouped.VENDOR_RISK.slice(0, 3),
+      compliance: grouped.COMPLIANCE_UPDATE.slice(0, 3),
+      general: grouped.GENERAL.slice(0, 3)
     }
   };
 }
