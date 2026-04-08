@@ -103,7 +103,7 @@ export default function RegisterPage() {
               <input type="hidden" name="tier" value={plan} />
               <button
                 type="submit"
-                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-lg transition-colors"
+                className="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 rounded-lg transition-colors"
               >
                 Continue to {planLabel(plan)} →
               </button>
@@ -111,7 +111,7 @@ export default function RegisterPage() {
           ) : (
             <button
               onClick={() => router.push("/dashboard")}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-lg transition-colors"
+              className="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 rounded-lg transition-colors"
             >
               Continue to Dashboard →
             </button>
@@ -155,7 +155,7 @@ export default function RegisterPage() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Acme Corp"
-              className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
             />
           </div>
 
@@ -174,14 +174,14 @@ export default function RegisterPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@company.com"
-              className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
             />
           </div>
 
           <button
             type="submit"
             disabled={state.phase === "loading"}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors"
+            className="w-full bg-teal-600 hover:bg-teal-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors"
           >
             {state.phase === "loading" ? "Creating account…" : "Create Account"}
           </button>
@@ -189,7 +189,7 @@ export default function RegisterPage() {
 
         <p className="text-center text-slate-500 text-sm mt-6">
           Already have an account?{" "}
-          <Link href="/login" className="text-indigo-600 hover:text-indigo-700 font-medium">
+          <Link href="/login" className="text-teal-600 hover:text-teal-700 font-medium">
             Sign in
           </Link>
         </p>

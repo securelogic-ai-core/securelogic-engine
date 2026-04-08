@@ -28,7 +28,7 @@ export default function CancelPage() {
         <div className="flex items-center justify-center gap-4">
           <Link
             href="/account"
-            className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-6 py-2.5 rounded-lg transition-colors text-sm"
+            className="bg-teal-600 hover:bg-teal-700 text-white font-semibold px-6 py-2.5 rounded-lg transition-colors text-sm"
           >
             Back to Account
           </Link>
