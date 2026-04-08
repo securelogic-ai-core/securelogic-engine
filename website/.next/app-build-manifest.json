@@ -1,0 +1,51 @@
+{
+  "pages": {
+    "/_not-found/page": [
+      "static/chunks/webpack-2eb758dea75faf50.js",
+      "static/chunks/4bd1b696-c023c6e3521b1417.js",
+      "static/chunks/255-29f3dcaae8f3cb4e.js",
+      "static/chunks/main-app-2f1abfb58937e68d.js",
+      "static/chunks/app/_not-found/page-96727fe5f1d27c64.js"
+    ],
+    "/layout": [
+      "static/chunks/webpack-2eb758dea75faf50.js",
+      "static/chunks/4bd1b696-c023c6e3521b1417.js",
+      "static/chunks/255-29f3dcaae8f3cb4e.js",
+      "static/chunks/main-app-2f1abfb58937e68d.js",
+      "static/css/cd9fa350bc01fa39.css",
+      "static/chunks/619-ba102abea3e3d0e4.js",
+      "static/chunks/239-17c63ab2a4f7ef9b.js",
+      "static/chunks/app/layout-5c52bf9d68bbafc7.js"
+    ],
+    "/intelligence-brief/page": [
+      "static/chunks/webpack-2eb758dea75faf50.js",
+      "static/chunks/4bd1b696-c023c6e3521b1417.js",
+      "static/chunks/255-29f3dcaae8f3cb4e.js",
+      "static/chunks/main-app-2f1abfb58937e68d.js",
+      "static/chunks/app/intelligence-brief/page-6505087446d1cc59.js"
+    ],
+    "/platform/page": [
+      "static/chunks/webpack-2eb758dea75faf50.js",
+      "static/chunks/4bd1b696-c023c6e3521b1417.js",
+      "static/chunks/255-29f3dcaae8f3cb4e.js",
+      "static/chunks/main-app-2f1abfb58937e68d.js",
+      "static/chunks/619-ba102abea3e3d0e4.js",
+      "static/chunks/app/platform/page-133386ca5adc37ce.js"
+    ],
+    "/page": [
+      "static/chunks/webpack-2eb758dea75faf50.js",
+      "static/chunks/4bd1b696-c023c6e3521b1417.js",
+      "static/chunks/255-29f3dcaae8f3cb4e.js",
+      "static/chunks/main-app-2f1abfb58937e68d.js",
+      "static/chunks/619-ba102abea3e3d0e4.js",
+      "static/chunks/app/page-133386ca5adc37ce.js"
+    ],
+    "/pricing/page": [
+      "static/chunks/webpack-2eb758dea75faf50.js",
+      "static/chunks/4bd1b696-c023c6e3521b1417.js",
+      "static/chunks/255-29f3dcaae8f3cb4e.js",
+      "static/chunks/main-app-2f1abfb58937e68d.js",
+      "static/chunks/app/pricing/page-6505087446d1cc59.js"
+    ]
+  }
+}

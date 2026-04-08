@@ -1,0 +1,7 @@
+{
+  "/_not-found/page": "app/_not-found/page.js",
+  "/intelligence-brief/page": "app/intelligence-brief/page.js",
+  "/platform/page": "app/platform/page.js",
+  "/page": "app/page.js",
+  "/pricing/page": "app/pricing/page.js"
+}
