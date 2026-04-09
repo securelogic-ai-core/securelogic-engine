@@ -32,10 +32,13 @@ export async function generateNewsletter(): Promise<number> {
     title: issue.title ?? "SecureLogic Cyber Risk Intelligence Brief",
     status: "draft",
     audienceTier: "standard",
-    summary: issue.executiveSummary ?? issue.executiveHeadline ?? "",
+    summary: issue.executiveSummary ?? null,
     sectionsJson: issue.sections ?? {},
     contentMd,
-    contentHtml
+    contentHtml,
+    thesisHeadline: issue.thesisHeadline ?? null,
+    crossDomainAnalysis: issue.crossDomainAnalysis ?? null,
+    actionSummaryJson: issue.actionSummary ?? null
   });
 
   logger.info({ event: "newsletter_issue_created" }, "Newsletter issue created (platform, insight-based)");

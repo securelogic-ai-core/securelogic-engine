@@ -26,11 +26,47 @@ export type MeResponse = {
   apiKeyCreatedAt: string;
 };
 
+export type BriefSignal = {
+  id?: string;
+  signalId?: string;
+  signal_id?: string;
+  title: string;
+  category: string;
+  riskLevel: string;
+  risk_level?: string;
+  analysis?: string;
+  summary?: string;
+  whyItMatters?: string;
+  recommendedAction?: string;
+  recommendation?: string;
+  riskRationale?: string;
+  priorityScore?: number;
+  priorityTier?: string;
+  source?: string;
+  sourceUrl?: string;
+  source_url?: string;
+};
+
+export type BriefSections = {
+  aiGovernance?: BriefSignal[];
+  securityIncidents?: BriefSignal[];
+  regulations?: BriefSignal[];
+  vendorRisk?: BriefSignal[];
+  compliance?: BriefSignal[];
+};
+
+export type ActionSummary = {
+  thisWeek: string[];
+  thisMonth: string[];
+  monitor: string[];
+};
+
 export type NewsletterIssue = {
   id: string;
   organization_id: string | null;
   title: string;
   summary: string | null;
+  thesis_headline: string | null;
   status: string;
   audience_tier: string;
   publish_date: string | null;
@@ -38,7 +74,9 @@ export type NewsletterIssue = {
   updated_at: string;
   content_html: string | null;
   content_md: string | null;
-  sections_json: unknown | null;
+  sections_json: BriefSections | null;
+  cross_domain_analysis: string | null;
+  action_summary_json: ActionSummary | null;
   locked: boolean;
 };
 
