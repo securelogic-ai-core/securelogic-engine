@@ -180,7 +180,7 @@ services:
     env: node
     plan: starter
     buildCommand: cd website && npm install --include=dev && npm run build
-    startCommand: cd website && npm run start
+    startCommand: cd website && npx serve@latest out -l $PORT
     autoDeploy: true
     envVars:
       - key: NODE_ENV
