@@ -55,7 +55,7 @@ export default async function AccountPage({
 
       <div className="space-y-5">
         {/* Organization */}
-        <div className="bg-white border border-slate-200 rounded-lg p-6">
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
           <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">
             Organization
           </h2>
@@ -68,7 +68,7 @@ export default async function AccountPage({
         </div>
 
         {/* API Key */}
-        <div className="bg-white border border-slate-200 rounded-lg p-6">
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
           <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">
             API Key
           </h2>
@@ -92,7 +92,7 @@ export default async function AccountPage({
         </div>
 
         {/* Billing / Entitlement */}
-        <div className="bg-white border border-slate-200 rounded-lg p-6">
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
           <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">
             Subscription
           </h2>
@@ -147,7 +147,7 @@ export default async function AccountPage({
                   <input type="hidden" name="tier" value="team" />
                   <button
                     type="submit"
-                    className="w-full bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
+                    className="w-full bg-teal-600 hover:bg-teal-500 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                   >
                     Upgrade to Team — $209/mo
                   </button>

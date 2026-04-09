@@ -52,7 +52,7 @@ export default function LandingPage() {
   return (
     <div>
       {/* Hero */}
-      <section className="bg-slate-900 text-white">
+      <section className="bg-navy-900 text-white">
         <div className="max-w-4xl mx-auto px-6 py-24 text-center">
           <div className="inline-flex items-center gap-2 bg-teal-900/50 border border-teal-700 text-teal-300 text-xs font-medium px-3 py-1 rounded-full mb-8">
             <span className="w-1.5 h-1.5 bg-teal-400 rounded-full" />
@@ -74,7 +74,7 @@ export default function LandingPage() {
           <div className="flex items-center justify-center gap-4">
             <Link
               href="/register"
-              className="bg-teal-600 hover:bg-teal-700 text-white font-semibold px-8 py-3 rounded-lg transition-colors"
+              className="bg-teal-600 hover:bg-teal-500 text-white font-semibold px-8 py-3 rounded-lg transition-colors"
             >
               Get Started Free
             </Link>
@@ -104,7 +104,7 @@ export default function LandingPage() {
           {VALUE_PROPS.map((prop) => (
             <div
               key={prop.title}
-              className="bg-white border border-slate-200 rounded-lg p-6"
+              className="bg-white border border-slate-200 rounded-xl shadow-sm p-6"
             >
               <div className="text-2xl mb-3">{prop.icon}</div>
               <h3 className="font-semibold text-slate-900 mb-2">{prop.title}</h3>
@@ -117,7 +117,7 @@ export default function LandingPage() {
       </section>
 
       {/* How it works */}
-      <section className="bg-slate-900 text-white">
+      <section className="bg-navy-900 text-white">
         <div className="max-w-4xl mx-auto px-6 py-20">
           <h2 className="text-2xl font-bold text-center mb-12">How it works</h2>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-10">
@@ -147,7 +147,7 @@ export default function LandingPage() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
           {/* Free */}
-          <div className="bg-white border border-slate-200 rounded-lg p-7 flex flex-col">
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-7 flex flex-col">
             <div className="mb-6">
               <h3 className="font-bold text-slate-900 text-lg mb-1">Free</h3>
               <div className="text-3xl font-bold text-slate-900">
@@ -176,7 +176,7 @@ export default function LandingPage() {
           </div>
 
           {/* Professional */}
-          <div className="bg-white border border-slate-200 rounded-lg p-7 flex flex-col">
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-7 flex flex-col">
             <div className="mb-6">
               <h3 className="font-bold text-slate-900 text-lg mb-1">Professional</h3>
               <div className="text-3xl font-bold text-slate-900">
@@ -206,7 +206,7 @@ export default function LandingPage() {
           </div>
 
           {/* Team */}
-          <div className="bg-teal-600 rounded-lg p-7 text-white relative overflow-hidden flex flex-col">
+          <div className="bg-teal-600 rounded-xl p-7 text-white relative overflow-hidden flex flex-col">
             <div className="absolute top-4 right-4 bg-teal-500 text-teal-100 text-xs font-semibold px-2 py-0.5 rounded">
               Most Popular
             </div>
@@ -239,7 +239,7 @@ export default function LandingPage() {
           </div>
 
           {/* Enterprise */}
-          <div className="bg-slate-900 rounded-lg p-7 text-white flex flex-col">
+          <div className="bg-navy-900 rounded-xl p-7 text-white flex flex-col">
             <div className="mb-6">
               <h3 className="font-bold text-lg mb-1">Enterprise</h3>
               <div className="text-3xl font-bold">
@@ -261,7 +261,7 @@ export default function LandingPage() {
               ))}
             </ul>
             <a
-              href="mailto:sales@securelogic.ai"
+              href="mailto:sales@securelogicai.com"
               className="block text-center border border-slate-600 hover:border-slate-400 text-slate-300 hover:text-white font-medium py-2.5 rounded-lg transition-colors text-sm"
             >
               Contact Us
@@ -281,7 +281,7 @@ export default function LandingPage() {
           </p>
           <Link
             href="/register"
-            className="inline-block bg-teal-600 hover:bg-teal-700 text-white font-semibold px-10 py-3 rounded-lg transition-colors"
+            className="inline-block bg-teal-600 hover:bg-teal-500 text-white font-semibold px-10 py-3 rounded-lg transition-colors"
           >
             Create Free Account
           </Link>

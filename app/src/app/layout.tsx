@@ -19,7 +19,7 @@ export default async function RootLayout({
 
   return (
     <html lang="en">
-      <body className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
+      <body className="min-h-screen flex flex-col bg-white text-slate-900">
         <Header
           isAuthenticated={isAuthenticated}
           organizationName={session.organizationName}

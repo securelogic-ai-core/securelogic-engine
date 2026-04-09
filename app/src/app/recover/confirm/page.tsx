@@ -59,7 +59,7 @@ function ConfirmContent() {
 
   return (
     <div className="max-w-lg mx-auto px-6 py-20 text-center">
-      <div className="bg-white border border-slate-200 rounded-lg p-10">
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-10">
         {status === "claiming" && (
           <>
             <div className="w-12 h-12 rounded-full border-4 border-teal-200 border-t-teal-600 animate-spin mx-auto mb-6" />
@@ -81,7 +81,7 @@ function ConfirmContent() {
             </p>
             <Link
               href="/dashboard"
-              className="inline-block bg-teal-600 hover:bg-teal-700 text-white font-semibold px-8 py-2.5 rounded-lg transition-colors text-sm"
+              className="inline-block bg-teal-600 hover:bg-teal-500 text-white font-semibold px-8 py-2.5 rounded-lg transition-colors text-sm"
             >
               Go to Dashboard →
             </Link>
@@ -101,7 +101,7 @@ function ConfirmContent() {
             </p>
             <Link
               href="/recover"
-              className="inline-block bg-teal-600 hover:bg-teal-700 text-white font-semibold px-8 py-2.5 rounded-lg transition-colors text-sm"
+              className="inline-block bg-teal-600 hover:bg-teal-500 text-white font-semibold px-8 py-2.5 rounded-lg transition-colors text-sm"
             >
               Request new link
             </Link>
@@ -121,7 +121,7 @@ function ConfirmContent() {
             </p>
             <Link
               href="/recover"
-              className="inline-block bg-teal-600 hover:bg-teal-700 text-white font-semibold px-8 py-2.5 rounded-lg transition-colors text-sm"
+              className="inline-block bg-teal-600 hover:bg-teal-500 text-white font-semibold px-8 py-2.5 rounded-lg transition-colors text-sm"
             >
               Try again
             </Link>

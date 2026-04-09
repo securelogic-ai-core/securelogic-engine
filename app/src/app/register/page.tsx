@@ -64,7 +64,7 @@ export default function RegisterPage() {
   if (state.phase === "success") {
     return (
       <div className="max-w-lg mx-auto px-6 py-16">
-        <div className="bg-white border border-slate-200 rounded-lg p-8">
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-8">
           <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center mb-4">
             <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
@@ -103,7 +103,7 @@ export default function RegisterPage() {
               <input type="hidden" name="tier" value={plan} />
               <button
                 type="submit"
-                className="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 rounded-lg transition-colors"
+                className="w-full bg-teal-600 hover:bg-teal-500 text-white font-semibold py-3 rounded-lg transition-colors"
               >
                 Continue to {planLabel(plan)} →
               </button>
@@ -111,7 +111,7 @@ export default function RegisterPage() {
           ) : (
             <button
               onClick={() => router.push("/dashboard")}
-              className="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 rounded-lg transition-colors"
+              className="w-full bg-teal-600 hover:bg-teal-500 text-white font-semibold py-3 rounded-lg transition-colors"
             >
               Continue to Dashboard →
             </button>
@@ -130,7 +130,7 @@ export default function RegisterPage() {
         </p>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-lg p-8">
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-8">
         {state.phase === "error" && (
           <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 mb-6">
             {state.message}
@@ -181,7 +181,7 @@ export default function RegisterPage() {
           <button
             type="submit"
             disabled={state.phase === "loading"}
-            className="w-full bg-teal-600 hover:bg-teal-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors"
+            className="w-full bg-teal-600 hover:bg-teal-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors"
           >
             {state.phase === "loading" ? "Creating account…" : "Create Account"}
           </button>

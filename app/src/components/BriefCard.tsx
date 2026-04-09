@@ -63,7 +63,7 @@ export function BriefCard({ issue }: BriefCardProps) {
 
   if (issue.locked) {
     return (
-      <div className="bg-white border border-slate-200 rounded-lg p-6 relative overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm relative overflow-hidden">
         <div className="absolute top-0 right-0 bg-slate-100 text-slate-500 text-xs font-medium px-3 py-1 rounded-bl-lg flex items-center gap-1">
           <LockIcon />
           Subscribers only
@@ -100,7 +100,7 @@ export function BriefCard({ issue }: BriefCardProps) {
 
   return (
     <Link href={`/briefs/${issue.id}`} className="block group">
-      <div className="bg-white border border-slate-200 rounded-lg p-6 hover:border-teal-300 hover:shadow-sm transition-all">
+      <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm hover:border-teal-300 hover:shadow-md transition-all">
         <p className="text-xs text-slate-400 font-medium uppercase tracking-wide mb-2">
           {date}
         </p>

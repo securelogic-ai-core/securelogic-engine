@@ -48,7 +48,7 @@ function LoginForm() {
         </p>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-lg p-8">
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-8">
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 mb-6">
             {error}
@@ -82,7 +82,7 @@ function LoginForm() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-teal-600 hover:bg-teal-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors"
+            className="w-full bg-teal-600 hover:bg-teal-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors"
           >
             {loading ? "Signing in…" : "Sign In"}
           </button>
