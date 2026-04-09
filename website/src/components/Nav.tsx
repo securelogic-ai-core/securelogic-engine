@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 
@@ -10,9 +11,19 @@ interface NavProps {
 
 export function Nav({ appUrl }: NavProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const pathname = usePathname();
+
+  function navLinkClass(href: string) {
+    const active = pathname === href || pathname === href.replace(/\/$/, "") || pathname?.startsWith(href.replace(/\/$/, "") + "/");
+    return `px-3 py-2 text-sm font-medium rounded-md transition-colors ${
+      active
+        ? "text-white bg-slate-800/70"
+        : "text-slate-300 hover:text-white hover:bg-slate-800/60"
+    }`;
+  }
 
   return (
-    <header className="sticky top-0 z-50 bg-navy-900 border-b border-slate-800 shadow-[0_1px_0_rgba(255,255,255,0.06),0_4px_24px_rgba(0,0,0,0.5)]">
+    <header className="sticky top-0 z-50 bg-navy-900/95 backdrop-blur-md border-b border-slate-800 shadow-[0_1px_0_rgba(255,255,255,0.06),0_4px_24px_rgba(0,0,0,0.5)]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
@@ -31,34 +42,20 @@ export function Nav({ appUrl }: NavProps) {
 
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-1">
-            <Link
-              href="/platform/"
-              className="px-3 py-2 text-sm font-medium text-slate-400 hover:text-white rounded-md hover:bg-slate-800/60 transition-colors"
-            >
-              Platform
-            </Link>
-            <Link
-              href="/intelligence-brief/"
-              className="px-3 py-2 text-sm font-medium text-slate-400 hover:text-white rounded-md hover:bg-slate-800/60 transition-colors"
-            >
-              Intelligence Brief
-            </Link>
-            <Link
-              href="/pricing/"
-              className="px-3 py-2 text-sm font-medium text-slate-400 hover:text-white rounded-md hover:bg-slate-800/60 transition-colors"
-            >
-              Pricing
-            </Link>
+            <Link href="/platform/" className={navLinkClass("/platform/")}>Platform</Link>
+            <Link href="/intelligence-brief/" className={navLinkClass("/intelligence-brief/")}>Intelligence Brief</Link>
+            <Link href="/pricing/" className={navLinkClass("/pricing/")}>Pricing</Link>
           </nav>
 
           {/* Desktop CTAs */}
-          <div className="hidden md:flex items-center gap-4">
+          <div className="hidden md:flex items-center gap-3">
             <a
               href={`${appUrl}/login`}
-              className="text-sm font-medium text-slate-400 hover:text-white transition-colors"
+              className="text-sm font-medium text-slate-300 hover:text-white transition-colors"
             >
               Log in
             </a>
+            <div className="w-px h-4 bg-slate-700/80" />
             <a
               href={`${appUrl}/register`}
               className="inline-flex items-center px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-semibold hover:bg-teal-500 transition-colors shadow-[0_1px_0_rgba(255,255,255,0.12)_inset]"

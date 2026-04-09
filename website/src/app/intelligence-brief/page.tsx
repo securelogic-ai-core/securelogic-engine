@@ -8,35 +8,40 @@ export const metadata: Metadata = {
 };
 
 export default function IntelligenceBriefPage() {
+  const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.securelogicai.com";
+
   return (
     <>
       {/* Hero */}
-      <section className="bg-navy-900 text-white pt-16 pb-20 px-4 relative overflow-hidden">
+      <section className="bg-navy-900 text-white pt-20 pb-24 px-4 relative overflow-hidden">
         <div
           className="absolute inset-0 pointer-events-none"
           aria-hidden="true"
-          style={{ background: "radial-gradient(ellipse 60% 80% at 50% 120%, rgba(13,148,136,0.15) 0%, transparent 65%)" }}
+          style={{
+            background:
+              "radial-gradient(ellipse 70% 60% at 50% 100%, rgba(13,148,136,0.18) 0%, transparent 65%), radial-gradient(ellipse 40% 40% at 50% 80%, rgba(6,78,100,0.25) 0%, transparent 60%)",
+          }}
         />
         <div className="relative max-w-3xl mx-auto text-center">
-          <span className="inline-block text-xs font-semibold text-teal-400 uppercase tracking-wider mb-4">
-            SecureLogic AI Product
+          <span className="inline-block text-xs font-bold text-teal-400 uppercase tracking-widest mb-4">
+            SecureLogic AI · Available Now
           </span>
-          <h1 className="text-4xl sm:text-5xl font-bold leading-tight mb-5">
+          <h1 className="text-5xl sm:text-6xl font-extrabold leading-tight tracking-tight mb-6">
             Intelligence Brief
           </h1>
-          <p className="text-lg text-slate-300 leading-relaxed mb-8">
+          <p className="text-lg text-slate-300 leading-relaxed mb-8 max-w-2xl mx-auto">
             Weekly executive-grade risk intelligence — synthesized from hundreds of signals across
             security, regulatory, vendor risk, and AI governance sources.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <a
-              href="https://app.securelogicai.com/register?plan=professional"
+              href={`${APP_URL}/register?plan=professional`}
               className="inline-flex items-center justify-center px-6 py-3 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-500 transition-colors text-sm"
             >
               Subscribe — $39/mo
             </a>
             <a
-              href="https://app.securelogicai.com/register"
+              href={`${APP_URL}/register`}
               className="inline-flex items-center justify-center px-6 py-3 rounded-lg border border-slate-600 text-slate-200 font-semibold hover:border-slate-400 hover:text-white transition-colors text-sm"
             >
               Free preview access
@@ -89,7 +94,7 @@ export default function IntelligenceBriefPage() {
                   "AI policy, EU AI Act, ISO 42001, model risk, and AI system governance developments affecting enterprise AI adoption.",
               },
             ].map((item) => (
-              <div key={item.title} className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm hover:border-slate-300 hover:shadow-md transition-all">
+              <div key={item.title} className="bg-white rounded-xl border border-slate-200 p-7 shadow-sm hover:border-teal-300/60 hover:shadow-md hover:shadow-teal-500/5 transition-all">
                 <h3 className="font-semibold text-slate-900 mb-2">{item.title}</h3>
                 <p className="text-sm text-slate-500 leading-relaxed">{item.description}</p>
               </div>
@@ -177,7 +182,7 @@ export default function IntelligenceBriefPage() {
                   + 29 more signals this issue — available to subscribers
                 </p>
                 <a
-                  href="https://app.securelogicai.com/register?plan=professional"
+                  href={`${APP_URL}/register?plan=professional`}
                   className="mt-3 inline-flex items-center px-4 py-2 rounded-lg bg-teal-600 text-white text-xs font-semibold hover:bg-teal-500 transition-colors"
                 >
                   Subscribe to read full brief
@@ -219,15 +224,15 @@ export default function IntelligenceBriefPage() {
               ))}
             </ul>
             <a
-              href="https://app.securelogicai.com/register?plan=professional"
-              className="block w-full text-center py-3 px-6 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-700 transition-colors"
+              href={`${APP_URL}/register?plan=professional`}
+              className="block w-full text-center py-3 px-6 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-500 transition-colors"
             >
               Subscribe now
             </a>
           </div>
           <p className="text-xs text-slate-400">
             Free tier available for preview access.{" "}
-            <a href="https://app.securelogicai.com/register" className="text-teal-600 hover:underline">
+            <a href={`${APP_URL}/register`} className="text-teal-600 hover:underline">
               Create a free account
             </a>
           </p>

@@ -20,7 +20,7 @@ export type EntitlementRecord = {
  */
 
 function isTier(value: unknown): value is Tier {
-  return value === "free" || value === "paid" || value === "admin";
+  return value === "free" || value === "professional" || value === "paid" || value === "admin";
 }
 
 function isValidEntitlementRecord(value: unknown): value is EntitlementRecord {

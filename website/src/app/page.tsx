@@ -49,6 +49,8 @@ function IconIntelligence() {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
+  const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.securelogicai.com";
+
   return (
     <>
       {/* ── Hero ──────────────────────────────────────────────────────────── */}
@@ -96,7 +98,7 @@ export default function HomePage() {
                   className="h-12 w-12 rounded-2xl mb-5 flex-shrink-0"
                   aria-hidden="true"
                 />
-                <p className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-600/10 border border-teal-700/30 text-[11px] font-semibold uppercase tracking-[0.16em] text-teal-400">
+                <p className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-600/10 border border-teal-700/30 text-xs font-semibold uppercase tracking-[0.16em] text-teal-400">
                   SecureLogic AI <span className="opacity-40">·</span> Unified Risk Intelligence
                 </p>
               </div>
@@ -118,7 +120,7 @@ export default function HomePage() {
               </h1>
 
               {/* Subtitle */}
-              <p className="text-[17px] text-slate-400 leading-relaxed max-w-[460px] mb-10">
+              <p className="text-[17px] text-slate-300 leading-relaxed max-w-[460px] mb-10">
                 SecureLogic AI continuously monitors vendors, compliance
                 frameworks, AI systems, and external threats — scoring every
                 signal and delivering decision-ready intelligence to your team.
@@ -127,14 +129,14 @@ export default function HomePage() {
               {/* CTAs */}
               <div className="flex flex-col sm:flex-row gap-3 mb-12">
                 <a
-                  href="https://app.securelogicai.com/register"
+                  href={`${APP_URL}/register`}
                   className="inline-flex items-center justify-center px-7 py-3.5 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-500 transition-colors text-sm shadow-[0_1px_0_rgba(255,255,255,0.12)_inset,0_4px_20px_rgba(13,148,136,0.30)]"
                 >
                   Start free
                 </a>
                 <Link
                   href="/intelligence-brief/"
-                  className="inline-flex items-center justify-center gap-1.5 px-7 py-3.5 rounded-lg border border-slate-600 text-slate-200 font-semibold hover:border-teal-500/60 hover:text-white hover:bg-slate-800/30 transition-colors text-sm"
+                  className="inline-flex items-center justify-center gap-1.5 px-7 py-3.5 rounded-lg border border-slate-600 text-slate-200 font-semibold hover:border-teal-500/60 hover:text-white hover:bg-white/5 transition-colors text-sm"
                 >
                   See the Intelligence Brief
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -152,8 +154,8 @@ export default function HomePage() {
                   "From $39/mo",
                 ].map((item) => (
                   <span key={item} className="flex items-center gap-2 text-xs text-slate-400 font-medium">
-                    <span className="w-1.5 h-1.5 rounded-full bg-teal-500 flex-shrink-0" />
-                    <span className="text-slate-300">{item}</span>
+                    <span className="w-2 h-2 rounded-full bg-teal-500 flex-shrink-0" />
+                    <span className="text-white">{item}</span>
                   </span>
                 ))}
               </div>
@@ -164,7 +166,7 @@ export default function HomePage() {
               className="relative rounded-2xl overflow-hidden flex-shrink-0"
               style={{
                 boxShadow:
-                  "0 0 0 1px rgba(45,212,191,0.10), 0 0 80px rgba(13,148,136,0.14), 0 32px 80px rgba(0,0,0,0.6)",
+                  "0 0 0 1px rgba(45,212,191,0.18), 0 0 80px rgba(13,148,136,0.16), 0 32px 80px rgba(0,0,0,0.6)",
               }}
             >
               {/* Document header — executive artifact framing */}
@@ -270,7 +272,7 @@ export default function HomePage() {
                     + 28 more signals — subscribers only
                   </p>
                   <a
-                    href="https://app.securelogicai.com/register?plan=professional"
+                    href={`${APP_URL}/register?plan=professional`}
                     className="text-[11px] font-semibold text-teal-400 hover:text-teal-300 transition-colors"
                   >
                     Subscribe →
@@ -284,8 +286,13 @@ export default function HomePage() {
       </section>
 
       {/* ── Platform modules ──────────────────────────────────────────────── */}
-      <section className="bg-navy-900 border-t border-slate-700/50 py-24 px-4">
-        <div className="max-w-6xl mx-auto">
+      <section className="relative overflow-hidden bg-navy-900 border-t border-slate-700/50 py-24 px-4">
+        <div
+          className="absolute inset-0 pointer-events-none"
+          aria-hidden="true"
+          style={{ background: "radial-gradient(ellipse 50% 30% at 50% 0%, rgba(13,148,136,0.07) 0%, transparent 70%)" }}
+        />
+        <div className="relative max-w-6xl mx-auto">
           <div className="mb-12">
             <p className="text-xs font-bold text-teal-400 uppercase tracking-widest mb-4">
               Platform
@@ -306,7 +313,7 @@ export default function HomePage() {
             <div
               className="absolute -inset-px rounded-2xl pointer-events-none"
               aria-hidden="true"
-              style={{ boxShadow: "0 0 80px rgba(13,148,136,0.10)" }}
+              style={{ boxShadow: "0 0 100px rgba(13,148,136,0.13)" }}
             />
           <div
             className="rounded-2xl overflow-hidden border border-slate-700/40"
@@ -345,10 +352,10 @@ export default function HomePage() {
               ].map((module) => (
                 <div
                   key={module.title}
-                  className="bg-navy-900 p-7 hover:bg-slate-800/20 transition-colors"
+                  className={`bg-navy-900 p-7 hover:bg-slate-800/20 transition-colors ${module.available ? "border-t-2 border-teal-500/40" : ""}`}
                 >
                   <div
-                    className={`w-9 h-9 rounded-lg flex items-center justify-center mb-5 ${
+                    className={`w-10 h-10 rounded-lg flex items-center justify-center mb-5 ${
                       module.available
                         ? "bg-teal-600/20 text-teal-400"
                         : "bg-slate-800 text-slate-500"
@@ -357,7 +364,7 @@ export default function HomePage() {
                     <module.Icon />
                   </div>
                   <h3 className="font-semibold text-white mb-2 text-sm">{module.title}</h3>
-                  <p className="text-xs text-slate-500 leading-relaxed mb-5">{module.description}</p>
+                  <p className="text-xs text-slate-400 leading-relaxed mb-5">{module.description}</p>
                   <span
                     className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full ${
                       module.available
@@ -445,8 +452,8 @@ export default function HomePage() {
 
               <div className="flex items-center gap-5">
                 <a
-                  href="https://app.securelogicai.com/register?plan=professional"
-                  className="inline-flex items-center px-6 py-3 rounded-lg bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 transition-colors"
+                  href={`${APP_URL}/register?plan=professional`}
+                  className="inline-flex items-center px-6 py-3 rounded-lg bg-teal-600 text-white text-sm font-semibold hover:bg-teal-500 transition-colors"
                 >
                   Subscribe to the Intelligence Brief
                 </a>
@@ -466,7 +473,10 @@ export default function HomePage() {
             </div>
 
             {/* Right: sample brief — same document framing as hero card */}
-            <div className="bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 shadow-xl">
+            <div
+              className="bg-slate-900 rounded-2xl overflow-hidden border border-slate-700/50"
+              style={{ boxShadow: "0 0 0 1px rgba(45,212,191,0.12), 0 0 60px rgba(13,148,136,0.12), 0 24px 60px rgba(0,0,0,0.4)" }}
+            >
               {/* Document header */}
               <div className="bg-[#0a1628] border-b border-slate-700/60 px-5 py-4">
                 <div className="flex items-center justify-between">
@@ -556,7 +566,7 @@ export default function HomePage() {
               <div className="px-6 py-4 border-t border-slate-800 flex items-center justify-between">
                 <p className="text-xs text-slate-600">+ 29 more signals this issue</p>
                 <a
-                  href="https://app.securelogicai.com/register?plan=professional"
+                  href={`${APP_URL}/register?plan=professional`}
                   className="text-xs font-semibold text-teal-400 hover:text-teal-300 transition-colors"
                 >
                   Subscribe to read →
@@ -589,7 +599,7 @@ export default function HomePage() {
                 sub: "No credit card required",
                 description: "Signal headlines, risk snapshot, and one brief preview.",
                 cta: "Start free",
-                href: "https://app.securelogicai.com/register",
+                href: `${APP_URL}/register`,
                 featured: false,
               },
               {
@@ -598,7 +608,7 @@ export default function HomePage() {
                 sub: "per month",
                 description: "Full Intelligence Brief — all signals, recommendations, and the executive synthesis.",
                 cta: "Subscribe now",
-                href: "https://app.securelogicai.com/register?plan=professional",
+                href: `${APP_URL}/register?plan=professional`,
                 featured: true,
               },
               {
@@ -661,7 +671,7 @@ export default function HomePage() {
           <div className="text-center">
             <Link
               href="/pricing/"
-              className="text-sm text-slate-500 hover:text-slate-300 transition-colors underline underline-offset-2"
+              className="text-sm text-slate-500 hover:text-teal-400 transition-colors"
             >
               View full pricing and feature comparison
             </Link>
@@ -700,7 +710,7 @@ export default function HomePage() {
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <a
-              href="https://app.securelogicai.com/register"
+              href={`${APP_URL}/register`}
               className="inline-flex items-center justify-center px-8 py-3.5 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-500 transition-colors"
             >
               Start free

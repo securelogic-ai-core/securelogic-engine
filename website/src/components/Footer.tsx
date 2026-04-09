@@ -18,7 +18,7 @@ export function Footer({ appUrl }: FooterProps) {
                 alt="SecureLogic AI"
                 width={28}
                 height={28}
-                className="rounded"
+                className="rounded-lg"
               />
               <span className="font-semibold text-white text-sm">SecureLogic AI</span>
             </Link>

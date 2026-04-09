@@ -67,13 +67,15 @@ export function enforceUsageCap() {
       }
 
       // Resolve tier from organizationContext (set by attachOrganizationContext).
-      // The DB vocabulary is starter/standard/premium; map to the usage-cap
-      // vocabulary free/paid/admin. Default to free.
+      // The DB vocabulary is starter/standard/professional/premium; map to the
+      // usage-cap vocabulary free/paid/admin. Default to free.
       const entitlementLevel =
         (req as any).organizationContext?.entitlementLevel as string | undefined;
 
       const tier: Tier =
-        entitlementLevel === "premium" || entitlementLevel === "standard"
+        entitlementLevel === "premium" ||
+        entitlementLevel === "professional" ||
+        entitlementLevel === "standard"
           ? "paid"
           : "free";
 
