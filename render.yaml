@@ -167,3 +167,27 @@ services:
       # Must be at least 32 characters. Generate with: openssl rand -hex 32
       - key: SESSION_SECRET
         sync: false
+
+  # =========================================================
+  # SECURELOGIC WEBSITE (Next.js marketing site)
+  # Public-facing marketing site: homepage, platform, pricing,
+  # Intelligence Brief product page.
+  # Links to the app service for login and registration.
+  # =========================================================
+
+  - type: web
+    name: securelogic-website
+    env: node
+    plan: starter
+    buildCommand: cd website && npm install --include=dev && npm run build
+    startCommand: cd website && npm run start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Public URL of the securelogic-app service.
+      # Used by the Nav and Footer to build login/register CTAs.
+      # e.g. https://app.securelogicai.com
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
