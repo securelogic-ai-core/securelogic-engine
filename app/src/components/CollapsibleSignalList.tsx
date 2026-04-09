@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import type { BriefSignal } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -26,19 +27,29 @@ function riskPillClass(level: string): string {
 
 // ---------------------------------------------------------------------------
 // SignalCard — compact card for domain intelligence signals
+// Title links to the signal detail page when href is provided.
 // ---------------------------------------------------------------------------
 
-function SignalCard({ signal }: { signal: BriefSignal }) {
+function SignalCard({ signal, href }: { signal: BriefSignal; href?: string }) {
   const risk = signal.riskLevel ?? signal.risk_level ?? "low";
   const analysis = signal.whyItMatters || signal.analysis || signal.summary || "";
   const action = signal.recommendedAction || signal.recommendation || "";
   const sourceHref = signal.sourceUrl ?? signal.source_url;
 
+  const title = href ? (
+    <Link
+      href={href}
+      className="hover:text-teal-700 transition-colors"
+    >
+      {signal.title}
+    </Link>
+  ) : signal.title;
+
   return (
     <div className={`border border-slate-200 border-l-4 ${riskBorderClass(risk)} rounded-lg p-5 bg-white`}>
       <div className="flex items-start justify-between gap-3 mb-2.5">
         <h4 className="text-slate-900 font-semibold text-sm leading-snug flex-1">
-          {signal.title}
+          {title}
         </h4>
         <span className={`text-xs font-bold px-2 py-0.5 rounded-full uppercase tracking-wide flex-shrink-0 ${riskPillClass(risk)}`}>
           {risk}
@@ -75,18 +86,23 @@ function SignalCard({ signal }: { signal: BriefSignal }) {
 }
 
 // ---------------------------------------------------------------------------
-// CollapsibleSignalList — client island for expand/collapse behavior
-// Only renders a toggle when signals.length > initialLimit.
-// The parent page stays a server component.
+// CollapsibleSignalList — client island for expand/collapse behavior.
+//
+// All signals are always rendered in the DOM. Signals beyond `initialLimit`
+// are hidden via CSS (Tailwind `hidden`) when collapsed so that @media print
+// can reveal them with `print:!block` without JS involvement.
 // ---------------------------------------------------------------------------
 
 const DEFAULT_LIMIT = 2;
 
 export function CollapsibleSignalList({
   signals,
+  signalHrefs,
   initialLimit = DEFAULT_LIMIT,
 }: {
   signals: BriefSignal[];
+  /** Parallel array of hrefs for signal title links. undefined = no link. */
+  signalHrefs?: (string | undefined)[];
   initialLimit?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -94,22 +110,32 @@ export function CollapsibleSignalList({
   if (signals.length === 0) return null;
 
   const canToggle = signals.length > initialLimit;
-  const visible = expanded || !canToggle ? signals : signals.slice(0, initialLimit);
   const hiddenCount = signals.length - initialLimit;
 
   return (
     <div>
       <div className="space-y-3">
-        {visible.map((signal, i) => (
-          <SignalCard key={signal.id ?? signal.signalId ?? i} signal={signal} />
-        ))}
+        {signals.map((signal, i) => {
+          const isHidden = !expanded && canToggle && i >= initialLimit;
+          return (
+            <div
+              key={signal.id ?? signal.signalId ?? i}
+              className={isHidden ? "hidden print:!block" : undefined}
+            >
+              <SignalCard
+                signal={signal}
+                href={signalHrefs?.[i]}
+              />
+            </div>
+          );
+        })}
       </div>
 
       {canToggle && (
         <button
           type="button"
           onClick={() => setExpanded((prev) => !prev)}
-          className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-teal-600 transition-colors"
+          className="print:hidden mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-teal-600 transition-colors"
         >
           {expanded
             ? "Show less ↑"

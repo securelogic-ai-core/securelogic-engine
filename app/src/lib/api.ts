@@ -64,6 +64,7 @@ export type ActionSummary = {
 export type NewsletterIssue = {
   id: string;
   organization_id: string | null;
+  issue_number: number | null;
   title: string;
   summary: string | null;
   thesis_headline: string | null;

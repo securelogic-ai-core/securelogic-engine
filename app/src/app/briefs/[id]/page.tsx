@@ -3,6 +3,9 @@ import Link from "next/link";
 import { getSession } from "@/lib/session";
 import { getIssue } from "@/lib/api";
 import { CollapsibleSignalList } from "@/components/CollapsibleSignalList";
+import { PrintButton } from "@/components/PrintButton";
+import { ScrollSpyTOC } from "@/components/ScrollSpyTOC";
+import type { TocEntry } from "@/components/ScrollSpyTOC";
 import type { BriefSignal, BriefSections, ActionSummary, NewsletterIssue } from "@/lib/api";
 
 interface Props {
@@ -106,8 +109,8 @@ function deriveDomainCoverage(sections: BriefSections): string[] {
 }
 
 /**
- * Estimate reading time in minutes from all prose fields present in the issue.
- * Uses 200 wpm. Minimum 1 minute. Computed server-side from real data.
+ * Estimate reading time in minutes from all prose fields in the issue.
+ * Uses 200 wpm. Minimum 1 minute. Computed server-side.
  */
 function estimateReadingTime(issue: NewsletterIssue, allSignals: BriefSignal[]): number {
   const chunks: string[] = [];
@@ -137,7 +140,6 @@ function estimateReadingTime(issue: NewsletterIssue, allSignals: BriefSignal[]):
 
 // ---------------------------------------------------------------------------
 // Risk Snapshot — at-a-glance severity and coverage band
-// Rendered immediately below the header. Derived entirely from real signal data.
 // ---------------------------------------------------------------------------
 
 function RiskSnapshot({
@@ -158,13 +160,10 @@ function RiskSnapshot({
   ).length;
   const hasImmediate = allSignals.some((s) => s.priorityTier === "IMMEDIATE");
   const hasNearTerm  = allSignals.some((s) => s.priorityTier === "NEAR-TERM");
-
-  const showUrgency = hasImmediate || hasNearTerm;
+  const showUrgency  = hasImmediate || hasNearTerm;
 
   return (
     <div className="bg-slate-50 border border-slate-200 rounded-xl px-6 py-5 flex flex-wrap items-center gap-x-7 gap-y-4">
-
-      {/* Total signals */}
       {allSignals.length > 0 && (
         <>
           <div className="text-center min-w-[44px]">
@@ -174,8 +173,6 @@ function RiskSnapshot({
           <div className="w-px h-8 bg-slate-200 hidden sm:block flex-shrink-0" />
         </>
       )}
-
-      {/* Severity breakdown */}
       {(critical > 0 || high > 0 || medium > 0) && (
         <>
           <div className="flex items-center gap-5">
@@ -203,8 +200,6 @@ function RiskSnapshot({
           )}
         </>
       )}
-
-      {/* Urgency status */}
       {showUrgency && (
         <>
           {hasImmediate ? (
@@ -221,8 +216,6 @@ function RiskSnapshot({
           )}
         </>
       )}
-
-      {/* Domain coverage */}
       {domains.length > 0 && (
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Coverage</span>
@@ -241,44 +234,7 @@ function RiskSnapshot({
 }
 
 // ---------------------------------------------------------------------------
-// Brief TOC — jump-to-section navigation, server-rendered pure HTML anchors.
-// Only shows entries for sections that actually have content.
-// Requires no JavaScript — browser handles anchor scroll natively.
-// ---------------------------------------------------------------------------
-
-type TocEntry = { id: string; label: string };
-
-function BriefTOC({ sections }: { sections: TocEntry[] }) {
-  if (sections.length < 2) return null;
-
-  return (
-    <nav aria-label="Brief sections" className="border border-slate-200 rounded-lg bg-white px-5 py-4">
-      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">
-        In This Brief
-      </p>
-      <ol className="flex flex-wrap gap-x-6 gap-y-2">
-        {sections.map(({ id, label }, i) => (
-          <li key={id} className="flex items-center gap-2">
-            <span className="text-[10px] font-semibold text-slate-300 tabular-nums">
-              {String(i + 1).padStart(2, "0")}
-            </span>
-            <a
-              href={`#${id}`}
-              className="text-xs font-medium text-slate-500 hover:text-teal-600 transition-colors"
-            >
-              {label}
-            </a>
-          </li>
-        ))}
-      </ol>
-    </nav>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Section header — two-tier system
-//   tier="primary"   — executive sections (Thesis, Action, Priority, Cross-Domain)
-//   tier="secondary" — domain deep-dive sections
 // ---------------------------------------------------------------------------
 
 function SectionHeader({
@@ -311,11 +267,18 @@ function SectionHeader({
 }
 
 // ---------------------------------------------------------------------------
-// Signal card — Priority Intelligence (top 3, full detail)
-// Urgency tier drives visual treatment. Rank badge communicates ordering.
+// Priority signal card — top 3, full detail, with link to signal detail page
 // ---------------------------------------------------------------------------
 
-function PrioritySignalCard({ signal, rank }: { signal: BriefSignal; rank?: number }) {
+function PrioritySignalCard({
+  signal,
+  rank,
+  issueId,
+}: {
+  signal: BriefSignal;
+  rank?: number;
+  issueId?: string;
+}) {
   const risk = signal.riskLevel ?? signal.risk_level ?? "low";
   const analysis = signal.whyItMatters || signal.analysis || signal.summary || "";
   const action = signal.recommendedAction || signal.recommendation || "";
@@ -332,9 +295,14 @@ function PrioritySignalCard({ signal, rank }: { signal: BriefSignal; rank?: numb
     tier === "NEAR-TERM" ? "bg-orange-500" :
     "bg-slate-700";
 
+  // Signal detail href — rank is 1-based, index is 0-based
+  const detailHref =
+    issueId && rank !== undefined
+      ? `/briefs/${issueId}/signal/priority/${rank - 1}`
+      : undefined;
+
   return (
     <div className={`border border-slate-200 border-l-4 ${riskColor(risk)} rounded-xl overflow-hidden shadow-sm`}>
-      {/* Tier bar — urgency label + rank */}
       <div className={`${tierBarBg} px-5 py-2 flex items-center justify-between`}>
         <span className="text-xs font-bold text-white uppercase tracking-widest">
           {tier || "Intelligence"}
@@ -349,7 +317,11 @@ function PrioritySignalCard({ signal, rank }: { signal: BriefSignal; rank?: numb
       <div className={`${cardBg} p-6`}>
         <div className="flex items-start justify-between gap-3 mb-2">
           <h3 className="text-slate-900 font-bold text-base leading-snug flex-1">
-            {signal.title}
+            {detailHref ? (
+              <Link href={detailHref} className="hover:text-teal-700 transition-colors">
+                {signal.title}
+              </Link>
+            ) : signal.title}
           </h3>
           <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wide flex-shrink-0 ${riskPillClass(risk)}`}>
             {risk}
@@ -387,8 +359,8 @@ function PrioritySignalCard({ signal, rank }: { signal: BriefSignal; rank?: numb
           </div>
         )}
 
-        {sourceHref ? (
-          <div className="pt-4 border-t border-slate-100">
+        <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+          {sourceHref ? (
             <a
               href={sourceHref}
               target="_blank"
@@ -404,12 +376,19 @@ function PrioritySignalCard({ signal, rank }: { signal: BriefSignal; rank?: numb
               )}
               <span>→</span>
             </a>
-          </div>
-        ) : signal.source ? (
-          <div className="pt-4 border-t border-slate-100">
+          ) : signal.source ? (
             <p className="text-xs text-slate-400 font-medium">Via {signal.source}</p>
-          </div>
-        ) : null}
+          ) : <span />}
+
+          {detailHref && (
+            <Link
+              href={detailHref}
+              className="text-xs font-semibold text-slate-400 hover:text-teal-600 transition-colors"
+            >
+              Full detail →
+            </Link>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -421,27 +400,9 @@ function PrioritySignalCard({ signal, rank }: { signal: BriefSignal; rank?: numb
 
 function ActionSummarySection({ summary, id }: { summary: ActionSummary; id?: string }) {
   const groups = [
-    {
-      label: "Before End of Week",
-      key: "thisWeek" as const,
-      color: "text-red-700",
-      numColor: "text-red-400",
-      bg: "bg-red-50 border-red-100",
-    },
-    {
-      label: "Before End of Month",
-      key: "thisMonth" as const,
-      color: "text-orange-700",
-      numColor: "text-orange-400",
-      bg: "bg-orange-50 border-orange-100",
-    },
-    {
-      label: "Ongoing Monitoring",
-      key: "monitor" as const,
-      color: "text-slate-600",
-      numColor: "text-slate-400",
-      bg: "bg-slate-50 border-slate-200",
-    },
+    { label: "Before End of Week",  key: "thisWeek"  as const, color: "text-red-700",    numColor: "text-red-400",    bg: "bg-red-50 border-red-100" },
+    { label: "Before End of Month", key: "thisMonth" as const, color: "text-orange-700", numColor: "text-orange-400", bg: "bg-orange-50 border-orange-100" },
+    { label: "Ongoing Monitoring",  key: "monitor"   as const, color: "text-slate-600",  numColor: "text-slate-400",  bg: "bg-slate-50 border-slate-200" },
   ];
 
   const hasContent = groups.some((g) => (summary[g.key] ?? []).length > 0);
@@ -459,9 +420,7 @@ function ActionSummarySection({ summary, id }: { summary: ActionSummary; id?: st
           if (!items.length) return null;
           return (
             <div key={key} className={`border rounded-xl p-5 ${bg}`}>
-              <p className={`text-xs font-bold uppercase tracking-wide mb-4 ${color}`}>
-                {label}
-              </p>
+              <p className={`text-xs font-bold uppercase tracking-wide mb-4 ${color}`}>{label}</p>
               <ol className="space-y-3">
                 {items.map((item, i) => (
                   <li key={i} className="flex items-start gap-3">
@@ -481,44 +440,34 @@ function ActionSummarySection({ summary, id }: { summary: ActionSummary; id?: st
 }
 
 // ---------------------------------------------------------------------------
-// Locked brief state — value-demonstrating teaser
+// Locked brief state
 // ---------------------------------------------------------------------------
 
 function LockedBriefState({ issue }: { issue: NewsletterIssue }) {
   const teaser = issue.thesis_headline ?? issue.summary;
+  const date = issue.publish_date ? formatDate(issue.publish_date) : formatDate(issue.created_at);
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-14">
       <div className="mb-8">
-        <Link
-          href="/briefs"
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-400 hover:text-slate-600 transition-colors"
-        >
+        <Link href="/briefs" className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-400 hover:text-slate-600 transition-colors">
           ← All Briefs
         </Link>
       </div>
-
-      <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-5">
-        {issue.publish_date ? formatDate(issue.publish_date) : formatDate(issue.created_at)}
-      </p>
-      <h1 className="text-3xl font-bold text-slate-900 leading-tight mb-4">
-        {issue.title}
-      </h1>
+      <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-5">{date}</p>
+      <h1 className="text-3xl font-bold text-slate-900 leading-tight mb-4">{issue.title}</h1>
       {teaser && (
         <div className="border-l-[3px] border-teal-400 pl-5 mb-10">
           <p className="text-slate-700 text-base font-medium leading-relaxed">{teaser}</p>
         </div>
       )}
-
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-8">
         <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-5">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-slate-400">
             <path fillRule="evenodd" d="M12 1.5a5.25 5.25 0 0 0-5.25 5.25v3a3 3 0 0 0-3 3v6.75a3 3 0 0 0 3 3h10.5a3 3 0 0 0 3-3v-6.75a3 3 0 0 0-3-3v-3c0-2.9-2.35-5.25-5.25-5.25Zm3.75 8.25v-3a3.75 3.75 0 1 0-7.5 0v3h7.5Z" clipRule="evenodd" />
           </svg>
         </div>
-        <h2 className="text-lg font-bold text-slate-900 mb-2 text-center">
-          Full brief requires a subscription
-        </h2>
+        <h2 className="text-lg font-bold text-slate-900 mb-2 text-center">Full brief requires a subscription</h2>
         <p className="text-slate-500 text-sm mb-7 text-center max-w-sm mx-auto leading-relaxed">
           Subscribers get the full analysis — signal-by-signal breakdown, risk scoring rationale,
           staged action roadmaps, and the weekly cross-domain pattern synthesis.
@@ -561,8 +510,8 @@ function LockedBriefState({ issue }: { issue: NewsletterIssue }) {
 }
 
 // ---------------------------------------------------------------------------
-// Full brief reader — premium executive experience
-// Primarily server-rendered. Only domain signal lists use a client component.
+// Full brief reader — primarily server-rendered
+// Client islands: ScrollSpyTOC, CollapsibleSignalList, PrintButton
 // ---------------------------------------------------------------------------
 
 function BriefReader({ issue }: { issue: NewsletterIssue }) {
@@ -578,8 +527,7 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
   const criticalCount = allSignals.filter((s) => (s.riskLevel ?? "").toLowerCase() === "critical").length;
   const highCount     = allSignals.filter((s) => (s.riskLevel ?? "").toLowerCase() === "high").length;
   const domains       = deriveDomainCoverage(sections);
-
-  const readingTime = estimateReadingTime(issue, allSignals);
+  const readingTime   = estimateReadingTime(issue, allSignals);
 
   const sectionOrder = ["securityIncidents", "aiGovernance", "regulations", "vendorRisk", "compliance"] as const;
 
@@ -594,19 +542,20 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
     (issue.action_summary_json.monitor?.length   ?? 0) > 0
   );
 
-  // TOC — only include sections that will actually render.
   const tocSections: TocEntry[] = [
     ...((issue.thesis_headline || issue.summary)
-      ? [{ id: "intelligence-thesis",  label: "Intelligence Thesis" }] : []),
+      ? [{ id: "intelligence-thesis",   label: "Intelligence Thesis" }]   : []),
     ...(hasActionItems
-      ? [{ id: "action-roadmap",       label: "Action Roadmap" }]      : []),
+      ? [{ id: "action-roadmap",         label: "Action Roadmap" }]        : []),
     ...(topSignals.length > 0
-      ? [{ id: "priority-intelligence", label: "Priority Intelligence" }] : []),
+      ? [{ id: "priority-intelligence",  label: "Priority Intelligence" }] : []),
     ...(issue.cross_domain_analysis
-      ? [{ id: "pattern-recognition",  label: "Pattern Recognition" }] : []),
+      ? [{ id: "pattern-recognition",    label: "Pattern Recognition" }]   : []),
     ...(hasCategoryContent
-      ? [{ id: "domain-intelligence",  label: "Domain Intelligence" }] : []),
+      ? [{ id: "domain-intelligence",    label: "Domain Intelligence" }]   : []),
   ];
+
+  const issueLabel = issue.issue_number ? `Issue #${issue.issue_number}` : null;
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-12">
@@ -621,20 +570,29 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
         </Link>
       </div>
 
-      {/* [1] Brief Header — publication identity, severity indicators, title */}
+      {/* [1] Header */}
       <div className="mb-8 pb-8 border-b border-slate-200">
-        {/* Publication eyebrow — includes reading time derived from real content */}
-        <div className="flex items-center flex-wrap gap-x-2 gap-y-1 mb-6">
-          <span className="text-xs font-bold text-teal-600 uppercase tracking-widest">SecureLogic AI</span>
-          <span className="text-slate-300 select-none">·</span>
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Intelligence Brief</span>
-          <span className="text-slate-300 select-none">·</span>
-          <span className="text-xs text-slate-400">{date}</span>
-          <span className="text-slate-300 select-none">·</span>
-          <span className="text-xs text-slate-400">~{readingTime} min read</span>
+        <div className="flex items-start justify-between gap-4 mb-6">
+          {/* Publication eyebrow */}
+          <div className="flex items-center flex-wrap gap-x-2 gap-y-1">
+            <span className="text-xs font-bold text-teal-600 uppercase tracking-widest">SecureLogic AI</span>
+            <span className="text-slate-300 select-none">·</span>
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Intelligence Brief</span>
+            {issueLabel && (
+              <>
+                <span className="text-slate-300 select-none">·</span>
+                <span className="text-xs font-semibold text-slate-500">{issueLabel}</span>
+              </>
+            )}
+            <span className="text-slate-300 select-none">·</span>
+            <span className="text-xs text-slate-400">{date}</span>
+            <span className="text-slate-300 select-none">·</span>
+            <span className="text-xs text-slate-400">~{readingTime} min read</span>
+          </div>
+          {/* Print button — client component, hidden from print output */}
+          <PrintButton />
         </div>
 
-        {/* Severity stakes */}
         {(criticalCount > 0 || highCount > 0) && (
           <div className="flex items-center gap-2.5 mb-5">
             {criticalCount > 0 && (
@@ -650,22 +608,21 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
           </div>
         )}
 
-        {/* Issue title */}
         <h1 className="text-3xl font-bold text-slate-900 leading-tight">
           {issue.title}
         </h1>
       </div>
 
-      {/* [2] Risk Snapshot — structured at-a-glance band */}
+      {/* [2] Risk Snapshot */}
       {allSignals.length > 0 && (
         <div className="mb-8">
           <RiskSnapshot allSignals={allSignals} domains={domains} />
         </div>
       )}
 
-      {/* [3] Brief TOC — jump-to-section, pure HTML anchors, no JS */}
+      {/* [3] Sticky scrollspy TOC — client component */}
       <div className="mb-12">
-        <BriefTOC sections={tocSections} />
+        <ScrollSpyTOC sections={tocSections} />
       </div>
 
       <div className="space-y-12">
@@ -677,9 +634,7 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
             <div className="bg-white border border-slate-200 border-l-4 border-l-teal-500 rounded-xl overflow-hidden shadow-sm">
               {issue.thesis_headline && (
                 <div className="bg-teal-50 border-b border-teal-100 px-7 py-5">
-                  <p className="text-teal-900 font-bold text-lg leading-snug">
-                    {issue.thesis_headline}
-                  </p>
+                  <p className="text-teal-900 font-bold text-lg leading-snug">{issue.thesis_headline}</p>
                 </div>
               )}
               {issue.summary && (
@@ -693,13 +648,10 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
 
         {/* [5] Action Roadmap */}
         {issue.action_summary_json && (
-          <ActionSummarySection
-            summary={issue.action_summary_json}
-            id="action-roadmap"
-          />
+          <ActionSummarySection summary={issue.action_summary_json} id="action-roadmap" />
         )}
 
-        {/* [6] Priority Intelligence — top 3, ranked */}
+        {/* [6] Priority Intelligence — ranked, linked to detail pages */}
         {topSignals.length > 0 && (
           <section id="priority-intelligence">
             <SectionHeader label="Priority Intelligence — Requires Your Attention" accent="bg-slate-800" tier="primary" />
@@ -709,6 +661,7 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
                   key={signal.id ?? signal.signalId ?? i}
                   signal={signal}
                   rank={i + 1}
+                  issueId={issue.id}
                 />
               ))}
             </div>
@@ -736,7 +689,7 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
           </section>
         )}
 
-        {/* [8] Domain Intelligence — collapsible per-domain signal lists */}
+        {/* [8] Domain Intelligence — collapsible, expandable on print */}
         {hasCategoryContent && (
           <section id="domain-intelligence">
             <div className="flex items-center gap-3 mb-3">
@@ -746,13 +699,23 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
               </h2>
             </div>
             <p className="text-sm text-slate-400 italic mb-8 pl-4">
-              Supporting signals by domain. These inform your monitoring posture and do not require immediate executive action. Source documentation is linked where available.
+              Supporting signals by domain. These inform your monitoring posture and do not require
+              immediate executive action. Source documentation is linked where available.
             </p>
             <div className="space-y-10">
               {sectionOrder.map((key) => {
                 const items = (sections[key] ?? []) as BriefSignal[];
-                const filtered = items.filter((s) => !topSignalTitles.has(s.title));
-                if (!filtered.length) return null;
+                // Keep original indices for signal detail page routing
+                const filteredWithIndex = items
+                  .map((signal, originalIndex) => ({ signal, originalIndex }))
+                  .filter(({ signal }) => !topSignalTitles.has(signal.title));
+
+                if (!filteredWithIndex.length) return null;
+
+                const filteredSignals = filteredWithIndex.map(({ signal }) => signal);
+                const signalHrefs = filteredWithIndex.map(
+                  ({ originalIndex }) => `/briefs/${issue.id}/signal/${key}/${originalIndex}`
+                );
 
                 return (
                   <div key={key}>
@@ -761,8 +724,10 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
                       accent={deriveSectionAccent(key)}
                       tier="secondary"
                     />
-                    {/* CollapsibleSignalList is the only client component on this page */}
-                    <CollapsibleSignalList signals={filtered} />
+                    <CollapsibleSignalList
+                      signals={filteredSignals}
+                      signalHrefs={signalHrefs}
+                    />
                   </div>
                 );
               })}
