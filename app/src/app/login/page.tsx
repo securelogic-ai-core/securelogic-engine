@@ -44,7 +44,7 @@ function LoginForm() {
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-slate-900 mb-2">Sign in</h1>
         <p className="text-slate-600">
-          Enter your API key to access your Intelligence Brief.
+          Enter your API key to access your account.
         </p>
       </div>
 

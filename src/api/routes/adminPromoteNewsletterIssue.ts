@@ -48,15 +48,14 @@ router.post("/newsletter-issues/:id/promote", async (req, res) => {
       return
     }
 
-    const subscriberResult = await pg.query(
-      `
-      SELECT COUNT(*)::int AS count
-      FROM subscribers
-      WHERE organization_id = $1
-        AND status = 'active'
-      `,
-      [issue.organization_id]
-    )
+    const subscriberResult = issue.organization_id
+      ? await pg.query(
+          `SELECT COUNT(*)::int AS count FROM subscribers WHERE organization_id = $1 AND status = 'active'`,
+          [issue.organization_id]
+        )
+      : await pg.query(
+          `SELECT COUNT(*)::int AS count FROM subscribers WHERE organization_id IS NULL AND status = 'active'`
+        )
 
     const activeSubscriberCount = Number(subscriberResult.rows[0]?.count ?? 0)
 

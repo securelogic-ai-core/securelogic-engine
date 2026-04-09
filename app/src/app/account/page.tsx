@@ -41,9 +41,9 @@ export default async function AccountPage({
   return (
     <div className="max-w-2xl mx-auto px-6 py-12">
       <div className="mb-10">
-        <h1 className="text-2xl font-bold text-slate-900 mb-1">Account</h1>
+        <h1 className="text-2xl font-bold text-slate-900 mb-1">Account &amp; Billing</h1>
         <p className="text-slate-600 text-sm">
-          Your organization settings and subscription status.
+          Subscription, access key, and organization details.
         </p>
       </div>
 
@@ -61,9 +61,7 @@ export default async function AccountPage({
           </h2>
           <dl className="space-y-4">
             <Row label="Name" value={me.organizationName} />
-            <Row label="Slug" value={me.organizationSlug} mono />
             <Row label="Plan" value={planName} />
-            <Row label="Status" value={me.organizationStatus} />
           </dl>
         </div>
 
@@ -75,7 +73,6 @@ export default async function AccountPage({
           <dl className="space-y-4">
             <Row label="Label" value={me.apiKeyLabel ?? "—"} />
             <Row label="Key ID" value={me.apiKeyId} mono />
-            <Row label="Status" value={me.apiKeyStatus} />
             <Row
               label="Last used"
               value={
@@ -116,8 +113,8 @@ export default async function AccountPage({
             <div>
               <p className="text-slate-600 text-sm mb-4">
                 {me.entitlementLevel === "professional"
-                  ? "You have full access to all Professional Intelligence Brief content."
-                  : "You have full access to all Intelligence Brief content."}
+                  ? "Active subscription. Full access to all Intelligence Brief content."
+                  : "Active subscription. Full access to all Intelligence Brief content."}
               </p>
               <form action="/api/billing/portal" method="POST">
                 <button
@@ -131,7 +128,7 @@ export default async function AccountPage({
           ) : (
             <div>
               <p className="text-slate-600 text-sm mb-5">
-                Upgrade for full brief content, all sections, and the complete archive.
+                Subscribe for full brief access — all sections, risk-scored findings, and the complete archive.
               </p>
               <div className="space-y-3">
                 <form action="/api/billing/checkout" method="POST">
@@ -162,7 +159,7 @@ export default async function AccountPage({
           <form action="/api/logout" method="POST">
             <button
               type="submit"
-              className="text-slate-500 hover:text-red-600 text-sm transition-colors"
+              className="text-slate-400 hover:text-slate-600 text-sm transition-colors"
             >
               Sign out
             </button>

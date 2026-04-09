@@ -71,10 +71,9 @@ export default function RegisterPage() {
             </svg>
           </div>
 
-          <h1 className="text-xl font-bold text-slate-900 mb-2">Account created</h1>
+          <h1 className="text-xl font-bold text-slate-900 mb-2">Account created — save your key</h1>
           <p className="text-slate-600 text-sm mb-6">
-            Your API key is shown <strong>once only</strong>. Copy it and store it
-            somewhere safe — it cannot be recovered.
+            Copy your API key before continuing. It cannot be recovered.
           </p>
 
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-4">
@@ -94,9 +93,11 @@ export default function RegisterPage() {
             </div>
           </div>
 
-          <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg px-4 py-3 mb-6">
-            ⚠ This key will not be shown again. Store it in a password manager or secrets vault.
+          <div className="border border-amber-200 text-amber-800 text-xs rounded-lg px-4 py-3 mb-4">
+            This is the only time this key will be shown. Store it in your password manager before proceeding.
           </div>
+
+          <hr className="border-slate-200 mb-4" />
 
           {plan ? (
             <form action="/api/billing/checkout" method="POST">
@@ -113,7 +114,7 @@ export default function RegisterPage() {
               onClick={() => router.push("/dashboard")}
               className="w-full bg-teal-600 hover:bg-teal-500 text-white font-semibold py-3 rounded-lg transition-colors"
             >
-              Continue to Dashboard →
+              Go to your dashboard →
             </button>
           )}
         </div>
@@ -124,9 +125,13 @@ export default function RegisterPage() {
   return (
     <div className="max-w-lg mx-auto px-6 py-16">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900 mb-2">Create your account</h1>
+        <h1 className="text-2xl font-bold text-slate-900 mb-2">
+          {plan ? "Create your account to continue" : "Create your account"}
+        </h1>
         <p className="text-slate-600">
-          Free to start. Get access to the Intelligence Brief archive immediately.
+          {plan
+            ? `You're one step from ${planLabel(plan)} access.`
+            : "Free to start. No credit card required."}
         </p>
       </div>
 

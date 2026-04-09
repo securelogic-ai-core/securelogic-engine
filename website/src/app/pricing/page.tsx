@@ -84,7 +84,7 @@ export default function PricingPage() {
                 href={`${APP_URL}/register?plan=professional`}
                 className="block w-full text-center py-2.5 px-5 rounded-lg bg-white text-teal-700 text-sm font-semibold hover:bg-teal-50 transition-colors mb-8"
               >
-                Subscribe now
+                Get started
               </a>
               <ul className="space-y-3 text-sm text-teal-100">
                 {[
@@ -109,26 +109,26 @@ export default function PricingPage() {
             </div>
 
             {/* Enterprise */}
-            <div className="bg-slate-900 rounded-2xl p-8 text-white shadow-sm">
+            <div className="bg-slate-900 rounded-2xl p-8 text-white shadow-sm border border-slate-700">
               <div className="mb-6">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Enterprise</p>
                 <div className="flex items-end gap-1 mb-3">
                   <span className="text-4xl font-bold">Custom</span>
                 </div>
-                <p className="text-sm text-slate-400">Full platform, API, and dedicated support.</p>
+                <p className="text-sm text-slate-400">Full platform access, API, dedicated onboarding, and enterprise support.</p>
               </div>
               <a
                 href="mailto:hello@securelogicai.com"
-                className="block w-full text-center py-2.5 px-5 rounded-lg border border-slate-600 text-slate-200 text-sm font-semibold hover:border-slate-400 transition-colors mb-8"
+                className="block w-full text-center py-2.5 px-5 rounded-lg border border-slate-500 text-slate-200 text-sm font-semibold hover:border-slate-400 transition-colors mb-8"
               >
-                Contact us
+                Talk to us
               </a>
-              <ul className="space-y-3 text-sm text-slate-400">
+              <ul className="space-y-3 text-sm text-slate-300">
                 {[
                   "Everything in Professional",
-                  "Vendor Risk module (when available)",
-                  "AI Governance module (when available)",
-                  "Compliance module (when available)",
+                  "Vendor Risk module",
+                  "AI Governance module",
+                  "Compliance module",
                   "API access to risk intelligence",
                   "Multi-user organization accounts",
                   "Dedicated onboarding",
@@ -144,6 +144,7 @@ export default function PricingPage() {
                   </li>
                 ))}
               </ul>
+              <p className="text-xs text-slate-500 mt-5 leading-relaxed">* Vendor Risk, AI Governance, and Compliance modules are in active development. Enterprise subscribers receive early access.</p>
             </div>
           </div>
         </div>
@@ -186,17 +187,19 @@ export default function PricingPage() {
       </section>
 
       {/* Bottom CTA */}
-      <section className="py-20 px-4 text-center">
-        <div className="max-w-xl mx-auto">
-          <h2 className="text-2xl font-bold text-slate-900 mb-3">Ready to get started?</h2>
-          <p className="text-slate-500 mb-7 text-sm">
-            Free access available immediately. No credit card required.
-          </p>
+      <section className="py-12 px-4 border-t border-slate-200">
+        <div className="max-w-xl mx-auto flex flex-col sm:flex-row items-center justify-center gap-4">
           <a
-            href={`${APP_URL}/register`}
-            className="inline-flex items-center px-7 py-3 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-700 transition-colors"
+            href={`${APP_URL}/register?plan=professional`}
+            className="inline-flex items-center px-7 py-3 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-500 transition-colors text-sm"
           >
-            Create free account
+            Professional — $39/mo
+          </a>
+          <a
+            href="mailto:hello@securelogicai.com"
+            className="inline-flex items-center px-7 py-3 rounded-lg border border-slate-300 text-slate-700 font-semibold hover:border-slate-400 transition-colors text-sm"
+          >
+            Enterprise — Talk to us
           </a>
         </div>
       </section>

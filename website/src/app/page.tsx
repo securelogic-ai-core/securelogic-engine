@@ -185,13 +185,9 @@ export default function HomePage() {
                         Intelligence Brief
                       </p>
                       <p className="text-[11px] text-slate-400 font-medium leading-none">
-                        SecureLogic AI · Issue #12
+                        SecureLogic AI · Weekly Edition
                       </p>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[10px] text-slate-500 font-medium">Apr 7, 2026</p>
-                    <p className="text-[9px] text-slate-600 uppercase tracking-wider mt-0.5">Weekly Edition</p>
                   </div>
                 </div>
               </div>
@@ -267,16 +263,10 @@ export default function HomePage() {
                   ))}
                 </div>
 
-                <div className="mt-4 pt-3.5 border-t border-slate-800 flex items-center justify-between">
+                <div className="mt-4 pt-3.5 border-t border-slate-800">
                   <p className="text-[11px] text-slate-600">
-                    + 28 more signals — subscribers only
+                    + 28 more signals this issue
                   </p>
-                  <a
-                    href={`${APP_URL}/register?plan=professional`}
-                    className="text-[11px] font-semibold text-teal-400 hover:text-teal-300 transition-colors"
-                  >
-                    Subscribe →
-                  </a>
                 </div>
               </div>
             </div>
@@ -455,7 +445,7 @@ export default function HomePage() {
                   href={`${APP_URL}/register?plan=professional`}
                   className="inline-flex items-center px-6 py-3 rounded-lg bg-teal-600 text-white text-sm font-semibold hover:bg-teal-500 transition-colors"
                 >
-                  Subscribe to the Intelligence Brief
+                  Get the Intelligence Brief
                 </a>
                 <span className="text-sm text-slate-400">$39 / month</span>
               </div>
@@ -493,13 +483,9 @@ export default function HomePage() {
                         Intelligence Brief
                       </p>
                       <p className="text-[11px] text-slate-400 font-medium leading-none">
-                        SecureLogic AI · Issue #12
+                        SecureLogic AI · Weekly Edition
                       </p>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[10px] text-slate-500 font-medium">Apr 7, 2026</p>
-                    <p className="text-[9px] text-slate-600 uppercase tracking-wider mt-0.5">Weekly Edition</p>
                   </div>
                 </div>
               </div>

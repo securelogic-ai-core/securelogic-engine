@@ -90,10 +90,10 @@ export default function SuccessPage() {
           <>
             <div className="w-12 h-12 rounded-full border-4 border-teal-200 border-t-teal-600 animate-spin mx-auto mb-6" />
             <h1 className="text-xl font-bold text-slate-900 mb-2">
-              Activating your account…
+              Activating your subscription…
             </h1>
             <p className="text-slate-500 text-sm">
-              Your payment was received. Updating your access now.
+              Your payment was received. This takes a few seconds — do not close this page.
             </p>
           </>
         )}
@@ -109,8 +109,8 @@ export default function SuccessPage() {
               Welcome to {planName}
             </h1>
             <p className="text-slate-500 text-sm mb-6">
-              Your subscription is active. You now have full access to the
-              Intelligence Brief.
+              Your {planName} subscription is active. You now have full access to all
+              Intelligence Brief content.
             </p>
             <p className="text-slate-400 text-xs mb-6">Redirecting to your dashboard…</p>
             <Link
