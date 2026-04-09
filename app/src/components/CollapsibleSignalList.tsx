@@ -1,0 +1,121 @@
+"use client";
+
+import { useState } from "react";
+import type { BriefSignal } from "@/lib/api";
+
+// ---------------------------------------------------------------------------
+// Helpers — local copies so this client component has no dependency on the
+// server-only page file.
+// ---------------------------------------------------------------------------
+
+function riskBorderClass(level: string): string {
+  const l = (level ?? "").toLowerCase();
+  if (l === "critical") return "border-l-red-500";
+  if (l === "high")     return "border-l-orange-400";
+  if (l === "medium")   return "border-l-yellow-400";
+  return "border-l-green-400";
+}
+
+function riskPillClass(level: string): string {
+  const l = (level ?? "").toLowerCase();
+  if (l === "critical") return "bg-red-100 text-red-700 border border-red-200";
+  if (l === "high")     return "bg-orange-100 text-orange-700 border border-orange-200";
+  if (l === "medium")   return "bg-yellow-100 text-yellow-700 border border-yellow-200";
+  return "bg-green-100 text-green-700 border border-green-200";
+}
+
+// ---------------------------------------------------------------------------
+// SignalCard — compact card for domain intelligence signals
+// ---------------------------------------------------------------------------
+
+function SignalCard({ signal }: { signal: BriefSignal }) {
+  const risk = signal.riskLevel ?? signal.risk_level ?? "low";
+  const analysis = signal.whyItMatters || signal.analysis || signal.summary || "";
+  const action = signal.recommendedAction || signal.recommendation || "";
+  const sourceHref = signal.sourceUrl ?? signal.source_url;
+
+  return (
+    <div className={`border border-slate-200 border-l-4 ${riskBorderClass(risk)} rounded-lg p-5 bg-white`}>
+      <div className="flex items-start justify-between gap-3 mb-2.5">
+        <h4 className="text-slate-900 font-semibold text-sm leading-snug flex-1">
+          {signal.title}
+        </h4>
+        <span className={`text-xs font-bold px-2 py-0.5 rounded-full uppercase tracking-wide flex-shrink-0 ${riskPillClass(risk)}`}>
+          {risk}
+        </span>
+      </div>
+
+      {analysis && (
+        <p className="text-sm text-slate-600 leading-relaxed mb-3">{analysis}</p>
+      )}
+
+      {action && (
+        <p className="text-sm text-slate-700 leading-snug">
+          <span className="font-semibold text-slate-800">Action: </span>
+          {action}
+        </p>
+      )}
+
+      {sourceHref ? (
+        <div className="mt-3 pt-3 border-t border-slate-100">
+          <a
+            href={sourceHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors"
+          >
+            Read source{signal.source ? ` — ${signal.source}` : ""} →
+          </a>
+        </div>
+      ) : signal.source ? (
+        <p className="mt-3 text-xs text-slate-400 font-medium">Via {signal.source}</p>
+      ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CollapsibleSignalList — client island for expand/collapse behavior
+// Only renders a toggle when signals.length > initialLimit.
+// The parent page stays a server component.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_LIMIT = 2;
+
+export function CollapsibleSignalList({
+  signals,
+  initialLimit = DEFAULT_LIMIT,
+}: {
+  signals: BriefSignal[];
+  initialLimit?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (signals.length === 0) return null;
+
+  const canToggle = signals.length > initialLimit;
+  const visible = expanded || !canToggle ? signals : signals.slice(0, initialLimit);
+  const hiddenCount = signals.length - initialLimit;
+
+  return (
+    <div>
+      <div className="space-y-3">
+        {visible.map((signal, i) => (
+          <SignalCard key={signal.id ?? signal.signalId ?? i} signal={signal} />
+        ))}
+      </div>
+
+      {canToggle && (
+        <button
+          type="button"
+          onClick={() => setExpanded((prev) => !prev)}
+          className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-teal-600 transition-colors"
+        >
+          {expanded
+            ? "Show less ↑"
+            : `Show ${hiddenCount} more signal${hiddenCount !== 1 ? "s" : ""} ↓`}
+        </button>
+      )}
+    </div>
+  );
+}
