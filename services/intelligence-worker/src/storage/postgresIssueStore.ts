@@ -10,6 +10,9 @@ export type PostgresIssueInput = {
   sectionsJson?: unknown;
   contentHtml?: string | null;
   contentMd?: string | null;
+  thesisHeadline?: string | null;
+  crossDomainAnalysis?: string | null;
+  actionSummaryJson?: unknown | null;
 };
 
 export async function createIssue(issue: PostgresIssueInput) {
@@ -25,10 +28,13 @@ export async function createIssue(issue: PostgresIssueInput) {
       sections_json,
       content_html,
       content_md,
+      thesis_headline,
+      cross_domain_analysis,
+      action_summary_json,
       created_at,
       updated_at
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,NOW(),NOW())
+    VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12::jsonb,NOW(),NOW())
     RETURNING id
     `,
     [
@@ -40,7 +46,10 @@ export async function createIssue(issue: PostgresIssueInput) {
       issue.summary ?? null,
       JSON.stringify(issue.sectionsJson ?? {}),
       issue.contentHtml ?? null,
-      issue.contentMd ?? null
+      issue.contentMd ?? null,
+      issue.thesisHeadline ?? null,
+      issue.crossDomainAnalysis ?? null,
+      issue.actionSummaryJson != null ? JSON.stringify(issue.actionSummaryJson) : null
     ]
   );
 

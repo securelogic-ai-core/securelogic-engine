@@ -19,7 +19,7 @@ export default async function RootLayout({
 
   return (
     <html lang="en">
-      <body className="min-h-screen flex flex-col bg-white text-slate-900">
+      <body className="min-h-screen flex flex-col bg-white text-slate-900" suppressHydrationWarning>
         <Header
           isAuthenticated={isAuthenticated}
           organizationName={session.organizationName}

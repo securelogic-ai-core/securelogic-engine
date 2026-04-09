@@ -63,12 +63,12 @@ export function Header({ organizationName, isAuthenticated }: HeaderProps) {
               >
                 Sign In
               </Link>
-              <Link
-                href="/register"
+              <a
+                href={`${SITE_URL}/pricing/`}
                 className="bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium px-4 py-1.5 rounded transition-colors"
               >
                 Get Started
-              </Link>
+              </a>
             </>
           )}
         </nav>
