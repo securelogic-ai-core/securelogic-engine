@@ -38,13 +38,13 @@ export default function IntelligenceBriefPage() {
               href={`${APP_URL}/register?plan=professional`}
               className="inline-flex items-center justify-center px-6 py-3 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-500 transition-colors text-sm"
             >
-              Subscribe — $39/mo
+              Get full brief access
             </a>
             <a
               href={`${APP_URL}/register`}
               className="inline-flex items-center justify-center px-6 py-3 rounded-lg border border-slate-600 text-slate-200 font-semibold hover:border-slate-400 hover:text-white transition-colors text-sm"
             >
-              Free preview access
+              Start for free
             </a>
           </div>
         </div>
@@ -107,8 +107,8 @@ export default function IntelligenceBriefPage() {
       <section className="bg-slate-900 py-20 px-4 text-white">
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-12">
-            <h2 className="text-2xl font-bold mb-3">Sample from a recent issue</h2>
-            <p className="text-slate-400 text-sm">Illustrative of actual brief format and signal types</p>
+            <h2 className="text-2xl font-bold mb-3">Format preview</h2>
+            <p className="text-slate-400 text-sm">This is the structure and format of a real issue. Content is illustrative.</p>
           </div>
 
           <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
@@ -116,7 +116,7 @@ export default function IntelligenceBriefPage() {
             <div className="p-6 border-b border-slate-700">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs text-teal-400 font-semibold uppercase tracking-wider">SecureLogic AI · Intelligence Brief</p>
-                <span className="text-xs text-slate-500">Issue #12 · Apr 7, 2026</span>
+                <span className="text-xs text-slate-500">Weekly Edition</span>
               </div>
               <p className="text-sm text-slate-300 leading-relaxed">
                 <span className="font-medium text-white">Executive synthesis: </span>

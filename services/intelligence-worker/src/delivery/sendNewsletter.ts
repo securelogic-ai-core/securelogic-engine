@@ -129,26 +129,20 @@ function buildUnsubscribeUrl(email: string): string | null {
 }
 
 /**
- * Appends a minimal CAN-SPAM compliant unsubscribe footer to the
- * issue HTML. The footer is plain enough to render in all clients.
- * Content is appended before </body> if present, otherwise at the end.
+ * Replaces the ##VIEW_BRIEF_URL## and ##UNSUBSCRIBE_URL## placeholders
+ * that renderNewsletterHtml bakes into the footer of every issue.
+ * These are resolved per-recipient at send time so each subscriber gets
+ * a unique signed unsubscribe link and the correct brief deep-link.
  *
- * The base content_html is not modified — a per-recipient copy is
+ * The base content_html is never modified — a per-recipient copy is
  * built here and never persisted back to the DB.
  */
-function injectUnsubscribeFooter(html: string, unsubscribeUrl: string): string {
-  const footer = `
-<div style="margin-top:32px;padding-top:16px;border-top:1px solid #e0e0e0;font-family:sans-serif;font-size:12px;color:#888;text-align:center;">
-  <p style="margin:0;">You are receiving this because you subscribed to SecureLogic AI.</p>
-  <p style="margin:4px 0 0;"><a href="${unsubscribeUrl}" style="color:#888;">Unsubscribe</a></p>
-</div>`;
-
-  const closeBody = html.lastIndexOf("</body>");
-  if (closeBody !== -1) {
-    return html.slice(0, closeBody) + footer + html.slice(closeBody);
-  }
-
-  return html + footer;
+function injectFooterLinks(html: string, issueId: string, unsubscribeUrl: string): string {
+  const appUrl = (process.env.NEWSLETTER_APP_URL ?? "").trim().replace(/\/$/, "");
+  const viewBriefUrl = appUrl ? `${appUrl}/briefs/${issueId}` : "#";
+  return html
+    .replace("##VIEW_BRIEF_URL##", viewBriefUrl)
+    .replace("##UNSUBSCRIBE_URL##", unsubscribeUrl);
 }
 
 async function isIssueFullySent(issueId: string): Promise<boolean> {
@@ -227,7 +221,7 @@ export async function sendNewsletter(issueId: string): Promise<SendNewsletterRes
     try {
       const unsubscribeUrl = buildUnsubscribeUrl(delivery.subscriber_email);
       const html = unsubscribeUrl
-        ? injectUnsubscribeFooter(issue.content_html, unsubscribeUrl)
+        ? injectFooterLinks(issue.content_html, issueId, unsubscribeUrl)
         : issue.content_html;
 
       await resend.emails.send({

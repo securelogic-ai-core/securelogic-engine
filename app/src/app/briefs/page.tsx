@@ -31,9 +31,6 @@ export default async function BriefsPage() {
           </p>
         </div>
 
-        {!isPremium && lockedCount > 0 && (
-          <CheckoutButton tier="team" label="Upgrade" variant="outline" />
-        )}
       </div>
 
       {issues.length === 0 ? (
@@ -59,8 +56,8 @@ export default async function BriefsPage() {
             Upgrade for full access to all Intelligence Brief content.
           </p>
           <div className="flex items-center justify-center gap-3 flex-wrap">
-            <CheckoutButton tier="professional" label="Professional — $39/mo" variant="outline" />
-            <CheckoutButton tier="team" label="Team — $209/mo" variant="solid" />
+            <CheckoutButton tier="professional" label="Professional — $39/mo" variant="solid" />
+            <CheckoutButton tier="team" label="Team — $209/mo" variant="outline" />
           </div>
         </div>
       )}

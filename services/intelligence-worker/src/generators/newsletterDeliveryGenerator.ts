@@ -40,12 +40,15 @@ export async function generateNewsletterDeliveries(): Promise<NewsletterDelivery
 
   for (const issue of issues) {
     // Determine which subscriber tiers qualify for this issue's audience_tier.
-    // standard/premium issues: only paid subscribers.
-    // free issues: all active subscribers (free tier is universally accessible).
-    const isPaidTier =
-      issue.audience_tier === "standard" || issue.audience_tier === "premium";
-
-    const tierFilter = isPaidTier ? "AND s.tier = 'paid'" : "";
+    // premium issues: premium subscribers only.
+    // standard issues: standard, paid, and premium subscribers.
+    // free issues: all active subscribers.
+    const tierFilter =
+      issue.audience_tier === "premium"
+        ? "AND s.tier IN ('premium')"
+        : issue.audience_tier === "standard"
+        ? "AND s.tier IN ('standard', 'paid', 'premium')"
+        : "";
 
     // Platform issues (organization_id IS NULL) deliver to all qualifying subscribers.
     // Org-scoped issues deliver only to subscribers belonging to that org.

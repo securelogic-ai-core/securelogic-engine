@@ -104,26 +104,6 @@ export default async function DashboardPage() {
             <UpgradeCard />
           )}
 
-          {/* Quick links */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
-              Quick links
-            </h3>
-            <div className="space-y-2">
-              <Link
-                href="/briefs"
-                className="block text-sm text-slate-700 hover:text-teal-600 transition-colors"
-              >
-                → Brief archive
-              </Link>
-              <Link
-                href="/account"
-                className="block text-sm text-slate-700 hover:text-teal-600 transition-colors"
-              >
-                → Account settings
-              </Link>
-            </div>
-          </div>
         </div>
       </div>
     </div>

@@ -63,7 +63,7 @@ export function Footer({ appUrl }: FooterProps) {
             </h3>
             <ul className="space-y-2.5 text-sm">
               <li>
-                <a href={`${appUrl}/sign-in`} className="hover:text-white transition-colors">
+                <a href={`${appUrl}/login`} className="hover:text-white transition-colors">
                   Log in
                 </a>
               </li>
