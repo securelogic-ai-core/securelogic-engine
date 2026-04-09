@@ -11,15 +11,20 @@ export default function PlatformPage() {
   return (
     <>
       {/* Header */}
-      <section className="bg-navy-900 text-white pt-16 pb-20 px-4">
-        <div className="max-w-3xl mx-auto text-center">
-          <span className="inline-block text-xs font-semibold text-teal-400 uppercase tracking-wider mb-4">
+      <section className="relative overflow-hidden bg-navy-900 text-white pt-20 pb-24 px-4">
+        <div
+          className="absolute inset-0 pointer-events-none"
+          aria-hidden="true"
+          style={{ background: "radial-gradient(ellipse 60% 80% at 50% 120%, rgba(13,148,136,0.15) 0%, transparent 65%)" }}
+        />
+        <div className="relative max-w-3xl mx-auto text-center">
+          <span className="inline-block text-xs font-bold text-teal-400 uppercase tracking-widest mb-4">
             Platform Overview
           </span>
-          <h1 className="text-4xl sm:text-5xl font-bold leading-tight mb-5">
-            One platform for total risk coverage
+          <h1 className="text-5xl sm:text-6xl font-extrabold leading-tight tracking-tight mb-6">
+            One platform for<br />total risk coverage
           </h1>
-          <p className="text-lg text-slate-300 leading-relaxed">
+          <p className="text-lg text-slate-300 leading-relaxed max-w-2xl mx-auto">
             SecureLogic AI brings vendor risk, AI governance, compliance, and threat intelligence
             into a single analytical platform — powered by the SecureLogic Engine.
           </p>
@@ -128,9 +133,16 @@ export default function PlatformPage() {
               </ul>
             </div>
             <div className="md:order-1 bg-slate-50 rounded-xl border border-slate-200 p-8 text-center">
-              <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-2xl mx-auto mb-4">🔗</div>
+              <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto mb-4 text-slate-500">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                </svg>
+              </div>
               <p className="text-sm font-medium text-slate-700 mb-2">Vendor Risk module</p>
-              <p className="text-xs text-slate-400">In active development. Enterprise early access available.</p>
+              <p className="text-xs text-slate-400 mb-4">In active development. Enterprise early access available.</p>
+              <a href="mailto:hello@securelogicai.com" className="text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors">
+                Request early access →
+              </a>
             </div>
           </div>
 
@@ -165,9 +177,16 @@ export default function PlatformPage() {
               </ul>
             </div>
             <div className="bg-slate-50 rounded-xl border border-slate-200 p-8 text-center">
-              <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-2xl mx-auto mb-4">🤖</div>
+              <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto mb-4 text-slate-500">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 3H7a2 2 0 00-2 2v2m4-4h6m-6 0V1m6 2h2a2 2 0 012 2v2m0 0V9m0-2h2M21 9v6m0 0v2a2 2 0 01-2 2h-2m0 0H9m6 0v2m-6-2H7a2 2 0 01-2-2v-2m0 0V9m0 6H3M3 9V7a2 2 0 012-2h2m2 4h6v6H9V9z" />
+                </svg>
+              </div>
               <p className="text-sm font-medium text-slate-700 mb-2">AI Governance module</p>
-              <p className="text-xs text-slate-400">In active development. Enterprise early access available.</p>
+              <p className="text-xs text-slate-400 mb-4">In active development. Enterprise early access available.</p>
+              <a href="mailto:hello@securelogicai.com" className="text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors">
+                Request early access →
+              </a>
             </div>
           </div>
 
@@ -202,9 +221,16 @@ export default function PlatformPage() {
               </ul>
             </div>
             <div className="md:order-1 bg-slate-50 rounded-xl border border-slate-200 p-8 text-center">
-              <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-2xl mx-auto mb-4">✓</div>
+              <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto mb-4 text-slate-500">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+              </div>
               <p className="text-sm font-medium text-slate-700 mb-2">Compliance module</p>
-              <p className="text-xs text-slate-400">In active development. Enterprise early access available.</p>
+              <p className="text-xs text-slate-400 mb-4">In active development. Enterprise early access available.</p>
+              <a href="mailto:hello@securelogicai.com" className="text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors">
+                Request early access →
+              </a>
             </div>
           </div>
         </div>

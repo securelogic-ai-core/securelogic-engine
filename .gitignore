@@ -50,3 +50,32 @@ data/issues/
 # LOCAL SCRIPTS
 # =========================
 scripts/generate-issue.ts
+
+# =========================
+# DATABASE FILES
+# =========================
+*.db
+*.db-*
+
+# =========================
+# SHELL / TOOL ACCIDENTS
+# =========================
+# Empty files created by accidental shell commands
+=
+^C
+c.id
+node
+tsc
+securelogic-engine@*
+
+# =========================
+# BACKUP / SAVE FILES
+# =========================
+*.json.save
+*.save
+*.backup.json
+
+# =========================
+# LOCAL LOGS
+# =========================
+type-errors.log

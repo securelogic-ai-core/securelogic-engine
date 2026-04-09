@@ -4,6 +4,7 @@ import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.securelogicai.com";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.securelogicai.com";
 
 export const metadata: Metadata = {
   title: {
@@ -12,7 +13,7 @@ export const metadata: Metadata = {
   },
   description:
     "SecureLogic AI is a Unified Risk Intelligence Platform that helps organizations see, understand, and act on their total risk exposure across vendors, controls, compliance frameworks, and AI systems.",
-  metadataBase: new URL("https://www.securelogicai.com"),
+  metadataBase: new URL(SITE_URL),
   openGraph: {
     siteName: "SecureLogic AI",
     type: "website",

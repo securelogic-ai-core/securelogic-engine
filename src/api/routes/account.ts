@@ -59,7 +59,7 @@ router.get("/me", requireApiKey, async (req, res, next) => {
     }
 
     const entitlementLevel = String(row.entitlement_level ?? "starter");
-    const billingActive = entitlementLevel === "premium";
+    const billingActive = entitlementLevel === "premium" || entitlementLevel === "professional";
 
     res.json({
       organizationId:     row.organization_id,

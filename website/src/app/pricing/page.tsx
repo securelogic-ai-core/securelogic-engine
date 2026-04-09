@@ -7,24 +7,32 @@ export const metadata: Metadata = {
 };
 
 export default function PricingPage() {
+  const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.securelogicai.com";
+
   return (
     <>
       {/* Header */}
-      <section className="bg-slate-50 border-b border-slate-200 pt-16 pb-14 px-4 text-center">
-        <div className="max-w-2xl mx-auto">
-          <h1 className="text-4xl font-bold text-slate-900 mb-4">Simple, transparent pricing</h1>
-          <p className="text-lg text-slate-500 leading-relaxed">
+      <section className="relative overflow-hidden bg-navy-900 border-b border-slate-800 pt-20 pb-20 px-4 text-center">
+        <div
+          className="absolute inset-0 pointer-events-none"
+          aria-hidden="true"
+          style={{ background: "radial-gradient(ellipse 60% 80% at 50% 120%, rgba(13,148,136,0.13) 0%, transparent 65%)" }}
+        />
+        <div className="relative max-w-2xl mx-auto">
+          <p className="text-xs font-bold text-teal-400 uppercase tracking-widest mb-4">Pricing</p>
+          <h1 className="text-4xl font-bold text-white mb-4">Simple, transparent pricing</h1>
+          <p className="text-lg text-slate-400 leading-relaxed">
             Start with the Intelligence Brief. Scale to the full platform as your needs grow.
           </p>
         </div>
       </section>
 
       {/* Plans */}
-      <section className="pb-20 px-4">
+      <section className="pt-14 pb-20 px-4">
         <div className="max-w-5xl mx-auto">
           <div className="grid sm:grid-cols-3 gap-6">
             {/* Free */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-8 shadow-sm">
+            <div className="bg-white rounded-2xl border border-slate-200 p-8 shadow-md ring-1 ring-slate-200/60">
               <div className="mb-6">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Free</p>
                 <div className="flex items-end gap-1 mb-3">
@@ -33,7 +41,7 @@ export default function PricingPage() {
                 <p className="text-sm text-slate-500">Preview access. No credit card required.</p>
               </div>
               <a
-                href="https://app.securelogicai.com/register"
+                href={`${APP_URL}/register`}
                 className="block w-full text-center py-2.5 px-5 rounded-lg border border-slate-300 text-slate-700 text-sm font-semibold hover:border-slate-400 transition-colors mb-8"
               >
                 Get started free
@@ -73,7 +81,7 @@ export default function PricingPage() {
                 <p className="text-sm text-teal-100">Full Intelligence Brief access.</p>
               </div>
               <a
-                href="https://app.securelogicai.com/register?plan=professional"
+                href={`${APP_URL}/register?plan=professional`}
                 className="block w-full text-center py-2.5 px-5 rounded-lg bg-white text-teal-700 text-sm font-semibold hover:bg-teal-50 transition-colors mb-8"
               >
                 Subscribe now
@@ -178,14 +186,14 @@ export default function PricingPage() {
       </section>
 
       {/* Bottom CTA */}
-      <section className="py-16 px-4 text-center">
+      <section className="py-20 px-4 text-center">
         <div className="max-w-xl mx-auto">
           <h2 className="text-2xl font-bold text-slate-900 mb-3">Ready to get started?</h2>
           <p className="text-slate-500 mb-7 text-sm">
             Free access available immediately. No credit card required.
           </p>
           <a
-            href="https://app.securelogicai.com/register"
+            href={`${APP_URL}/register`}
             className="inline-flex items-center px-7 py-3 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-700 transition-colors"
           >
             Create free account
