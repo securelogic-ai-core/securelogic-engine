@@ -47,6 +47,7 @@ function shapeIssue(
     return {
       id:                   row.id,
       organization_id:      row.organization_id,
+      issue_number:         row.issue_number,
       title:                row.title,
       summary:              row.summary,
       thesis_headline:      row.thesis_headline,
@@ -100,6 +101,7 @@ router.get(
         SELECT
           id,
           organization_id,
+          issue_number,
           title,
           summary,
           thesis_headline,
@@ -178,6 +180,7 @@ router.get(
         SELECT
           id,
           organization_id,
+          issue_number,
           title,
           summary,
           thesis_headline,

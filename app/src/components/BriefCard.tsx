@@ -167,7 +167,7 @@ function UnlockedCard({ issue }: { issue: NewsletterIssue }) {
       <div className={`bg-white border border-slate-200 border-l-4 ${borderAccent} rounded-xl p-6 shadow-sm hover:shadow-md transition-all`}>
         <div className="flex items-center justify-between gap-3 mb-3">
           <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide">
-            {date}
+            {issue.issue_number ? `Issue #${issue.issue_number} · ` : ""}{date}
           </p>
           <RiskBadges critical={critical} high={high} />
         </div>

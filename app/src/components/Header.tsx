@@ -37,13 +37,13 @@ export function Header({ organizationName, isAuthenticated }: HeaderProps) {
             <>
               <Link
                 href="/briefs"
-                className="text-slate-400 hover:text-white text-sm transition-colors"
+                className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
               >
                 Briefs
               </Link>
               <Link
                 href="/account"
-                className="text-slate-400 hover:text-white text-sm transition-colors"
+                className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
               >
                 {organizationName ?? "Account"}
               </Link>
@@ -59,7 +59,7 @@ export function Header({ organizationName, isAuthenticated }: HeaderProps) {
               </a>
               <Link
                 href="/login"
-                className="text-slate-400 hover:text-white text-sm transition-colors"
+                className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
               >
                 Sign In
               </Link>

@@ -6,7 +6,7 @@
 
 :root {
   --foreground: #0f172a;
-  --background: #ffffff;
+  --background: #f8fafc;
 }
 
 body {
@@ -14,4 +14,67 @@ body {
   background: var(--background);
   font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+@media print {
+  /* Reset page chrome */
+  body {
+    background: #fff;
+    color: #0f172a;
+    font-size: 11pt;
+  }
+
+  /* Hide nav, header, sidebar, sticky TOC, print button, expand toggles */
+  header,
+  nav,
+  aside,
+  footer,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Full-width content, no padding waste */
+  .max-w-3xl,
+  .max-w-4xl,
+  .max-w-5xl {
+    max-width: 100% !important;
+  }
+
+  /* Expand all collapsed signal cards */
+  .hidden.print\:\!block {
+    display: block !important;
+  }
+
+  /* Signal cards: keep together, no orphaned headings */
+  [class*="border-l-4"] {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Section headers: no orphan heading at page bottom */
+  h2,
+  h3 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  /* Teal action boxes — ensure they print without background clipping */
+  .bg-teal-50 {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Risk pill badges — keep color in print */
+  [class*="bg-red-100"],
+  [class*="bg-orange-100"],
+  [class*="bg-yellow-100"],
+  [class*="bg-green-100"] {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  a {
+    text-decoration: none;
+    color: inherit;
+  }
 }
