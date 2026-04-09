@@ -59,7 +59,7 @@ const PLANS = [
       "Invoice billing",
     ],
     cta: "Contact Us",
-    href: "mailto:sales@securelogic.ai",
+    href: "mailto:sales@securelogicai.com",
     style: "dark" as const,
   },
 ];
@@ -138,10 +138,10 @@ function PlanCard({
   const isDark = plan.style === "dark";
 
   const cardClass = isPrimary
-    ? "bg-teal-600 text-white rounded-lg p-7 flex flex-col relative overflow-hidden"
+    ? "bg-teal-600 text-white rounded-xl p-7 flex flex-col relative overflow-hidden"
     : isDark
-    ? "bg-slate-900 text-white rounded-lg p-7 flex flex-col"
-    : "bg-white border border-slate-200 rounded-lg p-7 flex flex-col";
+    ? "bg-navy-900 text-white rounded-xl p-7 flex flex-col"
+    : "bg-white border border-slate-200 rounded-xl shadow-sm p-7 flex flex-col";
 
   const priceClass = isPrimary || isDark ? "text-white" : "text-slate-900";
   const periodClass = isPrimary ? "text-teal-300" : isDark ? "text-slate-400" : "text-slate-400";

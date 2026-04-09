@@ -29,7 +29,7 @@ export default function RecoverPage() {
   if (phase === "sent") {
     return (
       <div className="max-w-lg mx-auto px-6 py-16">
-        <div className="bg-white border border-slate-200 rounded-lg p-8 text-center">
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-8 text-center">
           <div className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg className="w-6 h-6 text-teal-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
@@ -61,7 +61,7 @@ export default function RecoverPage() {
         </p>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-lg p-8">
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-8">
         {phase === "error" && (
           <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 mb-6">
             Something went wrong. Please try again.
@@ -91,7 +91,7 @@ export default function RecoverPage() {
           <button
             type="submit"
             disabled={phase === "loading"}
-            className="w-full bg-teal-600 hover:bg-teal-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors"
+            className="w-full bg-teal-600 hover:bg-teal-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors"
           >
             {phase === "loading" ? "Sending…" : "Send sign-in link"}
           </button>

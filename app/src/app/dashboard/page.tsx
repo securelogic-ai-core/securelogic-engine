@@ -49,7 +49,7 @@ export default async function DashboardPage() {
           {latestIssue ? (
             <BriefCard issue={latestIssue} />
           ) : (
-            <div className="bg-white border border-slate-200 rounded-lg p-8 text-center">
+            <div className="bg-white border border-slate-200 rounded-xl p-8 shadow-sm text-center">
               <p className="text-slate-500 text-sm">
                 No briefs published yet. Check back soon.
               </p>
@@ -71,7 +71,7 @@ export default async function DashboardPage() {
         {/* Sidebar */}
         <div className="space-y-4">
           {/* Account status */}
-          <div className="bg-white border border-slate-200 rounded-lg p-5">
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
               Account
             </h3>
@@ -105,7 +105,7 @@ export default async function DashboardPage() {
           )}
 
           {/* Quick links */}
-          <div className="bg-white border border-slate-200 rounded-lg p-5">
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
               Quick links
             </h3>
@@ -141,7 +141,7 @@ function planDisplayName(entitlementLevel: string): string {
 
 function UpgradeCard() {
   return (
-    <div className="bg-teal-600 text-white rounded-lg p-5">
+    <div className="bg-teal-600 text-white rounded-xl p-5">
       <h3 className="font-semibold text-sm mb-1">Unlock full access</h3>
       <p className="text-teal-200 text-xs mb-4">
         Full brief content, all sections, and the complete archive.
@@ -172,7 +172,7 @@ function UpgradeCard() {
 
 function ManageBillingButton() {
   return (
-    <div className="bg-white border border-slate-200 rounded-lg p-5">
+    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
       <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
         Billing
       </h3>

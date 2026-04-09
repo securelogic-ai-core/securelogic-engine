@@ -83,7 +83,7 @@ function LockedContent() {
   return (
     <div className="relative">
       {/* Blurred preview bar */}
-      <div className="bg-slate-100 rounded-lg h-32 mb-2 overflow-hidden relative">
+      <div className="bg-slate-100 rounded-xl h-32 mb-2 overflow-hidden relative">
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="space-y-2 w-full px-8 opacity-30 select-none">
             <div className="h-3 bg-slate-400 rounded w-full" />
@@ -94,7 +94,7 @@ function LockedContent() {
       </div>
 
       {/* Lock overlay */}
-      <div className="bg-white border border-slate-200 rounded-lg p-10 text-center">
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-10 text-center">
         <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -132,7 +132,7 @@ function LockedContent() {
             <input type="hidden" name="tier" value="team" />
             <button
               type="submit"
-              className="bg-teal-600 hover:bg-teal-700 text-white font-semibold px-6 py-2.5 rounded-lg transition-colors text-sm"
+              className="bg-teal-600 hover:bg-teal-500 text-white font-semibold px-6 py-2.5 rounded-lg transition-colors text-sm"
             >
               Team — $209/mo
             </button>

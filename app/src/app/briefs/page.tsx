@@ -37,7 +37,7 @@ export default async function BriefsPage() {
       </div>
 
       {issues.length === 0 ? (
-        <div className="bg-white border border-slate-200 rounded-lg p-12 text-center">
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-12 text-center">
           <p className="text-slate-500">
             No briefs have been published yet. Check back soon.
           </p>
@@ -51,7 +51,7 @@ export default async function BriefsPage() {
       )}
 
       {!isPremium && lockedCount > 0 && (
-        <div className="mt-10 bg-teal-50 border border-teal-200 rounded-lg p-6 text-center">
+        <div className="mt-10 bg-teal-50 border border-teal-200 rounded-xl p-6 text-center">
           <p className="text-teal-900 font-semibold mb-1">
             {lockedCount} brief{lockedCount !== 1 ? "s" : ""} locked
           </p>
@@ -80,7 +80,7 @@ function CheckoutButton({
   const base = "font-semibold text-sm py-2 px-5 rounded-lg transition-colors";
   const styles =
     variant === "solid"
-      ? `${base} bg-teal-600 hover:bg-teal-700 text-white`
+      ? `${base} bg-teal-600 hover:bg-teal-500 text-white`
       : `${base} bg-white border border-teal-300 text-teal-700 hover:border-teal-500`;
 
   return (
