@@ -157,6 +157,10 @@ router.post(
       // bucket in DomainRiskAggregationEngineV2 on next posture snapshot.
       const priority = severityToPriority(input.overall_severity);
       const findingTitle = `Vendor Risk: ${vendorName} — ${input.overall_severity} severity`;
+      const findingDescription =
+        (input.summary != null && input.summary.trim().length > 0)
+          ? input.summary.trim()
+          : `Vendor review finding from ${input.assessment_type} assessment.`;
 
       const findingResult = await client.query(
         `
@@ -166,12 +170,13 @@ router.post(
           source_type,
           source_id,
           title,
+          description,
           severity,
           domain,
           priority,
           status
         )
-        VALUES ($1, NULL, 'vendor_review', $2::uuid, $3, $4, 'Vendor Risk', $5, 'open')
+        VALUES ($1, NULL, 'vendor_review', $2::uuid, $3, $4, $5, 'Vendor Risk', $6, 'open')
         RETURNING
           id,
           organization_id,
@@ -179,6 +184,7 @@ router.post(
           source_type,
           source_id,
           title,
+          description,
           severity,
           domain,
           priority,
@@ -190,6 +196,7 @@ router.post(
           organizationId,
           assessmentId,
           findingTitle,
+          findingDescription,
           input.overall_severity,
           priority
         ]
