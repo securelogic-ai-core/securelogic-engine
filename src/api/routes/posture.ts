@@ -21,7 +21,9 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import {
   computePosture,
-  type DbFindingForPosture
+  FALLBACK_CONTEXT,
+  type DbFindingForPosture,
+  type OrgContext
 } from "../lib/postureComputation.js";
 
 const router = Router();
@@ -45,6 +47,45 @@ router.post(
       if (!organizationId) {
         res.status(403).json({ error: "organization_context_missing" });
         return;
+      }
+
+      // Fetch org profile for context-weighted posture computation.
+      // These columns are added by migration 20260411_org_profile_context_weighting.sql.
+      const orgProfileResult = await pg.query<{
+        regulated: boolean;
+        handles_pii: boolean;
+        safety_critical: boolean;
+        scale: string;
+      }>(
+        `
+        SELECT regulated, handles_pii, safety_critical, scale
+        FROM organizations
+        WHERE id = $1
+        `,
+        [organizationId]
+      );
+
+      let orgContext: OrgContext;
+
+      if ((orgProfileResult.rowCount ?? 0) === 0) {
+        // Should not occur: organizationId is resolved from a valid API key.
+        // Log a warning and fall back to the safe neutral context.
+        logger.warn(
+          { event: "posture_snapshot_org_not_found", organizationId },
+          "org profile not found for posture computation — falling back to FALLBACK_CONTEXT"
+        );
+        orgContext = FALLBACK_CONTEXT;
+      } else {
+        const row = orgProfileResult.rows[0]!;
+        const validScales = new Set(["Small", "Medium", "Enterprise"]);
+        orgContext = {
+          regulated: row.regulated,
+          handlesPII: row.handles_pii,
+          safetyCritical: row.safety_critical,
+          scale: validScales.has(row.scale)
+            ? (row.scale as OrgContext["scale"])
+            : "Small"
+        };
       }
 
       // Fetch open findings for this org
@@ -87,8 +128,8 @@ router.post(
         ? parseInt(actionRow.overdue_count, 10)
         : 0;
 
-      // Compute posture using the reused engine logic
-      const computed = computePosture(openFindings, openActionCount, overdueActionCount);
+      // Compute posture using real org context — no longer neutral by default
+      const computed = computePosture(openFindings, openActionCount, overdueActionCount, orgContext);
 
       const client = await pg.connect();
 

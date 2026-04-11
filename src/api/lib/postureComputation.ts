@@ -8,12 +8,16 @@
  * is consistent across the platform. Domain scores and the overall score
  * are computed from the same algorithm and the same policy.
  *
- * Organization context weighting (regulated, handlesPII, scale) is not
- * applied in this version because the organizations table does not yet
- * carry those fields. A neutral context (contextMultiplier = 1.0) is used,
- * which means scores reflect finding severity alone without amplification.
- * This is noted in computation_rationale. Context weighting is a subsequent
- * package once org profile columns are added.
+ * Organization context weighting (regulated, handlesPII, safetyCritical,
+ * scale) is applied using the org profile columns added in migration
+ * 20260411_org_profile_context_weighting.sql. Scores now reflect actual
+ * org context: a regulated, enterprise-scale org with identical findings
+ * will receive a higher risk score than a non-regulated small org.
+ *
+ * FALLBACK_CONTEXT is used only when the org profile cannot be read from
+ * the database (should not occur in production; the org is always resolved
+ * from the API key). It is not a neutral default — it is an emergency safe
+ * fallback that must be logged when reached.
  *
  * This module has no I/O dependencies and is fully unit-testable.
  */
@@ -68,6 +72,30 @@ export type DbFindingForPosture = {
   severity: string;
 };
 
+/**
+ * Organization context shape passed into posture computation.
+ * Sourced from the organizations table — not inferred or defaulted by this module.
+ * Maps directly to the engine's EngineInput["context"] shape.
+ */
+export type OrgContext = {
+  regulated: boolean;
+  handlesPII: boolean;
+  safetyCritical: boolean;
+  scale: "Small" | "Medium" | "Enterprise";
+};
+
+/**
+ * Emergency fallback context — used only when the org profile cannot be read.
+ * Equivalent to the previous neutral multiplier behaviour (contextMultiplier = 1.0).
+ * Callers must log a warning when this is used in production.
+ */
+export const FALLBACK_CONTEXT: OrgContext = {
+  regulated: false,
+  handlesPII: false,
+  safetyCritical: false,
+  scale: "Small"
+};
+
 export type DomainScoreResult = {
   domain: string;
   score: number | null;
@@ -90,15 +118,13 @@ export type PostureComputationResult = {
 // Computation
 // ----------------------------------------------------------------
 
-const NEUTRAL_CONTEXT = {
-  regulated: false,
-  safetyCritical: false,
-  handlesPII: false,
-  scale: "Small" as const
-};
-
 /**
- * Compute a posture snapshot from a set of open findings and action counts.
+ * Compute a posture snapshot from a set of open findings, action counts,
+ * and the calling organization's context profile.
+ *
+ * orgContext is read from the organizations table by the posture route
+ * before calling this function. It must not be defaulted to FALLBACK_CONTEXT
+ * silently — callers must log a warning if they fall back.
  *
  * Returns null overall_score when there are no findings — this is honest
  * and must be represented as "insufficient data" in the presentation layer,
@@ -107,8 +133,19 @@ const NEUTRAL_CONTEXT = {
 export function computePosture(
   findings: DbFindingForPosture[],
   openActionCount: number,
-  overdueActionCount: number
+  overdueActionCount: number,
+  orgContext: OrgContext = FALLBACK_CONTEXT
 ): PostureComputationResult {
+  // Build a human-readable summary of the context applied — used in rationale.
+  const contextSummary = [
+    orgContext.regulated ? "regulated" : null,
+    orgContext.handlesPII ? "handles_pii" : null,
+    orgContext.safetyCritical ? "safety_critical" : null,
+    `scale:${orgContext.scale}`
+  ]
+    .filter(Boolean)
+    .join(", ");
+
   if (findings.length === 0) {
     return {
       overall_score: null,
@@ -119,7 +156,12 @@ export function computePosture(
       domain_scores: [],
       computation_rationale: {
         note: "No open findings available. Score cannot be computed.",
-        context_weighting: "not applied — org profile not yet configured",
+        context_applied: {
+          regulated: orgContext.regulated,
+          handles_pii: orgContext.handlesPII,
+          safety_critical: orgContext.safetyCritical,
+          scale: orgContext.scale
+        },
         engine: "DomainRiskAggregationEngineV2 + OverallRiskAggregationEngineV2"
       }
     };
@@ -129,6 +171,13 @@ export function computePosture(
   // The aggregation engine only reads: domain, severity, title, id (id only in EXPLAIN mode).
   // Remaining Finding fields are required by the type but not accessed during scoring.
   // The cast to Finding[] is safe here and is the same pattern used in engine tests.
+  const engineContext = {
+    regulated: orgContext.regulated,
+    safetyCritical: orgContext.safetyCritical,
+    handlesPII: orgContext.handlesPII,
+    scale: orgContext.scale
+  };
+
   const engineFindings: Finding[] = findings.map((f) => ({
     id: f.id,
     title: f.title,
@@ -146,7 +195,7 @@ export function computePosture(
 
   const domainProfiles = DomainRiskAggregationEngineV2.aggregate(
     engineFindings,
-    NEUTRAL_CONTEXT
+    engineContext
   );
 
   const overall =
@@ -163,7 +212,7 @@ export function computePosture(
       `${profile.findingCount} finding(s); ` +
       `max severity ${profile.maxSeverity}; ` +
       `base score ${profile.baseScore}; ` +
-      `context multiplier ${profile.contextMultiplier} (neutral)`
+      `context multiplier ${profile.contextMultiplier} (${contextSummary})`
   }));
 
   const nullDomainCount = findings.filter((f) => f.domain === null).length;
@@ -177,17 +226,17 @@ export function computePosture(
     domain_scores: domainScores,
     computation_rationale: {
       note: `Computed from ${findings.length} open finding(s) across ${domainProfiles.length} domain(s).`,
-      context_weighting:
-        "neutral — org profile (regulated, handlesPII, scale) not yet configured; " +
-        "context multiplier = 1.0; no amplification applied",
+      context_applied: {
+        regulated: orgContext.regulated,
+        handles_pii: orgContext.handlesPII,
+        safety_critical: orgContext.safetyCritical,
+        scale: orgContext.scale
+      },
       engine: "DomainRiskAggregationEngineV2 + OverallRiskAggregationEngineV2",
       policy: "DEFAULT_SCORING_POLICY",
       null_domain_findings: nullDomainCount > 0
         ? `${nullDomainCount} finding(s) with no domain bucketed under "General"`
-        : 0,
-      limitation:
-        "Add org profile columns (regulated, handles_pii, safety_critical, scale) " +
-        "to organizations table to enable context-weighted posture scoring."
+        : 0
     }
   };
 }

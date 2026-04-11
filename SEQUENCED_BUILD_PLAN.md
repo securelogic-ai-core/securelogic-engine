@@ -56,23 +56,34 @@ Packages are closed when validated and committed, not when coded.
 
 ---
 
-## Next Package
+## Closed Packages (continued)
 
 ### Package: org-profile-context-weighting
+
+**Status:** Pending validation and commit close
 
 **Depends on:** platform-foundation-findings-actions-posture (closed)
 
 **What it delivers:**
 - Add `regulated`, `handles_pii`, `safety_critical`, `scale` columns to organizations table
 - Wire those fields into posture computation (remove neutral multiplier)
-- Admin route to update org profile
-- Posture snapshot computation_rationale reflects actual org context
+- Admin PATCH route extended to update org profile fields with boolean validation
+- Admin GET routes include new profile fields in response
+- `computePosture` accepts `OrgContext` parameter — scores now reflect actual org context
+- Posture snapshot `computation_rationale` now includes `context_applied` instead of a limitation note
+- `FALLBACK_CONTEXT` exported for emergency use with required warning log
 
-**Why it is next:**
-Posture computation currently runs with a neutral context multiplier (1.0).
-The computation_rationale in every snapshot explicitly flags this as a limitation.
-This package removes that limitation and makes posture scores org-aware.
-It is a small, targeted schema + computation change with no new domain objects.
+**Migration:** `db/migrations/20260411_org_profile_context_weighting.sql`
+
+**Done conditions:**
+- Migration applied and verified in live DB
+- `PATCH /admin/organizations/:id` accepts and persists all four profile fields
+- `POST /api/posture/snapshot` reads org profile and passes real context to engine
+- `computationRationale.context_applied` in snapshot response reflects actual org values
+- Regulated org produces higher posture score than non-regulated with identical findings (live test)
+- Boolean field rejection: `regulated: "yes"` returns 400
+- Invalid scale rejection: `scale: "Huge"` returns 400
+- Clean git commit on main
 
 ---
 
