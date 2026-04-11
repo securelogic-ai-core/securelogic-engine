@@ -44,7 +44,7 @@ They must not be re-declared differently in each module.
 | Posture Snapshot | posture_snapshots + domain_scores | POST /api/posture/snapshot, GET /api/posture/latest, GET /api/posture/history | Complete — package platform-foundation-findings-actions-posture |
 | Assessment | assessments | POST /api/assess, GET /api/assessments/:id | Complete — prior package |
 | Signal | signals | signals API | Complete — prior package |
-| Organization | organizations | admin API | Minimal — profile fields pending |
+| Organization | organizations | admin API | Profile fields complete — package org-profile-context-weighting |
 | Vendor | — | — | Not started |
 | AI System | — | — | Not started |
 | Control | — | — | Not started |
@@ -128,13 +128,13 @@ Organization
 
 Engine: `DomainRiskAggregationEngineV2` + `OverallRiskAggregationEngineV2`
 
-Inputs: open findings (severity, domain), open action count, overdue action count
+Inputs: open findings (severity, domain), open action count, overdue action count, org context profile
 
-Context weighting: neutral (multiplier = 1.0) until org profile columns are added
+Context weighting: **live** — `regulated`, `handles_pii`, `safety_critical`, `scale` columns read from organizations table and passed as engine context. Multipliers: regulated +0.2, safety_critical +0.3, handles_pii +0.2, scale Small=0, Medium=0.1, Enterprise=0.2.
 
 Null score: when there are zero open findings, overall_score is NULL (not zero). Must be presented as "insufficient data."
 
-Next evolution: context weighting requires `regulated`, `handles_pii`, `safety_critical`, `scale` columns on the organizations table.
+FALLBACK_CONTEXT: used only when org profile cannot be read (should not occur in production). Equivalent to unweighted scoring. Must be logged as a warning when reached.
 
 ---
 

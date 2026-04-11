@@ -6,6 +6,7 @@ const router = Router();
 
 const VALID_PLANS = new Set(["starter", "standard", "premium"]);
 const VALID_STATUSES = new Set(["active", "suspended"]);
+const VALID_SCALES = new Set(["Small", "Medium", "Enterprise"]);
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
@@ -55,7 +56,9 @@ router.get("/organizations", async (req, res) => {
 
     const result = await pg.query(
       `
-      SELECT id, name, slug, plan, status, created_at, updated_at
+      SELECT id, name, slug, plan, status,
+             regulated, handles_pii, safety_critical, scale,
+             created_at, updated_at
       FROM organizations
       ${whereClause}
       ORDER BY created_at DESC, id DESC
@@ -94,7 +97,10 @@ router.get("/organizations/:id", async (req, res) => {
     }
 
     const result = await pg.query(
-      `SELECT id, name, slug, plan, status, created_at, updated_at FROM organizations WHERE id = $1`,
+      `SELECT id, name, slug, plan, status,
+              regulated, handles_pii, safety_critical, scale,
+              created_at, updated_at
+       FROM organizations WHERE id = $1`,
       [id]
     );
 
@@ -142,15 +148,44 @@ router.post("/organizations", async (req, res) => {
       return;
     }
 
+    // Org profile fields — optional on create, defaults match DB column defaults
+    const regulated      = req.body?.regulated      ?? false;
+    const handlesPii     = req.body?.handles_pii    ?? false;
+    const safetyCritical = req.body?.safety_critical ?? false;
+    const scale          = req.body?.scale          ?? "Small";
+
+    if (typeof regulated !== "boolean") {
+      res.status(400).json({ error: "invalid_regulated", expected: "boolean" });
+      return;
+    }
+    if (typeof handlesPii !== "boolean") {
+      res.status(400).json({ error: "invalid_handles_pii", expected: "boolean" });
+      return;
+    }
+    if (typeof safetyCritical !== "boolean") {
+      res.status(400).json({ error: "invalid_safety_critical", expected: "boolean" });
+      return;
+    }
+    if (!VALID_SCALES.has(scale)) {
+      res.status(400).json({ error: "invalid_scale", allowed: ["Small", "Medium", "Enterprise"] });
+      return;
+    }
+
     let result;
     try {
       result = await pg.query(
         `
-        INSERT INTO organizations (name, slug, plan, status, created_at, updated_at)
-        VALUES ($1, $2, $3, 'active', NOW(), NOW())
-        RETURNING id, name, slug, plan, status, created_at, updated_at
+        INSERT INTO organizations (
+          name, slug, plan, status,
+          regulated, handles_pii, safety_critical, scale,
+          created_at, updated_at
+        )
+        VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, NOW(), NOW())
+        RETURNING id, name, slug, plan, status,
+                  regulated, handles_pii, safety_critical, scale,
+                  created_at, updated_at
         `,
-        [name, slug, plan]
+        [name, slug, plan, regulated, handlesPii, safetyCritical, scale]
       );
     } catch (err: any) {
       // Postgres unique violation on slug
@@ -190,8 +225,38 @@ router.patch("/organizations/:id", async (req, res) => {
       return;
     }
 
-    const plan = req.body?.plan != null ? String(req.body.plan).trim().toLowerCase() : null;
+    const plan   = req.body?.plan   != null ? String(req.body.plan).trim().toLowerCase()   : null;
     const status = req.body?.status != null ? String(req.body.status).trim().toLowerCase() : null;
+    const scale  = req.body?.scale  != null ? String(req.body.scale).trim()                : null;
+
+    // Boolean profile fields: must be actual booleans — not strings, not numbers
+    let regulated: boolean | null      = null;
+    let handlesPii: boolean | null     = null;
+    let safetyCritical: boolean | null = null;
+
+    if (req.body?.regulated !== undefined) {
+      if (typeof req.body.regulated !== "boolean") {
+        res.status(400).json({ error: "invalid_regulated", expected: "boolean" });
+        return;
+      }
+      regulated = req.body.regulated;
+    }
+
+    if (req.body?.handles_pii !== undefined) {
+      if (typeof req.body.handles_pii !== "boolean") {
+        res.status(400).json({ error: "invalid_handles_pii", expected: "boolean" });
+        return;
+      }
+      handlesPii = req.body.handles_pii;
+    }
+
+    if (req.body?.safety_critical !== undefined) {
+      if (typeof req.body.safety_critical !== "boolean") {
+        res.status(400).json({ error: "invalid_safety_critical", expected: "boolean" });
+        return;
+      }
+      safetyCritical = req.body.safety_critical;
+    }
 
     if (plan !== null && !VALID_PLANS.has(plan)) {
       res.status(400).json({ error: "invalid_plan", allowed: ["starter", "standard", "premium"] });
@@ -203,7 +268,20 @@ router.patch("/organizations/:id", async (req, res) => {
       return;
     }
 
-    if (plan === null && status === null) {
+    if (scale !== null && !VALID_SCALES.has(scale)) {
+      res.status(400).json({ error: "invalid_scale", allowed: ["Small", "Medium", "Enterprise"] });
+      return;
+    }
+
+    const hasUpdate =
+      plan !== null ||
+      status !== null ||
+      regulated !== null ||
+      handlesPii !== null ||
+      safetyCritical !== null ||
+      scale !== null;
+
+    if (!hasUpdate) {
       res.status(400).json({ error: "no_fields_to_update" });
       return;
     }
@@ -212,13 +290,19 @@ router.patch("/organizations/:id", async (req, res) => {
       `
       UPDATE organizations
       SET
-        plan = COALESCE($2, plan),
-        status = COALESCE($3, status),
-        updated_at = NOW()
+        plan            = COALESCE($2, plan),
+        status          = COALESCE($3, status),
+        regulated       = COALESCE($4, regulated),
+        handles_pii     = COALESCE($5, handles_pii),
+        safety_critical = COALESCE($6, safety_critical),
+        scale           = COALESCE($7, scale),
+        updated_at      = NOW()
       WHERE id = $1
-      RETURNING id, name, slug, plan, status, created_at, updated_at
+      RETURNING id, name, slug, plan, status,
+                regulated, handles_pii, safety_critical, scale,
+                created_at, updated_at
       `,
-      [id, plan, status]
+      [id, plan, status, regulated, handlesPii, safetyCritical, scale]
     );
 
     if ((result.rowCount ?? 0) === 0) {
@@ -229,7 +313,16 @@ router.patch("/organizations/:id", async (req, res) => {
     const org = result.rows[0];
 
     logger.info(
-      { event: "admin_org_updated", id: org.id, plan: org.plan, status: org.status },
+      {
+        event: "admin_org_updated",
+        id: org.id,
+        plan: org.plan,
+        status: org.status,
+        regulated: org.regulated,
+        handles_pii: org.handles_pii,
+        safety_critical: org.safety_critical,
+        scale: org.scale
+      },
       "admin: organization updated"
     );
 
