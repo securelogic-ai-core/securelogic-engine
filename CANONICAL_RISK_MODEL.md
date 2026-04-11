@@ -46,6 +46,7 @@ They must not be re-declared differently in each module.
 | Signal | signals | signals API | Complete — prior package |
 | Organization | organizations | admin API | Profile fields complete — package org-profile-context-weighting |
 | Vendor | vendors (extended) | POST /api/vendors, GET /api/vendors, GET /api/vendors/:id, PATCH /api/vendors/:id | Complete — package vendor-risk-primitives |
+| Vendor Assessment | vendor_assessments | POST /api/vendor-assessments, GET /api/vendor-assessments, GET /api/vendor-assessments/:id | Complete — package vendor-assessment-workflow |
 | AI System | — | — | Not started |
 | Control | — | — | Not started |
 | Framework | — | — | Not started |
@@ -119,7 +120,10 @@ Organization
   ├── Assessments (organization_id FK)
   │     └── Findings (assessment_id FK — now optional for platform-sourced findings)
   ├── Signals (organization_id FK — see signals table)
-  └── [Future] Vendors, Controls, AI Systems, Obligations
+  ├── Vendors (organization_id FK)
+  │     └── Vendor Assessments (vendor_id FK → vendor_assessments)
+  │           └── Findings (source_type='vendor_review', source_id=vendor_assessments.id)
+  └── [Future] Controls, AI Systems, Obligations
 ```
 
 ---

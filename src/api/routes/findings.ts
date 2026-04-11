@@ -137,6 +137,21 @@ router.get(
         conditions.push(`f.domain = $${params.length}`);
       }
 
+      // source_id: filters by the source record ID (UUID).
+      // For source_type='vendor_review' this is a vendor_assessments.id —
+      // NOT a vendor_id. The source_id column is polymorphic (no FK).
+      const filterSourceId = isNonEmptyString(req.query.source_id)
+        ? req.query.source_id
+        : null;
+      if (filterSourceId !== null) {
+        if (!isUuid(filterSourceId)) {
+          res.status(400).json({ error: "source_id_must_be_uuid" });
+          return;
+        }
+        params.push(filterSourceId);
+        conditions.push(`f.source_id = $${params.length}::uuid`);
+      }
+
       const filterPriority = isNonEmptyString(req.query.priority)
         ? req.query.priority
         : null;
