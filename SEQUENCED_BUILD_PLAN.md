@@ -87,13 +87,51 @@ Packages are closed when validated and committed, not when coded.
 
 ---
 
-## Future Package Queue (in dependency order)
+## Closed Packages (continued)
 
 ### Package: vendor-risk-primitives
-Depends on: org-profile-context-weighting
 
-Delivers: vendors table, vendor CRUD API, vendor → finding linkage, vendor → action linkage.
-Does not deliver: vendor assessments (next package after this one).
+**Status:** Pending validation and commit close
+
+**Depends on:** org-profile-context-weighting (closed)
+
+**What it delivers:**
+- vendors table extended (additive migration 20260412_vendor_risk_primitives.sql):
+  service_description, data_sensitivity, access_level, website, status columns added;
+  criticality/data_sensitivity/access_level/status CHECK constraints added;
+  org_status, org_criticality, owner indexes added
+- Vendor CRUD API: POST /api/vendors, GET /api/vendors, GET /api/vendors/:id, PATCH /api/vendors/:id
+- Default GET list returns active vendors only; pass ?status=archived for archived
+- Soft archive via PATCH status=archived; no hard delete route (assessments hold vendor_id FK)
+- vendor → finding linkage: convention established — findings.source_type='vendor_review' + findings.source_id=vendors.id
+- vendor → action linkage: action chain from vendor → finding → action is traversable via existing actions API
+- current_risk_score and framework_coverage preserved in DB but not exposed in new routes
+- 44 unit tests for vendorValidation.ts (pure, no DB)
+- TypeScript clean — zero compiler errors
+
+**Migration:** `db/migrations/20260412_vendor_risk_primitives.sql`
+
+**Routes delivered:**
+- `POST /api/vendors` — create vendor (org-scoped, 409 on duplicate name within org)
+- `GET /api/vendors` — list, filter by status/criticality, cursor paginate (default: active only)
+- `GET /api/vendors/:id` — get single vendor (404 if wrong org)
+- `PATCH /api/vendors/:id` — update fields, supports status=archived for soft delete
+
+**Done conditions:**
+- Migration applied and verified in live DB
+- All routes return correct responses with a real API key
+- Cross-org protection confirmed (org A cannot read org B vendors)
+- Entitlement check confirmed (unauthenticated request returns 401/403)
+- Clean git commit on main
+
+---
+
+## Future Package Queue (in dependency order)
+
+### Package: vendor-assessment-workflow
+Depends on: vendor-risk-primitives
+
+Delivers: vendor_assessments table, assessment → findings flow for vendor source_type, vendor posture rollup.
 
 ### Package: vendor-assessment-workflow
 Depends on: vendor-risk-primitives

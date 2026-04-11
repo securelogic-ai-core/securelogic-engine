@@ -45,7 +45,7 @@ They must not be re-declared differently in each module.
 | Assessment | assessments | POST /api/assess, GET /api/assessments/:id | Complete — prior package |
 | Signal | signals | signals API | Complete — prior package |
 | Organization | organizations | admin API | Profile fields complete — package org-profile-context-weighting |
-| Vendor | — | — | Not started |
+| Vendor | vendors (extended) | POST /api/vendors, GET /api/vendors, GET /api/vendors/:id, PATCH /api/vendors/:id | Complete — package vendor-risk-primitives |
 | AI System | — | — | Not started |
 | Control | — | — | Not started |
 | Framework | — | — | Not started |
