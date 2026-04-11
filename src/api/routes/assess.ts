@@ -6,6 +6,7 @@ import { logger } from "../infra/logger.js";
 import { pg } from "../infra/postgres.js";
 import { RunnerEngine } from "../../engine/RunnerEngine.js";
 import type { EngineInput } from "../../engine/contracts/EngineInput.js";
+import { severityToPriority } from "../lib/postureComputation.js";
 
 const router = Router();
 
@@ -176,28 +177,38 @@ async function persistAssessment(
     const assessmentId: string = assessmentResult.rows[0].id;
 
     // 2. Insert findings (bulk — one per engine finding)
+    //    Populates platform-level fields (organization_id, source_type, domain, priority)
+    //    in addition to assessment-specific fields.
     if (report.findings.length > 0) {
       const findingValues: unknown[] = [];
       const findingPlaceholders: string[] = [];
 
       report.findings.forEach((f, i) => {
-        const base = i * 6;
+        const base = i * 10;
         findingPlaceholders.push(
-          `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`
+          `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10})`
         );
         findingValues.push(
-          assessmentId,
-          f.title,
-          f.severity,
-          f.businessImpact ?? "",
-          f.recommendation ?? "",
-          f.id
+          assessmentId,          // assessment_id
+          organizationId,        // organization_id
+          "assessment",          // source_type
+          f.title,               // title
+          f.severity,            // severity
+          f.businessImpact ?? "", // description
+          f.recommendation ?? "", // recommendation
+          f.id,                  // framework_control_id (engine control id)
+          f.domain ?? null,      // domain
+          severityToPriority(f.severity) // priority
         );
       });
 
       await client.query(
         `
-        INSERT INTO findings (assessment_id, title, severity, description, recommendation, framework_control_id)
+        INSERT INTO findings (
+          assessment_id, organization_id, source_type,
+          title, severity, description, recommendation, framework_control_id,
+          domain, priority
+        )
         VALUES ${findingPlaceholders.join(", ")}
         `,
         findingValues
