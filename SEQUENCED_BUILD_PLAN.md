@@ -126,17 +126,49 @@ Packages are closed when validated and committed, not when coded.
 
 ---
 
+---
+
+## Closed Packages (continued)
+
+### Package: vendor-assessment-workflow
+
+**Status:** Pending validation and commit close
+
+**Depends on:** vendor-risk-primitives (closed)
+
+**What it delivers:**
+- `vendor_assessments` table: org-scoped, vendor-scoped, structured assessment record
+- `POST /api/vendor-assessments`: creates assessment + finding atomically; rejects archived vendors
+- `GET /api/vendor-assessments`: list with cursor pagination, optional vendor_id filter
+- `GET /api/vendor-assessments/:id`: returns assessment + exact finding produced by it
+- `GET /api/findings` extended with `source_id` filter (filters by source record UUID)
+- finding linkage: `source_type='vendor_review'`, `source_id=vendor_assessments.id` (NOT vendor_id)
+- `domain='Vendor Risk'` hardcoded on findings — flows into DomainRiskAggregationEngineV2 on next posture snapshot
+- Archived vendor rejection: `WHERE status='active' FOR UPDATE` inside transaction
+- 36 unit tests for `vendorAssessmentValidation.ts` — all pass
+- TypeScript clean — zero compiler errors
+
+**Migration:** `db/migrations/20260413_vendor_assessment_workflow.sql`
+
+**Routes delivered:**
+- `POST /api/vendor-assessments` — create assessment + finding (transactional)
+- `GET /api/vendor-assessments` — list, filter by vendor_id, cursor paginate
+- `GET /api/vendor-assessments/:id` — get assessment with exact finding
+- `GET /api/findings` — extended: `?source_id=<uuid>` filters by source record ID
+
+**Done conditions:**
+- Migration applied and verified in live DB
+- All routes return correct responses with a real API key
+- Cross-org protection confirmed (org A cannot read org B vendor assessments)
+- Entitlement check confirmed (unauthenticated request returns 401/403)
+- Archived vendor rejection confirmed: PATCH vendor to archived, then POST assessment returns 404
+- `GET /api/vendor-assessments/:id` confirms finding.source_id equals assessment.id
+- Cross-org test uses a real active vendor from org B (not a zero UUID)
+- Clean git commit on main
+
+---
+
 ## Future Package Queue (in dependency order)
-
-### Package: vendor-assessment-workflow
-Depends on: vendor-risk-primitives
-
-Delivers: vendor_assessments table, assessment → findings flow for vendor source_type, vendor posture rollup.
-
-### Package: vendor-assessment-workflow
-Depends on: vendor-risk-primitives
-
-Delivers: vendor_assessments table, assessment → findings flow for vendor source_type, vendor posture rollup.
 
 ### Package: ai-system-governance-primitives
 Depends on: vendor-risk-primitives (can run in parallel)

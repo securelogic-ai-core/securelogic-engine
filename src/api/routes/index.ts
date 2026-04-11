@@ -41,6 +41,7 @@ import assessmentsRouter from "./assessments.js";
 import findingsRouter from "./findings.js";
 import actionsRouter from "./actions.js";
 import vendorsRouter from "./vendors.js";
+import vendorAssessmentsRouter from "./vendorAssessments.js";
 import postureRouter from "./posture.js";
 import signalsRouter from "./signals.js";
 import insightsRouter from "./insights.js";
@@ -267,6 +268,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", findingsRouter);
   router.use("/api", actionsRouter);
   router.use("/api", vendorsRouter);
+  router.use("/api", vendorAssessmentsRouter);
   router.use("/api", postureRouter);
   router.use("/api", signalsRouter);
   router.use("/api", insightsRouter);
