@@ -168,6 +168,10 @@ router.get(
           recommendation,
           framework_control_id,
           status,
+          domain,
+          priority,
+          source_type,
+          owner_user_id,
           created_at
         FROM findings
         WHERE assessment_id = $1
