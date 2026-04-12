@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { capturePublicationContext } from "../lib/briefPublicationContext.js";
 
 const router = Router();
 
@@ -61,6 +62,13 @@ router.post("/newsletter-issues", async (req, res) => {
       }
     }
 
+    // Capture publication-time platform context when creating a sent issue with an org scope.
+    // Returns null for platform-wide briefs (no org) or when no posture snapshot exists yet.
+    const publicationContext =
+      status === "sent" && organizationId !== null
+        ? await capturePublicationContext(organizationId, pg)
+        : null;
+
     const result = await pg.query(
       `
       INSERT INTO newsletter_issues (
@@ -72,13 +80,15 @@ router.post("/newsletter-issues", async (req, res) => {
         status,
         audience_tier,
         publish_date,
+        publication_context_json,
         created_at,
         updated_at
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())
-      RETURNING id, organization_id, title, summary, status, audience_tier, publish_date, created_at
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
+      RETURNING id, organization_id, title, summary, status, audience_tier, publish_date, publication_context_json, created_at
       `,
-      [organizationId, title, summary, contentHtml, contentMd, status, audienceTier, publishDate]
+      [organizationId, title, summary, contentHtml, contentMd, status, audienceTier, publishDate,
+       publicationContext !== null ? JSON.stringify(publicationContext) : null]
     );
 
     res.status(201).json({
