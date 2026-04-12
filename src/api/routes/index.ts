@@ -48,6 +48,7 @@ import frameworksRouter from "./frameworks.js";
 import requirementsRouter from "./requirements.js";
 import controlsRouter from "./controls.js";
 import controlMappingsRouter from "./controlMappings.js";
+import controlAssessmentsRouter from "./controlAssessments.js";
 import postureRouter from "./posture.js";
 import signalsRouter from "./signals.js";
 import insightsRouter from "./insights.js";
@@ -281,6 +282,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", requirementsRouter);
   router.use("/api", controlsRouter);
   router.use("/api", controlMappingsRouter);
+  router.use("/api", controlAssessmentsRouter);
   router.use("/api", postureRouter);
   router.use("/api", signalsRouter);
   router.use("/api", insightsRouter);
