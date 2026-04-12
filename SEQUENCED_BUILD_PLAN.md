@@ -168,6 +168,41 @@ Packages are closed when validated and committed, not when coded.
 
 ---
 
+## Closed Packages (continued)
+
+### Package: posture-dashboard-foundation
+
+**Status:** Closed — commit 9515d54e
+
+**Depends on:** control-assessment-workflow (closed), vendor-risk-primitives (closed), control-framework-primitives (closed)
+
+**Locked product decisions:**
+1. Single endpoint only — no multiple routes, no new DB migration
+2. Heatmap Entry out of scope
+3. Route namespace: `/api/dashboard/`
+
+**What it delivers:**
+- `GET /api/dashboard/summary` — single read-only endpoint returning cross-domain posture summary
+- Current posture state: `overall_score`, `overall_severity`, `snapshot_date` from most recent posture_snapshot (null if no snapshot — 200 returned, not 404)
+- Domain-level breakdown from domain_scores for that snapshot, ordered severity descending
+- Open finding counts: total and by_severity (all four canonical keys always present; missing severities = 0)
+- Action counts: open and overdue
+- Object inventory counts: vendors, ai_systems, controls, control_assessments, governance_reviews
+- 12 unit tests for `buildFindingsBySeverity` — all pass
+- TypeScript clean — zero compiler errors
+
+**Migration:** None — reads from existing tables only
+
+**Routes delivered:**
+- `GET /api/dashboard/summary`
+
+**What it explicitly does not deliver:**
+- Heatmap Entry
+- Any new DB migration or new table
+- Additional endpoints beyond the single summary route
+
+---
+
 ## Future Package Queue (in dependency order)
 
 ### Package: ai-system-governance-primitives
@@ -180,12 +215,6 @@ Depends on: org-profile-context-weighting
 
 Delivers: frameworks, requirements, controls, control_mappings tables.
 Does not deliver: evidence or assessment workflow (next package after this one).
-
-### Package: posture-dashboard-foundation
-Depends on: vendor-risk-primitives + control-framework-primitives
-
-Delivers: dashboard API surface reading from posture_snapshots, domain_scores, findings, and actions.
-This is the first package where a UI can be built on top of real structured data.
 
 ### Package: intelligence-brief-platform-integration
 Depends on: posture-dashboard-foundation
