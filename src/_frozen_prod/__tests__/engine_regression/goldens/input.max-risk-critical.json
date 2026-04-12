@@ -1,0 +1,22 @@
+{
+  "client": {
+    "name": "Critical Corp",
+    "industry": "Finance",
+    "assessmentType": "AI",
+    "scope": "Full"
+  },
+  "context": {
+    "regulated": true,
+    "safetyCritical": true,
+    "handlesPII": true,
+    "scale": "Enterprise"
+  },
+  "answers": {
+    "GOV-101": false,
+    "GOV-102": false,
+    "MON-001": false,
+    "DQ-001": false,
+    "MD-001": false,
+    "BC-006": false
+  }
+}

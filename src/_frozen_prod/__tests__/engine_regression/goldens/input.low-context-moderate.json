@@ -1,0 +1,22 @@
+{
+  "client": {
+    "name": "Moderate Corp",
+    "industry": "Tech",
+    "assessmentType": "AI",
+    "scope": "Full"
+  },
+  "context": {
+    "regulated": false,
+    "safetyCritical": false,
+    "handlesPII": false,
+    "scale": "Small"
+  },
+  "answers": {
+    "GOV-101": true,
+    "GOV-102": true,
+    "MON-001": true,
+    "DQ-001": true,
+    "MD-001": true,
+    "BC-006": false
+  }
+}
