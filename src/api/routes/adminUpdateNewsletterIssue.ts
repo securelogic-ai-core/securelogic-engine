@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { capturePublicationContext } from "../lib/briefPublicationContext.js";
 
 const router = Router();
 
@@ -21,6 +22,7 @@ router.patch("/newsletter-issues/:id", async (req, res) => {
         title,
         content_html,
         status,
+        publication_context_json,
         created_at
       FROM newsletter_issues
       WHERE id = $1
@@ -66,13 +68,32 @@ router.patch("/newsletter-issues/:id", async (req, res) => {
       return;
     }
 
+    // Capture publication-time platform context when transitioning to 'sent' for
+    // the first time. Preserve existing context on status-preserving updates.
+    const isNewSentTransition = nextStatus === "sent" && existing.status !== "sent";
+    const orgId: string | null = existing.organization_id ?? null;
+
+    let resolvedPublicationContext: string | null;
+    if (isNewSentTransition && orgId !== null) {
+      const captured = await capturePublicationContext(orgId, pg);
+      resolvedPublicationContext = captured !== null ? JSON.stringify(captured) : null;
+    } else if (existing.status === "sent") {
+      // Already published — preserve the stored context, do not overwrite
+      resolvedPublicationContext = existing.publication_context_json !== null
+        ? JSON.stringify(existing.publication_context_json)
+        : null;
+    } else {
+      resolvedPublicationContext = null;
+    }
+
     const result = await pg.query(
       `
       UPDATE newsletter_issues
       SET
         title = $2,
         content_html = $3,
-        status = $4
+        status = $4,
+        publication_context_json = $5
       WHERE id = $1
       RETURNING
         id,
@@ -80,9 +101,10 @@ router.patch("/newsletter-issues/:id", async (req, res) => {
         title,
         content_html,
         status,
+        publication_context_json,
         created_at
       `,
-      [id, nextTitle, nextContentHtml, nextStatus]
+      [id, nextTitle, nextContentHtml, nextStatus, resolvedPublicationContext]
     );
 
     res.status(200).json({

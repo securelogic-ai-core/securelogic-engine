@@ -58,7 +58,7 @@ router.get("/intelligence/latest", async (req, res, next) => {
     const result = await pg.query(
       `
       SELECT id, title, status, audience_tier, summary, content_html, content_md,
-             sections_json, publish_date, created_at, updated_at
+             sections_json, publish_date, publication_context_json, created_at, updated_at
       FROM newsletter_issues
       WHERE (organization_id IS NOT DISTINCT FROM $1 OR organization_id IS NULL)
         AND status = 'sent'
@@ -103,7 +103,7 @@ router.get("/intelligence/:id", async (req, res, next) => {
     const result = await pg.query(
       `
       SELECT id, title, status, audience_tier, summary, content_html, content_md,
-             sections_json, publish_date, created_at, updated_at
+             sections_json, publish_date, publication_context_json, created_at, updated_at
       FROM newsletter_issues
       WHERE id = $1
         AND (organization_id IS NOT DISTINCT FROM $2 OR organization_id IS NULL)
