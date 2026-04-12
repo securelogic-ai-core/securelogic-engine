@@ -126,22 +126,25 @@ Done conditions met:
 
 ### Package: engine-regression-and-diff-safety
 
+**Status:** Closed — commit 5096fc1b
+
 Depends on: core-engine-production-hardening (closed)
 
 Purpose:
 Prevent future engine work from quietly degrading decision quality or changing outputs without visibility.
 
 What it delivers:
-- frozen output regression protection
-- version comparison tooling where needed
-- safe change visibility between engine versions
-- human-reviewable difference reporting for material scoring/output changes
+- Fixed duplicate vitest imports in `engine.contract.test.ts` and `engine.contract.v2.test.ts`
+- 3 severity boundary frozen tests: all-pass → Low, single Moderate finding / minimal context → Moderate, all-fail / max context → Critical
+- Golden fixtures for all 3 boundary scenarios (`engine_regression/goldens/`)
+- 2 DecisionDiffEngine edge case frozen tests: identical decisions → stable no-change summary, no-trace decisions → empty `domainScoreChanges`
+- Frozen test count: 12 files / 13 tests → 14 files / 18 tests
 
-Done conditions:
-- regression coverage exists for protected engine behavior
-- output drift is detectable before release
-- global typecheck passes
-- clean package-scoped commit on main
+Done conditions met:
+- regression coverage exists for protected engine behavior — YES (3 boundary scenarios + 2 diff edge cases)
+- output drift is detectable before release — YES (severity thresholds and scoring pipeline locked)
+- global typecheck passes — EXIT:0
+- clean package-scoped commit on main — YES (10 frozen test files only)
 
 ---
 
