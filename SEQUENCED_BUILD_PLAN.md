@@ -2,235 +2,423 @@
 
 ## Purpose
 
-This document defines the correct build sequence for the SecureLogic AI platform.
+This document defines the required build order for SecureLogic AI.
 
 It is not a feature wishlist.
-It is not a vision doc.
-It is the order in which work must happen to avoid building on bad foundations.
+It is not a vision memo.
+It is the enforced implementation sequence required to keep the platform from being built on weak foundations.
 
-Each package has a name, a dependency, and a clear done condition.
-Packages are closed when validated and committed, not when coded.
+Every package must have:
+- a clear dependency
+- a narrow scope
+- a concrete done condition
+- validation before closure
+- a clean package-scoped commit before it is considered closed
+
+The governing principle is simple:
+
+No downstream platform package matters if the core engine is not production-grade.
+
+---
+
+## Non-Negotiable Priority
+
+SecureLogic AI is an engine-first platform.
+
+That means:
+
+- The core risk engine is the foundation
+- Platform primitives exist to feed and persist engine outputs
+- Workflows exist to operationalize those primitives
+- Dashboards, briefs, reports, and UI are downstream output surfaces
+- No output surface is allowed to masquerade as platform maturity
+
+If the engine is not enterprise-grade, everything built on top of it is structurally compromised.
 
 ---
 
 ## Governing Rules
 
-- No package starts until its dependency packages are closed.
-- No UI, dashboard, or output surface is built before its backing domain objects exist.
-- No package is considered closed without a migration verified, routes validated live, and a clean commit.
-- Platform architecture takes priority over feature velocity.
+- No package starts until dependency packages are closed
+- No UI, dashboard, report, or output surface is built before its backing primitives exist
+- No primitive or workflow package is treated as strategically meaningful if the engine foundation is still weak
+- No package is closed when merely coded; it is closed only after validation and clean commit
+- Migration-bearing packages are not closed until migration is verified live
+- Readiness is not YES unless global typecheck passes
+- Surface work must never outrun core architecture
+- Platform architecture takes priority over feature velocity
 
 ---
 
-## Closed Packages
+## Build Layers
+
+The platform is built in this order:
+
+1. Core engine hardening
+2. Core platform primitives
+3. Domain workflows
+4. Output/read surfaces
+5. UI and presentation layers
+
+If work appears to skip this stack, it is drift.
+
+---
+
+## Layer 1 — Core Engine Hardening (Top Priority)
+
+These packages are the true foundation. They outrank everything below.
+
+### Package: core-engine-production-hardening
+
+**Status:** Closed — commit 7a920287
+
+Purpose:
+Make the SecureLogic engine production-grade before further platform expansion is treated as strategically meaningful.
+
+What it delivers:
+- deterministic engine execution contract
+- strict environment validation
+- dependency-aware health/readiness behavior
+- production-safe build and CI gates
+- Redis-backed entitlement/usage/rate-limit integrity
+- frozen contract validation for engine modes
+- runtime safety around engine invocation paths
+- enterprise-grade startup and failure behavior
+
+Active fix delivered:
+- `src/_frozen_prod/__tests__/RiskDecision.test.ts` — corrected RunnerEngine import from `../../index.js` to `../../engine/RunnerEngine.js`, removing the server-startup side-effect coupling; removed duplicate vitest import and trailing `;;;`
+- All 12 frozen contract test files now pass (13/13 tests)
+- Global `npx tsc --noEmit` clean
+
+Done conditions met:
+- Contract tests pass — 12/12 files, 13/13 tests
+- Global typecheck passes — EXIT:0
+- Engine module independently importable without triggering server or DB startup
+- Package-scoped clean commit on main
+
+### Package: engine-observability-and-operational-guardrails
+
+Depends on: core-engine-production-hardening (closed)
+
+Purpose:
+Make the engine operationally trustworthy in production, not just logically correct.
+
+What it delivers:
+- structured engine-level logging
+- request correlation / traceability
+- failure-path clarity
+- operational diagnostics needed for support and audit
+- clear distinction between user, system, and infra failures
+
+Done conditions:
+- logs support production triage
+- key failure modes are distinguishable
+- no silent engine failure paths
+- global typecheck passes
+- clean package-scoped commit on main
+
+### Package: engine-regression-and-diff-safety
+
+Depends on: core-engine-production-hardening (closed)
+
+Purpose:
+Prevent future engine work from quietly degrading decision quality or changing outputs without visibility.
+
+What it delivers:
+- frozen output regression protection
+- version comparison tooling where needed
+- safe change visibility between engine versions
+- human-reviewable difference reporting for material scoring/output changes
+
+Done conditions:
+- regression coverage exists for protected engine behavior
+- output drift is detectable before release
+- global typecheck passes
+- clean package-scoped commit on main
+
+---
+
+## Layer 2 — Core Platform Primitives
+
+These packages are valid only because they support the engine and persist platform state.
 
 ### Package: platform-foundation-findings-actions-posture
 
-**Status:** Pending validation and commit close
+Status: Pending validation and commit close
 
-**What it delivers:**
-- Findings expanded from assessment-scoped to platform-scoped (organization_id, source_type, domain, priority)
-- Actions as first-class platform primitive (org-scoped, owned, status-tracked, due-dated)
-- Posture Snapshots + Domain Scores (one per org per day, computed from findings + actions)
-- Posture computation reuses DomainRiskAggregationEngineV2 + OverallRiskAggregationEngineV2
-- Assessment runner updated to populate new platform-level finding fields
+Depends on: core-engine-production-hardening (closed or explicitly accepted as sufficient foundation)
 
-**Migration:** `db/migrations/20260410_platform_primitives.sql`
+What it delivers:
+- Findings expanded from assessment-scoped to platform-scoped
+- Actions as first-class platform primitive
+- Posture snapshots and domain scores
+- Posture computation using the engine, not parallel scoring logic
+- Assessment runner updated to populate platform-level finding fields
 
-**Routes delivered:**
-- `GET /api/findings` — list, filter, paginate
-- `PATCH /api/findings/:id` — update status/priority/owner
-- `POST /api/actions` — create action
-- `GET /api/actions` — list, filter, overdue flag
-- `PATCH /api/actions/:id` — update status/priority/owner/due_date
-- `POST /api/posture/snapshot` — compute and persist snapshot
-- `GET /api/posture/latest` — latest snapshot with domain scores
-- `GET /api/posture/history` — trend snapshots (default 90d, max 180d)
+Migration:
+`db/migrations/20260410_platform_primitives.sql`
 
-**Done conditions:**
-- Migration applied and verified in live DB
-- All routes return correct responses with a real API key
-- Cross-org protection confirmed (org A cannot read org B data)
-- Entitlement check confirmed (unauthenticated request returns 401/403)
-- Clean git commit on main
+Routes delivered:
+- `GET /api/findings`
+- `PATCH /api/findings/:id`
+- `POST /api/actions`
+- `GET /api/actions`
+- `PATCH /api/actions/:id`
+- `POST /api/posture/snapshot`
+- `GET /api/posture/latest`
+- `GET /api/posture/history`
 
----
-
-## Closed Packages (continued)
+Done conditions:
+- migration applied and verified live
+- all routes validated live with real API key
+- cross-org protection confirmed
+- entitlement gate confirmed
+- global typecheck passes
+- clean git commit on main
 
 ### Package: org-profile-context-weighting
 
-**Status:** Pending validation and commit close
+Status: Pending validation and commit close
 
-**Depends on:** platform-foundation-findings-actions-posture (closed)
+Depends on: platform-foundation-findings-actions-posture (closed)
 
-**What it delivers:**
-- Add `regulated`, `handles_pii`, `safety_critical`, `scale` columns to organizations table
-- Wire those fields into posture computation (remove neutral multiplier)
-- Admin PATCH route extended to update org profile fields with boolean validation
-- Admin GET routes include new profile fields in response
-- `computePosture` accepts `OrgContext` parameter — scores now reflect actual org context
-- Posture snapshot `computation_rationale` now includes `context_applied` instead of a limitation note
-- `FALLBACK_CONTEXT` exported for emergency use with required warning log
+What it delivers:
+- org context fields on organizations
+- engine/posture weighting uses real org context
+- admin route validation for context fields
+- posture rationale reflects actual context use
 
-**Migration:** `db/migrations/20260411_org_profile_context_weighting.sql`
+Migration:
+`db/migrations/20260411_org_profile_context_weighting.sql`
 
-**Done conditions:**
-- Migration applied and verified in live DB
-- `PATCH /admin/organizations/:id` accepts and persists all four profile fields
-- `POST /api/posture/snapshot` reads org profile and passes real context to engine
-- `computationRationale.context_applied` in snapshot response reflects actual org values
-- Regulated org produces higher posture score than non-regulated with identical findings (live test)
-- Boolean field rejection: `regulated: "yes"` returns 400
-- Invalid scale rejection: `scale: "Huge"` returns 400
-- Clean git commit on main
-
----
-
-## Closed Packages (continued)
+Done conditions:
+- migration applied and verified live
+- admin patch route validated
+- posture snapshot uses real org context
+- rejection behavior validated for bad input
+- global typecheck passes
+- clean git commit on main
 
 ### Package: vendor-risk-primitives
 
-**Status:** Pending validation and commit close
+Status: Pending validation and commit close
 
-**Depends on:** org-profile-context-weighting (closed)
+Depends on: org-profile-context-weighting (closed)
 
-**What it delivers:**
-- vendors table extended (additive migration 20260412_vendor_risk_primitives.sql):
-  service_description, data_sensitivity, access_level, website, status columns added;
-  criticality/data_sensitivity/access_level/status CHECK constraints added;
-  org_status, org_criticality, owner indexes added
-- Vendor CRUD API: POST /api/vendors, GET /api/vendors, GET /api/vendors/:id, PATCH /api/vendors/:id
-- Default GET list returns active vendors only; pass ?status=archived for archived
-- Soft archive via PATCH status=archived; no hard delete route (assessments hold vendor_id FK)
-- vendor → finding linkage: convention established — findings.source_type='vendor_review' + findings.source_id=vendors.id
-- vendor → action linkage: action chain from vendor → finding → action is traversable via existing actions API
-- current_risk_score and framework_coverage preserved in DB but not exposed in new routes
-- 44 unit tests for vendorValidation.ts (pure, no DB)
-- TypeScript clean — zero compiler errors
+What it delivers:
+- vendor object model
+- vendor CRUD
+- archiving behavior
+- vendor linkage into findings/action model
 
-**Migration:** `db/migrations/20260412_vendor_risk_primitives.sql`
+Migration:
+`db/migrations/20260412_vendor_risk_primitives.sql`
 
-**Routes delivered:**
-- `POST /api/vendors` — create vendor (org-scoped, 409 on duplicate name within org)
-- `GET /api/vendors` — list, filter by status/criticality, cursor paginate (default: active only)
-- `GET /api/vendors/:id` — get single vendor (404 if wrong org)
-- `PATCH /api/vendors/:id` — update fields, supports status=archived for soft delete
+Routes delivered:
+- `POST /api/vendors`
+- `GET /api/vendors`
+- `GET /api/vendors/:id`
+- `PATCH /api/vendors/:id`
 
-**Done conditions:**
-- Migration applied and verified in live DB
-- All routes return correct responses with a real API key
-- Cross-org protection confirmed (org A cannot read org B vendors)
-- Entitlement check confirmed (unauthenticated request returns 401/403)
-- Clean git commit on main
+Done conditions:
+- migration applied and verified live
+- routes validated live
+- cross-org protection confirmed
+- entitlement gate confirmed
+- global typecheck passes
+- clean git commit on main
+
+### Package: ai-system-governance-primitives
+
+Status: Not started
+
+Depends on: vendor-risk-primitives (closed)
+
+What it delivers:
+- ai_systems table
+- governance_reviews table
+- AI-system-to-finding linkage
+
+Done conditions:
+- migration applied and verified live
+- routes validated live
+- cross-org protection confirmed
+- entitlement gate confirmed
+- global typecheck passes
+- clean git commit on main
+
+### Package: control-framework-primitives
+
+Status: Not started
+
+Depends on: org-profile-context-weighting (closed)
+
+What it delivers:
+- frameworks
+- requirements
+- controls
+- control mappings
+
+Does not deliver:
+- evidence workflow
+- assessment workflow
+
+Done conditions:
+- migration applied and verified live
+- routes validated live
+- cross-org protection confirmed
+- entitlement gate confirmed
+- global typecheck passes
+- clean git commit on main
 
 ---
 
----
+## Layer 3 — Domain Workflows
 
-## Closed Packages (continued)
+These packages operationalize the primitives. They are not foundation.
 
 ### Package: vendor-assessment-workflow
 
-**Status:** Pending validation and commit close
+Status: Pending validation and commit close
 
-**Depends on:** vendor-risk-primitives (closed)
+Depends on: vendor-risk-primitives (closed)
 
-**What it delivers:**
-- `vendor_assessments` table: org-scoped, vendor-scoped, structured assessment record
-- `POST /api/vendor-assessments`: creates assessment + finding atomically; rejects archived vendors
-- `GET /api/vendor-assessments`: list with cursor pagination, optional vendor_id filter
-- `GET /api/vendor-assessments/:id`: returns assessment + exact finding produced by it
-- `GET /api/findings` extended with `source_id` filter (filters by source record UUID)
-- finding linkage: `source_type='vendor_review'`, `source_id=vendor_assessments.id` (NOT vendor_id)
-- `domain='Vendor Risk'` hardcoded on findings — flows into DomainRiskAggregationEngineV2 on next posture snapshot
-- Archived vendor rejection: `WHERE status='active' FOR UPDATE` inside transaction
-- 36 unit tests for `vendorAssessmentValidation.ts` — all pass
-- TypeScript clean — zero compiler errors
+What it delivers:
+- vendor_assessments table
+- transactional assessment + finding creation
+- vendor assessment retrieval
+- findings filter by source_id
+- archived vendor rejection
 
-**Migration:** `db/migrations/20260413_vendor_assessment_workflow.sql`
+Migration:
+`db/migrations/20260413_vendor_assessment_workflow.sql`
 
-**Routes delivered:**
-- `POST /api/vendor-assessments` — create assessment + finding (transactional)
-- `GET /api/vendor-assessments` — list, filter by vendor_id, cursor paginate
-- `GET /api/vendor-assessments/:id` — get assessment with exact finding
-- `GET /api/findings` — extended: `?source_id=<uuid>` filters by source record ID
+Routes delivered:
+- `POST /api/vendor-assessments`
+- `GET /api/vendor-assessments`
+- `GET /api/vendor-assessments/:id`
+- `GET /api/findings?source_id=<uuid>`
 
-**Done conditions:**
-- Migration applied and verified in live DB
-- All routes return correct responses with a real API key
-- Cross-org protection confirmed (org A cannot read org B vendor assessments)
-- Entitlement check confirmed (unauthenticated request returns 401/403)
-- Archived vendor rejection confirmed: PATCH vendor to archived, then POST assessment returns 404
-- `GET /api/vendor-assessments/:id` confirms finding.source_id equals assessment.id
-- Cross-org test uses a real active vendor from org B (not a zero UUID)
-- Clean git commit on main
+Done conditions:
+- migration applied and verified live
+- routes validated live
+- cross-org protection confirmed
+- entitlement gate confirmed
+- archived vendor rejection confirmed
+- global typecheck passes
+- clean git commit on main
+
+### Package: control-assessment-workflow
+
+Status: Closed prerequisite in repo history
+
+Depends on: control-framework-primitives (closed)
+
+What it delivers:
+- assessment workflow on top of controls/frameworks
+
+Done conditions:
+- migration applied and verified live
+- routes validated live
+- cross-org protection confirmed
+- entitlement gate confirmed
+- global typecheck passes
+- clean git commit on main
 
 ---
 
-## Closed Packages (continued)
+## Layer 4 — Output / Read Surfaces
+
+These packages are downstream. Useful, but not foundational.
 
 ### Package: posture-dashboard-foundation
 
-**Status:** Closed — commit 9515d54e
+Status: Closed — commit 9515d54e
 
-**Depends on:** control-assessment-workflow (closed), vendor-risk-primitives (closed), control-framework-primitives (closed)
+Depends on:
+- control-assessment-workflow (closed)
+- vendor-risk-primitives (closed)
+- control-framework-primitives (closed)
 
-**Locked product decisions:**
-1. Single endpoint only — no multiple routes, no new DB migration
-2. Heatmap Entry out of scope
-3. Route namespace: `/api/dashboard/`
-
-**What it delivers:**
-- `GET /api/dashboard/summary` — single read-only endpoint returning cross-domain posture summary
-- Current posture state: `overall_score`, `overall_severity`, `snapshot_date` from most recent posture_snapshot (null if no snapshot — 200 returned, not 404)
-- Domain-level breakdown from domain_scores for that snapshot, ordered severity descending
-- Open finding counts: total and by_severity (all four canonical keys always present; missing severities = 0)
-- Action counts: open and overdue
-- Object inventory counts: vendors, ai_systems, controls, control_assessments, governance_reviews
-- 12 unit tests for `buildFindingsBySeverity` — all pass
-- TypeScript clean — zero compiler errors
-
-**Migration:** None — reads from existing tables only
-
-**Routes delivered:**
+What it delivers:
 - `GET /api/dashboard/summary`
+- summary view of posture, domain scores, findings, actions, object counts
 
-**What it explicitly does not deliver:**
-- Heatmap Entry
-- Any new DB migration or new table
-- Additional endpoints beyond the single summary route
+Migration:
+None
+
+What it explicitly does not deliver:
+- heatmap entry
+- new tables
+- multiple dashboard endpoints
+
+This package is a read surface, not platform core.
+
+### Package: intelligence-brief-platform-integration
+
+Status: Closed — commit 6340fbb6
+
+Depends on: posture-dashboard-foundation (closed)
+
+What it delivers:
+- publication-time stored context on DB-backed Briefs
+- Brief reads platform posture/findings/actions state at publication time
+- Brief becomes a platform output instead of isolated content
+
+Migration:
+`db/migrations/20260417_brief_publication_context.sql`
+
+What it explicitly is:
+- a downstream output integration package
+
+What it explicitly is not:
+- platform core
+- engine foundation
+- justification to deprioritize engine hardening
+
+Done conditions:
+- migration additive and verified
+- targeted tests pass
+- global typecheck passes
+- clean git commit on main
 
 ---
 
-## Future Package Queue (in dependency order)
+## Layer 5 — UI / Presentation
 
-### Package: ai-system-governance-primitives
-Depends on: vendor-risk-primitives (can run in parallel)
+No UI package starts unless the underlying engine, primitives, and read surfaces are already closed.
 
-Delivers: ai_systems table, governance_reviews table, AI → finding linkage.
+Examples:
+- dashboard UI
+- vendor risk UI
+- AI governance UI
+- report presentation layers
+- premium Brief presentation changes
 
-### Package: control-framework-primitives
-Depends on: org-profile-context-weighting
-
-Delivers: frameworks, requirements, controls, control_mappings tables.
-Does not deliver: evidence or assessment workflow (next package after this one).
-
-### Package: intelligence-brief-platform-integration
-Depends on: posture-dashboard-foundation
-
-Delivers: Brief assembly reads from findings, actions, and posture snapshots.
-Brief becomes an output of the platform, not a standalone artifact.
+These are last-mile surfaces, not architecture.
 
 ---
 
 ## What Must Never Happen
 
-- Building dashboard UI before posture snapshots exist — already fixed
-- Building vendor risk UI before vendor domain objects exist — not started
-- Building AI governance UI before AI system objects exist — not started
-- Adding assessment templates before controls and frameworks exist — not started
-- Treating the Intelligence Brief as the platform core — ongoing guard
+- Treating the Intelligence Brief as the platform core
+- Treating dashboard progress as engine maturity
+- Building UI before the underlying objects and workflows exist
+- Building presentation polish on top of weak engine contracts
+- Letting "demoable" work outrank foundational hardening
+- Confusing platform outputs with platform foundations
+
+---
+
+## Immediate Priority Order From Here
+
+1. Close core-engine-production-hardening
+2. Close engine-observability-and-operational-guardrails
+3. Close engine-regression-and-diff-safety
+4. Close any still-open primitive/workflow packages already partially built
+5. Only then continue expanding downstream read/output surfaces
+
+If there is tension between engine work and surface work, engine work wins.
 
 ---
 
@@ -243,6 +431,7 @@ Brief becomes an output of the platform, not a standalone artifact.
 - [ ] Cross-org protection test passed
 - [ ] Entitlement gate test passed
 - [ ] Unit tests pass (if applicable)
+- [ ] Global `npx tsc --noEmit` passes
 - [ ] Clean git commit on main with package-scoped files only
-- [ ] CANONICAL_RISK_MODEL.md updated with new objects/status
+- [ ] CANONICAL_RISK_MODEL.md updated when required
 - [ ] This document updated with package marked closed
