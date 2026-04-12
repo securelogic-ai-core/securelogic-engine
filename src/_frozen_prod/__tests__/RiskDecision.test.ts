@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
-
 import fs from "fs";
-import { describe, it, expect } from "vitest";
-import { RunnerEngine } from "../../index.js";;;
+import { RunnerEngine } from "../../engine/RunnerEngine.js";
 
 describe("RiskDecision frozen contract", () => {
   it("must not change without a version bump", async () => {
