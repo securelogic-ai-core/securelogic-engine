@@ -98,24 +98,31 @@ Done conditions met:
 
 ### Package: engine-observability-and-operational-guardrails
 
+**Status:** Closed — commit 2bdbf98f
+
 Depends on: core-engine-production-hardening (closed)
 
 Purpose:
 Make the engine operationally trustworthy in production, not just logically correct.
 
 What it delivers:
-- structured engine-level logging
-- request correlation / traceability
-- failure-path clarity
-- operational diagnostics needed for support and audit
-- clear distinction between user, system, and infra failures
+- `EngineLogger` interface with `noopLogger` default — engine layer has zero dependency on pino
+- Logger injection via `RunnerEngine` constructor (3rd param, optional, backward-compatible)
+- Framework injection via `RunnerEngine` constructor (4th param, optional, for testability)
+- `engine_run_started` log on every run entry (mode)
+- `engine_run_completed` log on successful run (mode, severity, findingCount, durationMs)
+- `engine_run_failed` log before rethrow on any engine-level failure (mode, durationMs, err)
+- `EngineFrameworkError` classified error class on `MultiFrameworkOrchestrator`
+- Per-framework try/catch in `MultiFrameworkOrchestrator.runAll()` — no silent framework failure paths
+- `engine_framework_failed` log on framework throw (framework name, elapsedMs, err)
+- 4 unit tests covering all instrumented paths
 
-Done conditions:
-- logs support production triage
-- key failure modes are distinguishable
-- no silent engine failure paths
-- global typecheck passes
-- clean package-scoped commit on main
+Done conditions met:
+- logs support production triage — YES
+- key failure modes are distinguishable — YES (EngineFrameworkError vs generic engine error)
+- no silent engine failure paths — YES
+- global typecheck passes — EXIT:0
+- clean package-scoped commit on main — YES (4 engine files only)
 
 ### Package: engine-regression-and-diff-safety
 
