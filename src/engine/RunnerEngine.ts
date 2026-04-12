@@ -11,6 +11,7 @@ import type { Clock } from "./runtime/Clock.js";
 import { MultiFrameworkOrchestrator } from "./orchestrator/MultiFrameworkOrchestrator.js";
 import { AIGovFramework } from "./frameworks/AIGovFramework.js";
 import { NISTFramework } from "./frameworks/NISTFramework.js";
+import type { FrameworkResult, FrameworkRunner } from "./frameworks/FrameworkRunner.js";
 
 import { FindingNormalizer } from "./adapters/FindingNormalizer.js";
 
@@ -24,6 +25,7 @@ import { ReportBuilder } from "../reporting/ReportBuilder.js";
 import { ReportExporter } from "../reporting/ReportExporter.js";
 
 import { DEFAULT_ENGINE_MODE, type EngineMode } from "./EngineMode.js";
+import { type EngineLogger, noopLogger } from "./EngineLogger.js";
 
 type Decision = {
   severity: RiskLevel;
@@ -42,22 +44,49 @@ export class RunnerEngine {
   private ledger = new ExecutionLedger();
   private clock: Clock;
   private mode: EngineMode;
+  private logger: EngineLogger;
+  private frameworks: FrameworkRunner[];
 
   constructor(
     clock: Clock = new SystemClock(),
-    mode: EngineMode = DEFAULT_ENGINE_MODE
+    mode: EngineMode = DEFAULT_ENGINE_MODE,
+    logger: EngineLogger = noopLogger,
+    frameworks: FrameworkRunner[] = [new AIGovFramework(), new NISTFramework()]
   ) {
     this.clock = clock;
     this.mode = mode;
+    this.logger = logger;
+    this.frameworks = frameworks;
   }
 
   async run(input: EngineInput) {
-    const orchestrator = new MultiFrameworkOrchestrator([
-      new AIGovFramework(),
-      new NISTFramework(),
-    ]);
+    const startedAt = Date.now();
 
-    const frameworkResults = await orchestrator.runAll(input, this.clock);
+    this.logger.info(
+      { event: "engine_run_started", mode: this.mode },
+      "Engine run started"
+    );
+
+    const orchestrator = new MultiFrameworkOrchestrator(
+      this.frameworks,
+      this.logger
+    );
+
+    let frameworkResults: FrameworkResult[];
+    try {
+      frameworkResults = await orchestrator.runAll(input, this.clock);
+    } catch (err) {
+      this.logger.error(
+        {
+          event: "engine_run_failed",
+          mode: this.mode,
+          durationMs: Date.now() - startedAt,
+          err,
+        },
+        "Engine run failed"
+      );
+      throw err;
+    }
 
     const rawFindings = frameworkResults.flatMap((r) => r.findings);
     const allFindings = FindingNormalizer.normalize(rawFindings);
@@ -135,6 +164,17 @@ export class RunnerEngine {
     );
 
     ReportExporter.exportToJson(report);
+
+    this.logger.info(
+      {
+        event: "engine_run_completed",
+        mode: this.mode,
+        severity: decision.severity,
+        findingCount: allFindings.length,
+        durationMs: Date.now() - startedAt,
+      },
+      "Engine run completed"
+    );
 
     return { decision, report };
   }
