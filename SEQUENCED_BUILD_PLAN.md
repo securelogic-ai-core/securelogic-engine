@@ -402,7 +402,7 @@ These are last-mile surfaces, not architecture.
 
 ### Package: posture-dashboard-ui
 
-Status: Closed — commit pending review (2026-04-13)
+Status: Closed — implementation commit 5b2cf985, plan commit 4afd617e (2026-04-13)
 
 Depends on: posture-dashboard-foundation (closed)
 
@@ -438,7 +438,7 @@ Done conditions met:
 
 ### Package: vendor-risk-ui
 
-Status: Closed — commit pending review (2026-04-13)
+Status: Closed — implementation commit 5b2cf985, plan commit 5fa5d027 (2026-04-13)
 
 Depends on:
 - vendor-risk-primitives (Layer 2, closed)
@@ -475,7 +475,7 @@ Done conditions met:
 
 ### Package: ai-governance-ui
 
-Status: Closed — commit pending review (2026-04-13)
+Status: Closed — implementation commit 5b2cf985, plan commit 3276b401 (2026-04-13)
 
 Depends on: ai-system-governance-primitives (Layer 2, closed — commit 699a7740)
 
@@ -506,6 +506,43 @@ Done conditions met:
 - Targeted test (aiSystemGovernance.test.ts): 67/67 passed — YES
 - Global `npx tsc --noEmit` passes — EXIT:0 — YES
 - Clean diff: only `app/src/lib/api.ts`, `app/src/components/Header.tsx`, `app/src/app/ai-systems/page.tsx` changed this session — YES
+
+### Package: control-framework-ui
+
+Status: Closed — implementation commit 5b2cf985 (2026-04-13)
+
+Depends on:
+- control-framework-primitives (Layer 2, closed — commit 88474a1c)
+- control-assessment-workflow (Layer 3, closed — commit 138e2b6b)
+
+What it delivers:
+- New route `/controls` — server component, session-protected, redirect to `/login` if no apiKey
+- Controls list showing: name, latest assessment status badge (passed/failed/remediation_required/in_progress), latest assessment severity badge, description, assessment summary, assessment count, last tested date
+- Latest assessment state and count per control cross-joined from `GET /api/control-assessments` (avoids N+1)
+- `"Not assessed"` label when a control has no assessments
+- Not-entitled graceful state when API returns null
+- Empty state when entitled but no controls defined
+- Controls nav link added to `Header.tsx` for authenticated users
+
+Consumes:
+- `GET /api/controls?limit=100` (Layer 2, control-framework-primitives, closed)
+- `GET /api/control-assessments?limit=100` (Layer 3, control-assessment-workflow, closed)
+
+Explicitly does not deliver:
+- Framework list UI
+- Control detail page
+- Assessment detail page
+- New backend routes or middleware
+- New database tables or migrations
+
+Done conditions met:
+- UI-only, no backend changes — YES
+- Real API data only, no mocks — YES
+- Org scoping and entitlement behavior inherited from backend — YES
+- New route and nav link only — YES
+- Targeted tests (controlFrameworkPrimitives.test.ts 58/58, controlAssessmentWorkflow.test.ts 59/59): 117/117 — YES
+- Global `npx tsc --noEmit` passes — EXIT:0 — YES
+- Implementation in commit 5b2cf985 — YES
 
 ---
 
