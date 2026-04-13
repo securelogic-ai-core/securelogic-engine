@@ -211,7 +211,7 @@ Done conditions:
 
 ### Package: vendor-risk-primitives
 
-Status: Pending validation and commit close
+Status: Closed — commit 8c420777, validated 2026-04-13 (80/80 tests, global tsc EXIT:0)
 
 Depends on: org-profile-context-weighting (closed)
 
