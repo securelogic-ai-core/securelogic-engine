@@ -473,6 +473,40 @@ Done conditions met:
 - Global `npx tsc --noEmit` passes — EXIT:0 — YES
 - Clean diff: only `app/src/lib/api.ts`, `app/src/components/Header.tsx`, `app/src/app/vendors/page.tsx` changed this session — YES
 
+### Package: ai-governance-ui
+
+Status: Closed — commit pending review (2026-04-13)
+
+Depends on: ai-system-governance-primitives (Layer 2, closed — commit 699a7740)
+
+What it delivers:
+- New route `/ai-systems` — server component, session-protected, redirect to `/login` if no apiKey
+- AI system list showing: name, criticality badge (Critical/High/Medium/Low), deployment status chip, use case, model type, data classification, risk classification, review count
+- Review count per AI system cross-joined from `GET /api/governance-reviews` (avoids N+1)
+- Not-entitled graceful state when API returns null
+- Empty state when entitled but no AI systems registered
+- AI Systems nav link added to `Header.tsx` for authenticated users
+
+Consumes:
+- `GET /api/ai-systems?limit=100` (Layer 2, ai-system-governance-primitives, closed)
+- `GET /api/governance-reviews?limit=100` (Layer 2, ai-system-governance-primitives, closed)
+
+Explicitly does not deliver:
+- AI system detail page
+- Governance review detail page
+- New backend routes or middleware
+- New database tables or migrations
+- Control/assessment UI
+
+Done conditions met:
+- UI-only, no backend changes — YES
+- Real API data only, no mocks — YES
+- Org scoping and entitlement behavior inherited from backend — YES
+- New route and nav link only — YES
+- Targeted test (aiSystemGovernance.test.ts): 67/67 passed — YES
+- Global `npx tsc --noEmit` passes — EXIT:0 — YES
+- Clean diff: only `app/src/lib/api.ts`, `app/src/components/Header.tsx`, `app/src/app/ai-systems/page.tsx` changed this session — YES
+
 ---
 
 ## What Must Never Happen
