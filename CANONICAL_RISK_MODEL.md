@@ -47,10 +47,15 @@ They must not be re-declared differently in each module.
 | Organization | organizations | admin API | Profile fields complete — package org-profile-context-weighting |
 | Vendor | vendors (extended) | POST /api/vendors, GET /api/vendors, GET /api/vendors/:id, PATCH /api/vendors/:id | Complete — package vendor-risk-primitives |
 | Vendor Assessment | vendor_assessments | POST /api/vendor-assessments, GET /api/vendor-assessments, GET /api/vendor-assessments/:id | Complete — package vendor-assessment-workflow |
-| AI System | — | — | Not started |
-| Control | — | — | Not started |
-| Framework | — | — | Not started |
-| Obligation | — | — | Not started |
+| AI System | ai_systems | POST /api/ai-systems, GET /api/ai-systems, GET /api/ai-systems/:id | Complete — package ai-system-governance-primitives |
+| Governance Review | governance_reviews | POST /api/governance-reviews, GET /api/governance-reviews, GET /api/governance-reviews/:id | Complete — package ai-system-governance-primitives |
+| Framework | frameworks | POST /api/frameworks, GET /api/frameworks, GET /api/frameworks/:id | Complete — package control-framework-primitives |
+| Requirement | requirements | POST /api/requirements, GET /api/requirements, GET /api/requirements/:id | Complete — package control-framework-primitives |
+| Control | controls | POST /api/controls, GET /api/controls, GET /api/controls/:id | Complete — package control-framework-primitives |
+| Control Mapping | control_mappings | POST /api/control-mappings, GET /api/control-mappings | Complete — package control-framework-primitives |
+| Control Assessment | control_assessments | POST /api/control-assessments, GET /api/control-assessments, GET /api/control-assessments/:id, PATCH /api/control-assessments/:id | Complete — package control-assessment-workflow, commit 138e2b6b |
+| Obligation | obligations | POST /api/obligations, GET /api/obligations, GET /api/obligations/:id, PATCH /api/obligations/:id | Complete — package obligation-regulatory-primitives, commit 32b23a80 |
+| Obligation Mapping | obligation_mappings | POST /api/obligation-mappings, GET /api/obligation-mappings | Complete — package obligation-regulatory-primitives, commit 32b23a80 |
 | Evidence | — | — | Not started |
 | Risk (register) | — | — | Not started |
 
@@ -123,7 +128,17 @@ Organization
   ├── Vendors (organization_id FK)
   │     └── Vendor Assessments (vendor_id FK → vendor_assessments)
   │           └── Findings (source_type='vendor_review', source_id=vendor_assessments.id)
-  └── [Future] Controls, AI Systems, Obligations
+  ├── AI Systems (organization_id FK)
+  │     └── Governance Reviews (ai_system_id FK → governance_reviews)
+  │           └── Findings (source_type='ai_review', source_id=governance_reviews.id)
+  ├── Frameworks (organization_id FK)
+  │     └── Requirements (framework_id FK)
+  ├── Controls (organization_id FK)
+  │     ├── Control Mappings (control_id FK → requirements)
+  │     └── Control Assessments (control_id FK → control_assessments)
+  │           └── Findings (source_type='control_test', source_id=control_assessments.id, domain='General')
+  └── Obligations (organization_id FK)
+        └── Obligation Mappings (obligation_id FK → obligation_mappings → requirements)
 ```
 
 ---
@@ -139,6 +154,18 @@ Context weighting: **live** — `regulated`, `handles_pii`, `safety_critical`, `
 Null score: when there are zero open findings, overall_score is NULL (not zero). Must be presented as "insufficient data."
 
 FALLBACK_CONTEXT: used only when org profile cannot be read (should not occur in production). Equivalent to unweighted scoring. Must be logged as a warning when reached.
+
+---
+
+## Locked Package Decisions (governance-level)
+
+These decisions are locked and must not be relitigated during spec or implementation.
+
+### control-assessment-workflow
+
+1. **Mutable workflow**: control-assessment-workflow is a mutable workflow record. Controls move through assessment states over time. The assessment record is updated in place. It is not an immutable point-in-time snapshot.
+
+2. **Finding linkage**: Findings produced by control-assessment-workflow use `source_type='control_test'` and `domain='General'`. They flow into the posture engine via the standard findings path. `domain='General'` is already a canonical enum value.
 
 ---
 
