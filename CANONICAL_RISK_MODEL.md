@@ -95,6 +95,7 @@ These are the single source of truth. Do not redefine them anywhere else.
 - `control_test`
 - `vendor_review`
 - `ai_review`
+- `obligation_review`
 - `signal`
 - `manual`
 
