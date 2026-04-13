@@ -289,7 +289,7 @@ These packages operationalize the primitives. They are not foundation.
 
 ### Package: vendor-assessment-workflow
 
-Status: Pending validation and commit close
+Status: Closed — commit fee8e4d6, validated 2026-04-13 (36/36 tests, global tsc EXIT:0)
 
 Depends on: vendor-risk-primitives (closed)
 
