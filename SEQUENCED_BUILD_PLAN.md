@@ -368,7 +368,7 @@ Done conditions:
 
 ### Package: obligation-assessment-workflow
 
-Status: Open
+Status: Closed — commit 35ce54bd
 
 Depends on:
 - obligation-regulatory-primitives (closed — commit 32b23a80)
