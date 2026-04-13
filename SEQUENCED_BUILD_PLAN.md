@@ -154,7 +154,7 @@ These packages are valid only because they support the engine and persist platfo
 
 ### Package: platform-foundation-findings-actions-posture
 
-Status: Pending validation and commit close
+Status: Closed — implementation commit ff80716a, live validation 2026-04-13 (34/34 checks, cross-org confirmed)
 
 Depends on: core-engine-production-hardening (closed or explicitly accepted as sufficient foundation)
 
