@@ -115,6 +115,16 @@ These are the single source of truth. Do not redefine them anywhere else.
 - `Resilience`
 - `General`
 
+### Evidence Type
+- `document`
+- `screenshot`
+- `log`
+- `test_result`
+- `interview`
+- `observation`
+- `policy`
+- `other`
+
 ---
 
 ## Key Relationships
