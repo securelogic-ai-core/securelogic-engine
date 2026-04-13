@@ -42,6 +42,24 @@ export function Header({ organizationName, isAuthenticated }: HeaderProps) {
                 Briefs
               </Link>
               <Link
+                href="/vendors"
+                className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
+              >
+                Vendors
+              </Link>
+              <Link
+                href="/ai-systems"
+                className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
+              >
+                AI Systems
+              </Link>
+              <Link
+                href="/controls"
+                className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
+              >
+                Controls
+              </Link>
+              <Link
                 href="/account"
                 className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
               >

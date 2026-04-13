@@ -92,6 +92,193 @@ export type RegisterResponse =
   | { ok: true; apiKey: string; organizationId: string; entitlementLevel: string; note: string }
   | { error: string };
 
+export type DomainScore = {
+  domain: string;
+  score: number | null;
+  severity: string | null;
+  finding_count: number;
+  action_count: number;
+};
+
+export type DashboardSummary = {
+  posture: {
+    overall_score: number | null;
+    overall_severity: string | null;
+    snapshot_date: string | null;
+  };
+  domains: DomainScore[];
+  findings: {
+    open: number;
+    by_severity: {
+      Critical: number;
+      High: number;
+      Moderate: number;
+      Low: number;
+    };
+  };
+  actions: {
+    open: number;
+    overdue: number;
+  };
+  inventory: {
+    vendors: number;
+    ai_systems: number;
+    controls: number;
+    control_assessments: number;
+    governance_reviews: number;
+  };
+};
+
+export type Vendor = {
+  id: string;
+  organization_id: string;
+  name: string;
+  service_description: string | null;
+  category: string | null;
+  criticality: "critical" | "high" | "medium" | "low" | null;
+  data_sensitivity: string | null;
+  access_level: string | null;
+  website: string | null;
+  status: "active" | "archived";
+  owner_user_id: string | null;
+  last_reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type VendorsResponse = {
+  count: number;
+  limit: number;
+  organizationId: string;
+  statusFilter: string;
+  nextCursor: { created_at: string; id: string } | null;
+  vendors: Vendor[];
+};
+
+export type VendorAssessment = {
+  id: string;
+  organization_id: string;
+  vendor_id: string;
+  assessment_type: string;
+  overall_severity: string;
+  status: string;
+  summary: string | null;
+  notes: string | null;
+  performed_at: string;
+  reviewer_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type VendorAssessmentsResponse = {
+  count: number;
+  limit: number;
+  organizationId: string;
+  nextCursor: { created_at: string; id: string } | null;
+  assessments: VendorAssessment[];
+};
+
+export type AiSystem = {
+  id: string;
+  organization_id: string;
+  name: string;
+  use_case: string | null;
+  owner_user_id: string | null;
+  model_type: string | null;
+  data_classification: string | null;
+  deployment_status: string | null;
+  criticality: "critical" | "high" | "medium" | "low" | null;
+  risk_classification: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AiSystemsResponse = {
+  count: number;
+  limit: number;
+  organizationId: string;
+  nextCursor: { created_at: string; id: string } | null;
+  ai_systems: AiSystem[];
+};
+
+export type GovernanceReview = {
+  id: string;
+  organization_id: string;
+  ai_system_id: string;
+  review_type: string;
+  performed_at: string;
+  reviewer_id: string | null;
+  outcome: string | null;
+  summary: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GovernanceReviewsResponse = {
+  count: number;
+  limit: number;
+  organizationId: string;
+  nextCursor: { created_at: string; id: string } | null;
+  reviews: GovernanceReview[];
+};
+
+export type Framework = {
+  id: string;
+  organization_id: string;
+  name: string;
+  version: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FrameworksResponse = {
+  count: number;
+  limit: number;
+  organizationId: string;
+  nextCursor: { created_at: string; id: string } | null;
+  frameworks: Framework[];
+};
+
+export type Control = {
+  id: string;
+  organization_id: string;
+  name: string;
+  description: string | null;
+  owner_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ControlsResponse = {
+  count: number;
+  limit: number;
+  organizationId: string;
+  nextCursor: { created_at: string; id: string } | null;
+  controls: Control[];
+};
+
+export type ControlAssessment = {
+  id: string;
+  organization_id: string;
+  control_id: string;
+  status: string;
+  overall_severity: string | null;
+  summary: string | null;
+  notes: string | null;
+  performed_at: string | null;
+  reviewer_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ControlAssessmentsResponse = {
+  count: number;
+  limit: number;
+  organizationId: string;
+  nextCursor: { created_at: string; id: string } | null;
+  assessments: ControlAssessment[];
+};
+
 export type BillingCheckoutResponse = { checkoutUrl: string };
 export type BillingPortalResponse   = { portalUrl: string };
 
@@ -214,6 +401,110 @@ export async function claimRecovery(
     return { ok: true, apiKey: body.apiKey };
   } catch {
     return { ok: false, error: "recovery_failed" };
+  }
+}
+
+export async function getDashboardSummary(
+  apiKey: string
+): Promise<DashboardSummary | null> {
+  try {
+    const res = await engineFetch("/api/dashboard/summary", apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<DashboardSummary>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getVendors(
+  apiKey: string,
+  status: "active" | "archived" = "active"
+): Promise<VendorsResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendors?status=${status}&limit=100`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<VendorsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getVendorAssessments(
+  apiKey: string,
+  limit = 100
+): Promise<VendorAssessmentsResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-assessments?limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<VendorAssessmentsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getAiSystems(
+  apiKey: string
+): Promise<AiSystemsResponse | null> {
+  try {
+    const res = await engineFetch("/api/ai-systems?limit=100", apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<AiSystemsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getGovernanceReviews(
+  apiKey: string
+): Promise<GovernanceReviewsResponse | null> {
+  try {
+    const res = await engineFetch("/api/governance-reviews?limit=100", apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<GovernanceReviewsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getFrameworks(
+  apiKey: string
+): Promise<FrameworksResponse | null> {
+  try {
+    const res = await engineFetch("/api/frameworks?limit=100", apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<FrameworksResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getControls(
+  apiKey: string
+): Promise<ControlsResponse | null> {
+  try {
+    const res = await engineFetch("/api/controls?limit=100", apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<ControlsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getControlAssessments(
+  apiKey: string
+): Promise<ControlAssessmentsResponse | null> {
+  try {
+    const res = await engineFetch("/api/control-assessments?limit=100", apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<ControlAssessmentsResponse>;
+  } catch {
+    return null;
   }
 }
 
