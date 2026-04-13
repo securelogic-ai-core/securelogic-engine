@@ -281,6 +281,37 @@ Done conditions:
 - global typecheck passes
 - clean git commit on main
 
+### Package: obligation-regulatory-primitives
+
+Status: Closed — commit 32b23a80, validated 2026-04-13 (58/58 tests, global tsc EXIT:0)
+
+Depends on: control-framework-primitives (closed)
+
+What it delivers:
+- obligations table (org-scoped, lifecycle-managed via status: active/waived/not_applicable)
+- obligation_mappings join table (links obligation to requirement; org isolation enforced at application layer)
+- POST /api/obligations — create with 409 on title uniqueness violation per org
+- GET /api/obligations — list with status filter (default active), domain filter, cursor pagination
+- GET /api/obligations/:id — org-scoped single fetch
+- PATCH /api/obligations/:id — partial update, dynamic SET clause
+- POST /api/obligation-mappings — transactional cross-org verification (obligation + requirement → framework ownership)
+- GET /api/obligation-mappings — requires ?obligation_id or ?requirement_id; enriched join response
+
+Migration:
+`db/migrations/20260418_obligation_regulatory_primitives.sql`
+
+Does not deliver:
+- obligation assessment workflow
+- finding production from obligations
+- evidence linkage
+- risk register
+
+Done conditions:
+- migration additive and verified
+- 58/58 unit tests pass
+- global typecheck passes — EXIT:0
+- clean git commit on main
+
 ---
 
 ## Layer 3 — Domain Workflows
