@@ -366,6 +366,61 @@ Done conditions:
 - global typecheck passes
 - clean git commit on main
 
+### Package: obligation-assessment-workflow
+
+Status: Open
+
+Depends on:
+- obligation-regulatory-primitives (closed — commit 32b23a80)
+- control-framework-primitives (closed — commit 88474a1c)
+- platform-foundation-findings-actions-posture (closed — commit ff80716a)
+
+Purpose:
+Operationalize obligations as assessable objects. An obligation assessment is a mutable,
+org-scoped workflow record that tracks whether an obligation is being met. Findings are
+produced when obligations are found non-compliant or partially compliant.
+
+What it delivers:
+- `obligation_assessments` table (org-scoped, obligation_id FK, mutable status lifecycle)
+- Assessment status lifecycle: not_started → in_progress → compliant | non_compliant | partially_compliant
+- No finding at POST; finding created on FIRST PATCH transition to non_compliant or partially_compliant
+- Finding linkage: source_type = 'obligation_review', source_id = obligation_assessments.id
+- Finding domain inherited from the parent obligation's domain field (not hardcoded)
+- Finding creation is idempotent — existing finding returned on repeat transition, no duplicate created
+- Compliant assessment never creates a finding
+- Obligation must be status='active' at assessment creation time; waived/not_applicable rejected
+- POST /api/obligation-assessments
+- GET /api/obligation-assessments
+- GET /api/obligation-assessments/:id
+- PATCH /api/obligation-assessments/:id
+
+Migration:
+`db/migrations/YYYYMMDD_obligation_assessment_workflow.sql`
+
+Prerequisite canonical amendment required before implementation:
+- Add `obligation_review` to Source Type (findings) enum in CANONICAL_RISK_MODEL.md
+
+Does not deliver:
+- Evidence workflow
+- Risk register
+- Obligation gap scoring or rollup
+- Automatic side-effects on parent obligation status
+- UI layer
+
+Done conditions:
+- CANONICAL_RISK_MODEL.md amended with obligation_review source type
+- Migration additive and verified live
+- All four routes validated live with real API key
+- Cross-org protection confirmed: PATCH/:id with wrong org key returns 404
+- Entitlement gate confirmed: no key returns 401
+- Waived/not_applicable obligation rejection confirmed
+- Finding idempotency confirmed: second PATCH to non_compliant returns existing finding, no duplicate
+- Unit tests pass
+- Global `npx tsc --noEmit` passes — EXIT:0
+- Clean git commit on main with package-scoped files only
+- CANONICAL_RISK_MODEL.md updated with package attribution
+- This document updated with package marked closed
+
 ---
 
 ## Layer 4 — Output / Read Surfaces
