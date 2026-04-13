@@ -320,7 +320,7 @@ Done conditions:
 
 ### Package: control-assessment-workflow
 
-Status: Closed prerequisite in repo history
+Status: Closed — commit 138e2b6b, validated 2026-04-13 (59/59 tests, global tsc EXIT:0)
 
 Depends on: control-framework-primitives (closed)
 
