@@ -240,7 +240,7 @@ Done conditions:
 
 ### Package: ai-system-governance-primitives
 
-Status: Not started
+Status: Closed — commit 699a7740, validated 2026-04-13 (67/67 tests, global tsc EXIT:0)
 
 Depends on: vendor-risk-primitives (closed)
 
