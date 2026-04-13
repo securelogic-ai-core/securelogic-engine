@@ -398,14 +398,43 @@ Done conditions:
 
 No UI package starts unless the underlying engine, primitives, and read surfaces are already closed.
 
-Examples:
-- dashboard UI
-- vendor risk UI
-- AI governance UI
-- report presentation layers
-- premium Brief presentation changes
-
 These are last-mile surfaces, not architecture.
+
+### Package: posture-dashboard-ui
+
+Status: Closed — commit pending review (2026-04-13)
+
+Depends on: posture-dashboard-foundation (closed)
+
+What it delivers:
+- Posture section added to `/dashboard` route — additive, below existing Brief/Account row
+- Overall posture score tile with severity badge and snapshot date
+- Open findings tile with per-severity breakdown (Critical / High / Moderate / Low)
+- Open actions tile with overdue callout
+- Inventory summary tile (vendors, AI systems, controls, control assessments, governance reviews)
+- Domain breakdown panel with severity badge, score bar, finding/action sub-counts per domain
+- Graceful no-snapshot instructional state when `overall_score` is null
+- Graceful absent when org not entitled (`getDashboardSummary` returns null → section not rendered)
+
+Consumes:
+- `GET /api/dashboard/summary` (Layer 4, posture-dashboard-foundation, closed)
+
+Explicitly does not deliver:
+- New backend routes or middleware
+- New database tables or migrations
+- Vendor risk UI
+- AI governance UI
+- Heatmap
+- Report presentation
+
+Done conditions met:
+- UI-only, no backend changes — YES
+- Real API data only, no mocks — YES
+- Org scoping and entitlement behavior inherited from backend — YES
+- Additive change to existing dashboard route — YES
+- Targeted test (dashboardSummary.test.ts): 12/12 passed — YES
+- Global `npx tsc --noEmit` passes — EXIT:0 — YES
+- Clean diff: only `app/src/app/dashboard/page.tsx` changed this session — YES
 
 ---
 
