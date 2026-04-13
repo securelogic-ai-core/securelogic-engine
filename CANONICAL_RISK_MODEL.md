@@ -56,6 +56,7 @@ They must not be re-declared differently in each module.
 | Control Assessment | control_assessments | POST /api/control-assessments, GET /api/control-assessments, GET /api/control-assessments/:id, PATCH /api/control-assessments/:id | Complete — package control-assessment-workflow, commit 138e2b6b |
 | Obligation | obligations | POST /api/obligations, GET /api/obligations, GET /api/obligations/:id, PATCH /api/obligations/:id | Complete — package obligation-regulatory-primitives, commit 32b23a80 |
 | Obligation Mapping | obligation_mappings | POST /api/obligation-mappings, GET /api/obligation-mappings | Complete — package obligation-regulatory-primitives, commit 32b23a80 |
+| Obligation Assessment | obligation_assessments | POST /api/obligation-assessments, GET /api/obligation-assessments, GET /api/obligation-assessments/:id, PATCH /api/obligation-assessments/:id | Complete — package obligation-assessment-workflow, commit 35ce54bd |
 | Evidence | — | — | Not started |
 | Risk (register) | — | — | Not started |
 | Dependency | — | — | Not started |
@@ -140,7 +141,9 @@ Organization
   │     └── Control Assessments (control_id FK → control_assessments)
   │           └── Findings (source_type='control_test', source_id=control_assessments.id, domain='General')
   └── Obligations (organization_id FK)
-        └── Obligation Mappings (obligation_id FK → obligation_mappings → requirements)
+        ├── Obligation Mappings (obligation_id FK → obligation_mappings → requirements)
+        └── Obligation Assessments (obligation_id FK → obligation_assessments)
+              └── Findings (source_type='obligation_review', source_id=obligation_assessments.id, domain=obligation.domain)
 ```
 
 ---
