@@ -259,7 +259,7 @@ Done conditions:
 
 ### Package: control-framework-primitives
 
-Status: Not started
+Status: Closed — commit 88474a1c, validated 2026-04-13 (58/58 tests, global tsc EXIT:0)
 
 Depends on: org-profile-context-weighting (closed)
 
