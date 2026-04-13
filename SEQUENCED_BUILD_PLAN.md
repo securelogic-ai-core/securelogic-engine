@@ -436,6 +436,43 @@ Done conditions met:
 - Global `npx tsc --noEmit` passes — EXIT:0 — YES
 - Clean diff: only `app/src/app/dashboard/page.tsx` changed this session — YES
 
+### Package: vendor-risk-ui
+
+Status: Closed — commit pending review (2026-04-13)
+
+Depends on:
+- vendor-risk-primitives (Layer 2, closed)
+- vendor-assessment-workflow (Layer 3, closed)
+
+What it delivers:
+- New route `/vendors` — server component, session-protected, redirect to `/login` if no apiKey
+- Vendor list showing: name, criticality badge (Critical/High/Medium/Low), service description, category, data sensitivity, access level, assessment count, last reviewed date
+- Assessment count per vendor cross-joined from `GET /api/vendor-assessments` (avoids N+1)
+- Not-entitled graceful state when API returns null
+- Empty state when entitled but no vendors exist
+- Vendors nav link added to `Header.tsx` for authenticated users
+
+Consumes:
+- `GET /api/vendors?status=active&limit=100` (Layer 2, vendor-risk-primitives, closed)
+- `GET /api/vendor-assessments?limit=100` (Layer 3, vendor-assessment-workflow, closed)
+
+Explicitly does not deliver:
+- Vendor detail page
+- Vendor create/edit UI
+- New backend routes or middleware
+- New database tables or migrations
+- AI governance UI
+- Control/assessment UI
+
+Done conditions met:
+- UI-only, no backend changes — YES
+- Real API data only, no mocks — YES
+- Org scoping and entitlement behavior inherited from backend — YES
+- New route and nav link only — YES
+- Targeted tests (vendors.test.ts 44/44, vendorAssessments.test.ts 36/36) — YES
+- Global `npx tsc --noEmit` passes — EXIT:0 — YES
+- Clean diff: only `app/src/lib/api.ts`, `app/src/components/Header.tsx`, `app/src/app/vendors/page.tsx` changed this session — YES
+
 ---
 
 ## What Must Never Happen
