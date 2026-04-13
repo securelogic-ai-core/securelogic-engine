@@ -51,6 +51,7 @@ import controlMappingsRouter from "./controlMappings.js";
 import controlAssessmentsRouter from "./controlAssessments.js";
 import obligationsRouter from "./obligations.js";
 import obligationMappingsRouter from "./obligationMappings.js";
+import obligationAssessmentsRouter from "./obligationAssessments.js";
 import dashboardRouter from "./dashboard.js";
 import postureRouter from "./posture.js";
 import signalsRouter from "./signals.js";
@@ -288,6 +289,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", controlAssessmentsRouter);
   router.use("/api", obligationsRouter);
   router.use("/api", obligationMappingsRouter);
+  router.use("/api", obligationAssessmentsRouter);
   router.use("/api", dashboardRouter);
   router.use("/api", postureRouter);
   router.use("/api", signalsRouter);
