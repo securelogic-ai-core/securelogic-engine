@@ -421,6 +421,70 @@ Done conditions:
 - CANONICAL_RISK_MODEL.md updated with package attribution
 - This document updated with package marked closed
 
+### Package: evidence-primitives
+
+Status: Open
+
+Depends on:
+- platform-foundation-findings-actions-posture (closed — commit ff80716a)
+- control-assessment-workflow (closed — commit 138e2b6b)
+- vendor-assessment-workflow (closed — commit fee8e4d6)
+- obligation-assessment-workflow (closed — commit 35ce54bd)
+- ai-system-governance-primitives (closed — commit 699a7740)
+
+Prerequisite canonical amendment required before implementation:
+- Add `evidence_type` enum to CANONICAL_RISK_MODEL.md:
+  document, screenshot, log, test_result, interview, observation, policy, other
+
+Purpose:
+Provide a structured, org-scoped evidence record that attaches to assessment workflow
+objects as supporting proof. Evidence answers the audit question: "what proof supports
+this assessment outcome?" Without it, every assessment is an assertion without backing.
+Evidence attaches to control assessments, vendor assessments, obligation assessments,
+and governance reviews using the same source_type/source_id FK pattern established by
+findings.
+
+What it delivers:
+- `evidence` table (org-scoped, source_type/source_id FK linkage, immutable after creation)
+- Allowed linkage targets: control_test → control_assessments, vendor_review →
+  vendor_assessments, ai_review → governance_reviews, obligation_review →
+  obligation_assessments
+- Evidence is metadata only — no binary attachments, no file storage
+- POST /api/evidence — create evidence record, verify source ownership, 404 if source not in org
+- GET /api/evidence — requires ?source_type + ?source_id; returns all evidence for that record
+- GET /api/evidence/:id — single fetch, org-scoped
+- No PATCH — evidence records are immutable after creation
+- Pure validation library: validateEvidenceCreate — discriminated union, no I/O
+
+Migration:
+`db/migrations/YYYYMMDD_evidence_primitives.sql`
+
+Does not deliver:
+- File upload, binary attachments, or blob storage
+- Evidence deletion or archiving
+- Evidence versioning or supersession tracking
+- Evidence expiry or review dates
+- Evidence linking to findings (attaches to assessments only)
+- Evidence linking to raw assessments, signals, or manual entries
+- Evidence status lifecycle
+- Evidence rollup, completeness scoring, or reporting surface
+- UI layer
+
+Done conditions:
+- CANONICAL_RISK_MODEL.md amended with evidence_type enum before implementation
+- Migration additive and verified live
+- POST /api/evidence: creates record, 404 if source not in org
+- GET /api/evidence?source_type=&source_id=: returns evidence list, 400 if params missing
+- GET /api/evidence/:id: org-scoped single fetch
+- Cross-org protection confirmed
+- Entitlement gate confirmed
+- Source-record ownership check confirmed
+- Unit tests pass (pure validation)
+- Global `npx tsc --noEmit` passes — EXIT:0
+- Clean git commit on main with package-scoped files only
+- CANONICAL_RISK_MODEL.md updated with package attribution
+- This document updated with package marked closed
+
 ---
 
 ## Layer 4 — Output / Read Surfaces
