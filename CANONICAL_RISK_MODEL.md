@@ -58,6 +58,7 @@ They must not be re-declared differently in each module.
 | Obligation Mapping | obligation_mappings | POST /api/obligation-mappings, GET /api/obligation-mappings | Complete — package obligation-regulatory-primitives, commit 32b23a80 |
 | Evidence | — | — | Not started |
 | Risk (register) | — | — | Not started |
+| Dependency | — | — | Not started |
 
 ---
 
