@@ -188,7 +188,7 @@ Done conditions:
 
 ### Package: org-profile-context-weighting
 
-Status: Pending validation and commit close
+Status: Closed — commit f94027bc, validated 2026-04-13 (34/34 tests, global tsc EXIT:0)
 
 Depends on: platform-foundation-findings-actions-posture (closed)
 
