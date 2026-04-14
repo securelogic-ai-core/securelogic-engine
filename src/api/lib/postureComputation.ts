@@ -119,14 +119,19 @@ export type PostureComputationResult = {
 // ----------------------------------------------------------------
 
 /**
- * Compute a posture snapshot from a set of open findings, action counts,
- * and the calling organization's context profile.
+ * Compute a posture snapshot from a set of signals (findings + risks),
+ * action counts, and the calling organization's context profile.
  *
  * orgContext is read from the organizations table by the posture route
  * before calling this function. It must not be defaulted to FALLBACK_CONTEXT
  * silently — callers must log a warning if they fall back.
  *
- * Returns null overall_score when there are no findings — this is honest
+ * riskSignalCount — the number of open risk register entries included in
+ * the signals array. Used only in the computation_rationale for transparency;
+ * does not affect scoring. Defaults to 0 when called from pre-risk-integration
+ * code paths.
+ *
+ * Returns null overall_score when there are no signals — this is honest
  * and must be represented as "insufficient data" in the presentation layer,
  * not as a score of zero.
  */
@@ -134,7 +139,8 @@ export function computePosture(
   findings: DbFindingForPosture[],
   openActionCount: number,
   overdueActionCount: number,
-  orgContext: OrgContext = FALLBACK_CONTEXT
+  orgContext: OrgContext = FALLBACK_CONTEXT,
+  riskSignalCount: number = 0
 ): PostureComputationResult {
   // Build a human-readable summary of the context applied — used in rationale.
   const contextSummary = [
@@ -217,6 +223,16 @@ export function computePosture(
 
   const nullDomainCount = findings.filter((f) => f.domain === null).length;
 
+  const findingSignalCount = findings.length - riskSignalCount;
+  const noteparts: string[] = [
+    `Computed from ${findings.length} signal(s) across ${domainProfiles.length} domain(s)`
+  ];
+  if (riskSignalCount > 0) {
+    noteparts.push(
+      `${findingSignalCount} finding(s) + ${riskSignalCount} open risk(s)`
+    );
+  }
+
   return {
     overall_score: overall?.score ?? null,
     overall_severity: overall?.severity ?? null,
@@ -225,7 +241,7 @@ export function computePosture(
     overdue_action_count: overdueActionCount,
     domain_scores: domainScores,
     computation_rationale: {
-      note: `Computed from ${findings.length} open finding(s) across ${domainProfiles.length} domain(s).`,
+      note: noteparts.join(" — "),
       context_applied: {
         regulated: orgContext.regulated,
         handles_pii: orgContext.handlesPII,
@@ -236,7 +252,8 @@ export function computePosture(
       policy: "DEFAULT_SCORING_POLICY",
       null_domain_findings: nullDomainCount > 0
         ? `${nullDomainCount} finding(s) with no domain bucketed under "General"`
-        : 0
+        : 0,
+      risk_signals_included: riskSignalCount
     }
   };
 }

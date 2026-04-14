@@ -423,7 +423,7 @@ Done conditions:
 
 ### Package: evidence-primitives
 
-Status: Open
+Status: Closed — working tree (db/migrations/20260420_evidence_primitives.sql)
 
 Depends on:
 - platform-foundation-findings-actions-posture (closed — commit ff80716a)
@@ -484,6 +484,184 @@ Done conditions:
 - Clean git commit on main with package-scoped files only
 - CANONICAL_RISK_MODEL.md updated with package attribution
 - This document updated with package marked closed
+
+### Package: risk-register-primitives
+
+Status: Closed — working tree (db/migrations/20260421_risk_register_primitives.sql)
+
+Depends on:
+- platform-foundation-findings-actions-posture (closed — commit ff80716a)
+
+What it delivers:
+- `risks` table: org-scoped, title, description, domain, likelihood, impact, risk_rating, status, owner
+- POST /api/risks, GET /api/risks, GET /api/risks/summary, GET /api/risks/:id, PATCH /api/risks/:id
+- Pure validation: validateRiskCreate, validateRiskPatch, validateRiskListQuery
+- buildRiskSummary: pure aggregation helper (by_status, by_risk_rating, by_domain, open_critical_count)
+
+### Package: dependency-primitives
+
+Status: Closed — working tree (db/migrations/20260422_dependency_primitives.sql)
+
+Depends on:
+- platform-foundation-findings-actions-posture (closed — commit ff80716a)
+
+What it delivers:
+- `dependencies` table: org-scoped, name, description, dependency_type, criticality, status, version, vendor_id (optional)
+- POST /api/dependencies, GET /api/dependencies, GET /api/dependencies/summary, GET /api/dependencies/:id, PATCH /api/dependencies/:id
+- Pure validation: validateDependencyCreate, validateDependencyPatch, validateDependencyListQuery
+- buildDependencySummary: pure aggregation helper (by_criticality, by_status, by_dependency_type)
+
+### Package: risk-action-linkage
+
+Status: Closed — working tree (db/migrations/20260423_risk_action_linkage.sql)
+
+Depends on:
+- risk-register-primitives (closed — working tree)
+- platform-foundation-findings-actions-posture (closed — commit ff80716a)
+
+What it delivers:
+- Expands actions.source_type CHECK to include 'risk'
+- Allows actions to be linked to risk register entries via source_type='risk', source_id=risks.id
+- Additive migration only — no new tables, no route changes
+
+### Package: findings-source-type-risk
+
+Status: Closed — working tree (db/migrations/20260424_findings_source_type_risk.sql)
+
+Depends on:
+- risk-register-primitives (closed — working tree)
+
+What it delivers:
+- Expands findings.source_type CHECK to include 'risk'
+- Enables posture snapshot to map open risk register entries as scoring signals
+- Additive migration only
+
+### Package: dependency-review-workflow
+
+Status: Closed — working tree (db/migrations/20260425_dependency_review_workflow.sql)
+
+Depends on:
+- dependency-primitives (closed — working tree)
+- findings-source-type-risk (closed — working tree)
+
+What it delivers:
+- `dependency_assessments` table: mutable, status-driven workflow linked to dependencies
+- POST /api/dependency-assessments, GET /api/dependency-assessments, GET /api/dependency-assessments/:id, PATCH /api/dependency-assessments/:id
+- Finding-triggering statuses: flagged, needs_remediation (source_type='dependency_review')
+- Expands findings.source_type CHECK to include 'dependency_review'
+- Pure validation: validateDependencyAssessmentCreate, validateDependencyAssessmentStatusTransition
+
+### Package: risk-treatment-workflow
+
+Status: Closed — working tree (db/migrations/20260426_risk_treatment_workflow.sql)
+
+Depends on:
+- risk-register-primitives (closed — working tree)
+
+What it delivers:
+- `risk_treatments` table: treatment plans linked to risks (treatment_type, status, description, owner, due_date)
+- POST /api/risk-treatments, GET /api/risk-treatments, GET /api/risk-treatments/:id, PATCH /api/risk-treatments/:id
+- Terminal status sync: PATCH to mitigated/accepted/transferred updates parent risk.status
+- Pure validation: validateRiskTreatmentCreate, validateRiskTreatmentPatch
+
+### Package: evidence-linkage-workflow
+
+Status: Closed — working tree (db/migrations/20260427_evidence_linkage_workflow.sql)
+
+Depends on:
+- evidence-primitives (closed — working tree)
+- risk-treatment-workflow (closed — working tree)
+
+What it delivers:
+- Expands evidence.source_type CHECK to include 'risk_treatment' and 'finding'
+- Allows evidence to attach to risk treatments and findings directly
+- Updates evidenceValidation.ts VALID_SOURCE_TYPES and SOURCE_TYPE_TABLE in evidence.ts
+- Additive migration only
+
+### Package: vendor-review-workflow
+
+Status: Closed — working tree (db/migrations/20260428_vendor_review_workflow.sql)
+
+Depends on:
+- vendor-risk-primitives (closed — commit 699a7740)
+- evidence-primitives (closed — working tree)
+
+What it delivers:
+- `vendor_reviews` table: mutable, status-driven workflow linked to vendors (distinct from point-in-time vendor_assessments)
+- POST /api/vendor-reviews, GET /api/vendor-reviews, GET /api/vendor-reviews/:id, PATCH /api/vendor-reviews/:id
+- Finding-triggering statuses: concerns_identified, critical_issues (source_type='vendor_cycle_review', domain='Vendor Risk')
+- Expands findings.source_type CHECK to include 'vendor_cycle_review'
+- Pure validation: validateVendorReviewCreate, validateVendorReviewStatusTransition
+
+### Package: ai-governance-review-workflow
+
+Status: Closed — working tree (db/migrations/20260429_ai_governance_review_workflow.sql)
+
+Depends on:
+- ai-system-governance-primitives (closed — commit 699a7740)
+- evidence-primitives (closed — working tree)
+
+What it delivers:
+- `ai_governance_assessments` table: mutable, status-driven workflow linked to ai_systems (distinct from point-in-time governance_reviews)
+- POST /api/ai-governance-assessments, GET /api/ai-governance-assessments, GET /api/ai-governance-assessments/:id, PATCH /api/ai-governance-assessments/:id
+- Finding-triggering statuses: non_compliant, partially_compliant (source_type='ai_governance_review', domain='AI Governance')
+- Expands findings.source_type and evidence.source_type CHECK to include 'ai_governance_review'
+- Pure validation: validateAiGovernanceAssessmentCreate, validateAiGovernanceAssessmentStatusTransition
+
+### Package: obligation-compliance-review-workflow
+
+Status: Closed — working tree
+
+Depends on:
+- obligation-assessment-workflow (closed — commit 35ce54bd)
+
+What it delivers:
+- Obligation summary endpoint: GET /api/obligations/summary
+- buildObligationSummary: pure aggregation helper (total, by_status, by_domain)
+- Extends obligations.ts with summary route
+
+### Package: workflow-to-scoring-integration
+
+Status: Closed — working tree
+
+Depends on:
+- risk-register-primitives (closed — working tree)
+- risk-treatment-workflow (closed — working tree)
+- posture-dashboard-foundation (closed — commit 9515d54e)
+
+What it delivers:
+- `workflowScoringIntegration.ts`: pure library (no I/O)
+  - buildWorkflowSignalBreakdown: attributes scoring signals by workflow source_type
+  - buildScoringRationaleExtension: produces computation_rationale enrichment object
+- Posture snapshot route (posture.ts) extended with 2 additional parallel queries:
+  - Open findings grouped by source_type (for workflow attribution)
+  - Open risks with active treatments (for treatment transparency)
+- computation_rationale on every snapshot enriched with workflow_signal_breakdown
+- Open risks mapped as DbFindingForPosture signals and merged with findings before scoring
+
+### Package: hostile-review-alignment
+
+Status: Closed — working tree
+
+Depends on:
+- evidence-linkage-workflow (closed — working tree)
+
+What it delivers:
+- Corrects 3 stale assertions in src/api/tests/evidencePrimitives.test.ts:
+  - size expectation updated from 5 to 8 (reflects ai_governance_review, risk_treatment, finding additions)
+  - two 'finding' rejection assertions replaced with 'signal' (finding is now a valid source_type)
+- No implementation changes
+
+### Package: plan-and-model-sync
+
+Status: Closed — working tree
+
+Depends on:
+- hostile-review-alignment (closed — working tree)
+
+What it delivers:
+- CANONICAL_RISK_MODEL.md: Package Build Status table updated (Evidence, Risk, Dependency, Risk Treatment, Vendor Review, AI Governance Assessment, Dependency Assessment rows added); Source Type enums expanded; new canonical enums added (Risk Likelihood, Risk/Dependency/Treatment statuses and types, workflow assessment statuses); Key Relationships diagram updated; Posture Computation Policy updated with risk signals and treatment transparency; Locked Package Decisions added for new workflow packages
+- SEQUENCED_BUILD_PLAN.md: evidence-primitives marked Closed; 12 new packages added with Closed status
 
 ---
 
@@ -709,11 +887,24 @@ Done conditions met:
 
 ## Immediate Priority Order From Here
 
-1. Close core-engine-production-hardening
-2. Close engine-observability-and-operational-guardrails
-3. Close engine-regression-and-diff-safety
-4. Close any still-open primitive/workflow packages already partially built
-5. Only then continue expanding downstream read/output surfaces
+Packages closed in working tree (not yet committed):
+- evidence-primitives
+- risk-register-primitives
+- dependency-primitives
+- risk-action-linkage
+- findings-source-type-risk
+- dependency-review-workflow
+- risk-treatment-workflow
+- evidence-linkage-workflow
+- vendor-review-workflow
+- ai-governance-review-workflow
+- obligation-compliance-review-workflow
+- workflow-to-scoring-integration
+- hostile-review-alignment
+- plan-and-model-sync
+
+**Next executable package:** dashboard-read-surface-v2
+Purpose: Extend GET /api/dashboard/summary to include risk register counts, dependency counts, and evidence counts so the existing dashboard surface reflects the new platform objects. Test specs for this exist in working tree (riskRegisterSummary.test.ts, dependencySummary.test.ts, obligationSummary.test.ts all passing; dashboardSummary.test.ts may need extension).
 
 If there is tension between engine work and surface work, engine work wins.
 

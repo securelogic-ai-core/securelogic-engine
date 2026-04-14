@@ -176,13 +176,39 @@ describe("validateActionCreate — valid minimal input", () => {
 describe("validateActionCreate — all valid source types", () => {
   const base = { title: "Test", priority: "watch" };
 
-  it.each(["assessment", "finding", "signal", "manual"])(
+  it.each(["assessment", "finding", "signal", "manual", "risk"])(
     "accepts source_type=%s",
     (source_type) => {
       const result = validateActionCreate({ ...base, source_type });
       expect("input" in result).toBe(true);
     }
   );
+});
+
+describe("validateActionCreate — risk source_type linkage", () => {
+  it("accepts source_type=risk with a UUID source_id", () => {
+    const result = validateActionCreate({
+      title: "Remediate critical vendor risk",
+      priority: "immediate",
+      source_type: "risk",
+      source_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    });
+    expect("input" in result).toBe(true);
+    if ("input" in result) {
+      expect(result.input.source_type).toBe("risk");
+      expect(result.input.source_id).toBe("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+    }
+  });
+
+  it("accepts source_type=risk without source_id (source_id optional)", () => {
+    const result = validateActionCreate({
+      title: "Remediate risk",
+      priority: "near_term",
+      source_type: "risk"
+    });
+    expect("input" in result).toBe(true);
+    if ("input" in result) expect(result.input.source_type).toBe("risk");
+  });
 });
 
 describe("validateActionCreate — all valid priorities", () => {

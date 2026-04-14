@@ -357,3 +357,49 @@ describe("computePosture — context weighting", () => {
     expect(gov!.rationale).toContain("scale:Small");
   });
 });
+
+// ====================================================================
+// risk-posture-integration — riskSignalCount in rationale
+// ====================================================================
+
+describe("computePosture — riskSignalCount in computation_rationale", () => {
+  const signal = makeFinding("r1", "High", "Vendor Risk");
+
+  it("rationale note does not include risk breakdown when riskSignalCount is 0 (default)", () => {
+    const result = computePosture([signal], 0, 0, FALLBACK_CONTEXT);
+    const note = result.computation_rationale["note"] as string;
+    expect(note).not.toContain("risk");
+  });
+
+  it("rationale note includes risk breakdown when riskSignalCount > 0", () => {
+    const result = computePosture([signal], 0, 0, FALLBACK_CONTEXT, 1);
+    const note = result.computation_rationale["note"] as string;
+    expect(note).toContain("1 open risk");
+  });
+
+  it("rationale note includes finding count when riskSignalCount > 0", () => {
+    const f = makeFinding("f1", "Critical", "General");
+    const r = makeFinding("r1", "High", "Vendor Risk");
+    const result = computePosture([f, r], 0, 0, FALLBACK_CONTEXT, 1);
+    const note = result.computation_rationale["note"] as string;
+    expect(note).toContain("1 finding");
+    expect(note).toContain("1 open risk");
+  });
+
+  it("risk_signals_included is 0 when no risk signals", () => {
+    const result = computePosture([signal], 0, 0, FALLBACK_CONTEXT);
+    expect(result.computation_rationale["risk_signals_included"]).toBe(0);
+  });
+
+  it("risk_signals_included matches riskSignalCount when provided", () => {
+    const result = computePosture([signal], 0, 0, FALLBACK_CONTEXT, 1);
+    expect(result.computation_rationale["risk_signals_included"]).toBe(1);
+  });
+
+  it("scoring is not affected by riskSignalCount — same signals produce same score", () => {
+    const r1 = computePosture([signal], 0, 0, FALLBACK_CONTEXT, 0);
+    const r2 = computePosture([signal], 0, 0, FALLBACK_CONTEXT, 1);
+    expect(r1.overall_score).toBe(r2.overall_score);
+    expect(r1.overall_severity).toBe(r2.overall_severity);
+  });
+});
