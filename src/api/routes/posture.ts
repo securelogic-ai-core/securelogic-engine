@@ -25,8 +25,78 @@ import {
   type DbFindingForPosture,
   type OrgContext
 } from "../lib/postureComputation.js";
+import {
+  buildWorkflowSignalBreakdown,
+  buildScoringRationaleExtension
+} from "../lib/workflowScoringIntegration.js";
 
 const router = Router();
+
+// ---------------------------------------------------------------------------
+// buildComplianceSummary — pure helper exported for unit testing
+// ---------------------------------------------------------------------------
+
+/**
+ * Aggregate obligation and obligation assessment DB rows into a
+ * compliance posture summary.
+ *
+ * All canonical status keys are always present; missing values default to 0.
+ * open_compliance_concerns = assessments with non_compliant + partially_compliant.
+ */
+export function buildComplianceSummary(
+  obligationStatusRows: ReadonlyArray<{ status: string; count: string }>,
+  assessmentStatusRows: ReadonlyArray<{ status: string; count: string }>
+): {
+  obligations: {
+    total: number;
+    by_status: Record<string, number>;
+  };
+  assessments: {
+    total: number;
+    by_status: Record<string, number>;
+  };
+  open_compliance_concerns: number;
+} {
+  const obligationByStatus: Record<string, number> = {
+    active: 0,
+    waived: 0,
+    not_applicable: 0
+  };
+  for (const row of obligationStatusRows) {
+    if (row.status in obligationByStatus) {
+      obligationByStatus[row.status] = parseInt(row.count, 10);
+    }
+  }
+  const obligationTotal = Object.values(obligationByStatus).reduce((s, n) => s + n, 0);
+
+  const assessmentByStatus: Record<string, number> = {
+    not_started: 0,
+    in_progress: 0,
+    compliant: 0,
+    non_compliant: 0,
+    partially_compliant: 0
+  };
+  for (const row of assessmentStatusRows) {
+    if (row.status in assessmentByStatus) {
+      assessmentByStatus[row.status] = parseInt(row.count, 10);
+    }
+  }
+  const assessmentTotal = Object.values(assessmentByStatus).reduce((s, n) => s + n, 0);
+  const openComplianceConcerns =
+    (assessmentByStatus["non_compliant"] ?? 0) + (assessmentByStatus["partially_compliant"] ?? 0);
+
+  return {
+    obligations: {
+      total: obligationTotal,
+      by_status: obligationByStatus
+    },
+    assessments: {
+      total: assessmentTotal,
+      by_status: assessmentByStatus
+    },
+    open_compliance_concerns: openComplianceConcerns
+  };
+}
 
 /* =========================================================
    POST /api/posture/snapshot
@@ -88,18 +158,66 @@ router.post(
         };
       }
 
-      // Fetch open findings for this org
-      const findingsResult = await pg.query<DbFindingForPosture>(
-        `
-        SELECT id, title, domain, severity
-        FROM findings
-        WHERE organization_id = $1
-          AND status = 'open'
-        `,
-        [organizationId]
-      );
+      // Fetch open findings, open risks, finding source-type breakdown, and
+      // active treatment counts in parallel for scoring + rationale attribution.
+      const [findingsResult, risksResult, findingBreakdownResult, treatedRiskResult] = await Promise.all([
+        pg.query<DbFindingForPosture>(
+          `
+          SELECT id, title, domain, severity
+          FROM findings
+          WHERE organization_id = $1
+            AND status = 'open'
+          `,
+          [organizationId]
+        ),
+        pg.query<{ id: string; title: string; domain: string; risk_rating: string }>(
+          `
+          SELECT id, title, domain, risk_rating
+          FROM risks
+          WHERE organization_id = $1
+            AND status = 'open'
+          `,
+          [organizationId]
+        ),
+        // Source-type breakdown of open findings — for workflow attribution in rationale.
+        pg.query<{ source_type: string; count: string }>(
+          `
+          SELECT source_type, COUNT(*)::text AS count
+          FROM findings
+          WHERE organization_id = $1
+            AND status = 'open'
+          GROUP BY source_type
+          `,
+          [organizationId]
+        ),
+        // Open risks that have at least one active treatment — for treatment transparency.
+        // Active = not_started or in_progress (terminal statuses already update risk.status).
+        pg.query<{ count: string }>(
+          `
+          SELECT COUNT(DISTINCT r.id)::text AS count
+          FROM risks r
+          JOIN risk_treatments rt
+            ON rt.risk_id = r.id
+           AND rt.organization_id = $1
+           AND rt.status IN ('not_started', 'in_progress')
+          WHERE r.organization_id = $1
+            AND r.status = 'open'
+          `,
+          [organizationId]
+        )
+      ]);
 
-      const openFindings = findingsResult.rows;
+      // Map open risks to the DbFindingForPosture shape.
+      // risk_rating (Critical/High/Moderate/Low) maps directly to severity.
+      const riskSignals: DbFindingForPosture[] = risksResult.rows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        domain: r.domain,
+        severity: r.risk_rating
+      }));
+
+      const openFindings = [...findingsResult.rows, ...riskSignals];
+      const riskSignalCount = riskSignals.length;
 
       // Count open and overdue actions
       const actionCountResult = await pg.query<{
@@ -128,8 +246,24 @@ router.post(
         ? parseInt(actionRow.overdue_count, 10)
         : 0;
 
-      // Compute posture using real org context — no longer neutral by default
-      const computed = computePosture(openFindings, openActionCount, overdueActionCount, orgContext);
+      // Build workflow signal breakdown for rationale attribution.
+      const risksWithActiveTreatment = parseInt(
+        treatedRiskResult.rows[0]?.count ?? "0",
+        10
+      );
+      const signalBreakdown = buildWorkflowSignalBreakdown(
+        findingBreakdownResult.rows,
+        riskSignalCount,
+        risksWithActiveTreatment
+      );
+      const rationaleExtension = buildScoringRationaleExtension(signalBreakdown);
+
+      // Compute posture using real org context — no longer neutral by default.
+      // openFindings includes both assessment findings and open risk register entries.
+      const computed = computePosture(openFindings, openActionCount, overdueActionCount, orgContext, riskSignalCount);
+
+      // Merge workflow attribution into the computation rationale before persisting.
+      const enrichedRationale = { ...computed.computation_rationale, ...rationaleExtension };
 
       const client = await pg.connect();
 
@@ -167,7 +301,7 @@ router.post(
             computed.open_finding_count,
             computed.open_action_count,
             computed.overdue_action_count,
-            JSON.stringify(computed.computation_rationale)
+            JSON.stringify(enrichedRationale)
           ]
         );
 
@@ -238,7 +372,7 @@ router.post(
           openActionCount: computed.open_action_count,
           overdueActionCount: computed.overdue_action_count,
           domainScores: computed.domain_scores,
-          computationRationale: computed.computation_rationale
+          computationRationale: enrichedRationale
         });
       } catch (err) {
         await client.query("ROLLBACK");
@@ -402,6 +536,66 @@ router.get(
         "GET /api/posture/history failed"
       );
       res.status(500).json({ error: "posture_history_failed" });
+    }
+  }
+);
+
+/* =========================================================
+   GET /api/posture/compliance-summary
+   Aggregates obligation and obligation assessment outcomes
+   into a deterministic compliance posture summary.
+   Returns obligation counts by status, assessment counts by
+   status, and open compliance concern count.
+   ========================================================= */
+
+router.get(
+  "/posture/compliance-summary",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const [obligationResult, assessmentResult] = await Promise.all([
+        pg.query<{ status: string; count: string }>(
+          `
+          SELECT status, COUNT(*)::text AS count
+          FROM obligations
+          WHERE organization_id = $1
+          GROUP BY status
+          `,
+          [organizationId]
+        ),
+        pg.query<{ status: string; count: string }>(
+          `
+          SELECT status, COUNT(*)::text AS count
+          FROM obligation_assessments
+          WHERE organization_id = $1
+          GROUP BY status
+          `,
+          [organizationId]
+        )
+      ]);
+
+      const summary = buildComplianceSummary(
+        obligationResult.rows,
+        assessmentResult.rows
+      );
+
+      res.status(200).json(summary);
+    } catch (err) {
+      logger.error(
+        { event: "compliance_summary_failed", err },
+        "GET /api/posture/compliance-summary failed"
+      );
+      res.status(500).json({ error: "compliance_summary_failed" });
     }
   }
 );

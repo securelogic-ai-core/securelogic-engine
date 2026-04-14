@@ -33,6 +33,45 @@ import {
 
 const router = Router();
 
+// ---------------------------------------------------------------------------
+// Pure helper — exported for unit testing
+// ---------------------------------------------------------------------------
+
+/**
+ * Aggregate obligation DB rows into a summary object.
+ * All canonical status and domain keys are always present in by_status.
+ * by_domain is built from actual DB rows (domain is non-exhaustive).
+ * Exported for unit testing without a live database.
+ */
+export function buildObligationSummary(
+  byStatusRows: ReadonlyArray<{ status: string; count: string }>,
+  byDomainRows: ReadonlyArray<{ domain: string; count: string }>
+): {
+  total: number;
+  by_status: Record<string, number>;
+  by_domain: Record<string, number>;
+} {
+  const by_status: Record<string, number> = {
+    active: 0,
+    waived: 0,
+    not_applicable: 0
+  };
+  for (const row of byStatusRows) {
+    if (row.status in by_status) {
+      by_status[row.status] = parseInt(row.count, 10);
+    }
+  }
+
+  const by_domain: Record<string, number> = {};
+  for (const row of byDomainRows) {
+    by_domain[row.domain] = parseInt(row.count, 10);
+  }
+
+  const total = Object.values(by_status).reduce((s, n) => s + n, 0);
+
+  return { total, by_status, by_domain };
+}
+
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
 
@@ -268,6 +307,66 @@ router.get(
         "GET /api/obligations failed"
       );
       res.status(500).json({ error: "obligations_list_failed" });
+    }
+  }
+);
+
+/* =========================================================
+   GET /api/obligations/summary
+   Aggregate counts for the org's obligation inventory:
+   - by_status: count per lifecycle status
+   - by_domain: count per domain value (non-exhaustive)
+   ========================================================= */
+
+router.get(
+  "/obligations/summary",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    try {
+      const [byStatusResult, byDomainResult] = await Promise.all([
+        pg.query<{ status: string; count: string }>(
+          `
+          SELECT status, COUNT(*)::text AS count
+          FROM obligations
+          WHERE organization_id = $1
+          GROUP BY status
+          `,
+          [organizationId]
+        ),
+        pg.query<{ domain: string; count: string }>(
+          `
+          SELECT domain, COUNT(*)::text AS count
+          FROM obligations
+          WHERE organization_id = $1
+          GROUP BY domain
+          ORDER BY count DESC, domain ASC
+          `,
+          [organizationId]
+        )
+      ]);
+
+      const summary = buildObligationSummary(
+        byStatusResult.rows,
+        byDomainResult.rows
+      );
+
+      res.status(200).json(summary);
+    } catch (err) {
+      logger.error(
+        { event: "obligation_summary_failed", err },
+        "GET /api/obligations/summary failed"
+      );
+      res.status(500).json({ error: "obligation_summary_failed" });
     }
   }
 );

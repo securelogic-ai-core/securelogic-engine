@@ -9,7 +9,8 @@ const VALID_SOURCE_TYPES = new Set([
   "assessment",
   "finding",
   "signal",
-  "manual"
+  "manual",
+  "risk"
 ]);
 
 const VALID_PRIORITIES = new Set([

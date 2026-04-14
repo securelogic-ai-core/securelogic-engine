@@ -14,6 +14,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { validateFindingCreate } from "../lib/findingValidation.js";
 
 const router = Router();
 
@@ -27,8 +28,11 @@ const VALID_SOURCE_TYPES = new Set([
   "control_test",
   "vendor_review",
   "ai_review",
+  "obligation_review",
+  "dependency_review",
   "signal",
-  "manual"
+  "manual",
+  "risk"
 ]);
 const VALID_PRIORITIES = new Set(["immediate", "near_term", "planned", "watch"]);
 const VALID_PATCH_STATUSES = new Set(["open", "in_progress", "closed"]);
@@ -49,6 +53,122 @@ function isUuid(v: unknown): boolean {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
   );
 }
+
+/* =========================================================
+   POST /api/findings
+   Create a new finding for the requesting organization.
+   When source_type='risk', source_id must belong to the org.
+   ========================================================= */
+
+router.post(
+  "/findings",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const validation = validateFindingCreate(req.body);
+      if ("error" in validation) {
+        res.status(400).json(validation);
+        return;
+      }
+
+      const {
+        title,
+        severity,
+        source_type,
+        description,
+        source_id,
+        domain,
+        priority,
+        likelihood,
+        confidence,
+        time_sensitivity,
+        scoring_rationale,
+        owner_user_id,
+        due_date
+      } = validation.input;
+
+      // When source_type='risk', verify the risk belongs to this org
+      if (source_type === "risk" && source_id !== null) {
+        const riskCheck = await pg.query(
+          `SELECT id FROM risks WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+          [source_id, organizationId]
+        );
+        if ((riskCheck.rowCount ?? 0) === 0) {
+          res.status(404).json({ error: "source_risk_not_found" });
+          return;
+        }
+      }
+
+      const result = await pg.query(
+        `
+        INSERT INTO findings (
+          organization_id,
+          title,
+          severity,
+          source_type,
+          description,
+          source_id,
+          domain,
+          priority,
+          likelihood,
+          confidence,
+          time_sensitivity,
+          scoring_rationale,
+          owner_user_id,
+          due_date,
+          status
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'open'
+        )
+        RETURNING
+          id, organization_id, source_type, source_id, title, severity,
+          description, domain, priority, likelihood, confidence,
+          time_sensitivity, scoring_rationale, owner_user_id, due_date,
+          status, created_at, updated_at
+        `,
+        [
+          organizationId,
+          title,
+          severity,
+          source_type,
+          description,
+          source_id,
+          domain,
+          priority,
+          likelihood,
+          confidence,
+          time_sensitivity,
+          scoring_rationale,
+          owner_user_id,
+          due_date
+        ]
+      );
+
+      logger.info(
+        { event: "finding_created", findingId: result.rows[0].id, organizationId },
+        "Finding created"
+      );
+
+      res.status(201).json({ finding: result.rows[0] });
+    } catch (err) {
+      logger.error(
+        { event: "finding_create_failed", err },
+        "POST /api/findings failed"
+      );
+      res.status(500).json({ error: "finding_create_failed" });
+    }
+  }
+);
 
 /* =========================================================
    GET /api/findings

@@ -23,6 +23,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { buildEvidenceSummary } from "./evidence.js";
 
 const router = Router();
 
@@ -33,6 +34,54 @@ const router = Router();
 // directly without DATABASE_URL. Tests use vi.mock("../infra/postgres.js")
 // to prevent module evaluation from throwing, then import this export.
 // ---------------------------------------------------------------------------
+
+/**
+ * Build the inventory object from a DB row.
+ * All counts default to 0 when the row is absent.
+ * Exported for unit testing.
+ */
+export function buildInventory(row: {
+  vendors: string;
+  ai_systems: string;
+  controls: string;
+  control_assessments: string;
+  governance_reviews: string;
+  risks: string;
+  dependencies: string;
+  obligations: string;
+} | null | undefined): {
+  vendors: number;
+  ai_systems: number;
+  controls: number;
+  control_assessments: number;
+  governance_reviews: number;
+  risks: number;
+  dependencies: number;
+  obligations: number;
+} {
+  if (!row) {
+    return {
+      vendors: 0,
+      ai_systems: 0,
+      controls: 0,
+      control_assessments: 0,
+      governance_reviews: 0,
+      risks: 0,
+      dependencies: 0,
+      obligations: 0
+    };
+  }
+  return {
+    vendors: parseInt(row.vendors, 10),
+    ai_systems: parseInt(row.ai_systems, 10),
+    controls: parseInt(row.controls, 10),
+    control_assessments: parseInt(row.control_assessments, 10),
+    governance_reviews: parseInt(row.governance_reviews, 10),
+    risks: parseInt(row.risks, 10),
+    dependencies: parseInt(row.dependencies, 10),
+    obligations: parseInt(row.obligations, 10)
+  };
+}
 
 /**
  * Build the by_severity map and total open finding count from DB aggregate rows.
@@ -187,6 +236,38 @@ router.get(
         : 0;
 
       // -------------------------------------------------------
+      // 5a. Open risk counts by rating
+      // -------------------------------------------------------
+      const riskCountResult = await pg.query<{
+        risk_rating: string;
+        count: string;
+      }>(
+        `
+        SELECT risk_rating, COUNT(*)::text AS count
+        FROM risks
+        WHERE organization_id = $1
+          AND status NOT IN ('closed', 'transferred')
+        GROUP BY risk_rating
+        `,
+        [organizationId]
+      );
+
+      const openRisksByRating: Record<string, number> = {
+        Critical: 0,
+        High: 0,
+        Moderate: 0,
+        Low: 0
+      };
+      let totalOpenRisks = 0;
+      for (const row of riskCountResult.rows) {
+        if (row.risk_rating in openRisksByRating) {
+          const n = parseInt(row.count, 10);
+          openRisksByRating[row.risk_rating] = n;
+          totalOpenRisks += n;
+        }
+      }
+
+      // -------------------------------------------------------
       // 5. Object inventory counts — all live entity types
       // -------------------------------------------------------
       const inventoryResult = await pg.query<{
@@ -195,19 +276,75 @@ router.get(
         controls: string;
         control_assessments: string;
         governance_reviews: string;
+        risks: string;
+        dependencies: string;
+        obligations: string;
       }>(
         `
         SELECT
-          (SELECT COUNT(*)::text FROM vendors            WHERE organization_id = $1) AS vendors,
-          (SELECT COUNT(*)::text FROM ai_systems         WHERE organization_id = $1) AS ai_systems,
-          (SELECT COUNT(*)::text FROM controls           WHERE organization_id = $1) AS controls,
+          (SELECT COUNT(*)::text FROM vendors             WHERE organization_id = $1) AS vendors,
+          (SELECT COUNT(*)::text FROM ai_systems          WHERE organization_id = $1) AS ai_systems,
+          (SELECT COUNT(*)::text FROM controls            WHERE organization_id = $1) AS controls,
           (SELECT COUNT(*)::text FROM control_assessments WHERE organization_id = $1) AS control_assessments,
-          (SELECT COUNT(*)::text FROM governance_reviews  WHERE organization_id = $1) AS governance_reviews
+          (SELECT COUNT(*)::text FROM governance_reviews  WHERE organization_id = $1) AS governance_reviews,
+          (SELECT COUNT(*)::text FROM risks               WHERE organization_id = $1) AS risks,
+          (SELECT COUNT(*)::text FROM dependencies        WHERE organization_id = $1) AS dependencies,
+          (SELECT COUNT(*)::text FROM obligations         WHERE organization_id = $1) AS obligations
         `,
         [organizationId]
       );
 
-      const inv = inventoryResult.rows[0];
+      const inventory = buildInventory(inventoryResult.rows[0]);
+
+      // -------------------------------------------------------
+      // 6. Evidence counts by source_type
+      // -------------------------------------------------------
+      const evidenceCountResult = await pg.query<{
+        source_type: string;
+        count: string;
+      }>(
+        `
+        SELECT source_type, COUNT(*)::text AS count
+        FROM evidence
+        WHERE organization_id = $1
+        GROUP BY source_type
+        `,
+        [organizationId]
+      );
+
+      const evidenceSummary = buildEvidenceSummary(evidenceCountResult.rows);
+
+      // -------------------------------------------------------
+      // 7. Open dependency counts by criticality
+      // -------------------------------------------------------
+      const depCountResult = await pg.query<{
+        criticality: string;
+        count: string;
+      }>(
+        `
+        SELECT criticality, COUNT(*)::text AS count
+        FROM dependencies
+        WHERE organization_id = $1
+          AND status IN ('active', 'under_review')
+        GROUP BY criticality
+        `,
+        [organizationId]
+      );
+
+      const openDepsByCriticality: Record<string, number> = {
+        Critical: 0,
+        High: 0,
+        Moderate: 0,
+        Low: 0
+      };
+      let totalOpenDeps = 0;
+      for (const row of depCountResult.rows) {
+        if (row.criticality in openDepsByCriticality) {
+          const n = parseInt(row.count, 10);
+          openDepsByCriticality[row.criticality] = n;
+          totalOpenDeps += n;
+        }
+      }
 
       res.status(200).json({
         posture: {
@@ -224,13 +361,16 @@ router.get(
           open: openActionCount,
           overdue: overdueActionCount
         },
-        inventory: {
-          vendors: inv ? parseInt(inv.vendors, 10) : 0,
-          ai_systems: inv ? parseInt(inv.ai_systems, 10) : 0,
-          controls: inv ? parseInt(inv.controls, 10) : 0,
-          control_assessments: inv ? parseInt(inv.control_assessments, 10) : 0,
-          governance_reviews: inv ? parseInt(inv.governance_reviews, 10) : 0
-        }
+        risks_summary: {
+          open: totalOpenRisks,
+          by_risk_rating: openRisksByRating
+        },
+        dependency_summary: {
+          open: totalOpenDeps,
+          by_criticality: openDepsByCriticality
+        },
+        evidence_summary: evidenceSummary,
+        inventory
       });
     } catch (err) {
       logger.error(
