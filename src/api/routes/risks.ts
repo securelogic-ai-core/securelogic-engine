@@ -375,6 +375,131 @@ router.get(
 );
 
 /* =========================================================
+   GET /api/risks/intelligence
+   Returns open risks enriched with treatment counts and
+   linked open finding counts. Ordered by risk_rating severity.
+   Excludes closed and transferred risks.
+   ========================================================= */
+
+type RiskIntelligenceRow = {
+  id: string;
+  title: string;
+  domain: string;
+  risk_rating: string;
+  status: string;
+  likelihood: string | null;
+  owner: string | null;
+  active_treatments: string;
+  total_treatments: string;
+  linked_findings: string;
+};
+
+/**
+ * Map enriched risk rows into the intelligence list shape.
+ * Parses string counts from DB aggregates to numbers.
+ * Exported for unit testing without a live database.
+ */
+export function buildRiskIntelligenceList(rows: ReadonlyArray<RiskIntelligenceRow>): Array<{
+  id: string;
+  title: string;
+  domain: string;
+  risk_rating: string;
+  status: string;
+  likelihood: string | null;
+  owner: string | null;
+  active_treatments: number;
+  total_treatments: number;
+  linked_findings: number;
+}> {
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    domain: r.domain,
+    risk_rating: r.risk_rating,
+    status: r.status,
+    likelihood: r.likelihood ?? null,
+    owner: r.owner ?? null,
+    active_treatments: parseInt(r.active_treatments, 10),
+    total_treatments: parseInt(r.total_treatments, 10),
+    linked_findings: parseInt(r.linked_findings, 10)
+  }));
+}
+
+router.get(
+  "/risks/intelligence",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    try {
+      const result = await pg.query<RiskIntelligenceRow>(
+        `
+        SELECT
+          r.id,
+          r.title,
+          r.domain,
+          r.risk_rating,
+          r.status,
+          r.likelihood,
+          r.owner,
+          COUNT(rt.id) FILTER (
+            WHERE rt.status IN ('not_started', 'in_progress')
+          )::text AS active_treatments,
+          COUNT(rt.id)::text AS total_treatments,
+          COUNT(f.id)::text AS linked_findings
+        FROM risks r
+        LEFT JOIN risk_treatments rt
+          ON rt.risk_id = r.id
+         AND rt.organization_id = $1
+        LEFT JOIN findings f
+          ON f.source_type = 'risk'
+         AND f.source_id = r.id
+         AND f.organization_id = $1
+         AND f.status = 'open'
+        WHERE r.organization_id = $1
+          AND r.status NOT IN ('closed', 'transferred')
+        GROUP BY r.id, r.title, r.domain, r.risk_rating, r.status,
+                 r.likelihood, r.owner
+        ORDER BY
+          CASE r.risk_rating
+            WHEN 'Critical' THEN 1
+            WHEN 'High'     THEN 2
+            WHEN 'Moderate' THEN 3
+            WHEN 'Low'      THEN 4
+            ELSE 5
+          END,
+          r.created_at DESC
+        `,
+        [organizationId]
+      );
+
+      const risks = buildRiskIntelligenceList(result.rows);
+      const openCriticalCount = risks.filter((r) => r.risk_rating === "Critical").length;
+
+      res.status(200).json({
+        count: risks.length,
+        open_critical_count: openCriticalCount,
+        risks
+      });
+    } catch (err) {
+      logger.error(
+        { event: "risk_intelligence_failed", err },
+        "GET /api/risks/intelligence failed"
+      );
+      res.status(500).json({ error: "risk_intelligence_failed" });
+    }
+  }
+);
+
+/* =========================================================
    GET /api/risks/:id
    Get a single risk record by id.
    Returns 404 if not found or belongs to a different org.
