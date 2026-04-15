@@ -45,16 +45,16 @@ function parseRiskCounts(sectionsJson: BriefSections | null): {
 
 function riskLevelColor(level: string) {
   const l = level.toLowerCase();
-  if (l === "critical") return "bg-red-100 text-red-700";
-  if (l === "high") return "bg-orange-100 text-orange-700";
-  if (l === "medium") return "bg-yellow-100 text-yellow-700";
-  return "bg-green-100 text-green-700";
+  if (l === "critical") return "bg-red-900/40 text-red-300";
+  if (l === "high") return "bg-orange-900/40 text-orange-300";
+  if (l === "medium") return "bg-yellow-900/40 text-yellow-300";
+  return "bg-green-900/40 text-green-300";
 }
 
 function cardBorderAccent(critical: number, high: number): string {
   if (critical > 0) return "border-l-red-500";
   if (high > 0) return "border-l-orange-400";
-  return "border-l-teal-500";
+  return "border-l-brand-teal";
 }
 
 function RiskBadges({ critical, high }: { critical: number; high: number }) {
@@ -62,13 +62,13 @@ function RiskBadges({ critical, high }: { critical: number; high: number }) {
   return (
     <div className="flex items-center gap-1.5 flex-shrink-0">
       {critical > 0 && (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-red-100 text-red-700 border border-red-200 uppercase tracking-wide">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-red-900/40 text-red-300 border border-red-800/50 uppercase tracking-wide">
           <span className="w-1.5 h-1.5 bg-red-500 rounded-full inline-block" />
           {critical} Critical
         </span>
       )}
       {high > 0 && (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-orange-100 text-orange-700 border border-orange-200 uppercase tracking-wide">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-orange-900/40 text-orange-300 border border-orange-800/50 uppercase tracking-wide">
           <span className="w-1.5 h-1.5 bg-orange-500 rounded-full inline-block" />
           {high} High
         </span>
@@ -86,7 +86,7 @@ function formatDate(dateStr: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Locked card — value-demonstrating teaser
+// Locked card — value-demonstrating teaser for free plan users
 // ---------------------------------------------------------------------------
 
 function LockedCard({ issue }: { issue: NewsletterIssue }) {
@@ -97,48 +97,54 @@ function LockedCard({ issue }: { issue: NewsletterIssue }) {
   const teaser = issue.thesis_headline ?? issue.summary;
 
   return (
-    <div className="bg-white border border-slate-200 border-l-4 border-l-slate-300 rounded-xl p-6 shadow-sm relative overflow-hidden">
+    <div className="bg-brand-surface border border-brand-line border-l-4 border-l-slate-600 rounded-xl p-6 relative overflow-hidden">
       {/* Subscriber badge */}
-      <div className="absolute top-0 right-0 bg-teal-50 text-teal-600 text-xs font-semibold px-3 py-1.5 rounded-bl-lg flex items-center gap-1 border-b border-l border-teal-200">
+      <div className="absolute top-0 right-0 bg-teal-900/40 text-teal-400 text-xs font-semibold px-3 py-1.5 rounded-bl-lg flex items-center gap-1 border-b border-l border-teal-800/50">
         <LockIcon />
         Subscribers only
       </div>
 
-      <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide mb-2 pr-28">
+      <p className="text-xs text-slate-500 font-semibold uppercase tracking-wide mb-2 pr-28">
         {date}
       </p>
 
-      <h3 className="text-slate-900 font-bold text-base leading-snug mb-2">
+      <h3 className="text-slate-100 font-bold text-base leading-snug mb-2">
         {issue.title}
       </h3>
 
       {teaser && (
-        <p className="text-slate-500 text-sm leading-relaxed mb-3">
+        <p className="text-slate-400 text-sm leading-relaxed mb-4">
           {teaser}
         </p>
       )}
 
-      {/* Teaser of what's locked */}
-      <div className="space-y-1.5 mb-4">
-        {[
-          "Full signal analysis and risk scoring rationale",
-          "Staged action roadmap (this week / this month / monitor)",
-          "Cross-domain risk pattern analysis",
-        ].map((item) => (
-          <div key={item} className="flex items-center gap-2">
-            <span className="w-1 h-1 bg-teal-400 rounded-full flex-shrink-0" />
-            <span className="text-slate-500 text-xs">{item}</span>
-          </div>
-        ))}
+      {/* What you're missing */}
+      <div className="mb-4">
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
+          What you&apos;re missing
+        </p>
+        <div className="space-y-1.5">
+          {[
+            "Full signal analysis with risk scoring rationale",
+            "Why it matters — business impact for each finding",
+            "Recommended actions — prioritized by urgency",
+            "Complete brief archive — every issue, searchable",
+          ].map((item) => (
+            <div key={item} className="flex items-center gap-2">
+              <span className="w-1 h-1 bg-brand-teal rounded-full flex-shrink-0" />
+              <span className="text-slate-400 text-xs">{item}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
-      <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
-        <span className="text-slate-400 text-xs">
+      <div className="pt-4 border-t border-brand-line flex items-center justify-between">
+        <span className="text-slate-500 text-xs">
           Available to Professional and Team subscribers
         </span>
         <Link
           href="/account"
-          className="text-teal-600 hover:text-teal-700 text-sm font-semibold transition-colors flex-shrink-0 ml-3"
+          className="text-brand-teal hover:text-teal-300 text-sm font-semibold transition-colors flex-shrink-0 ml-3"
         >
           Upgrade →
         </Link>
@@ -164,18 +170,18 @@ function UnlockedCard({ issue }: { issue: NewsletterIssue }) {
 
   return (
     <Link href={`/briefs/${issue.id}`} className="block group">
-      <div className={`bg-white border border-slate-200 border-l-4 ${borderAccent} rounded-xl p-6 shadow-sm hover:shadow-md transition-all`}>
+      <div className={`bg-brand-surface border border-brand-line border-l-4 ${borderAccent} rounded-xl p-6 hover:border-slate-600 transition-all`}>
         <div className="flex items-center justify-between gap-3 mb-3">
-          <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide">
+          <p className="text-xs text-slate-500 font-semibold uppercase tracking-wide">
             {issue.issue_number ? `Issue #${issue.issue_number} · ` : ""}{date}
           </p>
           <RiskBadges critical={critical} high={high} />
         </div>
-        <h3 className="text-slate-900 font-bold text-base leading-snug mb-2 group-hover:text-teal-700 transition-colors">
+        <h3 className="text-slate-100 font-bold text-base leading-snug mb-2 group-hover:text-brand-teal transition-colors">
           {issue.title}
         </h3>
         {hook && (
-          <p className="text-slate-500 text-sm leading-relaxed line-clamp-3">
+          <p className="text-slate-400 text-sm leading-relaxed line-clamp-3">
             {hook}
           </p>
         )}
@@ -185,19 +191,19 @@ function UnlockedCard({ issue }: { issue: NewsletterIssue }) {
             {domains.map((domain) => (
               <span
                 key={domain}
-                className="text-[10px] text-slate-500 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded font-medium"
+                className="text-[10px] text-slate-400 bg-brand-bg border border-brand-line px-2 py-0.5 rounded font-medium"
               >
                 {domain}
               </span>
             ))}
           </div>
         )}
-        <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between">
-          <span className="text-teal-600 text-sm font-semibold group-hover:text-teal-700 transition-colors">
+        <div className="mt-4 pt-4 border-t border-brand-line flex items-center justify-between">
+          <span className="text-brand-teal text-sm font-semibold group-hover:text-teal-300 transition-colors">
             Read brief →
           </span>
           {signalCount > 0 && (
-            <span className="text-xs text-slate-400">
+            <span className="text-xs text-slate-500">
               {signalCount} signal{signalCount !== 1 ? "s" : ""}
             </span>
           )}

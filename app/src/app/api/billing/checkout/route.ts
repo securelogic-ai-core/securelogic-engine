@@ -33,7 +33,9 @@ export async function POST(request: Request) {
   const origin = getOrigin(request);
   const session = await getSession();
 
-  if (!session.apiKey) {
+  const token = session.jwtToken ?? session.apiKey ?? null;
+
+  if (!token) {
     return NextResponse.redirect(`${origin}/login`, { status: 303 });
   }
 
@@ -49,7 +51,7 @@ export async function POST(request: Request) {
     // fall through to the default tier
   }
 
-  const result = await createCheckoutSession(session.apiKey, tier);
+  const result = await createCheckoutSession(token, tier);
 
   if (!result) {
     return NextResponse.redirect(`${origin}/account?billing_error=checkout_failed`, {

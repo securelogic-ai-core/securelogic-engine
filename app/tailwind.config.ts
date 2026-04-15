@@ -18,6 +18,13 @@ const config: Config = {
         navy: {
           900: "#0a0f1e",
         },
+        // Brand dark palette
+        brand: {
+          bg:      "#0a0f1a",
+          surface: "#0d1b2e",
+          line:    "#1e2d45",
+          teal:    "#00c4b4",
+        },
       },
     },
   },

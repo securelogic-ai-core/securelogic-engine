@@ -19,11 +19,13 @@ export async function POST(request: Request) {
   const origin = getOrigin(request);
   const session = await getSession();
 
-  if (!session.apiKey) {
+  const token = session.jwtToken ?? session.apiKey ?? null;
+
+  if (!token) {
     return NextResponse.redirect(`${origin}/login`, { status: 303 });
   }
 
-  const result = await createPortalSession(session.apiKey);
+  const result = await createPortalSession(token);
 
   if (!result) {
     return NextResponse.redirect(`${origin}/account?billing_error=portal_failed`, {
