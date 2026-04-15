@@ -20,7 +20,11 @@ const REQUIRED_ENV_PROD = [
   "STRIPE_CANCEL_URL",
   "STRIPE_PORTAL_RETURN_URL",
   // Required for CAN-SPAM compliant unsubscribe links in outbound emails
-  "APP_BASE_URL"
+  "APP_BASE_URL",
+  // Required for outbound Intelligence Brief emails — must be a verified Resend sender
+  "BRIEF_FROM_EMAIL",
+  // Required for CAN-SPAM compliant unsubscribe links in Brief emails
+  "BRIEF_UNSUBSCRIBE_BASE_URL"
 ] as const;
 
 const OPTIONAL_ENV = [
@@ -30,9 +34,11 @@ const OPTIONAL_ENV = [
   "SECURELOGIC_DISABLE_PUBLIC_API",
   "ENABLE_DEBUG_ROUTES",
   "ALLOW_ADMIN_TIER_ASSIGNMENT",
-  // Resend — required for recovery emails and newsletter delivery.
-  // Optional at startup: if absent, recovery requests are accepted but
-  // no email is sent and a warning is logged.
+  // Resend — required for recovery emails.
+  // Optional at startup for the main API: if absent, recovery requests are
+  // accepted but no email is sent and a warning is logged.
+  // NOTE: NEWSLETTER_FROM_EMAIL is also required by the intelligence-worker;
+  // that service validates it at its own startup (runner.ts).
   "RESEND_API_KEY",
   "NEWSLETTER_FROM_EMAIL",
   // AI generation — required for intelligence brief generation.
@@ -387,6 +393,8 @@ export function validateEnv(): void {
     assertMaxLength("ALLOW_ADMIN_TIER_ASSIGNMENT", 16);
     assertMaxLength("SECURELOGIC_ENTITLEMENTS", 4096);
     assertMaxLength("BRIEF_ORG_ID", 64);
+    assertMaxLength("BRIEF_FROM_EMAIL", 320);
+    assertMaxLength("BRIEF_UNSUBSCRIBE_BASE_URL", 2048);
 
     validateRedisUrl();
     validateAdminKey();

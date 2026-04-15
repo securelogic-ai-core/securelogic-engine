@@ -314,8 +314,10 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
           status = "canceled";
         }
 
-        current_period_end = sub.current_period_end
-          ? new Date(sub.current_period_end * 1000).toISOString()
+        // current_period_end moved from Subscription to SubscriptionItem in Stripe v22
+        const periodEnd = sub.items.data[0]?.current_period_end ?? null;
+        current_period_end = periodEnd
+          ? new Date(periodEnd * 1000).toISOString()
           : null;
       }
     } catch (err) {

@@ -1,10 +1,11 @@
 import { setInterval } from "node:timers";
-import { runWorker } from "./runner.js";
+import { runWorker, validateWorkerEnv } from "./runner.js";
 import { logger } from "../../../src/api/infra/logger.js";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
 async function start() {
+  validateWorkerEnv();
   logger.info({ event: "scheduler_start" }, "SecureLogic AI Scheduler starting");
 
   await runWorker();
