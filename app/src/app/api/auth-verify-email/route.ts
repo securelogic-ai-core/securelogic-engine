@@ -1,0 +1,45 @@
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { getIronSession } from "iron-session";
+import { getSessionOptions, type SessionData } from "@/lib/session";
+import { authVerifyEmail, getAuthMe } from "@/lib/api";
+
+export async function POST(request: Request) {
+  try {
+    const body  = (await request.json()) as { token?: unknown };
+    const token = typeof body.token === "string" ? body.token.trim() : "";
+
+    if (!token) {
+      return NextResponse.json({ error: "missing_token" }, { status: 400 });
+    }
+
+    const result = await authVerifyEmail(token);
+
+    if ("error" in result) {
+      const status =
+        result.error === "token_not_found_or_already_verified" ? 404 :
+        result.error === "token_expired" ? 410 : 400;
+      return NextResponse.json(result, { status });
+    }
+
+    // Persist session so the user lands directly on dashboard
+    const me = await getAuthMe(result.token);
+    if (me) {
+      const cookieStore = await cookies();
+      const session = await getIronSession<SessionData>(cookieStore, getSessionOptions());
+      session.jwtToken         = result.token;
+      session.userId           = me.id;
+      session.email            = me.email;
+      session.name             = me.name;
+      session.organizationId   = me.organizationId;
+      session.organizationName = me.organizationName;
+      session.entitlementLevel = me.entitlementLevel;
+      session.billingActive    = me.billingActive;
+      await session.save();
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch {
+    return NextResponse.json({ error: "verification_failed" }, { status: 500 });
+  }
+}

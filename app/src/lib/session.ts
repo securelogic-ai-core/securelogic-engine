@@ -2,11 +2,20 @@ import { getIronSession } from "iron-session";
 import { cookies } from "next/headers";
 
 export interface SessionData {
-  apiKey: string;
-  organizationId: string;
-  organizationName: string;
-  entitlementLevel: string;
-  billingActive: boolean;
+  // Customer auth (email/password — new)
+  userId?: string;
+  email?: string;
+  name?: string;
+  jwtToken?: string;
+
+  // Legacy API-key auth (kept for backward compatibility)
+  apiKey?: string;
+
+  // Shared org/entitlement fields (populated by both auth paths)
+  organizationId?: string;
+  organizationName?: string;
+  entitlementLevel?: string;
+  billingActive?: boolean;
 }
 
 /**

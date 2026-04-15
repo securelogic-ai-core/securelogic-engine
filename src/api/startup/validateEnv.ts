@@ -24,7 +24,9 @@ const REQUIRED_ENV_PROD = [
   // Required for outbound Intelligence Brief emails — must be a verified Resend sender
   "BRIEF_FROM_EMAIL",
   // Required for CAN-SPAM compliant unsubscribe links in Brief emails
-  "BRIEF_UNSUBSCRIBE_BASE_URL"
+  "BRIEF_UNSUBSCRIBE_BASE_URL",
+  // Required for customer portal JWT signing (email/password auth)
+  "JWT_SECRET"
 ] as const;
 
 const OPTIONAL_ENV = [
@@ -395,6 +397,7 @@ export function validateEnv(): void {
     assertMaxLength("BRIEF_ORG_ID", 64);
     assertMaxLength("BRIEF_FROM_EMAIL", 320);
     assertMaxLength("BRIEF_UNSUBSCRIBE_BASE_URL", 2048);
+    assertMaxLength("JWT_SECRET", 512);
 
     validateRedisUrl();
     validateAdminKey();

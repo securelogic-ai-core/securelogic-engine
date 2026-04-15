@@ -68,6 +68,7 @@ import trendsRouter from "./trends.js";
 import topRisksRouter from "./topRisks.js";
 import topRisksSummaryRouter from "./topRisksSummary.js";
 import billingRouter from "./billing.js";
+import customerAuthRouter from "./customerAuth.js";
 import publicBriefSignupRouter from "./publicBriefSignup.js";
 import intelligenceBriefsRouter from "./intelligenceBriefs.js";
 import adminBriefsRouter from "./adminBriefs.js";
@@ -150,6 +151,9 @@ export function buildRoutes(opts: RoutesOptions): Router {
   // Self-service registration — public, rate-limited (5/IP/hour)
   router.use("/api", registerRouter);
   router.use("/api", accountRecoveryRouter);
+
+  // Customer email/password auth — public (rate-limited), JWT-issuing
+  router.use("/api", customerAuthRouter);
 
   // Account status — requireApiKey is inline; no entitlement gate (free tier must see own status)
   router.use("/api", accountRouter);
