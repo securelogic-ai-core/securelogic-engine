@@ -2,7 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   validateObligationAssessmentCreate,
   validateObligationAssessmentStatusTransition,
-  FINDING_STATUSES
+  TERMINAL_STATUSES,
+  FINDING_STATUSES,
+  VALID_TRANSITIONS,
+  isValidTransition
 } from "../lib/obligationAssessmentValidation.js";
 
 const VALID_UUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
@@ -711,5 +714,117 @@ describe("FINDING_STATUSES export", () => {
 
   it("does not contain in_progress", () => {
     expect(FINDING_STATUSES.has("in_progress")).toBe(false);
+  });
+});
+
+// ====================================================================
+// TERMINAL_STATUSES export
+// ====================================================================
+
+describe("TERMINAL_STATUSES", () => {
+  it("includes compliant", () => {
+    expect(TERMINAL_STATUSES.has("compliant")).toBe(true);
+  });
+
+  it("includes non_compliant", () => {
+    expect(TERMINAL_STATUSES.has("non_compliant")).toBe(true);
+  });
+
+  it("includes partially_compliant", () => {
+    expect(TERMINAL_STATUSES.has("partially_compliant")).toBe(true);
+  });
+
+  it("does not include not_started", () => {
+    expect(TERMINAL_STATUSES.has("not_started")).toBe(false);
+  });
+
+  it("does not include in_progress", () => {
+    expect(TERMINAL_STATUSES.has("in_progress")).toBe(false);
+  });
+});
+
+// ====================================================================
+// VALID_TRANSITIONS export
+// ====================================================================
+
+describe("VALID_TRANSITIONS", () => {
+  it("not_started can only transition to in_progress", () => {
+    expect(VALID_TRANSITIONS["not_started"]).toEqual(["in_progress"]);
+  });
+
+  it("in_progress can transition to all three terminal states", () => {
+    expect(VALID_TRANSITIONS["in_progress"]).toContain("compliant");
+    expect(VALID_TRANSITIONS["in_progress"]).toContain("non_compliant");
+    expect(VALID_TRANSITIONS["in_progress"]).toContain("partially_compliant");
+  });
+
+  it("compliant has no exits", () => {
+    expect(VALID_TRANSITIONS["compliant"]).toHaveLength(0);
+  });
+
+  it("non_compliant has no exits", () => {
+    expect(VALID_TRANSITIONS["non_compliant"]).toHaveLength(0);
+  });
+
+  it("partially_compliant has no exits", () => {
+    expect(VALID_TRANSITIONS["partially_compliant"]).toHaveLength(0);
+  });
+});
+
+// ====================================================================
+// isValidTransition
+// ====================================================================
+
+describe("isValidTransition", () => {
+  it("not_started → in_progress is valid", () => {
+    expect(isValidTransition("not_started", "in_progress")).toBe(true);
+  });
+
+  it("in_progress → compliant is valid", () => {
+    expect(isValidTransition("in_progress", "compliant")).toBe(true);
+  });
+
+  it("in_progress → non_compliant is valid", () => {
+    expect(isValidTransition("in_progress", "non_compliant")).toBe(true);
+  });
+
+  it("in_progress → partially_compliant is valid", () => {
+    expect(isValidTransition("in_progress", "partially_compliant")).toBe(true);
+  });
+
+  it("not_started → compliant is invalid (cannot skip in_progress)", () => {
+    expect(isValidTransition("not_started", "compliant")).toBe(false);
+  });
+
+  it("not_started → non_compliant is invalid", () => {
+    expect(isValidTransition("not_started", "non_compliant")).toBe(false);
+  });
+
+  it("not_started → partially_compliant is invalid", () => {
+    expect(isValidTransition("not_started", "partially_compliant")).toBe(false);
+  });
+
+  it("compliant → anything is invalid (terminal)", () => {
+    expect(isValidTransition("compliant", "in_progress")).toBe(false);
+    expect(isValidTransition("compliant", "not_started")).toBe(false);
+    expect(isValidTransition("compliant", "non_compliant")).toBe(false);
+  });
+
+  it("non_compliant → anything is invalid (terminal)", () => {
+    expect(isValidTransition("non_compliant", "in_progress")).toBe(false);
+    expect(isValidTransition("non_compliant", "compliant")).toBe(false);
+  });
+
+  it("partially_compliant → anything is invalid (terminal)", () => {
+    expect(isValidTransition("partially_compliant", "in_progress")).toBe(false);
+    expect(isValidTransition("partially_compliant", "compliant")).toBe(false);
+  });
+
+  it("unknown from-status returns false", () => {
+    expect(isValidTransition("unknown_status", "in_progress")).toBe(false);
+  });
+
+  it("unknown to-status returns false", () => {
+    expect(isValidTransition("in_progress", "unknown_status")).toBe(false);
   });
 });

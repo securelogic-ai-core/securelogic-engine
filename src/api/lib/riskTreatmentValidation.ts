@@ -4,6 +4,12 @@
  * No I/O. Returns a discriminated union: { input } | { error, detail? }.
  */
 
+import { sanitizeString } from "./sanitize.js";
+
+const MAX_OWNER = 100;
+const MAX_SUMMARY = 2000;
+const MAX_NOTES = 2000;
+
 const VALID_STATUSES = new Set([
   "not_started",
   "in_progress",
@@ -14,6 +20,19 @@ const VALID_STATUSES = new Set([
 
 // Terminal statuses — PATCH to these syncs the parent risk's status.
 export const TERMINAL_STATUSES = new Set(["mitigated", "accepted", "transferred"]);
+
+// Legal status transitions. Terminal states have empty arrays (no exit).
+export const VALID_TRANSITIONS: Record<string, readonly string[]> = {
+  not_started: ["in_progress"],
+  in_progress: ["mitigated", "accepted", "transferred"],
+  mitigated: [],
+  accepted: [],
+  transferred: []
+};
+
+export function isValidTransition(from: string, to: string): boolean {
+  return (VALID_TRANSITIONS[from] ?? []).includes(to);
+}
 
 const VALID_TREATMENT_TYPES = new Set([
   "mitigate",
@@ -112,7 +131,7 @@ export function validateRiskTreatmentCreate(
     }
     owner =
       typeof b["owner"] === "string" && b["owner"].trim().length > 0
-        ? b["owner"].trim()
+        ? sanitizeString(b["owner"].trim(), MAX_OWNER)
         : null;
   }
 
@@ -141,7 +160,7 @@ export function validateRiskTreatmentCreate(
     }
     summary =
       typeof b["summary"] === "string" && b["summary"].trim().length > 0
-        ? b["summary"].trim()
+        ? sanitizeString(b["summary"].trim(), MAX_SUMMARY)
         : null;
   }
 
@@ -153,7 +172,7 @@ export function validateRiskTreatmentCreate(
     }
     notes =
       typeof b["notes"] === "string" && b["notes"].trim().length > 0
-        ? b["notes"].trim()
+        ? sanitizeString(b["notes"].trim(), MAX_NOTES)
         : null;
   }
 
@@ -268,7 +287,7 @@ export function validateRiskTreatmentStatusTransition(
     }
     owner =
       typeof b["owner"] === "string" && b["owner"].trim().length > 0
-        ? b["owner"].trim()
+        ? sanitizeString(b["owner"].trim(), MAX_OWNER)
         : null;
   }
 
@@ -297,7 +316,7 @@ export function validateRiskTreatmentStatusTransition(
     }
     summary =
       typeof b["summary"] === "string" && b["summary"].trim().length > 0
-        ? b["summary"].trim()
+        ? sanitizeString(b["summary"].trim(), MAX_SUMMARY)
         : null;
   }
 
@@ -309,7 +328,7 @@ export function validateRiskTreatmentStatusTransition(
     }
     notes =
       typeof b["notes"] === "string" && b["notes"].trim().length > 0
-        ? b["notes"].trim()
+        ? sanitizeString(b["notes"].trim(), MAX_NOTES)
         : null;
   }
 

@@ -4,6 +4,27 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { decryptField } from "../lib/fieldEncryption.js";
+
+/**
+ * Decrypt and parse report_json from the DB.
+ * Handles both:
+ *   - Encrypted rows (string value stored as JSON string in JSONB column)
+ *   - Legacy unencrypted rows (plain JSONB object)
+ */
+function parseReportJson(value: unknown): Record<string, unknown> | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") {
+    // Encrypted value stored as a JSON string in JSONB column.
+    try {
+      return JSON.parse(decryptField(value)) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof value === "object") return value as Record<string, unknown>;
+  return null;
+}
 
 const router = Router();
 
@@ -204,8 +225,8 @@ router.get(
           report: {
             riskScore: assessment.risk_score,
             summary: assessment.report_summary,
-            domainScores: assessment.report_json?.domainScores ?? [],
-            executiveSummary: assessment.report_json?.executiveSummary ?? null
+            domainScores: parseReportJson(assessment.report_json)?.domainScores ?? [],
+            executiveSummary: parseReportJson(assessment.report_json)?.executiveSummary ?? null
           }
         },
         findings: findingsResult.rows,

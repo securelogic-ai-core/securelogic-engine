@@ -56,7 +56,11 @@ router.delete("/newsletter-issues/:id", async (req, res) => {
       ok: true,
       deletedIssueId: issueId
     })
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.code === "23503") {
+      res.status(409).json({ error: "has_dependencies", message: "Cannot delete — dependent records exist." })
+      return
+    }
     logger.error({ event: "admin_delete_newsletter_issue_failed", err }, "DELETE /admin/newsletter-issues/:id failed")
     res.status(500).json({ error: "admin_newsletter_issue_delete_failed" })
   }

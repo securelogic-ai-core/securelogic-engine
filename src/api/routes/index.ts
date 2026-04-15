@@ -59,6 +59,7 @@ import dependencyAssessmentsRouter from "./dependencyAssessments.js";
 import vendorReviewsRouter from "./vendorReviews.js";
 import risksRouter from "./risks.js";
 import riskTreatmentsRouter from "./riskTreatments.js";
+import cyberSignalsRouter from "./cyberSignals.js";
 import dashboardRouter from "./dashboard.js";
 import postureRouter from "./posture.js";
 import signalsRouter from "./signals.js";
@@ -67,6 +68,10 @@ import trendsRouter from "./trends.js";
 import topRisksRouter from "./topRisks.js";
 import topRisksSummaryRouter from "./topRisksSummary.js";
 import billingRouter from "./billing.js";
+import publicBriefSignupRouter from "./publicBriefSignup.js";
+import intelligenceBriefsRouter from "./intelligenceBriefs.js";
+import adminBriefsRouter from "./adminBriefs.js";
+import auditLogRouter from "./auditLog.js";
 
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -74,6 +79,10 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 
 import { enforceUsageCap } from "../middleware/enforceUsageCap.js";
 import { tierRateLimit } from "../middleware/tierRateLimit.js";
+import {
+  createApiKeyRateLimiter,
+  createOrgRateLimiter
+} from "../middleware/apiRateLimiter.js";
 
 import { adminLockout } from "../middleware/adminLockout.js";
 import { requireAdminKey } from "../middleware/requireAdminKey.js";
@@ -134,6 +143,9 @@ export function buildRoutes(opts: RoutesOptions): Router {
 
   router.use("/", emailProviderWebhookRouter);
   router.use("/", unsubscribeRouter);
+
+  // Public marketing signup — no API key, rate-limited (5/IP/min)
+  router.use("/api", publicBriefSignupRouter);
 
   // Self-service registration — public, rate-limited (5/IP/hour)
   router.use("/api", registerRouter);
@@ -275,6 +287,29 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", intelligenceRouter);
 
   // =========================================================
+  // API RATE LIMITING (global — all /api/* routes)
+  // 120 requests per minute per API key. Applied before individual
+  // route guards so every /api/* path is covered. Fails open when
+  // Redis is unavailable. Health endpoints are excluded (mounted
+  // separately above without this middleware).
+  // =========================================================
+
+  const defaultApiRateLimiter = createApiKeyRateLimiter(120);
+  router.use("/api", defaultApiRateLimiter);
+
+  // Specialized limiters — applied inline at their respective route paths
+  // after requireApiKey + attachOrganizationContext have run.
+  const signalIngestRateLimiter = createOrgRateLimiter(10, "signal_ingest");
+  const briefGenerationRateLimiter = createOrgRateLimiter(5, "brief_generate");
+
+  // Cyber signal ingest — 10 per minute per org (expensive pipeline operation)
+  router.post("/api/cyber-signals", signalIngestRateLimiter);
+  router.post("/api/cyber-signals/fetch/:source", signalIngestRateLimiter);
+
+  // Intelligence brief generation — 5 per minute per org
+  router.post("/api/intelligence-briefs/generate", briefGenerationRateLimiter);
+
+  // =========================================================
   // API ROUTES (engine + intelligence)
   // Each router owns its own requireApiKey + attachOrganizationContext
   // + requireEntitlement guards — mounted here for centralized routing.
@@ -304,6 +339,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", dependencyAssessmentsRouter);
   router.use("/api", risksRouter);
   router.use("/api", riskTreatmentsRouter);
+  router.use("/api", cyberSignalsRouter);
   router.use("/api", dashboardRouter);
   router.use("/api", postureRouter);
   router.use("/api", signalsRouter);
@@ -311,6 +347,12 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", trendsRouter);
   router.use("/api", topRisksRouter);
   router.use("/api", topRisksSummaryRouter);
+  router.use("/api", intelligenceBriefsRouter);
+  router.use("/api", auditLogRouter);
+
+  // Admin brief operations — own bearer-token auth (SCHEDULER_SECRET),
+  // independent of the admin panel key and org API key systems.
+  router.use("/api", adminBriefsRouter);
 
   return router;
 }

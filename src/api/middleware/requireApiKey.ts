@@ -2,6 +2,7 @@ import crypto from "crypto";
 import type { Request, Response, NextFunction } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 
 export async function requireApiKey(
   req: Request,
@@ -15,6 +16,12 @@ export async function requireApiKey(
       req.header("Authorization")?.replace(/^Bearer\s+/i, "").trim();
 
     if (!presentedKey) {
+      writeAuditEvent({
+        eventType: "auth.missing_api_key",
+        resourceType: "api_key",
+        payload: { route: req.originalUrl, method: req.method },
+        ipAddress: req.ip ?? null
+      });
       res.status(401).json({ error: "api_key_required" });
       return;
     }
@@ -32,6 +39,12 @@ export async function requireApiKey(
     );
 
     if (result.rows.length === 0) {
+      writeAuditEvent({
+        eventType: "auth.invalid_api_key",
+        resourceType: "api_key",
+        payload: { route: req.originalUrl, method: req.method },
+        ipAddress: req.ip ?? null
+      });
       res.status(401).json({ error: "invalid_api_key" });
       return;
     }
@@ -43,11 +56,29 @@ export async function requireApiKey(
       typeof apiKey.status === "string" &&
       apiKey.status.toLowerCase() !== "active"
     ) {
+      writeAuditEvent({
+        organizationId: apiKey.organization_id as string ?? null,
+        actorApiKeyId: apiKey.id as string ?? null,
+        eventType: "auth.inactive_api_key",
+        resourceType: "api_key",
+        resourceId: apiKey.id as string ?? null,
+        payload: { route: req.originalUrl, method: req.method },
+        ipAddress: req.ip ?? null
+      });
       res.status(403).json({ error: "api_key_inactive" });
       return;
     }
 
     if ("revoked_at" in apiKey && apiKey.revoked_at) {
+      writeAuditEvent({
+        organizationId: apiKey.organization_id as string ?? null,
+        actorApiKeyId: apiKey.id as string ?? null,
+        eventType: "auth.revoked_api_key",
+        resourceType: "api_key",
+        resourceId: apiKey.id as string ?? null,
+        payload: { route: req.originalUrl, method: req.method },
+        ipAddress: req.ip ?? null
+      });
       res.status(403).json({ error: "api_key_revoked" });
       return;
     }

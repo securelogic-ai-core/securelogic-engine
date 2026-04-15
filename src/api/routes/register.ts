@@ -14,8 +14,8 @@ const router = Router();
    ========================================================= */
 
 const registrationLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 5,
+  windowMs: 60 * 1000, // 1 minute
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "registration_rate_limit_exceeded" }

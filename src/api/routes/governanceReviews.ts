@@ -30,6 +30,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { validateGovernanceReviewCreate } from "../lib/governanceReviewValidation.js";
 import { severityToPriority } from "../lib/postureComputation.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
 
@@ -151,58 +152,78 @@ router.post(
       const review = reviewResult.rows[0];
       const reviewId: string = review.id;
 
-      // Insert the finding linked to this review.
-      // source_type = 'ai_review', source_id = reviewId (NOT ai_system_id).
-      // domain = 'AI Governance' — hardcoded so findings feed the correct domain
-      // bucket in DomainRiskAggregationEngineV2 on next posture snapshot.
-      const priority = severityToPriority(input.overall_severity);
-      const findingTitle = `AI Governance: ${systemName} — ${input.overall_severity} severity`;
-      const findingDescription =
-        input.summary != null && input.summary.trim().length > 0
-          ? input.summary.trim()
-          : `AI governance finding from ${input.review_type} review.`;
-
-      const findingResult = await client.query(
-        `
-        INSERT INTO findings (
-          organization_id,
-          assessment_id,
-          source_type,
-          source_id,
-          title,
-          description,
-          severity,
-          domain,
-          priority,
-          status
-        )
-        VALUES ($1, NULL, 'ai_review', $2::uuid, $3, $4, $5, 'AI Governance', $6, 'open')
-        RETURNING
-          id,
-          organization_id,
-          assessment_id,
-          source_type,
-          source_id,
-          title,
-          description,
-          severity,
-          domain,
-          priority,
-          status,
-          created_at,
-          updated_at
-        `,
-        [
-          organizationId,
-          reviewId,
-          findingTitle,
-          findingDescription,
-          input.overall_severity,
-          priority
-        ]
+      // Idempotency guard: check whether a finding for this review already
+      // exists before creating one. This prevents duplicates if the request
+      // is retried after a partial failure where the review row committed but
+      // the finding insert did not.
+      const existingFindingResult = await client.query<{ id: string }>(
+        `SELECT id FROM findings
+         WHERE organization_id = $1
+           AND source_type = 'ai_review'
+           AND source_id = $2::uuid
+         LIMIT 1`,
+        [organizationId, reviewId]
       );
 
-      const finding = findingResult.rows[0];
+      let finding: Record<string, unknown>;
+
+      if ((existingFindingResult.rowCount ?? 0) > 0) {
+        // Finding already exists for this review — return it without re-inserting.
+        finding = existingFindingResult.rows[0]!;
+      } else {
+        // Insert the finding linked to this review.
+        // source_type = 'ai_review', source_id = reviewId (NOT ai_system_id).
+        // domain = 'AI Governance' — hardcoded so findings feed the correct domain
+        // bucket in DomainRiskAggregationEngineV2 on next posture snapshot.
+        const priority = severityToPriority(input.overall_severity);
+        const findingTitle = `AI Governance: ${systemName} — ${input.overall_severity} severity`;
+        const findingDescription =
+          input.summary != null && input.summary.trim().length > 0
+            ? input.summary.trim()
+            : `AI governance finding from ${input.review_type} review.`;
+
+        const findingResult = await client.query(
+          `
+          INSERT INTO findings (
+            organization_id,
+            assessment_id,
+            source_type,
+            source_id,
+            title,
+            description,
+            severity,
+            domain,
+            priority,
+            status
+          )
+          VALUES ($1, NULL, 'ai_review', $2::uuid, $3, $4, $5, 'AI Governance', $6, 'open')
+          RETURNING
+            id,
+            organization_id,
+            assessment_id,
+            source_type,
+            source_id,
+            title,
+            description,
+            severity,
+            domain,
+            priority,
+            status,
+            created_at,
+            updated_at
+          `,
+          [
+            organizationId,
+            reviewId,
+            findingTitle,
+            findingDescription,
+            input.overall_severity,
+            priority
+          ]
+        );
+
+        finding = findingResult.rows[0];
+      }
 
       await client.query("COMMIT");
 
@@ -217,6 +238,16 @@ router.post(
         },
         "Governance review created"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        eventType: "governance_review.created",
+        resourceType: "governance_review",
+        resourceId: reviewId,
+        payload: { aiSystemId: input.ai_system_id, severity: input.overall_severity, findingId: finding.id },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(201).json({ review, finding });
     } catch (err) {

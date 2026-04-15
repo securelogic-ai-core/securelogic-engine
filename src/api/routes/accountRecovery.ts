@@ -12,18 +12,18 @@ const router = Router();
    RATE LIMITS
    ========================================================= */
 
-/** 3 recovery requests per IP per hour — prevents email spam */
+/** 10 recovery requests per IP per minute — prevents email spam */
 const requestLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 3,
+  windowMs: 60 * 1000,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "recovery_rate_limit_exceeded" }
 });
 
-/** 10 claim attempts per IP per hour — prevents brute-force on tokens */
+/** 10 claim attempts per IP per minute — prevents brute-force on tokens */
 const claimLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
+  windowMs: 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,

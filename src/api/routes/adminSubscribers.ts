@@ -243,7 +243,11 @@ router.delete("/subscribers/:id", async (req, res) => {
       ok: true,
       deleted: result.rows[0] ?? null
     });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.code === "23503") {
+      res.status(409).json({ error: "has_dependencies", message: "Cannot delete — dependent records exist." });
+      return;
+    }
     logger.error({ event: "admin_subscriber_delete_failed", err }, "DELETE /admin/subscribers/:id failed");
     res.status(500).json({ error: "admin_subscriber_delete_failed" });
   }

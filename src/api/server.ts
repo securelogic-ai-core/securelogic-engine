@@ -1,5 +1,7 @@
 import "dotenv/config";
 
+import path from "path";
+import { fileURLToPath } from "url";
 import session from "express-session";
 
 import cookieParser from "cookie-parser";
@@ -16,11 +18,13 @@ import hpp from "hpp";
 import { validateEnv } from "./startup/validateEnv.js";
 import { runSelfTest } from "./startup/selfTest.js";
 import { connectDatabase } from "./startup/connectDatabase.js";
+import { startupCheck } from "./startup/startupCheck.js";
 
 import { ensureRedisConnected, redisReady } from "./infra/redis.js";
 import { httpLogger } from "./infra/httpLogger.js";
 import { logger } from "./infra/logger.js";
 
+import { securityHeaders } from "./middleware/securityHeaders.js";
 import { rejectUnexpectedOptions } from "./middleware/rejectUnexpectedOptions.js";
 import { rejectOversizedHeaders } from "./middleware/rejectOversizedHeaders.js";
 import { rejectOversizedUrl } from "./middleware/rejectOversizedUrl.js";
@@ -38,6 +42,7 @@ import { errorHandler } from "./middleware/errorHandler.js";
 import { lemonWebhook } from "./webhooks/lemonWebhook.js";
 import { stripeWebhook } from "./webhooks/stripeWebhook.js";
 import { buildRoutes } from "./routes/index.js";
+import { startScheduler } from "./lib/schedulerRunner.js";
 
 /* =========================================================
    TYPE AUGMENTATION
@@ -156,22 +161,22 @@ app.use((req, res, next) => {
    ENTERPRISE SECURITY BASELINE (PROD SAFE)
    ========================================================= */
 
+// Consolidated security headers (replaces individual helmet directives and
+// the prior inline header block). securityHeaders must run first so every
+// response — including 4xx/5xx from later middleware — carries the full set.
+app.use(securityHeaders);
+
 app.use(
   helmet({
+    // CSP, HSTS, X-Frame-Options, and X-XSS-Protection are handled by
+    // securityHeaders above; disable duplicates in helmet to avoid conflicts.
     contentSecurityPolicy: false,
+    hsts: false,
+    frameguard: false,
+    xssFilter: false,
     crossOriginEmbedderPolicy: false
   })
 );
-
-app.use((_req, res, next) => {
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader(
-    "Permissions-Policy",
-    "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
-  );
-  next();
-});
 
 app.use(hpp());
 
@@ -182,9 +187,38 @@ app.use(rejectOversizedUrl);
 app.use(rejectChunkedBodies);
 app.use(rejectOversizedBody);
 
+// Production origins: exact-match allowlist — no wildcard.
+// Dev origins: github.dev previews (*.app.github.dev) plus localhost variants.
+const PROD_ORIGINS = new Set([
+  "https://www.securelogicai.com",
+  "https://securelogicai.com",
+  "https://app.securelogicai.com"
+]);
+
+const DEV_ORIGIN_RE =
+  /^https:\/\/[a-z0-9-]+-[a-z0-9]+-[a-z0-9]+\.app\.github\.dev$|^https?:\/\/localhost(:\d+)?$|^https?:\/\/127\.0\.0\.1(:\d+)?$/;
+
 app.use(
   cors({
-    origin: false,
+    origin: (origin, callback) => {
+      // Same-origin / non-browser requests (no Origin header) — allow.
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      if (PROD_ORIGINS.has(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      if (isDev && DEV_ORIGIN_RE.test(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(null, false);
+    },
     credentials: false,
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: [
@@ -316,8 +350,19 @@ app.post(
   lemonWebhook
 );
 
+// Stripe webhook rate limiter — 200 req/min per IP.
+// High enough for legitimate Stripe burst delivery (retries, backfill) but
+// blocks abuse. Scoped only to this endpoint; does not affect other webhooks.
+const stripeWebhookLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
 app.post(
   "/webhooks/stripe",
+  stripeWebhookLimiter,
   bodyParser.raw({
     type: "application/json",
     limit: "256kb"
@@ -378,6 +423,36 @@ app.use(
 );
 
 /* =========================================================
+   DEV DASHBOARD (local operator UI — dev only)
+   ========================================================= */
+
+if (isDev) {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const projectRoot = path.resolve(__dirname, "../..");
+
+  const dashboardCsp = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://unpkg.com",
+    "style-src 'self' 'unsafe-inline'",
+    "connect-src 'self'",
+    "font-src 'self' https://unpkg.com",
+    "img-src 'self' data:"
+  ].join("; ");
+
+  app.get("/dashboard", (_req, res) => {
+    res.setHeader("Content-Security-Policy", dashboardCsp);
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+    res.sendFile(path.join(projectRoot, "dashboard.html"));
+  });
+
+  app.get("/dashboard.jsx", (_req, res) => {
+    res.setHeader("Content-Security-Policy", dashboardCsp);
+    res.setHeader("Content-Type", "application/javascript");
+    res.sendFile(path.join(projectRoot, "dashboard.jsx"));
+  });
+}
+
+/* =========================================================
    ROUTES (ENTERPRISE)
    ========================================================= */
 
@@ -410,6 +485,9 @@ app.use(errorHandler);
    ========================================================= */
 
 await connectDatabase();
+await startupCheck();
+
+startScheduler();
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   logger.info(

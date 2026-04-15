@@ -4,6 +4,12 @@
  * No I/O. Returns a discriminated union: { input } | { error, detail? }.
  */
 
+import { sanitizeString } from "./sanitize.js";
+
+const MAX_DESCRIPTION = 2000;
+const MAX_SHORT_FIELD = 255;
+const MAX_NOTES = 2000;
+
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -73,10 +79,11 @@ export function validateObligationCreate(body: unknown): ObligationCreateResult 
   if (!isNonEmptyString(b["title"])) {
     return { error: "title_required" };
   }
-  const title = (b["title"] as string).trim();
-  if (title.length > TITLE_MAX_LENGTH) {
+  const rawTitle = (b["title"] as string).trim();
+  if (rawTitle.length > TITLE_MAX_LENGTH) {
     return { error: "title_too_long", detail: `max ${TITLE_MAX_LENGTH} characters` };
   }
+  const title = sanitizeString(rawTitle, TITLE_MAX_LENGTH);
 
   // status — optional, default 'active'
   let status = "active";
@@ -135,25 +142,25 @@ export function validateObligationCreate(body: unknown): ObligationCreateResult 
   // description — optional string
   const description =
     "description" in b && typeof b["description"] === "string" && b["description"].trim().length > 0
-      ? b["description"].trim()
+      ? sanitizeString(b["description"].trim(), MAX_DESCRIPTION)
       : null;
 
   // source_regulation — optional string
   const source_regulation =
     "source_regulation" in b && typeof b["source_regulation"] === "string" && b["source_regulation"].trim().length > 0
-      ? b["source_regulation"].trim()
+      ? sanitizeString(b["source_regulation"].trim(), MAX_SHORT_FIELD)
       : null;
 
   // jurisdiction — optional string
   const jurisdiction =
     "jurisdiction" in b && typeof b["jurisdiction"] === "string" && b["jurisdiction"].trim().length > 0
-      ? b["jurisdiction"].trim()
+      ? sanitizeString(b["jurisdiction"].trim(), MAX_SHORT_FIELD)
       : null;
 
   // notes — optional string
   const notes =
     "notes" in b && typeof b["notes"] === "string" && b["notes"].trim().length > 0
-      ? b["notes"].trim()
+      ? sanitizeString(b["notes"].trim(), MAX_NOTES)
       : null;
 
   return {
@@ -205,31 +212,31 @@ export function validateObligationPatch(body: unknown): ObligationPatchResult {
     if (!isNonEmptyString(b["title"])) {
       return { error: "title_must_be_non_empty_string" };
     }
-    const title = (b["title"] as string).trim();
-    if (title.length > TITLE_MAX_LENGTH) {
+    const rawPatchTitle = (b["title"] as string).trim();
+    if (rawPatchTitle.length > TITLE_MAX_LENGTH) {
       return { error: "title_too_long", detail: `max ${TITLE_MAX_LENGTH} characters` };
     }
-    input.title = title;
+    input.title = sanitizeString(rawPatchTitle, TITLE_MAX_LENGTH);
   }
 
   if ("description" in b) {
     input.description =
       typeof b["description"] === "string" && b["description"].trim().length > 0
-        ? b["description"].trim()
+        ? sanitizeString(b["description"].trim(), MAX_DESCRIPTION)
         : null;
   }
 
   if ("source_regulation" in b) {
     input.source_regulation =
       typeof b["source_regulation"] === "string" && b["source_regulation"].trim().length > 0
-        ? b["source_regulation"].trim()
+        ? sanitizeString(b["source_regulation"].trim(), MAX_SHORT_FIELD)
         : null;
   }
 
   if ("jurisdiction" in b) {
     input.jurisdiction =
       typeof b["jurisdiction"] === "string" && b["jurisdiction"].trim().length > 0
-        ? b["jurisdiction"].trim()
+        ? sanitizeString(b["jurisdiction"].trim(), MAX_SHORT_FIELD)
         : null;
   }
 
@@ -292,7 +299,7 @@ export function validateObligationPatch(body: unknown): ObligationPatchResult {
   if ("notes" in b) {
     input.notes =
       typeof b["notes"] === "string" && b["notes"].trim().length > 0
-        ? b["notes"].trim()
+        ? sanitizeString(b["notes"].trim(), MAX_NOTES)
         : null;
   }
 

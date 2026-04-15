@@ -15,6 +15,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { validateFindingCreate } from "../lib/findingValidation.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
 
@@ -158,6 +159,16 @@ router.post(
         { event: "finding_created", findingId: result.rows[0].id, organizationId },
         "Finding created"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        eventType: "finding.created",
+        resourceType: "finding",
+        resourceId: result.rows[0].id as string,
+        payload: { severity, source_type: source_type ?? null },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(201).json({ finding: result.rows[0] });
     } catch (err) {
@@ -473,6 +484,19 @@ router.patch(
         res.status(404).json({ error: "finding_not_found" });
         return;
       }
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        eventType: "finding.status_changed",
+        resourceType: "finding",
+        resourceId: result.rows[0].id as string,
+        payload: {
+          status: result.rows[0].status ?? null,
+          priority: result.rows[0].priority ?? null
+        },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(200).json({ finding: result.rows[0] });
     } catch (err) {
