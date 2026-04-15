@@ -9,6 +9,34 @@ import {
 import { sendFailureAlert } from "../../../src/api/infra/alerting.js"
 import { logger } from "../../../src/api/infra/logger.js"
 
+/**
+ * Fail-fast env check for the intelligence worker.
+ *
+ * NEWSLETTER_FROM_EMAIL is required for newsletter delivery. Without it,
+ * sendNewsletter.ts throws mid-send after the pipeline has already run.
+ * Check here so the process exits cleanly before doing any work.
+ *
+ * Skipped in test mode so unit tests can import runner.ts freely.
+ */
+export function validateWorkerEnv(): void {
+  if (process.env.NODE_ENV === "test") return;
+
+  const from = process.env.NEWSLETTER_FROM_EMAIL?.trim();
+  if (!from) {
+    if (process.env.NODE_ENV === "production") {
+      logger.fatal(
+        { event: "worker_env_invalid", missing: "NEWSLETTER_FROM_EMAIL" },
+        "NEWSLETTER_FROM_EMAIL is not set — intelligence worker cannot deliver newsletters"
+      );
+      process.exit(1);
+    }
+    logger.warn(
+      { event: "worker_env_missing", missing: "NEWSLETTER_FROM_EMAIL" },
+      "NEWSLETTER_FROM_EMAIL is not set — newsletter delivery will fail if triggered"
+    );
+  }
+}
+
 const LOCK_KEY = 710001
 const WORKER_NAME = "intelligence-worker"
 
@@ -128,6 +156,7 @@ export async function runWorker() {
 
 // Entry point when executed directly (e.g., cron / one-shot run)
 if (process.argv[1]?.endsWith("runner.js") || process.argv[1]?.endsWith("runner.ts")) {
+  validateWorkerEnv();
   runWorker().catch((err) => {
     logger.error({ event: "worker_bootstrap_failure", err }, "Worker bootstrap failure")
     process.exit(1)
