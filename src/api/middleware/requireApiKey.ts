@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { verifyJwt } from "../lib/jwt.js";
 
 export async function requireApiKey(
   req: Request,
@@ -23,6 +24,42 @@ export async function requireApiKey(
         ipAddress: req.ip ?? null
       });
       res.status(401).json({ error: "api_key_required" });
+      return;
+    }
+
+    // JWT bridge: if the token contains dots it is a JWT, not an API key.
+    // Verify the JWT, then load the org's primary API key record so all
+    // downstream middleware (attachOrganizationContext, requireEntitlement, …)
+    // works without modification.
+    if (presentedKey.includes(".")) {
+      const payload = verifyJwt(presentedKey);
+
+      if (!payload) {
+        writeAuditEvent({
+          eventType: "auth.invalid_jwt",
+          resourceType: "user",
+          payload: { route: req.originalUrl, method: req.method },
+          ipAddress: req.ip ?? null
+        });
+        res.status(401).json({ error: "invalid_token" });
+        return;
+      }
+
+      const orgKeyResult = await pg.query(
+        `SELECT * FROM api_keys
+         WHERE organization_id = $1 AND status = 'active'
+         ORDER BY created_at ASC LIMIT 1`,
+        [payload.org]
+      );
+
+      if (orgKeyResult.rows.length === 0) {
+        res.status(401).json({ error: "no_active_api_key_for_org" });
+        return;
+      }
+
+      (req as any).apiKey     = orgKeyResult.rows[0];
+      (req as any).jwtPayload = payload;
+      next();
       return;
     }
 

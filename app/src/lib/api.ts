@@ -282,20 +282,53 @@ export type ControlAssessmentsResponse = {
 export type BillingCheckoutResponse = { checkoutUrl: string };
 export type BillingPortalResponse   = { portalUrl: string };
 
+// ─── Customer auth types ────────────────────────────────────────────────────
+
+export type AuthSignupResponse =
+  | { ok: true; message: string }
+  | { error: string; detail?: string };
+
+export type AuthLoginResponse =
+  | {
+      ok: true;
+      token: string;
+      user: {
+        id: string;
+        email: string;
+        name: string;
+        organizationId: string;
+        organizationName: string;
+        entitlementLevel: string;
+      };
+    }
+  | { error: string };
+
+export type AuthMeResponse = {
+  id: string;
+  email: string;
+  name: string;
+  organizationId: string;
+  organizationName: string;
+  entitlementLevel: string;
+  billingActive: boolean;
+};
+
 // =========================================================
 // HELPERS
 // =========================================================
 
 async function engineFetch(
   path: string,
-  apiKey: string,
+  token: string,
   options?: RequestInit
 ): Promise<Response> {
+  // Supports both legacy API keys (sl_…) and JWT tokens (contains ".").
+  // The engine's requireApiKey middleware accepts both via Authorization: Bearer.
   return fetch(`${ENGINE_URL}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      "X-Api-Key": apiKey,
+      "Authorization": `Bearer ${token}`,
       ...(options?.headers ?? {}),
     },
     cache: "no-store",
@@ -519,4 +552,103 @@ export async function registerOrg(
     cache: "no-store",
   });
   return res.json() as Promise<RegisterResponse>;
+}
+
+// ─── Customer auth engine calls ─────────────────────────────────────────────
+
+export async function authSignup(
+  organizationName: string,
+  name: string,
+  email: string,
+  password: string,
+  promoCode?: string
+): Promise<AuthSignupResponse> {
+  const res = await fetch(`${ENGINE_URL}/api/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ organizationName, name, email, password, promoCode }),
+    cache: "no-store",
+  });
+  return res.json() as Promise<AuthSignupResponse>;
+}
+
+export async function authLogin(
+  email: string,
+  password: string
+): Promise<AuthLoginResponse> {
+  const res = await fetch(`${ENGINE_URL}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+    cache: "no-store",
+  });
+  return res.json() as Promise<AuthLoginResponse>;
+}
+
+export async function authVerifyEmail(
+  token: string
+): Promise<{ ok: true; token: string } | { error: string }> {
+  const res = await fetch(`${ENGINE_URL}/api/auth/verify-email`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+    cache: "no-store",
+  });
+  return res.json() as Promise<{ ok: true; token: string } | { error: string }>;
+}
+
+export async function authResendVerification(
+  email: string
+): Promise<{ ok: boolean }> {
+  const res = await fetch(`${ENGINE_URL}/api/auth/resend-verification`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+    cache: "no-store",
+  });
+  if (!res.ok) return { ok: false };
+  return { ok: true };
+}
+
+export async function authForgotPassword(
+  email: string
+): Promise<{ ok: boolean }> {
+  const res = await fetch(`${ENGINE_URL}/api/auth/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+    cache: "no-store",
+  });
+  if (!res.ok) return { ok: false };
+  return { ok: true };
+}
+
+export async function authResetPassword(
+  token: string,
+  password: string
+): Promise<{ ok: true } | { error: string }> {
+  const res = await fetch(`${ENGINE_URL}/api/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, password }),
+    cache: "no-store",
+  });
+  return res.json() as Promise<{ ok: true } | { error: string }>;
+}
+
+export async function getAuthMe(
+  jwtToken: string
+): Promise<AuthMeResponse | null> {
+  try {
+    const res = await fetch(`${ENGINE_URL}/api/auth/me`, {
+      headers: {
+        "Authorization": `Bearer ${jwtToken}`,
+      },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<AuthMeResponse>;
+  } catch {
+    return null;
+  }
 }

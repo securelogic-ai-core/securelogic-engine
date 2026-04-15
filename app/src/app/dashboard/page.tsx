@@ -7,7 +7,10 @@ import { BriefCard } from "@/components/BriefCard";
 export default async function DashboardPage() {
   const session = await getSession();
 
-  if (!session.apiKey) {
+  // Support both JWT auth (new) and legacy API key auth
+  const token = session.jwtToken ?? session.apiKey ?? null;
+
+  if (!token) {
     redirect("/login");
   }
 
@@ -15,15 +18,16 @@ export default async function DashboardPage() {
   // getMe() is the source of truth for entitlement — never rely on the
   // session cookie alone, which may be stale after a Stripe upgrade.
   const [me, issuesData, dashboardSummary] = await Promise.all([
-    getMe(session.apiKey),
-    getIssues(session.apiKey),
-    getDashboardSummary(session.apiKey),
+    getMe(token),
+    getIssues(token),
+    getDashboardSummary(token),
   ]);
 
   const latestIssue = issuesData?.issues?.[0] ?? null;
   const entitlementLevel = me?.entitlementLevel ?? "starter";
   const isPaid = entitlementLevel === "premium" || entitlementLevel === "professional";
   const planName = planDisplayName(entitlementLevel);
+  const displayName = session.name ?? me?.organizationName ?? session.organizationName ?? null;
   const orgName = me?.organizationName ?? session.organizationName;
 
   return (
@@ -31,7 +35,7 @@ export default async function DashboardPage() {
       {/* Welcome */}
       <div className="mb-10">
         <h1 className="text-2xl font-bold text-slate-900 mb-1">
-          Welcome back{orgName ? `, ${orgName}` : ""}.
+          Welcome back{displayName ? `, ${displayName}` : ""}.
         </h1>
         <p className="text-slate-600 text-sm">
           {isPaid
