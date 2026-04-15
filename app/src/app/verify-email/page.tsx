@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   AuthCard,
@@ -17,38 +17,43 @@ function VerifyEmailContent() {
   const tokenParam = searchParams.get("token");
   const emailParam = searchParams.get("email") ?? "";
 
-  const [loading,  setLoading]  = useState(false);
+  const [loading,   setLoading]   = useState(!!tokenParam);
   const [resending, setResending] = useState(false);
-  const [error,    setError]    = useState<string | null>(null);
-  const [resent,   setResent]   = useState(false);
+  const [error,     setError]     = useState<string | null>(null);
+  const [resent,    setResent]    = useState(false);
 
-  // If there's a token in the URL, verify it automatically on click
-  async function handleVerify() {
+  // Auto-verify immediately on page load when a token is present in the URL
+  useEffect(() => {
     if (!tokenParam) return;
-    setLoading(true);
-    setError(null);
 
-    const res = await fetch("/api/auth-verify-email", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: tokenParam }),
-    });
+    async function autoVerify() {
+      setLoading(true);
+      setError(null);
 
-    const data = (await res.json()) as { ok?: boolean; error?: string };
+      const res = await fetch("/api/auth-verify-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: tokenParam }),
+      });
 
-    if (!res.ok) {
-      setError(
-        data.error === "token_expired"
-          ? "This verification link has expired. Request a new one below."
-          : "Verification failed. The link may be invalid."
-      );
-      setLoading(false);
-      return;
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+
+      if (!res.ok) {
+        setError(
+          data.error === "token_expired"
+            ? "This verification link has expired. Request a new one below."
+            : "Verification failed. The link may be invalid."
+        );
+        setLoading(false);
+        return;
+      }
+
+      router.push("/dashboard");
+      router.refresh();
     }
 
-    router.push("/dashboard");
-    router.refresh();
-  }
+    autoVerify();
+  }, [tokenParam]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleResend() {
     if (!emailParam) return;
@@ -64,6 +69,68 @@ function VerifyEmailContent() {
     setResent(true);
   }
 
+  // When a token is present: show verifying state or error
+  if (tokenParam) {
+    return (
+      <AuthCard title={loading ? "Verifying your email…" : "Verification failed"}>
+        <div style={{ textAlign: "center", marginBottom: "28px" }}>
+          <div
+            style={{
+              width: "56px",
+              height: "56px",
+              backgroundColor: "rgba(0,196,180,0.1)",
+              border: "1px solid rgba(0,196,180,0.25)",
+              borderRadius: "50%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              margin: "0 auto 20px",
+              fontSize: "24px",
+            }}
+          >
+            {loading ? "⏳" : "✉️"}
+          </div>
+          {loading && (
+            <p style={{ margin: 0, fontSize: "14px", color: "#64748b" }}>
+              Please wait while we verify your email address…
+            </p>
+          )}
+        </div>
+
+        <AuthError message={error} />
+
+        {error && emailParam && (
+          <>
+            {resent && <AuthSuccess message="Verification email resent. Check your inbox." />}
+            {!resent && (
+              <AuthButton
+                loading={resending}
+                onClick={handleResend}
+                type="button"
+              >
+                Resend Verification Email
+              </AuthButton>
+            )}
+          </>
+        )}
+
+        <p
+          style={{
+            textAlign: "center",
+            marginTop: "20px",
+            fontSize: "14px",
+            color: "#64748b",
+          }}
+        >
+          <AuthLink href="/login">Sign in</AuthLink>
+          {" · "}
+          <AuthLink href="/signup">Create account</AuthLink>
+        </p>
+      </AuthCard>
+    );
+  }
+
+  // No token: show "check your inbox" with resend option
   return (
     <AuthCard title="Check your inbox">
       <div
@@ -72,7 +139,6 @@ function VerifyEmailContent() {
           marginBottom: "28px",
         }}
       >
-        {/* Envelope icon */}
         <div
           style={{
             width: "56px",
@@ -117,20 +183,14 @@ function VerifyEmailContent() {
         <AuthSuccess message="Verification email resent. Check your inbox." />
       )}
 
-      {tokenParam ? (
-        <AuthButton loading={loading} onClick={handleVerify} type="button">
-          Verify My Email
-        </AuthButton>
-      ) : (
-        <AuthButton
-          loading={resending}
-          onClick={handleResend}
-          type="button"
-          variant={resent ? "secondary" : "primary"}
-        >
-          {resent ? "Email Sent" : "Resend Verification Email"}
-        </AuthButton>
-      )}
+      <AuthButton
+        loading={resending}
+        onClick={handleResend}
+        type="button"
+        variant={resent ? "secondary" : "primary"}
+      >
+        {resent ? "Email Sent" : "Resend Verification Email"}
+      </AuthButton>
 
       <p
         style={{
