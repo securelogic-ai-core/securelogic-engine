@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.securelogicai.com";
@@ -14,8 +13,9 @@ export function Header({ organizationName, isAuthenticated }: HeaderProps) {
       <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
         {/* Wordmark */}
         <Link href={isAuthenticated ? "/dashboard" : "/"} className="flex items-center gap-3">
-          <Image
-            src="/branding/securelogic-ai-logo.png"
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="https://api.securelogicai.com/assets/logo.png"
             alt="SecureLogic AI"
             width={28}
             height={28}
