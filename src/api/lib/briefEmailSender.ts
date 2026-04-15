@@ -31,7 +31,7 @@
 
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
-import { renderBriefEmail, type BriefEmailData, type EmailBriefItem, type EmailBriefCategory } from "./briefEmailRenderer.js";
+import { renderBriefEmail, renderBriefEmailText, type BriefEmailData, type EmailBriefItem, type EmailBriefCategory } from "./briefEmailRenderer.js";
 
 const RESEND_API_URL = "https://api.resend.com/emails";
 
@@ -138,7 +138,8 @@ export function filterItemsByPreferences(
 async function sendViaResend(
   to: string,
   subject: string,
-  html: string
+  html: string,
+  text: string
 ): Promise<{ ok: boolean; error?: string }> {
   const apiKey = process.env["RESEND_API_KEY"];
   if (!apiKey) {
@@ -155,7 +156,7 @@ async function sendViaResend(
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ from, to: [to], subject, html })
+      body: JSON.stringify({ from, to: [to], subject, html, text })
     });
 
     if (!response.ok) {
@@ -237,7 +238,8 @@ function mapCategoriesToEmailData(
       relevance: row.relevance,
       affected_cve: row.affected_cve,
       why_it_matters: row.why_it_matters,
-      recommended_actions: row.recommended_actions
+      recommended_actions: row.recommended_actions,
+      is_personalized: row.is_personalized
     });
   }
 
@@ -400,8 +402,10 @@ export async function sendBrief(
     const unsubscribeUrl = buildUnsubscribeUrl(subscriber.id);
     const baseHtml = renderBriefEmail(emailData, orgName);
     const html = baseHtml.replace(/\{\{unsubscribe_url\}\}/g, unsubscribeUrl);
+    const baseText = renderBriefEmailText(emailData, orgName);
+    const text = baseText.replace(/\{\{unsubscribe_url\}\}/g, unsubscribeUrl);
 
-    const result = await sendViaResend(subscriber.email, subject, html);
+    const result = await sendViaResend(subscriber.email, subject, html, text);
 
     if (result.ok) {
       sent++;

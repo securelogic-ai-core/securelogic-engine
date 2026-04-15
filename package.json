@@ -14,7 +14,7 @@
     "migrate": "tsx scripts/runMigrations.ts",
     "test:pg-stores": "tsx services/intelligence-worker/src/storage/testPostgresStores.ts",
     "clean": "rm -rf dist",
-    "build": "rm -rf dist && tsc -p tsconfig.prod.json",
+    "build": "rm -rf dist && tsc -p tsconfig.prod.json && cp -r src/api/public dist/api/public",
     "start": "node dist/api/server.js",
     "typecheck": "tsc -p tsconfig.ci.json",
     "lint": "eslint \"src/**/*.{ts,tsx,js}\"",

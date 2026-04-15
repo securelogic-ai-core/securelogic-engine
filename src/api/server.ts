@@ -72,6 +72,15 @@ validateEnv();
 runSelfTest();
 
 /* =========================================================
+   MODULE-LEVEL PATH HELPERS
+   ========================================================= */
+
+// Resolved at module load. In dev (tsx): points to src/api/.
+// In production (node dist/api/server.js): points to dist/api/.
+// Used by both the dev dashboard and the static asset handler.
+const __serverDir = path.dirname(fileURLToPath(import.meta.url));
+
+/* =========================================================
    APP INIT
    ========================================================= */
 
@@ -427,8 +436,7 @@ app.use(
    ========================================================= */
 
 if (isDev) {
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const projectRoot = path.resolve(__dirname, "../..");
+  const projectRoot = path.resolve(__serverDir, "../..");
 
   const dashboardCsp = [
     "default-src 'self'",
@@ -451,6 +459,25 @@ if (isDev) {
     res.sendFile(path.join(projectRoot, "dashboard.jsx"));
   });
 }
+
+/* =========================================================
+   STATIC ASSETS  (/assets/*)
+   ========================================================= */
+
+// Serves src/api/public/assets/ in dev (tsx) and dist/api/public/assets/ in
+// production (copied there by the build script).
+// setHeaders overrides the global Cache-Control: no-store so that the logo
+// and other static files are properly cached by email clients and browsers.
+app.use(
+  "/assets",
+  express.static(path.join(__serverDir, "public", "assets"), {
+    maxAge: "7d",
+    immutable: true,
+    setHeaders(res) {
+      res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+    }
+  })
+);
 
 /* =========================================================
    ROUTES (ENTERPRISE)
