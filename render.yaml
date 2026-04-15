@@ -151,7 +151,7 @@ services:
     env: node
     plan: starter
     buildCommand: cd app && npm install --include=dev && npm run build
-    startCommand: cd app && npm run start
+    startCommand: cd app && npx next start -p $PORT
     autoDeploy: true
     envVars:
       - key: NODE_ENV
