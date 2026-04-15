@@ -31,6 +31,18 @@ const REVOKE_EVENTS = new Set([
   "customer.subscription.deleted"
 ]);
 
+/**
+ * Events that flag a payment failure.
+ * Access is NOT revoked — payment_failed_at is stamped on the api_key row
+ * for observability and dunning UX. Stripe will handle eventual cancellation
+ * via customer.subscription.updated (past_due → canceled) after its retry cycle.
+ *
+ * Register in Stripe Dashboard: invoice.payment_failed
+ */
+const PAYMENT_FAILED_EVENTS = new Set([
+  "invoice.payment_failed"
+]);
+
 /* =========================================================
    HELPERS
    ========================================================= */
@@ -122,6 +134,24 @@ function extractCustomerId(event: Stripe.Event): string | null {
 }
 
 /**
+ * Extracts the raw subscription tier string from checkout or subscription metadata.
+ * Returns 'professional' or 'team' when present; null for legacy/unknown events.
+ *
+ * This is distinct from resolveTierFromMetadata(): that function normalises 'team'
+ * → 'paid' for Redis/entitlement purposes. This function preserves the original
+ * value so it can be stored in stripe_subscription_tier for future feature gating.
+ */
+function extractRawSubscriptionTier(event: Stripe.Event): string | null {
+  const obj = event.data.object as any;
+  const raw =
+    obj?.metadata?.tier ??
+    obj?.subscription_details?.metadata?.tier ??
+    null;
+  if (raw === "professional" || raw === "team") return raw;
+  return null;
+}
+
+/**
  * Maps a Redis EntitlementRecord tier to the Postgres entitlement_level value.
  *
  * Tier → DB level:
@@ -149,23 +179,35 @@ function tierToDbLevel(tier: EntitlementRecord["tier"]): string {
 async function syncToDb(
   apiKeyId: string,
   entitlement: EntitlementRecord,
-  customerId: string | null
+  customerId: string | null,
+  rawSubscriptionTier: string | null
 ): Promise<void> {
   const level = tierToDbLevel(entitlement.tier);
 
+  // organizations.plan uses the same vocabulary as entitlement_level for paid tiers.
+  // starter is the floor for downgrades; standard is not written by billing.
+  const orgPlan =
+    level === "professional" ? "professional" :
+    level === "premium"      ? "premium"      : "starter";
+
+  // On a successful grant, also clear any stale payment_failed_at stamp.
+  const clearPaymentFailed = entitlement.activeSubscription;
+
   try {
-    const result = await pg.query(
+    const keyResult = await pg.query(
       `
       UPDATE api_keys
       SET
-        entitlement_level   = $1,
-        stripe_customer_id  = COALESCE(stripe_customer_id, $3)
+        entitlement_level        = $1,
+        stripe_customer_id       = COALESCE(stripe_customer_id, $3),
+        stripe_subscription_tier = COALESCE($4, stripe_subscription_tier),
+        payment_failed_at        = CASE WHEN $5 THEN NULL ELSE payment_failed_at END
       WHERE id = $2
       `,
-      [level, apiKeyId, customerId]
+      [level, apiKeyId, customerId, rawSubscriptionTier, clearPaymentFailed]
     );
 
-    const rows = result.rowCount ?? 0;
+    const rows = keyResult.rowCount ?? 0;
 
     if (rows === 0) {
       logger.warn(
@@ -178,6 +220,21 @@ async function syncToDb(
         "stripeWebhook: api_keys.entitlement_level updated"
       );
     }
+
+    // Sync organizations.plan to mirror the billing tier change.
+    await pg.query(
+      `
+      UPDATE organizations
+      SET plan = $1
+      WHERE id = (SELECT organization_id FROM api_keys WHERE id = $2 LIMIT 1)
+      `,
+      [orgPlan, apiKeyId]
+    );
+
+    logger.info(
+      { event: "stripe_webhook_org_plan_synced", apiKeyId, orgPlan },
+      "stripeWebhook: organizations.plan synced"
+    );
   } catch (err) {
     logger.error(
       { event: "stripe_webhook_db_sync_failed", err },
@@ -267,6 +324,52 @@ async function syncSubscriber(
   }
 }
 
+/**
+ * Handles invoice.payment_failed: stamps payment_failed_at on the api_key row
+ * so the billing UI can surface a dunning state. Does NOT revoke access — Stripe
+ * will send customer.subscription.updated (past_due) and eventually
+ * customer.subscription.deleted after its retry cycle, which will revoke.
+ */
+async function handlePaymentFailed(event: Stripe.Event): Promise<void> {
+  const obj = event.data.object as any;
+  const customerId = typeof obj?.customer === "string" ? obj.customer : null;
+
+  if (!customerId) {
+    logger.warn(
+      { event: "stripe_invoice_payment_failed_no_customer" },
+      "invoice.payment_failed: no customer ID in event — skipping"
+    );
+    return;
+  }
+
+  try {
+    const result = await pg.query(
+      `
+      UPDATE api_keys
+      SET payment_failed_at = NOW()
+      WHERE stripe_customer_id = $1
+      `,
+      [customerId]
+    );
+
+    logger.warn(
+      {
+        event: "stripe_payment_failed",
+        customerId,
+        rowsUpdated: result.rowCount ?? 0,
+        invoiceId: obj?.id ?? null,
+        amountDue: obj?.amount_due ?? null
+      },
+      "invoice.payment_failed: payment_failed_at stamped — access NOT revoked"
+    );
+  } catch (err) {
+    logger.error(
+      { event: "stripe_payment_failed_db_error", customerId, err },
+      "invoice.payment_failed: failed to stamp payment_failed_at (non-fatal)"
+    );
+  }
+}
+
 /* =========================================================
    MAIN HANDLER
    ========================================================= */
@@ -332,6 +435,13 @@ export async function stripeWebhook(
       "stripe webhook received"
     );
 
+    // Handle payment failure first — separate action from grant/revoke flow
+    if (PAYMENT_FAILED_EVENTS.has(eventType)) {
+      await handlePaymentFailed(event);
+      respond({ received: true, updated: true });
+      return;
+    }
+
     // Determine what entitlement action to take
     const subscription =
       eventType.startsWith("customer.subscription.")
@@ -361,12 +471,13 @@ export async function stripeWebhook(
       return;
     }
 
-    // Extract customer ID for belt-and-suspenders DB sync
+    // Extract customer ID and raw tier for DB sync
     const customerId = extractCustomerId(event);
+    const rawSubscriptionTier = extractRawSubscriptionTier(event);
 
     // Write to Redis (supplementary cache) then sync to Postgres (primary)
     await setEntitlementInRedis(apiKeyId, entitlement);
-    await syncToDb(apiKeyId, entitlement, customerId);
+    await syncToDb(apiKeyId, entitlement, customerId, rawSubscriptionTier);
 
     // Sync subscriber record so newsletter delivery includes this subscriber.
     // Fire-and-forget wrapper: errors logged inside syncSubscriber, never thrown.

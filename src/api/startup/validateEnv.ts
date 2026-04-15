@@ -34,7 +34,19 @@ const OPTIONAL_ENV = [
   // Optional at startup: if absent, recovery requests are accepted but
   // no email is sent and a warning is logged.
   "RESEND_API_KEY",
-  "NEWSLETTER_FROM_EMAIL"
+  "NEWSLETTER_FROM_EMAIL",
+  // AI generation — required for intelligence brief generation.
+  // Optional at startup: brief generation returns 503 without it.
+  "ANTHROPIC_API_KEY",
+  // Scheduler — required for cron-triggered jobs.
+  // Optional at startup: scheduler is disabled without it.
+  "SCHEDULER_SECRET",
+  // Field encryption — required in production to protect sensitive JSONB fields.
+  // Optional in development: fields stored as plaintext with a warning.
+  "FIELD_ENCRYPTION_KEY",
+  // Brief signup — organization_id used for public marketing signups.
+  // Defaults to the canonical SecureLogic brief org when not set.
+  "BRIEF_ORG_ID"
 ] as const;
 
 function isNonEmptyString(v: unknown): v is string {
@@ -245,6 +257,73 @@ function validateStripeEnv(): void {
   }
 }
 
+function validateAnthropicApiKey(): void {
+  const raw = process.env.ANTHROPIC_API_KEY?.trim();
+  if (!raw) {
+    logger.warn(
+      { event: "anthropic_api_key_missing" },
+      "ANTHROPIC_API_KEY is not set — intelligence brief generation will be unavailable"
+    );
+    return;
+  }
+
+  if (raw.length > 512) {
+    throw new Error("ANTHROPIC_API_KEY must be <= 512 characters");
+  }
+}
+
+function validateSchedulerSecret(): void {
+  const isProd = process.env.NODE_ENV === "production";
+  const raw = process.env.SCHEDULER_SECRET?.trim();
+
+  if (!raw) {
+    if (isProd) {
+      throw new Error("SCHEDULER_SECRET is required in production (min 32 chars)");
+    }
+    logger.warn(
+      { event: "scheduler_secret_missing" },
+      "SCHEDULER_SECRET is not set — scheduler endpoints will reject all calls"
+    );
+    return;
+  }
+
+  if (raw.length < 32) {
+    throw new Error("SCHEDULER_SECRET must be at least 32 characters");
+  }
+
+  if (raw.length > 512) {
+    throw new Error("SCHEDULER_SECRET must be <= 512 characters");
+  }
+}
+
+const HEX_64_RE = /^[0-9a-f]{64}$/i;
+
+function validateFieldEncryptionKey(): void {
+  const isProd = process.env.NODE_ENV === "production";
+  const raw = process.env.FIELD_ENCRYPTION_KEY?.trim();
+
+  if (!raw) {
+    if (isProd) {
+      throw new Error(
+        "FIELD_ENCRYPTION_KEY is required in production — sensitive fields (report_json, content_json, raw_payload) must be encrypted at rest. " +
+        "Generate with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+      );
+    }
+    logger.warn(
+      { event: "field_encryption_key_missing" },
+      "FIELD_ENCRYPTION_KEY is not set — sensitive JSONB fields stored as plaintext. Set this variable in production."
+    );
+    return;
+  }
+
+  if (!HEX_64_RE.test(raw)) {
+    throw new Error(
+      "FIELD_ENCRYPTION_KEY must be exactly 64 lowercase hex characters (32 random bytes). " +
+      "Generate with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+    );
+  }
+}
+
 function validateDevEntitlementsJson(): void {
   // DEV ONLY
   if (process.env.NODE_ENV !== "development") return;
@@ -307,6 +386,7 @@ export function validateEnv(): void {
     assertMaxLength("ENABLE_DEBUG_ROUTES", 16);
     assertMaxLength("ALLOW_ADMIN_TIER_ASSIGNMENT", 16);
     assertMaxLength("SECURELOGIC_ENTITLEMENTS", 4096);
+    assertMaxLength("BRIEF_ORG_ID", 64);
 
     validateRedisUrl();
     validateAdminKey();
@@ -316,6 +396,9 @@ export function validateEnv(): void {
     validateResendWebhookSecret();
     validateUnsubscribeSecret();
     validateStripeEnv();
+    validateAnthropicApiKey();
+    validateSchedulerSecret();
+    validateFieldEncryptionKey();
     validateDevEntitlementsJson();
   } catch (err) {
     const msg =

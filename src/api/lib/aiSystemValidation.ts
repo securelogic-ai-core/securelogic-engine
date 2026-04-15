@@ -5,6 +5,12 @@
  * No I/O dependencies — fully unit-testable without a database.
  */
 
+import { sanitizeString } from "./sanitize.js";
+
+const MAX_NAME = 255;
+const MAX_USE_CASE = 2000;
+const MAX_SHORT_FIELD = 100;
+
 const VALID_CRITICALITIES = new Set(["critical", "high", "medium", "low"]);
 
 function isNonEmptyString(v: unknown): v is string {
@@ -81,14 +87,14 @@ export function validateAiSystemCreate(
   const use_case =
     "use_case" in b
       ? typeof b["use_case"] === "string" && b["use_case"].trim().length > 0
-        ? b["use_case"].trim()
+        ? sanitizeString(b["use_case"].trim(), MAX_USE_CASE)
         : null
       : null;
 
   const model_type =
     "model_type" in b
       ? typeof b["model_type"] === "string" && b["model_type"].trim().length > 0
-        ? b["model_type"].trim()
+        ? sanitizeString(b["model_type"].trim(), MAX_SHORT_FIELD)
         : null
       : null;
 
@@ -96,7 +102,7 @@ export function validateAiSystemCreate(
     "data_classification" in b
       ? typeof b["data_classification"] === "string" &&
         b["data_classification"].trim().length > 0
-        ? b["data_classification"].trim()
+        ? sanitizeString(b["data_classification"].trim(), MAX_SHORT_FIELD)
         : null
       : null;
 
@@ -104,7 +110,7 @@ export function validateAiSystemCreate(
     "deployment_status" in b
       ? typeof b["deployment_status"] === "string" &&
         b["deployment_status"].trim().length > 0
-        ? b["deployment_status"].trim()
+        ? sanitizeString(b["deployment_status"].trim(), MAX_SHORT_FIELD)
         : null
       : null;
 
@@ -119,7 +125,7 @@ export function validateAiSystemCreate(
     "risk_classification" in b
       ? typeof b["risk_classification"] === "string" &&
         b["risk_classification"].trim().length > 0
-        ? b["risk_classification"].trim()
+        ? sanitizeString(b["risk_classification"].trim(), MAX_SHORT_FIELD)
         : null
       : null;
 
@@ -130,7 +136,7 @@ export function validateAiSystemCreate(
 
   return {
     input: {
-      name: (b["name"] as string).trim(),
+      name: sanitizeString((b["name"] as string).trim(), MAX_NAME),
       use_case,
       owner_user_id,
       model_type,

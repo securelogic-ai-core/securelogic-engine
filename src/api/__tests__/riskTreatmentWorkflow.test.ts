@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   validateRiskTreatmentCreate,
   validateRiskTreatmentStatusTransition,
-  TERMINAL_STATUSES
+  TERMINAL_STATUSES,
+  VALID_TRANSITIONS,
+  isValidTransition
 } from "../lib/riskTreatmentValidation.js";
 
 // ====================================================================
@@ -509,5 +511,91 @@ describe("validateRiskTreatmentStatusTransition — optional fields", () => {
       summary: "   "
     });
     if ("input" in r) expect(r.input.summary).toBeNull();
+  });
+});
+
+// ====================================================================
+// VALID_TRANSITIONS export
+// ====================================================================
+
+describe("VALID_TRANSITIONS", () => {
+  it("not_started can only transition to in_progress", () => {
+    expect(VALID_TRANSITIONS["not_started"]).toEqual(["in_progress"]);
+  });
+
+  it("in_progress can transition to all three terminal states", () => {
+    expect(VALID_TRANSITIONS["in_progress"]).toContain("mitigated");
+    expect(VALID_TRANSITIONS["in_progress"]).toContain("accepted");
+    expect(VALID_TRANSITIONS["in_progress"]).toContain("transferred");
+  });
+
+  it("mitigated has no exits", () => {
+    expect(VALID_TRANSITIONS["mitigated"]).toHaveLength(0);
+  });
+
+  it("accepted has no exits", () => {
+    expect(VALID_TRANSITIONS["accepted"]).toHaveLength(0);
+  });
+
+  it("transferred has no exits", () => {
+    expect(VALID_TRANSITIONS["transferred"]).toHaveLength(0);
+  });
+});
+
+// ====================================================================
+// isValidTransition
+// ====================================================================
+
+describe("isValidTransition", () => {
+  it("not_started → in_progress is valid", () => {
+    expect(isValidTransition("not_started", "in_progress")).toBe(true);
+  });
+
+  it("in_progress → mitigated is valid", () => {
+    expect(isValidTransition("in_progress", "mitigated")).toBe(true);
+  });
+
+  it("in_progress → accepted is valid", () => {
+    expect(isValidTransition("in_progress", "accepted")).toBe(true);
+  });
+
+  it("in_progress → transferred is valid", () => {
+    expect(isValidTransition("in_progress", "transferred")).toBe(true);
+  });
+
+  it("not_started → mitigated is invalid (cannot skip in_progress)", () => {
+    expect(isValidTransition("not_started", "mitigated")).toBe(false);
+  });
+
+  it("not_started → accepted is invalid", () => {
+    expect(isValidTransition("not_started", "accepted")).toBe(false);
+  });
+
+  it("not_started → transferred is invalid", () => {
+    expect(isValidTransition("not_started", "transferred")).toBe(false);
+  });
+
+  it("mitigated → anything is invalid (terminal)", () => {
+    expect(isValidTransition("mitigated", "in_progress")).toBe(false);
+    expect(isValidTransition("mitigated", "not_started")).toBe(false);
+    expect(isValidTransition("mitigated", "accepted")).toBe(false);
+  });
+
+  it("accepted → anything is invalid (terminal)", () => {
+    expect(isValidTransition("accepted", "in_progress")).toBe(false);
+    expect(isValidTransition("accepted", "transferred")).toBe(false);
+  });
+
+  it("transferred → anything is invalid (terminal)", () => {
+    expect(isValidTransition("transferred", "in_progress")).toBe(false);
+    expect(isValidTransition("transferred", "mitigated")).toBe(false);
+  });
+
+  it("unknown from-status returns false", () => {
+    expect(isValidTransition("unknown_status", "in_progress")).toBe(false);
+  });
+
+  it("unknown to-status returns false", () => {
+    expect(isValidTransition("in_progress", "unknown_status")).toBe(false);
   });
 });

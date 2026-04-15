@@ -2,7 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   validateVendorReviewCreate,
   validateVendorReviewStatusTransition,
-  FINDING_STATUSES
+  TERMINAL_STATUSES,
+  FINDING_STATUSES,
+  VALID_TRANSITIONS,
+  isValidTransition
 } from "../lib/vendorReviewValidation.js";
 
 // ====================================================================
@@ -502,5 +505,117 @@ describe("validateVendorReviewStatusTransition — optional fields", () => {
       expect(r.input.performed_at).toBeNull();
       expect(r.input.reviewer_id).toBeNull();
     }
+  });
+});
+
+// ====================================================================
+// TERMINAL_STATUSES export
+// ====================================================================
+
+describe("TERMINAL_STATUSES", () => {
+  it("includes satisfactory", () => {
+    expect(TERMINAL_STATUSES.has("satisfactory")).toBe(true);
+  });
+
+  it("includes concerns_identified", () => {
+    expect(TERMINAL_STATUSES.has("concerns_identified")).toBe(true);
+  });
+
+  it("includes critical_issues", () => {
+    expect(TERMINAL_STATUSES.has("critical_issues")).toBe(true);
+  });
+
+  it("does not include not_started", () => {
+    expect(TERMINAL_STATUSES.has("not_started")).toBe(false);
+  });
+
+  it("does not include in_progress", () => {
+    expect(TERMINAL_STATUSES.has("in_progress")).toBe(false);
+  });
+});
+
+// ====================================================================
+// VALID_TRANSITIONS export
+// ====================================================================
+
+describe("VALID_TRANSITIONS", () => {
+  it("not_started can only transition to in_progress", () => {
+    expect(VALID_TRANSITIONS["not_started"]).toEqual(["in_progress"]);
+  });
+
+  it("in_progress can transition to all three terminal states", () => {
+    expect(VALID_TRANSITIONS["in_progress"]).toContain("satisfactory");
+    expect(VALID_TRANSITIONS["in_progress"]).toContain("concerns_identified");
+    expect(VALID_TRANSITIONS["in_progress"]).toContain("critical_issues");
+  });
+
+  it("satisfactory has no exits", () => {
+    expect(VALID_TRANSITIONS["satisfactory"]).toHaveLength(0);
+  });
+
+  it("concerns_identified has no exits", () => {
+    expect(VALID_TRANSITIONS["concerns_identified"]).toHaveLength(0);
+  });
+
+  it("critical_issues has no exits", () => {
+    expect(VALID_TRANSITIONS["critical_issues"]).toHaveLength(0);
+  });
+});
+
+// ====================================================================
+// isValidTransition
+// ====================================================================
+
+describe("isValidTransition", () => {
+  it("not_started → in_progress is valid", () => {
+    expect(isValidTransition("not_started", "in_progress")).toBe(true);
+  });
+
+  it("in_progress → satisfactory is valid", () => {
+    expect(isValidTransition("in_progress", "satisfactory")).toBe(true);
+  });
+
+  it("in_progress → concerns_identified is valid", () => {
+    expect(isValidTransition("in_progress", "concerns_identified")).toBe(true);
+  });
+
+  it("in_progress → critical_issues is valid", () => {
+    expect(isValidTransition("in_progress", "critical_issues")).toBe(true);
+  });
+
+  it("not_started → satisfactory is invalid (cannot skip in_progress)", () => {
+    expect(isValidTransition("not_started", "satisfactory")).toBe(false);
+  });
+
+  it("not_started → concerns_identified is invalid", () => {
+    expect(isValidTransition("not_started", "concerns_identified")).toBe(false);
+  });
+
+  it("not_started → critical_issues is invalid", () => {
+    expect(isValidTransition("not_started", "critical_issues")).toBe(false);
+  });
+
+  it("satisfactory → anything is invalid (terminal)", () => {
+    expect(isValidTransition("satisfactory", "in_progress")).toBe(false);
+    expect(isValidTransition("satisfactory", "not_started")).toBe(false);
+    expect(isValidTransition("satisfactory", "critical_issues")).toBe(false);
+  });
+
+  it("concerns_identified → anything is invalid (terminal)", () => {
+    expect(isValidTransition("concerns_identified", "in_progress")).toBe(false);
+    expect(isValidTransition("concerns_identified", "satisfactory")).toBe(false);
+  });
+
+  it("critical_issues → anything is invalid (terminal)", () => {
+    expect(isValidTransition("critical_issues", "in_progress")).toBe(false);
+    expect(isValidTransition("critical_issues", "satisfactory")).toBe(false);
+  });
+
+  it("unknown from-status returns false", () => {
+    expect(isValidTransition("unknown_status", "in_progress")).toBe(false);
+  });
+
+  it("unknown to-status returns false", () => {
+    expect(isValidTransition("in_progress", "unknown_status")).toBe(false);
   });
 });

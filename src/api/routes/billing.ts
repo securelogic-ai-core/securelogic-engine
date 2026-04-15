@@ -2,6 +2,7 @@ import { Router } from "express";
 import { logger } from "../infra/logger.js";
 import { getStripe } from "../infra/stripeClient.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { pg } from "../infra/postgres.js";
 
 const router = Router();
@@ -228,6 +229,123 @@ router.post("/billing/portal", requireApiKey, async (req, res) => {
       "POST /api/billing/portal failed"
     );
     res.status(500).json({ error: "billing_portal_failed" });
+  }
+});
+
+/* =========================================================
+   GET SUBSCRIPTION STATUS
+   GET /api/billing/subscription
+
+   Returns the current billing state for the calling API key:
+   live subscription status from Stripe (if available) with a
+   DB fallback, plus the raw subscription tier and any pending
+   payment failure timestamp.
+   ========================================================= */
+
+router.get("/billing/subscription", requireApiKey, attachOrganizationContext, async (req, res) => {
+  try {
+    const apiKey = (req as any).apiKey as Record<string, unknown>;
+    const apiKeyId = typeof apiKey.id === "string" ? apiKey.id : null;
+
+    if (!apiKeyId) {
+      res.status(400).json({ error: "api_key_identity_missing" });
+      return;
+    }
+
+    const result = await pg.query<{
+      entitlement_level:        string;
+      stripe_customer_id:       string | null;
+      payment_failed_at:        string | null;
+      stripe_subscription_tier: string | null;
+    }>(
+      `SELECT entitlement_level, stripe_customer_id,
+              payment_failed_at, stripe_subscription_tier
+       FROM api_keys WHERE id = $1 LIMIT 1`,
+      [apiKeyId]
+    );
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: "api_key_not_found" });
+      return;
+    }
+
+    const row = result.rows[0]!;
+    const { entitlement_level, stripe_customer_id, payment_failed_at, stripe_subscription_tier } = row;
+
+    // Derive a human-readable tier label from entitlement_level
+    const tier =
+      entitlement_level === "professional" ? "professional" :
+      entitlement_level === "premium"      ? "premium"      : "free";
+
+    // No billing account — key has never gone through checkout
+    if (!stripe_customer_id) {
+      res.status(200).json({
+        tier,
+        entitlement_level,
+        status:             "none",
+        stripe_customer_id: null,
+        current_period_end: null,
+        payment_failed_at:  payment_failed_at ?? null,
+        subscription_tier:  stripe_subscription_tier ?? null
+      });
+      return;
+    }
+
+    // Fetch live subscription state from Stripe
+    type BillingStatus = "active" | "past_due" | "canceled" | "none";
+    let status: BillingStatus = "none";
+    let current_period_end: string | null = null;
+
+    try {
+      const subs = await getStripe().subscriptions.list({
+        customer: stripe_customer_id,
+        limit: 1,
+        status: "all"
+      });
+
+      const sub = subs.data[0] ?? null;
+
+      if (sub) {
+        if (sub.status === "active" || sub.status === "trialing") {
+          status = "active";
+        } else if (sub.status === "past_due") {
+          status = "past_due";
+        } else if (sub.status === "canceled" || sub.status === "unpaid") {
+          status = "canceled";
+        }
+
+        current_period_end = sub.current_period_end
+          ? new Date(sub.current_period_end * 1000).toISOString()
+          : null;
+      }
+    } catch (err) {
+      // Stripe unavailable — fall back to DB-derived status so the endpoint
+      // always returns a useful response rather than a 500.
+      logger.warn(
+        { event: "billing_subscription_stripe_fallback", apiKeyId, err },
+        "GET /api/billing/subscription: Stripe API call failed, using DB state"
+      );
+
+      status = (entitlement_level === "professional" || entitlement_level === "premium")
+        ? "active"
+        : "none";
+    }
+
+    res.status(200).json({
+      tier,
+      entitlement_level,
+      status,
+      stripe_customer_id,
+      current_period_end,
+      payment_failed_at:  payment_failed_at ?? null,
+      subscription_tier:  stripe_subscription_tier ?? null
+    });
+  } catch (err) {
+    logger.error(
+      { event: "billing_subscription_failed", err },
+      "GET /api/billing/subscription failed"
+    );
+    res.status(500).json({ error: "billing_subscription_failed" });
   }
 });
 

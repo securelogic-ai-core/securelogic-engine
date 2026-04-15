@@ -11,6 +11,18 @@
  * of known values only.
  */
 
+import { sanitizeString } from "./sanitize.js";
+
+// ---------------------------------------------------------------------------
+// Field length caps (application-layer, defence-in-depth)
+// ---------------------------------------------------------------------------
+
+const MAX_TITLE = 255;
+const MAX_DESCRIPTION = 2000;
+const MAX_DOMAIN = 100;
+const MAX_TREATMENT = 2000;
+const MAX_OWNER = 100;
+
 // ---------------------------------------------------------------------------
 // Canonical enums
 // ---------------------------------------------------------------------------
@@ -105,13 +117,13 @@ export function validateRiskCreate(body: unknown): RiskCreateResult {
   if (!isNonEmptyString(b["title"])) {
     return { error: "title_required" };
   }
-  const title = (b["title"] as string).trim();
+  const title = sanitizeString((b["title"] as string).trim(), MAX_TITLE);
 
   // domain — required non-empty string; not enum-gated (non-exhaustive per canonical model)
   if (!isNonEmptyString(b["domain"])) {
     return { error: "domain_required" };
   }
-  const domain = (b["domain"] as string).trim();
+  const domain = sanitizeString((b["domain"] as string).trim(), MAX_DOMAIN);
 
   // likelihood — required enum
   if (!isNonEmptyString(b["likelihood"])) {
@@ -172,7 +184,7 @@ export function validateRiskCreate(body: unknown): RiskCreateResult {
     }
     description =
       typeof b["description"] === "string" && b["description"].trim().length > 0
-        ? b["description"].trim()
+        ? sanitizeString(b["description"].trim(), MAX_DESCRIPTION)
         : null;
   }
 
@@ -184,7 +196,7 @@ export function validateRiskCreate(body: unknown): RiskCreateResult {
     }
     treatment =
       typeof b["treatment"] === "string" && b["treatment"].trim().length > 0
-        ? b["treatment"].trim()
+        ? sanitizeString(b["treatment"].trim(), MAX_TREATMENT)
         : null;
   }
 
@@ -196,7 +208,7 @@ export function validateRiskCreate(body: unknown): RiskCreateResult {
     }
     owner =
       typeof b["owner"] === "string" && b["owner"].trim().length > 0
-        ? b["owner"].trim()
+        ? sanitizeString(b["owner"].trim(), MAX_OWNER)
         : null;
   }
 
@@ -306,7 +318,7 @@ export function validateRiskUpdate(body: unknown): RiskUpdateResult {
     if (!isNonEmptyString(b["title"])) {
       return { error: "title_must_be_non_empty_string" };
     }
-    title = (b["title"] as string).trim();
+    title = sanitizeString((b["title"] as string).trim(), MAX_TITLE);
   }
 
   let domain: string | undefined;
@@ -314,7 +326,7 @@ export function validateRiskUpdate(body: unknown): RiskUpdateResult {
     if (!isNonEmptyString(b["domain"])) {
       return { error: "domain_must_be_non_empty_string" };
     }
-    domain = (b["domain"] as string).trim();
+    domain = sanitizeString((b["domain"] as string).trim(), MAX_DOMAIN);
   }
 
   let likelihood: string | undefined;
@@ -380,7 +392,7 @@ export function validateRiskUpdate(body: unknown): RiskUpdateResult {
     }
     description =
       typeof b["description"] === "string" && b["description"].trim().length > 0
-        ? b["description"].trim()
+        ? sanitizeString(b["description"].trim(), MAX_DESCRIPTION)
         : null;
   }
 
@@ -391,7 +403,7 @@ export function validateRiskUpdate(body: unknown): RiskUpdateResult {
     }
     treatment =
       typeof b["treatment"] === "string" && b["treatment"].trim().length > 0
-        ? b["treatment"].trim()
+        ? sanitizeString(b["treatment"].trim(), MAX_TREATMENT)
         : null;
   }
 
@@ -402,7 +414,7 @@ export function validateRiskUpdate(body: unknown): RiskUpdateResult {
     }
     owner =
       typeof b["owner"] === "string" && b["owner"].trim().length > 0
-        ? b["owner"].trim()
+        ? sanitizeString(b["owner"].trim(), MAX_OWNER)
         : null;
   }
 

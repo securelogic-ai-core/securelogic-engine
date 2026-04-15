@@ -40,10 +40,13 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 import {
   validateVendorReviewCreate,
   validateVendorReviewStatusTransition,
-  FINDING_STATUSES
+  TERMINAL_STATUSES,
+  FINDING_STATUSES,
+  isValidTransition
 } from "../lib/vendorReviewValidation.js";
 import { severityToPriority } from "../lib/postureComputation.js";
 
@@ -475,6 +478,23 @@ router.patch(
 
       const existing = reviewResult.rows[0];
 
+      // Terminal-state guard — cannot modify a completed review.
+      if (TERMINAL_STATUSES.has(existing.status)) {
+        await client.query("ROLLBACK");
+        res.status(409).json({
+          error: "workflow_terminal",
+          message: "This record is in a terminal state and cannot be modified."
+        });
+        return;
+      }
+
+      // Transition graph guard — must follow allowed paths.
+      if (!isValidTransition(existing.status, input.status)) {
+        await client.query("ROLLBACK");
+        res.status(422).json({ error: "invalid_transition" });
+        return;
+      }
+
       // Resolve severity: use PATCH body if provided, else fall back to stored.
       const resolvedSeverity: string | null =
         input.overall_severity ?? existing.overall_severity ?? null;
@@ -629,6 +649,16 @@ router.patch(
         },
         "Vendor review status updated"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        eventType: "workflow.status_transition",
+        resourceType: "vendor_review",
+        resourceId: reviewId,
+        payload: { from: existing.status, to: input.status, findingCreated: finding !== null },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(200).json({ review, finding });
     } catch (err) {

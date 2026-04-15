@@ -15,8 +15,24 @@ const VALID_STATUSES = new Set([
   "critical_issues"
 ]);
 
+// Terminal statuses — review cannot be modified once it reaches these states.
+export const TERMINAL_STATUSES = new Set(["satisfactory", "concerns_identified", "critical_issues"]);
+
 // Statuses that trigger finding creation on first transition.
 export const FINDING_STATUSES = new Set(["concerns_identified", "critical_issues"]);
+
+// Legal status transitions. Terminal states have empty arrays (no exit).
+export const VALID_TRANSITIONS: Record<string, readonly string[]> = {
+  not_started: ["in_progress"],
+  in_progress: ["satisfactory", "concerns_identified", "critical_issues"],
+  satisfactory: [],
+  concerns_identified: [],
+  critical_issues: []
+};
+
+export function isValidTransition(from: string, to: string): boolean {
+  return (VALID_TRANSITIONS[from] ?? []).includes(to);
+}
 
 const VALID_SEVERITIES = new Set(["Critical", "High", "Moderate", "Low"]);
 

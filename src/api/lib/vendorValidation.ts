@@ -1,3 +1,14 @@
+import { sanitizeString } from "./sanitize.js";
+
+// ---------------------------------------------------------------------------
+// Field length caps
+// ---------------------------------------------------------------------------
+
+const MAX_NAME = 255;
+const MAX_DESCRIPTION = 2000;
+const MAX_CATEGORY = 100;
+const MAX_WEBSITE = 512;
+
 /**
  * vendorValidation.ts
  *
@@ -121,14 +132,14 @@ export function validateVendorCreate(
   const service_description =
     "service_description" in b
       ? typeof b["service_description"] === "string"
-        ? b["service_description"]
+        ? sanitizeString(b["service_description"], MAX_DESCRIPTION)
         : null
       : null;
 
   const category =
     "category" in b
       ? typeof b["category"] === "string"
-        ? b["category"]
+        ? sanitizeString(b["category"], MAX_CATEGORY)
         : null
       : null;
 
@@ -154,7 +165,7 @@ export function validateVendorCreate(
   const website =
     "website" in b
       ? typeof b["website"] === "string" && b["website"].trim().length > 0
-        ? b["website"].trim()
+        ? sanitizeString(b["website"].trim(), MAX_WEBSITE)
         : null
       : null;
 
@@ -165,7 +176,7 @@ export function validateVendorCreate(
 
   return {
     input: {
-      name: (b["name"] as string).trim(),
+      name: sanitizeString((b["name"] as string).trim(), MAX_NAME),
       service_description,
       category,
       criticality,
@@ -211,16 +222,21 @@ export function validateVendorPatch(
     if (!isNonEmptyString(b["name"])) {
       return { error: "name_must_be_non_empty_string" };
     }
-    input.name = (b["name"] as string).trim();
+    input.name = sanitizeString((b["name"] as string).trim(), MAX_NAME);
   }
 
   if ("service_description" in b) {
     input.service_description =
-      typeof b["service_description"] === "string" ? b["service_description"] : null;
+      typeof b["service_description"] === "string"
+        ? sanitizeString(b["service_description"], MAX_DESCRIPTION)
+        : null;
   }
 
   if ("category" in b) {
-    input.category = typeof b["category"] === "string" ? b["category"] : null;
+    input.category =
+      typeof b["category"] === "string"
+        ? sanitizeString(b["category"], MAX_CATEGORY)
+        : null;
   }
 
   if ("criticality" in b) {
@@ -271,7 +287,7 @@ export function validateVendorPatch(
   if ("website" in b) {
     input.website =
       typeof b["website"] === "string" && b["website"].trim().length > 0
-        ? b["website"].trim()
+        ? sanitizeString(b["website"].trim(), MAX_WEBSITE)
         : null;
   }
 

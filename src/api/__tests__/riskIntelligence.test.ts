@@ -35,31 +35,31 @@ describe("buildRiskIntelligenceList — field mapping", () => {
   };
 
   it("maps id correctly", () => {
-    expect(buildRiskIntelligenceList([row])[0].id).toBe("aaa-bbb");
+    expect(buildRiskIntelligenceList([row])[0]!.id).toBe("aaa-bbb");
   });
 
   it("maps title correctly", () => {
-    expect(buildRiskIntelligenceList([row])[0].title).toBe("SQL injection risk");
+    expect(buildRiskIntelligenceList([row])[0]!.title).toBe("SQL injection risk");
   });
 
   it("maps domain correctly", () => {
-    expect(buildRiskIntelligenceList([row])[0].domain).toBe("Application Security");
+    expect(buildRiskIntelligenceList([row])[0]!.domain).toBe("Application Security");
   });
 
   it("maps risk_rating correctly", () => {
-    expect(buildRiskIntelligenceList([row])[0].risk_rating).toBe("Critical");
+    expect(buildRiskIntelligenceList([row])[0]!.risk_rating).toBe("Critical");
   });
 
   it("maps status correctly", () => {
-    expect(buildRiskIntelligenceList([row])[0].status).toBe("open");
+    expect(buildRiskIntelligenceList([row])[0]!.status).toBe("open");
   });
 
   it("maps likelihood correctly when present", () => {
-    expect(buildRiskIntelligenceList([row])[0].likelihood).toBe("High");
+    expect(buildRiskIntelligenceList([row])[0]!.likelihood).toBe("High");
   });
 
   it("maps owner correctly when present", () => {
-    expect(buildRiskIntelligenceList([row])[0].owner).toBe("alice@example.com");
+    expect(buildRiskIntelligenceList([row])[0]!.owner).toBe("alice@example.com");
   });
 });
 
@@ -82,27 +82,27 @@ describe("buildRiskIntelligenceList — string-to-number parsing", () => {
   };
 
   it("parses active_treatments to number", () => {
-    expect(buildRiskIntelligenceList([row])[0].active_treatments).toBe(2);
+    expect(buildRiskIntelligenceList([row])[0]!.active_treatments).toBe(2);
   });
 
   it("parses total_treatments to number", () => {
-    expect(buildRiskIntelligenceList([row])[0].total_treatments).toBe(4);
+    expect(buildRiskIntelligenceList([row])[0]!.total_treatments).toBe(4);
   });
 
   it("parses linked_findings to number", () => {
-    expect(buildRiskIntelligenceList([row])[0].linked_findings).toBe(7);
+    expect(buildRiskIntelligenceList([row])[0]!.linked_findings).toBe(7);
   });
 
   it("active_treatments is type number not string", () => {
-    expect(typeof buildRiskIntelligenceList([row])[0].active_treatments).toBe("number");
+    expect(typeof buildRiskIntelligenceList([row])[0]!.active_treatments).toBe("number");
   });
 
   it("total_treatments is type number not string", () => {
-    expect(typeof buildRiskIntelligenceList([row])[0].total_treatments).toBe("number");
+    expect(typeof buildRiskIntelligenceList([row])[0]!.total_treatments).toBe("number");
   });
 
   it("linked_findings is type number not string", () => {
-    expect(typeof buildRiskIntelligenceList([row])[0].linked_findings).toBe("number");
+    expect(typeof buildRiskIntelligenceList([row])[0]!.linked_findings).toBe("number");
   });
 });
 
@@ -125,23 +125,23 @@ describe("buildRiskIntelligenceList — null fields", () => {
   };
 
   it("preserves null likelihood", () => {
-    expect(buildRiskIntelligenceList([rowWithNulls])[0].likelihood).toBeNull();
+    expect(buildRiskIntelligenceList([rowWithNulls])[0]!.likelihood).toBeNull();
   });
 
   it("preserves null owner", () => {
-    expect(buildRiskIntelligenceList([rowWithNulls])[0].owner).toBeNull();
+    expect(buildRiskIntelligenceList([rowWithNulls])[0]!.owner).toBeNull();
   });
 
   it("parses zero active_treatments", () => {
-    expect(buildRiskIntelligenceList([rowWithNulls])[0].active_treatments).toBe(0);
+    expect(buildRiskIntelligenceList([rowWithNulls])[0]!.active_treatments).toBe(0);
   });
 
   it("parses zero total_treatments", () => {
-    expect(buildRiskIntelligenceList([rowWithNulls])[0].total_treatments).toBe(0);
+    expect(buildRiskIntelligenceList([rowWithNulls])[0]!.total_treatments).toBe(0);
   });
 
   it("parses zero linked_findings", () => {
-    expect(buildRiskIntelligenceList([rowWithNulls])[0].linked_findings).toBe(0);
+    expect(buildRiskIntelligenceList([rowWithNulls])[0]!.linked_findings).toBe(0);
   });
 });
 
@@ -183,14 +183,14 @@ describe("buildRiskIntelligenceList — multiple rows", () => {
 
   it("preserves row order", () => {
     const result = buildRiskIntelligenceList(rows);
-    expect(result[0].id).toBe("r1");
-    expect(result[1].id).toBe("r2");
+    expect(result[0]!.id).toBe("r1");
+    expect(result[1]!.id).toBe("r2");
   });
 
   it("maps each row independently", () => {
     const result = buildRiskIntelligenceList(rows);
-    expect(result[0].active_treatments).toBe(1);
-    expect(result[1].active_treatments).toBe(0);
+    expect(result[0]!.active_treatments).toBe(1);
+    expect(result[1]!.active_treatments).toBe(0);
   });
 });
 
@@ -213,7 +213,7 @@ describe("buildRiskIntelligenceList — output shape", () => {
   };
 
   it("output object has exactly 10 keys", () => {
-    const keys = Object.keys(buildRiskIntelligenceList([row])[0]);
+    const keys = Object.keys(buildRiskIntelligenceList([row])[0]!);
     expect(keys.sort()).toEqual(
       [
         "active_treatments",

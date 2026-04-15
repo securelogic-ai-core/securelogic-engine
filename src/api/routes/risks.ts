@@ -28,6 +28,7 @@ import {
   validateRiskUpdate,
   validateRiskListQuery
 } from "../lib/riskValidation.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
 
@@ -198,6 +199,20 @@ router.post(
         },
         "Risk record created"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        eventType: "risk.created",
+        resourceType: "risk",
+        resourceId: risk.id as string,
+        payload: {
+          domain: input.domain,
+          risk_rating: input.risk_rating,
+          status: input.status
+        },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(201).json({ risk });
     } catch (err) {
@@ -658,6 +673,16 @@ router.patch(
         },
         "Risk record updated"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        eventType: "risk.updated",
+        resourceType: "risk",
+        resourceId: risk.id as string,
+        payload: { fields: Object.keys(input) },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(200).json({ risk });
     } catch (err) {

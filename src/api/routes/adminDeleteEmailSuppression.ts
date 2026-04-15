@@ -39,7 +39,11 @@ router.delete("/email-suppressions/:id", async (req, res) => {
       ok: true,
       deletedSuppressionId: suppressionId
     })
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.code === "23503") {
+      res.status(409).json({ error: "has_dependencies", message: "Cannot delete — dependent records exist." })
+      return
+    }
     logger.error({ event: "admin_delete_email_suppression_failed", err }, "DELETE /admin/email-suppressions/:id failed")
     res.status(500).json({ error: "admin_email_suppression_delete_failed" })
   }

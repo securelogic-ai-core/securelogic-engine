@@ -1,3 +1,14 @@
+import { sanitizeString } from "./sanitize.js";
+
+// ---------------------------------------------------------------------------
+// Field length caps
+// ---------------------------------------------------------------------------
+
+const MAX_TITLE = 255;
+const MAX_DESCRIPTION = 2000;
+const MAX_DOMAIN = 100;
+const MAX_SCORING_RATIONALE = 2000;
+
 /**
  * findingValidation.ts — Pure validation for POST /api/findings.
  *
@@ -115,7 +126,7 @@ export function validateFindingCreate(body: unknown): FindingCreateResult {
   if (!isNonEmptyString(b["title"])) {
     return { error: "title_required" };
   }
-  const title = (b["title"] as string).trim();
+  const title = sanitizeString((b["title"] as string).trim(), MAX_TITLE);
 
   // severity — required enum
   if (!isNonEmptyString(b["severity"])) {
@@ -149,7 +160,7 @@ export function validateFindingCreate(body: unknown): FindingCreateResult {
     }
     description =
       typeof b["description"] === "string" && b["description"].trim().length > 0
-        ? b["description"].trim()
+        ? sanitizeString(b["description"].trim(), MAX_DESCRIPTION)
         : null;
   }
 
@@ -172,7 +183,7 @@ export function validateFindingCreate(body: unknown): FindingCreateResult {
     }
     domain =
       typeof b["domain"] === "string" && b["domain"].trim().length > 0
-        ? b["domain"].trim()
+        ? sanitizeString(b["domain"].trim(), MAX_DOMAIN)
         : null;
   }
 
@@ -252,7 +263,7 @@ export function validateFindingCreate(body: unknown): FindingCreateResult {
     }
     scoring_rationale =
       typeof b["scoring_rationale"] === "string" && b["scoring_rationale"].trim().length > 0
-        ? b["scoring_rationale"].trim()
+        ? sanitizeString(b["scoring_rationale"].trim(), MAX_SCORING_RATIONALE)
         : null;
   }
 

@@ -34,10 +34,12 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 import {
   validateRiskTreatmentCreate,
   validateRiskTreatmentStatusTransition,
-  TERMINAL_STATUSES
+  TERMINAL_STATUSES,
+  isValidTransition
 } from "../lib/riskTreatmentValidation.js";
 
 const router = Router();
@@ -435,6 +437,23 @@ router.patch(
 
       const existing = treatmentResult.rows[0];
 
+      // Terminal-state guard — cannot modify a completed treatment.
+      if (TERMINAL_STATUSES.has(existing.status)) {
+        await client.query("ROLLBACK");
+        res.status(409).json({
+          error: "workflow_terminal",
+          message: "This record is in a terminal state and cannot be modified."
+        });
+        return;
+      }
+
+      // Transition graph guard — must follow allowed paths.
+      if (!isValidTransition(existing.status, input.status)) {
+        await client.query("ROLLBACK");
+        res.status(422).json({ error: "invalid_transition" });
+        return;
+      }
+
       // Build the SET clause dynamically for mutable fields.
       const setClauses: string[] = ["status = $1", "updated_at = NOW()"];
       const updateParams: unknown[] = [input.status];
@@ -515,6 +534,16 @@ router.patch(
         },
         "Risk treatment status updated"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        eventType: "workflow.status_transition",
+        resourceType: "risk_treatment",
+        resourceId: treatmentId,
+        payload: { from: existing.status, to: input.status, riskUpdated },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(200).json({ treatment });
     } catch (err) {

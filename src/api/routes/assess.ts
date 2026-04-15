@@ -7,6 +7,7 @@ import { pg } from "../infra/postgres.js";
 import { RunnerEngine } from "../../engine/RunnerEngine.js";
 import type { EngineInput } from "../../engine/contracts/EngineInput.js";
 import { severityToPriority } from "../lib/postureComputation.js";
+import { encryptField } from "../lib/fieldEncryption.js";
 
 const router = Router();
 
@@ -218,19 +219,22 @@ async function persistAssessment(
     // 3. Insert report row
     await client.query(
       `
-      INSERT INTO reports (assessment_id, type, risk_score, summary, report_json, generated_at)
-      VALUES ($1, $2, $3, $4, $5, NOW())
+      INSERT INTO reports (organization_id, assessment_id, type, risk_score, summary, report_json, generated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, NOW())
       `,
       [
+        organizationId,
         assessmentId,
         "engine_v2",
         riskScore,
         report.executiveSummary.narrative,
-        JSON.stringify({
+        // Encrypt then wrap in JSON.stringify so the encrypted string
+        // is stored as a valid JSONB string value (not a raw JSON object).
+        JSON.stringify(encryptField(JSON.stringify({
           meta: report.meta,
           executiveSummary: report.executiveSummary,
           domainScores: report.domainScores
-        })
+        })))
       ]
     );
 
