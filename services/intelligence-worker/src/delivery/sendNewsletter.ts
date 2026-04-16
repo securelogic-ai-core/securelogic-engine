@@ -190,7 +190,8 @@ export async function sendNewsletter(issueId: string): Promise<SendNewsletterRes
   const deliveries = await fetchQueuedDeliveries(issueId);
 
   if (deliveries.length === 0) {
-    logger.info({ event: "newsletter_send_no_deliveries", issueId }, "sendNewsletter: no queued deliveries found");
+    logger.info({ event: "newsletter_send_no_deliveries", issueId }, "sendNewsletter: no queued deliveries — marking issue sent");
+    await markIssueSent(issueId);
     return result;
   }
 

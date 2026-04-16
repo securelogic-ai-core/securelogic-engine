@@ -119,7 +119,7 @@ router.get(
           updated_at
         FROM newsletter_issues
         WHERE (organization_id = $1 OR organization_id IS NULL)
-          AND status = 'sent'
+          AND status IN ('sent', 'queued')
         ORDER BY created_at DESC
         LIMIT 25
         `,
@@ -200,7 +200,7 @@ router.get(
         FROM newsletter_issues
         WHERE id = $1
           AND (organization_id = $2 OR organization_id IS NULL)
-          AND status = 'sent'
+          AND status IN ('sent', 'queued')
         LIMIT 1
         `,
         [id, organizationId]

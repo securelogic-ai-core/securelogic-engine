@@ -299,7 +299,7 @@ function SignalDetail({
           {category === "priority" && (
             <>
               <span className="text-slate-300 select-none">·</span>
-              <p className="text-xs font-bold text-slate-600 uppercase tracking-widest">
+              <p className="text-xs font-bold uppercase tracking-widest" style={{ color: '#94a3b8' }}>
                 #{index + 1} Priority
               </p>
             </>
@@ -322,15 +322,15 @@ function SignalDetail({
           )}
         </div>
 
-        <h1 className="text-2xl font-bold text-slate-900 leading-tight">
+        <h1 className="text-2xl font-bold leading-tight" style={{ color: '#f1f5f9', fontWeight: '700' }}>
           {signal.title}
         </h1>
 
         {(signal.priorityScore !== undefined && signal.priorityScore > 0) && (
-          <div className="mt-4 flex items-center gap-1.5 text-xs text-slate-400 font-medium">
+          <div className="mt-4 flex items-center gap-1.5 text-xs font-medium" style={{ color: '#94a3b8' }}>
             <span>Signal priority score</span>
-            <span className="text-slate-300 select-none">·</span>
-            <span className="text-slate-700 font-bold tabular-nums">{signal.priorityScore}</span>
+            <span className="select-none">·</span>
+            <span className="font-bold tabular-nums" style={{ color: '#94a3b8' }}>{signal.priorityScore}</span>
           </div>
         )}
       </div>
@@ -340,10 +340,10 @@ function SignalDetail({
 
         {signal.riskRationale && (
           <section>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">
+            <p className="text-xs font-bold uppercase tracking-wide mb-3" style={{ color: '#94a3b8' }}>
               What Happened
             </p>
-            <p className="text-base text-slate-700 leading-relaxed">
+            <p className="text-base leading-relaxed" style={{ color: '#cbd5e1' }}>
               {signal.riskRationale}
             </p>
           </section>
@@ -351,23 +351,24 @@ function SignalDetail({
 
         {action && (
           <section>
-            <p className="text-xs font-bold text-teal-700 uppercase tracking-wide mb-3">
+            <p className="text-xs font-bold uppercase tracking-wide mb-3" style={{ color: '#00c4b4' }}>
               Decision Guidance
             </p>
             <div className="bg-teal-50 border border-teal-100 rounded-xl p-6">
-              <p className="text-base text-slate-700 leading-relaxed">
+              <p className="text-base leading-relaxed" style={{ color: '#374151' }}>
                 {action}
               </p>
             </div>
             {tierActions.length > 0 && (
-              <div className="mt-4 border border-slate-200 rounded-xl overflow-hidden">
+              <div className="mt-4 border border-slate-200 rounded-xl overflow-hidden" style={{ backgroundColor: '#ffffff' }}>
                 <div className="bg-slate-50 px-5 py-3 border-b border-slate-200 flex items-center justify-between gap-3">
-                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                  <p className="text-xs font-bold uppercase tracking-wide" style={{ color: '#94a3b8' }}>
                     {tierActionsLabel} — From This Issue
                   </p>
                   <Link
                     href={`/briefs/${issue.id}#action-roadmap`}
-                    className="text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors flex-shrink-0"
+                    className="text-xs font-semibold hover:text-teal-300 transition-colors flex-shrink-0"
+                    style={{ color: '#00c4b4' }}
                   >
                     Full roadmap →
                   </Link>
@@ -375,10 +376,10 @@ function SignalDetail({
                 <ol className="divide-y divide-slate-100">
                   {tierActions.slice(0, 3).map((item, i) => (
                     <li key={i} className="px-5 py-3 flex items-start gap-3">
-                      <span className="text-xs font-bold text-slate-400 tabular-nums flex-shrink-0 mt-0.5 w-5 text-right">
+                      <span className="text-xs font-bold tabular-nums flex-shrink-0 mt-0.5 w-5 text-right" style={{ color: '#94a3b8' }}>
                         {String(i + 1).padStart(2, "0")}.
                       </span>
-                      <span className="text-sm text-slate-700 leading-snug">{item}</span>
+                      <span className="text-sm leading-snug" style={{ color: '#374151' }}>{item}</span>
                     </li>
                   ))}
                 </ol>
@@ -389,10 +390,10 @@ function SignalDetail({
 
         {whyItMattersText && (
           <section>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">
+            <p className="text-xs font-bold uppercase tracking-wide mb-3" style={{ color: '#94a3b8' }}>
               Organizational Exposure
             </p>
-            <p className="text-base text-slate-700 leading-relaxed">
+            <p className="text-base leading-relaxed" style={{ color: '#cbd5e1' }}>
               {whyItMattersText}
             </p>
           </section>
@@ -400,10 +401,10 @@ function SignalDetail({
 
         {analysisText && (
           <section>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">
+            <p className="text-xs font-bold uppercase tracking-wide mb-3" style={{ color: '#94a3b8' }}>
               Analyst Notes
             </p>
-            <p className="text-base text-slate-700 leading-relaxed">
+            <p className="text-base leading-relaxed" style={{ color: '#cbd5e1' }}>
               {analysisText}
             </p>
           </section>
@@ -431,29 +432,30 @@ function SignalDetail({
         )}
 
         {sourceHref ? (
-          <section className="pt-6 border-t border-slate-100">
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">
+          <section className="pt-6 border-t border-slate-700">
+            <p className="text-xs font-bold uppercase tracking-wide mb-3" style={{ color: '#94a3b8' }}>
               Primary Source
             </p>
             <a
               href={sourceHref}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-sm font-semibold text-teal-600 hover:text-teal-700 transition-colors"
+              className="inline-flex items-center gap-2 text-sm font-semibold hover:text-teal-300 transition-colors"
+              style={{ color: '#00c4b4' }}
             >
               {signal.source ?? "View source"} →
             </a>
           </section>
         ) : signal.source ? (
-          <section className="pt-6 border-t border-slate-100">
-            <p className="text-xs text-slate-400 font-medium">Via {signal.source}</p>
+          <section className="pt-6 border-t border-slate-700">
+            <p className="text-xs font-medium" style={{ color: '#94a3b8' }}>Via {signal.source}</p>
           </section>
         ) : null}
 
         {/* Related signals from the same section */}
         {related.length > 0 && (
-          <section className="pt-8 border-t border-slate-200">
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-4">
+          <section className="pt-8 border-t border-slate-700">
+            <p className="text-xs font-bold uppercase tracking-wide mb-4" style={{ color: '#94a3b8' }}>
               Related Signals — {SECTION_LABELS[category] ?? "Same Section"}
             </p>
             <div className="space-y-3">
@@ -466,26 +468,29 @@ function SignalDetail({
 
         {/* Prev / next navigation for priority signals */}
         {(prevHref || nextHref) && (
-          <section className="pt-8 border-t border-slate-200">
+          <section className="pt-8 border-t border-slate-700">
             <div className="flex items-center justify-between gap-4">
               {prevHref ? (
                 <Link
                   href={prevHref}
-                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-teal-700 transition-colors"
+                  className="inline-flex items-center gap-1.5 text-sm font-semibold hover:text-teal-300 transition-colors"
+                  style={{ color: '#94a3b8' }}
                 >
                   ← Previous signal
                 </Link>
               ) : <span />}
               <Link
                 href={`/briefs/${issue.id}`}
-                className="text-xs font-semibold text-slate-400 hover:text-slate-600 transition-colors"
+                className="text-xs font-semibold hover:text-slate-200 transition-colors"
+                style={{ color: '#94a3b8' }}
               >
                 Back to brief
               </Link>
               {nextHref ? (
                 <Link
                   href={nextHref}
-                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-teal-700 transition-colors"
+                  className="inline-flex items-center gap-1.5 text-sm font-semibold hover:text-teal-300 transition-colors"
+                  style={{ color: '#94a3b8' }}
                 >
                   Next signal →
                 </Link>

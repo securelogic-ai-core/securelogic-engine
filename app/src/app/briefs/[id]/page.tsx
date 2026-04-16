@@ -314,7 +314,7 @@ function ExecutiveSummarySection({
                   return (
                     <div key={s.id ?? s.signalId ?? i} className="flex items-center justify-between gap-3 py-2.5">
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-xs font-bold text-slate-300 tabular-nums flex-shrink-0 w-4 text-right">
+                        <span className="text-xs font-bold tabular-nums flex-shrink-0 w-4 text-right" style={{ color: '#94a3b8' }}>
                           {i + 1}.
                         </span>
                         <Link
@@ -379,12 +379,7 @@ function PrioritySignalCard({
   const tier = signal.priorityTier ?? "";
   const sourceHref = signal.sourceUrl ?? signal.source_url;
 
-  const cardBg =
-    tier === "IMMEDIATE"
-      ? "bg-red-50/50"
-      : tier === "NEAR-TERM"
-      ? "bg-orange-50/30"
-      : "bg-white";
+  const cardBg = "bg-slate-800";
 
   const tierBarBg =
     tier === "IMMEDIATE"
@@ -398,7 +393,7 @@ function PrioritySignalCard({
     issueId && typeof rank === "number" ? `/briefs/${issueId}/signal/priority/${rank - 1}` : undefined;
 
   return (
-    <div className={`border border-slate-200 border-l-4 ${riskColor(risk)} rounded-xl overflow-hidden shadow-sm`}>
+    <div className={`border border-slate-700 border-l-4 ${riskColor(risk)} rounded-xl overflow-hidden shadow-sm`}>
       <div className={`${tierBarBg} px-5 py-2.5 flex items-center justify-between gap-3`}>
         <div className="flex items-center gap-2.5 min-w-0">
           <span className="text-xs font-bold text-white uppercase tracking-widest flex-shrink-0">
@@ -418,9 +413,9 @@ function PrioritySignalCard({
 
       <div className={`${cardBg} p-6`}>
         <div className="flex items-start justify-between gap-3 mb-4">
-          <h3 className="text-slate-900 font-bold text-base leading-snug flex-1">
+          <h3 className="font-bold text-base leading-snug flex-1" style={{ color: '#f1f5f9', fontWeight: '700' }}>
             {detailHref ? (
-              <Link href={detailHref} className="hover:text-teal-700 transition-colors">
+              <Link href={detailHref} style={{ color: 'inherit' }} className="hover:text-teal-300 transition-colors">
                 {signal.title}
               </Link>
             ) : (
@@ -447,13 +442,13 @@ function PrioritySignalCard({
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1.5">
               Context
             </p>
-            <p className="text-sm text-slate-600 leading-relaxed line-clamp-3">
+            <p className="text-sm text-slate-300 leading-relaxed line-clamp-3">
               {signal.riskRationale || whyItMatters}
             </p>
           </div>
         )}
 
-        <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+        <div className="flex items-center justify-between pt-4 border-t border-slate-700">
           {sourceHref ? (
             <a
               href={sourceHref}
@@ -465,7 +460,7 @@ function PrioritySignalCard({
               {signal.source && (
                 <>
                   <span className="text-teal-300">·</span>
-                  <span className="font-medium text-slate-500">{signal.source}</span>
+                  <span className="font-medium text-slate-400">{signal.source}</span>
                 </>
               )}
               <span>→</span>
@@ -479,7 +474,8 @@ function PrioritySignalCard({
           {detailHref && (
             <Link
               href={detailHref}
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-600 hover:text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 px-3 py-1.5 rounded-lg transition-colors"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold hover:bg-teal-100 border border-teal-200 px-3 py-1.5 rounded-lg transition-colors"
+              style={{ color: '#00c4b4', backgroundColor: '#f0fdfa' }}
             >
               Read full analysis →
             </Link>

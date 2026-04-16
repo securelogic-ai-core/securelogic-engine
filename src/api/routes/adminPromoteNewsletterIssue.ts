@@ -59,11 +59,6 @@ router.post("/newsletter-issues/:id/promote", async (req, res) => {
 
     const activeSubscriberCount = Number(subscriberResult.rows[0]?.count ?? 0)
 
-    if (activeSubscriberCount <= 0) {
-      res.status(400).json({ error: "no_active_subscribers" })
-      return
-    }
-
     const updateResult = await pg.query(
       `
       UPDATE newsletter_issues

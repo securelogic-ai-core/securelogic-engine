@@ -20,6 +20,7 @@ import { fetchVendorRiskSignals } from "../sources/vendorRiskFeed.js";
 
 import {
   getLatestDraftIssue,
+  getActiveIssue,
   promoteIssueToQueued
 } from "../storage/postgresIssueStore.js";
 import { sendNewsletter } from "../delivery/sendNewsletter.js";
@@ -223,16 +224,24 @@ export async function runPipeline(): Promise<PipelineResult> {
     logger.error({ event: "delivery_generation_failed", err }, "Newsletter delivery generation failed");
   }
 
-  // Send after delivery generation so queued rows exist for the sender to drain
-  if (isWeeklySendDay && sendIssueId) {
+  // Send after delivery generation so queued rows exist for the sender to drain.
+  // On weekly send day: send the freshly promoted issue.
+  // Every run: also drain any previously queued issue (handles retries and no-subscriber cases).
+  const queuedIssueForDrain = sendIssueId
+    ? null
+    : await getActiveIssue(null, ["queued"]).catch(() => null);
+
+  const issueToSend = sendIssueId ?? queuedIssueForDrain?.id ?? null;
+
+  if (issueToSend) {
     try {
-      logger.info({ event: "newsletter_send_start", issueId: sendIssueId }, "Weekly send window: dispatching newsletter");
-      await sendNewsletter(sendIssueId);
+      logger.info({ event: "newsletter_send_start", issueId: issueToSend }, "Dispatching newsletter for queued issue");
+      await sendNewsletter(issueToSend);
     } catch (err) {
       logger.error({ event: "newsletter_send_failed", err }, "Newsletter send failed");
     }
   } else if (!isWeeklySendDay) {
-    logger.info({ event: "newsletter_send_skip", reason: "schedule_guard" }, "Newsletter generated but not sent (weekly schedule guard)");
+    logger.info({ event: "newsletter_send_skip", reason: "no_queued_issue" }, "No queued issue to send");
   }
 
   logger.info({
