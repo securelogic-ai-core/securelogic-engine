@@ -50,15 +50,21 @@ export function UpgradeCard() {
           disabled={loading !== null}
           className="w-full bg-brand-teal hover:bg-teal-400 disabled:opacity-60 text-white font-semibold text-sm py-2 rounded-lg transition-colors"
         >
-          {loading === "professional" ? "Redirecting…" : "Professional — $39/mo"}
+          {loading === "professional" ? "Redirecting…" : "Brief Pro — $29/mo"}
         </button>
         <button
           onClick={() => handleCheckout("team")}
           disabled={loading !== null}
           className="w-full bg-white/10 hover:bg-white/20 disabled:opacity-60 text-slate-100 font-semibold text-sm py-2 rounded-lg transition-colors border border-white/20"
         >
-          {loading === "team" ? "Redirecting…" : "Team — $209/mo"}
+          {loading === "team" ? "Redirecting…" : "Professional — $499/mo"}
         </button>
+        <a
+          href="mailto:hello@securelogicai.com"
+          className="w-full block text-center text-slate-400 hover:text-slate-200 text-sm py-2 rounded-lg transition-colors border border-white/10 hover:border-white/20"
+        >
+          Enterprise — Custom pricing
+        </a>
       </div>
     </div>
   );
