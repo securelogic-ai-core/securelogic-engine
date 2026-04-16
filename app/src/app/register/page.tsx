@@ -9,7 +9,7 @@ interface Props {
 export default async function RegisterPage({ searchParams }: Props) {
   const session = await getSession();
 
-  if (session.apiKey) {
+  if (session.jwtToken ?? session.apiKey) {
     redirect("/dashboard");
   }
 

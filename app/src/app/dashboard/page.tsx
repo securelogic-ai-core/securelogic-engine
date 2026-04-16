@@ -162,7 +162,7 @@ export default async function DashboardPage({
                 href="mailto:hello@securelogicai.com?subject=SecureLogic%20AI%20Platform%20Inquiry"
                 className="flex-shrink-0 text-xs font-semibold text-brand-teal hover:text-teal-300 transition-colors whitespace-nowrap"
               >
-                Platform — $499/mo →
+                Platform — $799/mo →
               </a>
             </div>
           </div>
