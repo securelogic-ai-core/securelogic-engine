@@ -32,9 +32,12 @@ export default async function DashboardPage({
 
   const latestIssue = issuesData?.issues?.[0] ?? null;
   const entitlementLevel = me?.entitlementLevel ?? "starter";
-  const isPaid = entitlementLevel === "premium" || entitlementLevel === "professional";
+  const isPaid = ["premium", "professional", "platform", "team"].includes(entitlementLevel);
   // Platform access: full posture dashboard, vendor/AI/controls features
-  const isPlatformUser = entitlementLevel === "premium" || entitlementLevel === "platform";
+  const isPlatformUser = entitlementLevel === "premium" || entitlementLevel === "platform" || entitlementLevel === "team";
+  const isTeamTier = entitlementLevel === "team";
+  const isPlatformPro = entitlementLevel === "premium" || entitlementLevel === "platform";
+  const isBriefPro = entitlementLevel === "professional";
   const planName = planDisplayName(entitlementLevel);
   const displayName = session.name ?? me?.organizationName ?? session.organizationName ?? null;
   const orgName = me?.organizationName ?? session.organizationName;
@@ -115,7 +118,11 @@ export default async function DashboardPage({
                 <p className="text-xs text-slate-500 mb-0.5">Plan</p>
                 <span
                   className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
-                    isPaid
+                    isTeamTier
+                      ? "bg-purple-900/40 text-purple-300"
+                      : isPlatformPro
+                      ? "bg-teal-800/50 text-teal-200 ring-1 ring-teal-700/50"
+                      : isBriefPro
                       ? "bg-teal-900/40 text-teal-300"
                       : "bg-slate-700/40 text-slate-300"
                   }`}
@@ -144,28 +151,7 @@ export default async function DashboardPage({
         )
       ) : (
         <div className="mt-10">
-          <div className="bg-brand-surface border border-brand-line rounded-xl p-6">
-            <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-3">
-              Security Posture
-            </h2>
-            <div className="flex items-start justify-between gap-6">
-              <div className="flex-1">
-                <p className="text-slate-200 text-sm font-semibold mb-1">
-                  Upgrade to Platform for posture monitoring
-                </p>
-                <p className="text-slate-500 text-xs leading-relaxed max-w-lg">
-                  Platform Professional includes vendor risk management, AI governance reviews,
-                  compliance posture tracking, control assessments, and security scoring.
-                </p>
-              </div>
-              <a
-                href="mailto:hello@securelogicai.com?subject=SecureLogic%20AI%20Platform%20Inquiry"
-                className="flex-shrink-0 text-xs font-semibold text-brand-teal hover:text-teal-300 transition-colors whitespace-nowrap"
-              >
-                Platform — $799/mo →
-              </a>
-            </div>
-          </div>
+          <SamplePostureDashboard />
         </div>
       )}
     </div>
@@ -174,10 +160,13 @@ export default async function DashboardPage({
 
 function planDisplayName(entitlementLevel: string): string {
   switch (entitlementLevel) {
-    case "premium":      return "Team";
-    case "professional": return "Professional";
-    case "admin":        return "Enterprise";
-    default:             return "Free";
+    case "professional":    return "Brief Pro";
+    case "premium":
+    case "platform":        return "Platform Professional";
+    case "team":            return "Platform Team";
+    case "free":
+    case "starter":
+    default:                return "Free";
   }
 }
 
@@ -195,6 +184,9 @@ function ManageBillingButton() {
           Manage Billing
         </button>
       </form>
+      <p className="mt-2 text-xs text-slate-400 text-center">
+        Upgrade, downgrade, or cancel anytime
+      </p>
     </div>
   );
 }
@@ -371,6 +363,112 @@ function PostureDashboard({ summary }: { summary: DashboardSummary }) {
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Sample Posture Dashboard — shown to non-Platform subscribers
+// Displays fake data with a preview banner so users can see
+// what Platform Professional looks like before upgrading.
+// ─────────────────────────────────────────────────────────────
+
+function SamplePostureDashboard() {
+  return (
+    <div>
+      <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-4">
+        Security Posture
+      </h2>
+
+      {/* Preview banner */}
+      <div className="mb-4 bg-amber-900/30 border border-amber-700/50 rounded-xl px-5 py-3 flex items-center gap-3">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-amber-400 flex-shrink-0">
+          <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495ZM10 5a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 5Zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clipRule="evenodd" />
+        </svg>
+        <p className="text-amber-200 text-sm">
+          <span className="font-semibold">SAMPLE PREVIEW</span> — This is a preview of Platform Professional. Your real data appears after upgrade.
+        </p>
+      </div>
+
+      {/* Sample tiles — blurred to indicate preview */}
+      <div className="relative">
+        <div className="pointer-events-none select-none" style={{ filter: "blur(1.5px)", opacity: 0.75 }}>
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+
+            {/* Posture score */}
+            <div className="lg:col-span-1 bg-brand-surface border border-brand-line rounded-xl p-5 flex flex-col justify-between">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Posture Score</p>
+              <p className="text-4xl font-bold text-slate-100 leading-none">67</p>
+              <span className="mt-2 self-start inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-900/40 text-amber-300">
+                Moderate
+              </span>
+              <p className="mt-2 text-xs text-slate-500">as of Apr 14, 2026</p>
+            </div>
+
+            {/* Open findings */}
+            <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Open Findings</p>
+              <p className="text-3xl font-bold text-slate-100">4</p>
+              <div className="mt-3 space-y-1">
+                <div className="flex items-center gap-2 text-xs text-slate-400">
+                  <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
+                  <span>Critical</span>
+                  <span className="ml-auto font-medium">1</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-slate-400">
+                  <span className="inline-block w-2 h-2 rounded-full bg-orange-400" />
+                  <span>High</span>
+                  <span className="ml-auto font-medium">2</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-slate-400">
+                  <span className="inline-block w-2 h-2 rounded-full bg-amber-400" />
+                  <span>Moderate</span>
+                  <span className="ml-auto font-medium">1</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Open actions */}
+            <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Open Actions</p>
+              <p className="text-3xl font-bold text-slate-100">3</p>
+              <p className="mt-2 text-xs font-semibold text-red-400">1 overdue</p>
+            </div>
+
+            {/* Inventory */}
+            <div className="lg:col-span-2 bg-brand-surface border border-brand-line rounded-xl p-5">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Inventory</p>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+                {[
+                  { label: "Vendors",      count: 8 },
+                  { label: "AI Systems",   count: 3 },
+                  { label: "Controls",     count: 12 },
+                  { label: "Assessments",  count: 5 },
+                  { label: "Gov. Reviews", count: 2 },
+                ].map(({ label, count }) => (
+                  <div key={label} className="flex items-baseline justify-between">
+                    <span className="text-xs text-slate-400">{label}</span>
+                    <span className="text-sm font-semibold text-slate-100 ml-2">{count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Upgrade CTA */}
+        <div className="mt-4 text-center">
+          <form action="/api/billing/checkout" method="POST">
+            <input type="hidden" name="tier" value="team" />
+            <button
+              type="submit"
+              className="inline-flex items-center gap-2 bg-teal-700 hover:bg-teal-600 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
+            >
+              Upgrade to Platform Professional — $799/mo
+            </button>
+          </form>
+        </div>
+      </div>
     </div>
   );
 }
