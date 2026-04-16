@@ -3,14 +3,16 @@ import { pg } from "../../../../src/api/infra/postgres.js";
 type Signal = {
   id: string;
   organization_id: string | null;
+  category: string | null;
   title: string;
   summary: string | null;
+  raw_content: string | null;
   source: string;
   source_url: string;
 };
 
 function buildText(signal: Signal): string {
-  return `${signal.title} ${signal.summary ?? ""}`.toLowerCase();
+  return `${signal.title} ${signal.raw_content ?? signal.summary ?? ""}`.toLowerCase();
 }
 
 function includesAny(text: string, values: string[]): boolean {
@@ -101,139 +103,23 @@ function deriveAudience(text: string): string {
   return "Security Leaders, Risk Teams";
 }
 
-function deriveRiskImplication(signal: Signal, text: string): string {
-  if (
-    includesAny(text, [
-      "zero-day",
-      "0-day",
-      "actively exploited",
-      "under active exploitation",
-      "exploit"
-    ])
-  ) {
-    return `This development indicates a time-sensitive exposure scenario tied to "${signal.title}" and may require accelerated patching, exposure validation, and compensating control review.`;
-  }
-
-  if (includesAny(text, ["phishing", "credential", "pdf lure", "casbaneiro"])) {
-    return `This development indicates heightened credential and endpoint risk tied to "${signal.title}" and raises the likelihood of user-targeted compromise attempts against enterprise staff.`;
-  }
-
-  if (
-    includesAny(text, [
-      "ai model",
-      "open-source ai",
-      "open source ai",
-      "ai governance",
-      "llm"
-    ])
-  ) {
-    return `This development may expand unmanaged AI usage risk, model governance exposure, and policy gaps if the organization does not have clear approval and oversight controls.`;
-  }
-
-  if (
-    includesAny(text, [
-      "guidance",
-      "regulation",
-      "enforcement",
-      "ai act",
-      "verification"
-    ])
-  ) {
-    return `This development may change external expectations for governance, documentation, accountability, or compliance readiness and should be reviewed for policy impact.`;
-  }
-
-  return `This development may affect enterprise security, governance, or compliance posture and should be reviewed for direct operational impact.`;
+export function deriveRiskImplication(_signal: Signal, _text: string): string {
+  // Intentionally empty — newsletterBuilder LLM generates real risk implications
+  // from raw content rather than propagating template strings into the DB.
+  return "";
 }
 
-function deriveAnalysis(signal: Signal, text: string): string {
-  if (
-    includesAny(text, [
-      "zero-day",
-      "0-day",
-      "actively exploited",
-      "under active exploitation"
-    ])
-  ) {
-    return `The event reported in "${signal.title}" represents an actively exploitable security condition with direct enterprise relevance. Organizations should assume elevated exposure risk until patch status, internet-facing footprint, and endpoint coverage are validated.`;
-  }
-
-  if (includesAny(text, ["phishing", "credential", "pdf lure", "casbaneiro"])) {
-    return `The event reported in "${signal.title}" reflects active social engineering and credential compromise tradecraft. This is especially relevant for organizations with inconsistent phishing resistance, weak browser hardening, or limited detection coverage for malicious document activity.`;
-  }
-
-  if (
-    includesAny(text, [
-      "ai model",
-      "open-source ai",
-      "open source ai",
-      "ai governance",
-      "llm",
-      "foundation model"
-    ])
-  ) {
-    return `The development reported in "${signal.title}" highlights AI governance questions around model use, approval boundaries, transparency, and downstream business risk. Enterprises adopting new AI capabilities should evaluate oversight, acceptable use constraints, and monitoring expectations before broader deployment.`;
-  }
-
-  if (
-    includesAny(text, [
-      "guidance",
-      "regulation",
-      "enforcement",
-      "ai act",
-      "verification",
-      "regulator"
-    ])
-  ) {
-    return `The development reported in "${signal.title}" may increase external expectations around governance, documentation, and accountability. Organizations should evaluate whether current policies, control evidence, and operating procedures align with the direction of travel reflected in this update.`;
-  }
-
-  return `The development reported in "${signal.title}" may affect enterprise governance, security, or compliance posture and should be reviewed to determine whether internal controls or monitoring priorities need to change.`;
+export function deriveAnalysis(signal: Signal, _text: string): string {
+  // Return raw source content as the floor for downstream LLM synthesis.
+  // The newsletterBuilder will pass this to analyzeSignal() instead of
+  // a template string, so the model has actual source material to work from.
+  return signal.raw_content ?? signal.summary ?? signal.title;
 }
 
-function deriveRecommendation(text: string): string {
-  if (
-    includesAny(text, [
-      "zero-day",
-      "0-day",
-      "actively exploited",
-      "under active exploitation",
-      "exploit"
-    ])
-  ) {
-    return "Validate asset exposure immediately, confirm patch or mitigation status, review internet-facing footprint, and ensure detection content is updated for related exploitation activity.";
-  }
-
-  if (includesAny(text, ["phishing", "credential", "pdf lure", "casbaneiro"])) {
-    return "Review email and web filtering coverage, validate browser and endpoint protections, reinforce phishing-resistant MFA, and hunt for suspicious document-driven credential theft activity.";
-  }
-
-  if (
-    includesAny(text, [
-      "ai model",
-      "open-source ai",
-      "open source ai",
-      "ai governance",
-      "llm",
-      "foundation model"
-    ])
-  ) {
-    return "Confirm AI usage policy boundaries, approval workflows, model evaluation criteria, and monitoring expectations before permitting broader internal use.";
-  }
-
-  if (
-    includesAny(text, [
-      "guidance",
-      "regulation",
-      "enforcement",
-      "ai act",
-      "verification",
-      "regulator"
-    ])
-  ) {
-    return "Review governance documentation, control evidence, accountability assignments, and policy language to determine whether regulatory or policy updates are required.";
-  }
-
-  return "Review the development, assess direct relevance to your environment, and determine whether internal controls, monitoring priorities, or governance processes should be updated.";
+export function deriveRecommendation(_text: string): string {
+  // Intentionally empty — newsletterBuilder LLM generates real recommendations
+  // from raw content rather than propagating template strings into the DB.
+  return "";
 }
 
 export async function generateInsights(): Promise<number> {
@@ -241,8 +127,10 @@ export async function generateInsights(): Promise<number> {
     SELECT
       id,
       organization_id,
+      category,
       title,
       summary,
+      raw_content,
       source,
       source_url
     FROM signals
@@ -271,6 +159,7 @@ export async function generateInsights(): Promise<number> {
       recommendation,
       riskLevel,
       audience,
+      signal.category ?? "GENERAL",
       false,
       JSON.stringify([signal.source_url])
     ];
@@ -288,12 +177,13 @@ export async function generateInsights(): Promise<number> {
           recommendation,
           risk_level,
           audience,
+          category,
           published,
           linked_sources,
           created_at,
           updated_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,NOW(),NOW())
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,NOW(),NOW())
         ON CONFLICT (signal_id)
         WHERE organization_id IS NULL
         DO UPDATE SET
@@ -303,6 +193,7 @@ export async function generateInsights(): Promise<number> {
           recommendation = EXCLUDED.recommendation,
           risk_level = EXCLUDED.risk_level,
           audience = EXCLUDED.audience,
+          category = EXCLUDED.category,
           published = EXCLUDED.published,
           linked_sources = EXCLUDED.linked_sources,
           updated_at = NOW()
@@ -322,12 +213,13 @@ export async function generateInsights(): Promise<number> {
           recommendation,
           risk_level,
           audience,
+          category,
           published,
           linked_sources,
           created_at,
           updated_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,NOW(),NOW())
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,NOW(),NOW())
         ON CONFLICT (organization_id, signal_id)
         WHERE organization_id IS NOT NULL
         DO UPDATE SET
@@ -337,6 +229,7 @@ export async function generateInsights(): Promise<number> {
           recommendation = EXCLUDED.recommendation,
           risk_level = EXCLUDED.risk_level,
           audience = EXCLUDED.audience,
+          category = EXCLUDED.category,
           published = EXCLUDED.published,
           linked_sources = EXCLUDED.linked_sources,
           updated_at = NOW()

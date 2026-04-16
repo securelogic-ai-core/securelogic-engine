@@ -4,7 +4,7 @@ import {
   createIssue,
   getActiveIssue
 } from "../storage/postgresIssueStore.js";
-import { buildNewsletterIssue } from "../newsletter/newsletterBuilder.js";
+import { buildNewsletterIssue, toBriefItem } from "../newsletter/newsletterBuilder.js";
 import { applyExecutiveEditorialPass } from "../editorial/executiveWriter.js";
 import { renderNewsletter } from "../render/renderNewsletter.js";
 import { renderNewsletterHtml } from "../render/renderNewsletterHtml.js";
@@ -27,13 +27,25 @@ export async function generateNewsletter(): Promise<number> {
   const contentMd = await renderNewsletter(issue);
   const contentHtml = await renderNewsletterHtml(issue);
 
+  // Project each section item to the canonical BriefItem shape before storage.
+  // This ensures sections_json contains clean, stable output fields rather than
+  // the full internal pipeline shape (which includes rawContent, DB timestamps, etc.)
+  const sections = issue.sections ?? {};
+  const briefSections = {
+    aiGovernance:     (sections.aiGovernance     ?? []).map(toBriefItem),
+    securityIncidents:(sections.securityIncidents ?? []).map(toBriefItem),
+    regulations:      (sections.regulations      ?? []).map(toBriefItem),
+    vendorRisk:       (sections.vendorRisk        ?? []).map(toBriefItem),
+    compliance:       (sections.compliance        ?? []).map(toBriefItem),
+  };
+
   await createIssue({
     organizationId: null,
     title: issue.title ?? "SecureLogic Cyber Risk Intelligence Brief",
     status: "draft",
     audienceTier: "standard",
     summary: issue.executiveSummary ?? null,
-    sectionsJson: issue.sections ?? {},
+    sectionsJson: briefSections,
     contentMd,
     contentHtml,
     thesisHeadline: issue.thesisHeadline ?? null,
