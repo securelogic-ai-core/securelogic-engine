@@ -39,7 +39,7 @@ export function UpgradeCard() {
     <div className="bg-brand-teal/10 border border-brand-teal/30 rounded-xl p-5">
       <h3 className="font-semibold text-sm text-slate-100 mb-1">Unlock full access</h3>
       <p className="text-slate-400 text-xs mb-4">
-        Full brief content, all sections, and the complete archive.
+        Choose a plan to access the Intelligence Brief.
       </p>
       {error && (
         <p className="text-red-400 text-xs mb-3">{error}</p>
@@ -50,21 +50,26 @@ export function UpgradeCard() {
           disabled={loading !== null}
           className="w-full bg-brand-teal hover:bg-teal-400 disabled:opacity-60 text-white font-semibold text-sm py-2 rounded-lg transition-colors"
         >
-          {loading === "professional" ? "Redirecting…" : "Brief Pro — $29/mo"}
+          {loading === "professional" ? "Redirecting…" : "Professional — $29/mo"}
         </button>
+        <p className="text-slate-500 text-xs px-1 -mt-1">Full brief content, all sections</p>
+
         <button
           onClick={() => handleCheckout("team")}
           disabled={loading !== null}
           className="w-full bg-white/10 hover:bg-white/20 disabled:opacity-60 text-slate-100 font-semibold text-sm py-2 rounded-lg transition-colors border border-white/20"
         >
-          {loading === "team" ? "Redirecting…" : "Professional — $499/mo"}
+          {loading === "team" ? "Redirecting…" : "Team — $209/mo"}
         </button>
+        <p className="text-slate-500 text-xs px-1 -mt-1">Up to 10 seats, shared access</p>
+
         <a
-          href="mailto:hello@securelogicai.com"
-          className="w-full block text-center text-slate-400 hover:text-slate-200 text-sm py-2 rounded-lg transition-colors border border-white/10 hover:border-white/20"
+          href="mailto:hello@securelogicai.com?subject=SecureLogic%20AI%20Platform%20Inquiry"
+          className="w-full block text-center text-slate-400 hover:text-slate-200 text-xs py-2 transition-colors"
         >
-          Enterprise — Custom pricing
+          Platform — $499/mo &rsaquo;
         </a>
+        <p className="text-slate-500 text-xs px-1 -mt-1">Full SaaS platform + brief</p>
       </div>
     </div>
   );
