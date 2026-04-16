@@ -77,6 +77,7 @@ type SubscriberRow = {
 
 type OrgRow = {
   name: string;
+  plan: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -129,6 +130,93 @@ export function filterItemsByPreferences(
 
     return true;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Free-tier brief filter
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns a "Lite" version of the brief email data for free-tier subscribers.
+ *
+ * Transformations applied:
+ *   - Keep only the top 3 items ranked by severity (Critical > High > Moderate > Low)
+ *   - Truncate why_it_matters to 150 characters per item
+ *   - Clear recommended_actions on all items (paid feature)
+ *   - Set upgrade_cta = true so the renderer injects the upgrade banner
+ *   - Preserve the original total signal count in total_signal_count
+ *
+ * Pure function — no I/O. Exported for unit testing.
+ */
+export function filterBriefForFreeTier(data: BriefEmailData): BriefEmailData {
+  // Flatten all items across categories, preserving which category each belongs to
+  type ScoredItem = { item: EmailBriefItem; cat: EmailBriefCategory; rank: number };
+  const allItems: ScoredItem[] = [];
+
+  for (const cat of data.categories) {
+    for (const item of cat.items) {
+      allItems.push({ item, cat, rank: SEVERITY_RANK[item.severity] ?? 1 });
+    }
+  }
+
+  const totalSignalCount = allItems.length;
+
+  // Sort descending by severity rank
+  allItems.sort((a, b) => b.rank - a.rank);
+
+  // Take top 3
+  const top3 = allItems.slice(0, 3);
+  const hiddenCount = Math.max(0, totalSignalCount - top3.length);
+
+  // Apply per-item transformations
+  const transform = (item: EmailBriefItem): EmailBriefItem => ({
+    ...item,
+    why_it_matters:
+      item.why_it_matters && item.why_it_matters.length > 150
+        ? item.why_it_matters.slice(0, 147) + "\u2026"
+        : item.why_it_matters,
+    recommended_actions: null,
+  });
+
+  // Rebuild category groups preserving original category order
+  const catMap = new Map<string, EmailBriefItem[]>();
+  for (const { item, cat } of top3) {
+    if (!catMap.has(cat.category)) catMap.set(cat.category, []);
+    catMap.get(cat.category)!.push(transform(item));
+  }
+
+  const newCategories: EmailBriefCategory[] = [];
+  for (const cat of data.categories) {
+    const items = catMap.get(cat.category);
+    if (items && items.length > 0) {
+      newCategories.push({ category: cat.category, label: cat.label, items });
+    }
+  }
+
+  // Recompute relevance counts from the reduced item set
+  let highCount = 0;
+  let mediumCount = 0;
+  let lowCount = 0;
+  for (const { items } of newCategories) {
+    for (const item of items) {
+      const rel = item.relevance.toLowerCase();
+      if (rel === "high") highCount++;
+      else if (rel === "medium") mediumCount++;
+      else lowCount++;
+    }
+  }
+
+  return {
+    ...data,
+    categories: newCategories,
+    signal_count: top3.length,
+    high_count: highCount,
+    medium_count: mediumCount,
+    low_count: lowCount,
+    upgrade_cta: true,
+    total_signal_count: totalSignalCount,
+    hidden_count: hiddenCount,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -328,12 +416,14 @@ export async function sendBrief(
     [briefId, orgId]
   );
 
-  // 3. Fetch org name
+  // 3. Fetch org name and plan
   const orgResult = await pg.query<OrgRow>(
-    `SELECT name FROM organizations WHERE id = $1`,
+    `SELECT name, plan FROM organizations WHERE id = $1`,
     [orgId]
   );
   const orgName = orgResult.rows[0]?.name ?? "Your Organisation";
+  const orgPlan = orgResult.rows[0]?.plan ?? "free";
+  const isFreeTier = orgPlan === "free" || orgPlan === "starter";
 
   // 4. Fetch active subscribers with their delivery preferences
   const subscribersResult = await pg.query<SubscriberRow>(
@@ -389,7 +479,7 @@ export async function sendBrief(
       brief.content_json
     );
 
-    const emailData: BriefEmailData = {
+    let emailData: BriefEmailData = {
       period_start: brief.period_start,
       period_end: brief.period_end,
       signal_count: signalCount,
@@ -398,6 +488,13 @@ export async function sendBrief(
       low_count,
       categories
     };
+
+    // For free-tier organisations, send the Brief Lite version:
+    // top 3 signals only, truncated why_it_matters, no recommended_actions,
+    // and an upgrade CTA banner in the email.
+    if (isFreeTier) {
+      emailData = filterBriefForFreeTier(emailData);
+    }
 
     const unsubscribeUrl = buildUnsubscribeUrl(subscriber.id);
     const baseHtml = renderBriefEmail(emailData, orgName);
