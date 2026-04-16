@@ -879,11 +879,12 @@ export default async function BriefDetailPage({
   const { id } = await params;
   const session = await getSession();
 
-  if (!session.apiKey) {
+  const token = session.jwtToken ?? session.apiKey ?? null;
+  if (!token) {
     redirect("/login");
   }
 
-  const issue = await getIssue(session.apiKey, id);
+  const issue = await getIssue(token, id);
 
   if (!issue) notFound();
 

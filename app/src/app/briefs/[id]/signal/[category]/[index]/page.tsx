@@ -507,11 +507,12 @@ export default async function SignalDetailPage({ params }: Props) {
   const { id, category, index: indexStr } = await params;
   const session = await getSession();
 
-  if (!session.apiKey) {
+  const token = session.jwtToken ?? session.apiKey ?? null;
+  if (!token) {
     redirect("/login");
   }
 
-  const issue = await getIssue(session.apiKey, id);
+  const issue = await getIssue(token, id);
 
   if (!issue || issue.locked) {
     notFound();
