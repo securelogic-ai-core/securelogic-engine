@@ -33,6 +33,8 @@
  *   Moderate (no CVE)                   → 'low'
  */
 
+import { logger } from "../infra/logger.js";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -370,7 +372,7 @@ export function buildContentMarkdown(content: BriefContentJson): string {
 // enrichBriefItems  (I/O — calls Claude API)
 // ---------------------------------------------------------------------------
 
-const CLAUDE_MODEL = "claude-sonnet-4-20250514";
+const CLAUDE_MODEL = "claude-sonnet-4-5";
 const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
 
 const CLAUDE_SYSTEM_PROMPT =
@@ -431,6 +433,10 @@ function fallbackRecommendedActions(item: BriefItem): string {
 async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
   const apiKey = process.env["ANTHROPIC_API_KEY"];
   if (!apiKey) {
+    logger.warn(
+      { event: "brief_enrichment_fallback", reason: "ANTHROPIC_API_KEY not set", signal_id: item.cyber_signal_id },
+      "Brief enrichment falling back to defaults"
+    );
     return {
       ...item,
       analysis: null,
@@ -485,6 +491,10 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
     });
 
     if (!response.ok) {
+      logger.warn(
+        { event: "brief_enrichment_fallback", reason: "API call failed", status: response.status, signal_id: item.cyber_signal_id },
+        "Brief enrichment falling back to defaults"
+      );
       return {
         ...item,
         analysis: null,
@@ -531,7 +541,11 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
       recommended_actions: recommendedActions,
       analyst_notes: null
     };
-  } catch {
+  } catch (err) {
+    logger.warn(
+      { event: "brief_enrichment_fallback", reason: "Exception during enrichment", signal_id: item.cyber_signal_id, err },
+      "Brief enrichment falling back to defaults"
+    );
     return {
       ...item,
       analysis: null,
