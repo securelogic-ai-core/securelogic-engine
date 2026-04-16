@@ -41,25 +41,51 @@ export type ActionSummary = {
 // Per-signal analysis (Haiku — cost efficient at scale)
 // ---------------------------------------------------------------------------
 
-function buildSignalPrompt(
+// Sources whose origin adds authoritative weight and should be referenced in analysis.
+const AUTHORITATIVE_SOURCES = [
+  "cisa", "nvd", "nist", "fbi", "certs", "us-cert", "msrc",
+  "sec.gov", "fda", "ncsc", "enisa", "europol"
+];
+
+/**
+ * Builds the per-signal analysis prompt.
+ * Exported for unit testing.
+ */
+export function buildSignalPrompt(
   title: string,
   content: string,
   category: string,
   source: string,
   cve?: string | null,
-  vendor?: string | null
+  vendor?: string | null,
+  riskLevel?: string | null
 ): string {
-  const excerpt = content.slice(0, 1200).replace(/\n+/g, " ").trim();
+  // Increased from 1200 → 3000: CVE advisories, breach reports, and regulatory
+  // texts routinely need 2500+ chars before reaching version numbers, CVSS scores,
+  // enforcement deadlines, and affected product lists that make analysis specific.
+  const excerpt = content.slice(0, 3000).replace(/\n+/g, " ").trim();
+
   const cveField = cve ? `CVE: ${cve}` : "";
   const vendorField = vendor ? `Vendor/Product: ${vendor}` : "";
-  const contextLines = [cveField, vendorField].filter(Boolean).join("\n");
+  const riskField = riskLevel ? `Risk Level: ${riskLevel.toUpperCase()}` : "";
+  const contextLines = [cveField, vendorField, riskField].filter(Boolean).join("\n");
+
+  const sourceIsAuthoritative = AUTHORITATIVE_SOURCES.some((s) =>
+    source.toLowerCase().includes(s)
+  );
+  const sourceNote = sourceIsAuthoritative
+    ? `\nNote: This signal originates from ${source} — an authoritative government or standards body. Reference the source authority by name in your analysis.`
+    : "";
+
+  const isHighPriority =
+    riskLevel?.toLowerCase() === "critical" || riskLevel?.toLowerCase() === "high";
 
   return `You are a risk intelligence analyst writing for enterprise CISOs, security leaders, and compliance teams.
 
 Signal: ${title}
 Source: ${source}
 Category: ${category}
-${contextLines ? `${contextLines}\n` : ""}${excerpt ? `Content: ${excerpt}` : ""}
+${contextLines ? `${contextLines}\n` : ""}${excerpt ? `Content: ${excerpt}` : ""}${sourceNote}
 
 Write a specific, enterprise-focused analysis of this signal. Requirements:
 - Name the specific product, vendor, regulation, CVE, actor, or agency involved — never write "a software product" or "an organization"
@@ -68,6 +94,7 @@ Write a specific, enterprise-focused analysis of this signal. Requirements:
 - Write for a CISO who reads 50 news items a day — give them something they can't get from a headline
 ${cve ? `- The CVE identifier (${cve}) must appear in the analysis if patch status or CVSS scoring is known` : ""}
 ${vendor ? `- Reference ${vendor} by name in the recommended action` : ""}
+${isHighPriority ? `- This signal is rated ${riskLevel!.toUpperCase()}. State the urgency directly. Do not qualify, soften, or hedge the risk or the required action.` : ""}
 
 Return valid JSON only — no markdown, no code fences:
 {
@@ -76,6 +103,39 @@ Return valid JSON only — no markdown, no code fences:
   "recommendedAction": "One specific, concrete action with a named function and time horizon. Example: 'Security team: audit all Fortinet VPN deployments for CVE-2025-XXXX and apply the emergency patch within 72 hours.' Not: 'Review your controls.'"
 }`;
 }
+
+/**
+ * Phrases that indicate the LLM produced generic template output rather than
+ * signal-specific analysis. Exported for unit testing.
+ *
+ * When any of these appear in the combined analysis+whyItMatters+action text,
+ * the result is discarded and the signal falls back to raw DB fields.
+ */
+export const GENERIC_QUALITY_GATE_PHRASES = [
+  // Original set
+  "validate applicability",
+  "assign ownership",
+  "confirm existing controls",
+  "determine whether escalation",
+  "review your controls",
+  "if unaddressed",
+  "enterprise impact if response lags",
+  "risk posture and should be evaluated",
+  // Extended: common LLM hedging and generic framing patterns
+  "organizations should be aware",
+  "this development may",
+  "this development reflects",
+  "may affect enterprise",
+  "highlights the need",
+  "highlights the importance",
+  "demonstrates the importance",
+  "could potentially",
+  "security teams should review",
+  "organizations should review",
+  "should consider reviewing",
+  "underscores the importance",
+  "serves as a reminder"
+];
 
 /**
  * Analyze a single signal using the LLM.
@@ -87,7 +147,8 @@ export async function analyzeSignal(
   category: string,
   source: string,
   cve?: string | null,
-  vendor?: string | null
+  vendor?: string | null,
+  riskLevel?: string | null
 ): Promise<SignalAnalysis | null> {
   const client = getClient();
   if (!client) return null;
@@ -95,11 +156,11 @@ export async function analyzeSignal(
   try {
     const message = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 600,
+      max_tokens: 700,
       messages: [
         {
           role: "user",
-          content: buildSignalPrompt(title, content, category, source, cve, vendor)
+          content: buildSignalPrompt(title, content, category, source, cve, vendor, riskLevel)
         }
       ]
     });
@@ -121,20 +182,8 @@ export async function analyzeSignal(
       return null;
     }
 
-    // Quality gate: reject obviously generic outputs
-    const genericPhrases = [
-      "validate applicability",
-      "assign ownership",
-      "confirm existing controls",
-      "determine whether escalation",
-      "review your controls",
-      "if unaddressed",
-      "enterprise impact if response lags",
-      "risk posture and should be evaluated"
-    ];
-
     const combined = `${parsed.analysis} ${parsed.whyItMatters} ${parsed.recommendedAction}`.toLowerCase();
-    const isGeneric = genericPhrases.some((phrase) => combined.includes(phrase));
+    const isGeneric = GENERIC_QUALITY_GATE_PHRASES.some((phrase) => combined.includes(phrase));
 
     if (isGeneric) {
       logger.warn(
