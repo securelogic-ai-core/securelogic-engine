@@ -11,6 +11,7 @@ import {
   type CrossDomainSignalInput,
   type ActionSummary
 } from "../pipeline/llmClient.js";
+import { extractCve, extractVendor } from "../pipeline/normalizeSignal.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -89,13 +90,20 @@ function sortByPriority(items: any[]) {
  * Normalize an insight using only its raw database fields.
  * No template strings. If a field is empty, it remains empty — the LLM
  * enhancement pass will populate it, or the signal will be held.
+ *
+ * After the insightGenerator change, `insight.analysis` holds the raw source
+ * content (not a template). We preserve it as `rawContent` so `applyLLMEnhancement`
+ * can pass it directly to the model rather than re-using any prior LLM output.
  */
-function normalizeInsight(insight: any) {
+export function normalizeInsight(insight: any) {
   const normalizedRisk = String(insight.riskLevel || insight.risk_level || "low").toLowerCase();
 
-  // Use raw database fields as the floor — these come from the insight
-  // generation pipeline and are real (not template-generated).
-  const analysis = String(insight.analysis || insight.summary || "").trim();
+  // Raw source content — `analysis` is now the floor (raw content passthrough),
+  // not a template string. Prefer explicit raw_content if ever added to schema.
+  const rawContent = String(
+    insight.raw_content || insight.rawContent || insight.analysis || insight.summary || ""
+  ).trim();
+
   const whyItMatters = String(
     insight.risk_implication || insight.riskImplication || insight.executiveImpact || ""
   ).trim();
@@ -103,14 +111,22 @@ function normalizeInsight(insight: any) {
     insight.recommendation || insight.recommendedAction || ""
   ).trim();
 
+  // Extract CVE/vendor from raw content + title for richer LLM prompts
+  const searchText = `${String(insight.title || "").trim()} ${rawContent}`;
+  const affectedCve = (insight.affected_cve ?? extractCve(searchText)) as string | null;
+  const affectedVendor = (insight.affected_vendor ?? extractVendor(searchText)) as string | null;
+
   return {
     ...insight,
     category: normalizeCategory(insight.category),
     riskLevel: normalizedRisk,
     risk_level: normalizedRisk,
     signalId: insight.signal_id ?? insight.signalId,
-    summary: analysis,
-    analysis,
+    rawContent,
+    summary: rawContent,
+    analysis: rawContent,
+    affectedCve,
+    affectedVendor,
     whyItMatters,
     executiveImpact: whyItMatters,
     riskImplication: whyItMatters,
@@ -195,9 +211,11 @@ async function applyLLMEnhancement(insights: any[]): Promise<any[]> {
         const insight = results[idx];
         const llmResult = await analyzeSignal(
           insight.title ?? "",
-          insight.analysis ?? insight.summary ?? "",
+          insight.rawContent ?? insight.analysis ?? insight.summary ?? "",
           insight.category ?? "GENERAL",
-          insight.source ?? ""
+          insight.source ?? "",
+          insight.affectedCve ?? null,
+          insight.affectedVendor ?? null
         );
 
         if (llmResult) {
@@ -223,23 +241,119 @@ async function applyLLMEnhancement(insights: any[]): Promise<any[]> {
 }
 
 /**
- * Enrich the top 3 signals with risk rationale (why they scored at this level).
- * This is a premium feature that builds trust in the scoring methodology.
+ * Enrich all high and critical signals with a risk rationale explaining
+ * why they scored at that level. Applied across all included signals,
+ * not just the positional top 3.
  */
-async function enrichTopSignalsWithRationale(topSignals: any[]): Promise<any[]> {
-  if (!process.env.ANTHROPIC_API_KEY?.trim()) return topSignals;
+export async function enrichSignalsWithRationale(signals: any[]): Promise<any[]> {
+  if (!process.env.ANTHROPIC_API_KEY?.trim()) return signals;
 
-  return Promise.all(
-    topSignals.map(async (signal) => {
-      const rationale = await generateRiskRationale(
-        signal.title ?? "",
-        signal.riskLevel ?? "high",
-        signal.analysis ?? "",
-        signal.category ?? "GENERAL"
-      );
-      return rationale ? { ...signal, riskRationale: rationale } : signal;
-    })
+  const enrichedById = new Map<string, any>();
+
+  await Promise.all(
+    signals
+      .filter((s) => {
+        const level = String(s.riskLevel || s.risk_level || "low").toLowerCase();
+        return level === "high" || level === "critical";
+      })
+      .map(async (signal) => {
+        const rationale = await generateRiskRationale(
+          signal.title ?? "",
+          signal.riskLevel ?? "high",
+          signal.analysis ?? "",
+          signal.category ?? "GENERAL"
+        );
+        if (rationale) {
+          const key = signal.id || signal.signalId || signal.signal_id;
+          if (key) enrichedById.set(String(key), { ...signal, riskRationale: rationale });
+        }
+      })
   );
+
+  return signals.map((s) => {
+    const key = String(s.id || s.signalId || s.signal_id || "");
+    return enrichedById.get(key) ?? s;
+  });
+}
+
+/**
+ * Map enriched signals back into the section groups so section items
+ * reflect updated riskRationale fields without re-sorting.
+ */
+function applySectionEnrichment(
+  sections: Record<string, any[]>,
+  enrichedSignals: any[]
+): Record<string, any[]> {
+  const enrichedById = new Map<string, any>();
+  for (const s of enrichedSignals) {
+    const key = String(s.id || s.signalId || s.signal_id || "");
+    if (key) enrichedById.set(key, s);
+  }
+
+  const result: Record<string, any[]> = {};
+  for (const [category, items] of Object.entries(sections)) {
+    result[category] = items.map((item) => {
+      const key = String(item.id || item.signalId || item.signal_id || "");
+      return (key && enrichedById.get(key)) ?? item;
+    });
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Output projection — canonical BriefItem shape stored in sections_json
+// ---------------------------------------------------------------------------
+
+/**
+ * Projects an enriched pipeline signal to the canonical BriefItem shape.
+ *
+ * This is the only function that should write to sections_json.
+ * It strips all internal pipeline state (rawContent, DB timestamps,
+ * organization_id, etc.) and ensures every required output field is
+ * explicitly present with a stable field name.
+ *
+ * riskLevel is kept as a backward-compat alias so existing app code
+ * continues to work without a migration.
+ */
+export function toBriefItem(item: any): Record<string, unknown> {
+  const severity = String(item.riskLevel ?? item.risk_level ?? "low").toLowerCase();
+  const recommendation = String(
+    item.recommendation ?? item.recommendedAction ?? ""
+  ).trim();
+
+  return {
+    // Identity
+    signalId:      item.signal_id ?? item.signalId ?? null,
+    source:        String(item.source ?? "").trim(),
+    sourceUrl:     item.url ?? item.source_url ?? null,
+
+    // Classification
+    title:         String(item.title ?? "").trim(),
+    category:      String(item.category ?? "GENERAL").toUpperCase(),
+    severity,
+    riskLevel:     severity,      // backward-compat: app currently reads riskLevel
+
+    // Audience
+    audience:      String(item.audience ?? "").trim(),
+
+    // Content (LLM-generated from source material, never template strings)
+    analysis:      String(item.analysis ?? "").trim(),
+    whyItMatters:  String(
+      item.whyItMatters ?? item.executiveImpact ?? item.riskImplication ?? ""
+    ).trim(),
+    recommendation,
+    recommendedAction: recommendation,   // backward-compat alias
+
+    // Priority (from executiveWriter pass)
+    priorityScore: typeof item.priorityScore === "number" ? item.priorityScore : 0,
+    priorityTier:  String(item.priorityTier ?? "MONITOR").trim(),
+
+    // Optional enrichment (all null-safe)
+    affectedCve:   item.affectedCve ?? null,
+    affectedVendor: item.affectedVendor ?? null,
+    riskRationale: item.riskRationale ?? null,
+    orgRelevance:  item.orgRelevance ?? null,
+  };
 }
 
 async function getNextIssueNumber(): Promise<number | null> {
@@ -303,14 +417,15 @@ export async function buildNewsletterIssue(organizationId: string | null) {
     if (totalIncluded >= MAX_SIGNALS_PER_BRIEF) break;
   }
 
-  // 7. Top 3 signals (highest priority across all sections)
+  // 7. Enrich all high/critical signals with risk rationale
   const allIncluded = Object.values(cappedSections).flat();
-  const topSignalsRaw = sortByPriority([...allIncluded]).slice(0, 3);
+  const enrichedAll = await enrichSignalsWithRationale(allIncluded);
 
-  // 8. Enrich top signals with risk rationale
-  const topSignals = await enrichTopSignalsWithRationale(topSignalsRaw);
+  // 8. Map enriched signals back into section groups and derive top 3
+  const enrichedSections = applySectionEnrichment(cappedSections, enrichedAll);
+  const topSignals = sortByPriority([...enrichedAll]).slice(0, 3);
 
-  const totalSignalCount = allIncluded.length;
+  const totalSignalCount = enrichedAll.length;
 
   // 9. Brief-level synthesis (Sonnet)
   const activeCategories = Object.entries(cappedSections)
@@ -378,11 +493,11 @@ export async function buildNewsletterIssue(organizationId: string | null) {
     actionSummary: actionSummary ?? null,
     topSignals,
     sections: {
-      aiGovernance: cappedSections.AI_GOVERNANCE ?? [],
-      securityIncidents: cappedSections.SECURITY_INCIDENT ?? [],
-      regulations: cappedSections.REGULATION ?? [],
-      vendorRisk: cappedSections.VENDOR_RISK ?? [],
-      compliance: cappedSections.COMPLIANCE_UPDATE ?? []
+      aiGovernance: enrichedSections.AI_GOVERNANCE ?? [],
+      securityIncidents: enrichedSections.SECURITY_INCIDENT ?? [],
+      regulations: enrichedSections.REGULATION ?? [],
+      vendorRisk: enrichedSections.VENDOR_RISK ?? [],
+      compliance: enrichedSections.COMPLIANCE_UPDATE ?? []
     }
   };
 }

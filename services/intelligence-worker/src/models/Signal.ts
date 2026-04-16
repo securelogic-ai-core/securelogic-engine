@@ -8,6 +8,10 @@ export interface Signal {
   categoryReason?: string;
   summary: string;
   rawContent: string;
+  /** CVE ID extracted from signal content, e.g. "CVE-2025-12345". Null when not found. */
+  affectedCve: string | null;
+  /** Known vendor/product name extracted from signal content. Null when not found. */
+  affectedVendor: string | null;
   tags: string[];
   timestamp: string;
   processed: boolean;

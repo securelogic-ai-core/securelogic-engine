@@ -27,24 +27,40 @@ export type MeResponse = {
 };
 
 export type BriefSignal = {
+  // Identity
   id?: string;
   signalId?: string;
   signal_id?: string;
-  title: string;
-  category: string;
-  riskLevel: string;
-  risk_level?: string;
-  analysis?: string;
-  summary?: string;
-  whyItMatters?: string;
-  recommendedAction?: string;
-  recommendation?: string;
-  riskRationale?: string;
-  priorityScore?: number;
-  priorityTier?: string;
   source?: string;
   sourceUrl?: string;
   source_url?: string;
+
+  // Classification
+  title: string;
+  category: string;
+  severity?: string;            // canonical severity field
+  riskLevel: string;            // backward-compat alias for severity
+  risk_level?: string;
+
+  // Audience
+  audience?: string;
+
+  // Content
+  analysis?: string;
+  summary?: string;
+  whyItMatters?: string;
+  recommendation?: string;      // canonical
+  recommendedAction?: string;   // backward-compat alias
+
+  // Priority
+  riskRationale?: string;
+  priorityScore?: number;
+  priorityTier?: string;
+
+  // Optional enrichment
+  affectedCve?: string | null;
+  affectedVendor?: string | null;
+  orgRelevance?: boolean | null;
 };
 
 export type BriefSections = {

@@ -45,22 +45,29 @@ function buildSignalPrompt(
   title: string,
   content: string,
   category: string,
-  source: string
+  source: string,
+  cve?: string | null,
+  vendor?: string | null
 ): string {
-  const excerpt = content.slice(0, 800).replace(/\n+/g, " ").trim();
+  const excerpt = content.slice(0, 1200).replace(/\n+/g, " ").trim();
+  const cveField = cve ? `CVE: ${cve}` : "";
+  const vendorField = vendor ? `Vendor/Product: ${vendor}` : "";
+  const contextLines = [cveField, vendorField].filter(Boolean).join("\n");
 
   return `You are a risk intelligence analyst writing for enterprise CISOs, security leaders, and compliance teams.
 
 Signal: ${title}
 Source: ${source}
 Category: ${category}
-${excerpt ? `Content: ${excerpt}` : ""}
+${contextLines ? `${contextLines}\n` : ""}${excerpt ? `Content: ${excerpt}` : ""}
 
 Write a specific, enterprise-focused analysis of this signal. Requirements:
 - Name the specific product, vendor, regulation, CVE, actor, or agency involved — never write "a software product" or "an organization"
 - Explain the specific enterprise exposure, not a generic risk category
 - The action must name a responsible function (security team, compliance team, procurement, legal) and a time horizon
 - Write for a CISO who reads 50 news items a day — give them something they can't get from a headline
+${cve ? `- The CVE identifier (${cve}) must appear in the analysis if patch status or CVSS scoring is known` : ""}
+${vendor ? `- Reference ${vendor} by name in the recommended action` : ""}
 
 Return valid JSON only — no markdown, no code fences:
 {
@@ -78,7 +85,9 @@ export async function analyzeSignal(
   title: string,
   content: string,
   category: string,
-  source: string
+  source: string,
+  cve?: string | null,
+  vendor?: string | null
 ): Promise<SignalAnalysis | null> {
   const client = getClient();
   if (!client) return null;
@@ -90,7 +99,7 @@ export async function analyzeSignal(
       messages: [
         {
           role: "user",
-          content: buildSignalPrompt(title, content, category, source)
+          content: buildSignalPrompt(title, content, category, source, cve, vendor)
         }
       ]
     });
