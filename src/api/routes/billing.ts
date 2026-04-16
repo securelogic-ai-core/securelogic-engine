@@ -216,9 +216,17 @@ router.post("/billing/portal", requireApiKey, async (req, res) => {
       return;
     }
 
+    // STRIPE_PORTAL_CONFIGURATION_ID — optional. Set this in your environment to a
+    // portal configuration ID created in the Stripe Dashboard (Customer Portal settings).
+    // That configuration should enable subscription_update (price changes) and
+    // subscription_cancel (at_period_end). Without it, the portal shows payment
+    // management only — plan changes require the configuration to be set.
+    const portalConfigId = process.env.STRIPE_PORTAL_CONFIGURATION_ID?.trim() || undefined;
+
     const portalSession = await getStripe().billingPortal.sessions.create({
       customer: customerId,
-      return_url: returnUrl
+      return_url: returnUrl,
+      ...(portalConfigId ? { configuration: portalConfigId } : {}),
     });
 
     logger.info(

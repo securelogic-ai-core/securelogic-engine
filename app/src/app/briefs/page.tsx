@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getIssues } from "@/lib/api";
+import { getIssues, getMe } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import type { NewsletterIssue } from "@/lib/api";
 
@@ -52,15 +52,20 @@ function FeaturedIssueCard({ issue }: { issue: NewsletterIssue }) {
 export default async function BriefsPage() {
   const session = await getSession();
 
-  if (!session.apiKey) {
+  const token = session.jwtToken ?? session.apiKey ?? null;
+  if (!token) {
     redirect("/login");
   }
 
-  const data = await getIssues(session.apiKey);
+  const [data, me] = await Promise.all([
+    getIssues(token),
+    getMe(token),
+  ]);
   const issues = data?.issues ?? [];
+  const entitlementLevel = me?.entitlementLevel ?? session.entitlementLevel ?? "free";
   const isPremium =
-    session.entitlementLevel === "premium" ||
-    session.entitlementLevel === "professional";
+    entitlementLevel === "premium" ||
+    entitlementLevel === "professional";
   const lockedCount = issues.filter((i) => i.locked).length;
 
   // Latest unlocked issue for the featured card
@@ -131,7 +136,7 @@ export default async function BriefsPage() {
             Upgrade for full access to all Intelligence Brief content.
           </p>
           <div className="flex items-center justify-center gap-3 flex-wrap">
-            <CheckoutButton tier="professional" label="Professional — $39/mo" variant="solid" />
+            <CheckoutButton tier="professional" label="Professional — $29/mo" variant="solid" />
             <CheckoutButton tier="team" label="Team — $209/mo" variant="outline" />
           </div>
         </div>

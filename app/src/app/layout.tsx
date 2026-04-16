@@ -16,12 +16,19 @@ export default async function RootLayout({
 }) {
   const session = await getSession();
   const isAuthenticated = Boolean(session.jwtToken ?? session.apiKey);
+  // entitlementLevel is stored in the session by the auth-login route at login time.
+  // It may be stale after a Stripe upgrade until a session refresh — but nav visibility
+  // is non-security-critical; actual page/API access is gated at the page level.
+  const entitlementLevel = session.entitlementLevel ?? "free";
+  const isPlatformUser =
+    entitlementLevel === "premium" || entitlementLevel === "platform";
 
   return (
     <html lang="en">
       <body className="min-h-screen flex flex-col bg-brand-bg text-slate-100" suppressHydrationWarning>
         <Header
           isAuthenticated={isAuthenticated}
+          isPlatformUser={isPlatformUser}
           organizationName={session.organizationName}
         />
         <main className="flex-1">{children}</main>

@@ -23,11 +23,12 @@ export default async function AccountPage({
 }) {
   const session = await getSession();
 
-  if (!session.apiKey) {
+  const token = session.jwtToken ?? session.apiKey ?? null;
+  if (!token) {
     redirect("/login");
   }
 
-  const me = await getMe(session.apiKey);
+  const me = await getMe(token);
 
   if (!me) {
     redirect("/login");
@@ -137,7 +138,7 @@ export default async function AccountPage({
                     type="submit"
                     className="w-full border border-teal-600 text-teal-600 hover:bg-teal-50 text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                   >
-                    Upgrade to Professional — $39/mo
+                    Brief Pro — $29/mo
                   </button>
                 </form>
                 <form action="/api/billing/checkout" method="POST">
@@ -146,7 +147,7 @@ export default async function AccountPage({
                     type="submit"
                     className="w-full bg-teal-600 hover:bg-teal-500 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                   >
-                    Upgrade to Team — $209/mo
+                    Platform Professional — $799/mo
                   </button>
                 </form>
               </div>

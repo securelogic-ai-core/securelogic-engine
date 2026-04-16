@@ -10,13 +10,14 @@ import {
 export default async function ControlsPage() {
   const session = await getSession();
 
-  if (!session.apiKey) {
+  const token = session.jwtToken ?? session.apiKey ?? null;
+  if (!token) {
     redirect("/login");
   }
 
   const [controlsData, assessmentsData] = await Promise.all([
-    getControls(session.apiKey),
-    getControlAssessments(session.apiKey),
+    getControls(token),
+    getControlAssessments(token),
   ]);
 
   // Build control_id → most-recent assessment (response is sorted created_at DESC).

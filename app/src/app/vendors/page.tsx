@@ -5,13 +5,14 @@ import { getVendors, getVendorAssessments, type Vendor } from "@/lib/api";
 export default async function VendorsPage() {
   const session = await getSession();
 
-  if (!session.apiKey) {
+  const token = session.jwtToken ?? session.apiKey ?? null;
+  if (!token) {
     redirect("/login");
   }
 
   const [vendorsData, assessmentsData] = await Promise.all([
-    getVendors(session.apiKey, "active"),
-    getVendorAssessments(session.apiKey),
+    getVendors(token, "active"),
+    getVendorAssessments(token),
   ]);
 
   // Build vendor_id → assessment count map from the flat assessments list.
