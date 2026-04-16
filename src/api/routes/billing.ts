@@ -103,13 +103,17 @@ router.post("/billing/checkout", requireApiKey, async (req, res) => {
 
     const tier = tierRaw as "professional" | "team";
     const priceId = resolvePriceId(tier);
-    const successUrl = process.env.STRIPE_SUCCESS_URL?.trim();
-    const cancelUrl = process.env.STRIPE_CANCEL_URL?.trim();
+    const successUrl =
+      process.env.STRIPE_SUCCESS_URL?.trim() ??
+      "https://app.securelogicai.com/dashboard?upgraded=true";
+    const cancelUrl =
+      process.env.STRIPE_CANCEL_URL?.trim() ??
+      "https://app.securelogicai.com/dashboard";
 
-    if (!priceId || !successUrl || !cancelUrl) {
+    if (!priceId) {
       logger.error(
         { event: "billing_checkout_misconfigured", tier },
-        "POST /api/billing/checkout: Stripe env vars not fully configured"
+        "POST /api/billing/checkout: Stripe price ID env var not configured"
       );
       res.status(503).json({ error: "billing_not_configured" });
       return;
