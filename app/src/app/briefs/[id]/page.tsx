@@ -213,7 +213,7 @@ function SectionHeader({
     return (
       <div className="flex items-center gap-3 mb-6">
         <div className={`w-1 h-6 ${accent} rounded-full flex-shrink-0`} />
-        <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{label}</h2>
+        <h2 className="text-sm font-bold text-slate-100 uppercase tracking-wider">{label}</h2>
       </div>
     );
   }
@@ -221,7 +221,7 @@ function SectionHeader({
   return (
     <div className="flex items-center gap-3 mb-5">
       <div className={`w-0.5 h-4 ${accent} rounded-full flex-shrink-0`} />
-      <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-widest">{label}</h2>
+      <h2 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">{label}</h2>
     </div>
   );
 }
@@ -527,7 +527,7 @@ function ActionSummarySection({
   return (
     <section id={id}>
       <SectionHeader label="Action Roadmap" accent="bg-teal-500" tier="primary" />
-      <p className="text-sm text-slate-500 mb-5 -mt-2 leading-relaxed">
+      <p className="text-sm text-slate-400 mb-5 -mt-2 leading-relaxed">
         All actions from this brief, ordered by urgency.
       </p>
 
@@ -601,11 +601,11 @@ function LockedBrief({ issue }: { issue: NewsletterIssue }) {
         {issue.publish_date ? formatDate(issue.publish_date) : formatDate(issue.created_at)}
       </p>
 
-      <h1 className="text-3xl font-bold text-slate-900 leading-tight mb-4">{issue.title}</h1>
+      <h1 className="text-3xl font-bold text-slate-100 leading-tight mb-4">{issue.title}</h1>
 
       {teaser && (
-        <div className="border-l-[3px] border-teal-400 pl-5 mb-10">
-          <p className="text-slate-700 text-base font-medium leading-relaxed">{teaser}</p>
+        <div className="border-l-[3px] border-teal-500 pl-5 mb-10">
+          <p className="text-slate-200 text-base font-medium leading-relaxed">{teaser}</p>
         </div>
       )}
 
@@ -679,7 +679,7 @@ function EmptyBrief({ issue }: { issue: NewsletterIssue }) {
       </div>
 
       <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-5">{date}</p>
-      <h1 className="text-3xl font-bold text-slate-900 leading-tight mb-8">{issue.title}</h1>
+      <h1 className="text-3xl font-bold text-slate-100 leading-tight mb-8">{issue.title}</h1>
 
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-10 text-center">
         <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-5">
@@ -805,17 +805,17 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
       </div>
 
       {/* Issue header */}
-      <div className="mb-8 pb-8 border-b border-slate-200">
+      <div className="mb-8 pb-8 border-b border-slate-700">
         <div className="flex items-center justify-between gap-4 mb-5">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs text-slate-400">{date}</span>
             {issue.issue_number && (
               <>
-                <span className="text-slate-300 select-none">·</span>
+                <span className="text-slate-600 select-none">·</span>
                 <span className="text-xs text-slate-400">Issue #{issue.issue_number}</span>
               </>
             )}
-            <span className="text-slate-300 select-none">·</span>
+            <span className="text-slate-600 select-none">·</span>
             <span className="text-xs text-slate-400">~{readingTime} min read</span>
           </div>
           <PrintButton />
@@ -824,19 +824,19 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
         {(criticalCount > 0 || highCount > 0) && (
           <div className="flex items-center gap-2 mb-4">
             {criticalCount > 0 && (
-              <span className="bg-red-100 text-red-700 border border-red-200 px-2.5 py-1 rounded text-xs font-bold uppercase tracking-wide">
+              <span className="bg-red-900/40 text-red-300 border border-red-800/50 px-2.5 py-1 rounded text-xs font-bold uppercase tracking-wide">
                 {criticalCount} Critical
               </span>
             )}
             {highCount > 0 && (
-              <span className="bg-orange-100 text-orange-700 border border-orange-200 px-2.5 py-1 rounded text-xs font-bold uppercase tracking-wide">
+              <span className="bg-orange-900/40 text-orange-300 border border-orange-800/50 px-2.5 py-1 rounded text-xs font-bold uppercase tracking-wide">
                 {highCount} High
               </span>
             )}
           </div>
         )}
 
-        <h1 className="text-3xl font-bold text-slate-900 leading-tight">{issue.title}</h1>
+        <h1 className="text-3xl font-bold text-slate-100 leading-tight">{issue.title}</h1>
       </div>
 
       <div className="mb-12">
@@ -900,13 +900,13 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
         {hasCategoryContent && (
           <section id="domain-intelligence">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-1 h-6 bg-slate-400 rounded-full flex-shrink-0" />
-              <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wider">
+              <div className="w-1 h-6 bg-slate-500 rounded-full flex-shrink-0" />
+              <h2 className="text-sm font-bold text-slate-100 uppercase tracking-wider">
                 Domain Intelligence
               </h2>
             </div>
 
-            <p className="text-sm text-slate-500 mb-8 pl-4">
+            <p className="text-sm text-slate-400 mb-8 pl-4">
               Below-threshold signals flagged for operational tracking. Review for developing movement before the next issue.
             </p>
 

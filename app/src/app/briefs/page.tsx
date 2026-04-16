@@ -78,21 +78,21 @@ export default async function BriefsPage() {
   return (
     <div className="max-w-4xl mx-auto px-6 py-14">
       {/* Publication masthead */}
-      <div className="mb-10 pb-8 border-b border-slate-200">
+      <div className="mb-10 pb-8 border-b border-slate-700">
         <div className="flex items-center gap-2 mb-4">
-          <span className="text-xs font-bold text-teal-600 uppercase tracking-widest">SecureLogic AI</span>
-          <span className="text-slate-300 select-none">·</span>
+          <span className="text-xs font-bold text-brand-teal uppercase tracking-widest">SecureLogic AI</span>
+          <span className="text-slate-600 select-none">·</span>
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Intelligence Brief</span>
         </div>
-        <h1 className="text-3xl font-bold text-slate-900 leading-tight mb-3">
+        <h1 className="text-3xl font-bold text-slate-100 leading-tight mb-3">
           Intelligence Brief
         </h1>
-        <p className="text-sm text-slate-500 mb-4 max-w-xl leading-relaxed">
+        <p className="text-sm text-slate-400 mb-4 max-w-xl leading-relaxed">
           Weekly risk intelligence across AI governance, security, regulatory, and vendor domains —
           distilled into executive-ready analysis and staged action roadmaps.
         </p>
         {issues.length > 0 && (
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-500">
             {issues.length - lockedCount} of {issues.length} issues available
           </p>
         )}
@@ -113,7 +113,7 @@ export default async function BriefsPage() {
           {remainingIssues.length > 0 && (
             <>
               {latestUnlocked && (
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-5">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-5">
                   Previous Issues
                 </p>
               )}
