@@ -66,6 +66,8 @@ export type BriefItem = {
   ingestion_timestamp: string;
   sort_order: number;
   /** Populated by enrichBriefItems() after generation. Null until enriched. */
+  analysis?: string | null;
+  /** Populated by enrichBriefItems() after generation. Null until enriched. */
   why_it_matters?: string | null;
   /** Populated by enrichBriefItems() after generation. Null until enriched. */
   recommended_actions?: string | null;
@@ -372,9 +374,14 @@ const CLAUDE_MODEL = "claude-sonnet-4-20250514";
 const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
 
 const CLAUDE_SYSTEM_PROMPT =
-  "You are a cybersecurity analyst writing for a weekly intelligence briefing " +
-  "read by CISOs, security engineers, and risk officers. " +
-  "Be direct, specific, and practitioner-focused. No filler.";
+  "You are a senior cybersecurity analyst writing for a weekly executive intelligence briefing " +
+  "read by CISOs, risk officers, GRC leads, and security engineers at mid-to-large enterprises. " +
+  "Your analysis must be specific, technical where appropriate, and commercially grounded. " +
+  "Never use generic boilerplate like 'this reflects active malicious tradecraft'. " +
+  "Always reference the specific technology, vendor, regulation, or threat actor involved. " +
+  "Every analysis must explain the mechanism — how the attack works, what the attacker gains, " +
+  "or what the regulatory change requires. Business impact must name who is affected and what breaks. " +
+  "Recommended actions must be concrete steps a team can execute this week, not policy reminders.";
 
 /**
  * Derive fallback why_it_matters text when Claude enrichment fails.
@@ -426,21 +433,40 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
   if (!apiKey) {
     return {
       ...item,
+      analysis: null,
       why_it_matters: fallbackWhyItMatters(item),
       recommended_actions: fallbackRecommendedActions(item),
       analyst_notes: null
     };
   }
 
+  const vendorLine = item.affected_vendor ? `Vendor/Product: ${item.affected_vendor}\n` : "";
+  const cveLine = item.affected_cve ? `CVE: ${item.affected_cve}\n` : "";
+
   const userPrompt =
     `Signal: ${item.summary}\n` +
-    `CVE: ${item.affected_cve ?? "N/A"}\n` +
+    vendorLine +
+    cveLine +
     `Severity: ${item.severity}\n` +
+    `Signal type: ${item.signal_type}\n` +
     `Category: ${item.category}\n\n` +
-    `Return JSON only with two fields:\n` +
-    `- why_it_matters: 2-3 sentences. Explain the real-world impact, who is at risk, and what an attacker can do with this.\n` +
-    `- recommended_actions: 3-5 specific actions a security team should take right now. Be concrete: name patch versions, ` +
-    `config settings, detection methods. Format as a plain numbered list, no markdown.`;
+    `Return JSON only with exactly three fields:\n\n` +
+    `- analysis: 3-4 sentences. Must be specific to this signal type (${item.signal_type}). ` +
+    `${item.affected_cve ? `Explain the vulnerability in ${item.affected_vendor ?? "the affected product"}, the attack vector (remote/local, auth required, exploit complexity), and what an attacker can achieve post-exploitation.` : ""}` +
+    `${item.signal_type === "threat_actor" || item.signal_type === "malware" ? `Describe the threat actor's TTPs, the targeted sectors or systems, and the kill chain stage this represents.` : ""}` +
+    `${item.signal_type === "regulatory_change" ? `Explain what the regulation or guidance requires, which teams or systems it applies to, and the compliance deadline or enforcement trigger.` : ""}` +
+    `${item.signal_type === "breach" || item.signal_type === "third_party_breach" ? `Describe the breach scope, what data or systems were compromised, and the third-party exposure risk for downstream customers.` : ""}` +
+    ` Do not use generic phrases like 'reflects active malicious tradecraft'. Reference the specific ` +
+    `technology, regulation, or actor by name.\n\n` +
+    `- why_it_matters: 2-3 sentences in business-impact framing. Name which teams are affected ` +
+    `(e.g. SOC, DevSecOps, legal, finance, cloud platform). State what breaks or what liability arises ` +
+    `if this is ignored. Reference any relevant compliance frameworks (HIPAA, SOC 2, NIST, EU AI Act) ` +
+    `if applicable.\n\n` +
+    `- recommended_actions: A plain numbered list of 3-5 concrete actions. Each action must be ` +
+    `executable this week or this month — not a policy reminder. Include specific steps: ` +
+    `patch version numbers if applicable, detection queries or log sources to check, ` +
+    `configuration changes to make, vendor contacts to engage, or regulatory filings to prepare. ` +
+    `Format: "1. [action]\\n2. [action]\\n..." — no markdown, no sub-bullets.`;
 
   try {
     const response = await fetch(CLAUDE_API_URL, {
@@ -452,7 +478,7 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
       },
       body: JSON.stringify({
         model: CLAUDE_MODEL,
-        max_tokens: 512,
+        max_tokens: 1024,
         system: CLAUDE_SYSTEM_PROMPT,
         messages: [{ role: "user", content: userPrompt }]
       })
@@ -461,6 +487,7 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
     if (!response.ok) {
       return {
         ...item,
+        analysis: null,
         why_it_matters: fallbackWhyItMatters(item),
         recommended_actions: fallbackRecommendedActions(item),
         analyst_notes: null
@@ -477,9 +504,15 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
     const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
 
     const parsed = JSON.parse(cleaned) as {
+      analysis?: string;
       why_it_matters?: string;
       recommended_actions?: string;
     };
+
+    const analysis =
+      typeof parsed.analysis === "string" && parsed.analysis.trim().length > 0
+        ? parsed.analysis.trim()
+        : null;
 
     const whyItMatters =
       typeof parsed.why_it_matters === "string" && parsed.why_it_matters.trim().length > 0
@@ -493,6 +526,7 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
 
     return {
       ...item,
+      analysis,
       why_it_matters: whyItMatters,
       recommended_actions: recommendedActions,
       analyst_notes: null
@@ -500,6 +534,7 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
   } catch {
     return {
       ...item,
+      analysis: null,
       why_it_matters: fallbackWhyItMatters(item),
       recommended_actions: fallbackRecommendedActions(item),
       analyst_notes: null
