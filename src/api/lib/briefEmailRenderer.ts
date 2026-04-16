@@ -69,6 +69,12 @@ export type BriefEmailData = {
   executive_headline?: string | null;
   /** v2 — full executive summary paragraph shown beneath the hero */
   executive_summary?: string | null;
+  /** Lite mode — show upgrade CTA banner after signal cards (free-tier subscribers) */
+  upgrade_cta?: boolean;
+  /** Total signals before free-tier filtering — used in upgrade banner copy */
+  total_signal_count?: number;
+  /** How many signals were hidden in the lite version */
+  hidden_count?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -515,6 +521,59 @@ function renderCycleSummary(data: BriefEmailData): string {
     </tr>`.trim();
 }
 
+/**
+ * Upgrade CTA banner — shown after signal cards for free-tier subscribers.
+ * Omitted entirely when upgrade_cta is not set.
+ */
+function renderUpgradeBanner(data: BriefEmailData): string {
+  if (!data.upgrade_cta) return "";
+
+  const totalCount  = data.total_signal_count ?? 0;
+  const hiddenCount = data.hidden_count ?? 0;
+
+  const hiddenLine =
+    hiddenCount > 0
+      ? `<tr>
+           <td style="padding-top:10px;">
+             <div style="color:#94a3b8;font-size:13px;font-family:Arial,Helvetica,sans-serif;">
+               + ${escHtml(String(hiddenCount))} more signal${hiddenCount !== 1 ? "s" : ""} in the full brief
+             </div>
+           </td>
+         </tr>`
+      : "";
+
+  return `
+    <tr>
+      <td bgcolor="#0d2d2d"
+          style="background-color:#0d2d2d;padding:24px 40px;border-top:2px solid #0d9488;">
+        <div style="font-size:10px;font-weight:700;color:#5eead4;text-transform:uppercase;
+                    letter-spacing:0.1em;margin-bottom:10px;font-family:Arial,Helvetica,sans-serif;">
+          You&rsquo;re viewing a free preview
+        </div>
+        <div style="color:#e2e8f0;font-size:14px;line-height:1.65;font-family:Arial,Helvetica,sans-serif;
+                    margin-bottom:16px;">
+          You&rsquo;re seeing a preview. Upgrade to Professional for full analysis on all
+          <strong style="color:#ffffff;">${escHtml(String(totalCount))}</strong>
+          signals this week.
+        </div>
+        <table cellpadding="0" cellspacing="0" border="0">
+          ${hiddenLine}
+          <tr>
+            <td style="padding-top:16px;">
+              <a href="https://app.securelogicai.com/signup"
+                 style="display:inline-block;background-color:#0d9488;color:#ffffff;
+                        font-size:13px;font-weight:700;font-family:Arial,Helvetica,sans-serif;
+                        padding:10px 22px;border-radius:5px;text-decoration:none;
+                        letter-spacing:0.02em;">
+                Upgrade to Professional &mdash; $29/mo &rarr;
+              </a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>`.trim();
+}
+
 /** Dark footer: logo, subscriber note, unsubscribe link, org name. */
 function renderFooter(orgName: string): string {
   return `
@@ -633,6 +692,18 @@ export function renderBriefEmailText(data: BriefEmailData, orgName: string): str
     }
   }
 
+  if (data.upgrade_cta) {
+    lines.push(DIVIDER);
+    lines.push("FREE PREVIEW — UPGRADE FOR FULL ACCESS");
+    if (data.total_signal_count && data.total_signal_count > 0) {
+      lines.push(`You're seeing a preview. Upgrade for full analysis on all ${data.total_signal_count} signals this week.`);
+    }
+    if (data.hidden_count && data.hidden_count > 0) {
+      lines.push(`+ ${data.hidden_count} more signal${data.hidden_count !== 1 ? "s" : ""} in the full brief`);
+    }
+    lines.push("Upgrade to Professional — $29/mo: https://app.securelogicai.com/signup", "");
+  }
+
   lines.push(
     DIVIDER,
     `${orgName} — SecureLogic AI Intelligence Brief`,
@@ -662,6 +733,7 @@ export function renderBriefEmailText(data: BriefEmailData, orgName: string): str
 export function renderBriefEmail(data: BriefEmailData, orgName: string): string {
   const masthead = renderMasthead(data);
   const executiveSummary = renderExecutiveSummary(data);
+  const upgradeBanner = renderUpgradeBanner(data);
   const cycleSummary = renderCycleSummary(data);
   const footer = renderFooter(orgName);
 
@@ -702,6 +774,7 @@ export function renderBriefEmail(data: BriefEmailData, orgName: string): string 
           ${executiveSummary}
           ${categoryRows}
           ${noContentRow}
+          ${upgradeBanner}
           ${cycleSummary}
           ${footer}
         </table>

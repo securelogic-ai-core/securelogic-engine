@@ -62,7 +62,7 @@ export default async function DashboardPage({
         <p className="text-slate-400 text-sm">
           {isPaid
             ? `You have ${planName} access to the Intelligence Brief.`
-            : "You're on the free plan. Upgrade for complete brief content."}
+            : "You're receiving the weekly Intelligence Brief Lite. Upgrade for the full brief."}
         </p>
       </div>
 

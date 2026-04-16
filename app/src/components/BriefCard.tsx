@@ -95,16 +95,21 @@ function LockedCard({ issue }: { issue: NewsletterIssue }) {
     : formatDate(issue.created_at);
 
   const teaser = issue.thesis_headline ?? issue.summary;
+  const { signalCount } = parseRiskCounts(issue.sections_json);
+  const previewBadge =
+    signalCount > 3
+      ? `Free preview — 3 of ${signalCount} signals`
+      : "Free preview";
 
   return (
     <div className="bg-brand-surface border border-brand-line border-l-4 border-l-slate-600 rounded-xl p-6 relative overflow-hidden">
-      {/* Subscriber badge */}
+      {/* Free preview badge */}
       <div className="absolute top-0 right-0 bg-teal-900/40 text-teal-400 text-xs font-semibold px-3 py-1.5 rounded-bl-lg flex items-center gap-1 border-b border-l border-teal-800/50">
         <LockIcon />
-        Subscribers only
+        {previewBadge}
       </div>
 
-      <p className="text-xs text-slate-500 font-semibold uppercase tracking-wide mb-2 pr-28">
+      <p className="text-xs text-slate-500 font-semibold uppercase tracking-wide mb-2 pr-40">
         {date}
       </p>
 
@@ -118,21 +123,29 @@ function LockedCard({ issue }: { issue: NewsletterIssue }) {
         </p>
       )}
 
-      {/* What you're missing */}
+      {/* Included vs excluded */}
       <div className="mb-4">
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
-          What you&apos;re missing
+          Your free brief includes
         </p>
         <div className="space-y-1.5">
           {[
-            "Full signal analysis with risk scoring rationale",
-            "Why it matters — business impact for each finding",
-            "Recommended actions — prioritized by urgency",
-            "Complete brief archive — every issue, searchable",
-          ].map((item) => (
-            <div key={item} className="flex items-center gap-2">
-              <span className="w-1 h-1 bg-brand-teal rounded-full flex-shrink-0" />
-              <span className="text-slate-400 text-xs">{item}</span>
+            { included: true,  label: "Weekly brief with top 3 signals" },
+            { included: true,  label: "Executive summary" },
+            { included: true,  label: "Why it matters (preview)" },
+            { included: false, label: "Full signal analysis (all signals)" },
+            { included: false, label: "Recommended actions" },
+            { included: false, label: "Complete brief archive" },
+          ].map(({ included, label }) => (
+            <div key={label} className="flex items-center gap-2">
+              {included ? (
+                <span className="text-brand-teal text-xs font-bold flex-shrink-0">✓</span>
+              ) : (
+                <span className="text-slate-600 text-xs font-bold flex-shrink-0">✗</span>
+              )}
+              <span className={`text-xs ${included ? "text-slate-300" : "text-slate-500"}`}>
+                {label}
+              </span>
             </div>
           ))}
         </div>
@@ -146,7 +159,7 @@ function LockedCard({ issue }: { issue: NewsletterIssue }) {
           href="/account"
           className="text-brand-teal hover:text-teal-300 text-sm font-semibold transition-colors flex-shrink-0 ml-3"
         >
-          Upgrade →
+          Upgrade to Professional — $29/mo →
         </Link>
       </div>
     </div>
