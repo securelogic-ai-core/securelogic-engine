@@ -215,7 +215,8 @@ async function applyLLMEnhancement(insights: any[]): Promise<any[]> {
           insight.category ?? "GENERAL",
           insight.source ?? "",
           insight.affectedCve ?? null,
-          insight.affectedVendor ?? null
+          insight.affectedVendor ?? null,
+          insight.riskLevel ?? null
         );
 
         if (llmResult) {
