@@ -655,6 +655,77 @@ function LockedBrief({ issue }: { issue: NewsletterIssue }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// EmptyBrief — shown when sections_json has no signals and no other content
+// ---------------------------------------------------------------------------
+
+function EmptyBrief({ issue }: { issue: NewsletterIssue }) {
+  const date = issue.publish_date ? formatDate(issue.publish_date) : formatDate(issue.created_at);
+  return (
+    <div className="max-w-3xl mx-auto px-6 pb-14">
+      {/* Masthead */}
+      <div className="-mx-6 mb-10 bg-slate-900 px-6 py-4 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-bold text-teal-400 uppercase tracking-widest">SecureLogic AI</span>
+          <span className="text-slate-500 select-none">·</span>
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-widest">Intelligence Brief</span>
+        </div>
+        <Link
+          href="/briefs"
+          className="text-xs font-medium text-slate-500 hover:text-slate-200 transition-colors flex-shrink-0"
+        >
+          ← All Briefs
+        </Link>
+      </div>
+
+      <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-5">{date}</p>
+      <h1 className="text-3xl font-bold text-slate-900 leading-tight mb-8">{issue.title}</h1>
+
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-10 text-center">
+        <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-5">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6 text-slate-400">
+            <path fillRule="evenodd" d="M4.5 3.75a3 3 0 0 0-3 3v10.5a3 3 0 0 0 3 3h15a3 3 0 0 0 3-3V6.75a3 3 0 0 0-3-3h-15Zm4.125 3a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm-3.873 8.703a4.126 4.126 0 0 1 7.746 0 .75.75 0 0 1-.351.92 7.47 7.47 0 0 1-3.522.877 7.47 7.47 0 0 1-3.522-.877.75.75 0 0 1-.351-.92ZM15 8.25a.75.75 0 0 0 0 1.5h3.75a.75.75 0 0 0 0-1.5H15ZM14.25 12a.75.75 0 0 1 .75-.75h3.75a.75.75 0 0 1 0 1.5H15a.75.75 0 0 1-.75-.75Zm.75 2.25a.75.75 0 0 0 0 1.5H18a.75.75 0 0 0 0-1.5h-3Z" clipRule="evenodd" />
+          </svg>
+        </div>
+        <h2 className="text-base font-bold text-slate-900 mb-2">
+          This brief has no content yet.
+        </h2>
+        <p className="text-slate-500 text-sm max-w-sm mx-auto leading-relaxed">
+          Briefs are generated weekly from live signal sources. Content for this issue has not been populated yet.
+        </p>
+        <div className="mt-6">
+          <Link
+            href="/briefs"
+            className="text-sm font-semibold text-teal-600 hover:text-teal-700 transition-colors"
+          >
+            ← Back to all briefs
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Returns true if the issue has at least one renderable signal or analysis block.
+// ---------------------------------------------------------------------------
+function hasRenderableContent(issue: NewsletterIssue): boolean {
+  const sections = (issue.sections_json ?? {}) as BriefSections;
+  const hasSignals = Object.values(sections).some(
+    (arr) => Array.isArray(arr) && arr.length > 0
+  );
+  return (
+    hasSignals ||
+    Boolean(issue.cross_domain_analysis) ||
+    Boolean(
+      issue.action_summary_json &&
+        (issue.action_summary_json.thisWeek?.length ||
+          issue.action_summary_json.thisMonth?.length ||
+          issue.action_summary_json.monitor?.length)
+    )
+  );
+}
+
 function BriefReader({ issue }: { issue: NewsletterIssue }) {
   const sections = (issue.sections_json ?? {}) as BriefSections;
   const allSignals = Object.values(sections).flat().filter(Boolean) as BriefSignal[];
@@ -890,6 +961,10 @@ export default async function BriefDetailPage({
 
   if (issue.locked) {
     return <LockedBrief issue={issue} />;
+  }
+
+  if (!hasRenderableContent(issue)) {
+    return <EmptyBrief issue={issue} />;
   }
 
   return <BriefReader issue={issue} />;
