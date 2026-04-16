@@ -33,6 +33,8 @@ export default async function DashboardPage({
   const latestIssue = issuesData?.issues?.[0] ?? null;
   const entitlementLevel = me?.entitlementLevel ?? "starter";
   const isPaid = entitlementLevel === "premium" || entitlementLevel === "professional";
+  // Platform access: full posture dashboard, vendor/AI/controls features
+  const isPlatformUser = entitlementLevel === "premium" || entitlementLevel === "platform";
   const planName = planDisplayName(entitlementLevel);
   const displayName = session.name ?? me?.organizationName ?? session.organizationName ?? null;
   const orgName = me?.organizationName ?? session.organizationName;
@@ -133,11 +135,37 @@ export default async function DashboardPage({
         </div>
       </div>
 
-      {/* Posture Dashboard — additive section below Brief/Account row.
-          Null when org is not entitled or has no snapshots yet. */}
-      {dashboardSummary && (
+      {/* Posture Dashboard — platform subscribers only */}
+      {isPlatformUser ? (
+        dashboardSummary && (
+          <div className="mt-10">
+            <PostureDashboard summary={dashboardSummary} />
+          </div>
+        )
+      ) : (
         <div className="mt-10">
-          <PostureDashboard summary={dashboardSummary} />
+          <div className="bg-brand-surface border border-brand-line rounded-xl p-6">
+            <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-3">
+              Security Posture
+            </h2>
+            <div className="flex items-start justify-between gap-6">
+              <div className="flex-1">
+                <p className="text-slate-200 text-sm font-semibold mb-1">
+                  Upgrade to Platform for posture monitoring
+                </p>
+                <p className="text-slate-500 text-xs leading-relaxed max-w-lg">
+                  Platform Professional includes vendor risk management, AI governance reviews,
+                  compliance posture tracking, control assessments, and security scoring.
+                </p>
+              </div>
+              <a
+                href="mailto:hello@securelogicai.com?subject=SecureLogic%20AI%20Platform%20Inquiry"
+                className="flex-shrink-0 text-xs font-semibold text-brand-teal hover:text-teal-300 transition-colors whitespace-nowrap"
+              >
+                Platform — $499/mo →
+              </a>
+            </div>
+          </div>
         </div>
       )}
     </div>

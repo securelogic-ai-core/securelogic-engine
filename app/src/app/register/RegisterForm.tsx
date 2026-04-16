@@ -18,7 +18,7 @@ function parsePlanParam(raw: string | null): PaidTier | null {
 }
 
 function planLabel(tier: PaidTier): string {
-  return tier === "team" ? "Team — $209/mo" : "Professional — $39/mo";
+  return tier === "team" ? "Platform Professional — $799/mo" : "Brief Pro — $29/mo";
 }
 
 interface Props {

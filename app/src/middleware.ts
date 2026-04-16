@@ -3,7 +3,14 @@ import type { NextRequest } from "next/server";
 
 const COOKIE_NAME = "sl_session";
 
-const PROTECTED_PREFIXES = ["/dashboard", "/briefs", "/account"];
+const PROTECTED_PREFIXES = [
+  "/dashboard",
+  "/briefs",
+  "/account",
+  "/vendors",
+  "/ai-systems",
+  "/controls",
+];
 
 /**
  * Lightweight session guard.
@@ -30,5 +37,12 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/briefs/:path*", "/account/:path*"],
+  matcher: [
+    "/dashboard/:path*",
+    "/briefs/:path*",
+    "/account/:path*",
+    "/vendors/:path*",
+    "/ai-systems/:path*",
+    "/controls/:path*",
+  ],
 };

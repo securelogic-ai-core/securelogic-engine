@@ -5,13 +5,14 @@ import { getAiSystems, getGovernanceReviews, type AiSystem } from "@/lib/api";
 export default async function AiSystemsPage() {
   const session = await getSession();
 
-  if (!session.apiKey) {
+  const token = session.jwtToken ?? session.apiKey ?? null;
+  if (!token) {
     redirect("/login");
   }
 
   const [systemsData, reviewsData] = await Promise.all([
-    getAiSystems(session.apiKey),
-    getGovernanceReviews(session.apiKey),
+    getAiSystems(token),
+    getGovernanceReviews(token),
   ]);
 
   // Build ai_system_id → review count from the flat reviews list.
