@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LogoutButton } from "./LogoutButton";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.securelogicai.com";
 
@@ -101,15 +102,3 @@ export function Header({ organizationName, isAuthenticated, isPlatformUser = fal
   );
 }
 
-function LogoutButton() {
-  return (
-    <form action="/api/logout" method="POST">
-      <button
-        type="submit"
-        className="text-slate-400 hover:text-white text-sm transition-colors"
-      >
-        Sign Out
-      </button>
-    </form>
-  );
-}
