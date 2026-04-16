@@ -486,7 +486,7 @@ export async function generateActionSummary(
   try {
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 600,
+      max_tokens: 1000,
       messages: [
         {
           role: "user",
@@ -528,7 +528,25 @@ Include 2-3 items per list. Omit a list item if there is no specific signal to s
       .trim();
 
     const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    const parsed = JSON.parse(cleaned) as Partial<ActionSummary>;
+
+    // Attempt to repair truncated JSON by closing any unclosed brackets/braces
+    let repaired = cleaned;
+    let parsed: Partial<ActionSummary>;
+    try {
+      parsed = JSON.parse(repaired) as Partial<ActionSummary>;
+    } catch {
+      // Count unclosed brackets and attempt to close them
+      const openBraces = (repaired.match(/\{/g) ?? []).length - (repaired.match(/\}/g) ?? []).length;
+      const openBrackets = (repaired.match(/\[/g) ?? []).length - (repaired.match(/\]/g) ?? []).length;
+      // Trim trailing incomplete string/token before closing
+      repaired = repaired.replace(/,?\s*"[^"]*$/, "").replace(/,\s*$/, "");
+      repaired += "]".repeat(Math.max(0, openBrackets)) + "}".repeat(Math.max(0, openBraces));
+      logger.warn(
+        { event: "llm_action_summary_json_repaired", originalLength: cleaned.length, repairedLength: repaired.length },
+        "Action summary JSON was truncated — attempted repair"
+      );
+      parsed = JSON.parse(repaired) as Partial<ActionSummary>;
+    }
 
     if (!parsed.thisWeek && !parsed.thisMonth && !parsed.monitor) return null;
 
