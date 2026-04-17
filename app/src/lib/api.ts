@@ -394,6 +394,75 @@ export type FrameworksResponse = {
   frameworks: Framework[];
 };
 
+export type Requirement = {
+  id: string;
+  framework_id: string;
+  reference_id: string;
+  title: string;
+  created_at: string;
+};
+
+export type RequirementsResponse = {
+  count: number;
+  limit: number;
+  frameworkId: string;
+  nextCursor: { created_at: string; id: string } | null;
+  requirements: Requirement[];
+};
+
+export type ControlMapping = {
+  id: string;
+  control_id: string;
+  requirement_id: string;
+  created_at: string;
+};
+
+export type ControlMappingsResponse = {
+  count: number;
+  limit: number;
+  nextCursor: { created_at: string; id: string } | null;
+  control_mappings: ControlMapping[];
+};
+
+export type ObligationMapping = {
+  id: string;
+  obligation_id: string;
+  requirement_id: string;
+  requirement?: Requirement;
+  created_at: string;
+};
+
+export type ObligationMappingsResponse = {
+  count: number;
+  obligationId?: string;
+  requirementId?: string;
+  obligation_mappings: ObligationMapping[];
+};
+
+export type MappedControl = {
+  control_id: string;
+  control_name: string;
+  latest_assessment_status: string | null;
+};
+
+export type ReadinessRequirement = {
+  id: string;
+  reference_id: string;
+  title: string;
+  status: "satisfied" | "partial" | "unmapped";
+  mapped_controls: MappedControl[];
+};
+
+export type FrameworkReadiness = {
+  framework: { id: string; name: string; version: string };
+  readiness_score: number;
+  total_requirements: number;
+  satisfied: number;
+  partial: number;
+  unmapped: number;
+  requirements: ReadinessRequirement[];
+};
+
 export type Control = {
   id: string;
   organization_id: string;
@@ -668,6 +737,86 @@ export async function getFrameworks(
     const res = await engineFetch("/api/frameworks?limit=100", apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<FrameworksResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getFramework(
+  apiKey: string,
+  frameworkId: string
+): Promise<Framework | null> {
+  try {
+    const res = await engineFetch(`/api/frameworks/${encodeURIComponent(frameworkId)}`, apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { framework: Framework };
+    return body.framework ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getRequirements(
+  apiKey: string,
+  frameworkId: string,
+  limit?: number
+): Promise<RequirementsResponse | null> {
+  try {
+    const qs = new URLSearchParams({ framework_id: frameworkId });
+    if (limit) qs.set("limit", String(limit));
+    const res = await engineFetch(`/api/requirements?${qs.toString()}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<RequirementsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getControlMappings(
+  apiKey: string,
+  params: { control_id?: string; requirement_id?: string; limit?: number }
+): Promise<ControlMappingsResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (params.control_id) qs.set("control_id", params.control_id);
+    if (params.requirement_id) qs.set("requirement_id", params.requirement_id);
+    if (params.limit) qs.set("limit", String(params.limit));
+    const res = await engineFetch(`/api/control-mappings?${qs.toString()}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<ControlMappingsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getObligationMappings(
+  apiKey: string,
+  params: { obligation_id?: string; requirement_id?: string; limit?: number }
+): Promise<ObligationMappingsResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (params.obligation_id) qs.set("obligation_id", params.obligation_id);
+    if (params.requirement_id) qs.set("requirement_id", params.requirement_id);
+    if (params.limit) qs.set("limit", String(params.limit));
+    const res = await engineFetch(`/api/obligation-mappings?${qs.toString()}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<ObligationMappingsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getFrameworkReadiness(
+  apiKey: string,
+  frameworkId: string
+): Promise<FrameworkReadiness | null> {
+  try {
+    const res = await engineFetch(
+      `/api/frameworks/${encodeURIComponent(frameworkId)}/readiness`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<FrameworkReadiness>;
   } catch {
     return null;
   }

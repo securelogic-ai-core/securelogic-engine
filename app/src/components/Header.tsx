@@ -77,6 +77,12 @@ export function Header({ organizationName, isAuthenticated, isPlatformUser = fal
                     Obligations
                   </Link>
                   <Link
+                    href="/frameworks"
+                    className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
+                  >
+                    Frameworks
+                  </Link>
+                  <Link
                     href="/findings"
                     className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
                   >
