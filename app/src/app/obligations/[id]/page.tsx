@@ -5,12 +5,21 @@ import {
   getObligation,
   getObligationAssessments,
   getFindings,
+  getObligationMappings,
+  getFrameworks,
+  getFrameworkReadiness,
   type Obligation,
   type ObligationAssessment,
   type Finding,
+  type Framework,
+  type ReadinessRequirement,
 } from "@/lib/api";
 import { FindingCard } from "@/components/FindingCard";
 import { AssessmentStatusCard } from "./AssessmentStatusCard";
+import {
+  ObligationFrameworkMappingsCard,
+  type ObligationMappedRequirement,
+} from "./FrameworkMappingsCard";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -377,16 +386,46 @@ export default async function ObligationDetailPage({
     entitlementLevel === "team";
   if (!isPlatformUser) redirect("/dashboard");
 
-  const [obligation, assessmentsData, findingsData] = await Promise.all([
-    getObligation(token, id),
-    getObligationAssessments(token, id, 20),
-    getFindings(token, { source_type: "obligation_review", limit: 100 }),
-  ]);
+  const [obligation, assessmentsData, findingsData, obligationMappingsData, frameworksData] =
+    await Promise.all([
+      getObligation(token, id),
+      getObligationAssessments(token, id, 20),
+      getFindings(token, { source_type: "obligation_review", limit: 100 }),
+      getObligationMappings(token, { obligation_id: id, limit: 100 }),
+      getFrameworks(token),
+    ]);
 
   if (!obligation) redirect("/obligations");
 
   const assessments = assessmentsData?.assessments ?? [];
   const allFindings = findingsData?.findings ?? [];
+  const frameworks: Framework[] = frameworksData?.frameworks ?? [];
+
+  // Fetch readiness per framework for the add-mapping picker
+  const readinessResults = await Promise.all(
+    frameworks.map((f) => getFrameworkReadiness(token, f.id))
+  );
+  const allRequirementsByFramework: Record<string, ReadinessRequirement[]> = {};
+  frameworks.forEach((f, i) => {
+    const r = readinessResults[i];
+    if (r) allRequirementsByFramework[f.id] = r.requirements;
+  });
+
+  // Build a framework id → name map for enriching obligation mappings
+  const frameworkNameById = new Map(frameworks.map((f) => [f.id, f.name]));
+
+  // Enrich obligation mappings — the GET ?obligation_id route includes nested requirement
+  const mappedRequirements: ObligationMappedRequirement[] =
+    (obligationMappingsData?.obligation_mappings ?? [])
+      .filter((m) => m.requirement != null)
+      .map((m) => ({
+        mappingId: m.id,
+        requirementId: m.requirement_id,
+        referenceId: m.requirement!.reference_id,
+        title: m.requirement!.title,
+        frameworkId: m.requirement!.framework_id,
+        frameworkName: frameworkNameById.get(m.requirement!.framework_id) ?? "Unknown framework",
+      }));
 
   // Findings link to assessment IDs (source_id = assessment.id).
   const assessmentIds = new Set(assessments.map((a) => a.id));
@@ -445,6 +484,12 @@ export default async function ObligationDetailPage({
           {latestAssessment && (
             <AssessmentStatusCard assessment={latestAssessment} obligationId={obligation.id} />
           )}
+          <ObligationFrameworkMappingsCard
+            obligationId={obligation.id}
+            mappedRequirements={mappedRequirements}
+            frameworks={frameworks.map((f) => ({ id: f.id, name: f.name }))}
+            allRequirementsByFramework={allRequirementsByFramework}
+          />
           <ActionsCard obligationId={obligation.id} />
         </div>
       </div>

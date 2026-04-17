@@ -5,14 +5,17 @@ import {
   getControl,
   getControlAssessmentsForControl,
   getFindings,
-  getControlMappings,
+  getFrameworks,
+  getFrameworkReadiness,
   type Control,
   type ControlAssessment,
-  type ControlMapping,
   type Finding,
+  type Framework,
+  type ReadinessRequirement,
 } from "@/lib/api";
 import { FindingCard } from "@/components/FindingCard";
 import { AssessmentStatusCard } from "./AssessmentStatusCard";
+import { FrameworkMappingsCard, type MappedRequirementDisplay } from "./FrameworkMappingsCard";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -292,40 +295,6 @@ function ComplianceSummaryCard({
   );
 }
 
-function FrameworkMappingsCard({ mappings }: { mappings: ControlMapping[] }) {
-  return (
-    <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
-          Framework Mappings
-        </h3>
-        <span
-          className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold"
-          style={{ background: "rgba(148,163,184,0.12)", color: "#475569" }}
-        >
-          {mappings.length}
-        </span>
-      </div>
-      {mappings.length === 0 ? (
-        <p className="text-xs" style={{ color: "#475569" }}>
-          Not mapped to any framework requirement.
-        </p>
-      ) : (
-        <p className="text-xs mb-3" style={{ color: "#cbd5e1" }}>
-          Maps to {mappings.length} requirement{mappings.length !== 1 ? "s" : ""} across your active frameworks.
-        </p>
-      )}
-      <Link
-        href="/frameworks"
-        className="text-xs font-medium hover:underline"
-        style={{ color: "#00c4b4" }}
-      >
-        View Frameworks →
-      </Link>
-    </div>
-  );
-}
-
 function ActionsCard({ controlId }: { controlId: string }) {
   return (
     <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
@@ -367,18 +336,46 @@ export default async function ControlDetailPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const [control, assessmentsData, findingsData, mappingsData] = await Promise.all([
+  const [control, assessmentsData, findingsData, frameworksData] = await Promise.all([
     getControl(token, id),
     getControlAssessmentsForControl(token, id, 20),
     getFindings(token, { source_type: "control_test", limit: 100 }),
-    getControlMappings(token, { control_id: id, limit: 100 }),
+    getFrameworks(token),
   ]);
 
   if (!control) redirect("/controls");
 
   const assessments = assessmentsData?.assessments ?? [];
   const allFindings = findingsData?.findings ?? [];
-  const frameworkMappings = mappingsData?.control_mappings ?? [];
+  const frameworks: Framework[] = frameworksData?.frameworks ?? [];
+
+  // Fetch readiness per framework to derive which requirements this control satisfies
+  const readinessResults = await Promise.all(
+    frameworks.map((f) => getFrameworkReadiness(token, f.id))
+  );
+
+  const mappedRequirements: MappedRequirementDisplay[] = [];
+  const allRequirementsByFramework: Record<string, ReadinessRequirement[]> = {};
+
+  frameworks.forEach((f, i) => {
+    const r = readinessResults[i];
+    if (!r) return;
+    allRequirementsByFramework[f.id] = r.requirements;
+    for (const req of r.requirements) {
+      for (const mc of req.mapped_controls) {
+        if (mc.control_id === control.id) {
+          mappedRequirements.push({
+            requirementId: req.id,
+            referenceId: req.reference_id,
+            title: req.title,
+            frameworkName: f.name,
+            frameworkId: f.id,
+            assessmentStatus: mc.latest_assessment_status,
+          });
+        }
+      }
+    }
+  });
 
   // Findings link to assessment IDs (source_id = assessment.id).
   const assessmentIds = new Set(assessments.map((a) => a.id));
@@ -437,7 +434,12 @@ export default async function ControlDetailPage({
           {latestAssessment && (
             <AssessmentStatusCard assessment={latestAssessment} controlId={control.id} />
           )}
-          <FrameworkMappingsCard mappings={frameworkMappings} />
+          <FrameworkMappingsCard
+            controlId={control.id}
+            mappedRequirements={mappedRequirements}
+            frameworks={frameworks.map((f) => ({ id: f.id, name: f.name }))}
+            allRequirementsByFramework={allRequirementsByFramework}
+          />
           <ActionsCard controlId={control.id} />
         </div>
       </div>
