@@ -24,34 +24,38 @@ router.get("/", (_req, res) => {
   <title>SecureLogic Ops Dashboard</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
+    *, *::before, *::after { box-sizing: border-box; }
     body {
-      font-family: Arial, sans-serif;
-      margin: 24px;
-      background: #0b1020;
-      color: #f3f4f6;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 24px;
+      background: #0a0f1a;
+      color: #f1f5f9;
     }
-    h1, h2 { margin-bottom: 8px; }
+    h1 { font-size: 20px; font-weight: 700; margin: 0 0 4px; color: #f1f5f9; }
+    h2 { font-size: 14px; font-weight: 600; margin: 0 0 12px; color: #00c4b4; text-transform: uppercase; letter-spacing: 0.06em; }
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
       gap: 16px;
-      margin-bottom: 24px;
+      margin-bottom: 20px;
     }
     .card {
-      background: #111827;
-      border: 1px solid #374151;
+      background: #0d1b2e;
+      border: 1px solid #1e2d45;
       border-radius: 10px;
       padding: 16px;
     }
     .healthy { color: #22c55e; }
     .degraded { color: #f59e0b; }
     .failing { color: #ef4444; }
-    .muted { color: #9ca3af; font-size: 13px; }
+    .muted { color: #94a3b8; font-size: 13px; }
     .error {
       color: #ef4444;
       margin-top: 12px;
       white-space: pre-wrap;
       word-break: break-word;
+      font-size: 13px;
     }
     .row {
       display: flex;
@@ -61,45 +65,54 @@ router.get("/", (_req, res) => {
       margin-bottom: 12px;
     }
     input[type="password"], input[type="text"] {
-      background: #0f172a;
-      color: #f3f4f6;
-      border: 1px solid #374151;
+      background: #0a0f1a;
+      color: #f1f5f9;
+      border: 1px solid #1e2d45;
       border-radius: 8px;
       padding: 10px 12px;
       min-width: 320px;
       width: min(100%, 520px);
+      font-size: 14px;
+      outline: none;
+    }
+    input[type="password"]:focus, input[type="text"]:focus {
+      border-color: #00c4b4;
     }
     button {
-      background: #2563eb;
-      color: white;
+      background: #00c4b4;
+      color: #0a0f1a;
       border: 0;
       border-radius: 8px;
       padding: 10px 14px;
       cursor: pointer;
-      font-weight: 600;
+      font-weight: 700;
+      font-size: 13px;
     }
+    button:hover { background: #00ddd0; }
     button.secondary {
-      background: #374151;
+      background: #1e2d45;
+      color: #f1f5f9;
     }
+    button.secondary:hover { background: #26394f; }
     table {
       width: 100%;
       border-collapse: collapse;
       margin-top: 8px;
-      background: #111827;
+      background: #0d1b2e;
     }
     th, td {
-      border: 1px solid #374151;
-      padding: 8px;
+      border: 1px solid #1e2d45;
+      padding: 8px 10px;
       text-align: left;
       vertical-align: top;
-      font-size: 14px;
+      font-size: 13px;
     }
-    th { background: #1f2937; }
+    th { background: #112036; color: #00c4b4; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
   </style>
 </head>
 <body>
   <h1>SecureLogic Ops Dashboard</h1>
-  <p class="muted">Token-based operator view for newsletter delivery health and system activity.</p>
+  <p class="muted">Operator view — delivery health, system activity, and worker status.</p>
 
   <div class="card" style="margin-bottom:16px;">
     <h2>Admin Token</h2>
@@ -232,7 +245,7 @@ router.get("/", (_req, res) => {
       const res = await fetch(path, {
         method: "GET",
         headers: {
-          "Authorization": "Bearer " + token
+          "X-Admin-Key": token
         }
       });
 
