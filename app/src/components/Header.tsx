@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { LogoutButton } from "./LogoutButton";
+import UserMenu from "./UserMenu";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.securelogicai.com";
 
@@ -8,9 +9,22 @@ interface HeaderProps {
   isAuthenticated: boolean;
   /** Show platform nav items (Vendors, AI Systems, Controls) for platform subscribers only */
   isPlatformUser?: boolean;
+  /** Current user name — shown in avatar */
+  userName?: string;
+  /** Current user email */
+  userEmail?: string;
+  /** Current user role */
+  userRole?: string;
 }
 
-export function Header({ organizationName, isAuthenticated, isPlatformUser = false }: HeaderProps) {
+export function Header({
+  organizationName,
+  isAuthenticated,
+  isPlatformUser = false,
+  userName,
+  userEmail,
+  userRole,
+}: HeaderProps) {
   return (
     <header className="sticky top-0 z-50 bg-navy-900/95 backdrop-blur-md border-b border-slate-800 shadow-[0_1px_0_rgba(255,255,255,0.06),0_4px_24px_rgba(0,0,0,0.5)]">
       <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
@@ -96,13 +110,27 @@ export function Header({ organizationName, isAuthenticated, isPlatformUser = fal
                   </Link>
                 </>
               )}
-              <Link
-                href="/account"
-                className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
-              >
-                {organizationName ?? "Account"}
-              </Link>
-              <LogoutButton />
+
+              {/* User avatar / menu */}
+              {userName ? (
+                <UserMenu
+                  name={userName}
+                  email={userEmail ?? ""}
+                  role={userRole ?? "admin"}
+                  organizationName={organizationName}
+                  isPlatformUser={isPlatformUser}
+                />
+              ) : (
+                <>
+                  <Link
+                    href="/account"
+                    className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
+                  >
+                    {organizationName ?? "Account"}
+                  </Link>
+                  <LogoutButton />
+                </>
+              )}
             </>
           ) : (
             <>
@@ -131,4 +159,3 @@ export function Header({ organizationName, isAuthenticated, isPlatformUser = fal
     </header>
   );
 }
-

@@ -14,6 +14,8 @@ export interface JwtPayload {
   sub: string;
   /** Organization UUID */
   org: string;
+  /** User role — 'admin' | 'analyst' | 'viewer' */
+  role: string;
   /** Issued-at (Unix seconds) */
   iat: number;
   /** Expiry (Unix seconds) */
@@ -33,16 +35,16 @@ function getSecret(): string {
 }
 
 /**
- * Sign a JWT for the given user + org.
+ * Sign a JWT for the given user + org + role.
  * Throws if JWT_SECRET is not set.
  */
-export function signJwt(sub: string, org: string): string {
+export function signJwt(sub: string, org: string, role: string = "admin"): string {
   const header = b64url(
     Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" }), "utf8")
   );
   const now  = Math.floor(Date.now() / 1000);
   const body = b64url(
-    Buffer.from(JSON.stringify({ sub, org, iat: now, exp: now + EXPIRY_SECONDS }), "utf8")
+    Buffer.from(JSON.stringify({ sub, org, role, iat: now, exp: now + EXPIRY_SECONDS }), "utf8")
   );
 
   const signing = `${header}.${body}`;
@@ -85,6 +87,9 @@ export function verifyJwt(token: string): JwtPayload | null {
 
     if (typeof payload.exp !== "number") return null;
     if (payload.exp < Math.floor(Date.now() / 1000)) return null;
+
+    // Backfill role for tokens issued before Sprint 7
+    if (!payload.role) payload.role = "admin";
 
     return payload;
   } catch {

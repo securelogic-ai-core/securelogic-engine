@@ -110,7 +110,7 @@ router.post(
             organizationId,
             input.name,
             input.use_case ?? null,
-            input.owner_user_id ?? null,
+            input.owner_user_id ?? (req as any).autoUserId ?? null,
             input.model_type ?? null,
             input.data_classification ?? null,
             input.deployment_status ?? null,

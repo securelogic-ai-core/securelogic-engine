@@ -6,6 +6,7 @@ export interface SessionData {
   userId?: string;
   email?: string;
   name?: string;
+  userRole?: string;
   jwtToken?: string;
 
   // Legacy API-key auth (kept for backward compatibility)

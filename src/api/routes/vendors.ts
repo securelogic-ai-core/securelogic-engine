@@ -126,7 +126,7 @@ router.post(
             input.data_sensitivity ?? null,
             input.access_level ?? null,
             input.website ?? null,
-            input.owner_user_id ?? null
+            input.owner_user_id ?? (req as any).autoUserId ?? null
           ]
         );
       } catch (err: any) {

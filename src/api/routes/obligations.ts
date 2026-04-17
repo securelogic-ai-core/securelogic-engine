@@ -167,7 +167,7 @@ router.post(
           input.status,
           input.priority,
           input.due_date,
-          input.owner_user_id,
+          input.owner_user_id ?? (req as any).autoUserId ?? null,
           input.notes
         ]
       );
