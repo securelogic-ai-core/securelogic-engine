@@ -17,8 +17,5 @@ CREATE INDEX IF NOT EXISTS idx_controls_next_test_due
   ON controls (organization_id, next_test_due)
   WHERE next_test_due IS NOT NULL;
 
--- Partial index: only rows that are actually overdue candidates
-CREATE INDEX IF NOT EXISTS idx_controls_overdue
-  ON controls (organization_id)
-  WHERE next_test_due IS NOT NULL
-    AND next_test_due < CURRENT_DATE;
+-- Note: overdue check (next_test_due < CURRENT_DATE) happens at query time.
+-- The idx_controls_next_test_due index above is sufficient for performance.
