@@ -1,19 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 
 export function LogoutButton() {
   const [signingOut, setSigningOut] = useState(false);
-  const router = useRouter();
 
   async function handleLogout() {
     setSigningOut(true);
     try {
-      await fetch("/api/logout", { method: "POST" });
-    } finally {
-      router.push("/login");
+      await fetch("/api/auth-logout", { method: "POST", redirect: "manual" });
+    } catch {
+      // ignore — session may already be cleared
     }
+    window.location.href = "/login";
   }
 
   return (

@@ -39,6 +39,12 @@ export function Header({ organizationName, isAuthenticated, isPlatformUser = fal
           {isAuthenticated ? (
             <>
               <Link
+                href="/dashboard"
+                className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
+              >
+                Dashboard
+              </Link>
+              <Link
                 href="/briefs"
                 className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
               >
