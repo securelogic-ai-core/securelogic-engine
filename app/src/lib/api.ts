@@ -1143,3 +1143,17 @@ export async function getAiGovernanceAssessments(
     return null;
   }
 }
+
+export async function getAiSystemGovernanceContext(
+  apiKey: string,
+  systemId: string
+): Promise<ComplianceContext | null> {
+  try {
+    const res = await engineFetch(`/api/ai-systems/${encodeURIComponent(systemId)}/governance-context`, apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { governance_context: ComplianceContext | null };
+    return body.governance_context ?? null;
+  } catch {
+    return null;
+  }
+}

@@ -1,11 +1,26 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { getSession } from "@/lib/session";
+import { getAiSystem, getAiSystemGovernanceContext } from "@/lib/api";
+import { GovernanceAssessmentForm } from "./GovernanceAssessmentForm";
 
-export default async function AiSystemAssessPage({
+export default async function GovernanceAssessPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const session = await getSession();
+
+  const token = session.jwtToken ?? session.apiKey ?? null;
+  if (!token) redirect("/login");
+
+  const [system, governanceContext] = await Promise.all([
+    getAiSystem(token, id),
+    getAiSystemGovernanceContext(token, id),
+  ]);
+
+  if (!system) redirect("/ai-systems");
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-12">
@@ -14,28 +29,21 @@ export default async function AiSystemAssessPage({
         className="inline-flex items-center gap-1.5 text-xs font-medium mb-6 transition-colors hover:opacity-80"
         style={{ color: "#94a3b8" }}
       >
-        ← AI System
+        ← {system.name}
       </Link>
 
-      <h1 className="text-2xl font-bold mb-3" style={{ color: "#f1f5f9" }}>
+      <h1 className="text-2xl font-bold mb-2" style={{ color: "#f1f5f9" }}>
         New Governance Assessment
       </h1>
       <p className="text-sm mb-8" style={{ color: "#94a3b8" }}>
-        Track ongoing governance assessment workflow with status progression from not_started through compliant.
+        Track the governance assessment workflow for {system.name}.
       </p>
 
-      <div
-        className="rounded-xl border p-8 text-center"
-        style={{ background: "#0d1626", borderColor: "#1e2d45" }}
-      >
-        <div className="text-4xl mb-4">🔒</div>
-        <h2 className="text-lg font-semibold mb-2" style={{ color: "#f1f5f9" }}>
-          Coming Soon
-        </h2>
-        <p className="text-sm" style={{ color: "#94a3b8" }}>
-          The governance assessment form is under construction.
-        </p>
-      </div>
+      <GovernanceAssessmentForm
+        systemId={system.id}
+        systemName={system.name}
+        governanceContext={governanceContext}
+      />
     </div>
   );
 }

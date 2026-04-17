@@ -64,6 +64,7 @@ import vendorAssessmentAnalysisRouter from "./vendorAssessmentAnalysis.js";
 import vendorSignalContextRouter from "./vendorSignalContext.js";
 import controlComplianceContextRouter from "./controlComplianceContext.js";
 import obligationComplianceContextRouter from "./obligationComplianceContext.js";
+import aiSystemGovernanceContextRouter from "./aiSystemGovernanceContext.js";
 import risksRouter from "./risks.js";
 import riskTreatmentsRouter from "./riskTreatments.js";
 import cyberSignalsRouter from "./cyberSignals.js";
@@ -341,6 +342,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", vendorSignalContextRouter);
   router.use("/api", controlComplianceContextRouter);
   router.use("/api", obligationComplianceContextRouter);
+  router.use("/api", aiSystemGovernanceContextRouter);
   router.use("/api", aiSystemsRouter);
   router.use("/api", governanceReviewsRouter);
   router.use("/api", aiGovernanceAssessmentsRouter);
