@@ -261,7 +261,7 @@ function severityStyle(s: string | null): { badge: string; bar: string; label: s
 }
 
 function PostureDashboard({ summary }: { summary: DashboardSummary }) {
-  const { posture, domains, findings, actions, inventory } = summary;
+  const { posture, domains, findings, actions, controls_cadence, inventory } = summary;
   const hasSnapshot = posture.overall_score !== null;
   const style = severityStyle(posture.overall_severity);
 
@@ -361,6 +361,18 @@ function PostureDashboard({ summary }: { summary: DashboardSummary }) {
               </div>
             ))}
           </div>
+          {(controls_cadence?.overdue ?? 0) > 0 && (
+            <div className="mt-3 pt-3" style={{ borderTop: "1px solid #1e293b" }}>
+              <a
+                href="/controls?filter=overdue"
+                className="flex items-center justify-between text-xs font-medium transition-opacity hover:opacity-80"
+                style={{ color: "#fca5a5" }}
+              >
+                <span>Controls overdue for testing</span>
+                <span className="font-bold">{controls_cadence.overdue}</span>
+              </a>
+            </div>
+          )}
         </div>
       </div>
 

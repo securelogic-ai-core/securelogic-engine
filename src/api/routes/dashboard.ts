@@ -236,6 +236,26 @@ router.get(
         : 0;
 
       // -------------------------------------------------------
+      // 4b. Overdue controls count
+      // -------------------------------------------------------
+      const overdueControlsResult = await pg.query<{ overdue_count: string }>(
+        `
+        SELECT COUNT(*)::text AS overdue_count
+        FROM controls
+        WHERE organization_id = $1
+          AND next_test_due IS NOT NULL
+          AND next_test_due < CURRENT_DATE
+          AND testing_frequency IS NOT NULL
+          AND testing_frequency != 'ad_hoc'
+        `,
+        [organizationId]
+      );
+      const overdueControlsCount = parseInt(
+        overdueControlsResult.rows[0]?.overdue_count ?? "0",
+        10
+      );
+
+      // -------------------------------------------------------
       // 5a. Open risk counts by rating
       // -------------------------------------------------------
       const riskCountResult = await pg.query<{
@@ -360,6 +380,9 @@ router.get(
         actions: {
           open: openActionCount,
           overdue: overdueActionCount
+        },
+        controls_cadence: {
+          overdue: overdueControlsCount
         },
         risks_summary: {
           open: totalOpenRisks,

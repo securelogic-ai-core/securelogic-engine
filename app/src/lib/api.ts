@@ -136,6 +136,9 @@ export type DashboardSummary = {
     open: number;
     overdue: number;
   };
+  controls_cadence: {
+    overdue: number;
+  };
   inventory: {
     vendors: number;
     ai_systems: number;
@@ -469,6 +472,10 @@ export type Control = {
   name: string;
   description: string | null;
   owner_user_id: string | null;
+  testing_frequency: "monthly" | "quarterly" | "biannual" | "annual" | "ad_hoc" | null;
+  next_test_due: string | null;
+  last_tested_at: string | null;
+  is_overdue: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -1333,6 +1340,31 @@ export async function getControl(
 ): Promise<Control | null> {
   try {
     const res = await engineFetch(`/api/controls/${encodeURIComponent(id)}`, apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { control: Control };
+    return body.control ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function updateControl(
+  apiKey: string,
+  controlId: string,
+  updates: {
+    name?: string;
+    description?: string | null;
+    owner_user_id?: string | null;
+    testing_frequency?: Control["testing_frequency"];
+    next_test_due?: string | null;
+  }
+): Promise<Control | null> {
+  try {
+    const res = await engineFetch(`/api/controls/${encodeURIComponent(controlId)}`, apiKey, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
     if (!res.ok) return null;
     const body = (await res.json()) as { control: Control };
     return body.control ?? null;

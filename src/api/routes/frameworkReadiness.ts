@@ -135,7 +135,9 @@ router.get(
       const allControlIds = [...new Set(mappingsResult.rows.map((r) => r.control_id))];
 
       // Step 4: Fetch latest assessment status per control (DISTINCT ON pattern)
+      // Also fetch next_test_due and testing_frequency for overdue degradation.
       const latestStatusByControl = new Map<string, string>();
+      const overdueByControl = new Map<string, boolean>();
 
       if (allControlIds.length > 0) {
         const assessmentsResult = await pg.query<{
@@ -154,9 +156,32 @@ router.get(
         for (const row of assessmentsResult.rows) {
           latestStatusByControl.set(row.control_id, row.latest_status);
         }
+
+        // Fetch overdue status for each mapped control
+        const controlsResult = await pg.query<{
+          id: string;
+          is_overdue: boolean;
+        }>(
+          `SELECT id,
+             (next_test_due IS NOT NULL
+              AND next_test_due < CURRENT_DATE
+              AND testing_frequency IS NOT NULL
+              AND testing_frequency != 'ad_hoc'
+             ) AS is_overdue
+           FROM controls
+           WHERE id = ANY($1::uuid[])
+             AND organization_id = $2`,
+          [allControlIds, organizationId]
+        );
+
+        for (const row of controlsResult.rows) {
+          overdueByControl.set(row.id, row.is_overdue);
+        }
       }
 
       // Step 5: Classify each requirement and build response
+      // A passed control counts as 'satisfied' only if it is NOT overdue.
+      // A passed-but-overdue control counts as 'partial' (cadence degradation).
       type ReqStatus = "satisfied" | "partial" | "unmapped";
 
       let satisfiedCount = 0;
@@ -171,10 +196,14 @@ router.get(
           status = "unmapped";
           unmappedCount++;
         } else {
-          const hasPassed = controls.some(
-            (c) => latestStatusByControl.get(c.control_id) === "passed"
+          // satisfied = at least one mapped control with latest assessment = 'passed'
+          //             AND that control is not overdue for re-testing
+          const hasPassedAndFresh = controls.some(
+            (c) =>
+              latestStatusByControl.get(c.control_id) === "passed" &&
+              !overdueByControl.get(c.control_id)
           );
-          if (hasPassed) {
+          if (hasPassedAndFresh) {
             status = "satisfied";
             satisfiedCount++;
           } else {
