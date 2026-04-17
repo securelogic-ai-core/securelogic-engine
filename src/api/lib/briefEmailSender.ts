@@ -368,6 +368,8 @@ export type SendBriefResult = {
   skipped: boolean;
   /** Count of subscribers skipped because their preference filter removed all items. */
   skipped_filtered: number;
+  /** Count of subscribers skipped because their email is in email_suppressions. */
+  suppressed: number;
   message?: string;
 };
 
@@ -435,19 +437,55 @@ export async function sendBrief(
   );
 
   if (subscribersResult.rows.length === 0) {
-    return { sent: 0, failed: 0, skipped: true, skipped_filtered: 0, message: "no_active_subscribers" };
+    return { sent: 0, failed: 0, skipped: true, skipped_filtered: 0, suppressed: 0, message: "no_active_subscribers" };
   }
 
   const subject = buildSubject(brief.period_start, brief.period_end);
   const signalCount = parseInt(brief.signal_count, 10) || 0;
   const allItems = itemsResult.rows;
 
-  // 5. Send to each subscriber with per-subscriber preference filtering
+  // 5. Batch-check which subscriber emails are suppressed before sending.
+  const subscriberEmails = subscribersResult.rows.map(s => s.email.toLowerCase());
+  const suppressedResult = await pg.query<{ email: string }>(
+    `SELECT LOWER(email) AS email FROM email_suppressions
+     WHERE LOWER(email) = ANY($1::text[])`,
+    [subscriberEmails]
+  );
+  const suppressedEmails = new Set(suppressedResult.rows.map(r => r.email));
+
+  // 6. Send to each subscriber with per-subscriber preference filtering
   let sent = 0;
   let failed = 0;
   let skippedFiltered = 0;
+  let suppressed = 0;
 
   for (const subscriber of subscribersResult.rows) {
+    // Skip suppressed addresses and record the outcome.
+    if (suppressedEmails.has(subscriber.email.toLowerCase())) {
+      suppressed++;
+      logger.warn(
+        {
+          event: "brief_send_suppressed",
+          briefId,
+          subscriberId: subscriber.id,
+          email: subscriber.email,
+          orgId
+        },
+        "Brief send skipped — subscriber email is suppressed"
+      );
+      await pg.query(
+        `INSERT INTO intelligence_brief_sends (brief_id, subscriber_id, status, error_message)
+         VALUES ($1, $2, 'suppressed', 'email_suppressed')`,
+        [briefId, subscriber.id]
+      ).catch((err) => {
+        logger.warn(
+          { event: "brief_send_audit_failed", briefId, subscriberId: subscriber.id, err },
+          "Failed to record suppressed audit row"
+        );
+      });
+      continue;
+    }
+
     // Apply subscriber delivery preferences — filter items before rendering.
     const filteredItems = filterItemsByPreferences(allItems, {
       min_severity: subscriber.min_severity,
@@ -547,5 +585,5 @@ export async function sendBrief(
     }
   }
 
-  return { sent, failed, skipped: false, skipped_filtered: skippedFiltered };
+  return { sent, failed, skipped: false, skipped_filtered: skippedFiltered, suppressed };
 }
