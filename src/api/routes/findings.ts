@@ -95,9 +95,10 @@ router.post(
         confidence,
         time_sensitivity,
         scoring_rationale,
-        owner_user_id,
         due_date
       } = validation.input;
+
+      const owner_user_id = validation.input.owner_user_id ?? (req as any).autoUserId ?? null;
 
       // When source_type='risk', verify the risk belongs to this org
       if (source_type === "risk" && source_id !== null) {

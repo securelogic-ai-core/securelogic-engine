@@ -520,6 +520,7 @@ export type AuthLoginResponse =
         id: string;
         email: string;
         name: string;
+        role: string;
         organizationId: string;
         organizationName: string;
         entitlementLevel: string;
@@ -531,12 +532,42 @@ export type AuthMeResponse = {
   id: string;
   email: string;
   name: string;
+  role: string;
   organizationId: string;
   organizationName: string;
   entitlementLevel: string;
   billingActive: boolean;
   emailSuppressed?: boolean;
 };
+
+export type TeamMember = {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  status: string;
+  created_at: string;
+  last_used_at: string | null;
+};
+
+export type PendingInvite = {
+  id: string;
+  email: string;
+  role: string;
+  invited_by: string;
+  expires_at: string;
+  created_at: string;
+};
+
+export type TeamResponse = {
+  members: TeamMember[];
+  pending_invites: PendingInvite[];
+  seat_usage: { used: number; max: number };
+};
+
+export type InvitePreviewResponse =
+  | { valid: true; email: string; orgName: string; inviterName: string; role: string }
+  | { valid: false; reason: string };
 
 // =========================================================
 // HELPERS
@@ -953,6 +984,29 @@ export async function getAuthMe(
     });
     if (!res.ok) return null;
     return res.json() as Promise<AuthMeResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getTeamMembers(token: string): Promise<TeamResponse | null> {
+  try {
+    const res = await engineFetch("/api/team/members", token);
+    if (!res.ok) return null;
+    return res.json() as Promise<TeamResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getInvitePreview(token: string): Promise<InvitePreviewResponse | null> {
+  try {
+    const res = await fetch(
+      `${ENGINE_URL}/api/team/invites/${encodeURIComponent(token)}/preview`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<InvitePreviewResponse>;
   } catch {
     return null;
   }

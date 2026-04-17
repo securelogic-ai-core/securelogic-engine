@@ -30,6 +30,9 @@ export default async function RootLayout({
           isAuthenticated={isAuthenticated}
           isPlatformUser={isPlatformUser}
           organizationName={session.organizationName}
+          userName={session.name}
+          userEmail={session.email}
+          userRole={session.userRole}
         />
         <main className="flex-1">{children}</main>
         <footer className="border-t border-brand-line bg-brand-surface mt-16">

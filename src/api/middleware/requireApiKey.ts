@@ -5,6 +5,25 @@ import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { verifyJwt } from "../lib/jwt.js";
 
+declare global {
+  namespace Express {
+    interface Request {
+      /** UUID of the authenticated user (JWT path only) */
+      userId?: string;
+      /** Role of the authenticated user (JWT path only) */
+      userRole?: string;
+      /**
+       * When a JWT user is authenticated, this is their user UUID.
+       * Routes can use it as a fallback for owner_user_id when the
+       * caller doesn't provide one explicitly.
+       */
+      autoUserId?: string;
+    }
+  }
+}
+
+const MUTATION_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
+
 export async function requireApiKey(
   req: Request,
   res: Response,
@@ -45,6 +64,16 @@ export async function requireApiKey(
         return;
       }
 
+      // Viewer accounts may not perform mutations.
+      // API key auth (non-JWT) bypasses this check — API keys are admin-level.
+      if (payload.role === "viewer" && MUTATION_METHODS.has(req.method.toUpperCase())) {
+        res.status(403).json({
+          error: "read_only_access",
+          detail: "Viewer accounts cannot make changes."
+        });
+        return;
+      }
+
       const orgKeyResult = await pg.query(
         `SELECT * FROM api_keys
          WHERE organization_id = $1 AND status = 'active'
@@ -59,6 +88,9 @@ export async function requireApiKey(
 
       (req as any).apiKey     = orgKeyResult.rows[0];
       (req as any).jwtPayload = payload;
+      req.userId              = payload.sub;
+      req.userRole            = payload.role;
+      req.autoUserId          = payload.sub;
       next();
       return;
     }

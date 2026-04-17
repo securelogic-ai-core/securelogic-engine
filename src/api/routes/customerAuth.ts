@@ -337,7 +337,7 @@ router.post("/auth/verify-email", verifyLimiter, async (req, res) => {
     }
 
     const result = await pg.query(
-      `SELECT id, organization_id, name, email_verification_expires_at
+      `SELECT id, organization_id, name, role, email_verification_expires_at
        FROM users
        WHERE email_verification_token = $1 AND email_verified = FALSE
        LIMIT 1`,
@@ -349,7 +349,13 @@ router.post("/auth/verify-email", verifyLimiter, async (req, res) => {
       return;
     }
 
-    const user = result.rows[0] as { id: string; organization_id: string; name: string; email_verification_expires_at: Date };
+    const user = result.rows[0] as {
+      id: string;
+      organization_id: string;
+      name: string;
+      role: string;
+      email_verification_expires_at: Date;
+    };
 
     if (new Date() > new Date(user.email_verification_expires_at)) {
       res.status(410).json({ error: "token_expired" });
@@ -366,7 +372,7 @@ router.post("/auth/verify-email", verifyLimiter, async (req, res) => {
       [user.id]
     );
 
-    const jwt = signJwt(user.id, user.organization_id);
+    const jwt = signJwt(user.id, user.organization_id, user.role || "admin");
 
     logger.info({ event: "email_verified", userId: user.id }, "Email verified");
 
@@ -458,10 +464,11 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
       organization_id: string;
       name: string;
       email: string;
+      role: string;
       password_hash: string;
       email_verified: boolean;
     }>(
-      `SELECT id, organization_id, name, email, password_hash, email_verified
+      `SELECT id, organization_id, name, email, role, password_hash, email_verified
        FROM users
        WHERE email = $1
        LIMIT 1`,
@@ -508,10 +515,11 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
       [user.organization_id]
     );
 
-    const orgName        = orgResult.rows[0]?.name ?? "Your Organisation";
+    const orgName          = orgResult.rows[0]?.name ?? "Your Organisation";
     const entitlementLevel = orgResult.rows[0]?.entitlement_level ?? "starter";
+    const userRole         = user.role || "admin";
 
-    const jwt = signJwt(user.id, user.organization_id);
+    const jwt = signJwt(user.id, user.organization_id, userRole);
 
     logger.info({ event: "customer_login", userId: user.id }, "Customer logged in");
 
@@ -530,6 +538,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
         id: user.id,
         email: user.email,
         name: user.name,
+        role: userRole,
         organizationId: user.organization_id,
         organizationName: orgName,
         entitlementLevel
@@ -696,8 +705,8 @@ router.get("/auth/me", requireAuth, async (req, res) => {
     const userId = req.jwtPayload!.sub;
     const orgId  = req.jwtPayload!.org;
 
-    const userResult = await pg.query<{ id: string; email: string; name: string }>(
-      `SELECT id, email, name FROM users WHERE id = $1 LIMIT 1`,
+    const userResult = await pg.query<{ id: string; email: string; name: string; role: string }>(
+      `SELECT id, email, name, role FROM users WHERE id = $1 LIMIT 1`,
       [userId]
     );
 
@@ -731,6 +740,7 @@ router.get("/auth/me", requireAuth, async (req, res) => {
       id:               user.id,
       email:            user.email,
       name:             user.name,
+      role:             user.role || "admin",
       organizationId:   orgId,
       organizationName: org?.name ?? "Your Organisation",
       entitlementLevel: org?.entitlement_level ?? "starter",

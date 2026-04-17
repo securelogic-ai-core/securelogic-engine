@@ -93,7 +93,7 @@ router.post(
           organizationId,
           input.name,
           input.description ?? null,
-          input.owner_user_id ?? null
+          input.owner_user_id ?? (req as any).autoUserId ?? null
         ]
       );
 

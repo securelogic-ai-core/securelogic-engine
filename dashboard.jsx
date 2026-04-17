@@ -687,6 +687,7 @@ function BriefsView({ toast }) {
             <EmptyState icon="◈" title="Select a brief" subtitle="Choose a brief from the list." />
           ) : (
             <div>
+              
               {/* Brief header */}
               <Card style={{ padding: "20px 24px", marginBottom: 20 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
