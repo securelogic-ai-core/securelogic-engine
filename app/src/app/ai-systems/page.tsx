@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getAiSystems, getGovernanceReviews, type AiSystem } from "@/lib/api";
@@ -28,18 +29,30 @@ export default async function AiSystemsPage() {
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">
-      <div className="mb-8 flex items-baseline justify-between">
+      <div className="mb-8 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: '#f1f5f9' }}>AI Systems</h1>
+          <p className="text-xs mt-1" style={{ color: '#475569' }}>
+            Sorted by criticality
+          </p>
           <p className="text-sm mt-1" style={{ color: '#94a3b8' }}>
             AI systems under governance for this organization.
           </p>
         </div>
-        {aiSystems.length > 0 && (
-          <span className="text-sm" style={{ color: '#94a3b8' }}>
-            {aiSystems.length} system{aiSystems.length !== 1 ? "s" : ""}
-          </span>
-        )}
+        <div className="flex items-center gap-3 flex-shrink-0">
+          {aiSystems.length > 0 && (
+            <span className="text-sm" style={{ color: '#94a3b8' }}>
+              {aiSystems.length} system{aiSystems.length !== 1 ? "s" : ""}
+            </span>
+          )}
+          <Link
+            href="/ai-systems/new"
+            className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors hover:opacity-90"
+            style={{ background: "#00c4b4", color: "#0a0f1a" }}
+          >
+            Add AI System
+          </Link>
+        </div>
       </div>
 
       {/* Not entitled */}
@@ -54,9 +67,16 @@ export default async function AiSystemsPage() {
       {/* Entitled but no systems yet */}
       {systemsData !== null && aiSystems.length === 0 && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
-          <p className="text-sm" style={{ color: '#94a3b8' }}>
-            No AI systems registered. Add AI systems via the API to populate this view.
+          <p className="text-sm mb-3" style={{ color: '#94a3b8' }}>
+            No AI systems registered yet.
           </p>
+          <Link
+            href="/ai-systems/new"
+            className="inline-flex items-center px-4 py-2 rounded-lg text-sm font-semibold transition-colors hover:opacity-90"
+            style={{ background: "#00c4b4", color: "#0a0f1a" }}
+          >
+            Add AI System
+          </Link>
         </div>
       )}
 
@@ -64,11 +84,16 @@ export default async function AiSystemsPage() {
       {aiSystems.length > 0 && (
         <div className="space-y-3">
           {aiSystems.map((system) => (
-            <AiSystemRow
+            <Link
               key={system.id}
-              system={system}
-              reviewCount={reviewCountBySystem.get(system.id) ?? 0}
-            />
+              href={`/ai-systems/${system.id}`}
+              className="block hover:border-slate-500 cursor-pointer transition-colors rounded-xl"
+            >
+              <AiSystemRow
+                system={system}
+                reviewCount={reviewCountBySystem.get(system.id) ?? 0}
+              />
+            </Link>
           ))}
         </div>
       )}
