@@ -6,7 +6,7 @@ const entitlementRank: Record<EntitlementLevel, number> = {
   starter:      1,
   standard:     2, // legacy alias for professional
   professional: 2,
-  premium:      3  // Team
+  premium:      4  // premium / platform / team — all map here
 };
 
 export function requireEntitlement(minimumLevel: EntitlementLevel) {
@@ -24,7 +24,7 @@ export function requireEntitlement(minimumLevel: EntitlementLevel) {
         : "starter";
 
     const currentLevel: EntitlementLevel =
-      currentLevelRaw === "premium"
+      currentLevelRaw === "premium" || currentLevelRaw === "platform" || currentLevelRaw === "team"
         ? "premium"
         : currentLevelRaw === "professional" || currentLevelRaw === "standard"
           ? "professional"
