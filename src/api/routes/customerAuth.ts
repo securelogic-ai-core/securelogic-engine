@@ -706,19 +706,26 @@ router.get("/auth/me", requireAuth, async (req, res) => {
       return;
     }
 
-    const orgResult = await pg.query<{ name: string; entitlement_level: string; payment_failed_at: string | null }>(
-      `SELECT o.name, COALESCE(k.entitlement_level, 'starter') AS entitlement_level,
-              k.payment_failed_at
-       FROM organizations o
-       LEFT JOIN api_keys k ON k.organization_id = o.id AND k.status = 'active'
-       WHERE o.id = $1
-       ORDER BY k.created_at ASC
-       LIMIT 1`,
-      [orgId]
-    );
+    const [orgResult, suppressionResult] = await Promise.all([
+      pg.query<{ name: string; entitlement_level: string; payment_failed_at: string | null }>(
+        `SELECT o.name, COALESCE(k.entitlement_level, 'starter') AS entitlement_level,
+                k.payment_failed_at
+         FROM organizations o
+         LEFT JOIN api_keys k ON k.organization_id = o.id AND k.status = 'active'
+         WHERE o.id = $1
+         ORDER BY k.created_at ASC
+         LIMIT 1`,
+        [orgId]
+      ),
+      pg.query<{ id: string }>(
+        `SELECT id FROM email_suppressions WHERE LOWER(email) = LOWER($1) LIMIT 1`,
+        [userResult.rows[0]!.email]
+      )
+    ]);
 
-    const user   = userResult.rows[0]!;
-    const org    = orgResult.rows[0];
+    const user            = userResult.rows[0]!;
+    const org             = orgResult.rows[0];
+    const emailSuppressed = suppressionResult.rows.length > 0;
 
     res.status(200).json({
       id:               user.id,
@@ -727,7 +734,8 @@ router.get("/auth/me", requireAuth, async (req, res) => {
       organizationId:   orgId,
       organizationName: org?.name ?? "Your Organisation",
       entitlementLevel: org?.entitlement_level ?? "starter",
-      billingActive:    org?.entitlement_level !== "starter" && !org?.payment_failed_at
+      billingActive:    org?.entitlement_level !== "starter" && !org?.payment_failed_at,
+      emailSuppressed
     });
   } catch (err) {
     logger.error({ event: "auth_me_failed", err }, "GET /api/auth/me failed");

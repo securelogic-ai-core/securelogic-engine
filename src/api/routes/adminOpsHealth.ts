@@ -13,7 +13,8 @@ router.get("/ops/health", async (_req, res) => {
       failedWorkerRunsResult,
       staleRunningWorkersResult,
       latestIssueResult,
-      latestProviderEventResult
+      latestProviderEventResult,
+      suppressedPayingResult
     ] = await Promise.all([
       pg.query(
         `
@@ -66,6 +67,17 @@ router.get("/ops/health", async (_req, res) => {
         ORDER BY created_at DESC
         LIMIT 1
         `
+      ),
+      pg.query(
+        `
+        SELECT COUNT(DISTINCT u.id)::int AS suppressed_paying_count
+        FROM users u
+        INNER JOIN organizations o ON o.id = u.organization_id
+        INNER JOIN api_keys k ON k.organization_id = o.id AND k.status = 'active'
+        INNER JOIN email_suppressions es ON LOWER(es.email) = LOWER(u.email)
+        WHERE k.entitlement_level IN ('professional', 'premium', 'platform', 'team')
+          AND o.status = 'active'
+        `
       )
     ])
 
@@ -77,6 +89,9 @@ router.get("/ops/health", async (_req, res) => {
     )
     const staleRunningWorkers = Number(
       staleRunningWorkersResult.rows[0]?.stale_running_workers ?? 0
+    )
+    const suppressedPayingCount = Number(
+      suppressedPayingResult.rows[0]?.suppressed_paying_count ?? 0
     )
 
     let status: "healthy" | "degraded" | "failing" = "healthy"
@@ -107,6 +122,12 @@ router.get("/ops/health", async (_req, res) => {
       reasons.push("suppression_volume_elevated")
     }
 
+    if (suppressedPayingCount > 0) {
+      if (status === "healthy") status = "degraded"
+      const noun = suppressedPayingCount === 1 ? "subscriber has" : "subscribers have"
+      reasons.push(`${suppressedPayingCount} paying ${noun} suppressed email`)
+    }
+
     res.status(200).json({
       ok: true,
       health: {
@@ -115,6 +136,7 @@ router.get("/ops/health", async (_req, res) => {
         queuedDeliveriesCount: queuedCount,
         deadLetterCount,
         suppressionCount,
+        suppressedPayingCount,
         failedWorkerRunsLast24h,
         staleRunningWorkers,
         latestIssue: latestIssueResult.rows[0] ?? null,

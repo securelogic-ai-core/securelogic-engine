@@ -327,6 +327,7 @@ export type AuthMeResponse = {
   organizationName: string;
   entitlementLevel: string;
   billingActive: boolean;
+  emailSuppressed?: boolean;
 };
 
 // =========================================================

@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getIssues, getMe, getDashboardSummary, type DashboardSummary } from "@/lib/api";
+import { getIssues, getMe, getDashboardSummary, getAuthMe, type DashboardSummary } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
 
@@ -24,15 +24,18 @@ export default async function DashboardPage({
   // Fetch live account data, issues, and posture summary in parallel.
   // getMe() is the source of truth for entitlement — never rely on the
   // session cookie alone, which may be stale after a Stripe upgrade.
-  const [me, issuesData, dashboardSummary] = await Promise.all([
+  // getAuthMe() provides user-level data (including suppression status) for JWT sessions.
+  const [me, issuesData, dashboardSummary, authMe] = await Promise.all([
     getMe(token),
     getIssues(token),
     getDashboardSummary(token),
+    session.jwtToken ? getAuthMe(session.jwtToken) : Promise.resolve(null),
   ]);
 
   const latestIssue = issuesData?.issues?.[0] ?? null;
   const entitlementLevel = me?.entitlementLevel ?? "starter";
   const isPaid = ["premium", "professional", "platform", "team"].includes(entitlementLevel);
+  const emailSuppressed = (authMe?.emailSuppressed ?? false) && isPaid;
   // Platform access: full posture dashboard, vendor/AI/controls features
   const isPlatformUser = entitlementLevel === "premium" || entitlementLevel === "platform" || entitlementLevel === "team";
   const isTeamTier = entitlementLevel === "team";
@@ -44,6 +47,25 @@ export default async function DashboardPage({
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-12">
+      {/* Email suppression warning — paid subscriber not receiving briefs */}
+      {emailSuppressed && (
+        <div className="mb-6 bg-red-950/50 border border-red-700/60 rounded-xl px-5 py-4 flex items-start gap-3">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5">
+            <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495ZM10 5a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 5Zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clipRule="evenodd" />
+          </svg>
+          <div>
+            <p className="text-red-300 font-semibold text-sm">⚠️ Your email address is not receiving briefs.</p>
+            <p className="text-red-400/80 text-xs mt-1">
+              Your subscription is active but brief delivery is blocked. Please contact{" "}
+              <a href="mailto:hello@securelogicai.com" className="underline hover:text-red-300">
+                hello@securelogicai.com
+              </a>{" "}
+              to resolve this.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Upgrade success banner */}
       {justUpgraded && (
         <div className="mb-6 bg-teal-900/40 border border-teal-700/50 rounded-xl px-5 py-4 flex items-center gap-3">
