@@ -40,13 +40,13 @@ export default async function ControlsPage() {
     <div className="max-w-5xl mx-auto px-6 py-12">
       <div className="mb-8 flex items-baseline justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Controls</h1>
-          <p className="text-slate-500 text-sm mt-1">
+          <h1 className="text-2xl font-bold" style={{ color: '#f1f5f9' }}>Controls</h1>
+          <p className="text-sm mt-1" style={{ color: '#94a3b8' }}>
             Security and compliance controls tracked for this organization.
           </p>
         </div>
         {controls.length > 0 && (
-          <span className="text-sm text-slate-500">
+          <span className="text-sm" style={{ color: '#94a3b8' }}>
             {controls.length} control{controls.length !== 1 ? "s" : ""}
           </span>
         )}
@@ -54,8 +54,8 @@ export default async function ControlsPage() {
 
       {/* Not entitled */}
       {controlsData === null && (
-        <div className="bg-slate-50 border border-slate-200 rounded-xl p-8 text-center">
-          <p className="text-sm text-slate-500">
+        <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
+          <p className="text-sm" style={{ color: '#94a3b8' }}>
             Controls data is not available for your current plan.
           </p>
         </div>
@@ -63,8 +63,8 @@ export default async function ControlsPage() {
 
       {/* Entitled but no controls yet */}
       {controlsData !== null && controls.length === 0 && (
-        <div className="bg-white border border-slate-200 rounded-xl p-8 text-center shadow-sm">
-          <p className="text-sm text-slate-500">
+        <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
+          <p className="text-sm" style={{ color: '#94a3b8' }}>
             No controls defined. Add controls via the API to populate this view.
           </p>
         </div>
@@ -91,25 +91,28 @@ export default async function ControlsPage() {
 // Sub-components
 // ─────────────────────────────────────────────────────────────
 
-const STATUS_STYLES: Record<string, string> = {
-  passed:               "bg-green-100 text-green-800",
-  failed:               "bg-red-100 text-red-800",
-  remediation_required: "bg-orange-100 text-orange-800",
-  in_progress:          "bg-blue-100 text-blue-800",
+const STATUS_BADGE_STYLES: Record<string, React.CSSProperties> = {
+  passed:               { background: 'rgba(34,197,94,0.15)',   color: '#86efac' },
+  failed:               { background: 'rgba(239,68,68,0.15)',   color: '#fca5a5' },
+  remediation_required: { background: 'rgba(249,115,22,0.15)',  color: '#fdba74' },
+  in_progress:          { background: 'rgba(59,130,246,0.15)',  color: '#93c5fd' },
 };
 
-const SEVERITY_STYLES: Record<string, string> = {
-  Critical: "bg-red-100 text-red-800",
-  High:     "bg-orange-100 text-orange-800",
-  Moderate: "bg-amber-100 text-amber-800",
-  Low:      "bg-green-100 text-green-800",
+const SEVERITY_BADGE_STYLES: Record<string, React.CSSProperties> = {
+  Critical: { background: 'rgba(239,68,68,0.15)',   color: '#fca5a5' },
+  High:     { background: 'rgba(249,115,22,0.15)',  color: '#fdba74' },
+  Moderate: { background: 'rgba(245,158,11,0.15)',  color: '#fcd34d' },
+  Low:      { background: 'rgba(34,197,94,0.15)',   color: '#86efac' },
 };
 
 function StatusBadge({ status }: { status: string }) {
-  const cls = STATUS_STYLES[status] ?? "bg-slate-100 text-slate-600";
+  const style = STATUS_BADGE_STYLES[status] ?? { background: 'rgba(148,163,184,0.15)', color: '#94a3b8' };
   const label = status.replace(/_/g, " ");
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${cls}`}>
+    <span
+      className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold"
+      style={style}
+    >
       {label.charAt(0).toUpperCase() + label.slice(1)}
     </span>
   );
@@ -117,9 +120,12 @@ function StatusBadge({ status }: { status: string }) {
 
 function SeverityBadge({ severity }: { severity: string | null }) {
   if (!severity) return null;
-  const cls = SEVERITY_STYLES[severity] ?? "bg-slate-100 text-slate-600";
+  const style = SEVERITY_BADGE_STYLES[severity] ?? { background: 'rgba(148,163,184,0.15)', color: '#94a3b8' };
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${cls}`}>
+    <span
+      className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold"
+      style={style}
+    >
       {severity}
     </span>
   );
@@ -144,12 +150,12 @@ function ControlRow({
       : null;
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+    <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
       <div className="flex items-start justify-between gap-4">
         {/* Left: name + description + latest assessment state */}
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-semibold text-slate-900">
+            <span className="text-sm font-semibold" style={{ color: '#f1f5f9' }}>
               {control.name}
             </span>
             {latestAssessment && (
@@ -160,12 +166,12 @@ function ControlRow({
             )}
           </div>
           {control.description && (
-            <p className="mt-1 text-xs text-slate-500 line-clamp-2">
+            <p className="mt-1 text-xs line-clamp-2" style={{ color: '#94a3b8' }}>
               {control.description}
             </p>
           )}
           {latestAssessment?.summary && (
-            <p className="mt-1 text-xs text-slate-400 line-clamp-1">
+            <p className="mt-1 text-xs line-clamp-1" style={{ color: '#475569' }}>
               {latestAssessment.summary}
             </p>
           )}
@@ -174,7 +180,7 @@ function ControlRow({
         {/* Right: assessment count + last tested */}
         <div className="flex-shrink-0 text-right space-y-1">
           <div>
-            <span className="text-xs text-slate-500">
+            <span className="text-xs" style={{ color: '#94a3b8' }}>
               {assessmentCount > 0
                 ? `${assessmentCount} assessment${assessmentCount !== 1 ? "s" : ""}`
                 : "Not assessed"}
@@ -182,7 +188,7 @@ function ControlRow({
           </div>
           {performedAt && (
             <div>
-              <span className="text-xs text-slate-400">
+              <span className="text-xs" style={{ color: '#475569' }}>
                 Tested {performedAt}
               </span>
             </div>

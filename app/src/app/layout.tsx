@@ -21,7 +21,7 @@ export default async function RootLayout({
   // is non-security-critical; actual page/API access is gated at the page level.
   const entitlementLevel = session.entitlementLevel ?? "free";
   const isPlatformUser =
-    entitlementLevel === "premium" || entitlementLevel === "platform";
+    entitlementLevel === "premium" || entitlementLevel === "platform" || entitlementLevel === "team";
 
   return (
     <html lang="en">

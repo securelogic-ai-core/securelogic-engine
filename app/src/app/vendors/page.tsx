@@ -30,13 +30,13 @@ export default async function VendorsPage() {
     <div className="max-w-5xl mx-auto px-6 py-12">
       <div className="mb-8 flex items-baseline justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Vendors</h1>
-          <p className="text-slate-500 text-sm mt-1">
+          <h1 className="text-2xl font-bold" style={{ color: '#f1f5f9' }}>Vendors</h1>
+          <p className="text-sm mt-1" style={{ color: '#94a3b8' }}>
             Third-party vendors tracked for this organization.
           </p>
         </div>
         {vendors.length > 0 && (
-          <span className="text-sm text-slate-500">
+          <span className="text-sm" style={{ color: '#94a3b8' }}>
             {vendors.length} active
           </span>
         )}
@@ -44,8 +44,8 @@ export default async function VendorsPage() {
 
       {/* Not entitled — both calls returned null */}
       {vendorsData === null && (
-        <div className="bg-slate-50 border border-slate-200 rounded-xl p-8 text-center">
-          <p className="text-sm text-slate-500">
+        <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
+          <p className="text-sm" style={{ color: '#94a3b8' }}>
             Vendor data is not available for your current plan.
           </p>
         </div>
@@ -53,8 +53,8 @@ export default async function VendorsPage() {
 
       {/* Entitled but no vendors yet */}
       {vendorsData !== null && vendors.length === 0 && (
-        <div className="bg-white border border-slate-200 rounded-xl p-8 text-center shadow-sm">
-          <p className="text-sm text-slate-500">
+        <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
+          <p className="text-sm" style={{ color: '#94a3b8' }}>
             No active vendors. Add vendors via the API to populate this view.
           </p>
         </div>
@@ -80,18 +80,21 @@ export default async function VendorsPage() {
 // Sub-components
 // ─────────────────────────────────────────────────────────────
 
-const CRITICALITY_STYLES: Record<string, string> = {
-  critical: "bg-red-100 text-red-800",
-  high:     "bg-orange-100 text-orange-800",
-  medium:   "bg-amber-100 text-amber-800",
-  low:      "bg-green-100 text-green-800",
+const CRITICALITY_BADGE_STYLES: Record<string, React.CSSProperties> = {
+  critical: { background: 'rgba(239,68,68,0.15)',   color: '#fca5a5' },
+  high:     { background: 'rgba(249,115,22,0.15)',  color: '#fdba74' },
+  medium:   { background: 'rgba(245,158,11,0.15)',  color: '#fcd34d' },
+  low:      { background: 'rgba(34,197,94,0.15)',   color: '#86efac' },
 };
 
 function CriticalityBadge({ value }: { value: string | null }) {
-  if (!value) return <span className="text-xs text-slate-400">—</span>;
-  const cls = CRITICALITY_STYLES[value] ?? "bg-slate-100 text-slate-600";
+  if (!value) return <span className="text-xs" style={{ color: '#475569' }}>—</span>;
+  const style = CRITICALITY_BADGE_STYLES[value] ?? { background: 'rgba(148,163,184,0.15)', color: '#94a3b8' };
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${cls}`}>
+    <span
+      className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold"
+      style={style}
+    >
       {value.charAt(0).toUpperCase() + value.slice(1)}
     </span>
   );
@@ -100,9 +103,9 @@ function CriticalityBadge({ value }: { value: string | null }) {
 function MetaChip({ label, value }: { label: string; value: string | null }) {
   if (!value) return null;
   return (
-    <span className="inline-flex items-center gap-1 text-xs text-slate-500">
-      <span className="text-slate-400">{label}:</span>
-      <span className="text-slate-700">{value}</span>
+    <span className="inline-flex items-center gap-1 text-xs">
+      <span style={{ color: '#94a3b8' }}>{label}:</span>
+      <span style={{ color: '#cbd5e1' }}>{value}</span>
     </span>
   );
 }
@@ -123,18 +126,18 @@ function VendorRow({
     : null;
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+    <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
       <div className="flex items-start justify-between gap-4">
         {/* Left: name + meta */}
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-semibold text-slate-900 truncate">
+            <span className="text-sm font-semibold truncate" style={{ color: '#f1f5f9' }}>
               {vendor.name}
             </span>
             <CriticalityBadge value={vendor.criticality} />
           </div>
           {vendor.service_description && (
-            <p className="mt-1 text-xs text-slate-500 line-clamp-2">
+            <p className="mt-1 text-xs line-clamp-2" style={{ color: '#94a3b8' }}>
               {vendor.service_description}
             </p>
           )}
@@ -143,7 +146,7 @@ function VendorRow({
             <MetaChip label="Data"        value={vendor.data_sensitivity} />
             <MetaChip label="Access"      value={vendor.access_level} />
             {vendor.website && (
-              <span className="text-xs text-slate-400 truncate max-w-xs">
+              <span className="text-xs truncate max-w-xs" style={{ color: '#475569' }}>
                 {vendor.website}
               </span>
             )}
@@ -153,7 +156,7 @@ function VendorRow({
         {/* Right: assessment count + last reviewed */}
         <div className="flex-shrink-0 text-right space-y-1">
           <div>
-            <span className="text-xs text-slate-500">
+            <span className="text-xs" style={{ color: '#94a3b8' }}>
               {assessmentCount > 0
                 ? `${assessmentCount} assessment${assessmentCount !== 1 ? "s" : ""}`
                 : "No assessments"}
@@ -161,7 +164,7 @@ function VendorRow({
           </div>
           {lastReviewed && (
             <div>
-              <span className="text-xs text-slate-400">
+              <span className="text-xs" style={{ color: '#475569' }}>
                 Reviewed {lastReviewed}
               </span>
             </div>
