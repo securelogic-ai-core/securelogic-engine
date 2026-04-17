@@ -11,7 +11,7 @@ import {
   type VendorReview,
   type Finding,
 } from "@/lib/api";
-import { FindingCard } from "./FindingCard";
+import { FindingCard } from "@/components/FindingCard";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -263,7 +263,7 @@ function OpenFindingsSectionClient({
       ) : (
         <div className="space-y-3">
           {findings.map((f) => (
-            <FindingCard key={f.id} finding={f} vendorId={vendorId} />
+            <FindingCard key={f.id} finding={f} revalidateUrl={`/vendors/${vendorId}`} />
           ))}
         </div>
       )}

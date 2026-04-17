@@ -9,6 +9,8 @@ import {
   type ObligationAssessment,
   type Finding,
 } from "@/lib/api";
+import { FindingCard } from "@/components/FindingCard";
+import { AssessmentStatusCard } from "./AssessmentStatusCard";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -121,7 +123,7 @@ function ObligationStatusBadge({ status }: { status: string }) {
 // Section: Open Findings
 // ─────────────────────────────────────────────────────────────
 
-function OpenFindingsSection({ findings }: { findings: Finding[] }) {
+function OpenFindingsSection({ findings, obligationId }: { findings: Finding[]; obligationId: string }) {
   return (
     <section>
       <div className="flex items-center gap-2 mb-4">
@@ -144,39 +146,9 @@ function OpenFindingsSection({ findings }: { findings: Finding[] }) {
           <p className="text-sm" style={{ color: "#94a3b8" }}>No open findings</p>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-3">
           {findings.map((f) => (
-            <div key={f.id} className="bg-brand-surface border border-brand-line rounded-xl p-5">
-              <div className="flex items-start gap-2 flex-wrap mb-2">
-                <SeverityBadge severity={f.severity} />
-                {f.priority && <PriorityBadge priority={f.priority} />}
-                <FindingStatusBadge status={f.status} />
-              </div>
-              <p className="text-sm font-semibold mb-1.5" style={{ color: "#f1f5f9" }}>
-                {f.title}
-              </p>
-              <p className="text-xs line-clamp-3 mb-2" style={{ color: "#94a3b8" }}>
-                {f.description}
-              </p>
-              {f.due_date && (
-                <p className="text-xs mb-2" style={{ color: "#475569" }}>
-                  Due: {fmt(f.due_date)}
-                </p>
-              )}
-              {f.recommendation && (
-                <div
-                  className="mt-3 rounded-lg px-3 py-2"
-                  style={{ borderLeft: "3px solid #00c4b4", background: "rgba(0,196,180,0.06)" }}
-                >
-                  <p className="text-xs font-medium mb-0.5" style={{ color: "#94a3b8" }}>
-                    Recommendation
-                  </p>
-                  <p className="text-xs" style={{ color: "#cbd5e1" }}>
-                    {f.recommendation}
-                  </p>
-                </div>
-              )}
-            </div>
+            <FindingCard key={f.id} finding={f} revalidateUrl={`/obligations/${obligationId}`} />
           ))}
         </div>
       )}
@@ -455,7 +427,7 @@ export default async function ObligationDetailPage({
       <div className="flex flex-col lg:flex-row gap-8">
         {/* Left: main content */}
         <div className="flex-1 min-w-0 space-y-8">
-          <OpenFindingsSection findings={openFindings} />
+          <OpenFindingsSection findings={openFindings} obligationId={obligation.id} />
           <AssessmentHistorySection
             assessments={assessments}
             assessmentIdsWithFindings={assessmentIdsWithFindings}
@@ -470,6 +442,9 @@ export default async function ObligationDetailPage({
             assessmentCount={assessments.length}
             latestAssessment={latestAssessment}
           />
+          {latestAssessment && (
+            <AssessmentStatusCard assessment={latestAssessment} obligationId={obligation.id} />
+          )}
           <ActionsCard obligationId={obligation.id} />
         </div>
       </div>
