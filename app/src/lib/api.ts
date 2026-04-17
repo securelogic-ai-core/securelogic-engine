@@ -252,6 +252,13 @@ export type FindingsParams = {
   limit?: number;
 };
 
+export type ComplianceContext = {
+  suggestedSeverity: "Critical" | "High" | "Moderate" | "Low" | null;
+  suggestedSummary: string;
+  riskIndicators: string[];
+  assessmentGuidance: string;
+};
+
 export type VendorSignalContextMatch = {
   title: string;
   relevance: string;
@@ -831,6 +838,34 @@ export async function getVendorSignalContext(
     if (!res.ok) return null;
     const body = (await res.json()) as { signal_context: VendorSignalContext };
     return body.signal_context ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getControlComplianceContext(
+  apiKey: string,
+  controlId: string
+): Promise<ComplianceContext | null> {
+  try {
+    const res = await engineFetch(`/api/controls/${encodeURIComponent(controlId)}/compliance-context`, apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { compliance_context: ComplianceContext };
+    return body.compliance_context ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getObligationComplianceContext(
+  apiKey: string,
+  obligationId: string
+): Promise<ComplianceContext | null> {
+  try {
+    const res = await engineFetch(`/api/obligations/${encodeURIComponent(obligationId)}/compliance-context`, apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { compliance_context: ComplianceContext };
+    return body.compliance_context ?? null;
   } catch {
     return null;
   }

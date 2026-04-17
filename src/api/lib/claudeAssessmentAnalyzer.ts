@@ -148,6 +148,91 @@ If no signals match, return matchedSignals as an empty array, overallRiskSummary
 }
 
 // ---------------------------------------------------------------------------
+// analyzeComplianceContext  (Haiku — cost at scale)
+// ---------------------------------------------------------------------------
+
+export type ComplianceContext = {
+  suggestedSeverity: "Critical" | "High" | "Moderate" | "Low" | null;
+  suggestedSummary: string;
+  riskIndicators: string[];
+  assessmentGuidance: string;
+};
+
+/**
+ * Generate a brief compliance context card for a control or obligation
+ * before the assessor starts filling out the form.
+ *
+ * @param itemType        "control" or "obligation"
+ * @param itemName        Name of the control or obligation.
+ * @param itemDescription Optional description for more context.
+ * @param recentFindings  Recent open findings linked to this item (titles + severities).
+ */
+export async function analyzeComplianceContext(
+  itemType: "control" | "obligation",
+  itemName: string,
+  itemDescription: string | null,
+  recentFindings: Array<{ title: string; severity: string }>
+): Promise<ComplianceContext | null> {
+  const client = getClient();
+  if (!client) return null;
+
+  const findingsText =
+    recentFindings.length > 0
+      ? recentFindings
+          .slice(0, 10)
+          .map((f) => `[${f.severity}] ${f.title}`)
+          .join("\n")
+      : "None";
+
+  const prompt = `You are a compliance analyst preparing context for a ${itemType} assessment.
+
+${itemType === "control" ? "Control" : "Obligation"}: ${itemName}
+${itemDescription ? `Description: ${itemDescription}` : ""}
+
+Recent open findings linked to this ${itemType}:
+${findingsText}
+
+Provide a brief compliance context to help the assessor focus their review.
+
+Return valid JSON only — no markdown, no code fences:
+{
+  "suggestedSeverity": "Critical|High|Moderate|Low|null",
+  "suggestedSummary": "1-2 sentence summary of what to look for in this assessment based on the ${itemType} name and any existing findings",
+  "riskIndicators": ["up to 3 short risk indicators or focus areas for this ${itemType}"],
+  "assessmentGuidance": "1-2 sentence practical guidance for the assessor on what evidence to gather or tests to perform"
+}
+
+If no meaningful context can be derived, set suggestedSeverity to null and provide generic but useful guidance.`;
+
+  try {
+    const message = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 800,
+      messages: [{ role: "user", content: prompt }]
+    });
+
+    const raw = message.content
+      .filter((c) => c.type === "text")
+      .map((c) => (c as { type: "text"; text: string }).text)
+      .join("")
+      .trim();
+
+    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
+    const parsed = JSON.parse(cleaned) as Partial<ComplianceContext>;
+
+    return {
+      suggestedSeverity: parsed.suggestedSeverity ?? null,
+      suggestedSummary: parsed.suggestedSummary ?? "",
+      riskIndicators: Array.isArray(parsed.riskIndicators) ? parsed.riskIndicators : [],
+      assessmentGuidance: parsed.assessmentGuidance ?? ""
+    };
+  } catch (err) {
+    logger.warn({ event: "compliance_context_failed", itemType, itemName, err }, "Compliance context analysis failed");
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // analyzeAssessmentDocument  (Sonnet — quality matters for document review)
 // ---------------------------------------------------------------------------
 
