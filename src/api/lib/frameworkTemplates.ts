@@ -14,8 +14,8 @@ export type FrameworkTemplate = {
 
 export const FRAMEWORK_TEMPLATES: Record<string, FrameworkTemplate> = {
   soc2: {
-    name: "SOC 2",
-    version: "Type II",
+    name: "SOC 2 Type II",
+    version: "2017",
     description:
       "AICPA Trust Services Criteria for security, availability, processing integrity, confidentiality, and privacy",
     requirements: [
