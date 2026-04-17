@@ -1523,3 +1523,43 @@ export async function getAiSystemGovernanceContext(
     return null;
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Alert Preferences
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type AlertPreferences = {
+  critical_finding_immediate: boolean;
+  high_finding_immediate: boolean;
+  daily_digest: boolean;
+  weekly_summary: boolean;
+};
+
+export async function getAlertPreferences(apiKey: string): Promise<AlertPreferences | null> {
+  try {
+    const res = await engineFetch("/api/alert-preferences", apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { preferences: AlertPreferences };
+    return body.preferences ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function updateAlertPreferences(
+  apiKey: string,
+  updates: Partial<AlertPreferences>
+): Promise<AlertPreferences | null> {
+  try {
+    const res = await engineFetch("/api/alert-preferences", apiKey, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { preferences: AlertPreferences };
+    return body.preferences ?? null;
+  } catch {
+    return null;
+  }
+}

@@ -16,6 +16,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { validateFindingCreate } from "../lib/findingValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { triggerFindingAlert } from "../lib/findingAlertTrigger.js";
 
 const router = Router();
 
@@ -170,6 +171,14 @@ router.post(
         resourceId: result.rows[0].id as string,
         payload: { severity, source_type: source_type ?? null },
         ipAddress: req.ip ?? null
+      });
+
+      triggerFindingAlert({
+        findingId: result.rows[0].id as string,
+        organizationId,
+        title: title as string,
+        severity: severity as string,
+        domain: (domain as string | null) ?? null,
       });
 
       res.status(201).json({ finding: result.rows[0] });

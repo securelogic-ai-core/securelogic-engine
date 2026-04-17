@@ -135,6 +135,22 @@ export default async function AccountPage({
           </div>
         )}
 
+        {/* Alert Preferences */}
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
+          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">
+            Alert Preferences
+          </h2>
+          <p className="text-sm text-slate-600 mb-4">
+            Configure which email alerts you receive for findings, daily digests, and weekly posture summaries.
+          </p>
+          <Link
+            href="/account/alerts"
+            className="text-sm font-medium text-teal-600 hover:text-teal-700 transition-colors"
+          >
+            Manage Alerts →
+          </Link>
+        </div>
+
         {/* API Key */}
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
           <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">
