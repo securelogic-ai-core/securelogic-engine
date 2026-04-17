@@ -17,6 +17,7 @@ import {
 } from "@/lib/api";
 import { FindingCard } from "@/components/FindingCard";
 import { AssessmentStatusCard } from "./AssessmentStatusCard";
+import { CadenceSection } from "./CadenceSection";
 import { FrameworkMappingsCard, type MappedRequirementDisplay } from "./FrameworkMappingsCard";
 import { EvidenceSection } from "./EvidenceSection";
 
@@ -441,6 +442,7 @@ export default async function ControlDetailPage({
         {/* Right: sidebar */}
         <div className="w-full lg:w-72 flex-shrink-0 space-y-4">
           <ControlDetailsCard control={control} />
+          <CadenceSection control={control} />
           <ComplianceSummaryCard
             openFindings={openFindings}
             assessmentCount={assessments.length}

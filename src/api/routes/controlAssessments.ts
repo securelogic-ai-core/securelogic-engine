@@ -582,6 +582,43 @@ router.patch(
         }
       }
 
+      // When transitioning to 'passed', update the parent control's
+      // last_tested_at and next_test_due based on its testing_frequency.
+      if (input.status === "passed") {
+        const freqRow = await client.query<{ testing_frequency: string | null }>(
+          `SELECT testing_frequency FROM controls WHERE id = $1`,
+          [existing.control_id]
+        );
+
+        const freq = freqRow.rows[0]?.testing_frequency ?? null;
+        const performedAt = (assessment.performed_at as string | null) ?? null;
+
+        const CADENCE_DAYS: Record<string, number> = {
+          monthly: 30, quarterly: 90, biannual: 180, annual: 365,
+        };
+
+        if (freq !== null && freq !== "ad_hoc" && freq in CADENCE_DAYS) {
+          const days = CADENCE_DAYS[freq]!;
+          await client.query(
+            `UPDATE controls
+             SET last_tested_at = COALESCE($3::date, CURRENT_DATE),
+                 next_test_due   = COALESCE($3::date, CURRENT_DATE) + ($4 * INTERVAL '1 day'),
+                 updated_at      = NOW()
+             WHERE id = $1 AND organization_id = $2`,
+            [existing.control_id, organizationId, performedAt, days]
+          );
+        } else if (freq !== null) {
+          // ad_hoc: record last_tested_at but leave next_test_due null
+          await client.query(
+            `UPDATE controls
+             SET last_tested_at = COALESCE($3::date, CURRENT_DATE),
+                 updated_at      = NOW()
+             WHERE id = $1 AND organization_id = $2`,
+            [existing.control_id, organizationId, performedAt]
+          );
+        }
+      }
+
       await client.query("COMMIT");
 
       logger.info(
