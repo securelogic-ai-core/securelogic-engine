@@ -33,6 +33,8 @@
 import { schedule } from "node-cron";
 import { logger } from "../infra/logger.js";
 import { runScheduler } from "./briefScheduler.js";
+import { runDailyDigest } from "./digestScheduler.js";
+import { runWeeklySummary } from "./summaryScheduler.js";
 
 /** True while a scheduler run is actively in progress. Prevents overlapping runs. */
 let isRunning = false;
@@ -91,5 +93,41 @@ export function startScheduler(): void {
   logger.info(
     { event: "scheduler_registered", schedule: "0 7 * * 1 (UTC)", description: "Every Monday 7:00 AM UTC" },
     "Intelligence Brief scheduler registered"
+  );
+
+  // Daily digest — 8:00 AM UTC every day
+  schedule(
+    "0 8 * * *",
+    async () => {
+      try {
+        await runDailyDigest();
+      } catch (err) {
+        logger.error({ event: "daily_digest_cron_error", err }, "Daily digest cron threw an unexpected error");
+      }
+    },
+    { timezone: "UTC" }
+  );
+
+  logger.info(
+    { event: "scheduler_registered", schedule: "0 8 * * * (UTC)", description: "Daily digest 8:00 AM UTC" },
+    "Daily digest scheduler registered"
+  );
+
+  // Weekly posture summary — 9:00 AM UTC every Monday
+  schedule(
+    "0 9 * * 1",
+    async () => {
+      try {
+        await runWeeklySummary();
+      } catch (err) {
+        logger.error({ event: "weekly_summary_cron_error", err }, "Weekly summary cron threw an unexpected error");
+      }
+    },
+    { timezone: "UTC" }
+  );
+
+  logger.info(
+    { event: "scheduler_registered", schedule: "0 9 * * 1 (UTC)", description: "Weekly summary Monday 9:00 AM UTC" },
+    "Weekly summary scheduler registered"
   );
 }
