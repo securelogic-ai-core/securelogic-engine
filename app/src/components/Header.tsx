@@ -76,6 +76,18 @@ export function Header({ organizationName, isAuthenticated, isPlatformUser = fal
                   >
                     Obligations
                   </Link>
+                  <Link
+                    href="/findings"
+                    className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
+                  >
+                    Findings
+                  </Link>
+                  <Link
+                    href="/risks"
+                    className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
+                  >
+                    Risk Register
+                  </Link>
                 </>
               )}
               <Link

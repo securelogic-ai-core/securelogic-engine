@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getIssues, getMe, getDashboardSummary, getAuthMe, type DashboardSummary } from "@/lib/api";
+import { getIssues, getMe, getDashboardSummary, getAuthMe, getFindings, type DashboardSummary, type Finding } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
 
@@ -31,6 +31,13 @@ export default async function DashboardPage({
     getDashboardSummary(token),
     session.jwtToken ? getAuthMe(session.jwtToken) : Promise.resolve(null),
   ]);
+
+  const entitlementLevelEarly = me?.entitlementLevel ?? "starter";
+  const isPlatformEarly = ["premium", "platform", "team"].includes(entitlementLevelEarly);
+  const recentFindingsData = isPlatformEarly
+    ? await getFindings(token, { status: "open", limit: 5 })
+    : null;
+  const recentFindings = recentFindingsData?.findings ?? [];
 
   const latestIssue = issuesData?.issues?.[0] ?? null;
   const entitlementLevel = me?.entitlementLevel ?? "starter";
@@ -162,6 +169,13 @@ export default async function DashboardPage({
           {!isPlatformUser && <UpgradeCard entitlementLevel={entitlementLevel} />}
         </div>
       </div>
+
+      {/* Recent Findings — platform subscribers only */}
+      {isPlatformUser && (
+        <div className="mt-10">
+          <RecentFindings findings={recentFindings} />
+        </div>
+      )}
 
       {/* Posture Dashboard — platform subscribers only */}
       {isPlatformUser ? (
@@ -490,6 +504,92 @@ function SamplePostureDashboard() {
           </form>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Recent Findings — compact list for platform dashboard
+// ─────────────────────────────────────────────────────────────
+
+const SEVERITY_BADGE_STYLES: Record<string, React.CSSProperties> = {
+  Critical: { background: "rgba(239,68,68,0.15)",  color: "#fca5a5" },
+  High:     { background: "rgba(249,115,22,0.15)", color: "#fdba74" },
+  Moderate: { background: "rgba(245,158,11,0.15)", color: "#fcd34d" },
+  Low:      { background: "rgba(34,197,94,0.15)",  color: "#86efac" },
+};
+
+const SOURCE_COMPACT_LABELS: Record<string, string> = {
+  vendor_review:        "Vendor",
+  control_test:         "Control",
+  obligation_review:    "Obligation",
+  ai_review:            "AI Review",
+  ai_governance_review: "AI Gov",
+  manual:               "Manual",
+  assessment:           "Assessment",
+  signal:               "Signal",
+  risk:                 "Risk",
+};
+
+function RecentFindings({ findings }: { findings: Finding[] }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">
+          Recent Findings
+        </h2>
+        <Link
+          href="/findings"
+          className="text-xs font-medium transition-colors"
+          style={{ color: "#00c4b4" }}
+        >
+          View all findings →
+        </Link>
+      </div>
+
+      {findings.length === 0 ? (
+        <div
+          className="rounded-xl border p-6 text-center"
+          style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(34,197,94,0.2)" }}
+        >
+          <p className="text-sm" style={{ color: "#86efac" }}>
+            No open findings. Your organization is in good shape.
+          </p>
+        </div>
+      ) : (
+        <div
+          className="rounded-xl border divide-y"
+          style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b", "--tw-divide-opacity": "1" } as React.CSSProperties}
+        >
+          {findings.map((f) => {
+            const sevStyle = SEVERITY_BADGE_STYLES[f.severity ?? ""] ?? { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
+            const sourceLabel = SOURCE_COMPACT_LABELS[f.source_type] ?? f.source_type;
+            return (
+              <div
+                key={f.id}
+                className="flex items-center gap-3 px-4 py-3"
+                style={{ borderColor: "#1e293b" }}
+              >
+                <span
+                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold shrink-0"
+                  style={sevStyle}
+                >
+                  {f.severity}
+                </span>
+                <span className="text-sm font-medium flex-1 truncate" style={{ color: "#f1f5f9" }}>
+                  {f.title}
+                </span>
+                <span
+                  className="text-xs shrink-0 px-2 py-0.5 rounded"
+                  style={{ background: "rgba(148,163,184,0.08)", color: "#64748b" }}
+                >
+                  {f.domain ?? sourceLabel}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
