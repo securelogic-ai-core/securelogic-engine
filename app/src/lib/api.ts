@@ -1006,3 +1006,77 @@ export async function getEvidence(
     return null;
   }
 }
+
+// ─── AI Governance types ─────────────────────────────────────────────────────
+
+export type AiGovernanceAssessment = {
+  id: string;
+  organization_id: string;
+  ai_system_id: string;
+  status: "not_started" | "in_progress" | "compliant" | "non_compliant" | "partially_compliant";
+  overall_severity: string | null;
+  summary: string | null;
+  notes: string | null;
+  performed_at: string | null;
+  reviewer_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AiGovernanceAssessmentsResponse = {
+  count: number;
+  limit: number;
+  organizationId: string;
+  nextCursor: { created_at: string; id: string } | null;
+  assessments: AiGovernanceAssessment[];
+};
+
+// ─── AI Governance API functions ─────────────────────────────────────────────
+
+export async function getAiSystem(
+  apiKey: string,
+  id: string
+): Promise<AiSystem | null> {
+  try {
+    const res = await engineFetch(`/api/ai-systems/${encodeURIComponent(id)}`, apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { ai_system: AiSystem };
+    return body.ai_system ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getGovernanceReviewsForSystem(
+  apiKey: string,
+  systemId: string,
+  limit = 20
+): Promise<GovernanceReviewsResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/governance-reviews?ai_system_id=${encodeURIComponent(systemId)}&limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<GovernanceReviewsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getAiGovernanceAssessments(
+  apiKey: string,
+  systemId: string,
+  limit = 20
+): Promise<AiGovernanceAssessmentsResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/ai-governance-assessments?ai_system_id=${encodeURIComponent(systemId)}&limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<AiGovernanceAssessmentsResponse>;
+  } catch {
+    return null;
+  }
+}
