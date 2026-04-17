@@ -70,6 +70,12 @@ export function Header({ organizationName, isAuthenticated, isPlatformUser = fal
                   >
                     Controls
                   </Link>
+                  <Link
+                    href="/obligations"
+                    className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
+                  >
+                    Obligations
+                  </Link>
                 </>
               )}
               <Link

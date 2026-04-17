@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import {
@@ -45,11 +46,20 @@ export default async function ControlsPage() {
             Security and compliance controls tracked for this organization.
           </p>
         </div>
-        {controls.length > 0 && (
-          <span className="text-sm" style={{ color: '#94a3b8' }}>
-            {controls.length} control{controls.length !== 1 ? "s" : ""}
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          {controls.length > 0 && (
+            <span className="text-sm" style={{ color: '#94a3b8' }}>
+              {controls.length} control{controls.length !== 1 ? "s" : ""}
+            </span>
+          )}
+          <Link
+            href="/controls/new"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+            style={{ background: "#00c4b4", color: "#0a0f1a" }}
+          >
+            + Add Control
+          </Link>
+        </div>
       </div>
 
       {/* Not entitled */}
@@ -74,12 +84,13 @@ export default async function ControlsPage() {
       {controls.length > 0 && (
         <div className="space-y-3">
           {controls.map((control) => (
-            <ControlRow
-              key={control.id}
-              control={control}
-              assessmentCount={assessmentCountByControl.get(control.id) ?? 0}
-              latestAssessment={latestAssessmentByControl.get(control.id) ?? null}
-            />
+            <Link key={control.id} href={`/controls/${control.id}`} className="block">
+              <ControlRow
+                control={control}
+                assessmentCount={assessmentCountByControl.get(control.id) ?? 0}
+                latestAssessment={latestAssessmentByControl.get(control.id) ?? null}
+              />
+            </Link>
           ))}
         </div>
       )}
@@ -150,7 +161,7 @@ function ControlRow({
       : null;
 
   return (
-    <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
+    <div className="bg-brand-surface border border-brand-line hover:border-slate-500 rounded-xl p-5 cursor-pointer transition-colors">
       <div className="flex items-start justify-between gap-4">
         {/* Left: name + description + latest assessment state */}
         <div className="min-w-0">

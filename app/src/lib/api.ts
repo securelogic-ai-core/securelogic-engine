@@ -807,3 +807,202 @@ export async function getFindings(
     return null;
   }
 }
+
+// ─── Obligation types ────────────────────────────────────────────────────────
+
+export type ObligationSummary = {
+  total: number;
+  by_status: {
+    active: number;
+    waived: number;
+    not_applicable: number;
+  };
+  by_domain: Record<string, number>;
+};
+
+export type Obligation = {
+  id: string;
+  organization_id: string;
+  title: string;
+  description: string | null;
+  source_regulation: string | null;
+  jurisdiction: string | null;
+  domain: string | null;
+  status: "active" | "waived" | "not_applicable";
+  priority: "immediate" | "near_term" | "planned" | "watch" | null;
+  due_date: string | null;
+  owner_user_id: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ObligationsParams = {
+  status?: string;
+  domain?: string;
+  limit?: number;
+};
+
+export type ObligationsResponse = {
+  count: number;
+  limit: number;
+  organizationId: string;
+  statusFilter: string;
+  nextCursor: { created_at: string; id: string } | null;
+  obligations: Obligation[];
+};
+
+export type ObligationAssessment = {
+  id: string;
+  organization_id: string;
+  obligation_id: string;
+  status: "not_started" | "in_progress" | "compliant" | "non_compliant" | "partially_compliant";
+  overall_severity: string | null;
+  summary: string | null;
+  notes: string | null;
+  performed_at: string | null;
+  reviewer_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ObligationAssessmentsResponse = {
+  count: number;
+  limit: number;
+  organizationId: string;
+  nextCursor: { created_at: string; id: string } | null;
+  assessments: ObligationAssessment[];
+};
+
+export type Evidence = {
+  id: string;
+  organization_id: string;
+  source_id: string;
+  source_type: string;
+  title: string;
+  description: string | null;
+  evidence_type: string;
+  collected_at: string | null;
+  collected_by: string | null;
+  external_ref: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type EvidenceResponse = {
+  count: number;
+  organizationId: string;
+  source_type: string;
+  source_id: string;
+  evidence: Evidence[];
+};
+
+// ─── Obligation API functions ─────────────────────────────────────────────────
+
+export async function getObligationSummary(
+  apiKey: string
+): Promise<ObligationSummary | null> {
+  try {
+    const res = await engineFetch("/api/obligations/summary", apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<ObligationSummary>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getObligations(
+  apiKey: string,
+  params?: ObligationsParams
+): Promise<ObligationsResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.domain) qs.set("domain", params.domain);
+    qs.set("limit", String(params?.limit ?? 50));
+    const res = await engineFetch(`/api/obligations?${qs.toString()}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<ObligationsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getObligation(
+  apiKey: string,
+  id: string
+): Promise<Obligation | null> {
+  try {
+    const res = await engineFetch(`/api/obligations/${encodeURIComponent(id)}`, apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { obligation: Obligation };
+    return body.obligation ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getObligationAssessments(
+  apiKey: string,
+  obligationId: string,
+  limit = 20
+): Promise<ObligationAssessmentsResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/obligation-assessments?obligation_id=${encodeURIComponent(obligationId)}&limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<ObligationAssessmentsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getControl(
+  apiKey: string,
+  id: string
+): Promise<Control | null> {
+  try {
+    const res = await engineFetch(`/api/controls/${encodeURIComponent(id)}`, apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { control: Control };
+    return body.control ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getControlAssessmentsForControl(
+  apiKey: string,
+  controlId: string,
+  limit = 20
+): Promise<ControlAssessmentsResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/control-assessments?control_id=${encodeURIComponent(controlId)}&limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<ControlAssessmentsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getEvidence(
+  apiKey: string,
+  sourceType: string,
+  sourceId: string
+): Promise<EvidenceResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/evidence?source_type=${encodeURIComponent(sourceType)}&source_id=${encodeURIComponent(sourceId)}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<EvidenceResponse>;
+  } catch {
+    return null;
+  }
+}
