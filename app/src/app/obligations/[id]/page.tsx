@@ -8,8 +8,10 @@ import {
   getObligationMappings,
   getFrameworks,
   getFrameworkReadiness,
+  getEvidence,
   type Obligation,
   type ObligationAssessment,
+  type Evidence,
   type Finding,
   type Framework,
   type ReadinessRequirement,
@@ -20,6 +22,7 @@ import {
   ObligationFrameworkMappingsCard,
   type ObligationMappedRequirement,
 } from "./FrameworkMappingsCard";
+import { EvidenceSection } from "./EvidenceSection";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -398,6 +401,13 @@ export default async function ObligationDetailPage({
   if (!obligation) redirect("/obligations");
 
   const assessments = assessmentsData?.assessments ?? [];
+  const latestAssessmentForEvidence = assessments[0] ?? null;
+
+  const evidenceData = latestAssessmentForEvidence
+    ? await getEvidence(token, "obligation_review", latestAssessmentForEvidence.id)
+    : null;
+  const latestEvidence: Evidence[] = evidenceData?.evidence ?? [];
+
   const allFindings = findingsData?.findings ?? [];
   const frameworks: Framework[] = frameworksData?.frameworks ?? [];
 
@@ -470,6 +480,11 @@ export default async function ObligationDetailPage({
           <AssessmentHistorySection
             assessments={assessments}
             assessmentIdsWithFindings={assessmentIdsWithFindings}
+          />
+          <EvidenceSection
+            assessmentId={latestAssessmentForEvidence?.id ?? null}
+            evidence={latestEvidence}
+            obligationId={obligation.id}
           />
         </div>
 

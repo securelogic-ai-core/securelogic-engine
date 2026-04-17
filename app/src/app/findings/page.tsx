@@ -130,13 +130,31 @@ export default async function FindingsPage({
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold mb-1" style={{ color: "#f1f5f9" }}>
-          Findings
-        </h1>
-        <p className="text-sm" style={{ color: "#94a3b8" }}>
-          All open findings across your organization
-        </p>
+      <div className="flex items-start justify-between gap-4 mb-8 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold mb-1" style={{ color: "#f1f5f9" }}>
+            Findings
+          </h1>
+          <p className="text-sm" style={{ color: "#94a3b8" }}>
+            All open findings across your organization
+          </p>
+        </div>
+        <a
+          href={`/api/export/findings${
+            Object.keys(currentSp).length > 0
+              ? `?${new URLSearchParams(
+                  Object.fromEntries(
+                    Object.entries(currentSp).filter(([, v]) => v !== undefined)
+                  ) as Record<string, string>
+                ).toString()}`
+              : ""
+          }`}
+          download
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex-shrink-0"
+          style={{ border: "1px solid #1e293b", color: "#94a3b8", background: "transparent" }}
+        >
+          ⬇ Export CSV
+        </a>
       </div>
 
       {/* Summary stat cards */}

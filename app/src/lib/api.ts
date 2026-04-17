@@ -1449,6 +1449,67 @@ export async function getAiGovernanceAssessments(
   }
 }
 
+// ─── Audit Package types ──────────────────────────────────────────────────────
+
+export type AuditPackageEvidenceItem = {
+  id: string;
+  title: string;
+  evidence_type: string;
+  description: string | null;
+  collected_at: string | null;
+  collected_by: string | null;
+  external_ref: string | null;
+};
+
+export type AuditPackageControl = {
+  control_id: string;
+  control_name: string;
+  assessment_id: string | null;
+  assessment_status: string | null;
+  overall_severity: string | null;
+  assessment_summary: string | null;
+  performed_at: string | null;
+  evidence: AuditPackageEvidenceItem[];
+};
+
+export type AuditPackageRequirement = {
+  id: string;
+  reference_id: string;
+  title: string;
+  status: "satisfied" | "partial" | "unmapped";
+  controls: AuditPackageControl[];
+};
+
+export type AuditPackage = {
+  generated_at: string;
+  organization: { name: string };
+  framework: { id: string; name: string; version: string };
+  readiness_summary: {
+    readiness_score: number;
+    total_requirements: number;
+    satisfied: number;
+    partial: number;
+    unmapped: number;
+  };
+  requirements: AuditPackageRequirement[];
+};
+
+export async function getAuditPackageJson(
+  apiKey: string,
+  frameworkId: string
+): Promise<AuditPackage | null> {
+  try {
+    const res = await engineFetch(
+      `/api/frameworks/${encodeURIComponent(frameworkId)}/audit-package`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<AuditPackage>;
+  } catch {
+    return null;
+  }
+}
+
 export async function getAiSystemGovernanceContext(
   apiKey: string,
   systemId: string
