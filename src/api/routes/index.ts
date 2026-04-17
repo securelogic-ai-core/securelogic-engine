@@ -24,6 +24,8 @@ import adminRequeueNewsletterDeliveryRouter from "./adminRequeueNewsletterDelive
 import adminRequeueNewsletterDeliveriesByIssueRouter from "./adminRequeueNewsletterDeliveriesByIssue.js";
 import adminEmailSuppressionsRouter from "./adminEmailSuppressions.js";
 import adminSuppressionsRouter from "./adminSuppressions.js";
+import adminBriefSubscribersRouter from "./adminBriefSubscribers.js";
+import adminIssuesRouter from "./adminIssues.js";
 import adminCreateEmailSuppressionRouter from "./adminCreateEmailSuppression.js";
 import adminDeleteEmailSuppressionRouter from "./adminDeleteEmailSuppression.js";
 import adminEmailProviderEventsRouter from "./adminEmailProviderEvents.js";
@@ -199,6 +201,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/admin", adminRequeueNewsletterDeliveriesByIssueRouter);
   router.use("/admin", adminEmailSuppressionsRouter);
   router.use("/admin", adminSuppressionsRouter);
+  router.use("/admin", adminBriefSubscribersRouter);
+  router.use("/admin", adminIssuesRouter);
   router.use("/admin", adminCreateEmailSuppressionRouter);
   router.use("/admin", adminDeleteEmailSuppressionRouter);
   router.use("/admin", adminEmailProviderEventsRouter);
