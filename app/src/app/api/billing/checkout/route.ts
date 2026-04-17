@@ -41,11 +41,12 @@ export async function POST(request: Request) {
 
   // Parse tier from form data. Default to "professional" so existing buttons
   // without a tier field continue to work (forward compat).
-  let tier: "professional" | "team" = "professional";
+  let tier: "professional" | "teams" | "team" = "professional";
   try {
     const form = await request.formData();
     const raw = form.get("tier");
     if (raw === "team") tier = "team";
+    else if (raw === "teams") tier = "teams";
   } catch {
     // formData() throws if content-type is not multipart/form-data —
     // fall through to the default tier

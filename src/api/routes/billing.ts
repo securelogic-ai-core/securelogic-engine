@@ -59,20 +59,28 @@ async function resolveStripeCustomer(
 /* =========================================================
    TIER → STRIPE PRICE ID MAPPING
 
-   Two paid tiers:
-     professional  →  STRIPE_PRICE_ID_PROFESSIONAL  ($49/mo)
-     team          →  STRIPE_PRICE_ID_TEAM           ($249/mo)
+   Three paid tiers:
+     professional  →  STRIPE_PRICE_ID_PROFESSIONAL  (Brief Pro, individual)
+     teams         →  STRIPE_PRICE_ID_TEAMS          (Brief Pro Teams, multi-seat)
+     team          →  STRIPE_PRICE_ID_TEAM            (Platform Professional)
 
-   The tier is passed in the request body, validated here, and
-   stored in Stripe session/subscription metadata so the webhook
-   can write the correct entitlement_level on completion.
+   Both "professional" and "teams" grant entitlement_level="professional"
+   (same brief content access). "team" grants entitlement_level="premium"
+   (full platform access).
+
+   The tier is passed in the request body, validated here, and stored in
+   Stripe session/subscription metadata so the webhook can write the
+   correct entitlement_level on completion.
    ========================================================= */
 
-const VALID_TIERS = new Set(["professional", "team"]);
+const VALID_TIERS = new Set(["professional", "teams", "team"]);
 
 function resolvePriceId(tier: string): string | null {
   if (tier === "professional") {
     return process.env.STRIPE_PRICE_ID_PROFESSIONAL?.trim() ?? null;
+  }
+  if (tier === "teams") {
+    return process.env.STRIPE_PRICE_ID_TEAMS?.trim() ?? null;
   }
   if (tier === "team") {
     return process.env.STRIPE_PRICE_ID_TEAM?.trim() ?? null;
@@ -97,11 +105,11 @@ router.post("/billing/checkout", requireApiKey, async (req, res) => {
     const tierRaw = typeof req.body?.tier === "string" ? req.body.tier.trim().toLowerCase() : null;
 
     if (!tierRaw || !VALID_TIERS.has(tierRaw)) {
-      res.status(400).json({ error: "invalid_tier", valid: ["professional", "team"] });
+      res.status(400).json({ error: "invalid_tier", valid: ["professional", "teams", "team"] });
       return;
     }
 
-    const tier = tierRaw as "professional" | "team";
+    const tier = tierRaw as "professional" | "teams" | "team";
     const priceId = resolvePriceId(tier);
     const successUrl =
       process.env.STRIPE_SUCCESS_URL?.trim() ??
