@@ -7,8 +7,10 @@ import {
   getFindings,
   getFrameworks,
   getFrameworkReadiness,
+  getEvidence,
   type Control,
   type ControlAssessment,
+  type Evidence,
   type Finding,
   type Framework,
   type ReadinessRequirement,
@@ -16,6 +18,7 @@ import {
 import { FindingCard } from "@/components/FindingCard";
 import { AssessmentStatusCard } from "./AssessmentStatusCard";
 import { FrameworkMappingsCard, type MappedRequirementDisplay } from "./FrameworkMappingsCard";
+import { EvidenceSection } from "./EvidenceSection";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -346,6 +349,13 @@ export default async function ControlDetailPage({
   if (!control) redirect("/controls");
 
   const assessments = assessmentsData?.assessments ?? [];
+  const latestAssessmentForEvidence = assessments[0] ?? null;
+
+  const evidenceData = latestAssessmentForEvidence
+    ? await getEvidence(token, "control_test", latestAssessmentForEvidence.id)
+    : null;
+  const latestEvidence: Evidence[] = evidenceData?.evidence ?? [];
+
   const allFindings = findingsData?.findings ?? [];
   const frameworks: Framework[] = frameworksData?.frameworks ?? [];
 
@@ -420,6 +430,11 @@ export default async function ControlDetailPage({
           <AssessmentHistorySection
             assessments={assessments}
             assessmentIdsWithFindings={assessmentIdsWithFindings}
+          />
+          <EvidenceSection
+            assessmentId={latestAssessmentForEvidence?.id ?? null}
+            evidence={latestEvidence}
+            controlId={control.id}
           />
         </div>
 

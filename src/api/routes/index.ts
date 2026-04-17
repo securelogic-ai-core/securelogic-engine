@@ -84,6 +84,8 @@ import intelligenceBriefsRouter from "./intelligenceBriefs.js";
 import adminBriefsRouter from "./adminBriefs.js";
 import auditLogRouter from "./auditLog.js";
 import teamInvitesRouter from "./teamInvites.js";
+import auditPackageRouter from "./auditPackage.js";
+import findingsExportRouter from "./findingsExport.js";
 
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -375,6 +377,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", intelligenceBriefsRouter);
   router.use("/api", auditLogRouter);
   router.use("/api", teamInvitesRouter);
+  router.use("/api", auditPackageRouter);
+  router.use("/api", findingsExportRouter);
 
   // Admin brief operations — own bearer-token auth (SCHEDULER_SECRET),
   // independent of the admin panel key and org API key systems.

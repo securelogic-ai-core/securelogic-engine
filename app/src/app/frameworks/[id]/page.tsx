@@ -8,6 +8,7 @@ import {
   type ReadinessRequirement,
 } from "@/lib/api";
 import { MapControlButton } from "./MapControlButton";
+import { DownloadButtons } from "./DownloadButtons";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -222,6 +223,11 @@ export default async function FrameworkDetailPage({
         <p className="text-sm" style={{ color: "#475569" }}>
           v{framework.version}
         </p>
+      </div>
+
+      {/* Export actions */}
+      <div className="mb-6">
+        <DownloadButtons frameworkId={framework.id} />
       </div>
 
       {/* Readiness summary */}
