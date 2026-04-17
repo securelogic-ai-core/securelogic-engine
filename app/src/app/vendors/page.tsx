@@ -66,6 +66,13 @@ export default async function VendorsPage() {
             </span>
           )}
           <Link
+            href="/vendors/import"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors hover:border-teal-500 hover:text-teal-300"
+            style={{ border: "1px solid #1e2d45", color: "#cbd5e1", background: "transparent" }}
+          >
+            Import CSV
+          </Link>
+          <Link
             href="/vendors/new"
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
             style={{ background: "#00c4b4", color: "#0a0f1a" }}
