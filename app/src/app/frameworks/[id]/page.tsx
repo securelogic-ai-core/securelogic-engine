@@ -4,8 +4,10 @@ import { getSession } from "@/lib/session";
 import {
   getFramework,
   getFrameworkReadiness,
+  getControls,
   type ReadinessRequirement,
 } from "@/lib/api";
+import { MapControlButton } from "./MapControlButton";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -95,11 +97,22 @@ function AssessmentBadge({ status }: { status: string | null }) {
 // Requirement row
 // ─────────────────────────────────────────────────────────────
 
-function RequirementRow({ req }: { req: ReadinessRequirement }) {
+function RequirementRow({
+  req,
+  frameworkId,
+  controls,
+}: {
+  req: ReadinessRequirement;
+  frameworkId: string;
+  controls: Array<{ id: string; name: string }>;
+}) {
+  const alreadyMappedControlIds = req.mapped_controls.map((mc) => mc.control_id);
+  const showMapper = req.status === "unmapped" || req.status === "partial";
+
   return (
     <div className="bg-brand-surface border border-brand-line rounded-xl p-4">
       <div className="flex items-start justify-between gap-3 mb-2">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap mb-1">
             <span
               className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-mono font-medium"
@@ -116,7 +129,7 @@ function RequirementRow({ req }: { req: ReadinessRequirement }) {
       </div>
 
       {req.mapped_controls.length > 0 && (
-        <div className="mt-3 space-y-1.5 pl-2" style={{ borderLeft: "2px solid rgba(255,255,255,0.06)" }}>
+        <div className="mt-3 space-y-1.5 pl-2 mb-2" style={{ borderLeft: "2px solid rgba(255,255,255,0.06)" }}>
           {req.mapped_controls.map((c) => (
             <div key={c.control_id} className="flex items-center justify-between gap-2">
               <Link
@@ -132,10 +145,15 @@ function RequirementRow({ req }: { req: ReadinessRequirement }) {
         </div>
       )}
 
-      {req.mapped_controls.length === 0 && (
-        <p className="mt-2 text-xs pl-2" style={{ color: "#475569" }}>
-          No controls mapped · <Link href="/controls" className="hover:underline" style={{ color: "#00c4b4" }}>Map a control →</Link>
-        </p>
+      {showMapper && (
+        <div className="mt-2">
+          <MapControlButton
+            requirementId={req.id}
+            frameworkId={frameworkId}
+            controls={controls}
+            alreadyMappedControlIds={alreadyMappedControlIds}
+          />
+        </div>
       )}
     </div>
   );
@@ -159,12 +177,15 @@ export default async function FrameworkDetailPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const [framework, readiness] = await Promise.all([
+  const [framework, readiness, controlsData] = await Promise.all([
     getFramework(token, id),
     getFrameworkReadiness(token, id),
+    getControls(token),
   ]);
 
   if (!framework) redirect("/frameworks");
+
+  const controls = (controlsData?.controls ?? []).map((c) => ({ id: c.id, name: c.name }));
 
   const allRequirements = readiness?.requirements ?? [];
   const statusFilter = sp["status"] ?? "";
@@ -295,7 +316,12 @@ export default async function FrameworkDetailPage({
         ) : (
           <div className="space-y-3">
             {requirements.map((req) => (
-              <RequirementRow key={req.id} req={req} />
+              <RequirementRow
+                key={req.id}
+                req={req}
+                frameworkId={framework.id}
+                controls={controls}
+              />
             ))}
           </div>
         )}

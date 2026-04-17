@@ -5,26 +5,26 @@ import { getSession } from "@/lib/session";
 
 const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
 
-export type CreateControlMappingResult = { error: string };
+export type CreateObligationMappingResult = { error: string };
 
-export async function createControlMapping(
-  controlId: string,
+export async function createObligationMapping(
+  obligationId: string,
   requirementId: string,
   frameworkId?: string
-): Promise<CreateControlMappingResult | void> {
+): Promise<CreateObligationMappingResult | void> {
   const session = await getSession();
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) return { error: "Not authenticated" };
 
   let res: Response;
   try {
-    res = await fetch(`${ENGINE_URL}/api/control-mappings`, {
+    res = await fetch(`${ENGINE_URL}/api/obligation-mappings`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ control_id: controlId, requirement_id: requirementId }),
+      body: JSON.stringify({ obligation_id: obligationId, requirement_id: requirementId }),
       cache: "no-store",
     });
   } catch {
@@ -32,7 +32,7 @@ export async function createControlMapping(
   }
 
   if (res.status === 409) {
-    revalidatePath(`/controls/${controlId}`);
+    revalidatePath(`/obligations/${obligationId}`);
     revalidatePath("/frameworks", "layout");
     if (frameworkId) revalidatePath(`/frameworks/${frameworkId}`);
     return;
@@ -43,7 +43,7 @@ export async function createControlMapping(
     return { error: data.error ?? "Failed to create mapping" };
   }
 
-  revalidatePath(`/controls/${controlId}`);
+  revalidatePath(`/obligations/${obligationId}`);
   revalidatePath("/frameworks", "layout");
   if (frameworkId) revalidatePath(`/frameworks/${frameworkId}`);
 }
