@@ -29,6 +29,7 @@ const VALID_SOURCE_TYPES = new Set([
   "control_test",
   "vendor_review",
   "ai_review",
+  "ai_governance_review",
   "obligation_review",
   "dependency_review",
   "signal",

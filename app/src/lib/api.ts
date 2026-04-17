@@ -226,8 +226,13 @@ export type Finding = {
   severity: string;
   description: string;
   recommendation: string | null;
+  framework_control_id: string | null;
   domain: string | null;
   priority: string | null;
+  likelihood: string | null;
+  confidence: string | null;
+  time_sensitivity: string | null;
+  scoring_rationale: string | null;
   status: string;
   owner_user_id: string | null;
   due_date: string | null;
@@ -249,7 +254,62 @@ export type FindingsParams = {
   status?: string;
   severity?: string;
   source_id?: string;
+  priority?: string;
   limit?: number;
+};
+
+export type Risk = {
+  id: string;
+  organization_id: string;
+  title: string;
+  description: string | null;
+  domain: string | null;
+  likelihood: string | null;
+  impact: string | null;
+  risk_rating: string | null;
+  status: string;
+  treatment: string | null;
+  owner: string | null;
+  due_date: string | null;
+  source_type: string | null;
+  source_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RiskIntelligence = {
+  id: string;
+  title: string;
+  domain: string | null;
+  risk_rating: string | null;
+  status: string;
+  likelihood: string | null;
+  owner: string | null;
+  active_treatments: number;
+  total_treatments: number;
+  linked_findings: number;
+};
+
+export type RisksResponse = {
+  count: number;
+  limit: number;
+  organizationId: string;
+  nextCursor: { created_at: string; id: string } | null;
+  risks: Risk[];
+};
+
+export type RisksIntelligenceResponse = {
+  count: number;
+  open_critical_count: number;
+  risks: RiskIntelligence[];
+};
+
+export type RisksSummary = {
+  total: number;
+  open_critical_count: number;
+  by_status: Record<string, number>;
+  by_risk_rating: Record<string, number>;
+  by_domain: Record<string, number>;
 };
 
 export type ComplianceContext = {
@@ -820,10 +880,52 @@ export async function getFindings(
     if (params?.status) qs.set("status", params.status);
     if (params?.severity) qs.set("severity", params.severity);
     if (params?.source_id) qs.set("source_id", params.source_id);
+    if (params?.priority) qs.set("priority", params.priority);
     qs.set("limit", String(params?.limit ?? 50));
     const res = await engineFetch(`/api/findings?${qs.toString()}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<FindingsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getRisks(
+  apiKey: string,
+  params?: { status?: string; domain?: string; limit?: number }
+): Promise<RisksResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.domain) qs.set("domain", params.domain);
+    qs.set("limit", String(params?.limit ?? 50));
+    const res = await engineFetch(`/api/risks?${qs.toString()}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<RisksResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getRisksIntelligence(
+  apiKey: string
+): Promise<RisksIntelligenceResponse | null> {
+  try {
+    const res = await engineFetch("/api/risks/intelligence", apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<RisksIntelligenceResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getRisksSummary(
+  apiKey: string
+): Promise<RisksSummary | null> {
+  try {
+    const res = await engineFetch("/api/risks/summary", apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<RisksSummary>;
   } catch {
     return null;
   }
