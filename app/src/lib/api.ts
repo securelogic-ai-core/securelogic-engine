@@ -194,6 +194,64 @@ export type VendorAssessmentsResponse = {
   assessments: VendorAssessment[];
 };
 
+export type VendorReview = {
+  id: string;
+  organization_id: string;
+  vendor_id: string;
+  status: "not_started" | "in_progress" | "satisfactory" | "concerns_identified" | "critical_issues";
+  overall_severity: string | null;
+  summary: string | null;
+  notes: string | null;
+  performed_at: string | null;
+  reviewer_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type VendorReviewsResponse = {
+  count: number;
+  limit: number;
+  organizationId: string;
+  nextCursor: { created_at: string; id: string } | null;
+  reviews: VendorReview[];
+};
+
+export type Finding = {
+  id: string;
+  organization_id: string;
+  assessment_id: string | null;
+  source_type: string;
+  source_id: string | null;
+  title: string;
+  severity: string;
+  description: string;
+  recommendation: string | null;
+  domain: string | null;
+  priority: string | null;
+  status: string;
+  owner_user_id: string | null;
+  due_date: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FindingsResponse = {
+  count: number;
+  limit: number;
+  organizationId: string;
+  nextCursor: { created_at: string; id: string } | null;
+  findings: Finding[];
+};
+
+export type FindingsParams = {
+  domain?: string;
+  source_type?: string;
+  status?: string;
+  severity?: string;
+  source_id?: string;
+  limit?: number;
+};
+
 export type AiSystem = {
   id: string;
   organization_id: string;
@@ -665,6 +723,86 @@ export async function getAuthMe(
     });
     if (!res.ok) return null;
     return res.json() as Promise<AuthMeResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getVendor(
+  apiKey: string,
+  id: string
+): Promise<Vendor | null> {
+  try {
+    const res = await engineFetch(`/api/vendors/${encodeURIComponent(id)}`, apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { vendor: Vendor };
+    return body.vendor ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getVendorAssessmentsForVendor(
+  apiKey: string,
+  vendorId: string,
+  limit = 20
+): Promise<VendorAssessmentsResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-assessments?vendor_id=${encodeURIComponent(vendorId)}&limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<VendorAssessmentsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getVendorReviews(
+  apiKey: string,
+  vendorId?: string,
+  limit = 20
+): Promise<VendorReviewsResponse | null> {
+  try {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (vendorId) params.set("vendor_id", vendorId);
+    const res = await engineFetch(`/api/vendor-reviews?${params.toString()}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<VendorReviewsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getVendorReview(
+  apiKey: string,
+  id: string
+): Promise<{ review: VendorReview; finding: Finding | null } | null> {
+  try {
+    const res = await engineFetch(`/api/vendor-reviews/${encodeURIComponent(id)}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ review: VendorReview; finding: Finding | null }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getFindings(
+  apiKey: string,
+  params?: FindingsParams
+): Promise<FindingsResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (params?.domain) qs.set("domain", params.domain);
+    if (params?.source_type) qs.set("source_type", params.source_type);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.severity) qs.set("severity", params.severity);
+    if (params?.source_id) qs.set("source_id", params.source_id);
+    qs.set("limit", String(params?.limit ?? 50));
+    const res = await engineFetch(`/api/findings?${qs.toString()}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<FindingsResponse>;
   } catch {
     return null;
   }
