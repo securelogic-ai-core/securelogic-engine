@@ -1,4 +1,8 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { getSession } from "@/lib/session";
+import { getAiSystem, getGovernanceReviewsForSystem, getAiGovernanceAssessments } from "@/lib/api";
+import { AiEvidenceForm } from "./AiEvidenceForm";
 
 export default async function AiSystemEvidenceNewPage({
   params,
@@ -6,6 +10,21 @@ export default async function AiSystemEvidenceNewPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const session = await getSession();
+
+  const token = session.jwtToken ?? session.apiKey ?? null;
+  if (!token) redirect("/login");
+
+  const [system, reviewsData, assessmentsData] = await Promise.all([
+    getAiSystem(token, id),
+    getGovernanceReviewsForSystem(token, id, 20),
+    getAiGovernanceAssessments(token, id, 20),
+  ]);
+
+  if (!system) redirect("/ai-systems");
+
+  const reviews = reviewsData?.reviews ?? [];
+  const assessments = assessmentsData?.assessments ?? [];
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-12">
@@ -14,28 +33,22 @@ export default async function AiSystemEvidenceNewPage({
         className="inline-flex items-center gap-1.5 text-xs font-medium mb-6 transition-colors hover:opacity-80"
         style={{ color: "#94a3b8" }}
       >
-        ← AI System
+        ← {system.name}
       </Link>
 
-      <h1 className="text-2xl font-bold mb-3" style={{ color: "#f1f5f9" }}>
+      <h1 className="text-2xl font-bold mb-2" style={{ color: "#f1f5f9" }}>
         Add Evidence
       </h1>
       <p className="text-sm mb-8" style={{ color: "#94a3b8" }}>
-        Attach evidence documents, screenshots, or test results to support this AI system&apos;s governance record.
+        Attach evidence documents, screenshots, or test results to support {system.name}&apos;s governance record.
       </p>
 
-      <div
-        className="rounded-xl border p-8 text-center"
-        style={{ background: "#0d1626", borderColor: "#1e2d45" }}
-      >
-        <div className="text-4xl mb-4">📎</div>
-        <h2 className="text-lg font-semibold mb-2" style={{ color: "#f1f5f9" }}>
-          Coming Soon
-        </h2>
-        <p className="text-sm" style={{ color: "#94a3b8" }}>
-          The evidence upload form is under construction.
-        </p>
-      </div>
+      <AiEvidenceForm
+        systemId={system.id}
+        systemName={system.name}
+        reviews={reviews}
+        assessments={assessments}
+      />
     </div>
   );
 }

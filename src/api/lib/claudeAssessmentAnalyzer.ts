@@ -233,6 +233,84 @@ If no meaningful context can be derived, set suggestedSeverity to null and provi
 }
 
 // ---------------------------------------------------------------------------
+// analyzeAiGovernanceContext  (Haiku — cost at scale)
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate AI governance assessment guidance for an AI system before the
+ * assessor starts filling out the form. Returns the same ComplianceContext
+ * shape as analyzeComplianceContext for UI reuse.
+ */
+export async function analyzeAiGovernanceContext(
+  systemName: string,
+  systemDescription: string | null,
+  modelType: string | null,
+  riskClassification: string | null,
+  recentFindings: Array<{ title: string; severity: string; status: string }>
+): Promise<ComplianceContext | null> {
+  const client = getClient();
+  if (!client) return null;
+
+  const findingsText =
+    recentFindings.length > 0
+      ? JSON.stringify(recentFindings.slice(0, 10), null, 2)
+      : "None";
+
+  const prompt = `You are an AI governance analyst preparing to assess an AI system named '${systemName}'.
+
+System details:
+- Description/Use case: ${systemDescription ?? "Not provided"}
+- Model type: ${modelType ?? "Not specified"}
+- Risk classification: ${riskClassification ?? "Not classified"}
+
+Recent findings for this system:
+${findingsText}
+
+Provide AI governance assessment guidance:
+1. Suggested initial severity rating based on system type and risk classification
+2. A suggested assessment summary starter
+3. Key AI-specific risk indicators to investigate (consider: model bias, data privacy, explainability, regulatory compliance, security vulnerabilities, data drift, unintended outputs)
+4. Specific governance assessment guidance for this type of AI system
+
+Return valid JSON only — no markdown, no code fences:
+{
+  "suggestedSeverity": "Critical|High|Moderate|Low|null",
+  "suggestedSummary": "1-2 sentence summary of what to assess for this AI system",
+  "riskIndicators": ["up to 4 short AI-specific risk indicators"],
+  "assessmentGuidance": "1-2 sentence practical guidance for assessing this AI system's governance posture"
+}
+
+If no meaningful context can be derived, set suggestedSeverity to null and provide generic but useful AI governance guidance.`;
+
+  try {
+    const message = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 800,
+      messages: [{ role: "user", content: prompt }]
+    });
+
+    const raw = message.content
+      .filter((c) => c.type === "text")
+      .map((c) => (c as { type: "text"; text: string }).text)
+      .join("")
+      .trim();
+
+    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
+    const parsed = JSON.parse(cleaned) as Partial<ComplianceContext>;
+
+    return {
+      suggestedSeverity: parsed.suggestedSeverity ?? null,
+      suggestedSummary: parsed.suggestedSummary ?? "",
+      riskIndicators: Array.isArray(parsed.riskIndicators) ? parsed.riskIndicators : [],
+      assessmentGuidance: parsed.assessmentGuidance ?? ""
+    };
+  } catch (err) {
+    logger.warn({ event: "ai_governance_context_failed", systemName, err }, "AI governance context analysis failed");
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // analyzeAssessmentDocument  (Sonnet — quality matters for document review)
 // ---------------------------------------------------------------------------
 
