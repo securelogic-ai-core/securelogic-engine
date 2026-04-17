@@ -58,8 +58,9 @@ function isValidApiKeyId(value: unknown): value is string {
 /**
  * Resolves the SecureLogic entitlement tier from the Stripe event metadata.
  *
- * - "professional" → Professional plan ($49/mo)
- * - "team"         → Team plan ($249/mo) — stored as "paid" in Redis for backward compat
+ * - "professional" → Brief Pro (individual) — entitlement_level="professional"
+ * - "teams"        → Brief Pro Teams (multi-seat) — entitlement_level="professional"
+ * - "team"         → Platform Professional — stored as "paid" in Redis for backward compat
  * - anything else  → falls back to "paid" (legacy events that predate tier metadata)
  */
 function resolveTierFromMetadata(event: Stripe.Event): "professional" | "paid" {
@@ -69,7 +70,7 @@ function resolveTierFromMetadata(event: Stripe.Event): "professional" | "paid" {
     obj?.subscription_details?.metadata?.tier ??
     null;
 
-  return rawTier === "professional" ? "professional" : "paid";
+  return rawTier === "professional" || rawTier === "teams" ? "professional" : "paid";
 }
 
 /**
@@ -147,7 +148,7 @@ function extractRawSubscriptionTier(event: Stripe.Event): string | null {
     obj?.metadata?.tier ??
     obj?.subscription_details?.metadata?.tier ??
     null;
-  if (raw === "professional" || raw === "team") return raw;
+  if (raw === "professional" || raw === "teams" || raw === "team") return raw;
   return null;
 }
 

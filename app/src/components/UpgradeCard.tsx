@@ -14,7 +14,7 @@ export function UpgradeCard({ entitlementLevel = "free" }: UpgradeCardProps) {
 
   const isBriefPro = entitlementLevel === "professional";
 
-  async function handleCheckout(tier: "professional" | "team", key: ButtonKey) {
+  async function handleCheckout(tier: "professional" | "teams" | "team", key: ButtonKey) {
     setLoading(key);
     setError(null);
     try {
@@ -73,7 +73,7 @@ export function UpgradeCard({ entitlementLevel = "free" }: UpgradeCardProps) {
         </button>
 
         <button
-          onClick={() => handleCheckout("professional", "teams")}
+          onClick={() => handleCheckout("teams", "teams")}
           disabled={loading !== null}
           className="w-full bg-white/10 hover:bg-white/20 disabled:opacity-60 text-slate-100 font-semibold text-sm py-2 rounded-lg transition-colors border border-white/20"
         >
