@@ -133,12 +133,11 @@ export default async function DashboardPage({
             </div>
           </div>
 
-          {/* Billing CTA */}
-          {isPaid ? (
-            <ManageBillingButton />
-          ) : (
-            <UpgradeCard />
-          )}
+          {/* Billing card — paid users */}
+          {isPaid && <ManageBillingButton />}
+
+          {/* Upgrade card — free and Brief Pro users (not Platform) */}
+          {!isPlatformUser && <UpgradeCard entitlementLevel={entitlementLevel} />}
         </div>
       </div>
 

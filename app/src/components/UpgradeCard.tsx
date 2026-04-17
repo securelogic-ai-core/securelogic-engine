@@ -2,16 +2,16 @@
 
 import { useState } from "react";
 
-/**
- * UpgradeCard — client component.
- *
- * Calls /api/checkout (JSON endpoint) with the desired tier, shows a
- * per-button loading state, then redirects to the Stripe checkout URL.
- * Must be a client component so it can use useState and fetch.
- */
-export function UpgradeCard() {
+interface UpgradeCardProps {
+  /** Current entitlement level — used to hide the Brief Pro option for existing Brief Pro subscribers. */
+  entitlementLevel?: string;
+}
+
+export function UpgradeCard({ entitlementLevel = "free" }: UpgradeCardProps) {
   const [loading, setLoading] = useState<"professional" | "team" | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const isBriefPro = entitlementLevel === "professional";
 
   async function handleCheckout(tier: "professional" | "team") {
     setLoading(tier);
@@ -37,39 +37,47 @@ export function UpgradeCard() {
 
   return (
     <div className="bg-brand-teal/10 border border-brand-teal/30 rounded-xl p-5">
-      <h3 className="font-semibold text-sm text-slate-100 mb-1">Unlock full access</h3>
+      <h3 className="font-semibold text-sm text-slate-100 mb-1">
+        {isBriefPro ? "Upgrade your plan" : "Unlock full access"}
+      </h3>
       <p className="text-slate-400 text-xs mb-4">
-        Choose a plan to access the Intelligence Brief.
+        {isBriefPro
+          ? "Add posture monitoring, vendor risk, and AI governance."
+          : "Choose a plan to access the Intelligence Brief."}
       </p>
       {error && (
         <p className="text-red-400 text-xs mb-3">{error}</p>
       )}
       <div className="space-y-2">
-        <button
-          onClick={() => handleCheckout("professional")}
-          disabled={loading !== null}
-          className="w-full bg-brand-teal hover:bg-teal-400 disabled:opacity-60 text-white font-semibold text-sm py-2 rounded-lg transition-colors"
-        >
-          {loading === "professional" ? "Redirecting…" : "Professional — $29/mo"}
-        </button>
-        <p className="text-slate-500 text-xs px-1 -mt-1">Full brief content, all sections</p>
+        {!isBriefPro && (
+          <>
+            <button
+              onClick={() => handleCheckout("professional")}
+              disabled={loading !== null}
+              className="w-full bg-brand-teal hover:bg-teal-400 disabled:opacity-60 text-white font-semibold text-sm py-2 rounded-lg transition-colors"
+            >
+              {loading === "professional" ? "Redirecting…" : "Brief Pro — $29/mo"}
+            </button>
+            <p className="text-slate-500 text-xs px-1 -mt-1">Full brief content, all sections</p>
+          </>
+        )}
 
         <button
           onClick={() => handleCheckout("team")}
           disabled={loading !== null}
           className="w-full bg-white/10 hover:bg-white/20 disabled:opacity-60 text-slate-100 font-semibold text-sm py-2 rounded-lg transition-colors border border-white/20"
         >
-          {loading === "team" ? "Redirecting…" : "Team — $209/mo"}
+          {loading === "team" ? "Redirecting…" : "Platform Professional — $799/mo"}
         </button>
-        <p className="text-slate-500 text-xs px-1 -mt-1">Up to 10 seats, shared access</p>
+        <p className="text-slate-500 text-xs px-1 -mt-1">Posture monitoring, vendor risk, AI governance</p>
 
         <a
-          href="mailto:hello@securelogicai.com?subject=SecureLogic%20AI%20Platform%20Inquiry"
+          href="mailto:hello@securelogicai.com?subject=SecureLogic%20AI%20Enterprise%20Inquiry"
           className="w-full block text-center text-slate-400 hover:text-slate-200 text-xs py-2 transition-colors"
         >
-          Platform — $499/mo &rsaquo;
+          Enterprise &rsaquo;
         </a>
-        <p className="text-slate-500 text-xs px-1 -mt-1">Full SaaS platform + brief</p>
+        <p className="text-slate-500 text-xs px-1 -mt-1">Custom contract, dedicated support</p>
       </div>
     </div>
   );
