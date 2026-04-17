@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getIssues, getMe, getDashboardSummary, getAuthMe, getFindings, type DashboardSummary, type Finding } from "@/lib/api";
+import { getIssues, getMe, getDashboardSummary, getAuthMe, getFindings, getFrameworks, getFrameworkReadiness, type DashboardSummary, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
 
@@ -34,10 +34,20 @@ export default async function DashboardPage({
 
   const entitlementLevelEarly = me?.entitlementLevel ?? "starter";
   const isPlatformEarly = ["premium", "platform", "team"].includes(entitlementLevelEarly);
-  const recentFindingsData = isPlatformEarly
-    ? await getFindings(token, { status: "open", limit: 5 })
-    : null;
+  const [recentFindingsData, frameworksData] = isPlatformEarly
+    ? await Promise.all([
+        getFindings(token, { status: "open", limit: 5 }),
+        getFrameworks(token),
+      ])
+    : [null, null];
   const recentFindings = recentFindingsData?.findings ?? [];
+
+  const frameworks = frameworksData?.frameworks ?? [];
+  const frameworkReadinessResults = frameworks.length > 0
+    ? await Promise.all(frameworks.map((f) => getFrameworkReadiness(token, f.id)))
+    : [];
+  const frameworkReadinessPairs: Array<{ framework: Framework; readiness: FrameworkReadiness | null }> =
+    frameworks.map((f, i) => ({ framework: f, readiness: frameworkReadinessResults[i] ?? null }));
 
   const latestIssue = issuesData?.issues?.[0] ?? null;
   const entitlementLevel = me?.entitlementLevel ?? "starter";
@@ -174,6 +184,13 @@ export default async function DashboardPage({
       {isPlatformUser && (
         <div className="mt-10">
           <RecentFindings findings={recentFindings} />
+        </div>
+      )}
+
+      {/* Framework Readiness — platform subscribers only */}
+      {isPlatformUser && (
+        <div className="mt-10">
+          <FrameworkReadinessWidget pairs={frameworkReadinessPairs} />
         </div>
       )}
 
@@ -530,6 +547,79 @@ const SOURCE_COMPACT_LABELS: Record<string, string> = {
   signal:               "Signal",
   risk:                 "Risk",
 };
+
+function FrameworkReadinessWidget({
+  pairs,
+}: {
+  pairs: Array<{ framework: Framework; readiness: FrameworkReadiness | null }>;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">
+          Framework Readiness
+        </h2>
+        <Link
+          href="/frameworks"
+          className="text-xs font-medium transition-colors"
+          style={{ color: "#00c4b4" }}
+        >
+          {pairs.length === 0 ? "Add Framework →" : "View all →"}
+        </Link>
+      </div>
+
+      {pairs.length === 0 ? (
+        <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
+          <p className="text-sm mb-2" style={{ color: "#94a3b8" }}>
+            No frameworks activated yet.
+          </p>
+          <Link href="/frameworks" className="text-xs font-medium hover:underline" style={{ color: "#00c4b4" }}>
+            Activate a framework →
+          </Link>
+        </div>
+      ) : (
+        <div className="bg-brand-surface border border-brand-line rounded-xl divide-y" style={{ "--tw-divide-opacity": "1" } as React.CSSProperties}>
+          {pairs.map(({ framework, readiness }) => {
+            const score = readiness?.readiness_score ?? 0;
+            const color =
+              score >= 75 ? "#22c55e" :
+              score >= 50 ? "#f59e0b" :
+              score >= 25 ? "#f97316" :
+              "#ef4444";
+            return (
+              <Link
+                key={framework.id}
+                href={`/frameworks/${framework.id}`}
+                className="flex items-center gap-4 px-5 py-4 hover:bg-white/[0.02] transition-colors"
+                style={{ borderColor: "#1e293b" }}
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate" style={{ color: "#f1f5f9" }}>
+                    {framework.name}
+                  </p>
+                  <p className="text-xs mt-0.5" style={{ color: "#475569" }}>
+                    v{framework.version}
+                  </p>
+                </div>
+                <div className="w-32 flex items-center gap-2 flex-shrink-0">
+                  <div className="flex-1 rounded-full h-1.5" style={{ background: "rgba(255,255,255,0.08)" }}>
+                    <div
+                      className="h-1.5 rounded-full"
+                      style={{ width: `${score}%`, background: color }}
+                    />
+                  </div>
+                  <span className="text-xs font-bold tabular-nums w-8 text-right" style={{ color }}>
+                    {score}%
+                  </span>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function RecentFindings({ findings }: { findings: Finding[] }) {
   return (

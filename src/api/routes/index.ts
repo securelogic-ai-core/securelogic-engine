@@ -49,6 +49,8 @@ import aiSystemsRouter from "./aiSystems.js";
 import governanceReviewsRouter from "./governanceReviews.js";
 import aiGovernanceAssessmentsRouter from "./aiGovernanceAssessments.js";
 import frameworksRouter from "./frameworks.js";
+import frameworkReadinessRouter from "./frameworkReadiness.js";
+import frameworkActivationRouter from "./frameworkActivation.js";
 import requirementsRouter from "./requirements.js";
 import controlsRouter from "./controls.js";
 import controlMappingsRouter from "./controlMappings.js";
@@ -346,6 +348,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", aiSystemsRouter);
   router.use("/api", governanceReviewsRouter);
   router.use("/api", aiGovernanceAssessmentsRouter);
+  router.use("/api", frameworkActivationRouter);
+  router.use("/api", frameworkReadinessRouter);
   router.use("/api", frameworksRouter);
   router.use("/api", requirementsRouter);
   router.use("/api", controlsRouter);
