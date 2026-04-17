@@ -2,7 +2,20 @@ import { Router } from "express";
 
 const router = Router();
 
+const DASHBOARD_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "connect-src 'self'",
+  "img-src 'self' data:",
+  "frame-ancestors 'none'"
+].join("; ");
+
 router.get("/", (_req, res) => {
+  // Override the global default-src:'none' CSP set by securityHeaders middleware.
+  // The dashboard is an operator-only HTML page that requires inline scripts and
+  // same-origin fetch calls — these are safe here because the page is not user-facing.
+  res.setHeader("Content-Security-Policy", DASHBOARD_CSP);
   res.status(200).type("html").send(`
 <!doctype html>
 <html lang="en">
