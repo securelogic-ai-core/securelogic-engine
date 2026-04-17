@@ -1,0 +1,245 @@
+/**
+ * claudeAssessmentAnalyzer.ts
+ *
+ * Claude-backed analysis for vendor assessments.
+ *
+ * Two operations:
+ *   - analyzeVendorSignalContext: Haiku — matches org signals against a vendor name
+ *     to surface relevant threat intelligence before an assessment begins.
+ *   - analyzeAssessmentDocument: Sonnet — extracts findings from a vendor-supplied
+ *     document (SOC 2, pentest report, audit, policy, etc.).
+ *
+ * Both functions fail gracefully: return null when ANTHROPIC_API_KEY is absent
+ * or any API call fails. Callers must handle null.
+ */
+
+import Anthropic from "@anthropic-ai/sdk";
+import { logger } from "../infra/logger.js";
+
+function getClient(): Anthropic | null {
+  const key = process.env.ANTHROPIC_API_KEY?.trim();
+  if (!key) return null;
+  return new Anthropic({ apiKey: key });
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type MatchedSignal = {
+  title: string;
+  relevance: string;
+  severity: string;
+  suggestedFindingTitle: string;
+  suggestedFindingDescription: string;
+};
+
+export type VendorSignalContext = {
+  matchedSignals: MatchedSignal[];
+  overallRiskSummary: string;
+  suggestedAssessmentSeverity: "Critical" | "High" | "Moderate" | "Low" | null;
+};
+
+export type DocumentFinding = {
+  title: string;
+  description: string;
+  severity: "Critical" | "High" | "Moderate" | "Low" | "Informational";
+  recommendation: string;
+  evidenceQuote: string | null;
+};
+
+export type DocumentAnalysisResult = {
+  documentType: string;
+  vendorName: string | null;
+  findings: DocumentFinding[];
+  overallRiskSummary: string;
+  suggestedAssessmentSeverity: "Critical" | "High" | "Moderate" | "Low" | null;
+  keyStrengths: string[];
+  keyGaps: string[];
+};
+
+// ---------------------------------------------------------------------------
+// analyzeVendorSignalContext  (Haiku — cost at scale)
+// ---------------------------------------------------------------------------
+
+/**
+ * Match recent org signals against a vendor name to surface relevant
+ * threat intelligence. Run this before showing an assessment form so
+ * the assessor has context on current vendor-related threats.
+ *
+ * @param vendorName  The vendor being assessed.
+ * @param signals     Recent signals from the org's cyber_signals table.
+ */
+export async function analyzeVendorSignalContext(
+  vendorName: string,
+  signals: Array<{
+    id: string;
+    title: string;
+    severity: string;
+    signal_type: string;
+    normalized_summary: string;
+    affected_vendor: string | null;
+  }>
+): Promise<VendorSignalContext | null> {
+  const client = getClient();
+  if (!client) return null;
+
+  if (signals.length === 0) return null;
+
+  const signalLines = signals
+    .slice(0, 20)
+    .map(
+      (s) =>
+        `[${s.severity}] ${s.title} (type: ${s.signal_type}${s.affected_vendor ? `, vendor: ${s.affected_vendor}` : ""}): ${s.normalized_summary.slice(0, 200)}`
+    )
+    .join("\n");
+
+  const prompt = `You are a third-party risk analyst preparing context for a vendor security assessment.
+
+Vendor being assessed: ${vendorName}
+
+Recent signals from our threat intelligence feed:
+${signalLines}
+
+Identify which signals are directly relevant to ${vendorName} — either because they name ${vendorName} explicitly, mention products or services commonly associated with ${vendorName}, or represent a threat that would materially affect ${vendorName}'s security posture.
+
+Return valid JSON only — no markdown, no code fences:
+{
+  "matchedSignals": [
+    {
+      "title": "signal title",
+      "relevance": "1-2 sentences explaining why this signal is relevant to ${vendorName}",
+      "severity": "Critical|High|Moderate|Low",
+      "suggestedFindingTitle": "Short finding title if this warrants a finding",
+      "suggestedFindingDescription": "1-2 sentences describing what to investigate or document in the assessment"
+    }
+  ],
+  "overallRiskSummary": "2-3 sentences summarizing the current threat context for ${vendorName} based on matched signals",
+  "suggestedAssessmentSeverity": "Critical|High|Moderate|Low|null"
+}
+
+If no signals match, return matchedSignals as an empty array, overallRiskSummary as "No current threat signals matched this vendor.", and suggestedAssessmentSeverity as null.`;
+
+  try {
+    const message = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1500,
+      messages: [{ role: "user", content: prompt }]
+    });
+
+    const raw = message.content
+      .filter((c) => c.type === "text")
+      .map((c) => (c as { type: "text"; text: string }).text)
+      .join("")
+      .trim();
+
+    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
+    const parsed = JSON.parse(cleaned) as Partial<VendorSignalContext>;
+
+    return {
+      matchedSignals: Array.isArray(parsed.matchedSignals) ? parsed.matchedSignals : [],
+      overallRiskSummary: parsed.overallRiskSummary ?? "No current threat signals matched this vendor.",
+      suggestedAssessmentSeverity: parsed.suggestedAssessmentSeverity ?? null
+    };
+  } catch (err) {
+    logger.warn({ event: "vendor_signal_context_failed", vendorName, err }, "Vendor signal context analysis failed");
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// analyzeAssessmentDocument  (Sonnet — quality matters for document review)
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract findings from a vendor-supplied assessment document.
+ * Accepts extracted text (from pdf-parse or similar) and returns structured findings.
+ *
+ * @param documentText  Raw text extracted from the uploaded document.
+ * @param vendorName    Name of the vendor who produced the document.
+ * @param documentHint  Optional hint about document type (e.g. "SOC 2 Type II report").
+ */
+export async function analyzeAssessmentDocument(
+  documentText: string,
+  vendorName: string,
+  documentHint?: string
+): Promise<DocumentAnalysisResult | null> {
+  const client = getClient();
+  if (!client) return null;
+
+  // Truncate to ~30k chars to stay within context limits while preserving the
+  // most actionable sections (executive summary, findings, exceptions).
+  const excerpt = documentText.slice(0, 30000).replace(/\n{3,}/g, "\n\n").trim();
+
+  const docTypeContext = documentHint
+    ? `The user has indicated this is: ${documentHint}.`
+    : "Identify the document type from its content (SOC 2, pentest report, ISO audit, security policy, etc.).";
+
+  const prompt = `You are a senior third-party risk analyst reviewing a vendor-supplied security document as part of a vendor risk assessment.
+
+Vendor: ${vendorName}
+${docTypeContext}
+
+Document text:
+---
+${excerpt}
+---
+
+Extract all security and compliance findings from this document. Focus on:
+- Identified vulnerabilities, exceptions, or control failures
+- Audit qualifications or scope limitations
+- Unaddressed risks or open remediation items
+- Data handling, access control, or privacy gaps
+- Missing certifications or compliance gaps
+
+Return valid JSON only — no markdown, no code fences:
+{
+  "documentType": "Detected document type (e.g. SOC 2 Type II, Penetration Test Report, ISO 27001 Audit, Security Policy)",
+  "vendorName": "Vendor name as found in the document, or null if not found",
+  "findings": [
+    {
+      "title": "Short finding title",
+      "description": "2-3 sentences describing the finding and its context",
+      "severity": "Critical|High|Moderate|Low|Informational",
+      "recommendation": "Specific remediation or follow-up action",
+      "evidenceQuote": "Direct quote from the document supporting this finding, or null"
+    }
+  ],
+  "overallRiskSummary": "2-3 sentences summarizing the vendor's security posture based on this document",
+  "suggestedAssessmentSeverity": "Critical|High|Moderate|Low|null",
+  "keyStrengths": ["strength 1", "strength 2"],
+  "keyGaps": ["gap 1", "gap 2"]
+}
+
+If the document contains no security findings, return an empty findings array with an appropriate overallRiskSummary.`;
+
+  try {
+    const message = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 3000,
+      messages: [{ role: "user", content: prompt }]
+    });
+
+    const raw = message.content
+      .filter((c) => c.type === "text")
+      .map((c) => (c as { type: "text"; text: string }).text)
+      .join("")
+      .trim();
+
+    const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
+    const parsed = JSON.parse(cleaned) as Partial<DocumentAnalysisResult>;
+
+    return {
+      documentType: parsed.documentType ?? "Unknown",
+      vendorName: parsed.vendorName ?? vendorName,
+      findings: Array.isArray(parsed.findings) ? parsed.findings : [],
+      overallRiskSummary: parsed.overallRiskSummary ?? "Document analysis did not produce a risk summary.",
+      suggestedAssessmentSeverity: parsed.suggestedAssessmentSeverity ?? null,
+      keyStrengths: Array.isArray(parsed.keyStrengths) ? parsed.keyStrengths : [],
+      keyGaps: Array.isArray(parsed.keyGaps) ? parsed.keyGaps : []
+    };
+  } catch (err) {
+    logger.warn({ event: "document_analysis_failed", vendorName, err }, "Assessment document analysis failed");
+    return null;
+  }
+}

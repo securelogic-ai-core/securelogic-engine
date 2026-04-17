@@ -1,6 +1,14 @@
+"use server";
+
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
+import {
+  getVendor,
+  getVendorSignalContext,
+  type VendorSignalContext,
+} from "@/lib/api";
+import { AssessmentForm } from "./AssessmentForm";
 
 export default async function VendorAssessPage({
   params,
@@ -12,53 +20,102 @@ export default async function VendorAssessPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
+  const [vendor, signalContext] = await Promise.all([
+    getVendor(token, id),
+    getVendorSignalContext(token, id),
+  ]);
+
+  if (!vendor) redirect("/vendors");
+
   return (
-    <div className="max-w-2xl mx-auto px-6 py-12">
+    <div className="max-w-3xl mx-auto px-6 py-12">
       <Link
         href={`/vendors/${id}`}
         className="inline-flex items-center gap-1.5 text-xs font-medium mb-6 transition-colors hover:opacity-80"
         style={{ color: "#94a3b8" }}
       >
-        ← Back to vendor
+        ← Back to {vendor.name}
       </Link>
 
-      <div className="bg-brand-surface border border-brand-line rounded-xl p-10 text-center">
-        <div
-          className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-5"
-          style={{ background: "rgba(0,196,180,0.12)" }}
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            className="w-6 h-6"
-            style={{ color: "#00c4b4" }}
+      <h1 className="text-2xl font-bold mb-1" style={{ color: "#f1f5f9" }}>
+        New Assessment
+      </h1>
+      <p className="text-sm mb-8" style={{ color: "#94a3b8" }}>
+        {vendor.name} · Record a point-in-time risk review
+      </p>
+
+      {signalContext && signalContext.matchedSignals.length > 0 && (
+        <SignalContextCard context={signalContext} />
+      )}
+
+      <AssessmentForm vendorId={id} vendorName={vendor.name} />
+    </div>
+  );
+}
+
+function SignalContextCard({ context }: { context: VendorSignalContext }) {
+  const severityColor: Record<string, string> = {
+    Critical: "#fca5a5",
+    High: "#fdba74",
+    Moderate: "#fcd34d",
+    Low: "#86efac",
+  };
+
+  return (
+    <div
+      className="rounded-xl border mb-8 p-5"
+      style={{ background: "rgba(0,196,180,0.05)", borderColor: "rgba(0,196,180,0.2)" }}
+    >
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#00c4b4" }}>
+          Threat Intelligence Context
+        </span>
+        {context.suggestedAssessmentSeverity && (
+          <span
+            className="text-xs px-2 py-0.5 rounded font-semibold"
+            style={{
+              background: "rgba(0,196,180,0.12)",
+              color: severityColor[context.suggestedAssessmentSeverity] ?? "#94a3b8",
+            }}
           >
-            <path
-              fillRule="evenodd"
-              d="M11.54 22.351l.07.04.028.016a.76.76 0 0 0 .723 0l.028-.015.071-.041a16.975 16.975 0 0 0 1.144-.742 19.58 19.58 0 0 0 2.683-2.282c1.944-1.99 3.963-4.98 3.963-8.827a8.25 8.25 0 0 0-16.5 0c0 3.846 2.02 6.837 3.963 8.827a19.58 19.58 0 0 0 2.682 2.282 16.975 16.975 0 0 0 1.145.742Z"
-              clipRule="evenodd"
-            />
-          </svg>
-        </div>
-
-        <h1 className="text-xl font-bold mb-2" style={{ color: "#f1f5f9" }}>
-          Coming Soon
-        </h1>
-        <p className="text-sm mb-6" style={{ color: "#94a3b8" }}>
-          The vendor assessment form will allow you to record a point-in-time
-          risk review for this vendor. Each assessment automatically creates a
-          finding in the platform.
-        </p>
-
-        <Link
-          href={`/vendors/${id}`}
-          className="inline-flex items-center gap-1.5 text-sm font-medium transition-colors hover:opacity-80"
-          style={{ color: "#00c4b4" }}
-        >
-          ← Back to vendor
-        </Link>
+            Suggested: {context.suggestedAssessmentSeverity}
+          </span>
+        )}
       </div>
+      <p className="text-sm mb-4" style={{ color: "#cbd5e1" }}>
+        {context.overallRiskSummary}
+      </p>
+      {context.matchedSignals.length > 0 && (
+        <div className="space-y-3">
+          {context.matchedSignals.map((signal, i) => (
+            <div
+              key={i}
+              className="rounded-lg border p-3"
+              style={{ background: "rgba(10,15,26,0.6)", borderColor: "#1e293b" }}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span
+                  className="text-xs font-semibold"
+                  style={{ color: severityColor[signal.severity] ?? "#94a3b8" }}
+                >
+                  {signal.severity}
+                </span>
+                <span className="text-xs font-medium" style={{ color: "#f1f5f9" }}>
+                  {signal.title}
+                </span>
+              </div>
+              <p className="text-xs mb-1" style={{ color: "#94a3b8" }}>
+                {signal.relevance}
+              </p>
+              {signal.suggestedFindingTitle && (
+                <p className="text-xs" style={{ color: "#64748b" }}>
+                  Suggested finding: {signal.suggestedFindingTitle}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

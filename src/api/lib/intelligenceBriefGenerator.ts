@@ -33,7 +33,14 @@
  *   Moderate (no CVE)                   → 'low'
  */
 
+import Anthropic from "@anthropic-ai/sdk";
 import { logger } from "../infra/logger.js";
+
+function getClient(): Anthropic | null {
+  const key = process.env.ANTHROPIC_API_KEY?.trim();
+  if (!key) return null;
+  return new Anthropic({ apiKey: key });
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -372,8 +379,7 @@ export function buildContentMarkdown(content: BriefContentJson): string {
 // enrichBriefItems  (I/O — calls Claude API)
 // ---------------------------------------------------------------------------
 
-const CLAUDE_MODEL = "claude-sonnet-4-5";
-const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
+const CLAUDE_MODEL = "claude-sonnet-4-6";
 
 const CLAUDE_SYSTEM_PROMPT =
   "You are a senior cybersecurity analyst writing for a weekly executive intelligence briefing " +
@@ -431,8 +437,8 @@ function fallbackRecommendedActions(item: BriefItem): string {
  * fallback content is returned immediately without making any API call.
  */
 async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
-  const apiKey = process.env["ANTHROPIC_API_KEY"];
-  if (!apiKey) {
+  const client = getClient();
+  if (!client) {
     logger.warn(
       { event: "brief_enrichment_fallback", reason: "ANTHROPIC_API_KEY not set", signal_id: item.cyber_signal_id },
       "Brief enrichment falling back to defaults"
@@ -475,40 +481,18 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
     `Format: "1. [action]\\n2. [action]\\n..." — no markdown, no sub-bullets.`;
 
   try {
-    const response = await fetch(CLAUDE_API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model: CLAUDE_MODEL,
-        max_tokens: 1024,
-        system: CLAUDE_SYSTEM_PROMPT,
-        messages: [{ role: "user", content: userPrompt }]
-      })
+    const message = await client.messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 1024,
+      system: CLAUDE_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: userPrompt }]
     });
 
-    if (!response.ok) {
-      logger.warn(
-        { event: "brief_enrichment_fallback", reason: "API call failed", status: response.status, signal_id: item.cyber_signal_id },
-        "Brief enrichment falling back to defaults"
-      );
-      return {
-        ...item,
-        analysis: null,
-        why_it_matters: fallbackWhyItMatters(item),
-        recommended_actions: fallbackRecommendedActions(item),
-        analyst_notes: null
-      };
-    }
-
-    const body = (await response.json()) as {
-      content?: Array<{ type: string; text: string }>;
-    };
-
-    const text = body?.content?.[0]?.text?.trim() ?? "";
+    const text = message.content
+      .filter((c) => c.type === "text")
+      .map((c) => (c as { type: "text"; text: string }).text)
+      .join("")
+      .trim();
 
     // Strip markdown code fences if Claude wrapped the JSON
     const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();

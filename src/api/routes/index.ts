@@ -60,6 +60,8 @@ import evidenceRouter from "./evidence.js";
 import dependenciesRouter from "./dependencies.js";
 import dependencyAssessmentsRouter from "./dependencyAssessments.js";
 import vendorReviewsRouter from "./vendorReviews.js";
+import vendorAssessmentAnalysisRouter from "./vendorAssessmentAnalysis.js";
+import vendorSignalContextRouter from "./vendorSignalContext.js";
 import risksRouter from "./risks.js";
 import riskTreatmentsRouter from "./riskTreatments.js";
 import cyberSignalsRouter from "./cyberSignals.js";
@@ -333,6 +335,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", vendorsRouter);
   router.use("/api", vendorAssessmentsRouter);
   router.use("/api", vendorReviewsRouter);
+  router.use("/api", vendorAssessmentAnalysisRouter);
+  router.use("/api", vendorSignalContextRouter);
   router.use("/api", aiSystemsRouter);
   router.use("/api", governanceReviewsRouter);
   router.use("/api", aiGovernanceAssessmentsRouter);

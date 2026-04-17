@@ -11,6 +11,7 @@ import {
   type VendorReview,
   type Finding,
 } from "@/lib/api";
+import { FindingCard } from "./FindingCard";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -224,6 +225,45 @@ function OpenFindingsSection({ findings }: { findings: Finding[] }) {
                 </div>
               )}
             </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function OpenFindingsSectionClient({
+  findings,
+  vendorId,
+}: {
+  findings: Finding[];
+  vendorId: string;
+}) {
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
+          Open Findings
+        </h2>
+        <span
+          className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold"
+          style={{
+            background: findings.length > 0 ? "rgba(239,68,68,0.15)" : "rgba(148,163,184,0.12)",
+            color: findings.length > 0 ? "#fca5a5" : "#475569",
+          }}
+        >
+          {findings.length}
+        </span>
+      </div>
+
+      {findings.length === 0 ? (
+        <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
+          <p className="text-sm" style={{ color: "#94a3b8" }}>No open findings</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {findings.map((f) => (
+            <FindingCard key={f.id} finding={f} vendorId={vendorId} />
           ))}
         </div>
       )}
@@ -640,7 +680,7 @@ export default async function VendorDetailPage({
       <div className="flex flex-col lg:flex-row gap-8">
         {/* Left: main content */}
         <div className="flex-1 min-w-0 space-y-8">
-          <OpenFindingsSection findings={openFindings} />
+          <OpenFindingsSectionClient findings={openFindings} vendorId={vendor.id} />
           <AssessmentHistorySection
             assessments={assessments}
             assessmentIdsWithFindings={assessmentIdsWithFindings}

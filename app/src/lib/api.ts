@@ -252,6 +252,20 @@ export type FindingsParams = {
   limit?: number;
 };
 
+export type VendorSignalContextMatch = {
+  title: string;
+  relevance: string;
+  severity: string;
+  suggestedFindingTitle: string;
+  suggestedFindingDescription: string;
+};
+
+export type VendorSignalContext = {
+  matchedSignals: VendorSignalContextMatch[];
+  overallRiskSummary: string;
+  suggestedAssessmentSeverity: "Critical" | "High" | "Moderate" | "Low" | null;
+};
+
 export type AiSystem = {
   id: string;
   organization_id: string;
@@ -803,6 +817,20 @@ export async function getFindings(
     const res = await engineFetch(`/api/findings?${qs.toString()}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<FindingsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getVendorSignalContext(
+  apiKey: string,
+  vendorId: string
+): Promise<VendorSignalContext | null> {
+  try {
+    const res = await engineFetch(`/api/vendors/${vendorId}/signal-context`, apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { signal_context: VendorSignalContext };
+    return body.signal_context ?? null;
   } catch {
     return null;
   }
