@@ -239,8 +239,31 @@ export type Finding = {
   status: string;
   owner_user_id: string | null;
   due_date: string | null;
+  action_count: number;
   created_at: string;
   updated_at: string;
+};
+
+export type Action = {
+  id: string;
+  organization_id: string;
+  title: string;
+  description: string | null;
+  action_type: string | null;
+  source_type: string;
+  source_id: string | null;
+  priority: "immediate" | "near_term" | "planned" | "watch";
+  due_date: string | null;
+  owner_user_id: string | null;
+  status: "open" | "in_progress" | "blocked" | "closed" | "accepted";
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ActionsResponse = {
+  count: number;
+  actions: Action[];
 };
 
 export type FindingsResponse = {
@@ -1095,6 +1118,93 @@ export async function getFindings(
     const res = await engineFetch(`/api/findings?${qs.toString()}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<FindingsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getFinding(
+  apiKey: string,
+  id: string
+): Promise<{ finding: Finding } | null> {
+  try {
+    const res = await engineFetch(`/api/findings/${encodeURIComponent(id)}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ finding: Finding }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getActionsForFinding(
+  apiKey: string,
+  findingId: string
+): Promise<ActionsResponse | null> {
+  try {
+    const qs = new URLSearchParams({ source_type: "finding", source_id: findingId, limit: "100" });
+    const res = await engineFetch(`/api/actions?${qs.toString()}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<ActionsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getAction(
+  apiKey: string,
+  id: string
+): Promise<{ action: Action } | null> {
+  try {
+    const res = await engineFetch(`/api/actions/${encodeURIComponent(id)}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ action: Action }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function createAction(
+  apiKey: string,
+  data: {
+    title: string;
+    description?: string;
+    priority: Action["priority"];
+    due_date?: string;
+    source_type: string;
+    source_id: string;
+  }
+): Promise<{ action: Action } | null> {
+  try {
+    const res = await engineFetch("/api/actions", apiKey, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ action: Action }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function updateAction(
+  apiKey: string,
+  id: string,
+  updates: {
+    status?: Action["status"];
+    priority?: Action["priority"];
+    due_date?: string | null;
+    owner_user_id?: string | null;
+  }
+): Promise<{ action: Action } | null> {
+  try {
+    const res = await engineFetch(`/api/actions/${encodeURIComponent(id)}`, apiKey, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ action: Action }>;
   } catch {
     return null;
   }

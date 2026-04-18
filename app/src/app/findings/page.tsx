@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getMe, getFindings, type Finding } from "@/lib/api";
-import { FindingCard } from "@/components/FindingCard";
+import { getMe, getFindings } from "@/lib/api";
+import { FindingsList } from "./FindingsList";
 
 const SOURCE_TYPE_LABELS: Record<string, string> = {
   vendor_review:        "Vendor Assessment",
@@ -118,15 +118,6 @@ export default async function FindingsPage({
     (sp.status && sp.status !== "open")
   );
 
-  // Group by domain when no domain filter is active
-  const grouped: Record<string, Finding[]> = {};
-  if (!activeDomain) {
-    for (const f of findings) {
-      const d = f.domain ?? "General";
-      (grouped[d] ??= []).push(f);
-    }
-  }
-
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">
       {/* Header */}
@@ -240,62 +231,7 @@ export default async function FindingsPage({
       </div>
 
       {/* Findings list */}
-      {findings.length === 0 ? (
-        <div
-          className="rounded-xl border p-10 text-center"
-          style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}
-        >
-          <p className="text-sm mb-3" style={{ color: "#94a3b8" }}>
-            No findings match your current filters.
-          </p>
-          {hasFilters && (
-            <Link
-              href="/findings"
-              className="text-xs font-medium"
-              style={{ color: "#00c4b4" }}
-            >
-              Clear filters
-            </Link>
-          )}
-        </div>
-      ) : activeDomain ? (
-        // Flat list when domain filter is active
-        <div className="space-y-3">
-          {findings.map((f) => (
-            <FindingCard key={f.id} finding={f} revalidateUrl="/findings" />
-          ))}
-        </div>
-      ) : (
-        // Grouped by domain
-        <div className="space-y-8">
-          {Object.entries(grouped).map(([domain, domainFindings]) => (
-            <div key={domain}>
-              <div
-                className="flex items-center gap-2 mb-3 pb-2"
-                style={{ borderBottom: "1px solid #1e293b" }}
-              >
-                <span
-                  className="text-xs font-semibold uppercase tracking-wide"
-                  style={{ color: "#64748b" }}
-                >
-                  {domain}
-                </span>
-                <span
-                  className="text-xs px-1.5 py-0.5 rounded"
-                  style={{ background: "rgba(148,163,184,0.1)", color: "#64748b" }}
-                >
-                  {domainFindings.length}
-                </span>
-              </div>
-              <div className="space-y-3">
-                {domainFindings.map((f) => (
-                  <FindingCard key={f.id} finding={f} revalidateUrl="/findings" />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <FindingsList findings={findings} hasFilters={hasFilters} />
     </div>
   );
 }
