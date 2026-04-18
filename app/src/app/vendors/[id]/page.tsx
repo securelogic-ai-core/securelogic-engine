@@ -666,14 +666,25 @@ export default async function VendorDetailPage({
         >
           ← Vendors
         </Link>
-        <h1 className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>
-          {vendor.name}
-        </h1>
-        {vendor.service_description && (
-          <p className="text-sm mt-1" style={{ color: "#94a3b8" }}>
-            {vendor.service_description}
-          </p>
-        )}
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>
+              {vendor.name}
+            </h1>
+            {vendor.service_description && (
+              <p className="text-sm mt-1" style={{ color: "#94a3b8" }}>
+                {vendor.service_description}
+              </p>
+            )}
+          </div>
+          <Link
+            href={`/vendors/${vendor.id}/edit`}
+            className="inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium border transition-colors hover:opacity-80 flex-shrink-0"
+            style={{ borderColor: "#1e2d45", color: "#00c4b4", background: "transparent" }}
+          >
+            Edit Vendor
+          </Link>
+        </div>
       </div>
 
       {/* Two-column layout */}
