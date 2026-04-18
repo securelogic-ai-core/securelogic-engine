@@ -505,8 +505,14 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
     }
 
     // Fetch org for display info
-    const orgResult = await pg.query<{ name: string; entitlement_level: string }>(
-      `SELECT o.name, COALESCE(k.entitlement_level, 'starter') AS entitlement_level
+    const orgResult = await pg.query<{
+      name: string;
+      entitlement_level: string;
+      onboarding_completed_at: string | null;
+    }>(
+      `SELECT o.name,
+              COALESCE(k.entitlement_level, 'starter') AS entitlement_level,
+              o.onboarding_completed_at
        FROM organizations o
        LEFT JOIN api_keys k ON k.organization_id = o.id AND k.status = 'active'
        WHERE o.id = $1
@@ -515,9 +521,11 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
       [user.organization_id]
     );
 
-    const orgName          = orgResult.rows[0]?.name ?? "Your Organisation";
-    const entitlementLevel = orgResult.rows[0]?.entitlement_level ?? "starter";
-    const userRole         = user.role || "admin";
+    const orgName              = orgResult.rows[0]?.name ?? "Your Organisation";
+    const entitlementLevel     = orgResult.rows[0]?.entitlement_level ?? "starter";
+    const onboardingCompleted  = orgResult.rows[0]?.onboarding_completed_at !== null
+      && orgResult.rows[0]?.onboarding_completed_at !== undefined;
+    const userRole             = user.role || "admin";
 
     const jwt = signJwt(user.id, user.organization_id, userRole);
 
@@ -541,7 +549,8 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
         role: userRole,
         organizationId: user.organization_id,
         organizationName: orgName,
-        entitlementLevel
+        entitlementLevel,
+        onboardingCompleted
       }
     });
   } catch (err) {
@@ -716,9 +725,15 @@ router.get("/auth/me", requireAuth, async (req, res) => {
     }
 
     const [orgResult, suppressionResult] = await Promise.all([
-      pg.query<{ name: string; entitlement_level: string; payment_failed_at: string | null }>(
+      pg.query<{
+        name: string;
+        entitlement_level: string;
+        payment_failed_at: string | null;
+        onboarding_completed_at: string | null;
+      }>(
         `SELECT o.name, COALESCE(k.entitlement_level, 'starter') AS entitlement_level,
-                k.payment_failed_at
+                k.payment_failed_at,
+                o.onboarding_completed_at
          FROM organizations o
          LEFT JOIN api_keys k ON k.organization_id = o.id AND k.status = 'active'
          WHERE o.id = $1
@@ -737,19 +752,45 @@ router.get("/auth/me", requireAuth, async (req, res) => {
     const emailSuppressed = suppressionResult.rows.length > 0;
 
     res.status(200).json({
-      id:               user.id,
-      email:            user.email,
-      name:             user.name,
-      role:             user.role || "admin",
-      organizationId:   orgId,
-      organizationName: org?.name ?? "Your Organisation",
-      entitlementLevel: org?.entitlement_level ?? "starter",
-      billingActive:    org?.entitlement_level !== "starter" && !org?.payment_failed_at,
-      emailSuppressed
+      id:                  user.id,
+      email:               user.email,
+      name:                user.name,
+      role:                user.role || "admin",
+      organizationId:      orgId,
+      organizationName:    org?.name ?? "Your Organisation",
+      entitlementLevel:    org?.entitlement_level ?? "starter",
+      billingActive:       org?.entitlement_level !== "starter" && !org?.payment_failed_at,
+      emailSuppressed,
+      onboardingCompleted: org?.onboarding_completed_at !== null && org?.onboarding_completed_at !== undefined
     });
   } catch (err) {
     logger.error({ event: "auth_me_failed", err }, "GET /api/auth/me failed");
     res.status(500).json({ error: "fetch_failed" });
+  }
+});
+
+/* =========================================================
+   POST /api/auth/onboarding-complete   (JWT required)
+   Marks the organization's onboarding as complete.
+   ========================================================= */
+
+router.post("/auth/onboarding-complete", requireAuth, async (req, res) => {
+  try {
+    const orgId = req.jwtPayload!.org;
+
+    await pg.query(
+      `UPDATE organizations
+       SET onboarding_completed_at = NOW()
+       WHERE id = $1
+         AND onboarding_completed_at IS NULL`,
+      [orgId]
+    );
+
+    logger.info({ event: "onboarding_complete", orgId }, "Onboarding marked complete");
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    logger.error({ event: "onboarding_complete_failed", err }, "POST /api/auth/onboarding-complete failed");
+    res.status(500).json({ error: "onboarding_complete_failed" });
   }
 });
 

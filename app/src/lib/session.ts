@@ -17,6 +17,7 @@ export interface SessionData {
   organizationName?: string;
   entitlementLevel?: string;
   billingActive?: boolean;
+  onboardingCompleted?: boolean;
 }
 
 /**

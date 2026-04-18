@@ -27,15 +27,16 @@ export async function POST(request: Request) {
     const cookieStore = await cookies();
     const session = await getIronSession<SessionData>(cookieStore, getSessionOptions());
 
-    session.userId           = result.user.id;
-    session.email            = result.user.email;
-    session.name             = result.user.name;
-    session.userRole         = (result.user as { role?: string }).role ?? "admin";
-    session.jwtToken         = result.token;
-    session.organizationId   = result.user.organizationId;
-    session.organizationName = result.user.organizationName;
-    session.entitlementLevel = result.user.entitlementLevel;
-    session.billingActive    = result.user.entitlementLevel !== "starter";
+    session.userId               = result.user.id;
+    session.email                = result.user.email;
+    session.name                 = result.user.name;
+    session.userRole             = (result.user as { role?: string }).role ?? "admin";
+    session.jwtToken             = result.token;
+    session.organizationId       = result.user.organizationId;
+    session.organizationName     = result.user.organizationName;
+    session.entitlementLevel     = result.user.entitlementLevel;
+    session.billingActive        = result.user.entitlementLevel !== "starter";
+    session.onboardingCompleted  = result.user.onboardingCompleted ?? false;
 
     await session.save();
 

@@ -145,6 +145,7 @@ export type DashboardSummary = {
     controls: number;
     control_assessments: number;
     governance_reviews: number;
+    frameworks: number;
   };
 };
 
@@ -554,6 +555,7 @@ export type AuthLoginResponse =
         organizationId: string;
         organizationName: string;
         entitlementLevel: string;
+        onboardingCompleted?: boolean;
       };
     }
   | { error: string };
@@ -568,6 +570,7 @@ export type AuthMeResponse = {
   entitlementLevel: string;
   billingActive: boolean;
   emailSuppressed?: boolean;
+  onboardingCompleted?: boolean;
 };
 
 export type TeamMember = {
@@ -1016,6 +1019,21 @@ export async function getAuthMe(
     return res.json() as Promise<AuthMeResponse>;
   } catch {
     return null;
+  }
+}
+
+export async function authCompleteOnboarding(
+  jwtToken: string
+): Promise<{ ok: boolean }> {
+  try {
+    const res = await fetch(`${ENGINE_URL}/api/auth/onboarding-complete`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${jwtToken}` },
+      cache: "no-store",
+    });
+    return { ok: res.ok };
+  } catch {
+    return { ok: false };
   }
 }
 
