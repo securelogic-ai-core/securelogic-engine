@@ -151,28 +151,23 @@ export default async function AccountPage({
           </Link>
         </div>
 
-        {/* API Key */}
-        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
-          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">
-            API Key
-          </h2>
-          <dl className="space-y-4">
-            <Row label="Label" value={me.apiKeyLabel ?? "—"} />
-            <Row label="Key ID" value={me.apiKeyId} mono />
-            <Row
-              label="Last used"
-              value={
-                me.lastUsedAt
-                  ? new Date(me.lastUsedAt).toLocaleDateString("en-US", {
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    })
-                  : "Never"
-              }
-            />
-          </dl>
-        </div>
+        {/* API Keys */}
+        {isPlatform && (
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">
+              API Keys
+            </h2>
+            <p className="text-sm text-slate-600 mb-4">
+              Manage your API keys and view usage.
+            </p>
+            <Link
+              href="/account/api-keys"
+              className="text-sm font-medium text-teal-600 hover:text-teal-700 transition-colors"
+            >
+              Manage API Keys →
+            </Link>
+          </div>
+        )}
 
         {/* Billing / Entitlement */}
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">

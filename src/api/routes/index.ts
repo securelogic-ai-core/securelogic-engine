@@ -89,10 +89,12 @@ import findingsExportRouter from "./findingsExport.js";
 import alertPreferencesRouter from "./alertPreferences.js";
 import policiesRouter from "./policies.js";
 import ssoRouter from "./sso.js";
+import customerApiKeysRouter from "./customerApiKeys.js";
 
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { trackApiUsage } from "../middleware/trackApiUsage.js";
 
 import { enforceUsageCap } from "../middleware/enforceUsageCap.js";
 import { tierRateLimit } from "../middleware/tierRateLimit.js";
@@ -173,6 +175,9 @@ export function buildRoutes(opts: RoutesOptions): Router {
 
   // SAML 2.0 SSO — public endpoints (check-domain, login, acs, metadata) + protected config endpoints
   router.use("/api", ssoRouter);
+
+  // Customer self-service API key management — own requireApiKey inline
+  router.use("/api", customerApiKeysRouter);
 
   // Account status — requireApiKey is inline; no entitlement gate (free tier must see own status)
   router.use("/api", accountRouter);
@@ -322,6 +327,10 @@ export function buildRoutes(opts: RoutesOptions): Router {
 
   const defaultApiRateLimiter = createApiKeyRateLimiter(120);
   router.use("/api", defaultApiRateLimiter);
+
+  // Fire-and-forget daily usage counter — runs after rate limit check,
+  // before route handlers. Never delays or blocks requests.
+  router.use("/api", trackApiUsage);
 
   // Specialized limiters — applied inline at their respective route paths
   // after requireApiKey + attachOrganizationContext have run.

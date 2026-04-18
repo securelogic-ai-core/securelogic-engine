@@ -79,16 +79,24 @@ export async function requireApiKey(
       const orgKeyResult = await pg.query(
         `SELECT * FROM api_keys
          WHERE organization_id = $1 AND status = 'active'
-         ORDER BY created_at ASC LIMIT 1`,
+         ORDER BY created_at DESC LIMIT 1`,
         [payload.org]
       );
 
       if (orgKeyResult.rows.length === 0) {
-        res.status(401).json({ error: "no_active_api_key_for_org" });
+        res.status(401).json({ error: "no_active_api_key" });
         return;
       }
 
-      (req as any).apiKey     = orgKeyResult.rows[0];
+      const orgApiKey = orgKeyResult.rows[0] as Record<string, unknown>;
+
+      // Fire-and-forget last_used_at update — same pattern as direct key path.
+      pg.query(
+        `UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`,
+        [orgApiKey.id]
+      ).catch(() => { /* silent */ });
+
+      (req as any).apiKey     = orgApiKey;
       (req as any).jwtPayload = payload;
       req.userId              = payload.sub;
       req.userRole            = payload.role;

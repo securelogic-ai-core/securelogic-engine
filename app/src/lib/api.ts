@@ -623,6 +623,43 @@ export type AuditLogResponse = {
   total: number;
 };
 
+export type ApiKeyRecord = {
+  id: string;
+  label: string;
+  entitlement_level: string;
+  status: "active" | "revoked";
+  last_used_at: string | null;
+  created_at: string;
+  revoked_at: string | null;
+  created_by_user_id: string | null;
+  created_by_name: string | null;
+};
+
+export type ApiKeyCreateResponse = {
+  key: ApiKeyRecord;
+  rawKey: string;
+};
+
+export type KeyUsageSummary = {
+  key_id: string;
+  label: string;
+  status: string;
+  total_requests: number;
+  requests_last_7_days: number;
+  last_active_date: string | null;
+};
+
+export type ApiUsageResponse = {
+  keys: KeyUsageSummary[];
+  daily: { date: string; total: number }[];
+  totalRequests: number;
+  periodDays: number;
+};
+
+export type ApiKeysResponse = {
+  keys: ApiKeyRecord[];
+};
+
 export type SsoConfig = {
   id: string;
   organization_id: string;
@@ -1907,5 +1944,80 @@ export async function checkSsoDomain(
     return res.json() as Promise<SsoDomainCheck>;
   } catch {
     return { hasSso: false, isEnforced: false, organizationId: null };
+  }
+}
+
+export async function getApiKeys(
+  jwtToken: string
+): Promise<ApiKeysResponse | null> {
+  try {
+    const res = await fetch(`${ENGINE_URL}/api/customer/keys`, {
+      headers: { Authorization: `Bearer ${jwtToken}` },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<ApiKeysResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function createApiKey(
+  jwtToken: string,
+  label: string
+): Promise<ApiKeyCreateResponse | null> {
+  try {
+    const res = await fetch(`${ENGINE_URL}/api/customer/keys`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${jwtToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ label }),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<ApiKeyCreateResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function revokeApiKey(
+  jwtToken: string,
+  keyId: string
+): Promise<{ ok: boolean } | null> {
+  try {
+    const res = await fetch(
+      `${ENGINE_URL}/api/customer/keys/${encodeURIComponent(keyId)}`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${jwtToken}` },
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<{ ok: boolean }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getApiUsage(
+  jwtToken: string,
+  days = 30
+): Promise<ApiUsageResponse | null> {
+  try {
+    const res = await fetch(
+      `${ENGINE_URL}/api/customer/keys/usage?days=${days}`,
+      {
+        headers: { Authorization: `Bearer ${jwtToken}` },
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<ApiUsageResponse>;
+  } catch {
+    return null;
   }
 }

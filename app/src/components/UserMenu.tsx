@@ -116,6 +116,11 @@ export default function UserMenu({ name, email, role, organizationName, isPlatfo
                 Team
               </MenuLink>
             )}
+            {isPlatformUser && (
+              <MenuLink href="/account/api-keys" onClick={() => setOpen(false)}>
+                API Keys
+              </MenuLink>
+            )}
             {isSsoEligible && role === "admin" && (
               <MenuLink href="/settings/sso" onClick={() => setOpen(false)}>
                 SSO Configuration
