@@ -1,0 +1,108 @@
+"use server";
+
+import { getSession } from "@/lib/session";
+
+const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
+
+export type FindingImportRow = {
+  title: string;
+  severity: string;
+  source_type: string;
+  description?: string;
+  domain?: string;
+  priority?: string;
+  likelihood?: string;
+  due_date?: string;
+  recommendation?: string;
+};
+
+export type FindingImportResult = {
+  total: number;
+  created: number;
+  skipped: number;
+  errors: number;
+  results: Array<{
+    name: string;
+    status: "created" | "skipped" | "error";
+    message?: string;
+    id?: string;
+  }>;
+};
+
+export async function importFindings(rows: FindingImportRow[]): Promise<FindingImportResult> {
+  const session = await getSession();
+  const token = session.jwtToken ?? session.apiKey ?? null;
+
+  if (!token) {
+    return {
+      total: rows.length,
+      created: 0,
+      skipped: 0,
+      errors: rows.length,
+      results: rows.map((r) => ({ name: r.title, status: "error" as const, message: "Not authenticated" })),
+    };
+  }
+
+  if (rows.length > 500) {
+    return {
+      total: rows.length,
+      created: 0,
+      skipped: 0,
+      errors: rows.length,
+      results: rows.map((r) => ({ name: r.title, status: "error" as const, message: "Import limit exceeded (max 500 rows)" })),
+    };
+  }
+
+  const results: FindingImportResult["results"] = [];
+
+  for (const row of rows) {
+    const body: Record<string, string> = {
+      title: row.title,
+      severity: row.severity,
+      source_type: row.source_type,
+    };
+    if (row.description)    body.description    = row.description;
+    if (row.domain)         body.domain         = row.domain;
+    if (row.priority)       body.priority       = row.priority;
+    if (row.likelihood)     body.likelihood     = row.likelihood;
+    if (row.due_date)       body.due_date       = row.due_date;
+    if (row.recommendation) body.recommendation = row.recommendation;
+
+    let res: Response;
+    try {
+      res = await fetch(`${ENGINE_URL}/api/findings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+        cache: "no-store",
+      });
+    } catch {
+      results.push({ name: row.title, status: "error", message: "Network error" });
+      continue;
+    }
+
+    if (res.status === 201) {
+      const data = (await res.json().catch(() => ({}))) as { finding?: { id?: string } };
+      results.push({ name: row.title, status: "created", id: data.finding?.id });
+      continue;
+    }
+    if (res.status === 409) {
+      results.push({ name: row.title, status: "skipped", message: "Already exists" });
+      continue;
+    }
+    if (res.status === 400) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
+      results.push({ name: row.title, status: "error", message: data.detail ?? data.error ?? "Invalid data" });
+      continue;
+    }
+    results.push({ name: row.title, status: "error", message: "Failed to create finding" });
+  }
+
+  return {
+    total: results.length,
+    created: results.filter((r) => r.status === "created").length,
+    skipped: results.filter((r) => r.status === "skipped").length,
+    errors:  results.filter((r) => r.status === "error").length,
+    results,
+  };
+}

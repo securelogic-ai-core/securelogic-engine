@@ -168,13 +168,33 @@ export default async function RisksPage({
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold mb-1" style={{ color: "#f1f5f9" }}>
-          Risk Register
-        </h1>
-        <p className="text-sm" style={{ color: "#94a3b8" }}>
-          Strategic risks and treatment status
-        </p>
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold mb-1" style={{ color: "#f1f5f9" }}>
+            Risk Register
+          </h1>
+          <p className="text-sm" style={{ color: "#94a3b8" }}>
+            Strategic risks and treatment status
+          </p>
+        </div>
+        <Link
+          href="/risks/import"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            padding: "8px 14px",
+            borderRadius: "8px",
+            fontSize: "13px",
+            fontWeight: 500,
+            border: "1px solid #1e293b",
+            color: "#94a3b8",
+            textDecoration: "none",
+            flexShrink: 0,
+          }}
+        >
+          ↑ Import CSV
+        </Link>
       </div>
 
       {/* Summary stat cards */}

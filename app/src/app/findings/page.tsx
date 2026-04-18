@@ -130,6 +130,23 @@ export default async function FindingsPage({
             All findings across your organization
           </p>
         </div>
+        <Link
+          href="/findings/import"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            padding: "8px 14px",
+            borderRadius: "8px",
+            fontSize: "13px",
+            fontWeight: 500,
+            border: "1px solid #1e293b",
+            color: "#94a3b8",
+            textDecoration: "none",
+          }}
+        >
+          ↑ Import CSV
+        </Link>
         <a
           href={`/api/export/findings${
             Object.keys(currentSp).length > 0
