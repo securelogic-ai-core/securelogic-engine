@@ -462,14 +462,25 @@ export default async function ObligationDetailPage({
         >
           ← Obligations
         </Link>
-        <h1 className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>
-          {obligation.title}
-        </h1>
-        {obligation.source_regulation && (
-          <p className="text-sm mt-1" style={{ color: "#94a3b8" }}>
-            {obligation.source_regulation}
-          </p>
-        )}
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>
+              {obligation.title}
+            </h1>
+            {obligation.source_regulation && (
+              <p className="text-sm mt-1" style={{ color: "#94a3b8" }}>
+                {obligation.source_regulation}
+              </p>
+            )}
+          </div>
+          <Link
+            href={`/obligations/${obligation.id}/edit`}
+            className="flex-shrink-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium border transition-colors hover:border-teal-500 hover:text-teal-300"
+            style={{ borderColor: "#1e2d45", color: "#94a3b8", background: "transparent" }}
+          >
+            Edit Obligation
+          </Link>
+        </div>
       </div>
 
       {/* Two-column layout */}
