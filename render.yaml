@@ -6,6 +6,7 @@ services:
     buildCommand: npm install && npm run build
     startCommand: npm run migrate && npm start
     autoDeploy: true
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
@@ -38,6 +39,10 @@ services:
 
       # Session secret — must be set; defaults to "dev-secret" if omitted
       - key: SESSION_SECRET
+        sync: false
+
+      # JWT signing secret — required for customer portal auth (HS256)
+      - key: JWT_SECRET
         sync: false
 
       # Base URL for unsubscribe links (e.g. https://app.example.com)

@@ -411,7 +411,7 @@ app.use(cookieParser());
    SESSION (CRITICAL FOR ADMIN AUTH)
    ========================================================= */
 
-const sessionSecret = process.env.SESSION_SECRET ?? (isDev ? "dev-secret" : "");
+const sessionSecret = process.env.SESSION_SECRET ?? (isDev ? "dev-secret" : (() => { throw new Error("SESSION_SECRET must be set in production"); })());
 
 app.use(
   session({

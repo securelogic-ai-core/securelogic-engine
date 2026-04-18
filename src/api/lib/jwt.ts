@@ -4,7 +4,7 @@
  * No external dependency. Signs and verifies JWTs using HMAC-SHA256
  * with the JWT_SECRET environment variable.
  *
- * Token lifetime: 30 days. Intended for customer-facing portal sessions.
+ * Token lifetime: 7 days. Intended for customer-facing portal sessions.
  */
 
 import crypto from "crypto";
@@ -22,7 +22,7 @@ export interface JwtPayload {
   exp: number;
 }
 
-const EXPIRY_SECONDS = 30 * 24 * 60 * 60; // 30 days
+const EXPIRY_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
 function b64url(buf: Buffer): string {
   return buf.toString("base64url");

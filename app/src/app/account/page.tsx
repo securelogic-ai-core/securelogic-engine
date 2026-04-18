@@ -67,6 +67,7 @@ export default async function AccountPage({
   const userName      = authMe?.name ?? session.name ?? "";
   const userEmail     = authMe?.email ?? session.email ?? "";
   const isPaid        = me.entitlementLevel === "premium" || me.entitlementLevel === "professional";
+  const hasPaymentFailure = me.billingActive === false && me.entitlementLevel !== "starter";
   const isPlatform    = isPaid;
   const isAdmin       = userRole === "admin";
   const planName      = planDisplayName(me.entitlementLevel);
@@ -81,6 +82,27 @@ export default async function AccountPage({
           Subscription, access key, and organization details.
         </p>
       </div>
+
+      {hasPaymentFailure && (
+        <div className="mb-6 bg-red-50 border border-red-200 rounded-lg px-5 py-4 flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-red-800 mb-1">Payment failed</p>
+            <p className="text-sm text-red-700">
+              Your last payment could not be processed. Please update your billing details to restore full access.
+            </p>
+          </div>
+          {isAdmin && (
+            <form action="/api/billing/portal" method="POST" className="flex-shrink-0">
+              <button
+                type="submit"
+                className="text-sm font-semibold text-red-700 border border-red-300 hover:border-red-500 px-4 py-1.5 rounded-lg transition-colors whitespace-nowrap"
+              >
+                Update Billing
+              </button>
+            </form>
+          )}
+        </div>
+      )}
 
       {billingErrorMessage && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg px-5 py-4">

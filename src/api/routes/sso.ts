@@ -12,6 +12,7 @@
  */
 
 import { Router, type Request, type Response } from "express";
+import rateLimit from "express-rate-limit";
 import * as samlify from "samlify";
 import { pg } from "../infra/postgres.js";
 import { signJwt } from "../lib/jwt.js";
@@ -36,6 +37,15 @@ const ENGINE_URL_BASE =
   process.env.ENGINE_URL_BASE ?? "https://securelogic-engine.onrender.com";
 
 const router = Router();
+
+const checkDomainLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip ?? "unknown",
+  message: { error: "rate_limit_exceeded" },
+});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -105,7 +115,7 @@ async function loadSsoConfig(orgId: string): Promise<SsoConfigRow | null> {
 // ─── GET /api/sso/check-domain ───────────────────────────────────────────────
 // No auth. Checks whether the email's domain has SSO configured.
 
-router.get("/sso/check-domain", async (req: Request, res: Response) => {
+router.get("/sso/check-domain", checkDomainLimiter, async (req: Request, res: Response) => {
   try {
     const emailParam = typeof req.query.email === "string" ? req.query.email.trim() : "";
 
@@ -337,6 +347,22 @@ router.post(
 
       if (!idp_entity_id || !idp_sso_url || !idp_certificate || !sp_entity_id) {
         res.status(400).json({ error: "missing_required_fields" });
+        return;
+      }
+
+      try {
+        const parsed = new URL(idp_sso_url);
+        if (parsed.protocol !== "https:") {
+          res.status(400).json({ error: "idp_sso_url_must_be_https" });
+          return;
+        }
+      } catch {
+        res.status(400).json({ error: "idp_sso_url_invalid" });
+        return;
+      }
+
+      if (idp_certificate.length > 10000) {
+        res.status(400).json({ error: "idp_certificate_too_long" });
         return;
       }
 
