@@ -279,7 +279,8 @@ app.use((req, res, next) => {
   if (
     req.originalUrl.startsWith("/webhooks/lemon") ||
     req.originalUrl.startsWith("/webhooks/email/resend") ||
-    req.originalUrl.startsWith("/api/vendor-assessments/analyze-document")
+    req.originalUrl.startsWith("/api/vendor-assessments/analyze-document") ||
+    /^\/api\/sso\/[^/]+\/acs/.test(req.originalUrl)
   ) {
     next();
     return;

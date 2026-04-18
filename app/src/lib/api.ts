@@ -623,6 +623,24 @@ export type AuditLogResponse = {
   total: number;
 };
 
+export type SsoConfig = {
+  id: string;
+  organization_id: string;
+  idp_entity_id: string;
+  idp_sso_url: string;
+  idp_certificate: string;
+  sp_entity_id: string;
+  is_enforced: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SsoDomainCheck = {
+  hasSso: boolean;
+  isEnforced: boolean;
+  organizationId: string | null;
+};
+
 // =========================================================
 // HELPERS
 // =========================================================
@@ -1858,5 +1876,36 @@ export async function getAuditLog(
     };
   } catch {
     return null;
+  }
+}
+
+export async function getSsoConfig(
+  jwtToken: string
+): Promise<{ config: SsoConfig } | null> {
+  try {
+    const res = await fetch(`${ENGINE_URL}/api/sso/config`, {
+      headers: { Authorization: `Bearer ${jwtToken}` },
+      cache: "no-store",
+    });
+    if (res.status === 404) return { config: null as unknown as SsoConfig };
+    if (!res.ok) return null;
+    return res.json() as Promise<{ config: SsoConfig }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function checkSsoDomain(
+  email: string
+): Promise<SsoDomainCheck> {
+  try {
+    const res = await fetch(
+      `${ENGINE_URL}/api/sso/check-domain?email=${encodeURIComponent(email)}`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) return { hasSso: false, isEnforced: false, organizationId: null };
+    return res.json() as Promise<SsoDomainCheck>;
+  } catch {
+    return { hasSso: false, isEnforced: false, organizationId: null };
   }
 }
