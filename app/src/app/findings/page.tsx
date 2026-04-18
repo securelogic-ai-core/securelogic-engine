@@ -83,7 +83,7 @@ export default async function FindingsPage({
   const isPlatformUser = ["premium", "platform", "team"].includes(entitlementLevel);
   if (!isPlatformUser) redirect("/dashboard");
 
-  const activeStatus   = sp.status   ?? "open";
+  const activeStatus   = sp.status   ?? "all";
   const activeSeverity = sp.severity ?? "";
   const activeDomain   = sp.domain   ?? "";
   const activeSource   = sp.source_type ?? "";
@@ -115,7 +115,7 @@ export default async function FindingsPage({
 
   const hasFilters = !!(
     activeSeverity || activeDomain || activeSource || activePriority ||
-    (sp.status && sp.status !== "open")
+    (sp.status && sp.status !== "all")
   );
 
   return (
@@ -127,7 +127,7 @@ export default async function FindingsPage({
             Findings
           </h1>
           <p className="text-sm" style={{ color: "#94a3b8" }}>
-            All open findings across your organization
+            All findings across your organization
           </p>
         </div>
         <a
@@ -183,10 +183,10 @@ export default async function FindingsPage({
           <span className="text-xs font-semibold uppercase tracking-wide mr-1" style={{ color: "#64748b" }}>
             Status
           </span>
+          <FilterPill label="All"         href={filterHref(currentSp, "status", "all")}         active={activeStatus === "all"} />
           <FilterPill label="Open"        href={filterHref(currentSp, "status", "open")}        active={activeStatus === "open"} />
           <FilterPill label="In Progress" href={filterHref(currentSp, "status", "in_progress")} active={activeStatus === "in_progress"} />
           <FilterPill label="Closed"      href={filterHref(currentSp, "status", "closed")}      active={activeStatus === "closed"} />
-          <FilterPill label="All"         href={filterHref(currentSp, "status", "all")}         active={activeStatus === "all"} />
         </div>
 
         {/* Severity */}

@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import Papa from "papaparse";
+import * as XLSX from "xlsx";
 import { importVendors, type VendorImportRow, type VendorImportResult } from "./actions";
 
 // ─────────────────────────────────────────────────────────────
@@ -39,6 +40,17 @@ const AUTO_MAP_RULES: Record<keyof VendorImportRow, string[]> = {
   access_level:        ["access", "access level", "access_level", "access type", "access_type"],
   website:             ["website", "url", "domain", "site"],
 };
+
+// Scan the first up to 5 rows of raw sheet data to find the real header row.
+// A title/merged row typically has only 1 non-empty cell; the header row has ≥2.
+function findHeaderRowIndex(rows: string[][]): number {
+  const limit = Math.min(5, rows.length);
+  for (let i = 0; i < limit; i++) {
+    const nonEmpty = rows[i].filter((cell) => cell != null && String(cell).trim() !== "").length;
+    if (nonEmpty >= 2) return i;
+  }
+  return 0;
+}
 
 function autoDetectMapping(headers: string[]): Record<string, string> {
   const map: Record<string, string> = {};
@@ -233,7 +245,9 @@ export function VendorImportClient() {
       setError("Failed to parse file. Please check the format and try again.");
       return;
     }
-    const headers = result.meta.fields ?? [];
+    // Filter out blank/empty column headers that PapaParse may produce
+    const allHeaders = result.meta.fields ?? [];
+    const headers = allHeaders.filter((h) => h != null && h.trim() !== "");
     if (headers.length === 0) {
       setError("No columns detected. Check your file has a header row.");
       return;
@@ -252,12 +266,67 @@ export function VendorImportClient() {
 
   const parseFile = useCallback((file: File) => {
     setError(null);
-    Papa.parse<Record<string, string>>(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: handleParsed,
-      error: () => setError("Failed to read file."),
-    });
+    const isXlsx = /\.(xlsx|xls)$/i.test(file.name);
+    if (isXlsx) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = e.target?.result;
+          const workbook = XLSX.read(data, { type: "array" });
+          const sheetName = workbook.SheetNames[0];
+          if (!sheetName) { setError("No sheets found in file."); return; }
+          const sheet = workbook.Sheets[sheetName];
+          // Convert to array-of-arrays to detect the real header row
+          const rawMatrix: string[][] = XLSX.utils.sheet_to_json(sheet, {
+            header: 1,
+            defval: "",
+            blankrows: false,
+          }) as string[][];
+          if (rawMatrix.length === 0) { setError("No data found in file."); return; }
+          const headerRowIdx = findHeaderRowIndex(rawMatrix);
+          // Build header list, skip empty/null columns
+          const rawHeaders = rawMatrix[headerRowIdx]
+            .map((h) => String(h ?? "").trim())
+            .filter((h) => h !== "");
+          if (rawHeaders.length === 0) { setError("No columns detected. Check your file has a header row."); return; }
+          // Build data rows from rows after the header row
+          const dataRows: Record<string, string>[] = [];
+          for (let i = headerRowIdx + 1; i < rawMatrix.length; i++) {
+            const row = rawMatrix[i];
+            const record: Record<string, string> = {};
+            rawHeaders.forEach((h, colIdx) => {
+              // Find actual column index in the original row (accounting for skipped empty headers)
+              const origIdx = rawMatrix[headerRowIdx]
+                .map((oh, oi) => ({ oh: String(oh ?? "").trim(), oi }))
+                .filter(({ oh }) => oh !== "")
+                .findIndex(({ oh }) => oh === h);
+              const actualCol = rawMatrix[headerRowIdx]
+                .map((oh, oi) => ({ oh: String(oh ?? "").trim(), oi }))
+                .filter(({ oh }) => oh !== "")[origIdx]?.oi ?? colIdx;
+              record[h] = String(row[actualCol] ?? "").trim();
+            });
+            if (Object.values(record).some((v) => v !== "")) dataRows.push(record);
+          }
+          if (dataRows.length === 0) { setError("No data rows found in the file."); return; }
+          setRawHeaders(rawHeaders);
+          setRawRows(dataRows);
+          setColumnMap(autoDetectMapping(rawHeaders));
+          setError(null);
+          setStep("mapping");
+        } catch {
+          setError("Failed to parse XLSX file. Please check the format and try again.");
+        }
+      };
+      reader.onerror = () => setError("Failed to read file.");
+      reader.readAsArrayBuffer(file);
+    } else {
+      Papa.parse<Record<string, string>>(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: handleParsed,
+        error: () => setError("Failed to read file."),
+      });
+    }
   }, [handleParsed]);
 
   const parsePaste = useCallback(() => {
