@@ -100,6 +100,7 @@ export function AuthInput({
   type = "text",
   value,
   onChange,
+  onBlur,
   placeholder,
   autoComplete,
   required = true,
@@ -109,6 +110,7 @@ export function AuthInput({
   type?: string;
   value: string;
   onChange: (v: string) => void;
+  onBlur?: () => void;
   placeholder?: string;
   autoComplete?: string;
   required?: boolean;
@@ -155,6 +157,7 @@ export function AuthInput({
         onBlur={(e) => {
           e.currentTarget.style.borderColor = "#1e2d45";
           e.currentTarget.style.boxShadow = "none";
+          onBlur?.();
         }}
       />
     </div>

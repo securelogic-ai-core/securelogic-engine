@@ -11,6 +11,8 @@ interface HeaderProps {
   isPlatformUser?: boolean;
   /** Show premium-only nav items (Audit Log) */
   isPremiumUser?: boolean;
+  /** Show SSO settings link for professional+ orgs */
+  isSsoEligible?: boolean;
   /** Current user name — shown in avatar */
   userName?: string;
   /** Current user email */
@@ -24,6 +26,7 @@ export function Header({
   isAuthenticated,
   isPlatformUser = false,
   isPremiumUser = false,
+  isSsoEligible = false,
   userName,
   userEmail,
   userRole,
@@ -137,6 +140,7 @@ export function Header({
                   role={userRole ?? "admin"}
                   organizationName={organizationName}
                   isPlatformUser={isPlatformUser}
+                  isSsoEligible={isSsoEligible}
                 />
               ) : (
                 <>

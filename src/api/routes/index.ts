@@ -88,6 +88,7 @@ import auditPackageRouter from "./auditPackage.js";
 import findingsExportRouter from "./findingsExport.js";
 import alertPreferencesRouter from "./alertPreferences.js";
 import policiesRouter from "./policies.js";
+import ssoRouter from "./sso.js";
 
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -169,6 +170,9 @@ export function buildRoutes(opts: RoutesOptions): Router {
 
   // Customer email/password auth — public (rate-limited), JWT-issuing
   router.use("/api", customerAuthRouter);
+
+  // SAML 2.0 SSO — public endpoints (check-domain, login, acs, metadata) + protected config endpoints
+  router.use("/api", ssoRouter);
 
   // Account status — requireApiKey is inline; no entitlement gate (free tier must see own status)
   router.use("/api", accountRouter);

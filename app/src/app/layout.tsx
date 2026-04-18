@@ -25,6 +25,10 @@ export default async function RootLayout({
   const isPremiumUser =
     entitlementLevel === "premium" || entitlementLevel === "professional" ||
     entitlementLevel === "platform" || entitlementLevel === "team";
+  const isSsoEligible =
+    entitlementLevel === "professional" || entitlementLevel === "premium" ||
+    entitlementLevel === "platform" || entitlementLevel === "team" ||
+    entitlementLevel === "standard";
 
   return (
     <html lang="en">
@@ -33,6 +37,7 @@ export default async function RootLayout({
           isAuthenticated={isAuthenticated}
           isPlatformUser={isPlatformUser}
           isPremiumUser={isPremiumUser}
+          isSsoEligible={isSsoEligible}
           organizationName={session.organizationName}
           userName={session.name}
           userEmail={session.email}

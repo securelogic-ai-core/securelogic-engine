@@ -9,6 +9,8 @@ interface Props {
   role: string;
   organizationName?: string;
   isPlatformUser?: boolean;
+  /** Show SSO settings link for professional+ orgs */
+  isSsoEligible?: boolean;
 }
 
 function RoleBadge({ role }: { role: string }) {
@@ -35,7 +37,7 @@ function RoleBadge({ role }: { role: string }) {
   );
 }
 
-export default function UserMenu({ name, email, role, organizationName, isPlatformUser }: Props) {
+export default function UserMenu({ name, email, role, organizationName, isPlatformUser, isSsoEligible }: Props) {
   const [open, setOpen]   = useState(false);
   const menuRef           = useRef<HTMLDivElement>(null);
   const initial           = (name || email || "?").charAt(0).toUpperCase();
@@ -112,6 +114,11 @@ export default function UserMenu({ name, email, role, organizationName, isPlatfo
             {isPlatformUser && (
               <MenuLink href="/account/team" onClick={() => setOpen(false)}>
                 Team
+              </MenuLink>
+            )}
+            {isSsoEligible && role === "admin" && (
+              <MenuLink href="/settings/sso" onClick={() => setOpen(false)}>
+                SSO Configuration
               </MenuLink>
             )}
           </div>
