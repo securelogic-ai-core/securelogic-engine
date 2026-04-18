@@ -52,13 +52,6 @@ const VALID_FREQUENCIES = new Set([
   "monthly", "quarterly", "biannual", "annual", "ad_hoc"
 ]);
 
-const FREQ_DAYS: Record<string, number> = {
-  monthly: 30,
-  quarterly: 90,
-  biannual: 180,
-  annual: 365,
-};
-
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function isIsoDate(v: unknown): v is string {

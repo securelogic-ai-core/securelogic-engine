@@ -229,7 +229,6 @@ async function assembleAuditPackage(
   }
 
   // Step 6: Build control maps per requirement
-  type ControlKey = { requirement_id: string; control_id: string; control_name: string };
   const controlsByRequirement = new Map<string, AuditControl[]>();
 
   // Add controls with assessments
