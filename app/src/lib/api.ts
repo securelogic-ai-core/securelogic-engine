@@ -1595,3 +1595,78 @@ export async function updateAlertPreferences(
     return null;
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Policy types
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type Policy = {
+  id: string;
+  organization_id: string;
+  name: string;
+  description: string | null;
+  category: string;
+  version: string | null;
+  owner: string | null;
+  status: "draft" | "active" | "under_review" | "retired";
+  review_frequency: "annual" | "biannual" | "ad_hoc" | null;
+  last_reviewed_at: string | null;
+  next_review_at: string | null;
+  is_overdue: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PolicyDetail = Policy & {
+  linked_controls: Array<{
+    control_id: string;
+    control_name: string;
+  }>;
+};
+
+export type PoliciesResponse = {
+  policies: Policy[];
+  total: number;
+  nextCursor: string | null;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Policy API functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function getPolicies(
+  apiKey: string,
+  params?: {
+    status?: string;
+    category?: string;
+    linked_to_control?: string;
+    limit?: number;
+  }
+): Promise<PoliciesResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.category) qs.set("category", params.category);
+    if (params?.linked_to_control) qs.set("linked_to_control", params.linked_to_control);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const query = qs.toString() ? `?${qs.toString()}` : "";
+    const res = await engineFetch(`/api/policies${query}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<PoliciesResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getPolicy(
+  apiKey: string,
+  id: string
+): Promise<{ policy: PolicyDetail } | null> {
+  try {
+    const res = await engineFetch(`/api/policies/${encodeURIComponent(id)}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ policy: PolicyDetail }>;
+  } catch {
+    return null;
+  }
+}
