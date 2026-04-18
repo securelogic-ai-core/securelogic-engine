@@ -85,6 +85,7 @@ import adminBriefsRouter from "./adminBriefs.js";
 import auditLogRouter from "./auditLog.js";
 import teamInvitesRouter from "./teamInvites.js";
 import auditPackageRouter from "./auditPackage.js";
+import gapReportRouter from "./gapReport.js";
 import findingsExportRouter from "./findingsExport.js";
 import alertPreferencesRouter from "./alertPreferences.js";
 import policiesRouter from "./policies.js";
@@ -393,6 +394,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", auditLogRouter);
   router.use("/api", teamInvitesRouter);
   router.use("/api", auditPackageRouter);
+  router.use("/api", gapReportRouter);
   router.use("/api", findingsExportRouter);
   router.use("/api", alertPreferencesRouter);
   router.use("/api", policiesRouter);
