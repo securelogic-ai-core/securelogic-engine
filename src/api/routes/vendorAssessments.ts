@@ -31,6 +31,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { validateVendorAssessmentCreate } from "../lib/vendorAssessmentValidation.js";
 import { severityToPriority } from "../lib/postureComputation.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
 
@@ -223,6 +224,17 @@ router.post(
         },
         "Vendor assessment created"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "vendor_assessment.created",
+        resourceType: "vendor_assessment",
+        resourceId: assessmentId as string,
+        payload: { vendor_id: input.vendor_id, status: (input as any).status ?? null },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(201).json({ assessment, finding });
     } catch (err) {

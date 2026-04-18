@@ -37,6 +37,7 @@ export async function requireApiKey(
 
     if (!presentedKey) {
       writeAuditEvent({
+        actorUserId: null,
         eventType: "auth.missing_api_key",
         resourceType: "api_key",
         payload: { route: req.originalUrl, method: req.method },
@@ -55,6 +56,7 @@ export async function requireApiKey(
 
       if (!payload) {
         writeAuditEvent({
+          actorUserId: null,
           eventType: "auth.invalid_jwt",
           resourceType: "user",
           payload: { route: req.originalUrl, method: req.method },
@@ -109,6 +111,7 @@ export async function requireApiKey(
 
     if (result.rows.length === 0) {
       writeAuditEvent({
+        actorUserId: null,
         eventType: "auth.invalid_api_key",
         resourceType: "api_key",
         payload: { route: req.originalUrl, method: req.method },
@@ -128,6 +131,7 @@ export async function requireApiKey(
       writeAuditEvent({
         organizationId: apiKey.organization_id as string ?? null,
         actorApiKeyId: apiKey.id as string ?? null,
+        actorUserId: null,
         eventType: "auth.inactive_api_key",
         resourceType: "api_key",
         resourceId: apiKey.id as string ?? null,
@@ -142,6 +146,7 @@ export async function requireApiKey(
       writeAuditEvent({
         organizationId: apiKey.organization_id as string ?? null,
         actorApiKeyId: apiKey.id as string ?? null,
+        actorUserId: null,
         eventType: "auth.revoked_api_key",
         resourceType: "api_key",
         resourceId: apiKey.id as string ?? null,

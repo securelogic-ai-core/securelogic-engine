@@ -203,6 +203,7 @@ router.post(
       writeAuditEvent({
         organizationId,
         actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        actorUserId: req.userId ?? null,
         eventType: "risk.created",
         resourceType: "risk",
         resourceId: risk.id as string,
@@ -677,6 +678,7 @@ router.patch(
       writeAuditEvent({
         organizationId,
         actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        actorUserId: req.userId ?? null,
         eventType: "risk.updated",
         resourceType: "risk",
         resourceId: risk.id as string,

@@ -25,6 +25,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { validateAiSystemCreate } from "../lib/aiSystemValidation.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
 
@@ -138,6 +139,17 @@ router.post(
         },
         "AI system created"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "ai_system.created",
+        resourceType: "ai_system",
+        resourceId: result.rows[0].id as string,
+        payload: { name: input.name },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(201).json({ ai_system: result.rows[0] });
     } catch (err) {

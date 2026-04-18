@@ -21,6 +21,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
 
@@ -202,6 +203,17 @@ router.post(
         { event: "policy_created", organizationId, policyId: result.rows[0]?.id, name },
         "Policy created"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "policy.created",
+        resourceType: "policy",
+        resourceId: result.rows[0].id as string,
+        payload: { name, category, status },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(201).json({ policy: result.rows[0] });
     } catch (err) {
@@ -589,6 +601,17 @@ router.patch(
         },
         "Policy updated"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "policy.updated",
+        resourceType: "policy",
+        resourceId: policyId,
+        payload: { fields: setClauses.slice(0, -1).map((s) => s.split(" = ")[0] ?? s) },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(200).json({ policy: result.rows[0] });
     } catch (err) {

@@ -170,6 +170,7 @@ router.post(
       writeAuditEvent({
         organizationId,
         actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        actorUserId: req.userId ?? null,
         eventType: "finding.created",
         resourceType: "finding",
         resourceId: result.rows[0].id as string,
@@ -604,6 +605,7 @@ router.patch(
       writeAuditEvent({
         organizationId,
         actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        actorUserId: req.userId ?? null,
         eventType: "finding.status_changed",
         resourceType: "finding",
         resourceId: result.rows[0].id as string,

@@ -242,6 +242,7 @@ router.post(
       writeAuditEvent({
         organizationId,
         actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
         eventType: "governance_review.created",
         resourceType: "governance_review",
         resourceId: reviewId,

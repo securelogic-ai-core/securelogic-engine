@@ -14,6 +14,7 @@
  *   writeAuditEvent({
  *     organizationId: req.organizationContext?.organizationId,
  *     actorApiKeyId:  req.apiKey?.id,
+ *     actorUserId:    req.userId ?? null,
  *     eventType:      "workflow.status_transition",
  *     resourceType:   "risk_treatment",
  *     resourceId:     treatmentId,
@@ -30,6 +31,8 @@ export type AuditEventInput = {
   organizationId?: string | null;
   /** API key that triggered the event. Null for system/scheduler events. */
   actorApiKeyId?: string | null;
+  /** User UUID from JWT. Null for API-key-only callers and system events. */
+  actorUserId?: string | null;
   /** Canonical event type identifier. Use dot-notation: 'domain.action'. */
   eventType: string;
   /** Entity class the event applies to. */
@@ -49,8 +52,6 @@ export type AuditEventInput = {
  * Errors are swallowed and logged at warn level.
  */
 export function writeAuditEvent(event: AuditEventInput): void {
-  // Kick off async write without awaiting it.
-  // The void cast makes the intent explicit.
   void _writeAsync(event);
 }
 
@@ -61,17 +62,19 @@ async function _writeAsync(event: AuditEventInput): Promise<void> {
       INSERT INTO security_audit_log (
         organization_id,
         actor_api_key_id,
+        actor_user_id,
         event_type,
         resource_type,
         resource_id,
         payload,
         ip_address
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `,
       [
         event.organizationId ?? null,
         event.actorApiKeyId ?? null,
+        event.actorUserId ?? null,
         event.eventType,
         event.resourceType,
         event.resourceId ?? null,
@@ -80,7 +83,6 @@ async function _writeAsync(event: AuditEventInput): Promise<void> {
       ]
     );
   } catch (err) {
-    // Non-fatal — audit write failures must never surface to callers.
     logger.warn(
       { event: "audit_write_failed", eventType: event.eventType, err },
       "Security audit log write failed"

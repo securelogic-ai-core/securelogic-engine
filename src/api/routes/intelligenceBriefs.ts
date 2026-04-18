@@ -300,6 +300,7 @@ router.post("/intelligence-briefs/generate", async (req, res) => {
     writeAuditEvent({
       organizationId: orgId,
       actorApiKeyId: (req as any).apiKey?.id ?? null,
+      actorUserId: null,
       eventType: "intelligence_brief.generated",
       resourceType: "intelligence_brief",
       resourceId: brief.id,
@@ -664,6 +665,7 @@ router.post("/intelligence-briefs/:id/send", async (req, res) => {
       writeAuditEvent({
         organizationId: orgId,
         actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: null,
         eventType: "intelligence_brief.sent",
         resourceType: "intelligence_brief",
         resourceId: id,

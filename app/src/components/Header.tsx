@@ -9,6 +9,8 @@ interface HeaderProps {
   isAuthenticated: boolean;
   /** Show platform nav items (Vendors, AI Systems, Controls) for platform subscribers only */
   isPlatformUser?: boolean;
+  /** Show premium-only nav items (Audit Log) */
+  isPremiumUser?: boolean;
   /** Current user name — shown in avatar */
   userName?: string;
   /** Current user email */
@@ -21,6 +23,7 @@ export function Header({
   organizationName,
   isAuthenticated,
   isPlatformUser = false,
+  isPremiumUser = false,
   userName,
   userEmail,
   userRole,
@@ -115,6 +118,15 @@ export function Header({
                     Risk Register
                   </Link>
                 </>
+              )}
+
+              {isPremiumUser && (
+                <Link
+                  href="/audit-log"
+                  className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
+                >
+                  Audit Log
+                </Link>
               )}
 
               {/* User avatar / menu */}

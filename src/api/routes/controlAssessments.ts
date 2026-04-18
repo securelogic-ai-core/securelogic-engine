@@ -44,6 +44,7 @@ import {
   FINDING_STATUSES
 } from "../lib/controlAssessmentValidation.js";
 import { severityToPriority } from "../lib/postureComputation.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
 
@@ -189,6 +190,17 @@ router.post(
         },
         "Control assessment created"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "control_assessment.created",
+        resourceType: "control_assessment",
+        resourceId: assessment.id as string,
+        payload: { control_id: input.control_id, status: input.status },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(201).json({ assessment });
     } catch (err) {
@@ -631,6 +643,17 @@ router.patch(
         },
         "Control assessment status updated"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "control_assessment.updated",
+        resourceType: "control_assessment",
+        resourceId: assessmentId,
+        payload: { fields: Object.keys(input) },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(200).json({ assessment, finding });
     } catch (err) {
