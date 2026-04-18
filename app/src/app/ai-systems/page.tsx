@@ -46,6 +46,23 @@ export default async function AiSystemsPage() {
             </span>
           )}
           <Link
+            href="/ai-systems/import"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 14px",
+              borderRadius: "8px",
+              fontSize: "13px",
+              fontWeight: 500,
+              border: "1px solid #1e293b",
+              color: "#94a3b8",
+              textDecoration: "none",
+            }}
+          >
+            ↑ Import CSV
+          </Link>
+          <Link
             href="/ai-systems/new"
             className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors hover:opacity-90"
             style={{ background: "#00c4b4", color: "#0a0f1a" }}
