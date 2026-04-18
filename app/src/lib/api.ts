@@ -689,15 +689,22 @@ async function engineFetch(
 ): Promise<Response> {
   // Supports both legacy API keys (sl_…) and JWT tokens (contains ".").
   // The engine's requireApiKey middleware accepts both via Authorization: Bearer.
-  return fetch(`${ENGINE_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`,
-      ...(options?.headers ?? {}),
-    },
-    cache: "no-store",
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  try {
+    return await fetch(`${ENGINE_URL}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+        ...(options?.headers ?? {}),
+      },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 // =========================================================
