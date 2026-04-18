@@ -51,6 +51,7 @@ export default async function DashboardPage({
 
   const latestIssue = issuesData?.issues?.[0] ?? null;
   const entitlementLevel = me?.entitlementLevel ?? "starter";
+  const onboardingCompleted = session.onboardingCompleted ?? false;
   const isPaid = ["premium", "professional", "platform", "team"].includes(entitlementLevel);
   const emailSuppressed = (authMe?.emailSuppressed ?? false) && isPaid;
   // Platform access: full posture dashboard, vendor/AI/controls features
@@ -96,6 +97,11 @@ export default async function DashboardPage({
             </p>
           </div>
         </div>
+      )}
+
+      {/* Onboarding banner — shown until onboarding is complete */}
+      {isPlatformUser && !onboardingCompleted && (
+        <OnboardingBanner />
       )}
 
       {/* Welcome */}
@@ -206,6 +212,38 @@ export default async function DashboardPage({
           <SamplePostureDashboard />
         </div>
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Onboarding banner — shown to platform users until dismissed
+// ─────────────────────────────────────────────────────────────
+
+function OnboardingBanner() {
+  return (
+    <div
+      className="mb-6 flex items-center justify-between gap-4 rounded-xl px-5 py-4 flex-wrap"
+      style={{
+        background: "rgba(0,196,180,0.08)",
+        border: "1px solid rgba(0,196,180,0.3)",
+      }}
+    >
+      <div>
+        <p className="text-sm font-semibold mb-0.5" style={{ color: "#00c4b4" }}>
+          🚀 Get started
+        </p>
+        <p className="text-xs" style={{ color: "#94a3b8" }}>
+          Complete your security program setup to start tracking your posture.
+        </p>
+      </div>
+      <Link
+        href="/getting-started"
+        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold flex-shrink-0 transition-colors"
+        style={{ background: "#00c4b4", color: "#0a0f1a" }}
+      >
+        Continue Setup →
+      </Link>
     </div>
   );
 }
@@ -418,13 +456,21 @@ function PostureDashboard({ summary }: { summary: DashboardSummary }) {
         </div>
       )}
 
-      {/* No snapshot yet — instructional state */}
+      {/* No snapshot yet */}
       {!hasSnapshot && (
         <div className="bg-brand-bg border border-brand-line rounded-xl p-6 text-center">
-          <p className="text-sm text-slate-400">
-            No posture snapshot exists yet.
-            Run a posture snapshot via the API to populate this view.
+          <p className="text-sm text-slate-400 mb-2">
+            Your security posture score will appear here once you&apos;ve added controls and run your first assessment.
           </p>
+          <div className="flex items-center justify-center gap-3 text-xs">
+            <Link href="/controls/new" className="font-medium transition-colors" style={{ color: "#00c4b4" }}>
+              Add a control →
+            </Link>
+            <span style={{ color: "#334155" }}>or</span>
+            <Link href="/controls" className="font-medium transition-colors" style={{ color: "#00c4b4" }}>
+              run an assessment →
+            </Link>
+          </div>
         </div>
       )}
     </div>

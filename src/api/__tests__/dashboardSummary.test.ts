@@ -138,6 +138,7 @@ describe("buildInventory — null row", () => {
     expect(inv.risks).toBe(0);
     expect(inv.dependencies).toBe(0);
     expect(inv.obligations).toBe(0);
+    expect(inv.frameworks).toBe(0);
   });
 
   it("returns all zeros when row is undefined", () => {
@@ -161,7 +162,8 @@ describe("buildInventory — populated row", () => {
     governance_reviews: "4",
     risks: "5",
     dependencies: "12",
-    obligations: "8"
+    obligations: "8",
+    frameworks: "1"
   };
 
   it("parses vendors correctly", () => {
@@ -196,18 +198,23 @@ describe("buildInventory — populated row", () => {
     expect(buildInventory(row).obligations).toBe(8);
   });
 
-  it("returns an object with all eight inventory keys", () => {
+  it("returns an object with all nine inventory keys", () => {
     const inv = buildInventory(row);
     expect(Object.keys(inv).sort()).toEqual([
       "ai_systems",
       "control_assessments",
       "controls",
       "dependencies",
+      "frameworks",
       "governance_reviews",
       "obligations",
       "risks",
       "vendors"
     ]);
+  });
+
+  it("parses frameworks correctly", () => {
+    expect(buildInventory(row).frameworks).toBe(1);
   });
 });
 

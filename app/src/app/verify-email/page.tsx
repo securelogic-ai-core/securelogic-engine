@@ -36,7 +36,7 @@ function VerifyEmailContent() {
         body: JSON.stringify({ token: tokenParam }),
       });
 
-      const data = (await res.json()) as { ok?: boolean; error?: string };
+      const data = (await res.json()) as { ok?: boolean; error?: string; onboardingCompleted?: boolean };
 
       if (!res.ok) {
         setError(
@@ -48,7 +48,7 @@ function VerifyEmailContent() {
         return;
       }
 
-      router.push("/dashboard");
+      router.push(data.onboardingCompleted ? "/dashboard" : "/getting-started");
       router.refresh();
     }
 

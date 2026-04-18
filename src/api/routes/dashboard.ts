@@ -49,6 +49,7 @@ export function buildInventory(row: {
   risks: string;
   dependencies: string;
   obligations: string;
+  frameworks?: string;
 } | null | undefined): {
   vendors: number;
   ai_systems: number;
@@ -58,6 +59,7 @@ export function buildInventory(row: {
   risks: number;
   dependencies: number;
   obligations: number;
+  frameworks: number;
 } {
   if (!row) {
     return {
@@ -68,7 +70,8 @@ export function buildInventory(row: {
       governance_reviews: 0,
       risks: 0,
       dependencies: 0,
-      obligations: 0
+      obligations: 0,
+      frameworks: 0
     };
   }
   return {
@@ -79,7 +82,8 @@ export function buildInventory(row: {
     governance_reviews: parseInt(row.governance_reviews, 10),
     risks: parseInt(row.risks, 10),
     dependencies: parseInt(row.dependencies, 10),
-    obligations: parseInt(row.obligations, 10)
+    obligations: parseInt(row.obligations, 10),
+    frameworks: row.frameworks !== undefined ? parseInt(row.frameworks, 10) : 0
   };
 }
 
@@ -299,6 +303,7 @@ router.get(
         risks: string;
         dependencies: string;
         obligations: string;
+        frameworks: string;
       }>(
         `
         SELECT
@@ -309,7 +314,8 @@ router.get(
           (SELECT COUNT(*)::text FROM governance_reviews  WHERE organization_id = $1) AS governance_reviews,
           (SELECT COUNT(*)::text FROM risks               WHERE organization_id = $1) AS risks,
           (SELECT COUNT(*)::text FROM dependencies        WHERE organization_id = $1) AS dependencies,
-          (SELECT COUNT(*)::text FROM obligations         WHERE organization_id = $1) AS obligations
+          (SELECT COUNT(*)::text FROM obligations         WHERE organization_id = $1) AS obligations,
+          (SELECT COUNT(*)::text FROM frameworks          WHERE organization_id = $1) AS frameworks
         `,
         [organizationId]
       );

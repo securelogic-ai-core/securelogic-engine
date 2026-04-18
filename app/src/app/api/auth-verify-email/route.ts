@@ -22,23 +22,26 @@ export async function POST(request: Request) {
       return NextResponse.json(result, { status });
     }
 
-    // Persist session so the user lands directly on dashboard
+    // Persist session so the user lands directly on the app
     const me = await getAuthMe(result.token);
+    let onboardingCompleted = false;
     if (me) {
+      onboardingCompleted = me.onboardingCompleted ?? false;
       const cookieStore = await cookies();
       const session = await getIronSession<SessionData>(cookieStore, getSessionOptions());
-      session.jwtToken         = result.token;
-      session.userId           = me.id;
-      session.email            = me.email;
-      session.name             = me.name;
-      session.organizationId   = me.organizationId;
-      session.organizationName = me.organizationName;
-      session.entitlementLevel = me.entitlementLevel;
-      session.billingActive    = me.billingActive;
+      session.jwtToken             = result.token;
+      session.userId               = me.id;
+      session.email                = me.email;
+      session.name                 = me.name;
+      session.organizationId       = me.organizationId;
+      session.organizationName     = me.organizationName;
+      session.entitlementLevel     = me.entitlementLevel;
+      session.billingActive        = me.billingActive;
+      session.onboardingCompleted  = onboardingCompleted;
       await session.save();
     }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, onboardingCompleted });
   } catch {
     return NextResponse.json({ error: "verification_failed" }, { status: 500 });
   }

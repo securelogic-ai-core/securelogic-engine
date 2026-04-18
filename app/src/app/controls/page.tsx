@@ -78,9 +78,16 @@ export default async function ControlsPage() {
 
       {controlsData !== null && controls.length === 0 && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>
-            No controls defined. Add controls via the API to populate this view.
+          <p className="text-sm mb-3" style={{ color: "#94a3b8" }}>
+            No controls defined yet. Controls are the security measures your organization has in place.
           </p>
+          <a
+            href="/controls/new"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-colors"
+            style={{ background: "#00c4b4", color: "#0a0f1a" }}
+          >
+            + Add Your First Control
+          </a>
         </div>
       )}
 
