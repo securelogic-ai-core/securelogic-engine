@@ -191,6 +191,26 @@ router.get(
         conditions.push("status NOT IN ('closed', 'accepted')");
       }
 
+      // source_type + source_id: filter by linked source record (e.g. all actions for a finding)
+      const filterSourceType = isNonEmptyString(req.query.source_type)
+        ? (req.query.source_type as string).trim()
+        : null;
+      const filterSourceId = isNonEmptyString(req.query.source_id)
+        ? (req.query.source_id as string).trim()
+        : null;
+      if (filterSourceType !== null) {
+        params.push(filterSourceType);
+        conditions.push(`source_type = $${params.length}`);
+      }
+      if (filterSourceId !== null) {
+        if (!isUuid(filterSourceId)) {
+          res.status(400).json({ error: "source_id_must_be_uuid" });
+          return;
+        }
+        params.push(filterSourceId);
+        conditions.push(`source_id = $${params.length}::uuid`);
+      }
+
       if (useCursor) {
         params.push(beforeCreatedAt, beforeId);
         const ci = params.length - 1;
@@ -245,6 +265,62 @@ router.get(
         "GET /api/actions failed"
       );
       res.status(500).json({ error: "actions_list_failed" });
+    }
+  }
+);
+
+/* =========================================================
+   GET /api/actions/:id
+   Get a single action by ID, scoped to the org.
+   Returns 404 if not found or belongs to a different org.
+   ========================================================= */
+
+router.get(
+  "/actions/:id",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const actionId = String(req.params["id"] ?? "").trim();
+      if (!actionId) {
+        res.status(400).json({ error: "action_id_required" });
+        return;
+      }
+
+      const result = await pg.query(
+        `
+        SELECT
+          id, organization_id, title, description, action_type,
+          source_type, source_id, priority, due_date, owner_user_id,
+          status, created_at, updated_at, completed_at
+        FROM actions
+        WHERE id = $1
+          AND organization_id = $2
+        `,
+        [actionId, organizationId]
+      );
+
+      if ((result.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "action_not_found" });
+        return;
+      }
+
+      res.status(200).json({ action: result.rows[0] });
+    } catch (err) {
+      logger.error(
+        { event: "action_get_failed", err },
+        "GET /api/actions/:id failed"
+      );
+      res.status(500).json({ error: "action_get_failed" });
     }
   }
 );

@@ -38,7 +38,7 @@ const VALID_SOURCE_TYPES = new Set([
   "risk"
 ]);
 const VALID_PRIORITIES = new Set(["immediate", "near_term", "planned", "watch"]);
-const VALID_PATCH_STATUSES = new Set(["open", "in_progress", "closed"]);
+const VALID_PATCH_STATUSES = new Set(["open", "in_progress", "closed", "accepted"]);
 
 function parseLimit(value: unknown): number {
   const parsed = Number(String(value ?? "").trim());
@@ -55,6 +55,10 @@ function isUuid(v: unknown): boolean {
     typeof v === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
   );
+}
+
+function isIsoDate(v: unknown): v is string {
+  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.trim());
 }
 
 /* =========================================================
@@ -343,8 +347,15 @@ router.get(
           f.scoring_rationale,
           f.status,
           f.owner_user_id,
+          f.due_date,
           f.created_at,
-          f.updated_at
+          f.updated_at,
+          (SELECT COUNT(*)::integer
+           FROM actions a
+           WHERE a.source_type = 'finding'
+             AND a.source_id = f.id
+             AND a.organization_id = f.organization_id
+          ) AS action_count
         FROM findings f
         ${whereClause}
         ORDER BY
@@ -394,8 +405,92 @@ router.get(
 );
 
 /* =========================================================
+   GET /api/findings/:id
+   Get a single finding with linked action count.
+   Returns 404 if not found or belongs to a different org.
+   ========================================================= */
+
+router.get(
+  "/findings/:id",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const findingId = String(req.params["id"] ?? "").trim();
+      if (!findingId) {
+        res.status(400).json({ error: "finding_id_required" });
+        return;
+      }
+      if (!isUuid(findingId)) {
+        res.status(400).json({ error: "finding_id_must_be_uuid" });
+        return;
+      }
+
+      const result = await pg.query(
+        `
+        SELECT
+          f.id,
+          f.organization_id,
+          f.assessment_id,
+          f.source_type,
+          f.source_id,
+          f.title,
+          f.severity,
+          f.description,
+          f.recommendation,
+          f.framework_control_id,
+          f.domain,
+          f.priority,
+          f.likelihood,
+          f.confidence,
+          f.time_sensitivity,
+          f.scoring_rationale,
+          f.status,
+          f.owner_user_id,
+          f.due_date,
+          f.created_at,
+          f.updated_at,
+          (SELECT COUNT(*)::integer
+           FROM actions a
+           WHERE a.source_type = 'finding'
+             AND a.source_id = f.id
+             AND a.organization_id = f.organization_id
+          ) AS action_count
+        FROM findings f
+        WHERE f.id = $1
+          AND f.organization_id = $2
+        `,
+        [findingId, organizationId]
+      );
+
+      if ((result.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "finding_not_found" });
+        return;
+      }
+
+      res.status(200).json({ finding: result.rows[0] });
+    } catch (err) {
+      logger.error(
+        { event: "finding_get_failed", err },
+        "GET /api/findings/:id failed"
+      );
+      res.status(500).json({ error: "finding_get_failed" });
+    }
+  }
+);
+
+/* =========================================================
    PATCH /api/findings/:id
-   Update status, owner, or priority of a finding.
+   Update status, owner, priority, or due_date of a finding.
    Returns 404 if the finding does not belong to the org.
    ========================================================= */
 
@@ -465,10 +560,20 @@ router.patch(
         updates.push(`owner_user_id = $${values.length}`);
       }
 
+      if ("due_date" in body) {
+        const dueDate = body["due_date"];
+        if (dueDate !== null && !isIsoDate(dueDate)) {
+          res.status(400).json({ error: "due_date_must_be_yyyy_mm_dd_or_null" });
+          return;
+        }
+        values.push(dueDate ?? null);
+        updates.push(`due_date = $${values.length}`);
+      }
+
       if (updates.length === 0) {
         res.status(400).json({
           error: "no_updateable_fields",
-          updatable: ["status", "priority", "owner_user_id"]
+          updatable: ["status", "priority", "owner_user_id", "due_date"]
         });
         return;
       }
