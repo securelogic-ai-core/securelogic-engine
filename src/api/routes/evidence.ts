@@ -52,7 +52,8 @@ const SOURCE_TYPE_TABLE: Record<string, string> = {
   obligation_review: "obligation_assessments",
   dependency_review: "dependency_assessments",
   risk_treatment: "risk_treatments",
-  finding: "findings"
+  finding: "findings",
+  policy_review: "policies",
 };
 
 // ---------------------------------------------------------------------------

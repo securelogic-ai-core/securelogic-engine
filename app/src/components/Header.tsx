@@ -91,6 +91,12 @@ export function Header({
                     Obligations
                   </Link>
                   <Link
+                    href="/policies"
+                    className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
+                  >
+                    Policies
+                  </Link>
+                  <Link
                     href="/frameworks"
                     className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
                   >

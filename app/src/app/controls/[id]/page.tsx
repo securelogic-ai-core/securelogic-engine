@@ -8,6 +8,7 @@ import {
   getFrameworks,
   getFrameworkReadiness,
   getEvidence,
+  getPolicies,
   type Control,
   type ControlAssessment,
   type Evidence,
@@ -20,6 +21,7 @@ import { AssessmentStatusCard } from "./AssessmentStatusCard";
 import { CadenceSection } from "./CadenceSection";
 import { FrameworkMappingsCard, type MappedRequirementDisplay } from "./FrameworkMappingsCard";
 import { EvidenceSection } from "./EvidenceSection";
+import { LinkedPoliciesCard } from "./LinkedPoliciesCard";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -340,15 +342,17 @@ export default async function ControlDetailPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const [control, assessmentsData, findingsData, frameworksData] = await Promise.all([
+  const [control, assessmentsData, findingsData, frameworksData, linkedPoliciesData] = await Promise.all([
     getControl(token, id),
     getControlAssessmentsForControl(token, id, 20),
     getFindings(token, { source_type: "control_test", limit: 100 }),
     getFrameworks(token),
+    getPolicies(token, { linked_to_control: id }),
   ]);
 
   if (!control) redirect("/controls");
 
+  const linkedPolicies = linkedPoliciesData?.policies ?? [];
   const assessments = assessmentsData?.assessments ?? [];
   const latestAssessmentForEvidence = assessments[0] ?? null;
 
@@ -443,6 +447,7 @@ export default async function ControlDetailPage({
         <div className="w-full lg:w-72 flex-shrink-0 space-y-4">
           <ControlDetailsCard control={control} />
           <CadenceSection control={control} />
+          <LinkedPoliciesCard policies={linkedPolicies} controlId={control.id} />
           <ComplianceSummaryCard
             openFindings={openFindings}
             assessmentCount={assessments.length}
