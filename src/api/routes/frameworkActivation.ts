@@ -20,6 +20,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { FRAMEWORK_TEMPLATES } from "../lib/frameworkTemplates.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
 
@@ -120,6 +121,17 @@ router.post(
         },
         "Framework template activated"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "framework.activated",
+        resourceType: "framework",
+        resourceId: framework.id,
+        payload: { name: framework.name, template_key: templateKey },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(200).json({ framework, requirements_created: requirementsCreated });
     } catch (err) {

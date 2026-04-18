@@ -239,6 +239,7 @@ router.post(
 
       writeAuditEvent({
         organizationId: orgId,
+        actorUserId: userId,
         eventType: "team.invite_sent",
         resourceType: "org_invite",
         resourceId: invite.id as string,
@@ -394,6 +395,7 @@ router.delete(
 
       writeAuditEvent({
         organizationId: orgId,
+        actorUserId: actorUserId,
         eventType: "team.member_removed",
         resourceType: "user",
         resourceId: targetUserId,
@@ -479,6 +481,7 @@ router.patch(
 
       writeAuditEvent({
         organizationId: orgId,
+        actorUserId: actorUserId,
         eventType: "team.role_changed",
         resourceType: "user",
         resourceId: targetUserId,
@@ -723,6 +726,7 @@ router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
 
     writeAuditEvent({
       organizationId: invite.organization_id,
+      actorUserId: newUserId,
       eventType: "team.invite_accepted",
       resourceType: "user",
       resourceId: newUserId,

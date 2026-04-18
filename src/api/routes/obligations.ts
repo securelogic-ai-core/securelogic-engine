@@ -30,6 +30,7 @@ import {
   validateObligationCreate,
   validateObligationPatch
 } from "../lib/obligationValidation.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
 
@@ -182,6 +183,17 @@ router.post(
         },
         "Obligation created"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "obligation.created",
+        resourceType: "obligation",
+        resourceId: result.rows[0].id as string,
+        payload: { title: input.title },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(201).json({ obligation: result.rows[0] });
     } catch (err: any) {
@@ -530,6 +542,17 @@ router.patch(
         res.status(404).json({ error: "obligation_not_found" });
         return;
       }
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "obligation.updated",
+        resourceType: "obligation",
+        resourceId: obligationId,
+        payload: { fields: Object.keys(input) },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(200).json({ obligation: result.rows[0] });
     } catch (err: any) {

@@ -538,6 +538,7 @@ router.patch(
       writeAuditEvent({
         organizationId,
         actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
         eventType: "workflow.status_transition",
         resourceType: "risk_treatment",
         resourceId: treatmentId,

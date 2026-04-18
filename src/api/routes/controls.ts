@@ -22,6 +22,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { validateControlCreate } from "../lib/controlValidation.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
 
@@ -153,6 +154,17 @@ router.post(
         },
         "Control created"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "control.created",
+        resourceType: "control",
+        resourceId: result.rows[0].id as string,
+        payload: { name: input.name, domain: (input as any).domain ?? null },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(201).json({ control: result.rows[0] });
     } catch (err: any) {
@@ -429,6 +441,17 @@ router.patch(
         },
         "Control updated"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "control.updated",
+        resourceType: "control",
+        resourceId: controlId,
+        payload: { fields: setClauses.slice(0, -1).map((s) => s.split(" = ")[0] ?? s) },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(200).json({ control: result.rows[0] });
     } catch (err: unknown) {

@@ -300,6 +300,7 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
 
     writeAuditEvent({
       organizationId: orgId,
+      actorUserId: userId,
       eventType: "auth.signup",
       resourceType: "user",
       resourceId: userId,
@@ -378,6 +379,7 @@ router.post("/auth/verify-email", verifyLimiter, async (req, res) => {
 
     writeAuditEvent({
       organizationId: user.organization_id,
+      actorUserId: user.id,
       eventType: "auth.email_verified",
       resourceType: "user",
       resourceId: user.id,
@@ -490,6 +492,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
 
     if (!user || !passwordValid) {
       writeAuditEvent({
+        actorUserId: null,
         eventType: "auth.login_failed",
         resourceType: "user",
         payload: { reason: !user ? "user_not_found" : "wrong_password" },
@@ -533,6 +536,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
 
     writeAuditEvent({
       organizationId: user.organization_id,
+      actorUserId: user.id,
       eventType: "auth.login",
       resourceType: "user",
       resourceId: user.id,
@@ -567,6 +571,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
 router.post("/auth/logout", requireAuth, (req, res) => {
   writeAuditEvent({
     organizationId: req.jwtPayload?.org ?? null,
+    actorUserId: req.jwtPayload?.sub ?? null,
     eventType: "auth.logout",
     resourceType: "user",
     resourceId: req.jwtPayload?.sub ?? null,
@@ -692,6 +697,7 @@ router.post("/auth/reset-password", verifyLimiter, async (req, res) => {
 
     writeAuditEvent({
       organizationId: user.organization_id,
+      actorUserId: user.id,
       eventType: "auth.password_reset",
       resourceType: "user",
       resourceId: user.id,

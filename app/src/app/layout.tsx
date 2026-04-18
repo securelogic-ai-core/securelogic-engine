@@ -22,6 +22,9 @@ export default async function RootLayout({
   const entitlementLevel = session.entitlementLevel ?? "free";
   const isPlatformUser =
     entitlementLevel === "premium" || entitlementLevel === "platform" || entitlementLevel === "team";
+  const isPremiumUser =
+    entitlementLevel === "premium" || entitlementLevel === "professional" ||
+    entitlementLevel === "platform" || entitlementLevel === "team";
 
   return (
     <html lang="en">
@@ -29,6 +32,7 @@ export default async function RootLayout({
         <Header
           isAuthenticated={isAuthenticated}
           isPlatformUser={isPlatformUser}
+          isPremiumUser={isPremiumUser}
           organizationName={session.organizationName}
           userName={session.name}
           userEmail={session.email}

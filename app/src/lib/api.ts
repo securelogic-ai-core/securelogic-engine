@@ -602,6 +602,27 @@ export type InvitePreviewResponse =
   | { valid: true; email: string; orgName: string; inviterName: string; role: string }
   | { valid: false; reason: string };
 
+export type AuditEvent = {
+  id: string;
+  organization_id: string | null;
+  actor_api_key_id: string | null;
+  actor_user_id: string | null;
+  actor_name: string | null;
+  actor_email: string | null;
+  event_type: string;
+  resource_type: string;
+  resource_id: string | null;
+  payload: Record<string, unknown> | null;
+  ip_address: string | null;
+  created_at: string;
+};
+
+export type AuditLogResponse = {
+  events: AuditEvent[];
+  nextCursor: { created_at: string; id: string } | null;
+  total: number;
+};
+
 // =========================================================
 // HELPERS
 // =========================================================
@@ -1794,6 +1815,47 @@ export async function getPolicy(
     const res = await engineFetch(`/api/policies/${encodeURIComponent(id)}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<{ policy: PolicyDetail }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getAuditLog(
+  token: string,
+  params?: {
+    event_type?: string;
+    resource_type?: string;
+    cursor?: string;
+    limit?: number;
+  }
+): Promise<AuditLogResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (params?.event_type) qs.set("event_type", params.event_type);
+    if (params?.resource_type) qs.set("resource_type", params.resource_type);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.cursor) {
+      try {
+        const cursor = JSON.parse(params.cursor) as { created_at: string; id: string };
+        qs.set("before_created_at", cursor.created_at);
+        qs.set("before_id", cursor.id);
+      } catch {
+        // ignore malformed cursor
+      }
+    }
+    const path = `/api/audit-log${qs.toString() ? `?${qs.toString()}` : ""}`;
+    const res = await engineFetch(path, token);
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      events: AuditEvent[];
+      nextCursor: { created_at: string; id: string } | null;
+      count: number;
+    };
+    return {
+      events: body.events,
+      nextCursor: body.nextCursor,
+      total: body.count
+    };
   } catch {
     return null;
   }

@@ -33,6 +33,7 @@ import {
   validateEvidenceCreate,
   validateEvidenceListQuery
 } from "../lib/evidenceValidation.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
 
@@ -242,6 +243,17 @@ router.post(
         },
         "Evidence record created"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "evidence.created",
+        resourceType: "evidence",
+        resourceId: evidence.id as string,
+        payload: { source_type: input.source_type, source_id: input.source_id },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(201).json({ evidence });
     } catch (err) {

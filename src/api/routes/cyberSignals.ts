@@ -249,6 +249,7 @@ router.post(
       writeAuditEvent({
         organizationId,
         actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: null,
         eventType: "cyber_signal.ingested",
         resourceType: "cyber_signal",
         resourceId: signal.id,
@@ -990,6 +991,7 @@ router.post(
       writeAuditEvent({
         organizationId,
         actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        actorUserId: null,
         eventType: "cyber_signal.batch_ingested",
         resourceType: "cyber_signal",
         payload: { source: "cisa_alerts", fetched, inserted, skippedDuplicate },
@@ -1166,6 +1168,7 @@ router.post(
       writeAuditEvent({
         organizationId,
         actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        actorUserId: null,
         eventType: "cyber_signal.batch_ingested",
         resourceType: "cyber_signal",
         payload: { source: "threat_intel_rss", fetched, inserted, skippedDuplicate },
@@ -1324,6 +1327,7 @@ router.post(
       writeAuditEvent({
         organizationId,
         actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        actorUserId: null,
         eventType: "cyber_signal.batch_ingested",
         resourceType: "cyber_signal",
         payload: { source: "regulatory", fetched, inserted, skippedDuplicate },
