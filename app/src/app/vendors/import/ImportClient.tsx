@@ -21,6 +21,15 @@ const VENDOR_FIELDS: Array<{ key: keyof VendorImportRow; label: string; required
 ];
 
 const VALID_CRITICALITIES = new Set(["critical", "high", "medium", "low"]);
+
+// XLSX files commonly use "Moderate" as a criticality label; the DB stores "medium".
+const CRITICALITY_ALIASES: Record<string, string> = { moderate: "medium" };
+
+function normalizeCriticality(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const v = raw.toLowerCase().trim();
+  return CRITICALITY_ALIASES[v] ?? v;
+}
 const VALID_DATA_SENSITIVITIES = new Set(["none", "internal", "confidential", "restricted"]);
 const VALID_ACCESS_LEVELS = new Set(["none", "read_only", "read_write", "admin", "network_access"]);
 
@@ -85,8 +94,7 @@ function normalizeRow(
     return val.length > 0 ? val : undefined;
   }
 
-  const criticality = get("criticality");
-  const normalizedCriticality = criticality?.toLowerCase().trim();
+  const normalizedCriticality = normalizeCriticality(get("criticality"));
 
   const data_sensitivity = get("data_sensitivity");
   const normalizedDataSensitivity = data_sensitivity?.toLowerCase().trim();
@@ -97,11 +105,7 @@ function normalizeRow(
   return {
     name:                get("name") ?? "",
     category:            get("category"),
-    criticality:         normalizedCriticality && VALID_CRITICALITIES.has(normalizedCriticality)
-                           ? normalizedCriticality
-                           : normalizedCriticality
-                             ? normalizedCriticality
-                             : undefined,
+    criticality:         normalizedCriticality ?? undefined,
     service_description: get("service_description"),
     data_sensitivity:    normalizedDataSensitivity && VALID_DATA_SENSITIVITIES.has(normalizedDataSensitivity)
                            ? normalizedDataSensitivity
