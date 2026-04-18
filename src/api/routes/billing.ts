@@ -61,7 +61,7 @@ async function resolveStripeCustomer(
 
    Three paid tiers:
      professional  →  STRIPE_PRICE_ID_PROFESSIONAL  (Brief Pro, individual)
-     teams         →  STRIPE_PRICE_ID_TEAMS          (Brief Pro Teams, multi-seat)
+     teams         →  STRIPE_PRICE_ID_TEAM           (Brief Pro Teams, multi-seat)
      team          →  STRIPE_PRICE_ID_TEAM            (Platform Professional)
 
    Both "professional" and "teams" grant entitlement_level="professional"
@@ -80,7 +80,7 @@ function resolvePriceId(tier: string): string | null {
     return process.env.STRIPE_PRICE_ID_PROFESSIONAL?.trim() ?? null;
   }
   if (tier === "teams") {
-    return process.env.STRIPE_PRICE_ID_TEAMS?.trim() ?? null;
+    return process.env.STRIPE_PRICE_ID_TEAM?.trim() ?? null;
   }
   if (tier === "team") {
     return process.env.STRIPE_PRICE_ID_TEAM?.trim() ?? null;

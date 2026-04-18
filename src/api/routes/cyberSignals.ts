@@ -61,7 +61,7 @@ import { fetchRegulatoryFeeds } from "../lib/regulatoryFeedAdapter.js";
 import { fetchMitreAttackSignals } from "../lib/mitreAttackAdapter.js";
 import { fetchMitreAtlasSignals } from "../lib/mitreAtlasAdapter.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
-import { encryptField, decryptField } from "../lib/fieldEncryption.js";
+import { encryptField } from "../lib/fieldEncryption.js";
 
 const router = Router();
 

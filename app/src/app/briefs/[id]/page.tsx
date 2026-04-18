@@ -374,7 +374,6 @@ function PrioritySignalCard({
 }) {
   const risk = signal.riskLevel ?? signal.risk_level ?? "low";
   const whyItMatters = signal.riskRationale || signal.whyItMatters || "";
-  const analysis = signal.analysis || signal.summary || "";
   const action = signal.recommendedAction || signal.recommendation || "";
   const tier = signal.priorityTier ?? "";
   const sourceHref = signal.sourceUrl ?? signal.source_url;
