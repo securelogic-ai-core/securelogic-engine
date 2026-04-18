@@ -10,11 +10,12 @@
  * (convention, not FK — source_id is polymorphic).
  *
  * Routes:
- *   POST  /api/ai-systems       — create AI system
- *   GET   /api/ai-systems       — list AI systems (cursor paginated)
- *   GET   /api/ai-systems/:id   — get single AI system
+ *   POST   /api/ai-systems       — create AI system
+ *   GET    /api/ai-systems       — list AI systems (cursor paginated)
+ *   GET    /api/ai-systems/:id   — get single AI system
+ *   PATCH  /api/ai-systems/:id   — update AI system metadata
+ *   DELETE /api/ai-systems/:id   — delete AI system (pre-flight check)
  *
- * No PATCH, no delete in this package.
  * All routes use the standard middleware chain.
  */
 
@@ -24,6 +25,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requireAuth } from "../middleware/requireAuth.js";
 import { validateAiSystemCreate } from "../lib/aiSystemValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 
@@ -317,6 +319,246 @@ router.get(
         "GET /api/ai-systems/:id failed"
       );
       res.status(500).json({ error: "ai_system_get_failed" });
+    }
+  }
+);
+
+function isUuid(v: unknown): v is string {
+  return typeof v === "string" && UUID_RE.test(v);
+}
+
+/* =========================================================
+   PATCH /api/ai-systems/:id
+   Update AI system metadata. Partial update — only provided
+   fields are changed.
+   ========================================================= */
+
+router.patch(
+  "/ai-systems/:id",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const aiSystemId = String(req.params.id ?? "").trim();
+      if (!aiSystemId) {
+        res.status(400).json({ error: "ai_system_id_required" });
+        return;
+      }
+      if (!isUuid(aiSystemId)) {
+        res.status(400).json({ error: "ai_system_id_must_be_uuid" });
+        return;
+      }
+
+      const body = req.body as Record<string, unknown>;
+
+      const setClauses: string[] = [];
+      const params: unknown[] = [aiSystemId, organizationId];
+
+      function addField(col: string, value: unknown): void {
+        params.push(value);
+        setClauses.push(`${col} = $${params.length}`);
+      }
+
+      if ("name" in body) {
+        const name = body["name"];
+        if (typeof name !== "string" || name.trim().length === 0) {
+          res.status(400).json({ error: "name_must_be_non_empty_string" });
+          return;
+        }
+        addField("name", name.trim());
+      }
+
+      if ("use_case" in body) {
+        const v = body["use_case"];
+        if (v !== null && typeof v !== "string") {
+          res.status(400).json({ error: "use_case_must_be_string_or_null" });
+          return;
+        }
+        addField("use_case", v ?? null);
+      }
+
+      if ("owner_user_id" in body) {
+        const v = body["owner_user_id"];
+        if (v !== null && !isUuid(v)) {
+          res.status(400).json({ error: "owner_user_id_must_be_uuid_or_null" });
+          return;
+        }
+        addField("owner_user_id", v ?? null);
+      }
+
+      if ("model_type" in body) {
+        const v = body["model_type"];
+        if (v !== null && typeof v !== "string") {
+          res.status(400).json({ error: "model_type_must_be_string_or_null" });
+          return;
+        }
+        addField("model_type", v ?? null);
+      }
+
+      if ("data_classification" in body) {
+        const v = body["data_classification"];
+        if (v !== null && typeof v !== "string") {
+          res.status(400).json({ error: "data_classification_must_be_string_or_null" });
+          return;
+        }
+        addField("data_classification", v ?? null);
+      }
+
+      if ("deployment_status" in body) {
+        const v = body["deployment_status"];
+        if (v !== null && typeof v !== "string") {
+          res.status(400).json({ error: "deployment_status_must_be_string_or_null" });
+          return;
+        }
+        addField("deployment_status", v ?? null);
+      }
+
+      if ("criticality" in body) {
+        const v = body["criticality"];
+        if (v !== null && (typeof v !== "string" || !VALID_CRITICALITY_FILTERS.has(v))) {
+          res.status(400).json({ error: "invalid_criticality", allowed: [...VALID_CRITICALITY_FILTERS] });
+          return;
+        }
+        addField("criticality", v ?? null);
+      }
+
+      if ("risk_classification" in body) {
+        const v = body["risk_classification"];
+        if (v !== null && typeof v !== "string") {
+          res.status(400).json({ error: "risk_classification_must_be_string_or_null" });
+          return;
+        }
+        addField("risk_classification", v ?? null);
+      }
+
+      if (setClauses.length === 0) {
+        res.status(400).json({ error: "no_valid_fields_provided" });
+        return;
+      }
+
+      setClauses.push("updated_at = NOW()");
+
+      const result = await pg.query(
+        `UPDATE ai_systems
+         SET ${setClauses.join(", ")}
+         WHERE id = $1 AND organization_id = $2
+         RETURNING ${AI_SYSTEM_SELECT}`,
+        params
+      );
+
+      if ((result.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "ai_system_not_found" });
+        return;
+      }
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "ai_system.updated",
+        resourceType: "ai_system",
+        resourceId: aiSystemId,
+        payload: { fields: setClauses.slice(0, -1).map((s) => s.split(" = ")[0] ?? s) },
+        ipAddress: req.ip ?? null
+      });
+
+      res.status(200).json({ ai_system: result.rows[0] });
+    } catch (err: unknown) {
+      if ((err as { code?: string })?.code === "23505") {
+        res.status(409).json({ error: "ai_system_name_already_exists" });
+        return;
+      }
+      logger.error({ event: "ai_system_patch_failed", err }, "PATCH /api/ai-systems/:id failed");
+      res.status(500).json({ error: "ai_system_patch_failed" });
+    }
+  }
+);
+
+/* =========================================================
+   DELETE /api/ai-systems/:id
+   Hard delete with pre-flight check for governance reviews.
+   Requires JWT auth (requireAuth) for user attribution.
+   ========================================================= */
+
+router.delete(
+  "/ai-systems/:id",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  requireAuth,
+  async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const aiSystemId = String(req.params.id ?? "").trim();
+      if (!aiSystemId) {
+        res.status(400).json({ error: "ai_system_id_required" });
+        return;
+      }
+      if (!isUuid(aiSystemId)) {
+        res.status(400).json({ error: "ai_system_id_must_be_uuid" });
+        return;
+      }
+
+      // Pre-flight: check for governance reviews (ON DELETE RESTRICT)
+      const countResult = await pg.query<{ reviews: string }>(
+        `SELECT COUNT(*)::int AS reviews
+         FROM ai_governance_reviews
+         WHERE ai_system_id = $1`,
+        [aiSystemId]
+      );
+      const reviewCount = Number(countResult.rows[0]?.reviews ?? 0);
+
+      if (reviewCount > 0) {
+        res.status(409).json({
+          error: "ai_system_has_reviews",
+          message: "This AI system cannot be deleted because it has linked governance reviews.",
+          details: { reviews: reviewCount }
+        });
+        return;
+      }
+
+      const result = await pg.query(
+        `DELETE FROM ai_systems
+         WHERE id = $1 AND organization_id = $2`,
+        [aiSystemId, organizationId]
+      );
+
+      if ((result.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "ai_system_not_found" });
+        return;
+      }
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "ai_system.deleted",
+        resourceType: "ai_system",
+        resourceId: aiSystemId,
+        payload: {},
+        ipAddress: req.ip ?? null
+      });
+
+      res.status(200).json({ ok: true });
+    } catch (err) {
+      logger.error({ event: "ai_system_delete_failed", err }, "DELETE /api/ai-systems/:id failed");
+      res.status(500).json({ error: "ai_system_delete_failed" });
     }
   }
 );

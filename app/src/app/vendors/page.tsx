@@ -65,6 +65,23 @@ export default async function VendorsPage() {
               {vendors.length} active
             </span>
           )}
+          <a
+            href="/api/export/vendors"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 14px",
+              borderRadius: "8px",
+              fontSize: "13px",
+              fontWeight: 500,
+              border: "1px solid #1e293b",
+              color: "#94a3b8",
+              textDecoration: "none",
+            }}
+          >
+            &#8595; Export CSV
+          </a>
           <Link
             href="/vendors/import"
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors hover:border-teal-500 hover:text-teal-300"

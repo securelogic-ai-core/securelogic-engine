@@ -10,7 +10,8 @@
  *   POST  /api/controls       — create control
  *   GET   /api/controls       — list controls (cursor paginated)
  *   GET   /api/controls/:id   — get single control
- *   PATCH /api/controls/:id   — update cadence + metadata
+ *   PATCH  /api/controls/:id   — update cadence + metadata
+ *   DELETE /api/controls/:id   — delete control (pre-flight check)
  *
  * All routes use the standard middleware chain.
  */
@@ -21,6 +22,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requireAuth } from "../middleware/requireAuth.js";
 import { validateControlCreate } from "../lib/controlValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 
@@ -464,6 +466,90 @@ router.patch(
         "PATCH /api/controls/:id failed"
       );
       res.status(500).json({ error: "control_patch_failed" });
+    }
+  }
+);
+
+/* =========================================================
+   DELETE /api/controls/:id
+   Hard delete with pre-flight check for FK children.
+   Requires JWT auth (requireAuth) for user attribution.
+   policy_control_links has CASCADE so it doesn't block.
+   ========================================================= */
+
+router.delete(
+  "/controls/:id",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  requireAuth,
+  async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const controlId = String(req.params["id"] ?? "").trim();
+      if (!controlId) {
+        res.status(400).json({ error: "control_id_required" });
+        return;
+      }
+      if (!isUuid(controlId)) {
+        res.status(400).json({ error: "control_id_must_be_uuid" });
+        return;
+      }
+
+      // Pre-flight: check for FK children that use ON DELETE RESTRICT
+      const countResult = await pg.query<{ assessments: string; mappings: string }>(
+        `SELECT
+           (SELECT COUNT(*) FROM control_assessments WHERE control_id = $1)::int AS assessments,
+           (SELECT COUNT(*) FROM control_mappings  WHERE control_id = $1)::int AS mappings`,
+        [controlId]
+      );
+      const assessmentCount = Number(countResult.rows[0]?.assessments ?? 0);
+      const mappingCount    = Number(countResult.rows[0]?.mappings    ?? 0);
+
+      if (assessmentCount > 0 || mappingCount > 0) {
+        res.status(409).json({
+          error: "control_has_children",
+          message: "This control cannot be deleted because it has linked assessments or framework mappings. Remove those first.",
+          details: {
+            assessments:       assessmentCount,
+            framework_mappings: mappingCount
+          }
+        });
+        return;
+      }
+
+      const result = await pg.query(
+        `DELETE FROM controls WHERE id = $1 AND organization_id = $2`,
+        [controlId, organizationId]
+      );
+
+      if ((result.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "control_not_found" });
+        return;
+      }
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "control.deleted",
+        resourceType: "control",
+        resourceId: controlId,
+        payload: {},
+        ipAddress: req.ip ?? null
+      });
+
+      res.status(200).json({ ok: true });
+    } catch (err) {
+      logger.error({ event: "control_delete_failed", err }, "DELETE /api/controls/:id failed");
+      res.status(500).json({ error: "control_delete_failed" });
     }
   }
 );

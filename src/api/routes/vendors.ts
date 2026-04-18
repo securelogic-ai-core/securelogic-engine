@@ -485,4 +485,115 @@ router.patch(
   }
 );
 
+/* =========================================================
+   GET /api/vendors/export.csv
+   CSV export of all org vendors with optional filters.
+   ========================================================= */
+
+function csvCell(val: string | null | undefined): string {
+  const s = val == null ? "" : String(val);
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+function csvRow(cells: Array<string | null | undefined>): string {
+  return cells.map(csvCell).join(",");
+}
+
+router.get(
+  "/vendors/export.csv",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const conditions: string[] = ["organization_id = $1"];
+    const params: unknown[] = [organizationId];
+
+    const qStatus = isNonEmptyString(req.query.status) ? req.query.status.trim() : null;
+    if (qStatus !== null) {
+      if (!VALID_STATUS_FILTERS.has(qStatus)) {
+        res.status(400).json({ error: "invalid_status_filter", allowed: [...VALID_STATUS_FILTERS] });
+        return;
+      }
+      params.push(qStatus);
+      conditions.push(`status = $${params.length}`);
+    }
+
+    const qCriticality = isNonEmptyString(req.query.criticality) ? req.query.criticality.trim() : null;
+    if (qCriticality !== null) {
+      if (!VALID_CRITICALITY_FILTERS.has(qCriticality)) {
+        res.status(400).json({ error: "invalid_criticality_filter", allowed: [...VALID_CRITICALITY_FILTERS] });
+        return;
+      }
+      params.push(qCriticality);
+      conditions.push(`criticality = $${params.length}`);
+    }
+
+    const where = conditions.join(" AND ");
+
+    try {
+      const result = await pg.query<{
+        id: string;
+        name: string;
+        category: string | null;
+        criticality: string | null;
+        status: string | null;
+        data_sensitivity: string | null;
+        access_level: string | null;
+        website: string | null;
+        service_description: string | null;
+        created_at: string;
+        last_reviewed_at: string | null;
+      }>(
+        `SELECT id, name, category, criticality, status, data_sensitivity,
+                access_level, website, service_description, created_at, last_reviewed_at
+         FROM vendors
+         WHERE ${where}
+         ORDER BY created_at DESC, id DESC`,
+        params
+      );
+
+      const fileDate = new Date().toISOString().slice(0, 10);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="vendors-${fileDate}.csv"`);
+
+      const header = csvRow([
+        "ID", "Name", "Category", "Criticality", "Status",
+        "Data Sensitivity", "Access Level", "Website",
+        "Description", "Last Reviewed", "Created At"
+      ]);
+      res.write(header + "\r\n");
+
+      for (const row of result.rows) {
+        const line = csvRow([
+          row.id,
+          row.name,
+          row.category,
+          row.criticality,
+          row.status,
+          row.data_sensitivity,
+          row.access_level,
+          row.website,
+          row.service_description,
+          row.last_reviewed_at ? new Date(row.last_reviewed_at).toISOString().slice(0, 10) : null,
+          new Date(row.created_at).toISOString().slice(0, 10),
+        ]);
+        res.write(line + "\r\n");
+      }
+
+      res.end();
+    } catch (err) {
+      logger.error({ event: "vendors_export_failed", err }, "GET /api/vendors/export.csv failed");
+      res.status(500).json({ error: "vendors_export_failed" });
+    }
+  }
+);
+
 export default router;
