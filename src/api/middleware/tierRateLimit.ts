@@ -78,7 +78,9 @@ export async function tierRateLimit(
       (req as any).organizationContext?.entitlementLevel as string | undefined;
 
     const tier: Tier =
-      entitlementLevel === "premium" || entitlementLevel === "standard"
+      entitlementLevel === "premium" ||
+      entitlementLevel === "professional" ||
+      entitlementLevel === "standard"
         ? "paid"
         : "free";
 
