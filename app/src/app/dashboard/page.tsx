@@ -190,7 +190,7 @@ export default async function DashboardPage({
       {/* Recent Findings — platform subscribers only */}
       {isPlatformUser && (
         <div className="mt-10">
-          <RecentFindings findings={recentFindings} />
+          <RecentFindings findings={recentFindings} summaryOpenCount={dashboardSummary?.findings?.open ?? 0} />
         </div>
       )}
 
@@ -524,7 +524,10 @@ function FrameworkReadinessWidget({
   );
 }
 
-function RecentFindings({ findings }: { findings: Finding[] }) {
+function RecentFindings({ findings, summaryOpenCount }: { findings: Finding[]; summaryOpenCount: number }) {
+  const noFindings = findings.length === 0;
+  const summaryConfirmsZero = summaryOpenCount === 0;
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
@@ -540,15 +543,29 @@ function RecentFindings({ findings }: { findings: Finding[] }) {
         </Link>
       </div>
 
-      {findings.length === 0 ? (
-        <div
-          className="rounded-xl border p-6 text-center"
-          style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(34,197,94,0.2)" }}
-        >
-          <p className="text-sm" style={{ color: "#86efac" }}>
-            No open findings. Your organization is in good shape.
-          </p>
-        </div>
+      {noFindings ? (
+        summaryConfirmsZero ? (
+          <div
+            className="rounded-xl border p-6 text-center"
+            style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(34,197,94,0.2)" }}
+          >
+            <p className="text-sm" style={{ color: "#86efac" }}>
+              No open findings. Your organization is in good shape.
+            </p>
+          </div>
+        ) : (
+          <div
+            className="rounded-xl border p-6 text-center"
+            style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}
+          >
+            <p className="text-sm mb-2" style={{ color: "#94a3b8" }}>
+              Could not load recent findings.
+            </p>
+            <Link href="/findings" className="text-xs font-medium" style={{ color: "#00c4b4" }}>
+              View all findings →
+            </Link>
+          </div>
+        )
       ) : (
         <div
           className="rounded-xl border divide-y"
