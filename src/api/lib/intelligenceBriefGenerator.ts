@@ -154,7 +154,14 @@ export function mapSignalToCategory(signalType: string): BriefCategory {
       return "vendor_incident";
 
     case "regulatory_change":
+    case "regulatory":
       return "regulatory";
+
+    case "vendor_incident":
+      return "vendor_incident";
+
+    case "general":
+      return "general";
 
     default:
       return "general";

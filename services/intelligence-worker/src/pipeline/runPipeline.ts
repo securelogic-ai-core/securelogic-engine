@@ -1,4 +1,8 @@
-import { collectRssSignals } from "../collectors/rssCollector.js";
+import crypto from "crypto";
+
+// rssCollector.ts retired — CISA coverage handled by regulatoryFeed.ts
+// import { collectRssSignals } from "../collectors/rssCollector.js";
+
 import { saveSignal } from "../storage/postgresSignalStore.js";
 import { saveTrend } from "../storage/postgresTrendStore.js";
 
@@ -17,6 +21,7 @@ import { fetchRegulatorySignals } from "../sources/regulatoryFeed.js";
 import { fetchSecuritySignals } from "../sources/securityNewsFeed.js";
 import { fetchAIGovernanceSignals } from "../sources/aiGovernanceFeed.js";
 import { fetchVendorRiskSignals } from "../sources/vendorRiskFeed.js";
+import { fetchRegulatoryEnforcementSignals } from "../sources/regulatoryEnforcementFeed.js";
 
 import {
   getLatestDraftIssue,
@@ -25,6 +30,7 @@ import {
 } from "../storage/postgresIssueStore.js";
 import { sendNewsletter } from "../delivery/sendNewsletter.js";
 import { logger } from "../../../../src/api/infra/logger.js";
+import { pg } from "../../../../src/api/infra/postgres.js";
 
 export type PipelineResult = {
   signals: number;
@@ -36,13 +42,124 @@ export type PipelineResult = {
   deliveriesSkippedInactive: number;
 };
 
+// ---------------------------------------------------------------------------
+// Category → signal_type bridge map
+// ---------------------------------------------------------------------------
+
+const CATEGORY_TO_SIGNAL_TYPE: Record<string, string> = {
+  SECURITY_INCIDENT: "threat_actor",
+  REGULATION: "regulatory",
+  COMPLIANCE_UPDATE: "regulatory",
+  VENDOR_RISK: "vendor_incident",
+  AI_GOVERNANCE: "general",
+  GENERAL: "general"
+};
+
+function mapCategoryToSignalType(category: string): string {
+  return CATEGORY_TO_SIGNAL_TYPE[category.toUpperCase()] ?? "general";
+}
+
+// Maps 0-1 impact score → cyber_signals severity values.
+function mapImpactToSeverity(impactScore: number): "Critical" | "High" | "Moderate" | "Low" {
+  if (impactScore >= 0.8) return "Critical";
+  if (impactScore >= 0.6) return "High";
+  if (impactScore >= 0.4) return "Moderate";
+  return "Low";
+}
+
+// ---------------------------------------------------------------------------
+// bridgeSignalsToCyberSignals
+// ---------------------------------------------------------------------------
+
+type BridgeableSignal = {
+  source: string;
+  category: string;
+  title: string;
+  summary: string;
+  affectedCve: string | null;
+  affectedVendor: string | null;
+  impactScore: number;
+};
+
+async function bridgeSignalsToCyberSignals(
+  signals: BridgeableSignal[]
+): Promise<{ bridged: number; skipped: number }> {
+  let bridged = 0;
+  let skipped = 0;
+
+  for (const signal of signals) {
+    const signalType = mapCategoryToSignalType(signal.category);
+    const severity = mapImpactToSeverity(signal.impactScore);
+
+    const dedupInput =
+      `${signal.source}|${signalType}|${signal.affectedCve ?? ""}|${signal.affectedVendor ?? ""}`.toLowerCase();
+    const dedupHash = crypto.createHash("sha256").update(dedupInput).digest("hex");
+
+    const normalizedSummary = signal.summary.slice(0, 2000) || signal.title;
+
+    try {
+      const result = await pg.query(
+        `INSERT INTO cyber_signals (
+          organization_id,
+          source,
+          signal_type,
+          severity,
+          raw_payload,
+          normalized_summary,
+          affected_vendor,
+          affected_cve,
+          dedup_hash,
+          processed
+        ) VALUES (
+          NULL, $1, $2, $3,
+          $4::jsonb, $5,
+          $6, $7,
+          $8, FALSE
+        )
+        ON CONFLICT (dedup_hash) WHERE organization_id IS NULL DO NOTHING
+        RETURNING id`,
+        [
+          signal.source,
+          signalType,
+          severity,
+          JSON.stringify({ title: signal.title, summary: signal.summary }),
+          normalizedSummary,
+          signal.affectedVendor,
+          signal.affectedCve,
+          dedupHash
+        ]
+      );
+
+      if (result.rows.length > 0) {
+        bridged++;
+      } else {
+        skipped++;
+      }
+    } catch (err) {
+      logger.error(
+        { event: "cyber_signal_bridge_failed", source: signal.source, err },
+        "Bridge to cyber_signals failed"
+      );
+    }
+  }
+
+  logger.info(
+    { event: "cyber_signal_bridge_complete", bridged, skipped },
+    `Bridge complete — ${bridged} bridged, ${skipped} skipped as duplicates`
+  );
+
+  return { bridged, skipped };
+}
+
+// ---------------------------------------------------------------------------
+// runPipeline
+// ---------------------------------------------------------------------------
+
 export async function runPipeline(): Promise<PipelineResult> {
   logger.info({ event: "pipeline_start" }, "Running intelligence pipeline");
 
-  const rssSignals = await collectRssSignals();
-
-  // Collect structured source feed signals (regulatory, security, AI governance)
-  const [regulatoryRaw, securityRaw, aiRaw, vendorRaw] = await Promise.all([
+  // Collect all structured source feed signals concurrently.
+  const [regulatoryRaw, securityRaw, aiRaw, vendorRaw, enforcementRaw] = await Promise.all([
     fetchRegulatorySignals().catch((err) => {
       logger.error({ event: "feed_fetch_failed", feed: "regulatory", err }, "Regulatory feed fetch failed");
       return [];
@@ -58,6 +175,10 @@ export async function runPipeline(): Promise<PipelineResult> {
     fetchVendorRiskSignals().catch((err) => {
       logger.error({ event: "feed_fetch_failed", feed: "vendor_risk", err }, "Vendor risk feed fetch failed");
       return [];
+    }),
+    fetchRegulatoryEnforcementSignals().catch((err) => {
+      logger.error({ event: "feed_fetch_failed", feed: "regulatory_enforcement", err }, "Regulatory enforcement feed fetch failed");
+      return [];
     })
   ]);
 
@@ -65,48 +186,14 @@ export async function runPipeline(): Promise<PipelineResult> {
     ...regulatoryRaw,
     ...securityRaw,
     ...aiRaw,
-    ...vendorRaw
+    ...vendorRaw,
+    ...enforcementRaw
   ].map((raw: any) => normalizeSignal(raw));
 
   let savedSignals = 0;
+  const bridgeableSignals: BridgeableSignal[] = [];
 
-  for (const signal of rssSignals) {
-    try {
-      const scores = scoreSignal({
-        title: signal.title,
-        source: signal.source,
-        summary: signal.summary ?? "",
-        tags: ["cisa"]
-      });
-
-      const id = await saveSignal({
-        organizationId: null,
-        category: "security",
-        title: signal.title,
-        source: signal.source,
-        sourceUrl: signal.sourceUrl,
-        summary: signal.summary ?? "",
-        rawContent: signal.summary ?? "",
-        externalId: signal.sourceUrl,
-        sourceSystem: "rss",
-        publishedAt: signal.publishedAt,
-        tags: ["cisa"],
-        processed: false,
-        impactScore: scores.impactScore,
-        noveltyScore: scores.noveltyScore,
-        relevanceScore: scores.relevanceScore,
-        priority: scores.priority
-      });
-
-      if (id) {
-        savedSignals++;
-      }
-    } catch (err) {
-      logger.error({ event: "signal_insert_failed", feed: "rss", title: signal.title, err }, "RSS signal insert failed");
-    }
-  }
-
-  for (const signal of sourceFeedSignals as any[]) {
+  for (const signal of sourceFeedSignals) {
     try {
       const scores = scoreSignal({
         title: signal.title ?? "",
@@ -120,12 +207,12 @@ export async function runPipeline(): Promise<PipelineResult> {
         category: signal.category ?? "GENERAL",
         title: signal.title ?? "",
         source: signal.source ?? "unknown",
-        sourceUrl: signal.url ?? signal.sourceUrl ?? "",
+        sourceUrl: signal.url ?? signal.url ?? "",
         summary: signal.summary ?? null,
         rawContent: signal.rawContent ?? signal.summary ?? null,
-        externalId: signal.url ?? signal.sourceUrl ?? undefined,
+        externalId: signal.url ?? undefined,
         sourceSystem: signal.source ?? null,
-        publishedAt: signal.published_at ?? signal.publishedAt ?? null,
+        publishedAt: signal.timestamp ?? null,
         tags: signal.tags ?? [],
         processed: true,
         impactScore: scores.impactScore,
@@ -136,9 +223,21 @@ export async function runPipeline(): Promise<PipelineResult> {
 
       if (id) {
         savedSignals++;
+        bridgeableSignals.push({
+          source: signal.source ?? "unknown",
+          category: signal.category ?? "GENERAL",
+          title: signal.title ?? "",
+          summary: signal.summary ?? "",
+          affectedCve: signal.affectedCve ?? null,
+          affectedVendor: signal.affectedVendor ?? null,
+          impactScore: scores.impactScore
+        });
       }
     } catch (err) {
-      logger.error({ event: "signal_insert_failed", feed: "source", title: (signal as any).title, err }, "Source feed signal insert failed");
+      logger.error(
+        { event: "signal_insert_failed", feed: "source", title: signal.title, err },
+        "Source feed signal insert failed"
+      );
     }
   }
 
@@ -162,7 +261,7 @@ export async function runPipeline(): Promise<PipelineResult> {
   }
 
   try {
-    const trends = generateTrends(rssSignals);
+    const trends = generateTrends(sourceFeedSignals as any);
     for (const trend of trends) {
       try {
         await saveTrend({
@@ -192,8 +291,6 @@ export async function runPipeline(): Promise<PipelineResult> {
   }
 
   // Weekly send window: Monday UTC.
-  // Promote the draft issue to 'queued' BEFORE delivery generation so the
-  // delivery generator finds it and creates queued rows for the sender to drain.
   const isWeeklySendDay = new Date().getUTCDay() === 1;
   let sendIssueId: string | null = null;
 
@@ -224,9 +321,6 @@ export async function runPipeline(): Promise<PipelineResult> {
     logger.error({ event: "delivery_generation_failed", err }, "Newsletter delivery generation failed");
   }
 
-  // Send after delivery generation so queued rows exist for the sender to drain.
-  // On weekly send day: send the freshly promoted issue.
-  // Every run: also drain any previously queued issue (handles retries and no-subscriber cases).
   const queuedIssueForDrain = sendIssueId
     ? null
     : await getActiveIssue(null, ["queued"]).catch(() => null);
@@ -242,6 +336,13 @@ export async function runPipeline(): Promise<PipelineResult> {
     }
   } else if (!isWeeklySendDay) {
     logger.info({ event: "newsletter_send_skip", reason: "no_queued_issue" }, "No queued issue to send");
+  }
+
+  // Bridge ingested signals to cyber_signals for the Intelligence Brief pipeline.
+  try {
+    await bridgeSignalsToCyberSignals(bridgeableSignals);
+  } catch (err) {
+    logger.error({ event: "cyber_signal_bridge_error", err }, "cyber_signals bridge failed");
   }
 
   logger.info({
