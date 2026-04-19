@@ -229,7 +229,7 @@ app.use(
       callback(null, false);
     },
     credentials: false,
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     allowedHeaders: [
       "Content-Type",
       "Authorization",
