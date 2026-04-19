@@ -104,6 +104,7 @@ import {
   createOrgRateLimiter
 } from "../middleware/apiRateLimiter.js";
 
+import { pg } from "../infra/postgres.js";
 import { adminLockout } from "../middleware/adminLockout.js";
 import { requireAdminKey } from "../middleware/requireAdminKey.js";
 import { adminRateLimit } from "../middleware/adminRateLimit.js";
@@ -129,8 +130,21 @@ export function buildRoutes(opts: RoutesOptions): Router {
   // HEALTH + VERSION
   // =========================================================
 
-  router.get("/health", (_req: Request, res: Response) => {
-    res.status(200).json({ status: "ok" });
+  router.get("/health", async (_req: Request, res: Response) => {
+    try {
+      await pg.query("SELECT 1");
+      res.status(200).json({
+        status: "ok",
+        db: "connected",
+        timestamp: new Date().toISOString(),
+      });
+    } catch {
+      res.status(503).json({
+        status: "degraded",
+        db: "unreachable",
+        timestamp: new Date().toISOString(),
+      });
+    }
   });
 
   router.all("/health", (req: Request, res: Response) => {

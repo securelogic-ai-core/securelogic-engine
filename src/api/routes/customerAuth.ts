@@ -13,7 +13,7 @@
  *
  * Security:
  *   - Passwords hashed with argon2id
- *   - JWT signed with HS256 (JWT_SECRET), 30-day expiry
+ *   - JWT signed with HS256 (JWT_SECRET), 7-day expiry
  *   - Verification and reset tokens: 64-byte hex (crypto.randomBytes)
  *   - Always-OK responses on forgot-password (enumeration prevention)
  *   - Rate limits: signup 5/hr, login 10/15min, forgot-password 3/hr
