@@ -139,6 +139,15 @@ export type DashboardSummary = {
   controls_cadence: {
     overdue: number;
   };
+  risks_summary?: {
+    open: number;
+    by_risk_rating: {
+      Critical: number;
+      High: number;
+      Moderate: number;
+      Low: number;
+    };
+  };
   inventory: {
     vendors: number;
     ai_systems: number;
@@ -146,6 +155,9 @@ export type DashboardSummary = {
     control_assessments: number;
     governance_reviews: number;
     frameworks: number;
+    risks?: number;
+    obligations?: number;
+    dependencies?: number;
   };
 };
 
@@ -264,7 +276,17 @@ export type Action = {
 
 export type ActionsResponse = {
   count: number;
+  limit?: number;
+  organizationId?: string;
+  nextCursor?: { created_at: string; id: string } | null;
   actions: Action[];
+};
+
+export type ActionsParams = {
+  status?: string;
+  priority?: string;
+  overdue?: boolean;
+  limit?: number;
 };
 
 export type FindingsResponse = {
@@ -1306,6 +1328,24 @@ export async function updateAction(
     });
     if (!res.ok) return null;
     return res.json() as Promise<{ action: Action }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getActions(
+  apiKey: string,
+  params?: ActionsParams
+): Promise<ActionsResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.priority) qs.set("priority", params.priority);
+    if (params?.overdue) qs.set("overdue", "true");
+    qs.set("limit", String(params?.limit ?? 100));
+    const res = await engineFetch(`/api/actions?${qs.toString()}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<ActionsResponse>;
   } catch {
     return null;
   }

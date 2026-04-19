@@ -90,7 +90,8 @@ export function Header({
                   <Link href="/policies"    className="text-slate-300 hover:text-white text-sm font-medium transition-colors">Policies</Link>
                   <Link href="/frameworks"  className="text-slate-300 hover:text-white text-sm font-medium transition-colors">Frameworks</Link>
                   <Link href="/findings"    className="text-slate-300 hover:text-white text-sm font-medium transition-colors">Findings</Link>
-                  <Link href="/risks"       className="text-slate-300 hover:text-white text-sm font-medium transition-colors">Risk Register</Link>
+                  <Link href="/actions"    className="text-slate-300 hover:text-white text-sm font-medium transition-colors">Actions</Link>
+                  <Link href="/risks"      className="text-slate-300 hover:text-white text-sm font-medium transition-colors">Risk Register</Link>
                 </>
               )}
               {isPremiumUser && (
@@ -165,7 +166,8 @@ export function Header({
                     <Link href="/policies"    onClick={closeMobile} className="block py-2 px-3 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors">Policies</Link>
                     <Link href="/frameworks"  onClick={closeMobile} className="block py-2 px-3 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors">Frameworks</Link>
                     <Link href="/findings"    onClick={closeMobile} className="block py-2 px-3 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors">Findings</Link>
-                    <Link href="/risks"       onClick={closeMobile} className="block py-2 px-3 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors">Risk Register</Link>
+                    <Link href="/actions"    onClick={closeMobile} className="block py-2 px-3 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors">Actions</Link>
+                    <Link href="/risks"      onClick={closeMobile} className="block py-2 px-3 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors">Risk Register</Link>
                   </>
                 )}
                 {isPremiumUser && (
