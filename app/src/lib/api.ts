@@ -2218,3 +2218,35 @@ export async function getWebhookDeliveries(
     return null;
   }
 }
+
+// =========================================================
+// ASK (natural language posture search)
+// =========================================================
+
+export type AskResponse = {
+  answer: string;
+  context_used: {
+    posture_score: number | null;
+    findings_count: number;
+    risks_count: number;
+    vendors_count: number;
+    as_of: string | null;
+  };
+  question: string;
+};
+
+export async function askQuestion(
+  token: string,
+  question: string
+): Promise<AskResponse | null> {
+  try {
+    const res = await engineFetch("/api/ask", token, {
+      method: "POST",
+      body: JSON.stringify({ question }),
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<AskResponse>;
+  } catch {
+    return null;
+  }
+}
