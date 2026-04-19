@@ -1934,6 +1934,32 @@ export async function getPolicy(
   }
 }
 
+export async function createPolicy(
+  token: string,
+  data: {
+    name: string;
+    description?: string;
+    category?: string;
+    status?: string;
+    version?: string;
+    owner?: string;
+    review_frequency?: string | null;
+    last_reviewed_at?: string;
+    next_review_at?: string;
+  }
+): Promise<{ policy: Policy } | null> {
+  try {
+    const res = await engineFetch("/api/policies", token, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ policy: Policy }>;
+  } catch {
+    return null;
+  }
+}
+
 export async function getAuditLog(
   token: string,
   params?: {
