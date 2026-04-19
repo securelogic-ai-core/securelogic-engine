@@ -55,6 +55,8 @@ Format rules:
 - Do not use markdown headers
 - You may use bullet points for lists of 3+ items
 - Always cite specific numbers (e.g. "3 critical findings" not "several critical findings")
+
+CRITICAL: Never invent, assume, or generate proper nouns — including vendor names, domain names, team names, regulation names, or person names — that are not explicitly present in the context data provided. If a list is empty or a field is null, state that no data is available rather than providing examples. For instance, if the vendor list is empty, say "no vendors have been added yet" — do not name hypothetical vendors. If you are uncertain whether a specific name appears in the context, do not use it.
 `.trim();
 
 // ---------------------------------------------------------------------------
@@ -218,17 +220,26 @@ router.post(
           [organizationId]
         ),
 
-        // 5. Vendors ordered by risk score
+        // 5. All vendors ordered by criticality then risk score
         pg.query<{
+          id: string;
           name: string;
           criticality: string | null;
           current_risk_score: number | null;
           last_reviewed_at: string | null;
         }>(
-          `SELECT name, criticality, current_risk_score, last_reviewed_at
+          `SELECT id, name, criticality, current_risk_score, last_reviewed_at
            FROM vendors
            WHERE organization_id = $1
-           ORDER BY current_risk_score DESC NULLS LAST
+           ORDER BY
+             CASE criticality
+               WHEN 'critical' THEN 1
+               WHEN 'high'     THEN 2
+               WHEN 'medium'   THEN 3
+               WHEN 'low'      THEN 4
+               ELSE 5
+             END,
+             current_risk_score DESC NULLS LAST
            LIMIT 20`,
           [organizationId]
         ),
@@ -279,27 +290,27 @@ router.post(
       // Assemble context object
       // -----------------------------------------------------------------------
       const posture = postureResult.rows[0] ?? null;
-      const fs = findingsSummaryResult.rows[0] ?? {};
-      const as_ = actionsSummaryResult.rows[0] ?? {};
+      const fs  = findingsSummaryResult.rows[0];
+      const as_ = actionsSummaryResult.rows[0];
 
       const findingsSummary = {
-        open_count:         parseInt(fs.open_count ?? "0", 10),
-        critical_open:      parseInt(fs.critical_open ?? "0", 10),
-        high_open:          parseInt(fs.high_open ?? "0", 10),
-        medium_open:        parseInt(fs.medium_open ?? "0", 10),
-        low_open:           parseInt(fs.low_open ?? "0", 10),
-        closed_count:       parseInt(fs.closed_count ?? "0", 10),
-        immediate_priority: parseInt(fs.immediate_priority ?? "0", 10),
-        vendor_sourced:     parseInt(fs.vendor_sourced ?? "0", 10),
-        signal_sourced:     parseInt(fs.signal_sourced ?? "0", 10),
+        open_count:         parseInt(fs?.open_count ?? "0", 10),
+        critical_open:      parseInt(fs?.critical_open ?? "0", 10),
+        high_open:          parseInt(fs?.high_open ?? "0", 10),
+        medium_open:        parseInt(fs?.medium_open ?? "0", 10),
+        low_open:           parseInt(fs?.low_open ?? "0", 10),
+        closed_count:       parseInt(fs?.closed_count ?? "0", 10),
+        immediate_priority: parseInt(fs?.immediate_priority ?? "0", 10),
+        vendor_sourced:     parseInt(fs?.vendor_sourced ?? "0", 10),
+        signal_sourced:     parseInt(fs?.signal_sourced ?? "0", 10),
       };
 
       const actionsSummary = {
-        open_count:      parseInt(as_.open_count ?? "0", 10),
-        blocked_count:   parseInt(as_.blocked_count ?? "0", 10),
-        overdue_count:   parseInt(as_.overdue_count ?? "0", 10),
-        immediate_count: parseInt(as_.immediate_count ?? "0", 10),
-        closed_count:    parseInt(as_.closed_count ?? "0", 10),
+        open_count:      parseInt(as_?.open_count ?? "0", 10),
+        blocked_count:   parseInt(as_?.blocked_count ?? "0", 10),
+        overdue_count:   parseInt(as_?.overdue_count ?? "0", 10),
+        immediate_count: parseInt(as_?.immediate_count ?? "0", 10),
+        closed_count:    parseInt(as_?.closed_count ?? "0", 10),
       };
 
       const context = {
@@ -320,10 +331,21 @@ router.post(
           trend:    d.trend_direction,
           findings: d.finding_count,
         })),
-        findings:          findingsSummary,
-        top_risks:         topRisksResult.rows,
-        vendors:           vendorsResult.rows,
-        actions:           actionsSummary,
+        findings:  findingsSummary,
+        top_risks: topRisksResult.rows,
+        vendors: {
+          total:          vendorsResult.rows.length,
+          critical_count: vendorsResult.rows.filter((v) => v.criticality === "critical").length,
+          high_count:     vendorsResult.rows.filter((v) => v.criticality === "high").length,
+          assessed_count: vendorsResult.rows.filter((v) => v.current_risk_score !== null).length,
+          list: vendorsResult.rows.map((v) => ({
+            name:         v.name,
+            criticality:  v.criticality,
+            risk_score:   v.current_risk_score,
+            last_reviewed: v.last_reviewed_at,
+          })),
+        },
+        actions:   actionsSummary,
         critical_findings: criticalFindingsResult.rows,
       };
 

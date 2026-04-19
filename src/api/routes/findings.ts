@@ -466,18 +466,18 @@ router.get(
         [organizationId]
       );
 
-      const row = result.rows[0] ?? {};
+      const row = result.rows[0];
       res.status(200).json({
         summary: {
-          open_count:         parseInt(row.open_count ?? "0", 10),
-          critical_open:      parseInt(row.critical_open ?? "0", 10),
-          high_open:          parseInt(row.high_open ?? "0", 10),
-          medium_open:        parseInt(row.medium_open ?? "0", 10),
-          low_open:           parseInt(row.low_open ?? "0", 10),
-          closed_count:       parseInt(row.closed_count ?? "0", 10),
-          immediate_priority: parseInt(row.immediate_priority ?? "0", 10),
-          vendor_sourced:     parseInt(row.vendor_sourced ?? "0", 10),
-          signal_sourced:     parseInt(row.signal_sourced ?? "0", 10),
+          open_count:         parseInt(row?.open_count ?? "0", 10),
+          critical_open:      parseInt(row?.critical_open ?? "0", 10),
+          high_open:          parseInt(row?.high_open ?? "0", 10),
+          medium_open:        parseInt(row?.medium_open ?? "0", 10),
+          low_open:           parseInt(row?.low_open ?? "0", 10),
+          closed_count:       parseInt(row?.closed_count ?? "0", 10),
+          immediate_priority: parseInt(row?.immediate_priority ?? "0", 10),
+          vendor_sourced:     parseInt(row?.vendor_sourced ?? "0", 10),
+          signal_sourced:     parseInt(row?.signal_sourced ?? "0", 10),
         },
       });
     } catch (err) {

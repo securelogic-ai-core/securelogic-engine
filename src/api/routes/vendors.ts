@@ -347,15 +347,15 @@ router.get(
         [organizationId]
       );
 
-      const row = result.rows[0] ?? {};
+      const row = result.rows[0];
       res.status(200).json({
         summary: {
-          total_vendors:      parseInt(row.total_vendors ?? "0", 10),
-          critical_vendors:   parseInt(row.critical_vendors ?? "0", 10),
-          high_vendors:       parseInt(row.high_vendors ?? "0", 10),
-          assessed_vendors:   parseInt(row.assessed_vendors ?? "0", 10),
-          avg_risk_score:     row.avg_risk_score != null ? parseFloat(row.avg_risk_score) : null,
-          top_vendors_by_risk: row.top_vendors_by_risk ?? [],
+          total_vendors:       parseInt(row?.total_vendors ?? "0", 10),
+          critical_vendors:    parseInt(row?.critical_vendors ?? "0", 10),
+          high_vendors:        parseInt(row?.high_vendors ?? "0", 10),
+          assessed_vendors:    parseInt(row?.assessed_vendors ?? "0", 10),
+          avg_risk_score:      row?.avg_risk_score != null ? parseFloat(row.avg_risk_score!) : null,
+          top_vendors_by_risk: row?.top_vendors_by_risk ?? [],
         },
       });
     } catch (err) {
