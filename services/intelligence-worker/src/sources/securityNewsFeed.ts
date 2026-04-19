@@ -24,6 +24,14 @@ const FEEDS = [
   {
     url: "https://www.bleepingcomputer.com/feed/",
     source: "security_news_bleepingcomputer"
+  },
+  {
+    url: "https://krebsonsecurity.com/feed/",
+    source: "security_news_krebs"
+  },
+  {
+    url: "https://www.theregister.com/security/headlines.atom",
+    source: "security_news_theregister"
   }
 ];
 
