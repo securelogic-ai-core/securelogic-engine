@@ -91,6 +91,7 @@ import alertPreferencesRouter from "./alertPreferences.js";
 import policiesRouter from "./policies.js";
 import ssoRouter from "./sso.js";
 import customerApiKeysRouter from "./customerApiKeys.js";
+import webhooksRouter from "./webhooks.js";
 
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -412,6 +413,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", findingsExportRouter);
   router.use("/api", alertPreferencesRouter);
   router.use("/api", policiesRouter);
+  router.use("/api", webhooksRouter);
 
   // Admin brief operations — own bearer-token auth (SCHEDULER_SECRET),
   // independent of the admin panel key and org API key systems.

@@ -29,6 +29,7 @@ import {
   validateRiskListQuery
 } from "../lib/riskValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 
 const router = Router();
 
@@ -214,6 +215,17 @@ router.post(
         },
         ipAddress: req.ip ?? null
       });
+
+      dispatchWebhookEvent({
+        event_type: "risk.created",
+        organization_id: organizationId,
+        data: {
+          id: risk.id,
+          title: risk.title,
+          risk_rating: risk.risk_rating,
+          domain: risk.domain,
+        },
+      }).catch(() => {});
 
       res.status(201).json({ risk });
     } catch (err) {

@@ -16,6 +16,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { validateFindingCreate } from "../lib/findingValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { triggerFindingAlert } from "../lib/findingAlertTrigger.js";
 
 const router = Router();
@@ -185,6 +186,19 @@ router.post(
         severity: severity as string,
         domain: (domain as string | null) ?? null,
       });
+
+      dispatchWebhookEvent({
+        event_type: "finding.created",
+        organization_id: organizationId,
+        data: {
+          id: result.rows[0].id,
+          title: result.rows[0].title,
+          severity: result.rows[0].severity,
+          status: result.rows[0].status,
+          source_type: result.rows[0].source_type,
+          created_at: result.rows[0].created_at,
+        },
+      }).catch(() => {});
 
       res.status(201).json({ finding: result.rows[0] });
     } catch (err) {
@@ -615,6 +629,16 @@ router.patch(
         },
         ipAddress: req.ip ?? null
       });
+
+      dispatchWebhookEvent({
+        event_type: "finding.updated",
+        organization_id: organizationId,
+        data: {
+          id: result.rows[0].id,
+          status: result.rows[0].status,
+          updated_at: result.rows[0].updated_at,
+        },
+      }).catch(() => {});
 
       res.status(200).json({ finding: result.rows[0] });
     } catch (err) {
