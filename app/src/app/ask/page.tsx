@@ -7,5 +7,5 @@ export default async function AskPage() {
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  return <AskClient />;
+  return <AskClient initialToken={token} />;
 }

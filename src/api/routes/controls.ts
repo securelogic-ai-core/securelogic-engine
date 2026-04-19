@@ -23,6 +23,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { requireAdminRole } from "../middleware/requireRole.js";
 import { validateControlCreate } from "../lib/controlValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 
@@ -475,6 +476,7 @@ router.delete(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
+  requireAdminRole,
   requireAuth,
   async (req, res) => {
     try {

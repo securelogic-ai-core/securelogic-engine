@@ -2235,6 +2235,39 @@ export type AskResponse = {
   question: string;
 };
 
+export async function transcribeAudio(
+  token: string,
+  audioBlob: Blob,
+  mimeType: string
+): Promise<{ text: string } | null> {
+  try {
+    const formData = new FormData();
+    const ext = mimeType.includes("webm")
+      ? "webm"
+      : mimeType.includes("ogg")
+      ? "ogg"
+      : "mp4";
+    formData.append("audio", audioBlob, `recording.${ext}`);
+
+    const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
+
+    // Must use raw fetch here — engineFetch sets Content-Type: application/json
+    // which would break the multipart boundary for audio uploads.
+    const res = await fetch(`${ENGINE_URL}/api/ask/transcribe`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "x-api-key": token,
+      },
+      body: formData,
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ text: string }>;
+  } catch {
+    return null;
+  }
+}
+
 export async function askQuestion(
   token: string,
   question: string

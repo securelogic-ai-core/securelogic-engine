@@ -19,6 +19,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requireAdminRole } from "../middleware/requireRole.js";
 import { FRAMEWORK_TEMPLATES } from "../lib/frameworkTemplates.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 
@@ -31,6 +32,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
+  requireAdminRole,
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;

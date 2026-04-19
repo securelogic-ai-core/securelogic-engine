@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect, useTransition } from "react";
 import { askAction } from "./actions";
 import type { AskResponse } from "@/lib/api";
+import { transcribeAudio } from "@/lib/api";
 
 // ─────────────────────────────────────────────────────────────
 // Example chips
@@ -45,15 +46,45 @@ function formatDate(iso: string | null): string {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Mic SVG
+// ─────────────────────────────────────────────────────────────
+
+function MicIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <line x1="12" y1="19" x2="12" y2="23" />
+      <line x1="8" y1="23" x2="16" y2="23" />
+    </svg>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Main component
 // ─────────────────────────────────────────────────────────────
 
-export function AskClient() {
+export function AskClient({ initialToken }: { initialToken: string }) {
   const [query, setQuery]           = useState("");
   const [answer, setAnswer]         = useState<AskResponse | null>(null);
   const [error, setError]           = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const textareaRef                 = useRef<HTMLTextAreaElement | null>(null);
+
+  const [isRecording, setIsRecording]     = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef   = useRef<Blob[]>([]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -98,8 +129,63 @@ export function AskClient() {
     setTimeout(() => textareaRef.current?.focus(), 50);
   }, []);
 
+  const toggleRecording = useCallback(async () => {
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+
+    setRecordingError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setIsRecording(false);
+        setIsTranscribing(true);
+
+        const mimeType = mediaRecorder.mimeType || "audio/webm";
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+
+        try {
+          const result = await transcribeAudio(initialToken, audioBlob, mimeType);
+          if (result?.text) {
+            setQuery(result.text);
+            submitQuery(result.text);
+          } else {
+            setRecordingError("Could not transcribe audio. Please try again.");
+          }
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch {
+      setRecordingError(
+        "Microphone access denied. Please allow microphone access and try again."
+      );
+    }
+  }, [isRecording, initialToken, submitQuery]);
+
   return (
     <div style={{ maxWidth: "720px", margin: "0 auto", padding: "48px 24px" }}>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.5; transform: scale(1.3); }
+        }
+      `}</style>
+
       {/* ── Header ── */}
       <h1
         style={{
@@ -197,25 +283,103 @@ export function AskClient() {
               ? "⌘ + Enter to submit"
               : "Ctrl + Enter to submit"}
           </span>
-          <button
-            onClick={() => submitQuery(query)}
-            disabled={isPending || query.trim().length === 0}
-            style={{
-              padding: "10px 24px",
-              borderRadius: "8px",
-              border: "none",
-              background: isPending || query.trim().length === 0 ? "#1e2d45" : "#00c4b4",
-              color: isPending || query.trim().length === 0 ? "#475569" : "#0a0f1a",
-              fontSize: "14px",
-              fontWeight: 700,
-              cursor: isPending || query.trim().length === 0 ? "not-allowed" : "pointer",
-              transition: "background 0.15s",
-            }}
-          >
-            {isPending ? "Analyzing…" : "Ask SecureLogic"}
-          </button>
+
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            {/* ── Microphone button ── */}
+            <button
+              onClick={toggleRecording}
+              disabled={isTranscribing || isPending}
+              style={{
+                padding: "10px 16px",
+                borderRadius: "8px",
+                border: isRecording ? "2px solid #ef4444" : "2px solid #00c4b4",
+                background: isRecording ? "rgba(239,68,68,0.1)" : "transparent",
+                color: isRecording ? "#ef4444" : "#00c4b4",
+                cursor: isTranscribing || isPending ? "not-allowed" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                fontSize: "14px",
+                transition: "all 0.2s",
+                opacity: isTranscribing || isPending ? 0.5 : 1,
+              }}
+              aria-label={isRecording ? "Stop recording" : "Start voice input"}
+            >
+              {isTranscribing ? (
+                <>
+                  <span
+                    style={{
+                      width: "14px",
+                      height: "14px",
+                      borderRadius: "50%",
+                      border: "2px solid #00c4b4",
+                      borderTopColor: "transparent",
+                      display: "inline-block",
+                      animation: "spin 0.8s linear infinite",
+                    }}
+                  />
+                  Transcribing…
+                </>
+              ) : isRecording ? (
+                <>
+                  <span
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      borderRadius: "50%",
+                      background: "#ef4444",
+                      display: "inline-block",
+                      animation: "pulse 1s infinite",
+                    }}
+                  />
+                  Stop
+                </>
+              ) : (
+                <>
+                  <MicIcon />
+                  Voice
+                </>
+              )}
+            </button>
+
+            {/* ── Ask button ── */}
+            <button
+              onClick={() => submitQuery(query)}
+              disabled={isPending || query.trim().length === 0}
+              style={{
+                padding: "10px 24px",
+                borderRadius: "8px",
+                border: "none",
+                background: isPending || query.trim().length === 0 ? "#1e2d45" : "#00c4b4",
+                color: isPending || query.trim().length === 0 ? "#475569" : "#0a0f1a",
+                fontSize: "14px",
+                fontWeight: 700,
+                cursor: isPending || query.trim().length === 0 ? "not-allowed" : "pointer",
+                transition: "background 0.15s",
+              }}
+            >
+              {isPending ? "Analyzing…" : "Ask SecureLogic"}
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* ── Recording error ── */}
+      {recordingError && !isRecording && !isTranscribing && (
+        <div
+          style={{
+            ...CARD,
+            padding: "14px 18px",
+            borderColor: "rgba(239,68,68,0.3)",
+            background: "rgba(239,68,68,0.07)",
+            marginBottom: "16px",
+          }}
+        >
+          <p style={{ margin: 0, fontSize: "13px", color: "#fca5a5" }}>
+            {recordingError}
+          </p>
+        </div>
+      )}
 
       {/* ── Loading state ── */}
       {isPending && (
@@ -241,7 +405,6 @@ export function AskClient() {
           <p style={{ margin: 0, fontSize: "14px", color: "#64748b" }}>
             Analyzing your posture data…
           </p>
-          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       )}
 
