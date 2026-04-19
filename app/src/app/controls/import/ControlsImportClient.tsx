@@ -209,7 +209,8 @@ export function ControlsImportClient() {
     setError(null);
     const isXlsx = /\.(xlsx|xls)$/i.test(file.name);
     if (isXlsx) {
-      const result = await parseExcelFile(file);
+      const fd = new FormData(); fd.append("file", file);
+      const result = await parseExcelFile(fd);
       if (result.error) { setError(result.error); return; }
       if (result.headers.length === 0) { setError("No columns detected."); return; }
       setRawHeaders(result.headers);

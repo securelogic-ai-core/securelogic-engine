@@ -1,13 +1,15 @@
-"use client";
+"use server";
 
 import ExcelJS from "exceljs";
 
-export async function parseExcelFile(file: File): Promise<{
+export async function parseExcelFile(formData: FormData): Promise<{
   headers: string[];
   rows: Record<string, string>[];
   error?: string;
 }> {
   try {
+    const file = formData.get("file") as File | null;
+    if (!file) return { headers: [], rows: [], error: "No file provided." };
     const buffer = await file.arrayBuffer();
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(buffer);
