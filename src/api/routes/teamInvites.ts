@@ -52,7 +52,7 @@ function isValidName(v: unknown): v is string {
 }
 
 function getAppBaseUrl(): string {
-  return (process.env.APP_URL ?? "https://securelogic-app.onrender.com").replace(/\/$/, "");
+  return (process.env.APP_BASE_URL ?? "https://securelogic-app.onrender.com").replace(/\/$/, "");
 }
 
 function getFromAddress(): string {
