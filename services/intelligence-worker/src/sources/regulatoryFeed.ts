@@ -27,7 +27,7 @@ const FEEDS = [
   }
 ];
 
-const MAX_ITEMS_PER_FEED = 5;
+const MAX_ITEMS_PER_FEED = 10;
 
 export async function fetchRegulatorySignals() {
   const results: ReturnType<typeof buildEvent>[] = [];

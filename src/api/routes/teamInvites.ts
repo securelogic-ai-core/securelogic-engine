@@ -673,12 +673,17 @@ router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
       return;
     }
 
-    // Check global email uniqueness
-    const existingUser = await pg.query(
-      `SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1`,
+    // Check for existing user — block actives, reactivate inactives.
+    // Inactive users (previously removed) may re-register via invite without
+    // requiring a hard DB delete.
+    const existingUserResult = await pg.query<{ id: string; status: string }>(
+      `SELECT id, status FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1`,
       [invite.email]
     );
-    if (existingUser.rows.length > 0) {
+
+    const existingUser = existingUserResult.rows[0] ?? null;
+
+    if (existingUser && existingUser.status !== "inactive") {
       res.status(409).json({
         error: "email_already_registered",
         detail: "This email is already registered. Please log in instead."
@@ -694,13 +699,28 @@ router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
     try {
       await client.query("BEGIN");
 
-      const userResult = await client.query(
-        `INSERT INTO users (organization_id, email, name, role, status, password_hash, email_verified)
-         VALUES ($1, $2, $3, $4, 'active', $5, TRUE)
-         RETURNING id`,
-        [invite.organization_id, invite.email, name, invite.role, passwordHash]
-      );
-      newUserId = userResult.rows[0].id as string;
+      if (existingUser && existingUser.status === "inactive") {
+        // Reactivate the removed user with fresh credentials and the invited role.
+        await client.query(
+          `UPDATE users SET
+             status        = 'active',
+             name          = $1,
+             password_hash = $2,
+             role          = $3,
+             updated_at    = NOW()
+           WHERE id = $4`,
+          [name, passwordHash, invite.role, existingUser.id]
+        );
+        newUserId = existingUser.id;
+      } else {
+        const userResult = await client.query(
+          `INSERT INTO users (organization_id, email, name, role, status, password_hash, email_verified)
+           VALUES ($1, $2, $3, $4, 'active', $5, TRUE)
+           RETURNING id`,
+          [invite.organization_id, invite.email, name, invite.role, passwordHash]
+        );
+        newUserId = userResult.rows[0].id as string;
+      }
 
       await client.query(
         `UPDATE org_invites
