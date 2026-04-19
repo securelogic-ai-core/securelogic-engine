@@ -13,8 +13,11 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
   fileFilter: (_req, file, cb) => {
-    const allowed = ["application/pdf", "text/plain", "text/csv"];
-    if (allowed.includes(file.mimetype)) {
+    const allowedMimeTypes = ["application/pdf", "text/plain", "text/csv"];
+    const allowedExtensions = /\.(pdf|txt|csv)$/i;
+    const mimeOk = allowedMimeTypes.includes(file.mimetype);
+    const extOk = allowedExtensions.test(file.originalname);
+    if (mimeOk && extOk) {
       cb(null, true);
     } else {
       cb(new Error("unsupported_file_type"));

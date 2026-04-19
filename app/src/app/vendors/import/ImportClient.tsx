@@ -3,7 +3,6 @@
 import { useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import Papa from "papaparse";
-import * as XLSX from "xlsx";
 import { importVendors, type VendorImportRow, type VendorImportResult } from "./actions";
 
 // ─────────────────────────────────────────────────────────────
@@ -272,57 +271,15 @@ export function VendorImportClient() {
     setError(null);
     const isXlsx = /\.(xlsx|xls)$/i.test(file.name);
     if (isXlsx) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const data = e.target?.result;
-          const workbook = XLSX.read(data, { type: "array" });
-          const sheetName = workbook.SheetNames[0];
-          if (!sheetName) { setError("No sheets found in file."); return; }
-          const sheet = workbook.Sheets[sheetName];
-          // Convert to array-of-arrays to detect the real header row
-          const rawMatrix: string[][] = XLSX.utils.sheet_to_json(sheet, {
-            header: 1,
-            defval: "",
-            blankrows: false,
-          }) as string[][];
-          if (rawMatrix.length === 0) { setError("No data found in file."); return; }
-          const headerRowIdx = findHeaderRowIndex(rawMatrix);
-          // Build header list, skip empty/null columns
-          const rawHeaders = rawMatrix[headerRowIdx]
-            .map((h) => String(h ?? "").trim())
-            .filter((h) => h !== "");
-          if (rawHeaders.length === 0) { setError("No columns detected. Check your file has a header row."); return; }
-          // Build data rows from rows after the header row
-          const dataRows: Record<string, string>[] = [];
-          for (let i = headerRowIdx + 1; i < rawMatrix.length; i++) {
-            const row = rawMatrix[i];
-            const record: Record<string, string> = {};
-            rawHeaders.forEach((h, colIdx) => {
-              // Find actual column index in the original row (accounting for skipped empty headers)
-              const origIdx = rawMatrix[headerRowIdx]
-                .map((oh, oi) => ({ oh: String(oh ?? "").trim(), oi }))
-                .filter(({ oh }) => oh !== "")
-                .findIndex(({ oh }) => oh === h);
-              const actualCol = rawMatrix[headerRowIdx]
-                .map((oh, oi) => ({ oh: String(oh ?? "").trim(), oi }))
-                .filter(({ oh }) => oh !== "")[origIdx]?.oi ?? colIdx;
-              record[h] = String(row[actualCol] ?? "").trim();
-            });
-            if (Object.values(record).some((v) => v !== "")) dataRows.push(record);
-          }
-          if (dataRows.length === 0) { setError("No data rows found in the file."); return; }
-          setRawHeaders(rawHeaders);
-          setRawRows(dataRows);
-          setColumnMap(autoDetectMapping(rawHeaders));
-          setError(null);
-          setStep("mapping");
-        } catch {
-          setError("Failed to parse XLSX file. Please check the format and try again.");
-        }
-      };
-      reader.onerror = () => setError("Failed to read file.");
-      reader.readAsArrayBuffer(file);
+      // SECURITY: xlsx library removed due to prototype pollution vulnerability
+      // (GHSA-4r6h-8v6p-xvw6). Re-enable when a safe alternative is installed.
+      // Tracked: Sprint 24.
+      setError(
+        "Excel (.xlsx) import is temporarily unavailable due to a security update. " +
+        "Please export your data as CSV and use the CSV import instead. " +
+        "A CSV template is available via the Download Template button below."
+      );
+      return;
     } else {
       Papa.parse<Record<string, string>>(file, {
         header: true,

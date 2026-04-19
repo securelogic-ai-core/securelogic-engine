@@ -15,6 +15,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { validateActionCreate } from "../lib/actionValidation.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
 
@@ -109,6 +110,17 @@ router.post(
           input.owner_user_id ?? null
         ]
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        actorUserId: (req as any).userId ?? null,
+        eventType: "action.created",
+        resourceType: "action",
+        resourceId: result.rows[0].id as string,
+        payload: { priority: input.priority, source_type: input.source_type },
+        ipAddress: req.ip ?? null,
+      });
 
       res.status(201).json({ action: result.rows[0] });
     } catch (err) {
@@ -443,6 +455,21 @@ router.patch(
         res.status(404).json({ error: "action_not_found" });
         return;
       }
+
+      const updatedStatus = result.rows[0].status as string | undefined;
+      const eventType =
+        "status" in body ? "action.status_changed" : "action.updated";
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        actorUserId: (req as any).userId ?? null,
+        eventType,
+        resourceType: "action",
+        resourceId: actionId,
+        payload: { status: updatedStatus ?? null },
+        ipAddress: req.ip ?? null,
+      });
 
       res.status(200).json({ action: result.rows[0] });
     } catch (err) {
