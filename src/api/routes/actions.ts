@@ -282,6 +282,62 @@ router.get(
 );
 
 /* =========================================================
+   GET /api/actions/summary
+   Aggregate counts for actions scoped to the org.
+   ========================================================= */
+
+router.get(
+  "/actions/summary",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const result = await pg.query<{
+        open_count: string;
+        blocked_count: string;
+        overdue_count: string;
+        immediate_count: string;
+        closed_count: string;
+      }>(
+        `
+        SELECT
+          COUNT(*) FILTER (WHERE status IN ('open', 'in_progress', 'blocked'))                      AS open_count,
+          COUNT(*) FILTER (WHERE status = 'blocked')                                                 AS blocked_count,
+          COUNT(*) FILTER (WHERE due_date < NOW() AND status NOT IN ('closed', 'accepted'))          AS overdue_count,
+          COUNT(*) FILTER (WHERE priority = 'immediate' AND status NOT IN ('closed', 'accepted'))    AS immediate_count,
+          COUNT(*) FILTER (WHERE status = 'closed')                                                  AS closed_count
+        FROM actions
+        WHERE organization_id = $1
+        `,
+        [organizationId]
+      );
+
+      const row = result.rows[0] ?? {};
+      res.status(200).json({
+        summary: {
+          open_count:      parseInt(row.open_count ?? "0", 10),
+          blocked_count:   parseInt(row.blocked_count ?? "0", 10),
+          overdue_count:   parseInt(row.overdue_count ?? "0", 10),
+          immediate_count: parseInt(row.immediate_count ?? "0", 10),
+          closed_count:    parseInt(row.closed_count ?? "0", 10),
+        },
+      });
+    } catch (err) {
+      logger.error({ event: "actions_summary_failed", err }, "GET /api/actions/summary failed");
+      res.status(500).json({ error: "actions_summary_failed" });
+    }
+  }
+);
+
+/* =========================================================
    GET /api/actions/:id
    Get a single action by ID, scoped to the org.
    Returns 404 if not found or belongs to a different org.

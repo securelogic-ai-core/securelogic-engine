@@ -420,6 +420,74 @@ router.get(
 );
 
 /* =========================================================
+   GET /api/findings/summary
+   Aggregate counts for findings scoped to the org.
+   ========================================================= */
+
+router.get(
+  "/findings/summary",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const result = await pg.query<{
+        open_count: string;
+        critical_open: string;
+        high_open: string;
+        medium_open: string;
+        low_open: string;
+        closed_count: string;
+        immediate_priority: string;
+        vendor_sourced: string;
+        signal_sourced: string;
+      }>(
+        `
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'open')                                   AS open_count,
+          COUNT(*) FILTER (WHERE status = 'open' AND severity = 'critical')         AS critical_open,
+          COUNT(*) FILTER (WHERE status = 'open' AND severity = 'high')             AS high_open,
+          COUNT(*) FILTER (WHERE status = 'open' AND severity = 'medium')           AS medium_open,
+          COUNT(*) FILTER (WHERE status = 'open' AND severity = 'low')              AS low_open,
+          COUNT(*) FILTER (WHERE status != 'open')                                  AS closed_count,
+          COUNT(*) FILTER (WHERE status = 'open' AND priority = 'immediate')        AS immediate_priority,
+          COUNT(*) FILTER (WHERE source_type = 'vendor_review')                     AS vendor_sourced,
+          COUNT(*) FILTER (WHERE source_type = 'signal')                            AS signal_sourced
+        FROM findings
+        WHERE organization_id = $1
+        `,
+        [organizationId]
+      );
+
+      const row = result.rows[0] ?? {};
+      res.status(200).json({
+        summary: {
+          open_count:         parseInt(row.open_count ?? "0", 10),
+          critical_open:      parseInt(row.critical_open ?? "0", 10),
+          high_open:          parseInt(row.high_open ?? "0", 10),
+          medium_open:        parseInt(row.medium_open ?? "0", 10),
+          low_open:           parseInt(row.low_open ?? "0", 10),
+          closed_count:       parseInt(row.closed_count ?? "0", 10),
+          immediate_priority: parseInt(row.immediate_priority ?? "0", 10),
+          vendor_sourced:     parseInt(row.vendor_sourced ?? "0", 10),
+          signal_sourced:     parseInt(row.signal_sourced ?? "0", 10),
+        },
+      });
+    } catch (err) {
+      logger.error({ event: "findings_summary_failed", err }, "GET /api/findings/summary failed");
+      res.status(500).json({ error: "findings_summary_failed" });
+    }
+  }
+);
+
+/* =========================================================
    GET /api/findings/:id
    Get a single finding with linked action count.
    Returns 404 if not found or belongs to a different org.

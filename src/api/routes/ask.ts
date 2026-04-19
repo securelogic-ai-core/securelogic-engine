@@ -1,0 +1,370 @@
+/**
+ * ask.ts — Natural language risk posture search ("Ask SecureLogic")
+ *
+ * POST /api/ask
+ *
+ * Accepts a plain-English question, fetches a real-time org-scoped
+ * data snapshot from 7 parallel DB queries, and sends the snapshot
+ * plus the question to Claude. Claude synthesises a structured answer
+ * using ONLY the provided data — it never touches the DB.
+ *
+ * Security:
+ *   - All DB queries are hardcoded parameterized statements; no SQL is
+ *     generated from user input.
+ *   - Rate limited to 20 questions / minute per org to contain Claude costs.
+ *   - Claude receives only org-scoped pre-fetched data — no raw DB access.
+ */
+
+import Anthropic from "@anthropic-ai/sdk";
+import rateLimit from "express-rate-limit";
+import { Router } from "express";
+import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
+import { requireApiKey } from "../middleware/requireApiKey.js";
+import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { requireEntitlement } from "../middleware/requireEntitlement.js";
+
+const router = Router();
+
+// ---------------------------------------------------------------------------
+// Claude client
+// ---------------------------------------------------------------------------
+
+function getClient(): Anthropic | null {
+  const key = process.env.ANTHROPIC_API_KEY?.trim();
+  if (!key) return null;
+  return new Anthropic({ apiKey: key });
+}
+
+// ---------------------------------------------------------------------------
+// System prompt
+// ---------------------------------------------------------------------------
+
+const SYSTEM_PROMPT = `
+You are SecureLogic AI, a cyber risk intelligence assistant. You have access to a customer's real-time GRC posture data. Answer their question accurately using ONLY the data provided in the context. Never invent data, scores, or risk ratings not present in the context.
+
+When answering:
+- Lead with the direct answer
+- Support it with specific numbers from the context
+- Highlight the most actionable insight when relevant
+- Be concise — 2-4 sentences for simple questions, up to 8 for complex analyses
+- Use plain language, not jargon
+- If the data doesn't contain enough information to answer, say so clearly rather than guessing
+
+Format rules:
+- Do not use markdown headers
+- You may use bullet points for lists of 3+ items
+- Always cite specific numbers (e.g. "3 critical findings" not "several critical findings")
+`.trim();
+
+// ---------------------------------------------------------------------------
+// Rate limiter — 20 questions per minute per org
+// ---------------------------------------------------------------------------
+
+const askRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req as any).organizationId ?? req.ip ?? "unknown",
+  message: {
+    error: "rate_limit_exceeded",
+    message: "Too many questions. Wait 60 seconds.",
+  },
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/ask
+// ---------------------------------------------------------------------------
+
+router.post(
+  "/ask",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  askRateLimit,
+  async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const { question } = req.body ?? {};
+
+    if (!question || typeof question !== "string" || question.trim().length === 0) {
+      res.status(400).json({ error: "question_required", message: "question is required and must be a non-empty string" });
+      return;
+    }
+
+    if (question.trim().length > 500) {
+      res.status(400).json({ error: "question_too_long", message: "question must be 500 characters or fewer" });
+      return;
+    }
+
+    const client = getClient();
+    if (!client) {
+      res.status(503).json({ error: "ask_unavailable", message: "AI query is not configured" });
+      return;
+    }
+
+    try {
+      // -----------------------------------------------------------------------
+      // Fetch all context data in parallel — 7 queries
+      // -----------------------------------------------------------------------
+      const [
+        postureResult,
+        domainResult,
+        findingsSummaryResult,
+        topRisksResult,
+        vendorsResult,
+        actionsSummaryResult,
+        criticalFindingsResult,
+      ] = await Promise.all([
+        // 1. Latest posture snapshot
+        pg.query<{
+          overall_score: number | null;
+          overall_severity: string | null;
+          open_finding_count: number;
+          open_action_count: number;
+          overdue_action_count: number;
+          snapshot_date: string;
+          computation_rationale: Record<string, unknown>;
+        }>(
+          `SELECT overall_score, overall_severity,
+                  open_finding_count, open_action_count, overdue_action_count,
+                  snapshot_date, computation_rationale
+           FROM posture_snapshots
+           WHERE organization_id = $1
+           ORDER BY snapshot_date DESC
+           LIMIT 1`,
+          [organizationId]
+        ),
+
+        // 2. Domain scores from latest snapshot
+        pg.query<{
+          domain: string;
+          score: number | null;
+          severity: string | null;
+          trend_direction: string | null;
+          finding_count: number;
+          action_count: number;
+        }>(
+          `SELECT d.domain, d.score, d.severity, d.trend_direction,
+                  d.finding_count, d.action_count
+           FROM domain_scores d
+           JOIN posture_snapshots p ON d.posture_snapshot_id = p.id
+           WHERE p.organization_id = $1
+           ORDER BY p.snapshot_date DESC, d.score ASC
+           LIMIT 20`,
+          [organizationId]
+        ),
+
+        // 3. Findings summary
+        pg.query<{
+          open_count: string;
+          critical_open: string;
+          high_open: string;
+          medium_open: string;
+          low_open: string;
+          closed_count: string;
+          immediate_priority: string;
+          vendor_sourced: string;
+          signal_sourced: string;
+        }>(
+          `SELECT
+             COUNT(*) FILTER (WHERE status = 'open')                                 AS open_count,
+             COUNT(*) FILTER (WHERE status = 'open' AND severity = 'critical')       AS critical_open,
+             COUNT(*) FILTER (WHERE status = 'open' AND severity = 'high')           AS high_open,
+             COUNT(*) FILTER (WHERE status = 'open' AND severity = 'medium')         AS medium_open,
+             COUNT(*) FILTER (WHERE status = 'open' AND severity = 'low')            AS low_open,
+             COUNT(*) FILTER (WHERE status != 'open')                                AS closed_count,
+             COUNT(*) FILTER (WHERE status = 'open' AND priority = 'immediate')      AS immediate_priority,
+             COUNT(*) FILTER (WHERE source_type = 'vendor_review')                   AS vendor_sourced,
+             COUNT(*) FILTER (WHERE source_type = 'signal')                          AS signal_sourced
+           FROM findings
+           WHERE organization_id = $1`,
+          [organizationId]
+        ),
+
+        // 4. Top open risks ordered by severity
+        pg.query<{
+          id: string;
+          title: string;
+          domain: string;
+          likelihood: string | null;
+          impact: string;
+          risk_rating: string;
+          status: string;
+          owner: string | null;
+          due_date: string | null;
+          treatment: string | null;
+        }>(
+          `SELECT id, title, domain, likelihood, impact, risk_rating,
+                  status, owner, due_date, treatment
+           FROM risks
+           WHERE organization_id = $1
+             AND status = 'open'
+           ORDER BY
+             CASE risk_rating
+               WHEN 'Critical' THEN 1
+               WHEN 'High'     THEN 2
+               WHEN 'Moderate' THEN 3
+               WHEN 'Low'      THEN 4
+             END ASC
+           LIMIT 20`,
+          [organizationId]
+        ),
+
+        // 5. Vendors ordered by risk score
+        pg.query<{
+          name: string;
+          criticality: string | null;
+          current_risk_score: number | null;
+          last_reviewed_at: string | null;
+        }>(
+          `SELECT name, criticality, current_risk_score, last_reviewed_at
+           FROM vendors
+           WHERE organization_id = $1
+           ORDER BY current_risk_score DESC NULLS LAST
+           LIMIT 20`,
+          [organizationId]
+        ),
+
+        // 6. Actions summary
+        pg.query<{
+          open_count: string;
+          blocked_count: string;
+          overdue_count: string;
+          immediate_count: string;
+          closed_count: string;
+        }>(
+          `SELECT
+             COUNT(*) FILTER (WHERE status IN ('open', 'in_progress', 'blocked'))               AS open_count,
+             COUNT(*) FILTER (WHERE status = 'blocked')                                          AS blocked_count,
+             COUNT(*) FILTER (WHERE due_date < NOW() AND status NOT IN ('closed', 'accepted'))   AS overdue_count,
+             COUNT(*) FILTER (WHERE priority = 'immediate' AND status NOT IN ('closed','accepted')) AS immediate_count,
+             COUNT(*) FILTER (WHERE status = 'closed')                                           AS closed_count
+           FROM actions
+           WHERE organization_id = $1`,
+          [organizationId]
+        ),
+
+        // 7. Recent high/critical open findings
+        pg.query<{
+          title: string;
+          severity: string;
+          status: string;
+          source_type: string;
+          domain: string | null;
+          priority: string | null;
+          created_at: string;
+        }>(
+          `SELECT title, severity, status, source_type, domain, priority, created_at
+           FROM findings
+           WHERE organization_id = $1
+             AND severity IN ('critical', 'high')
+             AND status = 'open'
+           ORDER BY
+             CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 END,
+             created_at DESC
+           LIMIT 15`,
+          [organizationId]
+        ),
+      ]);
+
+      // -----------------------------------------------------------------------
+      // Assemble context object
+      // -----------------------------------------------------------------------
+      const posture = postureResult.rows[0] ?? null;
+      const fs = findingsSummaryResult.rows[0] ?? {};
+      const as_ = actionsSummaryResult.rows[0] ?? {};
+
+      const findingsSummary = {
+        open_count:         parseInt(fs.open_count ?? "0", 10),
+        critical_open:      parseInt(fs.critical_open ?? "0", 10),
+        high_open:          parseInt(fs.high_open ?? "0", 10),
+        medium_open:        parseInt(fs.medium_open ?? "0", 10),
+        low_open:           parseInt(fs.low_open ?? "0", 10),
+        closed_count:       parseInt(fs.closed_count ?? "0", 10),
+        immediate_priority: parseInt(fs.immediate_priority ?? "0", 10),
+        vendor_sourced:     parseInt(fs.vendor_sourced ?? "0", 10),
+        signal_sourced:     parseInt(fs.signal_sourced ?? "0", 10),
+      };
+
+      const actionsSummary = {
+        open_count:      parseInt(as_.open_count ?? "0", 10),
+        blocked_count:   parseInt(as_.blocked_count ?? "0", 10),
+        overdue_count:   parseInt(as_.overdue_count ?? "0", 10),
+        immediate_count: parseInt(as_.immediate_count ?? "0", 10),
+        closed_count:    parseInt(as_.closed_count ?? "0", 10),
+      };
+
+      const context = {
+        posture: posture
+          ? {
+              overall_score:    posture.overall_score,
+              overall_severity: posture.overall_severity,
+              open_findings:    posture.open_finding_count,
+              open_actions:     posture.open_action_count,
+              overdue_actions:  posture.overdue_action_count,
+              as_of:            posture.snapshot_date,
+            }
+          : null,
+        domains: domainResult.rows.map((d) => ({
+          domain:   d.domain,
+          score:    d.score,
+          severity: d.severity,
+          trend:    d.trend_direction,
+          findings: d.finding_count,
+        })),
+        findings:          findingsSummary,
+        top_risks:         topRisksResult.rows,
+        vendors:           vendorsResult.rows,
+        actions:           actionsSummary,
+        critical_findings: criticalFindingsResult.rows,
+      };
+
+      // -----------------------------------------------------------------------
+      // Call Claude
+      // -----------------------------------------------------------------------
+      const userMessage = `Here is the current risk posture data for this organization:\n\n${JSON.stringify(context, null, 2)}\n\nQuestion: ${question.trim()}`;
+
+      let answer: string;
+      try {
+        const response = await client.messages.create({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1024,
+          system: SYSTEM_PROMPT,
+          messages: [{ role: "user", content: userMessage }],
+        });
+
+        const textBlock = response.content.find((b) => b.type === "text");
+        answer = textBlock && "text" in textBlock ? textBlock.text : "";
+      } catch (claudeErr) {
+        logger.error({ event: "ask_claude_failed", claudeErr }, "Claude API call failed");
+        res.status(502).json({ error: "ask_failed", message: "Unable to process query" });
+        return;
+      }
+
+      res.status(200).json({
+        answer,
+        context_used: {
+          posture_score:   posture?.overall_score ?? null,
+          findings_count:  findingsSummary.open_count,
+          risks_count:     topRisksResult.rows.length,
+          vendors_count:   vendorsResult.rows.length,
+          as_of:           posture?.snapshot_date ?? null,
+        },
+        question: question.trim(),
+      });
+    } catch (err) {
+      logger.error({ event: "ask_failed", err }, "POST /api/ask failed");
+      res.status(500).json({ error: "ask_failed", message: "Unable to process query" });
+    }
+  }
+);
+
+export default router;
