@@ -197,7 +197,7 @@ router.post(
 
       // Check if already a member
       const existingUser = await pg.query(
-        `SELECT id FROM users WHERE organization_id = $1 AND LOWER(email) = $2 LIMIT 1`,
+        `SELECT id FROM users WHERE organization_id = $1 AND LOWER(email) = $2 AND status != 'inactive' LIMIT 1`,
         [orgId, email]
       );
       if (existingUser.rows.length > 0) {
@@ -288,7 +288,7 @@ router.get(
         }>(
           `SELECT id, email, name, role, status, created_at, NULL AS last_used_at
            FROM users
-           WHERE organization_id = $1
+           WHERE organization_id = $1 AND status != 'inactive'
            ORDER BY created_at ASC`,
           [orgId]
         ),
