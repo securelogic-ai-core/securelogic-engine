@@ -373,6 +373,36 @@ router.get(
         }
       }
 
+      // -------------------------------------------------------
+      // 8. Active vendor counts by criticality
+      // -------------------------------------------------------
+      const vendorCriticalityResult = await pg.query<{
+        criticality: string | null;
+        count: string;
+      }>(
+        `
+        SELECT criticality, COUNT(*)::text AS count
+        FROM vendors
+        WHERE organization_id = $1
+          AND status = 'active'
+        GROUP BY criticality
+        `,
+        [organizationId]
+      );
+
+      const vendorByCriticality = { critical: 0, high: 0, medium: 0, low: 0, uncategorized: 0 };
+      let vendorTotal = 0;
+      for (const row of vendorCriticalityResult.rows) {
+        const n = parseInt(row.count, 10);
+        vendorTotal += n;
+        const k = row.criticality;
+        if (k === "critical")       vendorByCriticality.critical     += n;
+        else if (k === "high")      vendorByCriticality.high         += n;
+        else if (k === "medium")    vendorByCriticality.medium       += n;
+        else if (k === "low")       vendorByCriticality.low          += n;
+        else                        vendorByCriticality.uncategorized += n;
+      }
+
       res.status(200).json({
         posture: {
           overall_score: snapshotRow?.overall_score ?? null,
@@ -401,7 +431,12 @@ router.get(
           by_criticality: openDepsByCriticality
         },
         evidence_summary: evidenceSummary,
-        inventory
+        inventory,
+        vendor_risk: {
+          by_criticality: vendorByCriticality,
+          total: vendorTotal,
+          high_or_critical: vendorByCriticality.critical + vendorByCriticality.high,
+        },
       });
     } catch (err) {
       logger.error(
