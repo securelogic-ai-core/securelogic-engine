@@ -320,14 +320,14 @@ router.get(
         [organizationId]
       );
 
-      const row = result.rows[0] ?? {};
+      const row = result.rows[0];
       res.status(200).json({
         summary: {
-          open_count:      parseInt(row.open_count ?? "0", 10),
-          blocked_count:   parseInt(row.blocked_count ?? "0", 10),
-          overdue_count:   parseInt(row.overdue_count ?? "0", 10),
-          immediate_count: parseInt(row.immediate_count ?? "0", 10),
-          closed_count:    parseInt(row.closed_count ?? "0", 10),
+          open_count:      parseInt(row?.open_count ?? "0", 10),
+          blocked_count:   parseInt(row?.blocked_count ?? "0", 10),
+          overdue_count:   parseInt(row?.overdue_count ?? "0", 10),
+          immediate_count: parseInt(row?.immediate_count ?? "0", 10),
+          closed_count:    parseInt(row?.closed_count ?? "0", 10),
         },
       });
     } catch (err) {
