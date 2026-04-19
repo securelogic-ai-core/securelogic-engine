@@ -1,6 +1,14 @@
 import Link from "next/link";
 import type { DashboardSummary, DomainScore, Framework, FrameworkReadiness } from "@/lib/api";
 
+const CRIT_COLORS: Record<string, { bar: string; badge: string; text: string }> = {
+  critical:      { bar: "#ef4444", badge: "rgba(239,68,68,0.15)",   text: "#fca5a5" },
+  high:          { bar: "#f97316", badge: "rgba(249,115,22,0.15)",  text: "#fdba74" },
+  medium:        { bar: "#f59e0b", badge: "rgba(245,158,11,0.15)",  text: "#fcd34d" },
+  low:           { bar: "#22c55e", badge: "rgba(34,197,94,0.15)",   text: "#86efac" },
+  uncategorized: { bar: "#334155", badge: "rgba(100,116,139,0.1)",  text: "#64748b" },
+};
+
 const SEVERITY_COLORS: Record<string, string> = {
   Critical: "#ef4444",
   High:     "#f97316",
@@ -298,6 +306,112 @@ export function InventoryGrid({
             <span>Controls overdue for testing</span>
             <span className="font-bold">{controls_cadence.overdue}</span>
           </Link>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── VendorRiskCard ─────────────────────────────────────────────
+
+export function VendorRiskCard({
+  vendor_risk,
+}: {
+  vendor_risk: DashboardSummary["vendor_risk"];
+}) {
+  const vr = vendor_risk ?? {
+    by_criticality: { critical: 0, high: 0, medium: 0, low: 0, uncategorized: 0 },
+    total: 0,
+    high_or_critical: 0,
+  };
+
+  const cx = 40, cy = 40, r = 28, sw = 12;
+  const CIRC = 2 * Math.PI * r;
+  const total = vr.total;
+
+  const segments = [
+    { key: "critical",      count: vr.by_criticality.critical,      color: "#ef4444" },
+    { key: "high",          count: vr.by_criticality.high,          color: "#f97316" },
+    { key: "medium",        count: vr.by_criticality.medium,        color: "#f59e0b" },
+    { key: "low",           count: vr.by_criticality.low,           color: "#22c55e" },
+    { key: "uncategorized", count: vr.by_criticality.uncategorized, color: "#334155" },
+  ].filter((s) => s.count > 0);
+
+  let accumulated = 0;
+
+  return (
+    <div className="rounded-xl border p-5" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
+      <div className="flex items-baseline justify-between mb-4">
+        <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
+          Vendor Risk
+        </p>
+        <Link href="/vendors/risk" className="text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+          Risk report →
+        </Link>
+      </div>
+
+      {total === 0 ? (
+        <div className="flex flex-col items-center justify-center py-4 gap-2">
+          <p className="text-xs" style={{ color: TEXT_MUTED }}>No vendors added yet.</p>
+          <Link href="/vendors/new" className="text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+            Add vendor →
+          </Link>
+        </div>
+      ) : (
+        <div className="flex items-center gap-5">
+          <div className="flex-shrink-0">
+            <svg viewBox="0 0 80 80" width="80" height="80">
+              <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={sw} />
+              {segments.map(({ key, count, color }) => {
+                const arc = (count / total) * CIRC;
+                const offset = -accumulated;
+                accumulated += arc;
+                return (
+                  <circle
+                    key={key}
+                    cx={cx} cy={cy} r={r}
+                    fill="none" stroke={color} strokeWidth={sw}
+                    strokeDasharray={`${arc} ${CIRC - arc}`}
+                    strokeDashoffset={offset}
+                    transform={`rotate(-90 ${cx} ${cy})`}
+                    strokeLinecap="butt"
+                  />
+                );
+              })}
+              <text x={cx} y={cy - 4} textAnchor="middle" fill="#f1f5f9" fontSize="14" fontWeight="700">
+                {total}
+              </text>
+              <text x={cx} y={cy + 9} textAnchor="middle" fill={TEXT_MUTED} fontSize="8">
+                vendors
+              </text>
+            </svg>
+          </div>
+          <div className="flex-1 space-y-2">
+            {(["critical", "high", "medium", "low"] as const).map((level) => {
+              const count = vr.by_criticality[level];
+              const c = CRIT_COLORS[level]!;
+              return (
+                <Link
+                  key={level}
+                  href={`/vendors?criticality=${level}`}
+                  className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity"
+                >
+                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: c.bar }} />
+                  <span style={{ color: "#94a3b8" }}>
+                    {level.charAt(0).toUpperCase() + level.slice(1)}
+                  </span>
+                  <span className="ml-auto font-bold tabular-nums" style={{ color: count > 0 ? "#f1f5f9" : TEXT_MUTED }}>
+                    {count}
+                  </span>
+                </Link>
+              );
+            })}
+            {vr.high_or_critical > 0 && (
+              <p className="text-xs pt-1" style={{ color: "#fca5a5", borderTop: `1px solid ${SLATE_LINE}` }}>
+                {vr.high_or_critical} high-risk vendor{vr.high_or_critical !== 1 ? "s" : ""}
+              </p>
+            )}
+          </div>
         </div>
       )}
     </div>

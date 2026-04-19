@@ -160,6 +160,17 @@ export type DashboardSummary = {
     obligations?: number;
     dependencies?: number;
   };
+  vendor_risk?: {
+    by_criticality: {
+      critical: number;
+      high: number;
+      medium: number;
+      low: number;
+      uncategorized: number;
+    };
+    total: number;
+    high_or_critical: number;
+  };
 };
 
 export type Vendor = {

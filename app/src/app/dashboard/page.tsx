@@ -4,7 +4,7 @@ import { getSession } from "@/lib/session";
 import { getIssues, getMe, getDashboardSummary, getAuthMe, getFindings, getFrameworks, getFrameworkReadiness, type DashboardSummary, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
-import { FindingsDonut, DomainPostureBars, ActionsRing, InventoryGrid, FrameworkGaps } from "./DashboardCharts";
+import { FindingsDonut, DomainPostureBars, ActionsRing, InventoryGrid, FrameworkGaps, VendorRiskCard } from "./DashboardCharts";
 
 export default async function DashboardPage({
   searchParams,
@@ -295,7 +295,7 @@ function PostureDashboard({
   summary: DashboardSummary;
   frameworkPairs: Array<{ framework: Framework; readiness: FrameworkReadiness | null }>;
 }) {
-  const { domains, findings, actions, controls_cadence, inventory } = summary;
+  const { domains, findings, actions, controls_cadence, inventory, vendor_risk } = summary;
 
   return (
     <div>
@@ -310,11 +310,14 @@ function PostureDashboard({
         <ActionsRing actions={actions} />
       </div>
 
-      {/* Row 2: Inventory grid | Framework gaps */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <InventoryGrid inventory={inventory} controls_cadence={controls_cadence} />
+      {/* Row 2: Vendor risk | Framework gaps */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <VendorRiskCard vendor_risk={vendor_risk} />
         <FrameworkGaps pairs={frameworkPairs} />
       </div>
+
+      {/* Row 3: Inventory grid (full width) */}
+      <InventoryGrid inventory={inventory} controls_cadence={controls_cadence} />
     </div>
   );
 }
