@@ -4,6 +4,7 @@ import { getSession } from "@/lib/session";
 import { getIssues, getMe, getDashboardSummary, getAuthMe, getFindings, getFrameworks, getFrameworkReadiness, type DashboardSummary, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
+import { FindingsDonut, DomainPostureBars, ActionsRing, InventoryGrid, FrameworkGaps } from "./DashboardCharts";
 
 export default async function DashboardPage({
   searchParams,
@@ -204,7 +205,7 @@ export default async function DashboardPage({
       {isPlatformUser ? (
         dashboardSummary && (
           <div className="mt-10">
-            <PostureDashboard summary={dashboardSummary} />
+            <PostureDashboard summary={dashboardSummary} frameworkPairs={frameworkReadinessPairs} />
           </div>
         )
       ) : (
@@ -286,34 +287,15 @@ function ManageBillingButton() {
 // Consumes GET /api/dashboard/summary (Layer 4, closed).
 // ─────────────────────────────────────────────────────────────
 
-const SEVERITY_STYLES: Record<string, { badge: string; bar: string; label: string }> = {
-  Critical: { badge: "bg-red-900/40 text-red-300",      bar: "bg-red-500",    label: "Critical" },
-  High:     { badge: "bg-orange-900/40 text-orange-300", bar: "bg-orange-400", label: "High" },
-  Moderate: { badge: "bg-amber-900/40 text-amber-300",   bar: "bg-amber-400",  label: "Moderate" },
-  Low:      { badge: "bg-green-900/40 text-green-300",   bar: "bg-green-500",  label: "Low" },
-};
 
-function severityStyle(s: string | null): { badge: string; bar: string; label: string } {
-  if (s && SEVERITY_STYLES[s]) return SEVERITY_STYLES[s]!;
-  return { badge: "bg-slate-700/40 text-slate-400", bar: "bg-slate-600", label: s ?? "—" };
-}
-
-function PostureDashboard({ summary }: { summary: DashboardSummary }) {
-  const { posture, domains, findings, actions, controls_cadence, inventory } = summary;
-  const hasSnapshot = posture.overall_score !== null;
-  const style = severityStyle(posture.overall_severity);
-  const riskCount = inventory.risks ?? 0;
-  const obligationCount = inventory.obligations ?? 0;
-
-  const inventoryRows: Array<{ label: string; count: number; href: string }> = [
-    { label: "Vendors",      count: inventory.vendors,             href: "/vendors" },
-    { label: "AI Systems",   count: inventory.ai_systems,          href: "/ai-systems" },
-    { label: "Controls",     count: inventory.controls,            href: "/controls" },
-    { label: "Assessments",  count: inventory.control_assessments, href: "/controls" },
-    { label: "Gov. Reviews", count: inventory.governance_reviews,  href: "/ai-systems" },
-  ];
-  if (riskCount > 0) inventoryRows.push({ label: "Risks", count: riskCount, href: "/risks" });
-  if (obligationCount > 0) inventoryRows.push({ label: "Obligations", count: obligationCount, href: "/obligations" });
+function PostureDashboard({
+  summary,
+  frameworkPairs,
+}: {
+  summary: DashboardSummary;
+  frameworkPairs: Array<{ framework: Framework; readiness: FrameworkReadiness | null }>;
+}) {
+  const { domains, findings, actions, controls_cadence, inventory } = summary;
 
   return (
     <div>
@@ -321,223 +303,18 @@ function PostureDashboard({ summary }: { summary: DashboardSummary }) {
         Security Posture
       </h2>
 
-      {/* Top row: score + stat tiles */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-
-        {/* Posture Score — full card links to /posture */}
-        <Link
-          href="/posture"
-          className="lg:col-span-1 flex flex-col justify-between rounded-xl border p-5 transition-colors hover:border-teal-800"
-          style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b", textDecoration: "none" }}
-        >
-          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
-            Posture Score
-          </p>
-          {hasSnapshot ? (
-            <>
-              <p className="text-4xl font-bold text-slate-100 leading-none">
-                {posture.overall_score}
-              </p>
-              <span className={`mt-2 self-start inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${style.badge}`}>
-                {style.label}
-              </span>
-              {posture.snapshot_date && (
-                <p className="mt-2 text-xs text-slate-500">
-                  as of {new Date(posture.snapshot_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                </p>
-              )}
-            </>
-          ) : (
-            <p className="text-sm text-slate-500 mt-2">No snapshot yet</p>
-          )}
-          <p className="mt-3 text-xs font-medium" style={{ color: "#00c4b4" }}>
-            View details →
-          </p>
-        </Link>
-
-        {/* Open Findings — stretched link, severity rows individually clickable */}
-        <div
-          className="relative rounded-xl border p-5 transition-colors hover:border-teal-800"
-          style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b", cursor: "pointer" }}
-        >
-          <Link
-            href="/findings?status=open"
-            className="absolute inset-0 rounded-xl"
-            style={{ zIndex: 0 }}
-            aria-label="View open findings"
-          />
-          <div style={{ position: "relative", zIndex: 1 }}>
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
-              Open Findings
-            </p>
-            <p className="text-3xl font-bold text-slate-100">{findings.open}</p>
-            <div className="mt-3 space-y-1">
-              {(["Critical","High","Moderate","Low"] as const).map((sev) => {
-                const count = findings.by_severity[sev] ?? 0;
-                if (count === 0) return null;
-                const s = severityStyle(sev);
-                return (
-                  <Link
-                    key={sev}
-                    href={`/findings?status=open&severity=${sev}`}
-                    className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-200 transition-colors"
-                    style={{ position: "relative", zIndex: 2 }}
-                  >
-                    <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${s.bar}`} />
-                    <span>{sev}</span>
-                    <span className="ml-auto font-medium">{count}</span>
-                  </Link>
-                );
-              })}
-              {findings.open === 0 && (
-                <p className="text-xs text-slate-500">None open</p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Open Actions — stretched link, overdue sub-link individually clickable */}
-        <div
-          className="relative rounded-xl border p-5 transition-colors hover:border-teal-800"
-          style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b", cursor: "pointer" }}
-        >
-          <Link
-            href="/actions"
-            className="absolute inset-0 rounded-xl"
-            style={{ zIndex: 0 }}
-            aria-label="View actions"
-          />
-          <div style={{ position: "relative", zIndex: 1 }}>
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
-              Open Actions
-            </p>
-            <p className="text-3xl font-bold text-slate-100">{actions.open}</p>
-            {actions.overdue > 0 ? (
-              <Link
-                href="/actions?overdue=true"
-                className="block mt-2 text-xs font-semibold text-red-400 hover:text-red-300 transition-colors"
-                style={{ position: "relative", zIndex: 2 }}
-              >
-                {actions.overdue} overdue →
-              </Link>
-            ) : actions.open > 0 ? (
-              <p className="mt-2 text-xs text-slate-500">None overdue</p>
-            ) : (
-              <p className="mt-2 text-xs text-slate-500">None open</p>
-            )}
-          </div>
-        </div>
-
-        {/* Inventory — individual count links */}
-        <div className="lg:col-span-2 bg-brand-surface border border-brand-line rounded-xl p-5">
-          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">
-            Inventory
-          </p>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-            {inventoryRows.map(({ label, count, href }) => (
-              <div key={label} className="flex items-baseline justify-between">
-                <span className="text-xs text-slate-400">{label}</span>
-                <Link
-                  href={href}
-                  className="text-sm font-semibold ml-2 transition-colors hover:text-teal-300"
-                  style={{ color: "#00c4b4" }}
-                >
-                  {count}
-                </Link>
-              </div>
-            ))}
-          </div>
-          {(controls_cadence?.overdue ?? 0) > 0 && (
-            <div className="mt-3 pt-3" style={{ borderTop: "1px solid #1e293b" }}>
-              <Link
-                href="/controls?filter=overdue"
-                className="flex items-center justify-between text-xs font-medium transition-opacity hover:opacity-80"
-                style={{ color: "#fca5a5" }}
-              >
-                <span>Controls overdue for testing</span>
-                <span className="font-bold">{controls_cadence.overdue}</span>
-              </Link>
-            </div>
-          )}
-        </div>
+      {/* Row 1: Findings donut | Domain bars | Actions ring */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+        <FindingsDonut findings={findings} />
+        <DomainPostureBars domains={domains} />
+        <ActionsRing actions={actions} />
       </div>
 
-      {/* Domain breakdown */}
-      {domains.length > 0 && (
-        <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
-          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-4">
-            Domain Breakdown
-          </p>
-          <div className="space-y-3">
-            {domains.map((d) => {
-              const s = severityStyle(d.severity);
-              const score = d.score ?? 0;
-              const findingsHref = `/findings?domain=${encodeURIComponent(d.domain)}&status=open`;
-              return (
-                <div key={d.domain} className="relative">
-                  <Link
-                    href={findingsHref}
-                    className="absolute inset-0 rounded"
-                    style={{ zIndex: 0 }}
-                    aria-label={`View ${d.domain} findings`}
-                  />
-                  <div style={{ position: "relative", zIndex: 1 }}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium text-slate-200">{d.domain}</span>
-                      <div className="flex items-center gap-2">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${s.badge}`}>
-                          {s.label}
-                        </span>
-                        <span className="text-xs text-slate-500 w-7 text-right">{score}</span>
-                      </div>
-                    </div>
-                    <div className="h-1.5 bg-brand-line rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all ${s.bar}`}
-                        style={{ width: `${Math.min(score, 100)}%` }}
-                      />
-                    </div>
-                    <div className="flex gap-3 mt-1 text-xs">
-                      {d.finding_count > 0 && (
-                        <Link
-                          href={findingsHref}
-                          className="hover:text-teal-400 transition-colors"
-                          style={{ color: "#64748b", position: "relative", zIndex: 2 }}
-                        >
-                          {d.finding_count} finding{d.finding_count !== 1 ? "s" : ""}
-                        </Link>
-                      )}
-                      {d.action_count > 0 && (
-                        <span style={{ color: "#64748b" }}>
-                          {d.action_count} action{d.action_count !== 1 ? "s" : ""}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* No snapshot yet */}
-      {!hasSnapshot && (
-        <div className="bg-brand-bg border border-brand-line rounded-xl p-6 text-center">
-          <p className="text-sm text-slate-400 mb-2">
-            Your security posture score will appear here once you&apos;ve added controls and run your first assessment.
-          </p>
-          <div className="flex items-center justify-center gap-3 text-xs">
-            <Link href="/controls/new" className="font-medium transition-colors" style={{ color: "#00c4b4" }}>
-              Add a control →
-            </Link>
-            <span style={{ color: "#334155" }}>or</span>
-            <Link href="/controls" className="font-medium transition-colors" style={{ color: "#00c4b4" }}>
-              run an assessment →
-            </Link>
-          </div>
-        </div>
-      )}
+      {/* Row 2: Inventory grid | Framework gaps */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <InventoryGrid inventory={inventory} controls_cadence={controls_cadence} />
+        <FrameworkGaps pairs={frameworkPairs} />
+      </div>
     </div>
   );
 }

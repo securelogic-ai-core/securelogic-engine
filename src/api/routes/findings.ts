@@ -23,7 +23,7 @@ const router = Router();
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
 
-const VALID_STATUSES = new Set(["open", "in_progress", "closed"]);
+const VALID_STATUSES = new Set(["open", "in_progress", "closed", "accepted"]);
 const VALID_SEVERITIES = new Set(["Critical", "High", "Moderate", "Low"]);
 const VALID_SOURCE_TYPES = new Set([
   "assessment",

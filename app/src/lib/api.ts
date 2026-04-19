@@ -134,6 +134,7 @@ export type DashboardSummary = {
   };
   actions: {
     open: number;
+    in_progress: number;
     overdue: number;
   };
   controls_cadence: {

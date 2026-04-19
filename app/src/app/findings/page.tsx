@@ -204,6 +204,7 @@ export default async function FindingsPage({
           <FilterPill label="Open"        href={filterHref(currentSp, "status", "open")}        active={activeStatus === "open"} />
           <FilterPill label="In Progress" href={filterHref(currentSp, "status", "in_progress")} active={activeStatus === "in_progress"} />
           <FilterPill label="Closed"      href={filterHref(currentSp, "status", "closed")}      active={activeStatus === "closed"} />
+          <FilterPill label="Accepted"    href={filterHref(currentSp, "status", "accepted")}    active={activeStatus === "accepted"} />
         </div>
 
         {/* Severity */}
