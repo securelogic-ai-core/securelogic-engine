@@ -373,7 +373,7 @@ router.post("/auth/verify-email", verifyLimiter, async (req, res) => {
       [user.id]
     );
 
-    const jwt = signJwt(user.id, user.organization_id, user.role || "admin");
+    const jwt = signJwt(user.id, user.organization_id, user.role || "viewer");
 
     logger.info({ event: "email_verified", userId: user.id }, "Email verified");
 
@@ -528,7 +528,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
     const entitlementLevel     = orgResult.rows[0]?.entitlement_level ?? "starter";
     const onboardingCompleted  = orgResult.rows[0]?.onboarding_completed_at !== null
       && orgResult.rows[0]?.onboarding_completed_at !== undefined;
-    const userRole             = user.role || "admin";
+    const userRole             = user.role || "viewer";
 
     const jwt = signJwt(user.id, user.organization_id, userRole);
 
@@ -761,7 +761,7 @@ router.get("/auth/me", requireAuth, async (req, res) => {
       id:                  user.id,
       email:               user.email,
       name:                user.name,
-      role:                user.role || "admin",
+      role:                user.role || "viewer",
       organizationId:      orgId,
       organizationName:    org?.name ?? "Your Organisation",
       entitlementLevel:    org?.entitlement_level ?? "starter",

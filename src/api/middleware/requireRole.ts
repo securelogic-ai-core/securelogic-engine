@@ -29,6 +29,30 @@ export function requireRole(...allowedRoles: string[]) {
 }
 
 /**
+ * requireAdminRole — restrict a route to admin-role users only.
+ *
+ * API key auth (no role attached) bypasses this check — API keys are
+ * treated as admin-level. JWT users with any role other than "admin"
+ * receive a 403.
+ */
+export function requireAdminRole(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  const role = req.userRole ?? (req as any).jwtPayload?.role;
+
+  if (!role) { next(); return; }
+
+  if (role === "admin") { next(); return; }
+
+  res.status(403).json({
+    error: "forbidden",
+    message: "This action requires admin role."
+  });
+}
+
+/**
  * requireNotViewer — block viewer-role users from mutation endpoints.
  *
  * Viewer enforcement is also baked into requireApiKey for the JWT path,

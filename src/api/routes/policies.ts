@@ -21,6 +21,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requireAdminRole } from "../middleware/requireRole.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
@@ -703,6 +704,7 @@ router.delete(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
+  requireAdminRole,
   async (req, res) => {
     const organizationId =
       (req as any).organizationContext?.organizationId ?? null;
