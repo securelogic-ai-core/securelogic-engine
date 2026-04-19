@@ -2080,3 +2080,115 @@ export async function getApiUsage(
     return null;
   }
 }
+
+// =========================================================
+// WEBHOOKS
+// =========================================================
+
+export type WebhookEndpoint = {
+  id: string;
+  organization_id: string;
+  url: string;
+  secret_hint: string;
+  description: string | null;
+  status: "active" | "disabled" | "failed";
+  event_types: string[];
+  failure_count: number;
+  last_success_at: string | null;
+  last_failure_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WebhookEndpointWithSecret = WebhookEndpoint & { secret: string };
+
+export type WebhookDelivery = {
+  id: string;
+  event_type: string;
+  status: "pending" | "delivered" | "failed" | "retrying";
+  attempt_count: number;
+  response_status: number | null;
+  error_message: string | null;
+  delivered_at: string | null;
+  created_at: string;
+};
+
+export async function getWebhooks(
+  token: string
+): Promise<{ endpoints: WebhookEndpoint[] } | null> {
+  try {
+    const res = await engineFetch("/api/webhooks", token);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ endpoints: WebhookEndpoint[] }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function createWebhook(
+  token: string,
+  data: { url: string; description?: string; event_types?: string[] }
+): Promise<{ endpoint: WebhookEndpointWithSecret } | null> {
+  try {
+    const res = await engineFetch("/api/webhooks", token, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ endpoint: WebhookEndpointWithSecret }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function updateWebhook(
+  token: string,
+  id: string,
+  data: { url?: string; description?: string; event_types?: string[]; status?: string }
+): Promise<{ endpoint: WebhookEndpoint } | null> {
+  try {
+    const res = await engineFetch(`/api/webhooks/${id}`, token, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ endpoint: WebhookEndpoint }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteWebhook(token: string, id: string): Promise<boolean> {
+  try {
+    const res = await engineFetch(`/api/webhooks/${id}`, token, { method: "DELETE" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function testWebhook(
+  token: string,
+  id: string
+): Promise<{ delivery: WebhookDelivery } | null> {
+  try {
+    const res = await engineFetch(`/api/webhooks/${id}/test`, token, { method: "POST" });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ delivery: WebhookDelivery }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getWebhookDeliveries(
+  token: string,
+  endpointId: string
+): Promise<{ deliveries: WebhookDelivery[] } | null> {
+  try {
+    const res = await engineFetch(`/api/webhooks/${endpointId}/deliveries`, token);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ deliveries: WebhookDelivery[] }>;
+  } catch {
+    return null;
+  }
+}

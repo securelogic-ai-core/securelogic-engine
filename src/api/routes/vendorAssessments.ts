@@ -32,6 +32,7 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { validateVendorAssessmentCreate } from "../lib/vendorAssessmentValidation.js";
 import { severityToPriority } from "../lib/postureComputation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 
 const router = Router();
 
@@ -235,6 +236,16 @@ router.post(
         payload: { vendor_id: input.vendor_id, status: (input as any).status ?? null },
         ipAddress: req.ip ?? null
       });
+
+      dispatchWebhookEvent({
+        event_type: "vendor.assessed",
+        organization_id: organizationId,
+        data: {
+          vendor_id: input.vendor_id,
+          assessment_id: assessmentId,
+          overall_severity: input.overall_severity,
+        },
+      }).catch(() => {});
 
       res.status(201).json({ assessment, finding });
     } catch (err) {

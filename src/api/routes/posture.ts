@@ -29,6 +29,7 @@ import {
   buildWorkflowSignalBreakdown,
   buildScoringRationaleExtension
 } from "../lib/workflowScoringIntegration.js";
+import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 
 const router = Router();
 
@@ -361,6 +362,16 @@ router.post(
           },
           "Posture snapshot created"
         );
+
+        dispatchWebhookEvent({
+          event_type: "posture.snapshot_created",
+          organization_id: organizationId,
+          data: {
+            overall_score: computed.overall_score,
+            overall_severity: computed.overall_severity,
+            snapshot_date: snapshot.snapshot_date,
+          },
+        }).catch(() => {});
 
         res.status(201).json({
           snapshotId,
