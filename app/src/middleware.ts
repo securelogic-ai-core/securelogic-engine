@@ -10,6 +10,11 @@ const PROTECTED_PREFIXES = [
   "/vendors",
   "/ai-systems",
   "/controls",
+  "/findings",
+  "/risks",
+  "/ask",
+  "/obligations",
+  "/policies",
 ];
 
 /**
@@ -44,5 +49,10 @@ export const config = {
     "/vendors/:path*",
     "/ai-systems/:path*",
     "/controls/:path*",
+    "/findings/:path*",
+    "/risks/:path*",
+    "/ask/:path*",
+    "/obligations/:path*",
+    "/policies/:path*",
   ],
 };

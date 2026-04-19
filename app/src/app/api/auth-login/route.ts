@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     session.userId               = result.user.id;
     session.email                = result.user.email;
     session.name                 = result.user.name;
-    session.userRole             = (result.user as { role?: string }).role ?? "admin";
+    session.userRole             = (result.user as { role?: string }).role ?? "viewer";
     session.jwtToken             = result.token;
     session.organizationId       = result.user.organizationId;
     session.organizationName     = result.user.organizationName;

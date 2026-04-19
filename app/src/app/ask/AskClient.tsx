@@ -3,7 +3,6 @@
 import { useState, useRef, useCallback, useEffect, useTransition } from "react";
 import { askAction } from "./actions";
 import type { AskResponse } from "@/lib/api";
-import { transcribeAudio } from "@/lib/api";
 
 // ─────────────────────────────────────────────────────────────
 // Example chips
@@ -73,7 +72,7 @@ function MicIcon() {
 // Main component
 // ─────────────────────────────────────────────────────────────
 
-export function AskClient({ initialToken }: { initialToken: string }) {
+export function AskClient() {
   const [query, setQuery]           = useState("");
   const [answer, setAnswer]         = useState<AskResponse | null>(null);
   const [error, setError]           = useState<string | null>(null);
@@ -155,7 +154,11 @@ export function AskClient({ initialToken }: { initialToken: string }) {
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
 
         try {
-          const result = await transcribeAudio(initialToken, audioBlob, mimeType);
+          const ext = mimeType.includes("webm") ? "webm" : mimeType.includes("ogg") ? "ogg" : "mp4";
+          const fd = new FormData();
+          fd.append("audio", audioBlob, `recording.${ext}`);
+          const transcribeRes = await fetch("/api/transcribe", { method: "POST", body: fd });
+          const result = transcribeRes.ok ? await transcribeRes.json() as { text: string } : null;
           if (result?.text) {
             setQuery(result.text);
             submitQuery(result.text);
@@ -174,7 +177,7 @@ export function AskClient({ initialToken }: { initialToken: string }) {
         "Microphone access denied. Please allow microphone access and try again."
       );
     }
-  }, [isRecording, initialToken, submitQuery]);
+  }, [isRecording, submitQuery]);
 
   return (
     <div style={{ maxWidth: "720px", margin: "0 auto", padding: "48px 24px" }}>

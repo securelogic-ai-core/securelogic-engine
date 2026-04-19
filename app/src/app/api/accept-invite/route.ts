@@ -52,9 +52,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "invalid_response" }, { status: 500 });
     }
 
-    // Fetch org name via auth/me using the new JWT
-    let orgName = "Your Organisation";
-    let entitlementLevel = "starter";
+    // Fetch org name and onboarding status via auth/me using the new JWT
+    let orgName             = "Your Organisation";
+    let entitlementLevel    = "starter";
+    let onboardingCompleted = true;
     try {
       const meRes = await fetch(`${ENGINE_URL}/api/auth/me`, {
         headers: { Authorization: `Bearer ${data.token}` },
@@ -64,26 +65,29 @@ export async function POST(request: Request) {
         const me = (await meRes.json()) as {
           organizationName?: string;
           entitlementLevel?: string;
+          onboardingCompleted?: boolean;
         };
-        orgName          = me.organizationName ?? orgName;
-        entitlementLevel = me.entitlementLevel ?? entitlementLevel;
+        orgName             = me.organizationName  ?? orgName;
+        entitlementLevel    = me.entitlementLevel  ?? entitlementLevel;
+        onboardingCompleted = me.onboardingCompleted ?? true;
       }
     } catch {
-      // non-fatal
+      // non-fatal — session saved with safe defaults
     }
 
     const cookieStore = await cookies();
     const session     = await getIronSession<SessionData>(cookieStore, getSessionOptions());
 
-    session.userId           = data.user.id;
-    session.email            = data.user.email;
-    session.name             = data.user.name;
-    session.userRole         = data.user.role;
-    session.jwtToken         = data.token;
-    session.organizationId   = data.user.orgId;
-    session.organizationName = orgName;
-    session.entitlementLevel = entitlementLevel;
-    session.billingActive    = entitlementLevel !== "starter";
+    session.userId              = data.user.id;
+    session.email               = data.user.email;
+    session.name                = data.user.name;
+    session.userRole            = data.user.role;
+    session.jwtToken            = data.token;
+    session.organizationId      = data.user.orgId;
+    session.organizationName    = orgName;
+    session.entitlementLevel    = entitlementLevel;
+    session.billingActive       = entitlementLevel !== "starter";
+    session.onboardingCompleted = onboardingCompleted;
 
     await session.save();
 
