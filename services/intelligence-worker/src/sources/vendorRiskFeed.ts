@@ -15,7 +15,7 @@ import crypto from "crypto";
 import { logger } from "../../../../src/api/infra/logger.js";
 
 const FEED_TIMEOUT_MS = 15_000;
-const MAX_ITEMS_PER_FEED = 8;
+const MAX_ITEMS_PER_FEED = 12;
 
 const parser = new Parser();
 

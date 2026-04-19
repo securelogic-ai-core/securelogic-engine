@@ -17,12 +17,12 @@ export function classifyCategory(title: string, rawContent: string): Classificat
     reasons.push("matched:security-keywords");
   }
 
-  if (/(regulation|guidance|regulator|commission|eu ai act|enforcement|law)/.test(text)) {
+  if (/(regulation|guidance|regulator|commission|enforcement|law |penalty|fine |settlement|violation|nydfs|ftc |sec |cisa|enisa|ico |fsb |gdpr|ccpa|hipaa|nist|sox |pci |cybersecurity disclosure|material incident|breach notification|data protection|privacy act|circular letter|advisory|alert)/.test(text)) {
     matches.push("REGULATION");
     reasons.push("matched:regulation-keywords");
   }
 
-  if (/(soc 2|nist|iso|compliance|audit|attestation)/.test(text)) {
+  if (/(soc 2|iso 27001|nist csf|compliance|audit|attestation|framework|control|assessment|certification|maturity)/.test(text)) {
     matches.push("COMPLIANCE_UPDATE");
     reasons.push("matched:compliance-keywords");
   }

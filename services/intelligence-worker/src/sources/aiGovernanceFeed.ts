@@ -27,7 +27,7 @@ const FEEDS = [
   }
 ];
 
-const MAX_ITEMS_PER_FEED = 5;
+const MAX_ITEMS_PER_FEED = 8;
 
 export async function fetchAIGovernanceSignals() {
   const results: ReturnType<typeof buildEvent>[] = [];
