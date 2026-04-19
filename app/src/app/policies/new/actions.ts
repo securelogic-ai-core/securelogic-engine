@@ -2,8 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
-
-const ENGINE_URL = process.env.ENGINE_URL ?? "http://localhost:3001";
+import { createPolicy } from "@/lib/api";
 
 export async function createPolicyAction(data: {
   name: string;
@@ -20,24 +19,8 @@ export async function createPolicyAction(data: {
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) return { error: "Not authenticated" };
 
-  try {
-    const res = await fetch(`${ENGINE_URL}/api/policies`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-        "x-api-key": token,
-      },
-      body: JSON.stringify(data),
-    });
-
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      return { error: body.error ?? "Failed to create policy" };
-    }
-  } catch {
-    return { error: "Failed to create policy" };
-  }
+  const result = await createPolicy(token, data);
+  if (!result) return { error: "Failed to create policy" };
 
   redirect("/policies");
 }
