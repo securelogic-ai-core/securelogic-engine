@@ -65,9 +65,6 @@ export function Header({
             <span className="text-white font-semibold text-sm tracking-wide">
               SecureLogic AI
             </span>
-            <span className="text-teal-400 font-medium text-xs tracking-wide">
-              Intelligence Brief
-            </span>
           </div>
         </Link>
 
