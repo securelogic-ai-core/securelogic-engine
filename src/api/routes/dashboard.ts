@@ -217,11 +217,13 @@ router.get(
       // -------------------------------------------------------
       const actionCountResult = await pg.query<{
         open_count: string;
+        in_progress_count: string;
         overdue_count: string;
       }>(
         `
         SELECT
-          COUNT(*)::text AS open_count,
+          COUNT(*) FILTER (WHERE status = 'open')::text        AS open_count,
+          COUNT(*) FILTER (WHERE status = 'in_progress')::text AS in_progress_count,
           COUNT(*) FILTER (
             WHERE due_date < CURRENT_DATE
               AND status NOT IN ('closed', 'accepted')
@@ -234,10 +236,9 @@ router.get(
       );
 
       const actionRow = actionCountResult.rows[0];
-      const openActionCount = actionRow ? parseInt(actionRow.open_count, 10) : 0;
-      const overdueActionCount = actionRow
-        ? parseInt(actionRow.overdue_count, 10)
-        : 0;
+      const openActionCount       = actionRow ? parseInt(actionRow.open_count, 10)        : 0;
+      const inProgressActionCount = actionRow ? parseInt(actionRow.in_progress_count, 10) : 0;
+      const overdueActionCount    = actionRow ? parseInt(actionRow.overdue_count, 10)      : 0;
 
       // -------------------------------------------------------
       // 4b. Overdue controls count
@@ -385,6 +386,7 @@ router.get(
         },
         actions: {
           open: openActionCount,
+          in_progress: inProgressActionCount,
           overdue: overdueActionCount
         },
         controls_cadence: {
