@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import Papa from "papaparse";
+import { parseExcelFile } from "@/lib/parseExcel";
 import { importRisks, type RiskImportRow, type RiskImportResult } from "./actions";
 
 // ─────────────────────────────────────────────────────────────
@@ -248,18 +249,18 @@ export function RisksImportClient() {
     setStep("mapping");
   }, []);
 
-  const parseFile = useCallback((file: File) => {
+  const parseFile = useCallback(async (file: File) => {
     setError(null);
     const isXlsx = /\.(xlsx|xls)$/i.test(file.name);
     if (isXlsx) {
-      // SECURITY: xlsx library removed due to prototype pollution vulnerability
-      // (GHSA-4r6h-8v6p-xvw6). Re-enable when a safe alternative is installed.
-      // Tracked: Sprint 24.
-      setError(
-        "Excel (.xlsx) import is temporarily unavailable due to a security update. " +
-        "Please export your data as CSV and use the CSV import instead. " +
-        "A CSV template is available via the Download Template button below."
-      );
+      const result = await parseExcelFile(file);
+      if (result.error) { setError(result.error); return; }
+      if (result.headers.length === 0) { setError("No columns detected."); return; }
+      setRawHeaders(result.headers);
+      setRawRows(result.rows);
+      setColumnMap(autoDetectMapping(result.headers));
+      setError(null);
+      setStep("mapping");
       return;
     } else {
       Papa.parse<Record<string, string>>(file, {
