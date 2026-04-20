@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getMe, getFindings } from "@/lib/api";
+import { getMe, getFindings, getFindingsSummary } from "@/lib/api";
 import { FindingsList } from "./FindingsList";
 
 const SOURCE_TYPE_LABELS: Record<string, string> = {
@@ -89,20 +89,24 @@ export default async function FindingsPage({
   const activeSource   = sp.source_type ?? "";
   const activePriority = sp.priority ?? "";
 
-  const findingsData = await getFindings(token, {
-    status:      activeStatus === "all" ? undefined : activeStatus,
-    severity:    activeSeverity  || undefined,
-    domain:      activeDomain    || undefined,
-    source_type: activeSource    || undefined,
-    priority:    activePriority  || undefined,
-    limit: 100,
-  });
+  const [findingsData, summaryData] = await Promise.all([
+    getFindings(token, {
+      status:      activeStatus === "all" ? undefined : activeStatus,
+      severity:    activeSeverity  || undefined,
+      domain:      activeDomain    || undefined,
+      source_type: activeSource    || undefined,
+      priority:    activePriority  || undefined,
+      limit: 100,
+    }),
+    getFindingsSummary(token),
+  ]);
 
   const findings = findingsData?.findings ?? [];
+  const summary = summaryData?.summary;
 
-  const openCount       = findings.filter((f) => f.status === "open").length;
-  const criticalCount   = findings.filter((f) => f.severity === "Critical").length;
-  const highCount       = findings.filter((f) => f.severity === "High").length;
+  const openCount       = summary?.open_count ?? findings.filter((f) => f.status === "open").length;
+  const criticalCount   = summary?.critical_open ?? findings.filter((f) => f.severity === "Critical").length;
+  const highCount       = summary?.high_open ?? findings.filter((f) => f.severity === "High").length;
   const inProgressCount = findings.filter((f) => f.status === "in_progress").length;
 
   const currentSp: Params = {

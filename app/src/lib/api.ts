@@ -319,6 +319,18 @@ export type FindingsParams = {
   limit?: number;
 };
 
+export type FindingsSummary = {
+  open_count: number;
+  critical_open: number;
+  high_open: number;
+  medium_open: number;
+  low_open: number;
+  closed_count: number;
+  immediate_priority: number;
+  vendor_sourced: number;
+  signal_sourced: number;
+};
+
 export type Risk = {
   id: string;
   organization_id: string;
@@ -1253,6 +1265,18 @@ export async function getFindings(
     const res = await engineFetch(`/api/findings?${qs.toString()}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<FindingsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getFindingsSummary(
+  apiKey: string
+): Promise<{ summary: FindingsSummary } | null> {
+  try {
+    const res = await engineFetch(`/api/findings/summary`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ summary: FindingsSummary }>;
   } catch {
     return null;
   }
