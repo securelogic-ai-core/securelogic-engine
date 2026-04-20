@@ -2323,6 +2323,7 @@ export type RequirementWithResponse = {
   id: string;
   reference_id: string;
   title: string;
+  description: string | null;
   response: RequirementResponse | null;
 };
 

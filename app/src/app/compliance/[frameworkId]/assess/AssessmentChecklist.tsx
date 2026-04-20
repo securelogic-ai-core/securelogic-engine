@@ -9,6 +9,7 @@ type Status = "pass" | "fail" | "partial" | "not_assessed";
 type CardState = {
   status: Status;
   notes: string;
+  evidenceUrl: string;
   saving: boolean;
   savedAt: number | null;
   error: string | null;
@@ -27,14 +28,20 @@ function RequirementCard({
   onStatusChange,
   onNotesChange,
   onNotesSave,
+  onEvidenceUrlChange,
+  onEvidenceUrlSave,
 }: {
   req: FrameworkRequirements["requirements"][number];
   card: CardState;
   onStatusChange: (reqId: string, status: Status) => void;
   onNotesChange: (reqId: string, notes: string) => void;
   onNotesSave: (reqId: string) => void;
+  onEvidenceUrlChange: (reqId: string, url: string) => void;
+  onEvidenceUrlSave: (reqId: string) => void;
 }) {
+  const [guidanceOpen, setGuidanceOpen] = useState(false);
   const showNotes = card.status === "fail" || card.status === "partial";
+  const showEvidence = card.status !== "not_assessed";
 
   return (
     <div
@@ -62,7 +69,6 @@ function RequirementCard({
           </p>
         </div>
 
-        {/* Save indicator */}
         <div className="flex-shrink-0 w-16 text-right">
           {card.saving && (
             <span className="text-xs" style={{ color: "#94a3b8" }}>Saving…</span>
@@ -75,6 +81,27 @@ function RequirementCard({
           )}
         </div>
       </div>
+
+      {/* Guidance toggle */}
+      {req.description && (
+        <div className="mb-3">
+          <button
+            onClick={() => setGuidanceOpen((o) => !o)}
+            className="text-xs font-medium transition-opacity hover:opacity-80"
+            style={{ color: "#00c4b4" }}
+          >
+            What does this mean? {guidanceOpen ? "▲" : "▼"}
+          </button>
+          {guidanceOpen && (
+            <div
+              className="mt-2 rounded-lg px-3 py-2.5 text-xs leading-relaxed"
+              style={{ background: "rgba(0,196,180,0.06)", color: "#94a3b8", border: "1px solid rgba(0,196,180,0.12)" }}
+            >
+              {req.description}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Status selector */}
       <div className="flex gap-2 flex-wrap">
@@ -117,6 +144,37 @@ function RequirementCard({
           />
         </div>
       )}
+
+      {/* Evidence URL */}
+      {showEvidence && (
+        <div className="mt-3">
+          <input
+            type="url"
+            placeholder="Evidence URL (optional)"
+            value={card.evidenceUrl}
+            onChange={(e) => onEvidenceUrlChange(req.id, e.target.value)}
+            onBlur={() => onEvidenceUrlSave(req.id)}
+            className="w-full rounded-lg text-xs px-3 py-2 transition-colors"
+            style={{
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              color: "#cbd5e1",
+              outline: "none",
+            }}
+          />
+          {card.evidenceUrl && (
+            <a
+              href={card.evidenceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1 inline-block text-xs hover:underline truncate max-w-full"
+              style={{ color: "#00c4b4" }}
+            >
+              {card.evidenceUrl}
+            </a>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -138,6 +196,7 @@ export function AssessmentChecklist({
       m.set(req.id, {
         status: (req.response?.status ?? "not_assessed") as Status,
         notes: req.response?.notes ?? "",
+        evidenceUrl: req.response?.evidence_url ?? "",
         saving: false,
         savedAt: null,
         error: null,
@@ -149,7 +208,6 @@ export function AssessmentChecklist({
   const [creatingFindings, setCreatingFindings] = useState(false);
   const [findingsResult, setFindingsResult] = useState<{ created: number } | null>(null);
 
-  // Live summary
   const cardValues = [...cards.values()];
   const total = requirements.length;
   const pass = cardValues.filter((c) => c.status === "pass").length;
@@ -166,7 +224,7 @@ export function AssessmentChecklist({
     "#ef4444";
 
   const saveToEngine = useCallback(
-    async (reqId: string, status: Status, notes: string) => {
+    async (reqId: string, status: Status, notes: string, evidenceUrl: string) => {
       setCards((prev) => {
         const m = new Map(prev);
         const c = m.get(reqId);
@@ -184,7 +242,7 @@ export function AssessmentChecklist({
             subject_id: subjectId,
             status,
             notes: notes.trim() || null,
-            evidence_url: null,
+            evidence_url: evidenceUrl.trim() || null,
           }),
         });
 
@@ -211,16 +269,18 @@ export function AssessmentChecklist({
   const handleStatusChange = useCallback(
     (reqId: string, status: Status) => {
       let currentNotes = "";
+      let currentEvidenceUrl = "";
       setCards((prev) => {
         const m = new Map(prev);
         const c = m.get(reqId);
         if (c) {
           currentNotes = c.notes;
+          currentEvidenceUrl = c.evidenceUrl;
           m.set(reqId, { ...c, status });
         }
         return m;
       });
-      saveToEngine(reqId, status, currentNotes);
+      saveToEngine(reqId, status, currentNotes, currentEvidenceUrl);
     },
     [saveToEngine]
   );
@@ -237,7 +297,24 @@ export function AssessmentChecklist({
   const handleNotesSave = useCallback(
     (reqId: string) => {
       const c = cards.get(reqId);
-      if (c) saveToEngine(reqId, c.status, c.notes);
+      if (c) saveToEngine(reqId, c.status, c.notes, c.evidenceUrl);
+    },
+    [cards, saveToEngine]
+  );
+
+  const handleEvidenceUrlChange = useCallback((reqId: string, url: string) => {
+    setCards((prev) => {
+      const m = new Map(prev);
+      const c = m.get(reqId);
+      if (c) m.set(reqId, { ...c, evidenceUrl: url });
+      return m;
+    });
+  }, []);
+
+  const handleEvidenceUrlSave = useCallback(
+    (reqId: string) => {
+      const c = cards.get(reqId);
+      if (c) saveToEngine(reqId, c.status, c.notes, c.evidenceUrl);
     },
     [cards, saveToEngine]
   );
@@ -307,6 +384,8 @@ export function AssessmentChecklist({
               onStatusChange={handleStatusChange}
               onNotesChange={handleNotesChange}
               onNotesSave={handleNotesSave}
+              onEvidenceUrlChange={handleEvidenceUrlChange}
+              onEvidenceUrlSave={handleEvidenceUrlSave}
             />
           );
         })}
