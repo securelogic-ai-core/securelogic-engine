@@ -276,4 +276,176 @@ export const FRAMEWORK_TEMPLATES: Record<string, FrameworkTemplate> = {
       { reference_id: "164.312(e)(2)(ii)",       title: "Encryption" },
     ],
   },
+
+  // ── Cybersecurity ────────────────────────────────────────────
+
+  pci_dss: {
+    name: "PCI DSS",
+    version: "4.0",
+    description:
+      "Payment Card Industry Data Security Standard for protecting cardholder data",
+    requirements: [
+      { reference_id: "PCI-1",  title: "Install and Maintain Network Security Controls" },
+      { reference_id: "PCI-2",  title: "Apply Secure Configurations to All System Components" },
+      { reference_id: "PCI-3",  title: "Protect Stored Account Data" },
+      { reference_id: "PCI-4",  title: "Protect Cardholder Data with Strong Cryptography During Transmission" },
+      { reference_id: "PCI-5",  title: "Protect All Systems and Networks from Malicious Software" },
+      { reference_id: "PCI-6",  title: "Develop and Maintain Secure Systems and Software" },
+      { reference_id: "PCI-7",  title: "Restrict Access to System Components and Cardholder Data by Business Need to Know" },
+      { reference_id: "PCI-8",  title: "Identify Users and Authenticate Access to System Components" },
+      { reference_id: "PCI-9",  title: "Restrict Physical Access to Cardholder Data" },
+      { reference_id: "PCI-10", title: "Log and Monitor All Access to System Components and Cardholder Data" },
+      { reference_id: "PCI-11", title: "Test Security of Systems and Networks Regularly" },
+      { reference_id: "PCI-12", title: "Support Information Security with Organizational Policies and Programs" },
+    ],
+  },
+
+  nist_800_53: {
+    name: "NIST SP 800-53",
+    version: "Rev 5",
+    description:
+      "Security and privacy controls for federal information systems and organizations",
+    requirements: [
+      { reference_id: "AC",  title: "Access Control" },
+      { reference_id: "AT",  title: "Awareness and Training" },
+      { reference_id: "AU",  title: "Audit and Accountability" },
+      { reference_id: "CA",  title: "Assessment, Authorization, and Monitoring" },
+      { reference_id: "CM",  title: "Configuration Management" },
+      { reference_id: "CP",  title: "Contingency Planning" },
+      { reference_id: "IA",  title: "Identification and Authentication" },
+      { reference_id: "IR",  title: "Incident Response" },
+      { reference_id: "MA",  title: "Maintenance" },
+      { reference_id: "MP",  title: "Media Protection" },
+      { reference_id: "PE",  title: "Physical and Environmental Protection" },
+      { reference_id: "PL",  title: "Planning" },
+      { reference_id: "PM",  title: "Program Management" },
+      { reference_id: "PS",  title: "Personnel Security" },
+      { reference_id: "PT",  title: "Personally Identifiable Information Processing and Transparency" },
+      { reference_id: "RA",  title: "Risk Assessment" },
+      { reference_id: "SA",  title: "System and Services Acquisition" },
+      { reference_id: "SC",  title: "System and Communications Protection" },
+      { reference_id: "SI",  title: "System and Information Integrity" },
+      { reference_id: "SR",  title: "Supply Chain Risk Management" },
+    ],
+  },
+
+  cis_v8: {
+    name: "CIS Controls",
+    version: "v8",
+    description:
+      "Center for Internet Security Controls v8 — 18 prioritized safeguards for cyber defense",
+    requirements: [
+      { reference_id: "CIS-1",  title: "Inventory and Control of Enterprise Assets" },
+      { reference_id: "CIS-2",  title: "Inventory and Control of Software Assets" },
+      { reference_id: "CIS-3",  title: "Data Protection" },
+      { reference_id: "CIS-4",  title: "Secure Configuration of Enterprise Assets and Software" },
+      { reference_id: "CIS-5",  title: "Account Management" },
+      { reference_id: "CIS-6",  title: "Access Control Management" },
+      { reference_id: "CIS-7",  title: "Continuous Vulnerability Management" },
+      { reference_id: "CIS-8",  title: "Audit Log Management" },
+      { reference_id: "CIS-9",  title: "Email and Web Browser Protections" },
+      { reference_id: "CIS-10", title: "Malware Defenses" },
+      { reference_id: "CIS-11", title: "Data Recovery" },
+      { reference_id: "CIS-12", title: "Network Infrastructure Management" },
+      { reference_id: "CIS-13", title: "Network Monitoring and Defense" },
+      { reference_id: "CIS-14", title: "Security Awareness and Skills Training" },
+      { reference_id: "CIS-15", title: "Service Provider Management" },
+      { reference_id: "CIS-16", title: "Application Software Security" },
+      { reference_id: "CIS-17", title: "Incident Response Management" },
+      { reference_id: "CIS-18", title: "Penetration Testing" },
+    ],
+  },
+
+  // ── Privacy ──────────────────────────────────────────────────
+
+  gdpr: {
+    name: "GDPR",
+    version: "2018",
+    description:
+      "EU General Data Protection Regulation — lawful processing, data subject rights, and breach notification",
+    requirements: [
+      { reference_id: "Art-5",     title: "Principles Relating to Processing of Personal Data" },
+      { reference_id: "Art-6",     title: "Lawfulness of Processing" },
+      { reference_id: "Art-7",     title: "Conditions for Consent" },
+      { reference_id: "Art-12-14", title: "Transparency and Privacy Notices" },
+      { reference_id: "Art-15-22", title: "Rights of the Data Subject" },
+      { reference_id: "Art-24-25", title: "Data Protection by Design and by Default" },
+      { reference_id: "Art-28",    title: "Processor Agreements" },
+      { reference_id: "Art-30",    title: "Records of Processing Activities" },
+      { reference_id: "Art-32",    title: "Security of Processing" },
+      { reference_id: "Art-33-34", title: "Notification of Personal Data Breaches" },
+      { reference_id: "Art-35-36", title: "Data Protection Impact Assessments" },
+      { reference_id: "Art-37-39", title: "Data Protection Officer" },
+    ],
+  },
+
+  ccpa: {
+    name: "CCPA / CPRA",
+    version: "2023",
+    description:
+      "California Consumer Privacy Act and Privacy Rights Act — consumer rights and organizational obligations",
+    requirements: [
+      { reference_id: "CCPA-1", title: "Right to Know About Personal Information Collected or Sold" },
+      { reference_id: "CCPA-2", title: "Right to Delete Personal Information" },
+      { reference_id: "CCPA-3", title: "Right to Opt-Out of Sale or Sharing of Personal Information" },
+      { reference_id: "CCPA-4", title: "Right to Non-Discrimination for Exercising Privacy Rights" },
+      { reference_id: "CCPA-5", title: "Right to Correct Inaccurate Personal Information" },
+      { reference_id: "CCPA-6", title: "Right to Limit Use of Sensitive Personal Information" },
+      { reference_id: "CCPA-7", title: "Privacy Notice and Disclosure Requirements" },
+      { reference_id: "CCPA-8", title: "Reasonable Data Security Requirements" },
+    ],
+  },
+
+  // ── Financial ────────────────────────────────────────────────
+
+  sox: {
+    name: "SOX IT Controls",
+    version: "2002",
+    description:
+      "Sarbanes-Oxley Act IT general controls for financial reporting integrity",
+    requirements: [
+      { reference_id: "SOX-1", title: "Access Controls and Authentication" },
+      { reference_id: "SOX-2", title: "Change Management" },
+      { reference_id: "SOX-3", title: "Data Backup and Recovery" },
+      { reference_id: "SOX-4", title: "Incident Management" },
+      { reference_id: "SOX-5", title: "IT Operations" },
+      { reference_id: "SOX-6", title: "Logical Security" },
+      { reference_id: "SOX-7", title: "Physical Security" },
+      { reference_id: "SOX-8", title: "System Development and Acquisition" },
+    ],
+  },
+
+  dora: {
+    name: "DORA",
+    version: "2025",
+    description:
+      "EU Digital Operational Resilience Act — ICT risk, incident management, and third-party oversight",
+    requirements: [
+      { reference_id: "DORA-1",  title: "ICT Risk Management Framework" },
+      { reference_id: "DORA-2",  title: "ICT-Related Incident Classification" },
+      { reference_id: "DORA-3",  title: "ICT-Related Incident Reporting" },
+      { reference_id: "DORA-4",  title: "Digital Operational Resilience Testing" },
+      { reference_id: "DORA-5",  title: "ICT Third-Party Risk Management" },
+      { reference_id: "DORA-6",  title: "Oversight of Critical ICT Third-Party Providers" },
+      { reference_id: "DORA-7",  title: "Information and Intelligence Sharing" },
+      { reference_id: "DORA-8",  title: "Contractual Arrangements with ICT Third-Party Providers" },
+      { reference_id: "DORA-9",  title: "Register of Information on ICT Third-Party Arrangements" },
+      { reference_id: "DORA-10", title: "ICT-Related Incident Response and Recovery" },
+    ],
+  },
+
+  // ── AI Governance ────────────────────────────────────────────
+
+  nist_ai_rmf: {
+    name: "NIST AI RMF",
+    version: "1.0",
+    description:
+      "NIST Artificial Intelligence Risk Management Framework — Govern, Map, Measure, Manage",
+    requirements: [
+      { reference_id: "GOVERN",  title: "Cultivate and Implement Organizational Practices to Govern AI Risk" },
+      { reference_id: "MAP",     title: "Categorize and Prioritize AI Risks in Context" },
+      { reference_id: "MEASURE", title: "Analyze and Assess AI Risks Using Quantitative and Qualitative Methods" },
+      { reference_id: "MANAGE",  title: "Prioritize and Address AI Risks Based on Assessments" },
+    ],
+  },
 };

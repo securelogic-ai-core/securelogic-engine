@@ -20,7 +20,9 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requireAdminRole } from "../middleware/requireRole.js";
 import { validateFrameworkCreate } from "../lib/frameworkValidation.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
 
@@ -253,6 +255,119 @@ router.get(
         "GET /api/frameworks/:id failed"
       );
       res.status(500).json({ error: "framework_get_failed" });
+    }
+  }
+);
+
+/* =========================================================
+   DELETE /api/frameworks/:id
+   Deactivate (permanently delete) a framework for the requesting org.
+   Cascades: control_mappings → requirements → framework.
+   Requires admin role.
+   ========================================================= */
+
+router.delete(
+  "/frameworks/:id",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  requireAdminRole,
+  async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const frameworkId = String(req.params["id"] ?? "").trim();
+    if (!frameworkId) {
+      res.status(400).json({ error: "framework_id_required" });
+      return;
+    }
+    if (!isUuid(frameworkId)) {
+      res.status(400).json({ error: "framework_id_must_be_uuid" });
+      return;
+    }
+
+    const client = await pg.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Verify the framework belongs to this org before touching anything.
+      const frameworkResult = await client.query<{ id: string; name: string }>(
+        `SELECT id, name FROM frameworks WHERE id = $1 AND organization_id = $2`,
+        [frameworkId, organizationId]
+      );
+
+      if ((frameworkResult.rowCount ?? 0) === 0) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ error: "framework_not_found" });
+        return;
+      }
+
+      const frameworkName = frameworkResult.rows[0]!.name;
+
+      // Step 1: delete control_mappings that reference requirements of this framework.
+      await client.query(
+        `DELETE FROM control_mappings
+         WHERE requirement_id IN (
+           SELECT id FROM requirements WHERE framework_id = $1
+         )`,
+        [frameworkId]
+      );
+
+      // Step 2: delete requirements for this framework.
+      await client.query(
+        `DELETE FROM requirements WHERE framework_id = $1`,
+        [frameworkId]
+      );
+
+      // Step 3: delete the framework itself.
+      await client.query(
+        `DELETE FROM frameworks WHERE id = $1`,
+        [frameworkId]
+      );
+
+      await client.query("COMMIT");
+
+      logger.info(
+        {
+          event: "framework_deactivated",
+          organizationId,
+          frameworkId,
+          name: frameworkName,
+        },
+        "Framework deactivated"
+      );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "framework.deactivated",
+        resourceType: "framework",
+        resourceId: frameworkId,
+        payload: { name: frameworkName },
+        ipAddress: req.ip ?? null,
+      });
+
+      res.status(200).json({ success: true, message: "Framework deactivated" });
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // ignore rollback failure
+      }
+
+      logger.error(
+        { event: "framework_deactivate_failed", err },
+        "DELETE /api/frameworks/:id failed"
+      );
+      res.status(500).json({ error: "framework_deactivate_failed" });
+    } finally {
+      client.release();
     }
   }
 );
