@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import {
-  getFramework,
+  getFrameworkDetail,
   getFrameworkReadiness,
   getControls,
   type ReadinessRequirement,
@@ -178,13 +178,15 @@ export default async function FrameworkDetailPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const [framework, readiness, controlsData] = await Promise.all([
-    getFramework(token, id),
+  const [frameworkDetail, readiness, controlsData] = await Promise.all([
+    getFrameworkDetail(token, id),
     getFrameworkReadiness(token, id),
     getControls(token),
   ]);
 
-  if (!framework) redirect("/frameworks");
+  if (!frameworkDetail) redirect("/frameworks");
+  const framework = frameworkDetail.framework;
+  const selfReadiness = frameworkDetail.assessment_readiness.self;
 
   const controls = (controlsData?.controls ?? []).map((c) => ({ id: c.id, name: c.name }));
 
@@ -225,9 +227,16 @@ export default async function FrameworkDetailPage({
         </p>
       </div>
 
-      {/* Export actions */}
-      <div className="mb-6">
+      {/* Export actions + self-assessment link */}
+      <div className="flex items-center gap-3 mb-6 flex-wrap">
         <DownloadButtons frameworkId={framework.id} />
+        <Link
+          href={`/compliance/${framework.id}/assess`}
+          className="inline-flex items-center px-4 py-2 rounded-lg text-sm font-semibold transition-opacity hover:opacity-80"
+          style={{ background: "#00c4b4", color: "#0a0f1a" }}
+        >
+          Start Self Assessment
+        </Link>
       </div>
 
       {/* Readiness summary */}
@@ -263,6 +272,40 @@ export default async function FrameworkDetailPage({
               </p>
               <p className="text-xs mt-0.5" style={{ color: "#475569" }}>Unmapped</p>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Self-assessment readiness */}
+      {selfReadiness.total > 0 && (
+        <div className="bg-brand-surface border border-brand-line rounded-xl p-6 mb-8">
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <h2 className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
+              Self Assessment Readiness
+            </h2>
+            <Link
+              href={`/compliance/${framework.id}/assess`}
+              className="text-xs font-medium hover:underline"
+              style={{ color: "#00c4b4" }}
+            >
+              Continue assessment →
+            </Link>
+          </div>
+
+          <ReadinessBar score={Math.round(selfReadiness.readiness_score * 100)} />
+
+          <div className="grid grid-cols-4 gap-4 mt-5">
+            {[
+              { label: "Pass",         value: selfReadiness.pass,         color: "#86efac" },
+              { label: "Partial",      value: selfReadiness.partial,      color: "#fcd34d" },
+              { label: "Fail",         value: selfReadiness.fail,         color: "#fca5a5" },
+              { label: "Not Assessed", value: selfReadiness.not_assessed, color: "#94a3b8" },
+            ].map((s) => (
+              <div key={s.label} className="text-center">
+                <p className="text-2xl font-bold" style={{ color: s.color }}>{s.value}</p>
+                <p className="text-xs mt-0.5" style={{ color: "#475569" }}>{s.label}</p>
+              </div>
+            ))}
           </div>
         </div>
       )}
