@@ -96,12 +96,12 @@ router.post(
 
         for (const req of template.requirements) {
           const base = values.length;
-          values.push(framework.id, req.reference_id, req.title);
-          placeholders.push(`($${base + 1}, $${base + 2}, $${base + 3})`);
+          values.push(framework.id, req.reference_id, req.title, req.description ?? null);
+          placeholders.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`);
         }
 
         const insertResult = await client.query(
-          `INSERT INTO requirements (framework_id, reference_id, title)
+          `INSERT INTO requirements (framework_id, reference_id, title, description)
            VALUES ${placeholders.join(", ")}
            ON CONFLICT (framework_id, reference_id) DO NOTHING
            RETURNING id`,

@@ -437,6 +437,7 @@ router.get(
         id: string;
         reference_id: string;
         title: string;
+        description: string | null;
         response_id: string | null;
         response_status: string | null;
         response_notes: string | null;
@@ -448,6 +449,7 @@ router.get(
           r.id,
           r.reference_id,
           r.title,
+          r.description,
           rr.id             AS response_id,
           rr.status         AS response_status,
           rr.notes          AS response_notes,
@@ -489,6 +491,7 @@ router.get(
           id: row.id,
           reference_id: row.reference_id,
           title: row.title,
+          description: row.description ?? null,
           response: hasResponse
             ? {
                 status: row.response_status,
