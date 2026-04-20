@@ -107,6 +107,8 @@ export default async function FindingsPage({
   const openCount       = summary?.open_count ?? findings.filter((f) => f.status === "open").length;
   const criticalCount   = summary?.critical_open ?? findings.filter((f) => f.severity === "Critical").length;
   const highCount       = summary?.high_open ?? findings.filter((f) => f.severity === "High").length;
+  const moderateCount   = summary?.medium_open ?? findings.filter((f) => f.severity === "Moderate" && f.status === "open").length;
+  const lowCount        = summary?.low_open ?? findings.filter((f) => f.severity === "Low" && f.status === "open").length;
   const inProgressCount = findings.filter((f) => f.status === "in_progress").length;
 
   const currentSp: Params = {
@@ -170,7 +172,7 @@ export default async function FindingsPage({
       </div>
 
       {/* Summary stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
         <div style={STAT_CARD_STYLE}>
           <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
             Open
@@ -188,6 +190,18 @@ export default async function FindingsPage({
             High
           </p>
           <p className="text-3xl font-bold" style={{ color: "#fdba74" }}>{highCount}</p>
+        </div>
+        <div style={STAT_CARD_STYLE}>
+          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
+            Moderate
+          </p>
+          <p className="text-3xl font-bold" style={{ color: "#fbbf24" }}>{moderateCount}</p>
+        </div>
+        <div style={STAT_CARD_STYLE}>
+          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
+            Low
+          </p>
+          <p className="text-3xl font-bold" style={{ color: "#86efac" }}>{lowCount}</p>
         </div>
         <div style={STAT_CARD_STYLE}>
           <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
