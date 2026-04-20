@@ -22,13 +22,25 @@ export async function createAssessment(
   const overall_severity = ((formData.get("overall_severity") as string | null) ?? "").trim();
   if (!overall_severity) return { error: "Overall severity is required" };
 
-  const body: Record<string, string | null> = {
+  let importedFindings: unknown[] = [];
+  const importedFindingsJson = ((formData.get("imported_findings_json") as string | null) ?? "").trim();
+  if (importedFindingsJson) {
+    try {
+      const parsed = JSON.parse(importedFindingsJson);
+      if (Array.isArray(parsed)) importedFindings = parsed;
+    } catch {
+      // ignore malformed JSON — findings are additive, not critical
+    }
+  }
+
+  const body: Record<string, unknown> = {
     vendor_id: vendorId,
     assessment_type,
     overall_severity,
     summary: ((formData.get("summary") as string | null) ?? "").trim() || null,
     notes: ((formData.get("notes") as string | null) ?? "").trim() || null,
     performed_at: ((formData.get("performed_at") as string | null) ?? "").trim() || null,
+    findings: importedFindings,
   };
 
   let res: Response;

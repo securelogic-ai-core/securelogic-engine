@@ -8,6 +8,13 @@ const VALID_SEVERITIES = new Set(["Critical", "High", "Moderate", "Low"]);
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export type AssessmentFindingInput = {
+  title: string;
+  severity: string;
+  description: string | null;
+  recommendation: string | null;
+};
+
 function isUuid(v: unknown): v is string {
   return typeof v === "string" && UUID_RE.test(v);
 }
@@ -28,6 +35,7 @@ export type VendorAssessmentCreateInput = {
   notes: string | null;
   performed_at: string | null;
   reviewer_id: string | null;
+  findings: AssessmentFindingInput[];
 };
 
 export type VendorAssessmentCreateResult =
@@ -122,6 +130,44 @@ export function validateVendorAssessmentCreate(
     }
   }
 
+  // findings — optional array of pre-extracted findings to import
+  const findings: AssessmentFindingInput[] = [];
+  if ("findings" in b) {
+    if (!Array.isArray(b["findings"])) {
+      return { error: "findings_must_be_array" };
+    }
+    for (let i = 0; i < (b["findings"] as unknown[]).length; i++) {
+      const item = (b["findings"] as unknown[])[i];
+      if (item === null || typeof item !== "object" || Array.isArray(item)) {
+        return { error: `findings[${i}]_must_be_object` };
+      }
+      const fi = item as Record<string, unknown>;
+      if (!isNonEmptyString(fi["title"])) {
+        return { error: `findings[${i}]_title_required` };
+      }
+      if (!isNonEmptyString(fi["severity"])) {
+        return { error: `findings[${i}]_severity_required` };
+      }
+      if (!VALID_SEVERITIES.has(fi["severity"] as string)) {
+        return { error: `findings[${i}]_invalid_severity` };
+      }
+      const fDescription: string | null =
+        typeof fi["description"] === "string" && fi["description"].trim().length > 0
+          ? fi["description"].trim()
+          : null;
+      const fRecommendation: string | null =
+        typeof fi["recommendation"] === "string" && fi["recommendation"].trim().length > 0
+          ? fi["recommendation"].trim()
+          : null;
+      findings.push({
+        title: (fi["title"] as string).trim(),
+        severity: fi["severity"] as string,
+        description: fDescription,
+        recommendation: fRecommendation,
+      });
+    }
+  }
+
   return {
     input: {
       vendor_id,
@@ -130,7 +176,8 @@ export function validateVendorAssessmentCreate(
       summary,
       notes,
       performed_at,
-      reviewer_id
+      reviewer_id,
+      findings
     }
   };
 }

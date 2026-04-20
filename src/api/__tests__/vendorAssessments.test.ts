@@ -437,3 +437,152 @@ describe("validateVendorAssessmentCreate — full valid body", () => {
     }
   });
 });
+
+// ----------------------------------------------------------------
+// findings array
+// ----------------------------------------------------------------
+
+describe("validateVendorAssessmentCreate — findings", () => {
+  it("defaults to empty array when not provided", () => {
+    const r = validateVendorAssessmentCreate({
+      vendor_id: VALID_VENDOR_UUID,
+      assessment_type: "annual",
+      overall_severity: "High"
+    });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.findings).toEqual([]);
+  });
+
+  it("accepts an empty findings array", () => {
+    const r = validateVendorAssessmentCreate({
+      vendor_id: VALID_VENDOR_UUID,
+      assessment_type: "annual",
+      overall_severity: "High",
+      findings: []
+    });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.findings).toEqual([]);
+  });
+
+  it("rejects findings that is not an array", () => {
+    const r = validateVendorAssessmentCreate({
+      vendor_id: VALID_VENDOR_UUID,
+      assessment_type: "annual",
+      overall_severity: "High",
+      findings: "not an array"
+    });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("findings_must_be_array");
+  });
+
+  it("rejects a finding with missing title", () => {
+    const r = validateVendorAssessmentCreate({
+      vendor_id: VALID_VENDOR_UUID,
+      assessment_type: "annual",
+      overall_severity: "High",
+      findings: [{ severity: "High", description: "desc", recommendation: "rec" }]
+    });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("findings[0]_title_required");
+  });
+
+  it("rejects a finding with missing severity", () => {
+    const r = validateVendorAssessmentCreate({
+      vendor_id: VALID_VENDOR_UUID,
+      assessment_type: "annual",
+      overall_severity: "High",
+      findings: [{ title: "Some Gap", description: "desc" }]
+    });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("findings[0]_severity_required");
+  });
+
+  it("rejects a finding with invalid severity", () => {
+    const r = validateVendorAssessmentCreate({
+      vendor_id: VALID_VENDOR_UUID,
+      assessment_type: "annual",
+      overall_severity: "High",
+      findings: [{ title: "Some Gap", severity: "Extreme" }]
+    });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("findings[0]_invalid_severity");
+  });
+
+  it("accepts a valid finding with all fields", () => {
+    const r = validateVendorAssessmentCreate({
+      vendor_id: VALID_VENDOR_UUID,
+      assessment_type: "annual",
+      overall_severity: "High",
+      findings: [
+        {
+          title: "MFA not enforced",
+          severity: "Critical",
+          description: "Admin accounts lack MFA.",
+          recommendation: "Enable MFA for all admin accounts."
+        }
+      ]
+    });
+    expect("input" in r).toBe(true);
+    if ("input" in r) {
+      expect(r.input.findings).toHaveLength(1);
+      expect(r.input.findings[0]!.title).toBe("MFA not enforced");
+      expect(r.input.findings[0]!.severity).toBe("Critical");
+      expect(r.input.findings[0]!.description).toBe("Admin accounts lack MFA.");
+      expect(r.input.findings[0]!.recommendation).toBe("Enable MFA for all admin accounts.");
+    }
+  });
+
+  it("accepts a valid finding with only required fields", () => {
+    const r = validateVendorAssessmentCreate({
+      vendor_id: VALID_VENDOR_UUID,
+      assessment_type: "annual",
+      overall_severity: "High",
+      findings: [{ title: "Weak password policy", severity: "Moderate" }]
+    });
+    expect("input" in r).toBe(true);
+    if ("input" in r) {
+      expect(r.input.findings).toHaveLength(1);
+      expect(r.input.findings[0]!.title).toBe("Weak password policy");
+      expect(r.input.findings[0]!.severity).toBe("Moderate");
+      expect(r.input.findings[0]!.description).toBeNull();
+      expect(r.input.findings[0]!.recommendation).toBeNull();
+    }
+  });
+
+  it("accepts multiple valid findings", () => {
+    const r = validateVendorAssessmentCreate({
+      vendor_id: VALID_VENDOR_UUID,
+      assessment_type: "annual",
+      overall_severity: "Critical",
+      findings: [
+        { title: "Finding A", severity: "Critical" },
+        { title: "Finding B", severity: "High", description: "desc B" },
+        { title: "Finding C", severity: "Low" }
+      ]
+    });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.findings).toHaveLength(3);
+  });
+
+  it("trims finding title", () => {
+    const r = validateVendorAssessmentCreate({
+      vendor_id: VALID_VENDOR_UUID,
+      assessment_type: "annual",
+      overall_severity: "High",
+      findings: [{ title: "  Untrimmed Title  ", severity: "High" }]
+    });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.findings[0]!.title).toBe("Untrimmed Title");
+  });
+
+  it("rejects non-object item in findings array", () => {
+    const r = validateVendorAssessmentCreate({
+      vendor_id: VALID_VENDOR_UUID,
+      assessment_type: "annual",
+      overall_severity: "High",
+      findings: ["not an object"]
+    });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("findings[0]_must_be_object");
+  });
+});

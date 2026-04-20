@@ -42,6 +42,9 @@ export function AssessmentForm({ vendorId, vendorName }: Props) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [docFile, setDocFile] = useState<File | null>(null);
+  const [importedFindings, setImportedFindings] = useState<
+    Array<{ title: string; severity: string; description: string; recommendation: string }>
+  >([]);
   const [docAnalysis, setDocAnalysis] = useState<{
     documentType: string;
     overallRiskSummary: string;
@@ -82,12 +85,27 @@ export function AssessmentForm({ vendorId, vendorName }: Props) {
 
   function handleSubmit(formData: FormData) {
     setError(null);
+    if (importedFindings.length > 0) {
+      formData.set("imported_findings_json", JSON.stringify(importedFindings));
+    }
     startTransition(async () => {
       const result = (await createAssessment(vendorId, formData)) as CreateAssessmentResult | void;
       if (result && "error" in result) {
         setError(result.error);
       }
     });
+  }
+
+  function importFinding(f: { title: string; severity: string; description: string; recommendation: string }) {
+    setImportedFindings((prev) => {
+      const alreadyImported = prev.some((p) => p.title === f.title && p.severity === f.severity);
+      if (alreadyImported) return prev;
+      return [...prev, f];
+    });
+  }
+
+  function removeFinding(index: number) {
+    setImportedFindings((prev) => prev.filter((_, i) => i !== index));
   }
 
   const severityColor: Record<string, string> = {
@@ -270,32 +288,79 @@ export function AssessmentForm({ vendorId, vendorName }: Props) {
                   Extracted Findings ({docAnalysis.findings.length})
                 </p>
                 <div className="space-y-2">
-                  {docAnalysis.findings.map((f, i) => (
-                    <div
-                      key={i}
-                      className="rounded-lg border p-3"
-                      style={{ background: "rgba(10,15,26,0.6)", borderColor: "#1e293b" }}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span
-                          className="text-xs font-semibold"
-                          style={{ color: severityColor[f.severity] ?? "#94a3b8" }}
-                        >
-                          {f.severity}
-                        </span>
-                        <span className="text-xs font-medium" style={{ color: "#f1f5f9" }}>
-                          {f.title}
-                        </span>
+                  {docAnalysis.findings.map((f, i) => {
+                    const alreadyImported = importedFindings.some(
+                      (p) => p.title === f.title && p.severity === f.severity
+                    );
+                    return (
+                      <div
+                        key={i}
+                        className="rounded-lg border p-3"
+                        style={{ background: "rgba(10,15,26,0.6)", borderColor: "#1e293b" }}
+                      >
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="text-xs font-semibold flex-shrink-0"
+                              style={{ color: severityColor[f.severity] ?? "#94a3b8" }}
+                            >
+                              {f.severity}
+                            </span>
+                            <span className="text-xs font-medium truncate" style={{ color: "#f1f5f9" }}>
+                              {f.title}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => importFinding(f)}
+                            disabled={alreadyImported}
+                            className="px-2 py-1 rounded text-xs font-semibold flex-shrink-0 transition-opacity disabled:opacity-40"
+                            style={{
+                              background: alreadyImported ? "rgba(34,197,94,0.1)" : "rgba(0,196,180,0.15)",
+                              color: alreadyImported ? "#86efac" : "#00c4b4",
+                            }}
+                          >
+                            {alreadyImported ? "Imported" : "Import"}
+                          </button>
+                        </div>
+                        <p className="text-xs mb-1" style={{ color: "#94a3b8" }}>
+                          {f.description}
+                        </p>
+                        <p className="text-xs" style={{ color: "#64748b" }}>
+                          → {f.recommendation}
+                        </p>
                       </div>
-                      <p className="text-xs mb-1" style={{ color: "#94a3b8" }}>
-                        {f.description}
-                      </p>
-                      <p className="text-xs" style={{ color: "#64748b" }}>
-                        → {f.recommendation}
-                      </p>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
+              </div>
+            )}
+
+            {importedFindings.length > 0 && (
+              <div
+                className="rounded-lg border p-3 space-y-2"
+                style={{ background: "rgba(0,196,180,0.04)", borderColor: "rgba(0,196,180,0.2)" }}
+              >
+                <p className="text-xs font-semibold" style={{ color: "#00c4b4" }}>
+                  Imported ({importedFindings.length}) — will be created with assessment
+                </p>
+                {importedFindings.map((f, i) => (
+                  <div key={i} className="flex items-center justify-between gap-2">
+                    <span className="text-xs truncate" style={{ color: "#94a3b8" }}>
+                      <span style={{ color: severityColor[f.severity] ?? "#94a3b8" }}>{f.severity}</span>
+                      {" · "}
+                      {f.title}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeFinding(i)}
+                      className="text-xs flex-shrink-0 hover:opacity-80 transition-opacity"
+                      style={{ color: "#475569" }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
           </div>
