@@ -502,16 +502,24 @@ export async function buildNewsletterIssue(organizationId: string | null) {
   // 12. Action summary (Sonnet)
   const actionSummary: ActionSummary | null = await generateActionSummary(crossDomainInput);
 
-  // 13. Build title
-  const weekLabel = new Date().toLocaleDateString("en-US", {
+  // 13. Build title using UTC date in "Weekday, Month Day, Year" format
+  const dateLabel = new Date().toLocaleDateString("en-US", {
+    weekday: "long",
     month: "long",
     day: "numeric",
-    year: "numeric"
+    year: "numeric",
+    timeZone: "UTC"
   });
   const title =
     issueNumber != null
-      ? `SecureLogic AI Intelligence Brief #${issueNumber} — Week of ${weekLabel}`
-      : `SecureLogic AI Intelligence Brief — Week of ${weekLabel}`;
+      ? `SecureLogic AI Intelligence Brief #${issueNumber} — ${dateLabel}`
+      : `SecureLogic AI Intelligence Brief — ${dateLabel}`;
+
+  // Collect IDs of all insights that were included in this brief so the
+  // generator can mark them published after a successful createIssue call.
+  const includedInsightIds: string[] = allIncluded
+    .map((i: any) => i.id)
+    .filter(Boolean);
 
   return {
     id: `NEWS-${Date.now()}`,
@@ -524,6 +532,7 @@ export async function buildNewsletterIssue(organizationId: string | null) {
     crossDomainAnalysis: crossDomainAnalysis ?? null,
     actionSummary: actionSummary ?? null,
     topSignals,
+    includedInsightIds,
     sections: {
       aiGovernance: enrichedSections.AI_GOVERNANCE ?? [],
       securityIncidents: enrichedSections.SECURITY_INCIDENT ?? [],

@@ -284,17 +284,20 @@ export async function runPipeline(): Promise<PipelineResult> {
     logger.error({ event: "trend_generation_failed", err }, "Trend generation failed");
   }
 
-  try {
-    newslettersCreated = await generateNewsletter();
-  } catch (err) {
-    logger.error({ event: "newsletter_generation_failed", err }, "Newsletter generation failed");
-  }
+  // Brief generation and delivery run once daily at 8AM UTC.
+  // Signal ingestion (above) continues every hour regardless.
+  const BRIEF_SEND_HOUR = 8;
+  const currentHour = new Date().getUTCHours();
 
-  // Weekly send window: Monday UTC.
-  const isWeeklySendDay = new Date().getUTCDay() === 1;
-  let sendIssueId: string | null = null;
+  if (currentHour === BRIEF_SEND_HOUR) {
+    try {
+      newslettersCreated = await generateNewsletter();
+    } catch (err) {
+      logger.error({ event: "newsletter_generation_failed", err }, "Newsletter generation failed");
+    }
 
-  if (isWeeklySendDay) {
+    let sendIssueId: string | null = null;
+
     try {
       const draftIssue = await getLatestDraftIssue(null);
 
@@ -303,39 +306,44 @@ export async function runPipeline(): Promise<PipelineResult> {
 
         if (promoted) {
           sendIssueId = draftIssue.id;
-          logger.info({ event: "issue_promoted", issueId: draftIssue.id }, "Draft issue promoted to queued for weekly send");
+          logger.info({ event: "issue_promoted", issueId: draftIssue.id }, "Draft issue promoted to queued for daily send");
         } else {
           logger.warn({ event: "issue_promote_skipped", issueId: draftIssue.id }, "Issue promotion skipped — already queued or not in draft state");
         }
       } else {
-        logger.info({ event: "newsletter_send_skip", reason: "no_draft" }, "Weekly send window: no draft issue to promote");
+        logger.info({ event: "newsletter_send_skip", reason: "no_draft" }, "Daily send window: no draft issue to promote");
       }
     } catch (err) {
       logger.error({ event: "issue_promote_failed", err }, "Issue promotion failed");
     }
-  }
 
-  try {
-    deliveryResult = await generateNewsletterDeliveries();
-  } catch (err) {
-    logger.error({ event: "delivery_generation_failed", err }, "Newsletter delivery generation failed");
-  }
-
-  const queuedIssueForDrain = sendIssueId
-    ? null
-    : await getActiveIssue(null, ["queued"]).catch(() => null);
-
-  const issueToSend = sendIssueId ?? queuedIssueForDrain?.id ?? null;
-
-  if (issueToSend) {
     try {
-      logger.info({ event: "newsletter_send_start", issueId: issueToSend }, "Dispatching newsletter for queued issue");
-      await sendNewsletter(issueToSend);
+      deliveryResult = await generateNewsletterDeliveries();
     } catch (err) {
-      logger.error({ event: "newsletter_send_failed", err }, "Newsletter send failed");
+      logger.error({ event: "delivery_generation_failed", err }, "Newsletter delivery generation failed");
     }
-  } else if (!isWeeklySendDay) {
-    logger.info({ event: "newsletter_send_skip", reason: "no_queued_issue" }, "No queued issue to send");
+
+    const queuedIssueForDrain = sendIssueId
+      ? null
+      : await getActiveIssue(null, ["queued"]).catch(() => null);
+
+    const issueToSend = sendIssueId ?? queuedIssueForDrain?.id ?? null;
+
+    if (issueToSend) {
+      try {
+        logger.info({ event: "newsletter_send_start", issueId: issueToSend }, "Dispatching newsletter for queued issue");
+        await sendNewsletter(issueToSend);
+      } catch (err) {
+        logger.error({ event: "newsletter_send_failed", err }, "Newsletter send failed");
+      }
+    } else {
+      logger.info({ event: "newsletter_send_skip", reason: "no_queued_issue" }, "No queued issue to send");
+    }
+  } else {
+    logger.info(
+      { event: "brief_generation_skip", currentHour, sendHour: BRIEF_SEND_HOUR },
+      "Brief generation skipped — not send hour"
+    );
   }
 
   // Bridge ingested signals to cyber_signals for the Intelligence Brief pipeline.

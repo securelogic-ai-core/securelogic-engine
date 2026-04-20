@@ -72,6 +72,7 @@ export async function getInsights(organizationId: string | null, limit = 100) {
     SELECT *
     FROM insights
     WHERE (organization_id = $1 OR organization_id IS NULL)
+      AND (published = FALSE OR published IS NULL)
     ORDER BY created_at DESC
     LIMIT $2
     `,
