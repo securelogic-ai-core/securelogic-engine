@@ -362,7 +362,6 @@ router.get(
           f.scoring_rationale,
           f.status,
           f.owner_user_id,
-          f.due_date,
           f.created_at,
           f.updated_at,
           (SELECT COUNT(*)::integer
@@ -539,7 +538,6 @@ router.get(
           f.scoring_rationale,
           f.status,
           f.owner_user_id,
-          f.due_date,
           f.created_at,
           f.updated_at,
           (SELECT COUNT(*)::integer

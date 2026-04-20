@@ -17,8 +17,8 @@ export async function runWeeklySummary(): Promise<{ orgsProcessed: number; email
       const orgId = org.id;
 
       const [postureResult, findingsResult, frameworksResult] = await Promise.all([
-        pg.query<{ posture_score: number }>(
-          `SELECT posture_score FROM posture_snapshots
+        pg.query<{ overall_score: number }>(
+          `SELECT overall_score FROM posture_snapshots
            WHERE organization_id = $1
            ORDER BY created_at DESC LIMIT 1`,
           [orgId]
@@ -68,7 +68,7 @@ export async function runWeeklySummary(): Promise<{ orgsProcessed: number; email
         ),
       ]);
 
-      const postureScore = postureResult.rows[0]?.posture_score ?? null;
+      const postureScore = postureResult.rows[0]?.overall_score ?? null;
       const openFindings = parseInt(findingsResult.rows[0]?.open_count ?? "0", 10);
       const criticalFindings = parseInt(findingsResult.rows[0]?.critical_count ?? "0", 10);
       const frameworkReadiness = frameworksResult.rows.map((r) => ({
