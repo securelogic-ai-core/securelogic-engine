@@ -452,10 +452,10 @@ router.get(
         `
         SELECT
           COUNT(*) FILTER (WHERE status = 'open')                                   AS open_count,
-          COUNT(*) FILTER (WHERE status = 'open' AND severity = 'critical')         AS critical_open,
-          COUNT(*) FILTER (WHERE status = 'open' AND severity = 'high')             AS high_open,
-          COUNT(*) FILTER (WHERE status = 'open' AND severity = 'medium')           AS medium_open,
-          COUNT(*) FILTER (WHERE status = 'open' AND severity = 'low')              AS low_open,
+          COUNT(*) FILTER (WHERE status = 'open' AND severity = 'Critical')         AS critical_open,
+          COUNT(*) FILTER (WHERE status = 'open' AND severity = 'High')             AS high_open,
+          COUNT(*) FILTER (WHERE status = 'open' AND severity = 'Moderate')         AS medium_open,
+          COUNT(*) FILTER (WHERE status = 'open' AND severity = 'Low')              AS low_open,
           COUNT(*) FILTER (WHERE status != 'open')                                  AS closed_count,
           COUNT(*) FILTER (WHERE status = 'open' AND priority = 'immediate')        AS immediate_priority,
           COUNT(*) FILTER (WHERE source_type = 'vendor_review')                     AS vendor_sourced,
