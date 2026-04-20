@@ -248,7 +248,52 @@ router.get(
         return;
       }
 
-      res.status(200).json({ framework: result.rows[0] });
+      // Compute self-assessment readiness from requirement_responses
+      const readinessResult = await pg.query<{
+        total: string;
+        pass: string;
+        partial: string;
+        fail: string;
+      }>(
+        `
+        SELECT
+          COUNT(r.id)::text                                                    AS total,
+          COUNT(rr.id) FILTER (WHERE rr.status = 'pass')::text                AS pass,
+          COUNT(rr.id) FILTER (WHERE rr.status = 'partial')::text             AS partial,
+          COUNT(rr.id) FILTER (WHERE rr.status = 'fail')::text                AS fail
+        FROM requirements r
+        LEFT JOIN requirement_responses rr
+          ON rr.requirement_id = r.id
+         AND rr.organization_id = $1
+         AND rr.assessment_type = 'self'
+         AND rr.subject_id       = $1::uuid
+        WHERE r.framework_id = $2
+        `,
+        [organizationId, frameworkId]
+      );
+
+      const rs = readinessResult.rows[0]!;
+      const total        = parseInt(rs.total,   10);
+      const pass         = parseInt(rs.pass,    10);
+      const partial      = parseInt(rs.partial, 10);
+      const fail         = parseInt(rs.fail,    10);
+      const not_assessed = total - pass - partial - fail;
+      const readiness_score =
+        total === 0 ? 0 : Math.round(((pass + partial * 0.5) / total) * 10000) / 10000;
+
+      res.status(200).json({
+        framework: result.rows[0],
+        assessment_readiness: {
+          self: {
+            total,
+            pass,
+            partial,
+            fail,
+            not_assessed,
+            readiness_score
+          }
+        }
+      });
     } catch (err) {
       logger.error(
         { event: "framework_get_failed", err },

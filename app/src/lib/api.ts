@@ -2274,3 +2274,87 @@ export async function askQuestion(
     return null;
   }
 }
+
+// ─────────────────────────────────────────────────────────────
+// Requirement responses
+// ─────────────────────────────────────────────────────────────
+
+export type RequirementResponse = {
+  id: string;
+  requirement_id: string;
+  assessment_type: "self" | "vendor";
+  subject_id: string;
+  status: "pass" | "fail" | "partial" | "not_assessed";
+  notes: string | null;
+  evidence_url: string | null;
+  assessed_at: string;
+};
+
+export type RequirementWithResponse = {
+  id: string;
+  reference_id: string;
+  title: string;
+  response: RequirementResponse | null;
+};
+
+export type FrameworkRequirements = {
+  framework: {
+    id: string;
+    name: string;
+    version: string;
+  };
+  requirements: RequirementWithResponse[];
+  summary: {
+    total: number;
+    pass: number;
+    partial: number;
+    fail: number;
+    not_assessed: number;
+    readiness_score: number;
+  };
+};
+
+export async function getFrameworkRequirements(
+  apiKey: string,
+  frameworkId: string,
+  assessmentType: "self" | "vendor",
+  subjectId: string
+): Promise<FrameworkRequirements | null> {
+  try {
+    const params = new URLSearchParams({
+      assessment_type: assessmentType,
+      subject_id: subjectId,
+    });
+    const res = await engineFetch(
+      `/api/frameworks/${encodeURIComponent(frameworkId)}/requirements?${params.toString()}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<FrameworkRequirements>;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveRequirementResponse(
+  apiKey: string,
+  body: {
+    requirement_id: string;
+    assessment_type: "self" | "vendor";
+    subject_id: string;
+    status: "pass" | "fail" | "partial" | "not_assessed";
+    notes: string | null;
+    evidence_url: string | null;
+  }
+): Promise<{ response: RequirementResponse; updated: boolean } | null> {
+  try {
+    const res = await engineFetch("/api/requirement-responses", apiKey, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ response: RequirementResponse; updated: boolean }>;
+  } catch {
+    return null;
+  }
+}
