@@ -6,6 +6,8 @@ import { BriefCard } from "@/components/BriefCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
 import { FindingsDonut, DomainPostureBars, ActionsRing, InventoryGrid, FrameworkGaps, VendorRiskCard } from "./DashboardCharts";
 
+export const revalidate = 0;
+
 export default async function DashboardPage({
   searchParams,
 }: {
