@@ -516,6 +516,17 @@ function ActionsCard({ vendorId }: { vendorId: string }) {
         >
           Add Finding
         </Link>
+        <Link
+          href={`/vendors/${vendorId}/assess/framework`}
+          className="flex items-center justify-center w-full py-2 rounded-lg text-sm font-medium border transition-colors"
+          style={{
+            borderColor: "#1e2d45",
+            color: "#94a3b8",
+            background: "transparent",
+          }}
+        >
+          Assess Against Framework
+        </Link>
       </div>
     </div>
   );

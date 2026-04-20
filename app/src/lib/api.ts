@@ -949,6 +949,35 @@ export async function getFramework(
   }
 }
 
+export type SelfAssessmentReadiness = {
+  total: number;
+  pass: number;
+  partial: number;
+  fail: number;
+  not_assessed: number;
+  readiness_score: number;
+};
+
+export type FrameworkDetail = {
+  framework: Framework;
+  assessment_readiness: {
+    self: SelfAssessmentReadiness;
+  };
+};
+
+export async function getFrameworkDetail(
+  apiKey: string,
+  frameworkId: string
+): Promise<FrameworkDetail | null> {
+  try {
+    const res = await engineFetch(`/api/frameworks/${encodeURIComponent(frameworkId)}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<FrameworkDetail>;
+  } catch {
+    return null;
+  }
+}
+
 export async function getRequirements(
   apiKey: string,
   frameworkId: string,
