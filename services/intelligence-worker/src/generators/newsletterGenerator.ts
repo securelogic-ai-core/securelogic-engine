@@ -21,7 +21,7 @@ export async function generateNewsletter(): Promise<number> {
   const thisWeekResult = await pg.query<{ id: string }>(
     `SELECT id FROM newsletter_issues
      WHERE organization_id IS NULL
-       AND created_at >= date_trunc('week', NOW())
+       AND created_at >= date_trunc('day', NOW())
        AND status IN ('draft', 'queued', 'sent')
      LIMIT 1`
   );
@@ -69,6 +69,19 @@ export async function generateNewsletter(): Promise<number> {
     crossDomainAnalysis: issue.crossDomainAnalysis ?? null,
     actionSummaryJson: issue.actionSummary ?? null
   });
+
+  // Mark all included insights as published so they are excluded from future briefs.
+  const insightIds = (rawIssue.includedInsightIds ?? []).filter(Boolean) as string[];
+  if (insightIds.length > 0) {
+    await pg.query(
+      `UPDATE insights SET published = TRUE WHERE id = ANY($1::uuid[])`,
+      [insightIds]
+    );
+    logger.info(
+      { event: "insights_marked_published", count: insightIds.length },
+      `Marked ${insightIds.length} insights as published`
+    );
+  }
 
   logger.info({ event: "newsletter_issue_created" }, "Newsletter issue created (platform, insight-based)");
   return 1;
