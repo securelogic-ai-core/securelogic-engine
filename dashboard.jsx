@@ -398,7 +398,7 @@ function OverviewView({ toast }) {
               sub={posture?.overall_severity ? `Severity: ${posture.overall_severity}` : "No snapshot"}
               accent={!!posture?.overall_score}
             />
-            <StatTile label="Open Findings" value={findings?.open ?? "—"} sub={findings?.open > 0 ? `${findings.by_severity?.Critical || 0} Critical` : "None open"} />
+            <StatTile label="Open Findings" value={findings?.open ?? "—"} sub={findings?.open > 0 ? (() => { const bySev = findings.by_severity ?? {}; const parts = [["Critical", bySev.Critical], ["High", bySev.High], ["Moderate", bySev.Moderate], ["Low", bySev.Low]].filter(([, n]) => n > 0).map(([label, n]) => `${n} ${label}`).join(" · "); return parts || "None open"; })() : "None open"} />
             <StatTile label="Open Actions" value={actions?.open ?? "—"} sub={actions?.overdue > 0 ? `${actions.overdue} overdue` : "None overdue"} />
             <StatTile label="Vendors" value={inventory?.vendors ?? "—"} />
             <StatTile label="AI Systems" value={inventory?.ai_systems ?? "—"} />
