@@ -17,6 +17,23 @@ export async function generateNewsletter(): Promise<number> {
     return 0;
   }
 
+  // Guard against creating a duplicate issue when one was already sent this calendar week.
+  const thisWeekResult = await pg.query<{ id: string }>(
+    `SELECT id FROM newsletter_issues
+     WHERE organization_id IS NULL
+       AND created_at >= date_trunc('week', NOW())
+       AND status IN ('draft', 'queued', 'sent')
+     LIMIT 1`
+  );
+
+  if (thisWeekResult.rows.length > 0) {
+    logger.info(
+      { event: "newsletter_generation_skip", existingId: thisWeekResult.rows[0]!.id },
+      "Newsletter generation skipped: issue already exists for this calendar week"
+    );
+    return 0;
+  }
+
   // Build structured brief from platform insights (intelligence layer)
   const rawIssue = await buildNewsletterIssue(null);
 

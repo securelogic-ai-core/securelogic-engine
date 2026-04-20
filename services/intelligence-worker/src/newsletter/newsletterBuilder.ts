@@ -139,19 +139,16 @@ export function normalizeInsight(insight: any) {
 /**
  * A signal is publishable if it has at minimum:
  * - A non-empty analysis (what happened)
- * - A non-empty action recommendation
  * - It belongs to a published category (not GENERAL)
  *
- * Signals missing these fields are held from the brief rather than published
- * with template text.
+ * recommendedAction is not required here — fallback actions are applied
+ * upstream in applyLLMEnhancement before this filter runs.
  */
 function isPublishable(insight: any): boolean {
   const analysis = String(insight.analysis || "").trim();
-  const action = String(insight.recommendedAction || insight.recommendation || "").trim();
   const category = normalizeCategory(insight.category);
 
   if (!analysis) return false;
-  if (!action) return false;
   if (!PUBLISHED_CATEGORIES.includes(category as any)) return false;
 
   return true;
@@ -181,19 +178,47 @@ function groupByCategory(insights: any[]) {
 }
 
 /**
+ * Generate a category-appropriate fallback recommendedAction for signals
+ * that have no LLM-generated or DB-stored recommendation.
+ * Applied when ANTHROPIC_API_KEY is absent or when a per-signal LLM call fails.
+ */
+function generateFallbackAction(insight: any): string {
+  const category = normalizeCategory(insight.category);
+  const fallbacks: Record<string, string> = {
+    SECURITY_INCIDENT:
+      "Review affected systems and apply available patches. Monitor endpoint and network telemetry for indicators of compromise.",
+    REGULATION:
+      "Review regulatory guidance and assess applicability to your organization's compliance posture.",
+    COMPLIANCE_UPDATE:
+      "Review regulatory guidance and assess applicability to your organization's compliance posture.",
+    VENDOR_RISK:
+      "Assess exposure to affected vendors and review contractual security obligations.",
+    AI_GOVERNANCE:
+      "Review AI governance policies and assess applicability to your organization's AI systems and processes.",
+    GENERAL:
+      "Monitor developments and assess relevance to your organization's risk profile.",
+  };
+  return fallbacks[category] ?? fallbacks["GENERAL"]!;
+}
+
+/**
  * Apply LLM-generated analysis to a list of normalized insights.
  * Processes in batches of 5 to stay within rate limits.
  *
- * Unlike the previous implementation, LLM failure means the insight retains
- * its raw database fields — NOT template strings.
+ * When the API key is absent or a per-signal call fails, a category-appropriate
+ * fallback recommendedAction is applied so signals remain publishable.
  */
 async function applyLLMEnhancement(insights: any[]): Promise<any[]> {
   if (!process.env.ANTHROPIC_API_KEY?.trim()) {
     logger.info(
       { event: "llm_enhancement_skipped" },
-      "ANTHROPIC_API_KEY not set — using raw database fields for signal analysis"
+      "ANTHROPIC_API_KEY not set — applying fallback actions to signals without recommendations"
     );
-    return insights;
+    return insights.map((insight) => {
+      if (insight.recommendedAction || insight.recommendation) return insight;
+      const fallback = generateFallbackAction(insight);
+      return { ...insight, recommendedAction: fallback, recommendation: fallback };
+    });
   }
 
   const results = [...insights];
@@ -232,8 +257,14 @@ async function applyLLMEnhancement(insights: any[]): Promise<any[]> {
             riskImplication: llmResult.whyItMatters,
             risk_implication: llmResult.whyItMatters
           };
+        } else {
+          // LLM failed — apply fallback if no recommendation exists in raw DB fields
+          const existing = insight.recommendedAction || insight.recommendation;
+          if (!existing) {
+            const fallback = generateFallbackAction(insight);
+            results[idx] = { ...insight, recommendedAction: fallback, recommendation: fallback };
+          }
         }
-        // LLM failed — raw database fields remain (no template substitution)
       })
     );
   }

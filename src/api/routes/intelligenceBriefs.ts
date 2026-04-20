@@ -152,7 +152,8 @@ router.post("/intelligence-briefs/generate", async (req, res) => {
 
     const briefId = insertBriefResult.rows[0]!.id;
 
-    // Pull cyber signals in the window
+    // Pull cyber signals in the window — include global signals (organization_id IS NULL)
+    // because the pipeline bridges all ingested signals as global (no org scope).
     const signalsResult = await client.query<CyberSignalForBrief>(
       `SELECT
          id,
@@ -164,7 +165,7 @@ router.post("/intelligence-briefs/generate", async (req, res) => {
          source,
          ingestion_timestamp
        FROM cyber_signals
-       WHERE organization_id = $1
+       WHERE (organization_id = $1 OR organization_id IS NULL)
          AND ingestion_timestamp >= $2
          AND ingestion_timestamp < $3
        ORDER BY ingestion_timestamp DESC`,
