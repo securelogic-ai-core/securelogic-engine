@@ -212,6 +212,36 @@ router.post(
 
       const finding = findingResult.rows[0];
 
+      // Insert any AI-extracted findings imported by the user.
+      for (const importedFinding of input.findings) {
+        const importedPriority = severityToPriority(importedFinding.severity);
+        await client.query(
+          `
+          INSERT INTO findings (
+            organization_id,
+            assessment_id,
+            source_type,
+            source_id,
+            title,
+            description,
+            severity,
+            domain,
+            priority,
+            status
+          )
+          VALUES ($1, NULL, 'vendor_review', $2::uuid, $3, $4, $5, 'Vendor Risk', $6, 'open')
+          `,
+          [
+            organizationId,
+            assessmentId,
+            importedFinding.title,
+            importedFinding.description ?? null,
+            importedFinding.severity,
+            importedPriority
+          ]
+        );
+      }
+
       await client.query("COMMIT");
 
       logger.info(

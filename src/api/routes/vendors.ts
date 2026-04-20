@@ -315,34 +315,69 @@ router.get(
         total_vendors: string;
         critical_vendors: string;
         high_vendors: string;
-        assessed_vendors: string;
-        avg_risk_score: string | null;
+        vendors_with_findings: string;
         top_vendors_by_risk: Array<{
           id: string;
           name: string;
           criticality: string | null;
-          current_risk_score: number | null;
-          last_reviewed_at: string | null;
+          open_findings: number;
+          critical_findings: number;
+          high_findings: number;
         }> | null;
       }>(
         `
+        WITH vendor_findings AS (
+          SELECT
+            v.id,
+            v.name,
+            v.criticality,
+            COUNT(f.id) FILTER (
+              WHERE f.status = 'open'
+            )                                                                AS open_findings,
+            COUNT(f.id) FILTER (
+              WHERE f.status = 'open'
+                AND f.severity = 'Critical'
+            )                                                                AS critical_findings,
+            COUNT(f.id) FILTER (
+              WHERE f.status = 'open'
+                AND f.severity = 'High'
+            )                                                                AS high_findings
+          FROM vendors v
+          LEFT JOIN (
+            SELECT va.vendor_id, f.id, f.status, f.severity
+            FROM findings f
+            JOIN vendor_assessments va
+              ON va.id = f.source_id
+             AND f.source_type = 'vendor_review'
+             AND va.organization_id = $1
+            UNION ALL
+            SELECT vr.vendor_id, f.id, f.status, f.severity
+            FROM findings f
+            JOIN vendor_reviews vr
+              ON vr.id = f.source_id
+             AND f.source_type = 'vendor_cycle_review'
+             AND vr.organization_id = $1
+          ) f ON f.vendor_id = v.id
+          WHERE v.organization_id = $1
+            AND v.status = 'active'
+          GROUP BY v.id, v.name, v.criticality
+        )
         SELECT
-          COUNT(*)::text                                                      AS total_vendors,
-          COUNT(*) FILTER (WHERE criticality = 'critical')::text             AS critical_vendors,
-          COUNT(*) FILTER (WHERE criticality = 'high')::text                 AS high_vendors,
-          COUNT(*) FILTER (WHERE current_risk_score IS NOT NULL)::text       AS assessed_vendors,
-          ROUND(AVG(current_risk_score), 1)::text                            AS avg_risk_score,
+          COUNT(*)::text                                                     AS total_vendors,
+          COUNT(*) FILTER (WHERE criticality = 'critical')::text            AS critical_vendors,
+          COUNT(*) FILTER (WHERE criticality = 'high')::text                AS high_vendors,
+          COUNT(*) FILTER (WHERE open_findings > 0)::text                   AS vendors_with_findings,
           json_agg(
             json_build_object(
               'id',                id,
               'name',              name,
               'criticality',       criticality,
-              'current_risk_score', current_risk_score,
-              'last_reviewed_at',  last_reviewed_at
-            ) ORDER BY current_risk_score DESC NULLS LAST
-          ) FILTER (WHERE current_risk_score IS NOT NULL)                    AS top_vendors_by_risk
-        FROM vendors
-        WHERE organization_id = $1
+              'open_findings',     open_findings,
+              'critical_findings', critical_findings,
+              'high_findings',     high_findings
+            ) ORDER BY open_findings DESC NULLS LAST, critical_findings DESC NULLS LAST
+          ) FILTER (WHERE open_findings > 0)                                AS top_vendors_by_risk
+        FROM vendor_findings
         `,
         [organizationId]
       );
@@ -350,12 +385,11 @@ router.get(
       const row = result.rows[0];
       res.status(200).json({
         summary: {
-          total_vendors:       parseInt(row?.total_vendors ?? "0", 10),
-          critical_vendors:    parseInt(row?.critical_vendors ?? "0", 10),
-          high_vendors:        parseInt(row?.high_vendors ?? "0", 10),
-          assessed_vendors:    parseInt(row?.assessed_vendors ?? "0", 10),
-          avg_risk_score:      row?.avg_risk_score != null ? parseFloat(row.avg_risk_score!) : null,
-          top_vendors_by_risk: row?.top_vendors_by_risk ?? [],
+          total_vendors:        parseInt(row?.total_vendors ?? "0", 10),
+          critical_vendors:     parseInt(row?.critical_vendors ?? "0", 10),
+          high_vendors:         parseInt(row?.high_vendors ?? "0", 10),
+          vendors_with_findings: parseInt(row?.vendors_with_findings ?? "0", 10),
+          top_vendors_by_risk:  row?.top_vendors_by_risk ?? [],
         },
       });
     } catch (err) {

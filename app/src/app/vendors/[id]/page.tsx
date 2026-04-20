@@ -12,6 +12,7 @@ import {
   type Finding,
 } from "@/lib/api";
 import { FindingCard } from "@/components/FindingCard";
+import { CompleteReviewSection } from "./CompleteReviewSection";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -559,6 +560,7 @@ export default async function VendorDetailPage({
   );
 
   const openFindings = vendorFindings.filter((f) => f.status === "open");
+  const inProgressReviews = reviews.filter((r) => r.status === "in_progress");
 
   // Track which assessments/reviews produced findings.
   const assessmentIdsWithFindings = new Set<string>();
@@ -620,6 +622,10 @@ export default async function VendorDetailPage({
             assessmentIdsWithFindings={assessmentIdsWithFindings}
           />
           <ReviewCyclesSection reviews={reviews} />
+          <CompleteReviewSection
+            inProgressReviews={inProgressReviews}
+            vendorId={vendor.id}
+          />
         </div>
 
         {/* Right: sidebar */}
