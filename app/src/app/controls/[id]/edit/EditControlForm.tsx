@@ -26,18 +26,61 @@ const FREQUENCY_OPTIONS = [
   { value: "ad_hoc",   label: "Ad-hoc" },
 ];
 
+const CONTROL_TYPE_OPTIONS = [
+  { value: "",             label: "— Not set —" },
+  { value: "preventive",   label: "Preventive" },
+  { value: "detective",    label: "Detective" },
+  { value: "corrective",   label: "Corrective" },
+  { value: "deterrent",    label: "Deterrent" },
+  { value: "compensating", label: "Compensating" },
+  { value: "directive",    label: "Directive" },
+];
+
+const DOMAIN_OPTIONS = [
+  { value: "",                  label: "— Not set —" },
+  { value: "access_management", label: "Access Management" },
+  { value: "vendor_risk",       label: "Vendor Risk" },
+  { value: "ai_governance",     label: "AI Governance" },
+  { value: "regulatory",        label: "Regulatory" },
+  { value: "vulnerability",     label: "Vulnerability" },
+  { value: "resilience",        label: "Resilience" },
+  { value: "general",           label: "General" },
+];
+
+const MATURITY_OPTIONS = [
+  { value: "",           label: "— Not set —" },
+  { value: "initial",    label: "Initial" },
+  { value: "managed",    label: "Managed" },
+  { value: "defined",    label: "Defined" },
+  { value: "optimizing", label: "Optimizing" },
+  { value: "optimized",  label: "Optimized" },
+];
+
+const IMPL_STATUS_OPTIONS = [
+  { value: "",             label: "— Not set —" },
+  { value: "not_started",  label: "Not Started" },
+  { value: "in_progress",  label: "In Progress" },
+  { value: "implemented",  label: "Implemented" },
+  { value: "verified",     label: "Verified" },
+];
+
 type DeleteResult = { error: string; details?: { assessments?: number; framework_mappings?: number } };
 
 export function EditControlForm({ control }: { control: Control }) {
-  const [name, setName]                   = useState(control.name);
-  const [description, setDescription]     = useState(control.description ?? "");
-  const [frequency, setFrequency]         = useState(control.testing_frequency ?? "");
-  const [nextTestDue, setNextTestDue]     = useState(control.next_test_due?.slice(0, 10) ?? "");
-  const [saving, setSaving]               = useState(false);
-  const [error, setError]                 = useState<string | null>(null);
-  const [deleting, setDeleting]           = useState(false);
-  const [deleteError, setDeleteError]     = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [name, setName]                         = useState(control.name);
+  const [description, setDescription]           = useState(control.description ?? "");
+  const [frequency, setFrequency]               = useState(control.testing_frequency ?? "");
+  const [nextTestDue, setNextTestDue]           = useState(control.next_test_due?.slice(0, 10) ?? "");
+  const [controlType, setControlType]           = useState(control.control_type ?? "");
+  const [domain, setDomain]                     = useState(control.domain ?? "");
+  const [controlFamily, setControlFamily]       = useState(control.control_family ?? "");
+  const [maturityLevel, setMaturityLevel]       = useState(control.maturity_level ?? "");
+  const [implStatus, setImplStatus]             = useState(control.implementation_status ?? "");
+  const [saving, setSaving]                     = useState(false);
+  const [error, setError]                       = useState<string | null>(null);
+  const [deleting, setDeleting]                 = useState(false);
+  const [deleteError, setDeleteError]           = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete]       = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -46,10 +89,15 @@ export function EditControlForm({ control }: { control: Control }) {
     setError(null);
 
     const data: ControlEditData = {
-      name:              name.trim(),
-      description:       description.trim() || null,
-      testing_frequency: frequency || null,
-      next_test_due:     nextTestDue || null,
+      name:                  name.trim(),
+      description:           description.trim() || null,
+      testing_frequency:     frequency || null,
+      next_test_due:         nextTestDue || null,
+      control_type:          controlType || null,
+      domain:                domain || null,
+      control_family:        controlFamily.trim() || null,
+      maturity_level:        maturityLevel || null,
+      implementation_status: implStatus || null,
     };
 
     const result = await updateControlAction(control.id, data);
@@ -81,6 +129,8 @@ export function EditControlForm({ control }: { control: Control }) {
     }
   }
 
+  const fieldClass = "w-full rounded-lg px-3 py-2 text-sm border outline-none";
+
   return (
     <>
       <form onSubmit={handleSubmit}>
@@ -95,7 +145,7 @@ export function EditControlForm({ control }: { control: Control }) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
-              className="w-full rounded-lg px-3 py-2 text-sm border outline-none"
+              className={fieldClass}
               style={inputStyle}
             />
           </div>
@@ -109,10 +159,87 @@ export function EditControlForm({ control }: { control: Control }) {
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              className="w-full rounded-lg px-3 py-2 text-sm border outline-none resize-none"
+              className={`${fieldClass} resize-none`}
               style={inputStyle}
               placeholder="Describe what this control covers"
             />
+          </div>
+
+          {/* ── Classification ── */}
+          <div className="pt-2 pb-1" style={{ borderTop: "1px solid #1e2d45" }}>
+            <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#475569" }}>
+              Classification
+            </p>
+          </div>
+
+          {/* Control Type */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: "#94a3b8" }}>
+              Control Type
+            </label>
+            <select value={controlType} onChange={(e) => setControlType(e.target.value)} className={fieldClass} style={inputStyle}>
+              {CONTROL_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value} style={{ background: "#0a0f1a" }}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Domain */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: "#94a3b8" }}>
+              Domain
+            </label>
+            <select value={domain} onChange={(e) => setDomain(e.target.value)} className={fieldClass} style={inputStyle}>
+              {DOMAIN_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value} style={{ background: "#0a0f1a" }}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Control Family */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: "#94a3b8" }}>
+              Control Family
+            </label>
+            <input
+              type="text"
+              value={controlFamily}
+              onChange={(e) => setControlFamily(e.target.value)}
+              placeholder="e.g. Access Control, Audit and Accountability"
+              className={fieldClass}
+              style={inputStyle}
+            />
+          </div>
+
+          {/* Maturity Level */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: "#94a3b8" }}>
+              Maturity Level
+            </label>
+            <select value={maturityLevel} onChange={(e) => setMaturityLevel(e.target.value)} className={fieldClass} style={inputStyle}>
+              {MATURITY_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value} style={{ background: "#0a0f1a" }}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Implementation Status */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: "#94a3b8" }}>
+              Implementation Status
+            </label>
+            <select value={implStatus} onChange={(e) => setImplStatus(e.target.value)} className={fieldClass} style={inputStyle}>
+              {IMPL_STATUS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value} style={{ background: "#0a0f1a" }}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* ── Testing Schedule ── */}
+          <div className="pt-2 pb-1" style={{ borderTop: "1px solid #1e2d45" }}>
+            <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#475569" }}>
+              Testing Schedule
+            </p>
           </div>
 
           {/* Testing Frequency */}
@@ -120,16 +247,9 @@ export function EditControlForm({ control }: { control: Control }) {
             <label className="block text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: "#94a3b8" }}>
               Testing Frequency
             </label>
-            <select
-              value={frequency}
-              onChange={(e) => setFrequency(e.target.value)}
-              className="w-full rounded-lg px-3 py-2 text-sm border outline-none"
-              style={inputStyle}
-            >
+            <select value={frequency} onChange={(e) => setFrequency(e.target.value)} className={fieldClass} style={inputStyle}>
               {FREQUENCY_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value} style={{ background: "#0a0f1a" }}>
-                  {o.label}
-                </option>
+                <option key={o.value} value={o.value} style={{ background: "#0a0f1a" }}>{o.label}</option>
               ))}
             </select>
           </div>
@@ -143,7 +263,7 @@ export function EditControlForm({ control }: { control: Control }) {
               type="date"
               value={nextTestDue}
               onChange={(e) => setNextTestDue(e.target.value)}
-              className="w-full rounded-lg px-3 py-2 text-sm border outline-none"
+              className={fieldClass}
               style={inputStyle}
             />
           </div>

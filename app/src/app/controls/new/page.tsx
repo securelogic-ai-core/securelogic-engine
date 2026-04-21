@@ -23,6 +23,54 @@ function FieldLabel({ children, required }: { children: React.ReactNode; require
   );
 }
 
+const CONTROL_TYPE_OPTIONS = [
+  { value: "",             label: "— Not set —" },
+  { value: "preventive",   label: "Preventive" },
+  { value: "detective",    label: "Detective" },
+  { value: "corrective",   label: "Corrective" },
+  { value: "deterrent",    label: "Deterrent" },
+  { value: "compensating", label: "Compensating" },
+  { value: "directive",    label: "Directive" },
+];
+
+const DOMAIN_OPTIONS = [
+  { value: "",                  label: "— Not set —" },
+  { value: "access_management", label: "Access Management" },
+  { value: "vendor_risk",       label: "Vendor Risk" },
+  { value: "ai_governance",     label: "AI Governance" },
+  { value: "regulatory",        label: "Regulatory" },
+  { value: "vulnerability",     label: "Vulnerability" },
+  { value: "resilience",        label: "Resilience" },
+  { value: "general",           label: "General" },
+];
+
+const MATURITY_OPTIONS = [
+  { value: "",           label: "— Not set —" },
+  { value: "initial",    label: "Initial" },
+  { value: "managed",    label: "Managed" },
+  { value: "defined",    label: "Defined" },
+  { value: "optimizing", label: "Optimizing" },
+  { value: "optimized",  label: "Optimized" },
+];
+
+const IMPL_STATUS_OPTIONS = [
+  { value: "",             label: "— Not set —" },
+  { value: "not_started",  label: "Not Started" },
+  { value: "in_progress",  label: "In Progress" },
+  { value: "implemented",  label: "Implemented" },
+  { value: "verified",     label: "Verified" },
+];
+
+function SectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="pt-2 pb-1" style={{ borderTop: "1px solid #1e2d45" }}>
+      <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#475569" }}>
+        {children}
+      </p>
+    </div>
+  );
+}
+
 export default function NewControlPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -83,6 +131,62 @@ export default function NewControlPage() {
               style={inputStyle}
               disabled={submitting}
             />
+          </div>
+
+          {/* ── Classification ── */}
+          <SectionHeading>Classification</SectionHeading>
+
+          {/* Control Type */}
+          <div>
+            <FieldLabel>Control Type</FieldLabel>
+            <select name="control_type" className={inputClass} style={inputStyle} disabled={submitting}>
+              {CONTROL_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value} style={{ background: "#0a0f1a" }}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Domain */}
+          <div>
+            <FieldLabel>Domain</FieldLabel>
+            <select name="domain" className={inputClass} style={inputStyle} disabled={submitting}>
+              {DOMAIN_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value} style={{ background: "#0a0f1a" }}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Control Family */}
+          <div>
+            <FieldLabel>Control Family</FieldLabel>
+            <input
+              type="text"
+              name="control_family"
+              placeholder="e.g. Access Control, Audit and Accountability"
+              className={inputClass}
+              style={inputStyle}
+              disabled={submitting}
+            />
+          </div>
+
+          {/* Maturity Level */}
+          <div>
+            <FieldLabel>Maturity Level</FieldLabel>
+            <select name="maturity_level" className={inputClass} style={inputStyle} disabled={submitting}>
+              {MATURITY_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value} style={{ background: "#0a0f1a" }}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Implementation Status */}
+          <div>
+            <FieldLabel>Implementation Status</FieldLabel>
+            <select name="implementation_status" className={inputClass} style={inputStyle} disabled={submitting}>
+              {IMPL_STATUS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value} style={{ background: "#0a0f1a" }}>{o.label}</option>
+              ))}
+            </select>
           </div>
 
           {/* Error */}

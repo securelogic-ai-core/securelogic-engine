@@ -23,6 +23,18 @@ export async function createControl(
   const description = ((formData.get("description") as string | null) ?? "").trim();
   if (description) body["description"] = description;
 
+  const controlType         = ((formData.get("control_type")         as string | null) ?? "").trim();
+  const domain              = ((formData.get("domain")               as string | null) ?? "").trim();
+  const controlFamily       = ((formData.get("control_family")       as string | null) ?? "").trim();
+  const maturityLevel       = ((formData.get("maturity_level")       as string | null) ?? "").trim();
+  const implementationStatus = ((formData.get("implementation_status") as string | null) ?? "").trim();
+
+  if (controlType)          body["control_type"]          = controlType;
+  if (domain)               body["domain"]                = domain;
+  if (controlFamily)        body["control_family"]        = controlFamily;
+  if (maturityLevel)        body["maturity_level"]        = maturityLevel;
+  if (implementationStatus) body["implementation_status"] = implementationStatus;
+
   let res: Response;
   try {
     res = await fetch(`${ENGINE_URL}/api/controls`, {

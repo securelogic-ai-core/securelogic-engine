@@ -226,7 +226,50 @@ function AssessmentHistorySection({
 // Sidebar
 // ─────────────────────────────────────────────────────────────
 
+const CLASSIFICATION_LABELS: Record<string, Record<string, string>> = {
+  control_type: {
+    preventive: "Preventive", detective: "Detective", corrective: "Corrective",
+    deterrent: "Deterrent", compensating: "Compensating", directive: "Directive",
+  },
+  domain: {
+    access_management: "Access Management", vendor_risk: "Vendor Risk",
+    ai_governance: "AI Governance", regulatory: "Regulatory",
+    vulnerability: "Vulnerability", resilience: "Resilience", general: "General",
+  },
+  maturity_level: {
+    initial: "Initial", managed: "Managed", defined: "Defined",
+    optimizing: "Optimizing", optimized: "Optimized",
+  },
+  implementation_status: {
+    not_started: "Not Started", in_progress: "In Progress",
+    implemented: "Implemented", verified: "Verified",
+  },
+};
+
+function DetailRow({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div className="flex items-center justify-between py-1.5" style={{ borderTop: "1px solid #1e2d45" }}>
+      <span className="text-xs uppercase tracking-wide font-medium" style={{ color: "#475569" }}>
+        {label}
+      </span>
+      <span className="text-xs font-medium" style={{ color: value ? "#cbd5e1" : "#334155" }}>
+        {value ?? "—"}
+      </span>
+    </div>
+  );
+}
+
 function ControlDetailsCard({ control }: { control: Control }) {
+  const classificationFields = [
+    { label: "Type",           key: "control_type",          value: control.control_type },
+    { label: "Domain",         key: "domain",                value: control.domain },
+    { label: "Family",         key: null,                    value: control.control_family },
+    { label: "Maturity",       key: "maturity_level",        value: control.maturity_level },
+    { label: "Implementation", key: "implementation_status", value: control.implementation_status },
+  ];
+
+  const hasClassification = classificationFields.some((f) => f.value);
+
   return (
     <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
       <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "#94a3b8" }}>
@@ -240,15 +283,29 @@ function ControlDetailsCard({ control }: { control: Control }) {
           {control.description}
         </p>
       )}
+
+      {hasClassification && (
+        <>
+          <p className="text-xs font-semibold uppercase tracking-wide mt-3 mb-1" style={{ color: "#334155" }}>
+            Classification
+          </p>
+          {classificationFields.map((f) => {
+            const displayValue = f.key
+              ? (CLASSIFICATION_LABELS[f.key]?.[f.value ?? ""] ?? f.value)
+              : f.value;
+            return (
+              <DetailRow key={f.label} label={f.label} value={displayValue ?? null} />
+            );
+          })}
+        </>
+      )}
+
+      {control.status && control.status !== "active" && (
+        <DetailRow label="Status" value={control.status.charAt(0).toUpperCase() + control.status.slice(1)} />
+      )}
+
       {control.owner_user_id && (
-        <div className="flex items-center justify-between pt-2" style={{ borderTop: "1px solid #1e2d45" }}>
-          <span className="text-xs uppercase tracking-wide font-medium" style={{ color: "#475569" }}>
-            Owner
-          </span>
-          <span className="text-xs font-medium" style={{ color: "#cbd5e1" }}>
-            Assigned
-          </span>
-        </div>
+        <DetailRow label="Owner" value="Assigned" />
       )}
     </div>
   );
