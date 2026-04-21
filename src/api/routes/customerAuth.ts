@@ -726,6 +726,79 @@ router.post("/auth/reset-password", verifyLimiter, async (req, res) => {
 });
 
 /* =========================================================
+   POST /api/auth/change-password   (JWT required)
+   { current_password: string, new_password: string }
+   ========================================================= */
+
+router.post("/auth/change-password", requireAuth, async (req, res) => {
+  try {
+    const userId          = req.jwtPayload!.sub;
+    const orgId           = req.jwtPayload!.org;
+    const currentRaw      = req.body?.current_password;
+    const newRaw          = req.body?.new_password;
+
+    if (typeof currentRaw !== "string" || !currentRaw) {
+      res.status(400).json({ error: "current_password_required" });
+      return;
+    }
+    if (typeof newRaw !== "string" || newRaw.length < 12) {
+      res.status(400).json({ error: "password_too_short", detail: "12 characters minimum" });
+      return;
+    }
+    if (currentRaw === newRaw) {
+      res.status(400).json({ error: "same_password" });
+      return;
+    }
+
+    const result = await pg.query<{ password_hash: string }>(
+      `SELECT password_hash FROM users WHERE id = $1 LIMIT 1`,
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: "user_not_found" });
+      return;
+    }
+
+    let currentValid = false;
+    try {
+      currentValid = await argon2.verify(result.rows[0]!.password_hash, currentRaw);
+    } catch {
+      currentValid = false;
+    }
+
+    if (!currentValid) {
+      res.status(400).json({ error: "incorrect_password" });
+      return;
+    }
+
+    const newHash = await argon2.hash(newRaw);
+
+    await pg.query(
+      `UPDATE users
+       SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW()
+       WHERE id = $2`,
+      [newHash, userId]
+    );
+
+    writeAuditEvent({
+      organizationId: orgId,
+      actorUserId:    userId,
+      eventType:      "auth.password_changed",
+      resourceType:   "user",
+      resourceId:     userId,
+      ipAddress:      req.ip ?? null
+    });
+
+    logger.info({ event: "password_changed", userId }, "Password changed");
+    res.status(200).json({ success: true });
+  } catch (err) {
+    logger.error({ event: "change_password_failed", err }, "POST /api/auth/change-password failed");
+    res.status(500).json({ error: "change_password_failed" });
+  }
+});
+
+/* =========================================================
    GET /api/auth/me   (JWT required)
    ========================================================= */
 

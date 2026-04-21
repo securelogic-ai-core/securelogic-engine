@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getMe, getAuthMe } from "@/lib/api";
 import MfaSection from "./security/MfaSection";
+import ChangePasswordSection from "./security/ChangePasswordSection";
 
 function planDisplayName(entitlementLevel: string): string {
   switch (entitlementLevel) {
@@ -161,6 +162,11 @@ export default async function AccountPage({
         {/* Security / MFA — only available with JWT auth (email/password login) */}
         {session.jwtToken && (
           <MfaSection totpEnabled={authMe?.totpEnabled ?? false} />
+        )}
+
+        {/* Change password — only available with JWT auth (email/password login) */}
+        {session.jwtToken && (
+          <ChangePasswordSection />
         )}
 
         {/* Alert Preferences */}
