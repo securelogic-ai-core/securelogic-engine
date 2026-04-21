@@ -27,8 +27,16 @@ export async function POST(request: Request) {
       }),
     });
 
-    const data = await res.json();
-    return NextResponse.json(data, { status: res.status });
+    const data = await res.json() as { success?: boolean; token?: string; error?: string };
+
+    // If the engine issued a fresh JWT, update the iron-session so the
+    // current device is not immediately invalidated by the iat check.
+    if (res.ok && typeof data.token === "string") {
+      session.jwtToken = data.token;
+      await session.save();
+    }
+
+    return NextResponse.json({ success: data.success, error: data.error }, { status: res.status });
   } catch {
     return NextResponse.json({ error: "change_password_failed" }, { status: 500 });
   }

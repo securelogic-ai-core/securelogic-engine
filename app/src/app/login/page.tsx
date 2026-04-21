@@ -226,7 +226,7 @@ function LoginForm() {
       title="Sign in"
       subtitle="Access your SecureLogic AI account."
     >
-      {reason === "idle" && (
+      {(reason === "idle" || reason === "session_invalidated") && (
         <div
           style={{
             background:   "rgba(59,130,246,0.1)",
@@ -239,7 +239,9 @@ function LoginForm() {
             lineHeight:   "1.5",
           }}
         >
-          You were signed out due to inactivity. Please sign in again.
+          {reason === "session_invalidated"
+            ? "Your session was invalidated because your password was changed. Please sign in again."
+            : "You were signed out due to inactivity. Please sign in again."}
         </div>
       )}
       <AuthError message={error} />

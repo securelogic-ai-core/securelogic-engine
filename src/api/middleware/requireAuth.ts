@@ -10,6 +10,7 @@
 
 import type { Request, Response, NextFunction } from "express";
 import { verifyJwt, type JwtPayload } from "../lib/jwt.js";
+import { pg } from "../infra/postgres.js";
 
 declare global {
   namespace Express {
@@ -19,11 +20,11 @@ declare global {
   }
 }
 
-export function requireAuth(
+export async function requireAuth(
   req: Request,
   res: Response,
   next: NextFunction
-): void {
+): Promise<void> {
   const header = req.headers.authorization;
 
   if (!header?.startsWith("Bearer ")) {
@@ -37,6 +38,22 @@ export function requireAuth(
   if (!payload) {
     res.status(401).json({ error: "invalid_or_expired_token" });
     return;
+  }
+
+  // Reject tokens issued before the user's most recent password change.
+  // Fail open on DB error — a transient failure must not lock out all users.
+  try {
+    const result = await pg.query<{ password_changed_at: Date | null }>(
+      `SELECT password_changed_at FROM users WHERE id = $1 LIMIT 1`,
+      [payload.sub]
+    );
+    const changedAt = result.rows[0]?.password_changed_at ?? null;
+    if (changedAt !== null && payload.iat < Math.floor(new Date(changedAt).getTime() / 1000)) {
+      res.status(401).json({ error: "session_invalidated", detail: "Password was changed. Please sign in again." });
+      return;
+    }
+  } catch {
+    // fail open
   }
 
   req.jwtPayload = payload;

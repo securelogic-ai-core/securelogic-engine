@@ -718,6 +718,7 @@ router.post("/auth/reset-password", verifyLimiter, async (req, res) => {
     await pg.query(
       `UPDATE users
        SET password_hash = $1,
+           password_changed_at = NOW(),
            password_reset_token = NULL,
            password_reset_expires_at = NULL,
            updated_at = NOW()
@@ -818,7 +819,10 @@ router.post("/auth/change-password", requireAuth, async (req, res) => {
     });
 
     logger.info({ event: "password_changed", userId }, "Password changed");
-    res.status(200).json({ success: true });
+    // Issue a fresh JWT so the current device's session is not immediately
+    // invalidated by the password_changed_at check we added to requireAuth.
+    const freshJwt = signJwt(userId, orgId, req.jwtPayload!.role);
+    res.status(200).json({ success: true, token: freshJwt });
   } catch (err) {
     logger.error({ event: "change_password_failed", err }, "POST /api/auth/change-password failed");
     res.status(500).json({ error: "change_password_failed" });
