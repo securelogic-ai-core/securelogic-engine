@@ -66,6 +66,22 @@ export async function requireApiKey(
         return;
       }
 
+      // Reject tokens issued before the user's most recent password change.
+      // Fail open on DB error — transient failure must not lock out all users.
+      try {
+        const pwResult = await pg.query<{ password_changed_at: Date | null }>(
+          `SELECT password_changed_at FROM users WHERE id = $1 LIMIT 1`,
+          [payload.sub]
+        );
+        const changedAt = pwResult.rows[0]?.password_changed_at ?? null;
+        if (changedAt !== null && payload.iat < Math.floor(new Date(changedAt).getTime() / 1000)) {
+          res.status(401).json({ error: "session_invalidated", detail: "Password was changed. Please sign in again." });
+          return;
+        }
+      } catch {
+        // fail open
+      }
+
       // Viewer accounts may not perform mutations.
       // API key auth (non-JWT) bypasses this check — API keys are admin-level.
       if (payload.role === "viewer" && MUTATION_METHODS.has(req.method.toUpperCase())) {
