@@ -542,6 +542,12 @@ export type Control = {
   name: string;
   description: string | null;
   owner_user_id: string | null;
+  control_type: string | null;
+  status: string;
+  domain: string | null;
+  control_family: string | null;
+  maturity_level: string | null;
+  implementation_status: string | null;
   testing_frequency: "monthly" | "quarterly" | "biannual" | "annual" | "ad_hoc" | null;
   next_test_due: string | null;
   last_tested_at: string | null;

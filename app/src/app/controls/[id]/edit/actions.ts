@@ -10,6 +10,11 @@ export type ControlEditData = {
   description?: string | null;
   testing_frequency?: string | null;
   next_test_due?: string | null;
+  control_type?: string | null;
+  domain?: string | null;
+  control_family?: string | null;
+  maturity_level?: string | null;
+  implementation_status?: string | null;
 };
 
 export async function updateControlAction(
@@ -21,9 +26,14 @@ export async function updateControlAction(
   if (!token) return { error: "Not authenticated" };
 
   const body: Record<string, string | null> = { name: data.name };
-  body.description      = data.description      ?? null;
-  body.testing_frequency = data.testing_frequency ?? null;
-  body.next_test_due    = data.next_test_due     ?? null;
+  body.description           = data.description           ?? null;
+  body.testing_frequency     = data.testing_frequency     ?? null;
+  body.next_test_due         = data.next_test_due         ?? null;
+  body.control_type          = data.control_type          ?? null;
+  body.domain                = data.domain                ?? null;
+  body.control_family        = data.control_family        ?? null;
+  body.maturity_level        = data.maturity_level        ?? null;
+  body.implementation_status = data.implementation_status ?? null;
 
   let res: Response;
   try {
