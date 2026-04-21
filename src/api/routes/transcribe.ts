@@ -48,6 +48,10 @@ const transcribeRateLimit = rateLimit({
   }
 });
 
+router.get("/ask/transcribe/status", (_req, res) => {
+  res.status(200).json({ configured: !!process.env.OPENAI_API_KEY });
+});
+
 router.post(
   "/ask/transcribe",
   requireApiKey,
