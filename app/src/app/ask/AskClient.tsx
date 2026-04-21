@@ -137,7 +137,17 @@ export function AskClient() {
     setRecordingError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : MediaRecorder.isTypeSupported("audio/mp4")
+        ? "audio/mp4"
+        : "";
+
+      const mediaRecorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -150,11 +160,11 @@ export function AskClient() {
         setIsRecording(false);
         setIsTranscribing(true);
 
-        const mimeType = mediaRecorder.mimeType || "audio/webm";
-        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        const recordedMime = mediaRecorder.mimeType || mimeType || "audio/webm";
+        const audioBlob = new Blob(audioChunksRef.current, { type: recordedMime });
 
         try {
-          const ext = mimeType.includes("webm") ? "webm" : mimeType.includes("ogg") ? "ogg" : "mp4";
+          const ext = recordedMime.includes("webm") ? "webm" : recordedMime.includes("ogg") ? "ogg" : "mp4";
           const fd = new FormData();
           fd.append("audio", audioBlob, `recording.${ext}`);
           const transcribeRes = await fetch("/api/transcribe", { method: "POST", body: fd });
@@ -172,10 +182,17 @@ export function AskClient() {
 
       mediaRecorder.start();
       setIsRecording(true);
-    } catch {
-      setRecordingError(
-        "Microphone access denied. Please allow microphone access and try again."
-      );
+    } catch (err) {
+      const name = (err as { name?: string }).name ?? "";
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        setRecordingError(
+          "Microphone access denied. Please allow microphone access and try again."
+        );
+      } else {
+        setRecordingError(
+          "Voice input is not supported on this browser. Please type your question instead."
+        );
+      }
     }
   }, [isRecording, submitQuery]);
 
