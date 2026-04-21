@@ -121,6 +121,7 @@ router.post(
         domainResult,
         findingsSummaryResult,
         topRisksResult,
+        vendorCountResult,
         vendorsResult,
         actionsSummaryResult,
         criticalFindingsResult,
@@ -220,7 +221,16 @@ router.post(
           [organizationId]
         ),
 
-        // 5. All vendors ordered by criticality then risk score
+        // 5a. Active vendor count
+        pg.query<{ total: string }>(
+          `SELECT COUNT(*) AS total
+           FROM vendors
+           WHERE organization_id = $1
+             AND status != 'inactive'`,
+          [organizationId]
+        ),
+
+        // 5b. All active vendors ordered by criticality then risk score
         pg.query<{
           id: string;
           name: string;
@@ -231,6 +241,7 @@ router.post(
           `SELECT id, name, criticality, current_risk_score, last_reviewed_at
            FROM vendors
            WHERE organization_id = $1
+             AND status != 'inactive'
            ORDER BY
              CASE criticality
                WHEN 'critical' THEN 1
@@ -239,8 +250,7 @@ router.post(
                WHEN 'low'      THEN 4
                ELSE 5
              END,
-             current_risk_score DESC NULLS LAST
-           LIMIT 20`,
+             current_risk_score DESC NULLS LAST`,
           [organizationId]
         ),
 
@@ -334,7 +344,7 @@ router.post(
         findings:  findingsSummary,
         top_risks: topRisksResult.rows,
         vendors: {
-          total:          vendorsResult.rows.length,
+          total:          parseInt(vendorCountResult.rows[0]?.total ?? "0", 10),
           critical_count: vendorsResult.rows.filter((v) => v.criticality === "critical").length,
           high_count:     vendorsResult.rows.filter((v) => v.criticality === "high").length,
           assessed_count: vendorsResult.rows.filter((v) => v.current_risk_score !== null).length,
@@ -377,7 +387,7 @@ router.post(
           posture_score:   posture?.overall_score ?? null,
           findings_count:  findingsSummary.open_count,
           risks_count:     topRisksResult.rows.length,
-          vendors_count:   vendorsResult.rows.length,
+          vendors_count:   parseInt(vendorCountResult.rows[0]?.total ?? "0", 10),
           as_of:           posture?.snapshot_date ?? null,
         },
         question: question.trim(),
