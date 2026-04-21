@@ -93,6 +93,14 @@ services:
       - key: ALERT_WEBHOOK_URL
         sync: false
 
+      # Required for voice transcription
+      # (Whisper-1 via /api/ask/transcribe).
+      # Without this key the voice button
+      # returns a 503 and the user sees
+      # "Could not transcribe audio."
+      - key: OPENAI_API_KEY
+        sync: false
+
   # =========================================================
   # INTELLIGENCE WORKER (background)
   # Long-running process — runs the signal pipeline every hour.
