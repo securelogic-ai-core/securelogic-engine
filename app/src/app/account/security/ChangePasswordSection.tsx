@@ -118,9 +118,10 @@ export default function ChangePasswordSection() {
 
       if (!res.ok || !data.success) {
         setError(
-          data.error === "incorrect_password"  ? "Your current password is incorrect." :
-          data.error === "password_too_short"  ? "New password must be at least 12 characters." :
-          data.error === "same_password"       ? "New password must be different from your current password." :
+          data.error === "incorrect_password"    ? "Your current password is incorrect." :
+          data.error === "password_too_short"    ? "New password must be at least 12 characters." :
+          data.error === "same_password"         ? "New password must be different from your current password." :
+          data.error === "password_recently_used"? "This password was used recently. Please choose a different one." :
           "Something went wrong. Please try again."
         );
         return;

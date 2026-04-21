@@ -28,6 +28,7 @@ import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { signJwt, signMfaChallenge } from "../lib/jwt.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { checkPasswordReuse, recordPasswordHash } from "../lib/passwordHistory.js";
 import { Resend } from "resend";
 
 const router = Router();
@@ -707,6 +708,11 @@ router.post("/auth/reset-password", verifyLimiter, async (req, res) => {
       return;
     }
 
+    if (await checkPasswordReuse(user.id, String(passwordRaw), pg)) {
+      res.status(400).json({ error: "password_recently_used", detail: "Password was used recently. Choose a different password." });
+      return;
+    }
+
     const newHash = await argon2.hash(String(passwordRaw));
 
     await pg.query(
@@ -718,6 +724,8 @@ router.post("/auth/reset-password", verifyLimiter, async (req, res) => {
        WHERE id = $2`,
       [newHash, user.id]
     );
+
+    await recordPasswordHash(user.id, newHash, pg);
 
     logger.info({ event: "password_reset", userId: user.id }, "Password reset complete");
 
@@ -784,6 +792,11 @@ router.post("/auth/change-password", requireAuth, async (req, res) => {
       return;
     }
 
+    if (await checkPasswordReuse(userId, newRaw, pg)) {
+      res.status(400).json({ error: "password_recently_used", detail: "Password was used recently. Choose a different password." });
+      return;
+    }
+
     const newHash = await argon2.hash(newRaw);
 
     await pg.query(
@@ -792,6 +805,8 @@ router.post("/auth/change-password", requireAuth, async (req, res) => {
        WHERE id = $2`,
       [newHash, userId]
     );
+
+    await recordPasswordHash(userId, newHash, pg);
 
     writeAuditEvent({
       organizationId: orgId,
