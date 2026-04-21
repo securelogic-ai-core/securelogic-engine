@@ -1,14 +1,27 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getMe, getRisksIntelligence, getRisksSummary, type RiskIntelligence } from "@/lib/api";
+import { getMe, getRisksIntelligence, getRisksSummary, getRiskScale, type RiskIntelligence, type RiskScaleLevel } from "@/lib/api";
 
-const RATING_STYLES: Record<string, React.CSSProperties> = {
+const FALLBACK_RATING_STYLES: Record<string, React.CSSProperties> = {
   Critical: { background: "rgba(239,68,68,0.15)",   color: "#fca5a5" },
   High:     { background: "rgba(249,115,22,0.15)",  color: "#fdba74" },
   Moderate: { background: "rgba(245,158,11,0.15)",  color: "#fcd34d" },
   Low:      { background: "rgba(34,197,94,0.15)",   color: "#86efac" },
 };
+
+function ratingStyleFromScale(
+  ratingValue: string | null,
+  scaleLevels: RiskScaleLevel[]
+): React.CSSProperties {
+  if (!ratingValue) return { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
+  const v = ratingValue.toLowerCase();
+  const level = scaleLevels.find((l) => l.value.toLowerCase() === v);
+  if (level) {
+    return { background: `${level.color}26`, color: level.color };
+  }
+  return FALLBACK_RATING_STYLES[ratingValue] ?? { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
+}
 
 const STATUS_STYLES: Record<string, React.CSSProperties> = {
   open:        { background: "rgba(239,68,68,0.12)",  color: "#fca5a5" },
@@ -61,8 +74,8 @@ function FilterPill({
   );
 }
 
-function RiskCard({ risk }: { risk: RiskIntelligence }) {
-  const ratingStyle = RATING_STYLES[risk.risk_rating ?? ""] ?? { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
+function RiskCard({ risk, scaleLevels }: { risk: RiskIntelligence; scaleLevels: RiskScaleLevel[] }) {
+  const ratingStyle = ratingStyleFromScale(risk.risk_rating ?? null, scaleLevels);
   const statusStyle = STATUS_STYLES[risk.status] ?? { background: "rgba(148,163,184,0.12)", color: "#94a3b8" };
   const statusLabel = (risk.status ?? "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
@@ -82,7 +95,7 @@ function RiskCard({ risk }: { risk: RiskIntelligence }) {
               className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold"
               style={ratingStyle}
             >
-              {risk.risk_rating}
+              {scaleLevels.find((l) => l.value.toLowerCase() === risk.risk_rating?.toLowerCase())?.label ?? risk.risk_rating}
             </span>
           )}
           <span
@@ -141,10 +154,13 @@ export default async function RisksPage({
   const activeStatus = sp.status ?? "";
   const activeDomain = sp.domain ?? "";
 
-  const [intelligenceData, summary] = await Promise.all([
+  const [intelligenceData, summary, scale] = await Promise.all([
     getRisksIntelligence(token),
     getRisksSummary(token),
+    getRiskScale(token),
   ]);
+
+  const scaleLevels = scale?.levels ?? [];
 
   // Filter in-memory (intelligence endpoint excludes closed/transferred)
   let risks = intelligenceData?.risks ?? [];
@@ -262,7 +278,7 @@ export default async function RisksPage({
       ) : (
         <div className="space-y-3">
           {risks.map((r) => (
-            <RiskCard key={r.id} risk={r} />
+            <RiskCard key={r.id} risk={r} scaleLevels={scaleLevels} />
           ))}
         </div>
       )}

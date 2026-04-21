@@ -4,8 +4,9 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { updateFindingStatus } from "@/app/actions/updateFindingStatus";
 import type { Finding } from "@/lib/api";
+import { useRiskScale } from "@/hooks/useRiskScale";
 
-const SEVERITY_STYLES: Record<string, React.CSSProperties> = {
+const SEVERITY_FALLBACK: Record<string, React.CSSProperties> = {
   Critical: { background: "rgba(239,68,68,0.15)", color: "#fca5a5" },
   High:     { background: "rgba(249,115,22,0.15)", color: "#fdba74" },
   Moderate: { background: "rgba(245,158,11,0.15)", color: "#fcd34d" },
@@ -54,8 +55,14 @@ export function FindingCard({ finding, revalidateUrl }: Props) {
   const [isPending, startTransition] = useTransition();
   const [optimisticStatus, setOptimisticStatus] = useState(finding.status);
   const [error, setError] = useState<string | null>(null);
+  const { getLevelByValue } = useRiskScale();
 
-  const severityStyle = SEVERITY_STYLES[finding.severity ?? ""] ?? { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
+  const severityRaw = finding.severity ?? "";
+  const scaleLevel = getLevelByValue(severityRaw);
+  const severityStyle: React.CSSProperties = scaleLevel
+    ? { background: `${scaleLevel.color}26`, color: scaleLevel.color }
+    : (SEVERITY_FALLBACK[severityRaw] ?? { background: "rgba(148,163,184,0.15)", color: "#94a3b8" });
+  const severityLabel = scaleLevel?.label ?? severityRaw;
   const statusStyle = STATUS_STYLES[optimisticStatus] ?? { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
   const transitions = STATUS_TRANSITIONS[optimisticStatus] ?? [];
 
@@ -100,7 +107,7 @@ export function FindingCard({ finding, revalidateUrl }: Props) {
         <div className="flex items-center gap-2 flex-wrap">
           {finding.severity && (
             <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold" style={severityStyle}>
-              {finding.severity}
+              {severityLabel}
             </span>
           )}
           <span
