@@ -41,8 +41,12 @@ function isValidEmail(v: unknown): v is string {
   return t.length >= 3 && t.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t);
 }
 
-function isValidPassword(v: unknown): v is string {
-  return typeof v === "string" && v.length >= 8 && v.length <= 128;
+function validatePassword(v: unknown): { error: string; detail: string } | null {
+  if (typeof v !== "string" || v.length < 12 || v.length > 128)
+    return { error: "password_too_short", detail: "12 characters minimum" };
+  if (!/[a-z]/.test(v) || !/[A-Z]/.test(v) || !/[0-9]/.test(v))
+    return { error: "password_too_weak", detail: "Must include uppercase, lowercase, and a number" };
+  return null;
 }
 
 function isValidName(v: unknown): v is string {
@@ -637,8 +641,9 @@ router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
       return;
     }
 
-    if (!isValidPassword(passwordRaw)) {
-      res.status(400).json({ error: "invalid_password", detail: "8–128 characters required" });
+    const pwErrInvite = validatePassword(passwordRaw);
+    if (pwErrInvite) {
+      res.status(400).json(pwErrInvite);
       return;
     }
 

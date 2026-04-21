@@ -62,8 +62,8 @@ export default function AcceptInviteForm({ token, email, orgName, inviterName, r
       return;
     }
 
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
+    if (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
+      setError("Must be 12+ characters with uppercase, lowercase, and a number.");
       return;
     }
 
@@ -88,6 +88,10 @@ export default function AcceptInviteForm({ token, email, orgName, inviterName, r
           ? (data.detail ?? "This email is already registered. Please log in instead.")
           : data.error === "invite_expired_or_invalid"
           ? "This invitation has expired or is no longer valid."
+          : data.error === "password_too_short"
+          ? "Password must be at least 12 characters."
+          : data.error === "password_too_weak"
+          ? "Password must include uppercase, lowercase, and a number."
           : data.detail ?? data.error ?? "Failed to accept invitation. Please try again."
       );
       setSubmitting(false);
@@ -237,7 +241,7 @@ export default function AcceptInviteForm({ token, email, orgName, inviterName, r
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="8+ characters"
+                placeholder="12+ characters"
                 autoComplete="new-password"
                 required
                 style={inputStyle}
