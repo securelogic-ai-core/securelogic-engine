@@ -575,8 +575,16 @@ export function FrameworkGaps({
       ) : (
         <div className="space-y-4">
           {sorted.map(({ framework, readiness }) => {
-            const score = readiness?.readiness_score ?? 0;
-            const color = scoreColor(score);
+            const score     = readiness?.readiness_score   ?? 0;
+            const satisfied = readiness?.satisfied         ?? 0;
+            const partial   = readiness?.partial           ?? 0;
+            const unmapped  = readiness?.unmapped          ?? 0;
+            const color     = scoreColor(score);
+            const breakdown = [
+              satisfied > 0 ? `${satisfied} satisfied` : null,
+              partial   > 0 ? `${partial} partial`     : null,
+              unmapped  > 0 ? `${unmapped} unmapped`   : null,
+            ].filter(Boolean);
             return (
               <div key={framework.id}>
                 <div className="flex items-baseline justify-between mb-1.5">
@@ -597,12 +605,120 @@ export function FrameworkGaps({
                 <div className="h-2 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }}>
                   <div className="h-2 rounded-full" style={{ width: `${score}%`, background: color }} />
                 </div>
+                {breakdown.length > 0 && (
+                  <p className="mt-1 text-xs" style={{ color: TEXT_MUTED }}>
+                    {breakdown.join(" • ")}
+                  </p>
+                )}
               </div>
             );
           })}
           {pairs.length > 3 && (
             <p className="text-xs" style={{ color: TEXT_MUTED }}>+{pairs.length - 3} more frameworks</p>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── ComplianceCoverage ─────────────────────────────────────────
+
+export function ComplianceCoverage({
+  frameworkPairs,
+}: {
+  frameworkPairs: Array<{ framework: Framework; readiness: FrameworkReadiness | null }>;
+}) {
+  const pairs = frameworkPairs.filter((p) => p.readiness !== null);
+
+  const totalSatisfied    = pairs.reduce((sum, p) => sum + (p.readiness?.satisfied         ?? 0), 0);
+  const totalRequirements = pairs.reduce((sum, p) => sum + (p.readiness?.total_requirements ?? 0), 0);
+  const overallPct = totalRequirements > 0
+    ? Math.round((totalSatisfied / totalRequirements) * 100)
+    : null;
+
+  const sorted = [...pairs].sort(
+    (a, b) => (b.readiness?.readiness_score ?? 0) - (a.readiness?.readiness_score ?? 0)
+  );
+
+  return (
+    <div className="rounded-xl border p-5" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
+      <div className="flex items-baseline justify-between mb-4">
+        <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
+          Compliance Coverage
+        </p>
+        <Link href="/frameworks" className="text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+          All frameworks →
+        </Link>
+      </div>
+
+      {/* Aggregate number */}
+      <div className="mb-4">
+        {overallPct !== null ? (
+          <>
+            <p className="text-4xl font-bold leading-none" style={{ color: TEAL }}>
+              {overallPct}%
+            </p>
+            <p className="mt-1 text-xs" style={{ color: "#94a3b8" }}>
+              {totalSatisfied} of {totalRequirements} requirements satisfied
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-2xl font-bold" style={{ color: TEXT_MUTED }}>—</p>
+            <p className="mt-1 text-xs" style={{ color: TEXT_MUTED }}>No frameworks assessed yet.</p>
+          </>
+        )}
+      </div>
+
+      {/* Per-framework rows */}
+      {sorted.length === 0 ? (
+        <div className="flex items-center justify-between">
+          <p className="text-xs" style={{ color: TEXT_MUTED }}>No frameworks assessed yet.</p>
+          <Link href="/frameworks" className="text-xs font-medium hover:opacity-80" style={{ color: TEAL }}>
+            Add framework →
+          </Link>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {sorted.map(({ framework, readiness }) => {
+            const score     = readiness?.readiness_score   ?? 0;
+            const satisfied = readiness?.satisfied         ?? 0;
+            const total     = readiness?.total_requirements ?? 0;
+            const partial   = readiness?.partial           ?? 0;
+            const unmapped  = readiness?.unmapped          ?? 0;
+            const color =
+              score >= 80 ? "#22c55e" :
+              score >= 60 ? "#f59e0b" :
+              "#ef4444";
+            return (
+              <div key={framework.id}>
+                <div className="flex items-baseline justify-between mb-1">
+                  <span className="text-xs truncate max-w-[120px]" style={{ color: "#cbd5e1" }}>
+                    {framework.name}
+                  </span>
+                  <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                    <span className="text-xs tabular-nums" style={{ color: TEXT_MUTED }}>
+                      {satisfied}/{total}
+                    </span>
+                    {partial > 0 && (
+                      <span className="text-xs" style={{ color: "#f59e0b" }}>
+                        {partial} partial
+                      </span>
+                    )}
+                    {unmapped > 0 && (
+                      <span className="text-xs" style={{ color: "#475569" }}>
+                        {unmapped} unmapped
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="h-1 rounded-full" style={{ background: SLATE_LINE }}>
+                  <div className="h-1 rounded-full" style={{ width: `${Math.min(score, 100)}%`, background: color }} />
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

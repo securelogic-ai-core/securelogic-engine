@@ -4,7 +4,7 @@ import { getSession } from "@/lib/session";
 import { getIssues, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFrameworks, getFrameworkReadiness, type DashboardSummary, type PostureSnapshot, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
-import { FindingsDonut, DomainPostureBars, ActionsRing, InventoryGrid, FrameworkGaps, VendorRiskCard, PostureScoreTile, RisksBreakdown } from "./DashboardCharts";
+import { FindingsDonut, DomainPostureBars, ActionsRing, InventoryGrid, FrameworkGaps, VendorRiskCard, PostureScoreTile, RisksBreakdown, ComplianceCoverage } from "./DashboardCharts";
 import { PostureTrendChart } from "./PostureTrendChart";
 import { LastLoginBanner } from "./LastLoginBanner";
 
@@ -330,10 +330,11 @@ function PostureDashboard({
         <ActionsRing actions={actions} />
       </div>
 
-      {/* Row 2: Vendor risk | Framework gaps */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+      {/* Row 2: Vendor risk | Framework gaps | Compliance coverage */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <VendorRiskCard vendor_risk={vendor_risk} />
         <FrameworkGaps pairs={frameworkPairs} />
+        <ComplianceCoverage frameworkPairs={frameworkPairs} />
       </div>
 
       {/* Row 3: Inventory grid (full width) */}
