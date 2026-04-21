@@ -289,8 +289,9 @@ router.get(
           status: string;
           created_at: string;
           last_used_at: string | null;
+          lockout_until: string | null;
         }>(
-          `SELECT id, email, name, role, status, created_at, NULL AS last_used_at
+          `SELECT id, email, name, role, status, created_at, NULL AS last_used_at, lockout_until
            FROM users
            WHERE organization_id = $1 AND status != 'inactive'
            ORDER BY created_at ASC`,
