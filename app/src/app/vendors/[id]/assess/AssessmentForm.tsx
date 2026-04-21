@@ -23,15 +23,15 @@ const LABEL_STYLE: React.CSSProperties = {
 };
 
 const SEVERITIES = ["Critical", "High", "Moderate", "Low"] as const;
-const ASSESSMENT_TYPES = [
-  "Annual Review",
-  "Onboarding",
-  "Triggered Review",
-  "Continuous Monitoring",
-  "Contract Renewal",
-  "Incident Response",
-  "Custom",
-] as const;
+const ASSESSMENT_TYPES: Array<{ value: string; label: string }> = [
+  { value: "initial_assessment",   label: "Initial Assessment" },
+  { value: "annual_review",        label: "Annual Review" },
+  { value: "periodic_review",      label: "Periodic Review" },
+  { value: "incident_triggered",   label: "Incident-Triggered Review" },
+  { value: "pre_contract",         label: "Pre-Contract Due Diligence" },
+  { value: "post_incident",        label: "Post-Incident Review" },
+  { value: "framework_assessment", label: "Framework Assessment" },
+];
 
 type Props = {
   vendorId: string;
@@ -130,10 +130,10 @@ export function AssessmentForm({ vendorId, vendorName }: Props) {
         <div>
           <label style={LABEL_STYLE}>Assessment Type *</label>
           <select name="assessment_type" required style={INPUT_STYLE}>
-            <option value="">Select type…</option>
-            {ASSESSMENT_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
+            <option value="">— Select type —</option>
+            {ASSESSMENT_TYPES.map(({ value, label }) => (
+              <option key={value} value={value}>
+                {label}
               </option>
             ))}
           </select>
