@@ -604,6 +604,7 @@ export type AuthLoginResponse =
         onboardingCompleted?: boolean;
       };
     }
+  | { mfa_required: true; mfa_token: string }
   | { error: string };
 
 export type AuthMeResponse = {
@@ -617,6 +618,7 @@ export type AuthMeResponse = {
   billingActive: boolean;
   emailSuppressed?: boolean;
   onboardingCompleted?: boolean;
+  totpEnabled?: boolean;
 };
 
 export type TeamMember = {

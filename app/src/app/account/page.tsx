@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getMe, getAuthMe } from "@/lib/api";
+import MfaSection from "./security/MfaSection";
 
 function planDisplayName(entitlementLevel: string): string {
   switch (entitlementLevel) {
@@ -155,6 +156,11 @@ export default async function AccountPage({
               {isAdmin ? "Manage Team →" : "View Team →"}
             </Link>
           </div>
+        )}
+
+        {/* Security / MFA — only available with JWT auth (email/password login) */}
+        {session.jwtToken && (
+          <MfaSection totpEnabled={authMe?.totpEnabled ?? false} />
         )}
 
         {/* Alert Preferences */}

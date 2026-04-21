@@ -26,7 +26,7 @@ import rateLimit from "express-rate-limit";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
-import { signJwt } from "../lib/jwt.js";
+import { signJwt, signMfaChallenge } from "../lib/jwt.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { Resend } from "resend";
 
@@ -469,8 +469,9 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
       role: string;
       password_hash: string;
       email_verified: boolean;
+      totp_enabled: boolean;
     }>(
-      `SELECT id, organization_id, name, email, role, password_hash, email_verified
+      `SELECT id, organization_id, name, email, role, password_hash, email_verified, totp_enabled
        FROM users
        WHERE email = $1
        LIMIT 1`,
@@ -504,6 +505,14 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
 
     if (!user.email_verified) {
       res.status(403).json({ error: "email_not_verified" });
+      return;
+    }
+
+    // MFA challenge — issue a short-lived token instead of a full session
+    if (user.totp_enabled) {
+      const mfaToken = signMfaChallenge(user.id, user.organization_id);
+      logger.info({ event: "customer_login_mfa_required", userId: user.id }, "MFA required");
+      res.status(200).json({ mfa_required: true, mfa_token: mfaToken });
       return;
     }
 
@@ -720,8 +729,8 @@ router.get("/auth/me", requireAuth, async (req, res) => {
     const userId = req.jwtPayload!.sub;
     const orgId  = req.jwtPayload!.org;
 
-    const userResult = await pg.query<{ id: string; email: string; name: string; role: string }>(
-      `SELECT id, email, name, role FROM users WHERE id = $1 LIMIT 1`,
+    const userResult = await pg.query<{ id: string; email: string; name: string; role: string; totp_enabled: boolean }>(
+      `SELECT id, email, name, role, totp_enabled FROM users WHERE id = $1 LIMIT 1`,
       [userId]
     );
 
@@ -767,7 +776,8 @@ router.get("/auth/me", requireAuth, async (req, res) => {
       entitlementLevel:    org?.entitlement_level ?? "starter",
       billingActive:       org?.entitlement_level !== "starter" && !org?.payment_failed_at,
       emailSuppressed,
-      onboardingCompleted: org?.onboarding_completed_at !== null && org?.onboarding_completed_at !== undefined
+      onboardingCompleted: org?.onboarding_completed_at !== null && org?.onboarding_completed_at !== undefined,
+      totpEnabled:         user.totp_enabled ?? false
     });
   } catch (err) {
     logger.error({ event: "auth_me_failed", err }, "GET /api/auth/me failed");

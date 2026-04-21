@@ -23,26 +23,34 @@ export async function POST(request: Request) {
       return NextResponse.json(result, { status });
     }
 
+    // MFA required — pass challenge token through without setting session
+    if ("mfa_required" in result && result.mfa_required) {
+      return NextResponse.json({ mfa_required: true, mfa_token: result.mfa_token });
+    }
+
+    // TypeScript needs explicit narrowing here after three union branches
+    const loginResult = result as Extract<typeof result, { ok: true }>;
+
     // Persist session
     const cookieStore = await cookies();
     const session = await getIronSession<SessionData>(cookieStore, getSessionOptions());
 
-    session.userId               = result.user.id;
-    session.email                = result.user.email;
-    session.name                 = result.user.name;
-    session.userRole             = (result.user as { role?: string }).role ?? "viewer";
-    session.jwtToken             = result.token;
-    session.organizationId       = result.user.organizationId;
-    session.organizationName     = result.user.organizationName;
-    session.entitlementLevel     = result.user.entitlementLevel;
-    session.billingActive        = result.user.entitlementLevel !== "starter";
-    session.onboardingCompleted  = result.user.onboardingCompleted ?? false;
+    session.userId               = loginResult.user.id;
+    session.email                = loginResult.user.email;
+    session.name                 = loginResult.user.name;
+    session.userRole             = (loginResult.user as { role?: string }).role ?? "viewer";
+    session.jwtToken             = loginResult.token;
+    session.organizationId       = loginResult.user.organizationId;
+    session.organizationName     = loginResult.user.organizationName;
+    session.entitlementLevel     = loginResult.user.entitlementLevel;
+    session.billingActive        = loginResult.user.entitlementLevel !== "starter";
+    session.onboardingCompleted  = loginResult.user.onboardingCompleted ?? false;
 
     await session.save();
 
     return NextResponse.json({
       ok: true,
-      entitlementLevel: result.user.entitlementLevel
+      entitlementLevel: loginResult.user.entitlementLevel
     });
   } catch {
     return NextResponse.json({ error: "login_failed" }, { status: 500 });
