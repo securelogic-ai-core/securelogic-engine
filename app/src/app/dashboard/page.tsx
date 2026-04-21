@@ -4,7 +4,7 @@ import { getSession } from "@/lib/session";
 import { getIssues, getMe, getDashboardSummary, getAuthMe, getFindings, getFrameworks, getFrameworkReadiness, type DashboardSummary, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
-import { FindingsDonut, DomainPostureBars, ActionsRing, InventoryGrid, FrameworkGaps, VendorRiskCard } from "./DashboardCharts";
+import { FindingsDonut, DomainPostureBars, ActionsRing, InventoryGrid, FrameworkGaps, VendorRiskCard, PostureScoreTile, RisksBreakdown } from "./DashboardCharts";
 
 export const revalidate = 0;
 
@@ -297,13 +297,19 @@ function PostureDashboard({
   summary: DashboardSummary;
   frameworkPairs: Array<{ framework: Framework; readiness: FrameworkReadiness | null }>;
 }) {
-  const { domains, findings, actions, controls_cadence, inventory, vendor_risk } = summary;
+  const { posture, domains, findings, actions, controls_cadence, inventory, vendor_risk, risks_summary } = summary;
 
   return (
     <div>
       <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-4">
         Security Posture
       </h2>
+
+      {/* Row 0: Posture score | Risks breakdown */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <PostureScoreTile posture={posture} />
+        <RisksBreakdown risks_summary={risks_summary} />
+      </div>
 
       {/* Row 1: Findings donut | Domain bars | Actions ring */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">

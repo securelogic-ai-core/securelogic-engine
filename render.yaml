@@ -164,6 +164,32 @@ services:
         sync: false
 
   # =========================================================
+  # POSTURE WORKER (background)
+  # Long-running process — computes posture snapshots for all
+  # active organisations every 6 hours. Uses the same Postgres
+  # instance as the API service.
+  # =========================================================
+
+  - type: worker
+    name: securelogic-posture-worker
+    env: node
+    plan: starter
+    buildCommand: npm install --include=dev && tsc -p services/posture-worker/tsconfig.json
+    startCommand: node dist-posture-worker/services/posture-worker/src/index.js
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Shared with API service — same Postgres instance
+      - key: DATABASE_URL
+        sync: false
+
+      # Optional: override log verbosity (default: info)
+      - key: LOG_LEVEL
+        sync: false
+
+  # =========================================================
   # SECURELOGIC APP (Next.js frontend)
   # User-facing web application: landing, registration, login,
   # brief archive, account, and billing flows.

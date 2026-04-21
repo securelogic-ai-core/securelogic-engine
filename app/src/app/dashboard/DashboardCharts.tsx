@@ -22,9 +22,17 @@ const TEXT_MUTED = "#64748b";
 const SURFACE    = "var(--color-brand-surface, #111827)";
 
 function scoreColor(score: number): string {
-  if (score >= 70) return "#22c55e";
-  if (score >= 40) return "#f59e0b";
+  if (score >= 80) return "#22c55e";
+  if (score >= 60) return "#f59e0b";
+  if (score >= 40) return "#f97316";
   return "#ef4444";
+}
+
+function TrendArrow({ direction }: { direction?: string | null }) {
+  if (!direction || direction === "unknown") return null;
+  if (direction === "improving") return <span style={{ color: "#22c55e", fontSize: "10px", fontWeight: 700 }}>↑</span>;
+  if (direction === "worsening") return <span style={{ color: "#ef4444", fontSize: "10px", fontWeight: 700 }}>↓</span>;
+  return <span style={{ color: "#64748b", fontSize: "10px" }}>→</span>;
 }
 
 // ── FindingsDonut ──────────────────────────────────────────────
@@ -141,8 +149,11 @@ export function DomainPostureBars({ domains }: { domains: DomainScore[] }) {
                 className="block hover:opacity-80 transition-opacity"
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs truncate max-w-[140px]" style={{ color: "#cbd5e1" }}>{d.domain}</span>
-                  <span className="text-xs font-bold tabular-nums ml-2 flex-shrink-0" style={{ color }}>{score}</span>
+                  <span className="text-xs truncate max-w-[120px]" style={{ color: "#cbd5e1" }}>{d.domain}</span>
+                  <span className="flex items-center gap-1 ml-2 flex-shrink-0">
+                    <TrendArrow direction={d.trend_direction} />
+                    <span className="text-xs font-bold tabular-nums" style={{ color }}>{score}</span>
+                  </span>
                 </div>
                 <div className="h-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }}>
                   <div className="h-1.5 rounded-full" style={{ width: `${Math.min(score, 100)}%`, background: color }} />
@@ -414,6 +425,119 @@ export function VendorRiskCard({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── PostureScoreTile ───────────────────────────────────────────
+
+export function PostureScoreTile({
+  posture,
+}: {
+  posture: DashboardSummary["posture"];
+}) {
+  const score = posture.overall_score;
+  const severity = posture.overall_severity;
+  const date = posture.snapshot_date;
+
+  const color = score == null ? TEXT_MUTED :
+    score >= 80 ? "#22c55e" :
+    score >= 60 ? "#f59e0b" :
+    score >= 40 ? "#f97316" :
+    "#ef4444";
+
+  const badgeStyle: React.CSSProperties =
+    severity === "Low"      ? { background: "rgba(34,197,94,0.15)",   color: "#86efac" } :
+    severity === "Moderate" ? { background: "rgba(245,158,11,0.15)",  color: "#fcd34d" } :
+    severity === "High"     ? { background: "rgba(249,115,22,0.15)",  color: "#fdba74" } :
+    severity === "Critical" ? { background: "rgba(239,68,68,0.15)",   color: "#fca5a5" } :
+    { background: "rgba(100,116,139,0.12)", color: "#64748b" };
+
+  const formattedDate = date
+    ? new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+    : null;
+
+  return (
+    <div
+      className="rounded-xl border p-5 flex flex-col justify-between"
+      style={{ background: SURFACE, borderColor: SLATE_LINE, borderLeft: `4px solid ${TEAL}` }}
+    >
+      <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: TEXT_MUTED }}>
+        Posture Score
+      </p>
+      {score == null ? (
+        <div>
+          <p className="text-2xl font-bold mb-1" style={{ color: TEXT_MUTED }}>—</p>
+          <p className="text-xs" style={{ color: TEXT_MUTED }}>No snapshot yet. Run a posture snapshot to see your score.</p>
+        </div>
+      ) : (
+        <>
+          <p className="text-4xl font-bold leading-none" style={{ color }}>{score}</p>
+          <div className="mt-2 flex items-center gap-2">
+            {severity && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold" style={badgeStyle}>
+                {severity}
+              </span>
+            )}
+          </div>
+          {formattedDate && (
+            <p className="mt-2 text-xs" style={{ color: TEXT_MUTED }}>as of {formattedDate}</p>
+          )}
+        </>
+      )}
+      <Link href="/posture" className="block mt-3 text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+        Full posture →
+      </Link>
+    </div>
+  );
+}
+
+// ── RisksBreakdown ─────────────────────────────────────────────
+
+export function RisksBreakdown({
+  risks_summary,
+}: {
+  risks_summary: DashboardSummary["risks_summary"];
+}) {
+  const rs = risks_summary ?? { open: 0, by_risk_rating: { Critical: 0, High: 0, Moderate: 0, Low: 0 } };
+  const total = rs.open;
+
+  const bars = [
+    { label: "Critical", count: rs.by_risk_rating.Critical, color: "#ef4444" },
+    { label: "High",     count: rs.by_risk_rating.High,     color: "#f97316" },
+    { label: "Moderate", count: rs.by_risk_rating.Moderate, color: "#f59e0b" },
+    { label: "Low",      count: rs.by_risk_rating.Low,      color: "#22c55e" },
+  ];
+
+  return (
+    <div className="rounded-xl border p-5" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
+      <div className="flex items-baseline justify-between mb-4">
+        <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
+          Open Risks
+        </p>
+        <Link href="/risks" className="text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+          View all →
+        </Link>
+      </div>
+      <p className="text-3xl font-bold mb-3" style={{ color: total > 0 ? "#f1f5f9" : TEXT_MUTED }}>
+        {total}
+      </p>
+      <div className="space-y-2.5">
+        {bars.map(({ label, count, color }) => {
+          const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+          return (
+            <div key={label}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs" style={{ color: "#94a3b8" }}>{label}</span>
+                <span className="text-xs font-bold tabular-nums" style={{ color: count > 0 ? color : TEXT_MUTED }}>{count}</span>
+              </div>
+              <div className="h-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }}>
+                <div className="h-1.5 rounded-full" style={{ width: `${pct}%`, background: color }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

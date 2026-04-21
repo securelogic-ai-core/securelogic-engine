@@ -114,6 +114,7 @@ export type DomainScore = {
   severity: string | null;
   finding_count: number;
   action_count: number;
+  trend_direction?: "improving" | "stable" | "worsening" | "unknown" | null;
 };
 
 export type DashboardSummary = {
@@ -148,6 +149,7 @@ export type DashboardSummary = {
       Moderate: number;
       Low: number;
     };
+    by_domain?: Record<string, number>;
   };
   inventory: {
     vendors: number;
