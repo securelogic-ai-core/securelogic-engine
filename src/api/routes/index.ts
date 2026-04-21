@@ -94,6 +94,7 @@ import customerApiKeysRouter from "./customerApiKeys.js";
 import webhooksRouter from "./webhooks.js";
 import askRouter from "./ask.js";
 import transcribeRouter from "./transcribe.js";
+import riskScaleRouter from "./riskScale.js";
 
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -418,6 +419,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", webhooksRouter);
   router.use("/api", askRouter);
   router.use("/api", transcribeRouter);
+  router.use("/api", riskScaleRouter);
 
   // Admin brief operations — own bearer-token auth (SCHEDULER_SECRET),
   // independent of the admin panel key and org API key systems.

@@ -2366,6 +2366,63 @@ export async function getFrameworkRequirements(
   }
 }
 
+// =========================================================
+// RISK SCALE
+// =========================================================
+
+export type RiskScaleLevel = {
+  value: string;
+  label: string;
+  color: string;
+  rank: number;
+};
+
+export type RiskScale = {
+  preset_name: string;
+  display_name: string;
+  is_customized: boolean;
+  levels: RiskScaleLevel[];
+};
+
+export async function getRiskScale(token: string): Promise<RiskScale | null> {
+  try {
+    const res = await engineFetch("/api/risk-scale", token);
+    if (!res.ok) return null;
+    return res.json() as Promise<RiskScale>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getRiskScalePresets(
+  token: string
+): Promise<RiskScale[] | null> {
+  try {
+    const res = await engineFetch("/api/risk-scale/presets", token);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { presets: RiskScale[] };
+    return body.presets ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function updateRiskScale(
+  token: string,
+  body: { preset_name: string; custom_levels?: Partial<RiskScaleLevel>[] }
+): Promise<RiskScale | null> {
+  try {
+    const res = await engineFetch("/api/risk-scale", token, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<RiskScale>;
+  } catch {
+    return null;
+  }
+}
+
 export async function saveRequirementResponse(
   apiKey: string,
   body: {

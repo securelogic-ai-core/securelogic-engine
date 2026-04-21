@@ -114,7 +114,7 @@ router.post(
 
     try {
       // -----------------------------------------------------------------------
-      // Fetch all context data in parallel — 7 queries
+      // Fetch all context data in parallel — 8 queries (+ risk scale)
       // -----------------------------------------------------------------------
       const [
         postureResult,
@@ -125,6 +125,7 @@ router.post(
         vendorsResult,
         actionsSummaryResult,
         criticalFindingsResult,
+        riskScaleResult,
       ] = await Promise.all([
         // 1. Latest posture snapshot
         pg.query<{
@@ -294,6 +295,29 @@ router.post(
            LIMIT 15`,
           [organizationId]
         ),
+
+        // 8. Org risk scale
+        pg.query<{
+          preset_name: string;
+          custom_levels: Array<{ value: string; label: string; color: string; rank: number }> | null;
+          preset_levels: Array<{ value: string; label: string; color: string; rank: number }>;
+          display_name: string;
+        }>(
+          `SELECT
+             COALESCE(ors.preset_name, 'standard')  AS preset_name,
+             ors.custom_levels,
+             rsp.levels                              AS preset_levels,
+             rsp.display_name
+           FROM risk_scale_presets rsp
+           LEFT JOIN organization_risk_scales ors
+             ON ors.organization_id = $1
+             AND ors.preset_name = rsp.name
+           WHERE rsp.name = COALESCE(
+             (SELECT preset_name FROM organization_risk_scales WHERE organization_id = $1),
+             'standard'
+           )`,
+          [organizationId]
+        ),
       ]);
 
       // -----------------------------------------------------------------------
@@ -302,6 +326,13 @@ router.post(
       const posture = postureResult.rows[0] ?? null;
       const fs  = findingsSummaryResult.rows[0];
       const as_ = actionsSummaryResult.rows[0];
+
+      const scaleRow = riskScaleResult.rows[0] ?? null;
+      const scaleLevels = scaleRow?.custom_levels ?? scaleRow?.preset_levels ?? [];
+      const riskScaleContext = {
+        name:   scaleRow?.display_name ?? "Standard",
+        levels: scaleLevels.map((l: { label: string }) => l.label),
+      };
 
       const findingsSummary = {
         open_count:         parseInt(fs?.open_count ?? "0", 10),
@@ -324,6 +355,7 @@ router.post(
       };
 
       const context = {
+        risk_scale: riskScaleContext,
         posture: posture
           ? {
               overall_score:    posture.overall_score,
@@ -362,7 +394,11 @@ router.post(
       // -----------------------------------------------------------------------
       // Call Claude
       // -----------------------------------------------------------------------
-      const userMessage = `Here is the current risk posture data for this organization:\n\n${JSON.stringify(context, null, 2)}\n\nQuestion: ${question.trim()}`;
+      const scaleInstruction = riskScaleContext.levels.length > 0
+        ? `\n\nThis organization uses the following risk rating scale: ${riskScaleContext.levels.join(", ")}. Use these exact labels when referring to risk levels.`
+        : "";
+
+      const userMessage = `Here is the current risk posture data for this organization:\n\n${JSON.stringify(context, null, 2)}${scaleInstruction}\n\nQuestion: ${question.trim()}`;
 
       let answer: string;
       try {
