@@ -25,13 +25,20 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const redirect     = searchParams.get("redirect") ?? "/dashboard";
 
-  const [email,       setEmail]       = useState("");
-  const [password,    setPassword]    = useState("");
-  const [loading,     setLoading]     = useState(false);
-  const [error,       setError]       = useState<string | null>(null);
-  const [ssoConfig,   setSsoConfig]   = useState<SsoDomainResult | null>(null);
-  const [checkingSSO, setCheckingSSO] = useState(false);
+  const [email,        setEmail]        = useState("");
+  const [password,     setPassword]     = useState("");
+  const [loading,      setLoading]      = useState(false);
+  const [error,        setError]        = useState<string | null>(null);
+  const [ssoConfig,    setSsoConfig]    = useState<SsoDomainResult | null>(null);
+  const [checkingSSO,  setCheckingSSO]  = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  // MFA challenge state
+  const [mfaRequired,   setMfaRequired]   = useState(false);
+  const [mfaToken,      setMfaToken]      = useState("");
+  const [mfaCode,       setMfaCode]       = useState("");
+  const [useBackupMode, setUseBackupMode] = useState(false);
+  const [backupCode,    setBackupCode]    = useState("");
 
   const checkSSOForEmail = useCallback(async (emailValue: string) => {
     const trimmed = emailValue.trim();
@@ -68,7 +75,12 @@ function LoginForm() {
       body: JSON.stringify({ email: email.trim(), password }),
     });
 
-    const data = (await res.json()) as { ok?: boolean; error?: string };
+    const data = (await res.json()) as {
+      ok?: boolean;
+      error?: string;
+      mfa_required?: boolean;
+      mfa_token?: string;
+    };
 
     if (!res.ok) {
       if (data.error === "email_not_verified") {
@@ -79,6 +91,46 @@ function LoginForm() {
         data.error === "invalid_credentials"
           ? "Invalid email or password."
           : "Sign in failed. Please try again."
+      );
+      setLoading(false);
+      return;
+    }
+
+    // MFA required — show the TOTP step
+    if (data.mfa_required && data.mfa_token) {
+      setMfaToken(data.mfa_token);
+      setMfaRequired(true);
+      setLoading(false);
+      return;
+    }
+
+    router.push(redirect);
+    router.refresh();
+  }
+
+  async function handleMfaSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    const endpoint = useBackupMode ? "/api/mfa/use-backup" : "/api/mfa/verify";
+    const body     = useBackupMode
+      ? { backup_code: backupCode.trim(), mfa_token: mfaToken }
+      : { code: mfaCode.trim(), mfa_token: mfaToken };
+
+    const res  = await fetch(endpoint, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(body)
+    });
+    const data = (await res.json()) as { ok?: boolean; error?: string };
+
+    if (!res.ok || !data.ok) {
+      setError(
+        data.error === "invalid_code"        ? "Incorrect code. Try again." :
+        data.error === "invalid_backup_code" ? "Backup code not recognised." :
+        data.error === "too_many_attempts"   ? "Too many attempts. Try again in 5 minutes." :
+        "Verification failed. Please try again."
       );
       setLoading(false);
       return;
@@ -95,6 +147,78 @@ function LoginForm() {
     : null;
 
   const showPasswordForm = !hasSso || showPassword;
+
+  // MFA verification step
+  if (mfaRequired) {
+    return (
+      <AuthCard
+        title="Two-factor verification"
+        subtitle="Enter the code from your authenticator app."
+      >
+        <AuthError message={error} />
+
+        {!useBackupMode ? (
+          <form onSubmit={(e) => { void handleMfaSubmit(e); }}>
+            <AuthInput
+              id="mfa-code"
+              label="Authenticator code"
+              type="text"
+              value={mfaCode}
+              onChange={(v) => { setMfaCode(v); setError(null); }}
+              placeholder="000000"
+              autoComplete="one-time-code"
+            />
+            <div style={{ textAlign: "right", marginBottom: "24px", marginTop: "-8px" }}>
+              <button
+                type="button"
+                onClick={() => { setUseBackupMode(true); setError(null); }}
+                style={{
+                  background:     "none",
+                  border:         "none",
+                  color:          "#64748b",
+                  fontSize:       "13px",
+                  cursor:         "pointer",
+                  textDecoration: "underline"
+                }}
+              >
+                Use a backup code instead
+              </button>
+            </div>
+            <AuthButton loading={loading}>Verify</AuthButton>
+          </form>
+        ) : (
+          <form onSubmit={(e) => { void handleMfaSubmit(e); }}>
+            <AuthInput
+              id="backup-code"
+              label="Backup code"
+              type="text"
+              value={backupCode}
+              onChange={(v) => { setBackupCode(v); setError(null); }}
+              placeholder="e.g. 3f9a2c1d7b"
+              autoComplete="off"
+            />
+            <div style={{ textAlign: "right", marginBottom: "24px", marginTop: "-8px" }}>
+              <button
+                type="button"
+                onClick={() => { setUseBackupMode(false); setError(null); }}
+                style={{
+                  background:     "none",
+                  border:         "none",
+                  color:          "#64748b",
+                  fontSize:       "13px",
+                  cursor:         "pointer",
+                  textDecoration: "underline"
+                }}
+              >
+                ← Use authenticator code instead
+              </button>
+            </div>
+            <AuthButton loading={loading}>Use backup code</AuthButton>
+          </form>
+        )}
+      </AuthCard>
+    );
+  }
 
   return (
     <AuthCard
