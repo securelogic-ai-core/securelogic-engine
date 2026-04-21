@@ -5,14 +5,14 @@ import {
   getVendor,
   getVendorAssessmentsForVendor,
   getVendorReviews,
-  getFindings,
+  getVendorFindings,
   type Vendor,
   type VendorAssessment,
   type VendorReview,
-  type Finding,
+  type VendorFinding,
 } from "@/lib/api";
-import { FindingCard } from "@/components/FindingCard";
 import { CompleteReviewSection } from "./CompleteReviewSection";
+import { RecalculateScoreButton } from "./RecalculateScoreButton";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -156,13 +156,29 @@ function VendorStatusBadge({ status }: { status: string }) {
   );
 }
 
+const ASSESSMENT_TYPE_LABELS: Record<string, string> = {
+  initial_assessment:   "Initial Assessment",
+  annual_review:        "Annual Review",
+  periodic_review:      "Periodic Review",
+  incident_triggered:   "Incident-Triggered Review",
+  pre_contract:         "Pre-Contract Due Diligence",
+  post_incident:        "Post-Incident Review",
+  framework_assessment: "Framework Assessment",
+};
+
+function assessmentTypeLabel(raw: string): string {
+  return ASSESSMENT_TYPE_LABELS[raw] ?? raw;
+}
+
 function OpenFindingsSectionClient({
   findings,
   vendorId,
 }: {
-  findings: Finding[];
+  findings: VendorFinding[];
   vendorId: string;
 }) {
+  const openFindings = findings.filter((f) => f.status === "open" || f.status === "in_progress");
+
   return (
     <section>
       <div className="flex items-center gap-2 mb-4">
@@ -172,23 +188,57 @@ function OpenFindingsSectionClient({
         <span
           className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold"
           style={{
-            background: findings.length > 0 ? "rgba(239,68,68,0.15)" : "rgba(148,163,184,0.12)",
-            color: findings.length > 0 ? "#fca5a5" : "#475569",
+            background: openFindings.length > 0 ? "rgba(239,68,68,0.15)" : "rgba(148,163,184,0.12)",
+            color: openFindings.length > 0 ? "#fca5a5" : "#475569",
           }}
         >
-          {findings.length}
+          {openFindings.length}
         </span>
       </div>
 
-      {findings.length === 0 ? (
+      {openFindings.length === 0 ? (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
           <p className="text-sm" style={{ color: "#94a3b8" }}>No open findings</p>
         </div>
       ) : (
         <div className="space-y-3">
-          {findings.map((f) => (
-            <FindingCard key={f.id} finding={f} revalidateUrl={`/vendors/${vendorId}`} />
-          ))}
+          {openFindings.map((f) => {
+            const sevStyle =
+              f.severity === "Critical" ? { background: "rgba(239,68,68,0.15)", color: "#fca5a5" } :
+              f.severity === "High"     ? { background: "rgba(249,115,22,0.15)", color: "#fdba74" } :
+              f.severity === "Moderate" ? { background: "rgba(245,158,11,0.15)", color: "#fcd34d" } :
+              f.severity === "Low"      ? { background: "rgba(34,197,94,0.15)",  color: "#86efac" } :
+              { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
+            return (
+              <div
+                key={f.id}
+                className="bg-brand-surface border border-brand-line rounded-xl p-4"
+              >
+                <div className="flex items-start gap-3">
+                  <span
+                    className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold flex-shrink-0 mt-0.5"
+                    style={sevStyle}
+                  >
+                    {f.severity}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium mb-0.5" style={{ color: "#f1f5f9" }}>
+                      {f.title}
+                    </p>
+                    {f.description && (
+                      <p className="text-xs line-clamp-2" style={{ color: "#94a3b8" }}>
+                        {f.description}
+                      </p>
+                    )}
+                    <p className="text-xs mt-1" style={{ color: "#475569" }}>
+                      {assessmentTypeLabel(f.assessment_type)}
+                      {f.performed_at ? ` · ${fmt(f.performed_at)}` : ""}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </section>
@@ -236,7 +286,7 @@ function AssessmentHistorySection({
                   <div className="flex items-center gap-2 flex-wrap mb-1.5">
                     <SeverityBadge severity={a.overall_severity} />
                     <span className="text-xs" style={{ color: "#94a3b8" }}>
-                      {a.assessment_type}
+                      {assessmentTypeLabel(a.assessment_type)}
                     </span>
                     {assessmentIdsWithFindings.has(a.id) && (
                       <span
@@ -405,70 +455,97 @@ function VendorDetailsCard({ vendor }: { vendor: Vendor }) {
 // Sidebar: Risk Summary
 // ─────────────────────────────────────────────────────────────
 
-function riskSummaryColor(openFindings: Finding[]): string {
-  if (openFindings.some((f) => f.severity === "Critical")) return "#fca5a5";
-  if (openFindings.some((f) => f.severity === "High")) return "#fdba74";
-  if (openFindings.some((f) => f.severity === "Moderate")) return "#fcd34d";
-  if (openFindings.length > 0) return "#86efac";
-  return "#00c4b4";
+function riskScoreColor(score: number | null): string {
+  if (score == null) return "#64748b";
+  if (score >= 75) return "#86efac";
+  if (score >= 50) return "#fcd34d";
+  if (score >= 25) return "#fdba74";
+  return "#fca5a5";
+}
+
+function riskLevelFromScore(score: number | null): string | null {
+  if (score == null) return null;
+  if (score >= 75) return "Low Risk";
+  if (score >= 50) return "Moderate Risk";
+  if (score >= 25) return "High Risk";
+  return "Critical Risk";
 }
 
 function RiskSummaryCard({
-  openFindings,
+  vendor,
+  openFindingCount,
   assessmentCount,
   reviewCount,
   lastActivityDate,
 }: {
-  openFindings: Finding[];
+  vendor: Vendor;
+  openFindingCount: number;
   assessmentCount: number;
   reviewCount: number;
   lastActivityDate: string | null;
 }) {
-  const countColor = riskSummaryColor(openFindings);
+  const score = vendor.current_risk_score ?? null;
+  const scoreColor = riskScoreColor(score);
+  const riskLevel = riskLevelFromScore(score);
+
+  const riskLevelBadgeStyle: React.CSSProperties =
+    riskLevel === "Low Risk"      ? { background: "rgba(34,197,94,0.15)",   color: "#86efac" } :
+    riskLevel === "Moderate Risk" ? { background: "rgba(245,158,11,0.15)",  color: "#fcd34d" } :
+    riskLevel === "High Risk"     ? { background: "rgba(249,115,22,0.15)",  color: "#fdba74" } :
+    riskLevel === "Critical Risk" ? { background: "rgba(239,68,68,0.15)",   color: "#fca5a5" } :
+    { background: "rgba(100,116,139,0.12)", color: "#64748b" };
 
   return (
     <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
-      <h3
-        className="text-xs font-semibold uppercase tracking-wide mb-4"
-        style={{ color: "#94a3b8" }}
-      >
+      <h3 className="text-xs font-semibold uppercase tracking-wide mb-4" style={{ color: "#94a3b8" }}>
         Risk Summary
       </h3>
 
-      <div className="mb-4">
-        <p
-          className="text-4xl font-bold leading-none"
-          style={{ color: countColor }}
-        >
-          {openFindings.length}
+      {/* Risk score */}
+      <div className="mb-4 pb-4" style={{ borderBottom: "1px solid #1e2d45" }}>
+        <p className="text-xs mb-1" style={{ color: "#475569" }}>Vendor Risk Score</p>
+        <p className="text-4xl font-bold leading-none mb-2" style={{ color: scoreColor }}>
+          {score != null ? score : "—"}
         </p>
-        <p className="text-xs mt-1" style={{ color: "#475569" }}>
-          open finding{openFindings.length !== 1 ? "s" : ""}
-        </p>
+        {riskLevel ? (
+          <span
+            className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold"
+            style={riskLevelBadgeStyle}
+          >
+            {riskLevel}
+          </span>
+        ) : (
+          <p className="text-xs" style={{ color: "#475569" }}>
+            No score yet — create an assessment to compute
+          </p>
+        )}
       </div>
 
-      <div className="space-y-2">
+      {/* Counts */}
+      <div className="space-y-2 mb-4">
         <div className="flex items-center justify-between">
-          <span className="text-xs" style={{ color: "#94a3b8" }}>Assessments</span>
-          <span className="text-xs font-semibold" style={{ color: "#cbd5e1" }}>
-            {assessmentCount}
+          <span className="text-xs" style={{ color: "#94a3b8" }}>Open findings</span>
+          <span className="text-xs font-semibold" style={{ color: openFindingCount > 0 ? "#fca5a5" : "#cbd5e1" }}>
+            {openFindingCount}
           </span>
         </div>
         <div className="flex items-center justify-between">
+          <span className="text-xs" style={{ color: "#94a3b8" }}>Assessments</span>
+          <span className="text-xs font-semibold" style={{ color: "#cbd5e1" }}>{assessmentCount}</span>
+        </div>
+        <div className="flex items-center justify-between">
           <span className="text-xs" style={{ color: "#94a3b8" }}>Review cycles</span>
-          <span className="text-xs font-semibold" style={{ color: "#cbd5e1" }}>
-            {reviewCount}
-          </span>
+          <span className="text-xs font-semibold" style={{ color: "#cbd5e1" }}>{reviewCount}</span>
         </div>
         {lastActivityDate && (
           <div className="flex items-center justify-between">
             <span className="text-xs" style={{ color: "#94a3b8" }}>Last activity</span>
-            <span className="text-xs font-semibold" style={{ color: "#cbd5e1" }}>
-              {fmt(lastActivityDate)}
-            </span>
+            <span className="text-xs font-semibold" style={{ color: "#cbd5e1" }}>{fmt(lastActivityDate)}</span>
           </div>
         )}
       </div>
+
+      <RecalculateScoreButton vendorId={vendor.id} />
     </div>
   );
 }
@@ -547,39 +624,28 @@ export default async function VendorDetailPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const [vendor, assessmentsData, reviewsData, findingsData] = await Promise.all([
+  const [vendor, assessmentsData, reviewsData, vendorFindingsData] = await Promise.all([
     getVendor(token, id),
     getVendorAssessmentsForVendor(token, id, 20),
     getVendorReviews(token, id, 20),
-    getFindings(token, { domain: "Vendor Risk", limit: 100 }),
+    getVendorFindings(token, id),
   ]);
 
   if (!vendor) redirect("/vendors");
 
   const assessments = assessmentsData?.assessments ?? [];
   const reviews = reviewsData?.reviews ?? [];
-  const allFindings = findingsData?.findings ?? [];
+  const vendorFindings = vendorFindingsData?.findings ?? [];
 
-  // Filter findings to those linked to this vendor's assessments or reviews.
-  const assessmentIds = new Set(assessments.map((a) => a.id));
-  const reviewIds = new Set(reviews.map((r) => r.id));
-
-  const vendorFindings = allFindings.filter(
-    (f) =>
-      (f.source_type === "vendor_review" && f.source_id != null && assessmentIds.has(f.source_id)) ||
-      (f.source_type === "vendor_cycle_review" && f.source_id != null && reviewIds.has(f.source_id))
+  const openFindings = vendorFindings.filter(
+    (f) => f.status === "open" || f.status === "in_progress"
   );
-
-  const openFindings = vendorFindings.filter((f) => f.status === "open");
   const inProgressReviews = reviews.filter((r) => r.status === "in_progress");
 
-  // Track which assessments/reviews produced findings.
-  const assessmentIdsWithFindings = new Set<string>();
-  for (const f of vendorFindings) {
-    if (f.source_type === "vendor_review" && f.source_id) {
-      assessmentIdsWithFindings.add(f.source_id);
-    }
-  }
+  // Track which assessments produced findings (for the badge on history cards).
+  const assessmentIdsWithFindings = new Set<string>(
+    vendorFindings.map((f) => f.assessment_id)
+  );
 
   // Last activity: most recent of latest assessment or review created_at.
   const latestAssessmentDate = assessments[0]?.created_at ?? null;
@@ -643,7 +709,8 @@ export default async function VendorDetailPage({
         <div className="w-full lg:w-72 flex-shrink-0 space-y-4">
           <VendorDetailsCard vendor={vendor} />
           <RiskSummaryCard
-            openFindings={openFindings}
+            vendor={vendor}
+            openFindingCount={openFindings.length}
             assessmentCount={assessments.length}
             reviewCount={reviews.length}
             lastActivityDate={lastActivityDate}

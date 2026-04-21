@@ -182,6 +182,7 @@ export type Vendor = {
   service_description: string | null;
   category: string | null;
   criticality: "critical" | "high" | "medium" | "low" | null;
+  current_risk_score: number | null;
   data_sensitivity: string | null;
   access_level: string | null;
   website: string | null;
@@ -1269,6 +1270,39 @@ export async function getVendorAssessmentsForVendor(
     );
     if (!res.ok) return null;
     return res.json() as Promise<VendorAssessmentsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export type VendorFinding = {
+  id: string;
+  title: string;
+  severity: string;
+  status: string;
+  domain: string | null;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+  assessment_id: string;
+  assessment_type: string;
+  performed_at: string | null;
+};
+
+export async function getVendorFindings(
+  apiKey: string,
+  vendorId: string,
+  status?: string
+): Promise<{ findings: VendorFinding[]; total: number } | null> {
+  try {
+    const params = new URLSearchParams({ limit: "100" });
+    if (status) params.set("status", status);
+    const res = await engineFetch(
+      `/api/vendors/${encodeURIComponent(vendorId)}/findings?${params.toString()}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<{ findings: VendorFinding[]; total: number }>;
   } catch {
     return null;
   }

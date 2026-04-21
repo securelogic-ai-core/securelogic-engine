@@ -33,6 +33,7 @@ import { validateVendorAssessmentCreate } from "../lib/vendorAssessmentValidatio
 import { severityToPriority } from "../lib/postureComputation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
+import { computeVendorRiskScore } from "../lib/vendorRiskScore.js";
 
 const router = Router();
 
@@ -276,6 +277,37 @@ router.post(
           overall_severity: input.overall_severity,
         },
       }).catch(() => {});
+
+      // Background: recompute and persist vendor risk score after new assessment.
+      setImmediate(async () => {
+        try {
+          const vendorRow = await pg.query<{ criticality: string | null }>(
+            `SELECT criticality FROM vendors WHERE id = $1 AND organization_id = $2`,
+            [input.vendor_id, organizationId]
+          );
+          if ((vendorRow.rowCount ?? 0) === 0) return;
+
+          const criticality = vendorRow.rows[0]!.criticality;
+          const findingsRows = await pg.query<{ severity: string; status: string }>(
+            `SELECT f.severity, f.status
+             FROM findings f
+             JOIN vendor_assessments va ON va.id::text = f.source_id::text
+             WHERE va.vendor_id = $1
+               AND f.organization_id = $2
+               AND f.status IN ('open', 'in_progress')`,
+            [input.vendor_id, organizationId]
+          );
+
+          const { score } = computeVendorRiskScore(criticality, findingsRows.rows);
+          await pg.query(
+            `UPDATE vendors SET current_risk_score = $1, updated_at = NOW()
+             WHERE id = $2 AND organization_id = $3`,
+            [score, input.vendor_id, organizationId]
+          );
+        } catch {
+          // silent — score update is best-effort
+        }
+      });
 
       res.status(201).json({ assessment, finding });
     } catch (err) {

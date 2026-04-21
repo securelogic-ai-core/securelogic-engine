@@ -8,10 +8,12 @@
  * source_id column on findings is polymorphic).
  *
  * Routes:
- *   POST   /api/vendors           — create vendor
- *   GET    /api/vendors           — list vendors (active only by default)
- *   GET    /api/vendors/:id       — get single vendor
- *   PATCH  /api/vendors/:id       — update vendor fields (supports archiving)
+ *   POST   /api/vendors                  — create vendor
+ *   GET    /api/vendors                  — list vendors (active only by default)
+ *   GET    /api/vendors/:id              — get single vendor
+ *   PATCH  /api/vendors/:id              — update vendor fields (supports archiving)
+ *   GET    /api/vendors/:id/risk-score   — compute + persist vendor risk score
+ *   GET    /api/vendors/:id/findings     — findings linked to vendor via assessments
  *
  * No hard-delete route. Vendors are archived via PATCH status=archived.
  * Hard delete is deferred: assessments hold vendor_id FKs (ON DELETE SET NULL)
@@ -31,6 +33,7 @@ import {
   validateVendorPatch
 } from "../lib/vendorValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { computeVendorRiskScore } from "../lib/vendorRiskScore.js";
 
 const router = Router();
 
@@ -40,10 +43,6 @@ const MAX_LIMIT = 100;
 const VALID_STATUS_FILTERS = new Set(["active", "archived"]);
 const VALID_CRITICALITY_FILTERS = new Set(["critical", "high", "medium", "low"]);
 
-// Columns returned from all vendor queries.
-// current_risk_score and framework_coverage are deliberately excluded:
-// they are legacy pre-platform fields. Vendor risk will be derived from
-// findings in a later package.
 const VENDOR_SELECT = `
   id,
   organization_id,
@@ -51,6 +50,7 @@ const VENDOR_SELECT = `
   service_description,
   category,
   criticality,
+  current_risk_score,
   data_sensitivity,
   access_level,
   website,
@@ -588,6 +588,179 @@ router.patch(
         "PATCH /api/vendors/:id failed"
       );
       res.status(500).json({ error: "vendor_patch_failed" });
+    }
+  }
+);
+
+/* =========================================================
+   GET /api/vendors/:id/risk-score
+   Compute and persist the risk score for a single vendor.
+   Returns the computed score, risk_level, and contributing inputs.
+   ========================================================= */
+
+router.get(
+  "/vendors/:id/risk-score",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const vendorId = String(req.params.id ?? "").trim();
+      if (!vendorId) {
+        res.status(400).json({ error: "vendor_id_required" });
+        return;
+      }
+
+      const vendorResult = await pg.query<{ criticality: string | null }>(
+        `SELECT criticality FROM vendors WHERE id = $1 AND organization_id = $2`,
+        [vendorId, organizationId]
+      );
+      if ((vendorResult.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "vendor_not_found" });
+        return;
+      }
+
+      const criticality = vendorResult.rows[0]!.criticality;
+
+      const findingsResult = await pg.query<{ severity: string; status: string }>(
+        `
+        SELECT f.severity, f.status
+        FROM findings f
+        JOIN vendor_assessments va ON va.id::text = f.source_id::text
+        WHERE va.vendor_id = $1
+          AND f.organization_id = $2
+          AND f.status IN ('open', 'in_progress')
+        `,
+        [vendorId, organizationId]
+      );
+
+      const { score, risk_level } = computeVendorRiskScore(
+        criticality,
+        findingsResult.rows
+      );
+
+      await pg.query(
+        `UPDATE vendors SET current_risk_score = $1, updated_at = NOW()
+         WHERE id = $2 AND organization_id = $3`,
+        [score, vendorId, organizationId]
+      );
+
+      res.status(200).json({
+        vendor_id: vendorId,
+        score,
+        risk_level,
+        finding_count: findingsResult.rowCount ?? 0,
+        criticality,
+        computed_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      logger.error({ event: "vendor_risk_score_failed", err }, "GET /api/vendors/:id/risk-score failed");
+      res.status(500).json({ error: "vendor_risk_score_failed" });
+    }
+  }
+);
+
+/* =========================================================
+   GET /api/vendors/:id/findings
+   Fetch all findings linked to a vendor via its assessments.
+   Uses the source_type/source_id join — no vendor_id column
+   exists on findings.
+   ========================================================= */
+
+const VALID_FINDING_STATUSES = new Set(["open", "in_progress", "resolved", "accepted"]);
+
+router.get(
+  "/vendors/:id/findings",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const vendorId = String(req.params.id ?? "").trim();
+      if (!vendorId) {
+        res.status(400).json({ error: "vendor_id_required" });
+        return;
+      }
+
+      const limit = Math.min(parseLimit(req.query.limit ?? 50), 100);
+      const filterStatus = isNonEmptyString(req.query.status)
+        ? (req.query.status as string).trim()
+        : null;
+
+      if (filterStatus !== null && !VALID_FINDING_STATUSES.has(filterStatus)) {
+        res.status(400).json({ error: "invalid_status_filter", allowed: [...VALID_FINDING_STATUSES] });
+        return;
+      }
+
+      const params: unknown[] = [vendorId, organizationId];
+      let statusClause = "";
+      if (filterStatus !== null) {
+        params.push(filterStatus);
+        statusClause = `AND f.status = $${params.length}`;
+      }
+      params.push(limit);
+      const limitParam = params.length;
+
+      const result = await pg.query<{
+        id: string;
+        title: string;
+        severity: string;
+        status: string;
+        domain: string | null;
+        description: string | null;
+        created_at: string;
+        updated_at: string;
+        assessment_id: string;
+        assessment_type: string;
+        performed_at: string | null;
+      }>(
+        `
+        SELECT
+          f.id,
+          f.title,
+          f.severity,
+          f.status,
+          f.domain,
+          f.description,
+          f.created_at,
+          f.updated_at,
+          va.id          AS assessment_id,
+          va.assessment_type,
+          va.performed_at
+        FROM findings f
+        JOIN vendor_assessments va
+          ON va.id::text = f.source_id::text
+          AND f.source_type = 'vendor_review'
+        WHERE va.vendor_id = $1
+          AND f.organization_id = $2
+          ${statusClause}
+        ORDER BY f.created_at DESC
+        LIMIT $${limitParam}
+        `,
+        params
+      );
+
+      res.status(200).json({
+        findings: result.rows,
+        total: result.rowCount ?? 0,
+      });
+    } catch (err) {
+      logger.error({ event: "vendor_findings_failed", err }, "GET /api/vendors/:id/findings failed");
+      res.status(500).json({ error: "vendor_findings_failed" });
     }
   }
 );
