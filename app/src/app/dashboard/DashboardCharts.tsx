@@ -440,18 +440,19 @@ export function PostureScoreTile({
   const severity = posture.overall_severity;
   const date = posture.snapshot_date;
 
-  const color = score == null ? TEXT_MUTED :
-    score >= 80 ? "#22c55e" :
-    score >= 60 ? "#f59e0b" :
-    score >= 40 ? "#f97316" :
-    "#ef4444";
+  const severityColor =
+    severity === "Low"      ? "#86efac" :
+    severity === "Moderate" ? "#fcd34d" :
+    severity === "High"     ? "#fdba74" :
+    severity === "Critical" ? "#fca5a5" :
+    TEXT_MUTED;
 
   const badgeStyle: React.CSSProperties =
-    severity === "Low"      ? { background: "rgba(34,197,94,0.15)",   color: "#86efac" } :
-    severity === "Moderate" ? { background: "rgba(245,158,11,0.15)",  color: "#fcd34d" } :
-    severity === "High"     ? { background: "rgba(249,115,22,0.15)",  color: "#fdba74" } :
-    severity === "Critical" ? { background: "rgba(239,68,68,0.15)",   color: "#fca5a5" } :
-    { background: "rgba(100,116,139,0.12)", color: "#64748b" };
+    severity === "Low"      ? { background: "rgba(34,197,94,0.15)",   color: severityColor } :
+    severity === "Moderate" ? { background: "rgba(245,158,11,0.15)",  color: severityColor } :
+    severity === "High"     ? { background: "rgba(249,115,22,0.15)",  color: severityColor } :
+    severity === "Critical" ? { background: "rgba(239,68,68,0.15)",   color: severityColor } :
+    { background: "rgba(100,116,139,0.12)", color: severityColor };
 
   const formattedDate = date
     ? new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
@@ -472,7 +473,7 @@ export function PostureScoreTile({
         </div>
       ) : (
         <>
-          <p className="text-4xl font-bold leading-none" style={{ color }}>{score}</p>
+          <p className="text-4xl font-bold leading-none" style={{ color: severityColor }}>{score}</p>
           <div className="mt-2 flex items-center gap-2">
             {severity && (
               <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold" style={badgeStyle}>
