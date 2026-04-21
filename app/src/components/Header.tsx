@@ -11,8 +11,8 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.securelogicai.
 // ─── Nav config ───────────────────────────────────────────────────────────────
 
 type NavItem =
-  | { type: "link";  label: string; href: string; platform?: boolean; premium?: boolean }
-  | { type: "group"; label: string; platform?: boolean; premium?: boolean;
+  | { type: "link";  label: string; href: string; platform?: boolean; premium?: boolean; admin?: boolean }
+  | { type: "group"; label: string; platform?: boolean; premium?: boolean; admin?: boolean;
       items: Array<{ label: string; href: string }> };
 
 const NAV_ITEMS: NavItem[] = [
@@ -40,17 +40,19 @@ const NAV_ITEMS: NavItem[] = [
       { label: "Risk Register", href: "/risks" },
     ],
   },
-  { type: "link", label: "Audit Log", href: "/audit-log", premium: true },
+  { type: "link", label: "Audit Log", href: "/audit-log", admin: true },
 ];
 
 function filterNav(
   items: NavItem[],
   isPlatformUser: boolean,
   isPremiumUser: boolean,
+  isAdminUser: boolean,
 ): NavItem[] {
   return items.filter(item => {
     if (item.platform && !isPlatformUser) return false;
     if (item.premium  && !isPremiumUser)  return false;
+    if (item.admin    && !isAdminUser)    return false;
     return true;
   });
 }
@@ -181,8 +183,10 @@ interface HeaderProps {
   isAuthenticated: boolean;
   /** Platform nav items (Vendors, AI Systems, Controls, etc.) */
   isPlatformUser?: boolean;
-  /** Premium-only nav items (Audit Log) */
+  /** Premium-only nav items */
   isPremiumUser?: boolean;
+  /** Admin-only nav items (Audit Log) */
+  isAdminUser?: boolean;
   /** SSO settings link for professional+ orgs */
   isSsoEligible?: boolean;
   userName?: string;
@@ -195,6 +199,7 @@ export function Header({
   isAuthenticated,
   isPlatformUser = false,
   isPremiumUser = false,
+  isAdminUser = false,
   isSsoEligible = false,
   userName,
   userEmail,
@@ -213,7 +218,7 @@ export function Header({
     return () => document.removeEventListener("click", handleClick);
   }, [mobileOpen]);
 
-  const visibleNav = filterNav(NAV_ITEMS, isPlatformUser, isPremiumUser);
+  const visibleNav = filterNav(NAV_ITEMS, isPlatformUser, isPremiumUser, isAdminUser);
 
   return (
     <header className="relative sticky top-0 z-50 bg-navy-900/95 backdrop-blur-md border-b border-slate-800 shadow-[0_1px_0_rgba(255,255,255,0.06),0_4px_24px_rgba(0,0,0,0.5)]">

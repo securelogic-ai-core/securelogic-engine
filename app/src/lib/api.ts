@@ -665,10 +665,25 @@ export type AuditEvent = {
   created_at: string;
 };
 
+// AuditLogEvent — shape returned by the viewer API (payload aliased as metadata)
+export type AuditLogEvent = {
+  id: string;
+  event_type: string;
+  actor_email: string | null;
+  actor_name: string | null;
+  resource_type: string | null;
+  resource_id: string | null;
+  ip_address: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+};
+
 export type AuditLogResponse = {
-  events: AuditEvent[];
-  nextCursor: { created_at: string; id: string } | null;
+  events: AuditLogEvent[];
   total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
 };
 
 export type ApiKeyRecord = {
@@ -2017,40 +2032,38 @@ export async function createPolicy(
 
 export async function getAuditLog(
   token: string,
-  params?: {
-    event_type?: string;
-    resource_type?: string;
-    cursor?: string;
+  params: {
+    page?: number;
     limit?: number;
-  }
+    event_type?: string;
+    user_id?: string;
+    date_from?: string;
+    date_to?: string;
+  } = {}
 ): Promise<AuditLogResponse | null> {
   try {
     const qs = new URLSearchParams();
-    if (params?.event_type) qs.set("event_type", params.event_type);
-    if (params?.resource_type) qs.set("resource_type", params.resource_type);
-    if (params?.limit) qs.set("limit", String(params.limit));
-    if (params?.cursor) {
-      try {
-        const cursor = JSON.parse(params.cursor) as { created_at: string; id: string };
-        qs.set("before_created_at", cursor.created_at);
-        qs.set("before_id", cursor.id);
-      } catch {
-        // ignore malformed cursor
-      }
-    }
+    if (params.page)       qs.set("page",       String(params.page));
+    if (params.limit)      qs.set("limit",      String(params.limit));
+    if (params.event_type) qs.set("event_type", params.event_type);
+    if (params.user_id)    qs.set("user_id",    params.user_id);
+    if (params.date_from)  qs.set("date_from",  params.date_from);
+    if (params.date_to)    qs.set("date_to",    params.date_to);
     const path = `/api/audit-log${qs.toString() ? `?${qs.toString()}` : ""}`;
     const res = await engineFetch(path, token);
     if (!res.ok) return null;
-    const body = (await res.json()) as {
-      events: AuditEvent[];
-      nextCursor: { created_at: string; id: string } | null;
-      count: number;
-    };
-    return {
-      events: body.events,
-      nextCursor: body.nextCursor,
-      total: body.count
-    };
+    return res.json() as Promise<AuditLogResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getAuditLogEventTypes(token: string): Promise<string[] | null> {
+  try {
+    const res = await engineFetch("/api/audit-log/event-types", token);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { event_types: string[] };
+    return body.event_types ?? null;
   } catch {
     return null;
   }
@@ -2447,3 +2460,4 @@ export async function saveRequirementResponse(
     return null;
   }
 }
+

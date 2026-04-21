@@ -1,317 +1,215 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getMe, getAuditLog } from "@/lib/api";
-import type { AuditEvent } from "@/lib/api";
+import { getAuditLog, getAuditLogEventTypes } from "@/lib/api";
+import AuditLogTable from "./AuditLogTable";
 
-const RESOURCE_TYPE_FILTERS = [
-  { label: "All",        value: "" },
-  { label: "Vendor",     value: "vendor" },
-  { label: "Control",    value: "control" },
-  { label: "Finding",    value: "finding" },
-  { label: "Policy",     value: "policy" },
-  { label: "Framework",  value: "framework" },
-  { label: "AI System",  value: "ai_system" },
-  { label: "Team",       value: "org_invite" },
-  { label: "Auth",       value: "user" },
-];
-
-function domainFromEventType(eventType: string): string {
-  const prefix = eventType.split(".")[0] ?? "";
-  return prefix;
-}
-
-const BADGE_STYLES: Record<string, { bg: string; color: string }> = {
-  auth:              { bg: "rgba(100,116,139,0.15)", color: "#94a3b8" },
-  team:              { bg: "rgba(59,130,246,0.15)",  color: "#93c5fd" },
-  vendor:            { bg: "rgba(0,196,180,0.15)",   color: "#00c4b4" },
-  control:           { bg: "rgba(139,92,246,0.15)",  color: "#c4b5fd" },
-  control_assessment:{ bg: "rgba(139,92,246,0.15)",  color: "#c4b5fd" },
-  finding:           { bg: "rgba(239,68,68,0.15)",   color: "#fca5a5" },
-  policy:            { bg: "rgba(99,102,241,0.15)",  color: "#a5b4fc" },
-  framework:         { bg: "rgba(34,197,94,0.15)",   color: "#86efac" },
-  ai_system:         { bg: "rgba(6,182,212,0.15)",   color: "#67e8f9" },
-  governance_review: { bg: "rgba(6,182,212,0.15)",   color: "#67e8f9" },
-  workflow:          { bg: "rgba(245,158,11,0.15)",  color: "#fcd34d" },
-  evidence:          { bg: "rgba(100,116,139,0.15)", color: "#94a3b8" },
-  obligation:        { bg: "rgba(99,102,241,0.15)",  color: "#a5b4fc" },
-  vendor_assessment: { bg: "rgba(0,196,180,0.15)",   color: "#00c4b4" },
-  intelligence_brief:{ bg: "rgba(245,158,11,0.15)",  color: "#fcd34d" },
-  cyber_signal:      { bg: "rgba(239,68,68,0.15)",   color: "#fca5a5" },
-};
-
-const DEFAULT_BADGE = { bg: "rgba(100,116,139,0.1)", color: "#64748b" };
-
-function EventTypeBadge({ eventType }: { eventType: string }) {
-  const domain = domainFromEventType(eventType);
-  const style = BADGE_STYLES[domain] ?? DEFAULT_BADGE;
-  return (
-    <span
-      style={{
-        background: style.bg,
-        color: style.color,
-        padding: "2px 8px",
-        borderRadius: "4px",
-        fontSize: "11px",
-        fontWeight: 500,
-        fontFamily: "monospace",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {eventType}
-    </span>
-  );
-}
-
-function formatTimestamp(iso: string): string {
-  try {
-    return new Intl.DateTimeFormat("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    }).format(new Date(iso));
-  } catch {
-    return iso;
-  }
-}
-
-function resourceLabel(event: AuditEvent): string {
-  const payload = event.payload;
-  if (payload && typeof payload === "object") {
-    const name = (payload as Record<string, unknown>)["name"];
-    if (typeof name === "string" && name) return name;
-    const title = (payload as Record<string, unknown>)["title"];
-    if (typeof title === "string" && title) return title;
-  }
-  if (event.resource_id) return event.resource_id.slice(0, 8);
-  return event.resource_type;
-}
-
-function actorLabel(event: AuditEvent): string {
-  if (event.actor_name) return event.actor_name;
-  if (event.actor_email) return event.actor_email;
-  return "System";
-}
-
-function FilterPill({
-  label,
-  href,
-  active,
-}: {
-  label: string;
-  href: string;
-  active: boolean;
-}) {
-  return (
-    <Link
-      href={href}
-      className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium transition-colors"
-      style={
-        active
-          ? { background: "rgba(0,196,180,0.15)", color: "#00c4b4", border: "1px solid rgba(0,196,180,0.4)" }
-          : { background: "transparent", color: "#94a3b8", border: "1px solid #1e293b" }
-      }
-    >
-      {label}
-    </Link>
-  );
-}
-
-function filterHref(current: Record<string, string | undefined>, key: string, value: string | null): string {
-  const params = new URLSearchParams();
-  for (const [k, v] of Object.entries(current)) {
-    if (v !== undefined && k !== key && k !== "cursor") params.set(k, v);
-  }
-  if (value) params.set(key, value);
-  const qs = params.toString();
-  return `/audit-log${qs ? `?${qs}` : ""}`;
-}
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default async function AuditLogPage({
   searchParams,
 }: {
-  searchParams: Promise<Record<string, string | undefined>>;
+  searchParams: Promise<{
+    page?: string;
+    event_type?: string;
+    date_from?: string;
+    date_to?: string;
+  }>;
 }) {
   const session = await getSession();
-  const token = session.jwtToken ?? session.apiKey ?? null;
-  if (!token) redirect("/login");
 
-  const sp = await searchParams;
-  const me = await getMe(token);
-  const entitlementLevel = me?.entitlementLevel ?? "starter";
-  const isPremiumUser = ["premium", "professional", "platform", "team"].includes(entitlementLevel);
+  if (!session.jwtToken) redirect("/login");
+  if (session.userRole !== "admin") redirect("/dashboard");
 
-  if (!isPremiumUser) {
-    return (
-      <main style={{ maxWidth: 800, margin: "0 auto", padding: "48px 24px" }}>
-        <h1 style={{ color: "#f1f5f9", fontSize: "24px", fontWeight: 700, marginBottom: "8px" }}>
-          Audit Log
-        </h1>
-        <p style={{ color: "#64748b", marginBottom: "32px" }}>
-          Audit Log is available on premium and above plans.
-        </p>
-        <div
-          style={{
-            background: "#111827",
-            border: "1px solid #1e293b",
-            borderRadius: "12px",
-            padding: "32px",
-            textAlign: "center",
-          }}
-        >
-          <p style={{ color: "#94a3b8", marginBottom: "8px" }}>
-            Upgrade to access your full audit trail, including actor attribution and CSV export.
-          </p>
-          <Link
-            href="/dashboard"
-            style={{
-              display: "inline-block",
-              marginTop: "16px",
-              background: "rgba(0,196,180,0.15)",
-              color: "#00c4b4",
-              border: "1px solid rgba(0,196,180,0.4)",
-              padding: "8px 20px",
-              borderRadius: "8px",
-              fontSize: "14px",
-              fontWeight: 500,
-              textDecoration: "none",
-            }}
-          >
-            Return to Dashboard
-          </Link>
-        </div>
-      </main>
-    );
-  }
+  const sp         = await searchParams;
+  const page       = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
+  const event_type = sp.event_type || undefined;
+  const date_from  = sp.date_from  || undefined;
+  const date_to    = sp.date_to    || undefined;
 
-  const activeResourceType = sp["resource_type"] ?? "";
-  const cursor = sp["cursor"];
+  const [auditData, eventTypes] = await Promise.all([
+    getAuditLog(session.jwtToken, { page, limit: 50, event_type, date_from, date_to }),
+    getAuditLogEventTypes(session.jwtToken),
+  ]);
 
-  const data = await getAuditLog(token, {
-    resource_type: activeResourceType || undefined,
-    cursor,
-    limit: 100,
-  });
+  const events      = auditData?.events      ?? [];
+  const total       = auditData?.total       ?? 0;
+  const totalPages  = auditData?.total_pages ?? 1;
+  const hasFilters  = !!(event_type || date_from || date_to);
 
-  const events = data?.events ?? [];
-  const nextCursor = data?.nextCursor ?? null;
+  const exportParams = new URLSearchParams();
+  if (event_type) exportParams.set("event_type", event_type);
+  if (date_from)  exportParams.set("date_from",  date_from);
+  if (date_to)    exportParams.set("date_to",    date_to);
+  const exportHref = `/api/export/audit-log${exportParams.toString() ? `?${exportParams.toString()}` : ""}`;
+
+  const from = total === 0 ? 0 : (page - 1) * 50 + 1;
+  const to   = Math.min(page * 50, total);
 
   return (
-    <main style={{ maxWidth: "64rem", margin: "0 auto", padding: "48px 24px" }}>
+    <div className="max-w-7xl mx-auto px-6 py-10" style={{ color: "#f1f5f9" }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "32px" }}>
+      <div className="flex items-start justify-between gap-4 mb-8">
         <div>
-          <h1 style={{ color: "#f1f5f9", fontSize: "24px", fontWeight: 700, margin: 0 }}>
+          <h1 className="text-2xl font-bold mb-1" style={{ color: "#f1f5f9" }}>
             Audit Log
           </h1>
-          <p style={{ color: "#64748b", marginTop: "6px", fontSize: "14px" }}>
-            A record of all security program activity in your organization.
+          <p className="text-sm" style={{ color: "#94a3b8" }}>
+            Security and activity events for your organization.
           </p>
         </div>
         <a
-          href="/api/export/audit-log"
-          download
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "6px",
-            color: "#00c4b4",
-            border: "1px solid rgba(0,196,180,0.4)",
-            background: "transparent",
-            padding: "8px 16px",
-            borderRadius: "8px",
-            fontSize: "13px",
-            fontWeight: 500,
-            textDecoration: "none",
-            whiteSpace: "nowrap",
-          }}
+          href={exportHref}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors hover:opacity-80"
+          style={{ background: "#0d1626", border: "1px solid #1e2d45", color: "#94a3b8" }}
         >
-          ↓ Export CSV
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="17 8 12 3 7 8" />
+            <line x1="12" y1="3" x2="12" y2="15" />
+          </svg>
+          Export CSV
         </a>
       </div>
 
-      {/* Filter pills */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "24px" }}>
-        {RESOURCE_TYPE_FILTERS.map((f) => (
-          <FilterPill
-            key={f.value}
-            label={f.label}
-            href={filterHref(sp, "resource_type", f.value || null)}
-            active={activeResourceType === f.value}
-          />
-        ))}
-      </div>
+      {/* Filter bar */}
+      <form action="/audit-log" method="GET" className="flex flex-wrap items-end gap-3 mb-6">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#64748b" }}>
+            Event Type
+          </label>
+          <select
+            name="event_type"
+            defaultValue={event_type ?? ""}
+            className="rounded-lg px-3 py-2 text-sm border outline-none"
+            style={{ background: "#0d1626", borderColor: "#1e2d45", color: "#f1f5f9", minWidth: "200px" }}
+          >
+            <option value="" style={{ background: "#0d1626" }}>All events</option>
+            {(eventTypes ?? []).map((et) => (
+              <option key={et} value={et} style={{ background: "#0d1626" }}>
+                {et}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      {/* Events list */}
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#64748b" }}>
+            From
+          </label>
+          <input
+            type="date"
+            name="date_from"
+            defaultValue={date_from ?? ""}
+            className="rounded-lg px-3 py-2 text-sm border outline-none"
+            style={{ background: "#0d1626", borderColor: "#1e2d45", color: "#f1f5f9" }}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#64748b" }}>
+            To
+          </label>
+          <input
+            type="date"
+            name="date_to"
+            defaultValue={date_to ?? ""}
+            className="rounded-lg px-3 py-2 text-sm border outline-none"
+            style={{ background: "#0d1626", borderColor: "#1e2d45", color: "#f1f5f9" }}
+          />
+        </div>
+
+        <button
+          type="submit"
+          className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+          style={{ background: "#00c4b4", color: "#0a0f1a" }}
+        >
+          Filter
+        </button>
+
+        {hasFilters && (
+          <Link
+            href="/audit-log"
+            className="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            style={{ color: "#64748b" }}
+          >
+            Clear
+          </Link>
+        )}
+      </form>
+
+      {/* Table */}
       {events.length === 0 ? (
         <div
-          style={{
-            background: "#111827",
-            border: "1px solid #1e293b",
-            borderRadius: "12px",
-            padding: "48px 32px",
-            textAlign: "center",
-          }}
+          className="rounded-xl p-16 text-center"
+          style={{ background: "#0d1626", border: "1px solid #1e2d45" }}
         >
-          <p style={{ color: "#94a3b8", fontSize: "15px", marginBottom: "8px" }}>
-            No audit events recorded yet.
+          <p className="text-base font-medium mb-1" style={{ color: "#94a3b8" }}>
+            No audit events found.
           </p>
-          <p style={{ color: "#64748b", fontSize: "13px" }}>
-            Activity will appear here as your team makes changes to the security program.
-          </p>
+          {hasFilters && (
+            <p className="text-sm" style={{ color: "#475569" }}>
+              Try adjusting your filters.
+            </p>
+          )}
         </div>
       ) : (
-        <div style={{ borderTop: "1px solid #1e293b" }}>
-          {events.map((event) => (
-            <div
-              key={event.id}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "140px 1fr 180px 160px",
-                alignItems: "center",
-                gap: "16px",
-                padding: "12px 0",
-                borderBottom: "1px solid #1e293b",
-              }}
-              className="audit-row"
-            >
-              <span style={{ color: "#64748b", fontSize: "11px", whiteSpace: "nowrap" }}>
-                {formatTimestamp(event.created_at)}
-              </span>
-              <EventTypeBadge eventType={event.event_type} />
-              <span style={{ color: "#cbd5e1", fontSize: "13px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {resourceLabel(event)}
-              </span>
-              <span style={{ color: "#64748b", fontSize: "12px", textAlign: "right", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {actorLabel(event)}
-              </span>
-            </div>
-          ))}
-        </div>
+        <AuditLogTable events={events} />
       )}
 
       {/* Pagination */}
-      {nextCursor && (
-        <div style={{ textAlign: "center", marginTop: "24px" }}>
-          <Link
-            href={filterHref(sp, "cursor", JSON.stringify(nextCursor))}
-            style={{
-              color: "#94a3b8",
-              border: "1px solid #1e293b",
-              background: "transparent",
-              padding: "8px 24px",
-              borderRadius: "8px",
-              fontSize: "13px",
-              textDecoration: "none",
-            }}
-          >
-            Load more
-          </Link>
+      {total > 0 && (
+        <div className="mt-6 flex items-center justify-between gap-4">
+          <p className="text-sm" style={{ color: "#64748b" }}>
+            Showing {from}–{to} of {total.toLocaleString()} events
+          </p>
+          <div className="flex items-center gap-2">
+            {page > 1 ? (
+              <Link
+                href={buildPageHref(page - 1, event_type, date_from, date_to)}
+                className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:opacity-80"
+                style={{ background: "#0d1626", border: "1px solid #1e2d45", color: "#94a3b8" }}
+              >
+                ← Previous
+              </Link>
+            ) : (
+              <span className="px-3 py-1.5 rounded-lg text-sm opacity-30" style={{ color: "#64748b" }}>
+                ← Previous
+              </span>
+            )}
+            <span className="text-sm px-3" style={{ color: "#64748b" }}>
+              Page {page} of {totalPages}
+            </span>
+            {page < totalPages ? (
+              <Link
+                href={buildPageHref(page + 1, event_type, date_from, date_to)}
+                className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:opacity-80"
+                style={{ background: "#0d1626", border: "1px solid #1e2d45", color: "#94a3b8" }}
+              >
+                Next →
+              </Link>
+            ) : (
+              <span className="px-3 py-1.5 rounded-lg text-sm opacity-30" style={{ color: "#64748b" }}>
+                Next →
+              </span>
+            )}
+          </div>
         </div>
       )}
-    </main>
+    </div>
   );
+}
+
+function buildPageHref(
+  page: number,
+  event_type?: string,
+  date_from?: string,
+  date_to?: string
+): string {
+  const p = new URLSearchParams();
+  p.set("page", String(page));
+  if (event_type) p.set("event_type", event_type);
+  if (date_from)  p.set("date_from",  date_from);
+  if (date_to)    p.set("date_to",    date_to);
+  return `/audit-log?${p.toString()}`;
 }
