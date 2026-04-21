@@ -24,7 +24,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { requireAdminRole } from "../middleware/requireRole.js";
-import { validateControlCreate } from "../lib/controlValidation.js";
+import { validateControlCreate, validateControlPatch } from "../lib/controlValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
@@ -65,6 +65,12 @@ const CONTROL_SELECT = `
   name,
   description,
   owner_user_id,
+  control_type,
+  status,
+  domain,
+  control_family,
+  maturity_level,
+  implementation_status,
   testing_frequency,
   next_test_due,
   last_tested_at,
@@ -127,8 +133,21 @@ router.post(
     try {
       const result = await pg.query(
         `
-        INSERT INTO controls (organization_id, name, description, owner_user_id, testing_frequency, next_test_due)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO controls (
+          organization_id,
+          name,
+          description,
+          owner_user_id,
+          control_type,
+          status,
+          domain,
+          control_family,
+          maturity_level,
+          implementation_status,
+          testing_frequency,
+          next_test_due
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING ${CONTROL_SELECT}
         `,
         [
@@ -136,6 +155,12 @@ router.post(
           input.name,
           input.description ?? null,
           input.owner_user_id ?? (req as any).autoUserId ?? null,
+          input.control_type ?? null,
+          input.status ?? "active",
+          input.domain ?? null,
+          input.control_family ?? null,
+          input.maturity_level ?? null,
+          input.implementation_status ?? null,
           testingFrequency,
           nextTestDueRaw
         ]
@@ -350,6 +375,15 @@ router.patch(
 
     const body = req.body as Record<string, unknown>;
 
+    // Validate new metadata fields via controlValidation
+    const validated = validateControlPatch(body);
+    if ("error" in validated) {
+      res.status(400).json(validated);
+      return;
+    }
+
+    const patchInput = validated.input;
+
     // Build partial update from provided fields
     const setClauses: string[] = [];
     const params: unknown[] = [controlId, organizationId];
@@ -359,33 +393,17 @@ router.patch(
       setClauses.push(`${sql} = $${params.length}`);
     }
 
-    if ("name" in body) {
-      const name = body["name"];
-      if (typeof name !== "string" || name.trim().length === 0) {
-        res.status(400).json({ error: "name_must_be_non_empty_string" });
-        return;
-      }
-      addField("name", name.trim());
-    }
+    if ("name" in patchInput)                  addField("name",                  patchInput.name);
+    if ("description" in patchInput)           addField("description",           patchInput.description ?? null);
+    if ("owner_user_id" in patchInput)         addField("owner_user_id",         patchInput.owner_user_id ?? null);
+    if ("control_type" in patchInput)          addField("control_type",          patchInput.control_type ?? null);
+    if ("status" in patchInput)                addField("status",                patchInput.status);
+    if ("domain" in patchInput)                addField("domain",                patchInput.domain ?? null);
+    if ("control_family" in patchInput)        addField("control_family",        patchInput.control_family ?? null);
+    if ("maturity_level" in patchInput)        addField("maturity_level",        patchInput.maturity_level ?? null);
+    if ("implementation_status" in patchInput) addField("implementation_status", patchInput.implementation_status ?? null);
 
-    if ("description" in body) {
-      const description = body["description"];
-      if (description !== null && typeof description !== "string") {
-        res.status(400).json({ error: "description_must_be_string_or_null" });
-        return;
-      }
-      addField("description", description ?? null);
-    }
-
-    if ("owner_user_id" in body) {
-      const ownerUserId = body["owner_user_id"];
-      if (ownerUserId !== null && !isUuid(ownerUserId)) {
-        res.status(400).json({ error: "owner_user_id_must_be_uuid_or_null" });
-        return;
-      }
-      addField("owner_user_id", ownerUserId ?? null);
-    }
-
+    // testing_frequency and next_test_due — validated inline (enum defined in route)
     if ("testing_frequency" in body) {
       const freq = body["testing_frequency"];
       if (freq !== null && (typeof freq !== "string" || !VALID_FREQUENCIES.has(freq))) {
