@@ -24,6 +24,7 @@ function LoginForm() {
   const router       = useRouter();
   const searchParams = useSearchParams();
   const redirect     = searchParams.get("redirect") ?? "/dashboard";
+  const reason       = searchParams.get("reason");
 
   const [email,        setEmail]        = useState("");
   const [password,     setPassword]     = useState("");
@@ -225,6 +226,22 @@ function LoginForm() {
       title="Sign in"
       subtitle="Access your SecureLogic AI account."
     >
+      {reason === "idle" && (
+        <div
+          style={{
+            background:   "rgba(59,130,246,0.1)",
+            border:       "1px solid rgba(59,130,246,0.3)",
+            borderRadius: "8px",
+            padding:      "12px 14px",
+            marginBottom: "16px",
+            color:        "#93c5fd",
+            fontSize:     "14px",
+            lineHeight:   "1.5",
+          }}
+        >
+          You were signed out due to inactivity. Please sign in again.
+        </div>
+      )}
       <AuthError message={error} />
 
       {/* Email field — always visible */}

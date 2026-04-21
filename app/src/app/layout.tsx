@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Header } from "@/components/Header";
 import { getSession } from "@/lib/session";
+import IdleLogout from "@/components/IdleLogout";
 
 export const metadata: Metadata = {
   title: "SecureLogic AI — Intelligence Brief",
@@ -44,6 +45,7 @@ export default async function RootLayout({
           userRole={session.userRole}
         />
         <main className="flex-1">{children}</main>
+        {isAuthenticated && <IdleLogout />}
         <footer className="border-t border-brand-line bg-brand-surface mt-16">
           <div className="max-w-6xl mx-auto px-6 py-6 flex items-center justify-between">
             <span className="text-slate-400 text-sm">

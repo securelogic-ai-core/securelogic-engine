@@ -1,6 +1,12 @@
 import { getIronSession } from "iron-session";
 import { cookies } from "next/headers";
 
+// Absolute session lifetime. Configurable via SESSION_TIMEOUT_SECONDS env var.
+// Default: 8 hours — appropriate for a security platform.
+const SESSION_MAX_AGE_SECONDS = parseInt(
+  process.env.SESSION_TIMEOUT_SECONDS ?? String(60 * 60 * 8)
+);
+
 export interface SessionData {
   // Customer auth (email/password — new)
   userId?: string;
@@ -34,7 +40,7 @@ export function getSessionOptions() {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production" || process.env.FORCE_SECURE_COOKIE === "true",
       sameSite: "lax" as const,
-      maxAge: 60 * 60 * 24 * 7, // 7 days
+      maxAge: SESSION_MAX_AGE_SECONDS,
     },
   };
 }

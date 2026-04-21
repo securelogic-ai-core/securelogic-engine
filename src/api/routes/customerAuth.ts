@@ -496,7 +496,11 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
         actorUserId: null,
         eventType: "auth.login_failed",
         resourceType: "user",
-        payload: { reason: !user ? "user_not_found" : "wrong_password" },
+        payload: {
+          reason: !user ? "user_not_found" : "wrong_password",
+          email:  email.slice(0, 4) + "***",
+          method: "password"
+        },
         ipAddress: req.ip ?? null
       });
       res.status(401).json({ error: "invalid_credentials" });
@@ -545,11 +549,12 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
 
     writeAuditEvent({
       organizationId: user.organization_id,
-      actorUserId: user.id,
-      eventType: "auth.login",
-      resourceType: "user",
-      resourceId: user.id,
-      ipAddress: req.ip ?? null
+      actorUserId:    user.id,
+      eventType:      "auth.login",
+      resourceType:   "user",
+      resourceId:     user.id,
+      payload:        { email: user.email.slice(0, 4) + "***", method: "password" },
+      ipAddress:      req.ip ?? null
     });
 
     res.status(200).json({
