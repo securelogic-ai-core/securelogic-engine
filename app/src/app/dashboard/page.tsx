@@ -1,10 +1,11 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getIssues, getMe, getDashboardSummary, getAuthMe, getFindings, getFrameworks, getFrameworkReadiness, type DashboardSummary, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
+import { getIssues, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFrameworks, getFrameworkReadiness, type DashboardSummary, type PostureSnapshot, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
 import { FindingsDonut, DomainPostureBars, ActionsRing, InventoryGrid, FrameworkGaps, VendorRiskCard, PostureScoreTile, RisksBreakdown } from "./DashboardCharts";
+import { PostureTrendChart } from "./PostureTrendChart";
 import { LastLoginBanner } from "./LastLoginBanner";
 
 export const revalidate = 0;
@@ -29,11 +30,12 @@ export default async function DashboardPage({
   // getMe() is the source of truth for entitlement — never rely on the
   // session cookie alone, which may be stale after a Stripe upgrade.
   // getAuthMe() provides user-level data (including suppression status) for JWT sessions.
-  const [me, issuesData, dashboardSummary, authMe] = await Promise.all([
+  const [me, issuesData, dashboardSummary, authMe, postureHistory] = await Promise.all([
     getMe(token),
     getIssues(token),
     getDashboardSummary(token),
     session.jwtToken ? getAuthMe(session.jwtToken) : Promise.resolve(null),
+    getPostureHistory(token, 90),
   ]);
 
   const entitlementLevelEarly = me?.entitlementLevel ?? "starter";
@@ -210,7 +212,7 @@ export default async function DashboardPage({
       {isPlatformUser ? (
         dashboardSummary && (
           <div className="mt-10">
-            <PostureDashboard summary={dashboardSummary} frameworkPairs={frameworkReadinessPairs} />
+            <PostureDashboard summary={dashboardSummary} frameworkPairs={frameworkReadinessPairs} postureSnapshots={postureHistory?.snapshots ?? []} />
           </div>
         )
       ) : (
@@ -296,9 +298,11 @@ function ManageBillingButton() {
 function PostureDashboard({
   summary,
   frameworkPairs,
+  postureSnapshots,
 }: {
   summary: DashboardSummary;
   frameworkPairs: Array<{ framework: Framework; readiness: FrameworkReadiness | null }>;
+  postureSnapshots: PostureSnapshot[];
 }) {
   const { posture, domains, findings, actions, controls_cadence, inventory, vendor_risk, risks_summary } = summary;
 
@@ -312,6 +316,11 @@ function PostureDashboard({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         <PostureScoreTile posture={posture} />
         <RisksBreakdown risks_summary={risks_summary} />
+      </div>
+
+      {/* Row 0b: Posture score trend (full width) */}
+      <div className="mb-4">
+        <PostureTrendChart snapshots={postureSnapshots} />
       </div>
 
       {/* Row 1: Findings donut | Domain bars | Actions ring */}

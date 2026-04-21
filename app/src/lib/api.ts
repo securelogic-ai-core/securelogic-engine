@@ -108,6 +108,24 @@ export type RegisterResponse =
   | { ok: true; apiKey: string; organizationId: string; entitlementLevel: string; note: string }
   | { error: string };
 
+export type PostureSnapshot = {
+  id: string;
+  snapshot_date: string;
+  overall_score: number | null;
+  overall_severity: string | null;
+  open_finding_count: number;
+  open_action_count: number;
+  overdue_action_count: number;
+  created_at: string;
+};
+
+export type PostureHistory = {
+  organizationId: string;
+  days: number;
+  count: number;
+  snapshots: PostureSnapshot[];
+};
+
 export type DomainScore = {
   domain: string;
   score: number | null;
@@ -890,6 +908,19 @@ export async function getDashboardSummary(
     const res = await engineFetch("/api/dashboard/summary", apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<DashboardSummary>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getPostureHistory(
+  token: string,
+  days: number = 90
+): Promise<PostureHistory | null> {
+  try {
+    const res = await engineFetch(`/api/posture/history?days=${days}`, token);
+    if (!res.ok) return null;
+    return res.json() as Promise<PostureHistory>;
   } catch {
     return null;
   }
