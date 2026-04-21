@@ -16,6 +16,7 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
@@ -201,6 +202,16 @@ router.get(
         `,
         [organizationId, CSV_MAX]
       );
+
+      writeAuditEvent({
+        organizationId: organizationId,
+        actorUserId:    req.userId ?? null,
+        actorApiKeyId:  (req as any).apiKey?.id ?? null,
+        eventType:      "data.exported",
+        resourceType:   "audit_log",
+        payload:        { format: "csv", record_count: result.rows.length, entity: "audit_log" },
+        ipAddress:      req.ip ?? null
+      });
 
       const header = "timestamp,event_type,resource_type,resource_id,actor_name,actor_email,payload";
       const lines = result.rows.map((r) => rowToCsv(r as Record<string, unknown>));

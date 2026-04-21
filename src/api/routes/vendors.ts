@@ -667,6 +667,16 @@ router.get(
         params
       );
 
+      writeAuditEvent({
+        organizationId: organizationId,
+        actorUserId:    req.userId ?? null,
+        actorApiKeyId:  (req as any).apiKey?.id ?? null,
+        eventType:      "data.exported",
+        resourceType:   "vendor",
+        payload:        { format: "csv", record_count: result.rows.length, entity: "vendors" },
+        ipAddress:      req.ip ?? null
+      });
+
       const fileDate = new Date().toISOString().slice(0, 10);
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="vendors-${fileDate}.csv"`);

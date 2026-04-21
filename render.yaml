@@ -193,6 +193,11 @@ services:
       - key: SESSION_SECRET
         sync: false
 
+      # Absolute session lifetime in seconds. Default: 28800 (8 hours).
+      # Set lower for higher-security deployments.
+      - key: SESSION_TIMEOUT_SECONDS
+        sync: false
+
   # =========================================================
   # SECURELOGIC WEBSITE (Next.js marketing site)
   # Public-facing marketing site: homepage, platform, pricing,
