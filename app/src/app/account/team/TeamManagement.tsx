@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { TeamMember, PendingInvite } from "@/lib/api";
 import InviteModal from "./InviteModal";
-import { revokeInvite, removeMember, updateMemberRole } from "./actions";
+import { revokeInvite, removeMember, updateMemberRole, unlockMember } from "./actions";
 
 interface Props {
   members: TeamMember[];
@@ -106,6 +106,19 @@ export default function TeamManagement({
     if ("error" in result) {
       setActionError(result.error);
     } else {
+      router.refresh();
+    }
+  }
+
+  async function handleUnlockMember(userId: string) {
+    clearMessages();
+    setLoadingId(userId + "-unlock");
+    const result = await unlockMember(userId);
+    setLoadingId(null);
+    if ("error" in result) {
+      setActionError(result.error);
+    } else {
+      setSuccessMessage("Account unlocked.");
       router.refresh();
     }
   }
@@ -215,6 +228,8 @@ export default function TeamManagement({
               const canRemove    = isAdmin && !isSelf && !isLastAdmin;
               const canEditRole  = isAdmin && !isSelf;
 
+              const isLocked = !!(member.lockout_until && new Date(member.lockout_until) > new Date());
+
               return (
                 <div
                   key={member.id}
@@ -239,6 +254,20 @@ export default function TeamManagement({
                           }}
                         >
                           You
+                        </span>
+                      )}
+                      {isLocked && (
+                        <span
+                          style={{
+                            background: "rgba(239,68,68,0.1)",
+                            color: "#ef4444",
+                            fontSize: "11px",
+                            fontWeight: 600,
+                            padding: "1px 6px",
+                            borderRadius: "4px",
+                          }}
+                        >
+                          Locked
                         </span>
                       )}
                     </div>
@@ -282,6 +311,25 @@ export default function TeamManagement({
                     >
                       {member.status === "active" ? "Active" : "Inactive"}
                     </span>
+
+                    {/* Unlock — admin only, shown when account is locked */}
+                    {isAdmin && isLocked && (
+                      <button
+                        onClick={() => handleUnlockMember(member.id)}
+                        disabled={loadingId === member.id + "-unlock"}
+                        style={{
+                          background: "transparent",
+                          border: "1px solid rgba(239,68,68,0.4)",
+                          color: "#ef4444",
+                          fontSize: "12px",
+                          cursor: loadingId === member.id + "-unlock" ? "not-allowed" : "pointer",
+                          padding: "2px 8px",
+                          borderRadius: "4px",
+                        }}
+                      >
+                        {loadingId === member.id + "-unlock" ? "…" : "Unlock"}
+                      </button>
+                    )}
 
                     {/* Remove */}
                     {canRemove && (

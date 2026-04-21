@@ -40,6 +40,7 @@ function LoginForm() {
   const [mfaCode,       setMfaCode]       = useState("");
   const [useBackupMode, setUseBackupMode] = useState(false);
   const [backupCode,    setBackupCode]    = useState("");
+  const [lockedUntil,   setLockedUntil]   = useState<string | null>(null);
 
   const checkSSOForEmail = useCallback(async (emailValue: string) => {
     const trimmed = emailValue.trim();
@@ -79,6 +80,7 @@ function LoginForm() {
     const data = (await res.json()) as {
       ok?: boolean;
       error?: string;
+      locked_until?: string;
       mfa_required?: boolean;
       mfa_token?: string;
     };
@@ -86,6 +88,11 @@ function LoginForm() {
     if (!res.ok) {
       if (data.error === "email_not_verified") {
         router.push(`/verify-email?email=${encodeURIComponent(email.trim())}`);
+        return;
+      }
+      if (data.error === "account_locked") {
+        setLockedUntil(data.locked_until ?? null);
+        setLoading(false);
         return;
       }
       setError(
@@ -244,6 +251,35 @@ function LoginForm() {
             : "You were signed out due to inactivity. Please sign in again."}
         </div>
       )}
+      {lockedUntil && (
+        <div
+          style={{
+            background:   "rgba(239,68,68,0.1)",
+            border:       "1px solid rgba(239,68,68,0.3)",
+            borderRadius: "8px",
+            padding:      "12px 14px",
+            marginBottom: "16px",
+            color:        "#fca5a5",
+            fontSize:     "14px",
+            lineHeight:   "1.5",
+          }}
+        >
+          Your account has been temporarily locked after too many failed attempts. Please try again after{" "}
+          <strong>
+            {new Date(lockedUntil).toLocaleTimeString("en-US", {
+              hour: "numeric",
+              minute: "2-digit",
+              timeZoneName: "short",
+            })}
+          </strong>
+          , or{" "}
+          <a href="/forgot-password" style={{ color: "#fca5a5", textDecoration: "underline" }}>
+            reset your password
+          </a>
+          .
+        </div>
+      )}
+
       <AuthError message={error} />
 
       {/* Email field — always visible */}

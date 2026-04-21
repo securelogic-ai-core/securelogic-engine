@@ -73,6 +73,10 @@ const verifyLimiter = rateLimit({
    CONSTANTS
    ========================================================= */
 
+const MAX_FAILED_ATTEMPTS      = 5;
+const LOCKOUT_DURATION_MINUTES = 15;
+const ATTEMPT_RESET_HOURS      = 24;
+
 const VERIFICATION_TTL_MS   = 24 * 60 * 60 * 1000; // 24 hours
 const RESET_TTL_MS          = 60 * 60 * 1000;       // 1 hour
 
@@ -203,6 +207,50 @@ function passwordResetEmailHtml(name: string, resetUrl: string): string {
 async function sendEmail(to: string, subject: string, html: string): Promise<void> {
   const resend = getResend();
   await resend.emails.send({ from: getFromAddress(), to: [to], subject, html });
+}
+
+function lockoutEmailHtml(lockedUntil: Date): string {
+  const until   = lockedUntil.toLocaleString("en-US", { timeZone: "UTC", dateStyle: "medium", timeStyle: "short" }) + " UTC";
+  const resetUrl = `${getAppBaseUrl()}/reset-password`;
+  return `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0a0f1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" bgcolor="#0a0f1a">
+  <tr><td align="center" style="padding:40px 16px;">
+    <table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
+      <tr><td align="center" style="padding-bottom:32px;">
+        <img src="https://api.securelogicai.com/assets/logo.png" alt="SecureLogic AI" height="36" style="display:block;">
+      </td></tr>
+      <tr><td style="background:#0d1b2e;border:1px solid #1e2d45;border-radius:12px;padding:40px;">
+        <p style="margin:0 0 8px;font-size:22px;font-weight:700;color:#f1f5f9;">Account temporarily locked</p>
+        <p style="margin:0 0 16px;font-size:15px;color:#94a3b8;">We detected ${MAX_FAILED_ATTEMPTS} consecutive failed login attempts on your SecureLogic AI account. For your protection, the account has been temporarily locked.</p>
+        <p style="margin:0 0 24px;font-size:15px;color:#94a3b8;">The lock will expire at <strong style="color:#f1f5f9;">${until}</strong>. You can sign in again after that time.</p>
+        <p style="margin:0 0 16px;font-size:14px;color:#94a3b8;">If this wasn&apos;t you, we strongly recommend resetting your password immediately:</p>
+        <table cellpadding="0" cellspacing="0"><tr><td>
+          <a href="${resetUrl}"
+             style="display:inline-block;background:#00c4b4;color:#0a0f1a;font-size:15px;font-weight:600;text-decoration:none;padding:14px 28px;border-radius:8px;">
+            Reset My Password
+          </a>
+        </td></tr></table>
+        <p style="margin:24px 0 0;font-size:13px;color:#64748b;">If you believe this is an error, please contact <a href="mailto:hello@securelogicai.com" style="color:#00c4b4;text-decoration:none;">hello@securelogicai.com</a>.</p>
+      </td></tr>
+      <tr><td align="center" style="padding:24px 0 0;">
+        <p style="margin:0;font-size:12px;color:#334155;">© ${new Date().getFullYear()} SecureLogic AI. All rights reserved.</p>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>`;
+}
+
+async function sendLockoutEmail(to: string, lockedUntil: Date): Promise<void> {
+  await sendEmail(
+    to,
+    "Security Alert: Your SecureLogic AI account has been temporarily locked",
+    lockoutEmailHtml(lockedUntil)
+  );
 }
 
 /* =========================================================
@@ -476,8 +524,12 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
       password_hash: string;
       email_verified: boolean;
       totp_enabled: boolean;
+      failed_login_attempts: number;
+      lockout_until: Date | null;
+      last_failed_login_at: Date | null;
     }>(
-      `SELECT id, organization_id, name, email, role, password_hash, email_verified, totp_enabled
+      `SELECT id, organization_id, name, email, role, password_hash, email_verified, totp_enabled,
+              failed_login_attempts, lockout_until, last_failed_login_at
        FROM users
        WHERE email = $1
        LIMIT 1`,
@@ -488,7 +540,38 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
     // to prevent timing-based email enumeration
     const dummyHash = "$argon2id$v=19$m=65536,t=3,p=4$dummy$dummy";
     const user      = result.rows[0] ?? null;
-    const hash      = user?.password_hash ?? dummyHash;
+
+    // B6: Auto-reset stale failure counters after ATTEMPT_RESET_HOURS
+    if (user && user.last_failed_login_at) {
+      const hoursSince = (Date.now() - new Date(user.last_failed_login_at).getTime()) / (1000 * 60 * 60);
+      if (hoursSince > ATTEMPT_RESET_HOURS && (!user.lockout_until || new Date(user.lockout_until) <= new Date())) {
+        pg.query(
+          `UPDATE users SET failed_login_attempts = 0, lockout_until = NULL, last_failed_login_at = NULL WHERE id = $1`,
+          [user.id]
+        ).catch(() => {});
+        user.failed_login_attempts = 0;
+        user.lockout_until = null;
+      }
+    }
+
+    // B2: Block locked accounts (only for known users — unknown emails fall through to generic 401)
+    if (user && user.lockout_until && new Date(user.lockout_until) > new Date()) {
+      writeAuditEvent({
+        actorUserId: null,
+        eventType: "auth.login_blocked",
+        resourceType: "user",
+        payload: { reason: "lockout", locked_until: user.lockout_until, email: email.slice(0, 4) + "***" },
+        ipAddress: req.ip ?? null
+      });
+      res.status(429).json({
+        error: "account_locked",
+        detail: "Account is temporarily locked due to too many failed login attempts. Try again later.",
+        locked_until: user.lockout_until
+      });
+      return;
+    }
+
+    const hash = user?.password_hash ?? dummyHash;
 
     let passwordValid = false;
     try {
@@ -509,8 +592,31 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
         },
         ipAddress: req.ip ?? null
       });
+
+      // B3: Increment failure counter for known users only
+      if (user) {
+        const newCount    = (user.failed_login_attempts ?? 0) + 1;
+        const shouldLock  = newCount >= MAX_FAILED_ATTEMPTS;
+        const lockoutUntil = shouldLock ? new Date(Date.now() + LOCKOUT_DURATION_MINUTES * 60 * 1000) : null;
+        pg.query(
+          `UPDATE users SET failed_login_attempts = $1, last_failed_login_at = NOW(), lockout_until = $2 WHERE id = $3`,
+          [newCount, lockoutUntil, user.id]
+        ).catch(() => {});
+        if (shouldLock) {
+          sendLockoutEmail(user.email, lockoutUntil!).catch(() => {});
+        }
+      }
+
       res.status(401).json({ error: "invalid_credentials" });
       return;
+    }
+
+    // B4: Reset failure counter on successful authentication (fire-and-forget)
+    if ((user.failed_login_attempts ?? 0) > 0) {
+      pg.query(
+        `UPDATE users SET failed_login_attempts = 0, lockout_until = NULL, last_failed_login_at = NULL WHERE id = $1`,
+        [user.id]
+      ).catch(() => {});
     }
 
     if (!user.email_verified) {
@@ -917,6 +1023,61 @@ router.post("/auth/onboarding-complete", requireAuth, async (req, res) => {
   } catch (err) {
     logger.error({ event: "onboarding_complete_failed", err }, "POST /api/auth/onboarding-complete failed");
     res.status(500).json({ error: "onboarding_complete_failed" });
+  }
+});
+
+/* =========================================================
+   POST /api/auth/admin/unlock-user   (JWT required, admin only)
+   Body: { user_id: string }
+   ========================================================= */
+
+router.post("/auth/admin/unlock-user", requireAuth, async (req, res) => {
+  try {
+    const adminId = req.jwtPayload!.sub;
+    const orgId   = req.jwtPayload!.org;
+    const role    = req.jwtPayload!.role;
+
+    if (role !== "admin") {
+      res.status(403).json({ error: "admin_required" });
+      return;
+    }
+
+    const targetUserId = typeof req.body?.user_id === "string" ? req.body.user_id.trim() : null;
+    if (!targetUserId) {
+      res.status(400).json({ error: "user_id_required" });
+      return;
+    }
+
+    const userResult = await pg.query<{ id: string }>(
+      `SELECT id FROM users WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [targetUserId, orgId]
+    );
+
+    if (userResult.rows.length === 0) {
+      res.status(404).json({ error: "user_not_found" });
+      return;
+    }
+
+    await pg.query(
+      `UPDATE users SET failed_login_attempts = 0, lockout_until = NULL, last_failed_login_at = NULL WHERE id = $1`,
+      [targetUserId]
+    );
+
+    writeAuditEvent({
+      organizationId: orgId,
+      actorUserId:    adminId,
+      eventType:      "auth.account_unlocked",
+      resourceType:   "user",
+      resourceId:     targetUserId,
+      payload:        { unlocked_by: adminId },
+      ipAddress:      req.ip ?? null
+    });
+
+    logger.info({ event: "account_unlocked", adminId, targetUserId }, "Admin unlocked user account");
+    res.status(200).json({ ok: true, user_id: targetUserId });
+  } catch (err) {
+    logger.error({ event: "unlock_user_failed", err }, "POST /api/auth/admin/unlock-user failed");
+    res.status(500).json({ error: "unlock_failed" });
   }
 });
 

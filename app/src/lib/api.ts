@@ -639,6 +639,7 @@ export type TeamMember = {
   status: string;
   created_at: string;
   last_used_at: string | null;
+  lockout_until?: string | null;
 };
 
 export type PendingInvite = {

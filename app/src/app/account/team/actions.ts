@@ -99,6 +99,35 @@ export async function removeMember(userId: string): Promise<ActionResult> {
   return { ok: true };
 }
 
+export async function unlockMember(userId: string): Promise<ActionResult> {
+  const token = await getToken();
+  if (!token) return { error: "Not authenticated" };
+
+  let res: Response;
+  try {
+    res = await fetch(`${ENGINE_URL}/api/auth/admin/unlock-user`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ user_id: userId }),
+      cache: "no-store",
+    });
+  } catch {
+    return { error: "Network error — please try again" };
+  }
+
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+
+  if (!res.ok) {
+    return { error: data.error ?? "Failed to unlock account." };
+  }
+
+  revalidatePath("/account/team");
+  return { ok: true };
+}
+
 export async function updateMemberRole(
   userId: string,
   role: string
