@@ -84,6 +84,12 @@ async function buildFullLoginResponse(userId: string, orgId: string, role: strin
   const org   = orgResult.rows[0];
   const token = signJwt(userId, orgId, role);
 
+  // Stamp last login — best-effort, never blocks login
+  pg.query(
+    `UPDATE users SET previous_login_at = last_login_at, last_login_at = NOW() WHERE id = $1`,
+    [userId]
+  ).catch(() => {/* ignore */});
+
   return {
     ok: true as const,
     token,

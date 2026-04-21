@@ -5,6 +5,7 @@ import { getIssues, getMe, getDashboardSummary, getAuthMe, getFindings, getFrame
 import { BriefCard } from "@/components/BriefCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
 import { FindingsDonut, DomainPostureBars, ActionsRing, InventoryGrid, FrameworkGaps, VendorRiskCard, PostureScoreTile, RisksBreakdown } from "./DashboardCharts";
+import { LastLoginBanner } from "./LastLoginBanner";
 
 export const revalidate = 0;
 
@@ -68,6 +69,8 @@ export default async function DashboardPage({
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-12">
+      <LastLoginBanner previousLoginAt={authMe?.previousLoginAt ?? null} />
+
       {/* Email suppression warning — paid subscriber not receiving briefs */}
       {emailSuppressed && (
         <div className="mb-6 bg-red-950/50 border border-red-700/60 rounded-xl px-5 py-4 flex items-start gap-3">

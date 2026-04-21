@@ -27,8 +27,8 @@ function ResetPasswordForm() {
     e.preventDefault();
     setError(null);
 
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
+    if (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
+      setError("Must be 12+ characters with uppercase, lowercase, and a number.");
       return;
     }
     if (password !== confirm) {
@@ -56,6 +56,10 @@ function ResetPasswordForm() {
           ? "This reset link has expired. Please request a new one."
           : data.error === "token_not_found_or_expired"
           ? "Invalid reset link. Please request a new one."
+          : data.error === "password_too_short"
+          ? "Password must be at least 12 characters."
+          : data.error === "password_too_weak"
+          ? "Password must include uppercase, lowercase, and a number."
           : "Password reset failed. Please try again."
       );
       setLoading(false);
@@ -85,7 +89,7 @@ function ResetPasswordForm() {
               type="password"
               value={password}
               onChange={setPassword}
-              placeholder="8+ characters"
+              placeholder="12+ characters"
               autoComplete="new-password"
             />
             <AuthInput

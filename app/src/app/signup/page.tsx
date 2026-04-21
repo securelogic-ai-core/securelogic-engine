@@ -22,10 +22,21 @@ export default function SignupPage() {
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState<string | null>(null);
 
+  function clientValidatePassword(pw: string): string | null {
+    if (pw.length < 12) return "Must be 12+ characters with uppercase, lowercase, and a number";
+    if (!/[a-z]/.test(pw) || !/[A-Z]/.test(pw) || !/[0-9]/.test(pw))
+      return "Must be 12+ characters with uppercase, lowercase, and a number";
+    return null;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
     setError(null);
+
+    const pwErr = clientValidatePassword(password);
+    if (pwErr) { setError(pwErr); return; }
+
+    setLoading(true);
 
     const res = await fetch("/api/auth-signup", {
       method: "POST",
@@ -45,6 +56,10 @@ export default function SignupPage() {
       setError(
         data.error === "email_already_registered"
           ? "An account with this email already exists. Try signing in."
+          : data.error === "password_too_short"
+          ? "Password must be at least 12 characters."
+          : data.error === "password_too_weak"
+          ? "Password must include uppercase, lowercase, and a number."
           : data.detail ?? data.error ?? "Signup failed. Please try again."
       );
       setLoading(false);
@@ -93,7 +108,7 @@ export default function SignupPage() {
           type="password"
           value={password}
           onChange={setPassword}
-          placeholder="8+ characters"
+          placeholder="12+ characters"
           autoComplete="new-password"
         />
 

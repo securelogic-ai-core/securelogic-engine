@@ -85,8 +85,12 @@ function isValidEmail(v: unknown): v is string {
   return t.length >= 3 && t.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t);
 }
 
-function isValidPassword(v: unknown): v is string {
-  return typeof v === "string" && v.length >= 8 && v.length <= 128;
+function validatePassword(v: unknown): { error: string; detail: string } | null {
+  if (typeof v !== "string" || v.length < 12 || v.length > 128)
+    return { error: "password_too_short", detail: "12 characters minimum" };
+  if (!/[a-z]/.test(v) || !/[A-Z]/.test(v) || !/[0-9]/.test(v))
+    return { error: "password_too_weak", detail: "Must include uppercase, lowercase, and a number" };
+  return null;
 }
 
 function isValidName(v: unknown): v is string {
@@ -225,8 +229,9 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
       res.status(400).json({ error: "invalid_email" });
       return;
     }
-    if (!isValidPassword(passwordRaw)) {
-      res.status(400).json({ error: "invalid_password", detail: "8–128 characters required" });
+    const pwErrSignup = validatePassword(passwordRaw);
+    if (pwErrSignup) {
+      res.status(400).json(pwErrSignup);
       return;
     }
 
@@ -520,6 +525,12 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
       return;
     }
 
+    // Stamp last login — best-effort, never blocks login
+    pg.query(
+      `UPDATE users SET previous_login_at = last_login_at, last_login_at = NOW() WHERE id = $1`,
+      [user.id]
+    ).catch(() => {/* ignore */});
+
     // Fetch org for display info
     const orgResult = await pg.query<{
       name: string;
@@ -666,8 +677,9 @@ router.post("/auth/reset-password", verifyLimiter, async (req, res) => {
       return;
     }
 
-    if (!isValidPassword(passwordRaw)) {
-      res.status(400).json({ error: "invalid_password", detail: "8–128 characters required" });
+    const pwErrReset = validatePassword(passwordRaw);
+    if (pwErrReset) {
+      res.status(400).json(pwErrReset);
       return;
     }
 
@@ -807,8 +819,8 @@ router.get("/auth/me", requireAuth, async (req, res) => {
     const userId = req.jwtPayload!.sub;
     const orgId  = req.jwtPayload!.org;
 
-    const userResult = await pg.query<{ id: string; email: string; name: string; role: string; totp_enabled: boolean }>(
-      `SELECT id, email, name, role, totp_enabled FROM users WHERE id = $1 LIMIT 1`,
+    const userResult = await pg.query<{ id: string; email: string; name: string; role: string; totp_enabled: boolean; previous_login_at: string | null }>(
+      `SELECT id, email, name, role, totp_enabled, previous_login_at FROM users WHERE id = $1 LIMIT 1`,
       [userId]
     );
 
@@ -855,7 +867,8 @@ router.get("/auth/me", requireAuth, async (req, res) => {
       billingActive:       org?.entitlement_level !== "starter" && !org?.payment_failed_at,
       emailSuppressed,
       onboardingCompleted: org?.onboarding_completed_at !== null && org?.onboarding_completed_at !== undefined,
-      totpEnabled:         user.totp_enabled ?? false
+      totpEnabled:         user.totp_enabled ?? false,
+      previousLoginAt:     user.previous_login_at ?? null
     });
   } catch (err) {
     logger.error({ event: "auth_me_failed", err }, "GET /api/auth/me failed");

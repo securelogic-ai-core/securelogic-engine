@@ -628,6 +628,7 @@ export type AuthMeResponse = {
   emailSuppressed?: boolean;
   onboardingCompleted?: boolean;
   totpEnabled?: boolean;
+  previousLoginAt?: string | null;
 };
 
 export type TeamMember = {
