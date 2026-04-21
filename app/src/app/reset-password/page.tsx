@@ -60,6 +60,8 @@ function ResetPasswordForm() {
           ? "Password must be at least 12 characters."
           : data.error === "password_too_weak"
           ? "Password must include uppercase, lowercase, and a number."
+          : data.error === "password_recently_used"
+          ? "This password was used recently. Please choose a different one."
           : "Password reset failed. Please try again."
       );
       setLoading(false);
