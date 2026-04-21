@@ -163,6 +163,7 @@ router.get(
         severity: string | null;
         finding_count: number;
         action_count: number;
+        trend_direction: string | null;
       }> = [];
 
       if (snapshotRow !== null) {
@@ -172,9 +173,11 @@ router.get(
           severity: string | null;
           finding_count: number;
           action_count: number;
+          trend_direction: string | null;
         }>(
           `
-          SELECT domain, score, severity, finding_count, action_count
+          SELECT domain, score, severity, finding_count, action_count,
+                 trend_direction
           FROM domain_scores
           WHERE posture_snapshot_id = $1
           ORDER BY
@@ -289,6 +292,31 @@ router.get(
           const n = parseInt(row.count, 10);
           openRisksByRating[row.risk_rating] = n;
           totalOpenRisks += n;
+        }
+      }
+
+      // -------------------------------------------------------
+      // 5b. Open risk counts by domain
+      // -------------------------------------------------------
+      const riskByDomainResult = await pg.query<{
+        domain: string | null;
+        count: string;
+      }>(
+        `
+        SELECT domain, COUNT(*)::text AS count
+        FROM risks
+        WHERE organization_id = $1
+          AND status NOT IN ('closed', 'transferred')
+          AND domain IS NOT NULL
+        GROUP BY domain
+        `,
+        [organizationId]
+      );
+
+      const openRisksByDomain: Record<string, number> = {};
+      for (const row of riskByDomainResult.rows) {
+        if (row.domain) {
+          openRisksByDomain[row.domain] = parseInt(row.count, 10);
         }
       }
 
@@ -424,7 +452,8 @@ router.get(
         },
         risks_summary: {
           open: totalOpenRisks,
-          by_risk_rating: openRisksByRating
+          by_risk_rating: openRisksByRating,
+          by_domain: openRisksByDomain
         },
         dependency_summary: {
           open: totalOpenDeps,
