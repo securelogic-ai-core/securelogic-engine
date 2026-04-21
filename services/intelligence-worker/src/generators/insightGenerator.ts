@@ -194,7 +194,7 @@ export async function generateInsights(): Promise<number> {
           risk_level = EXCLUDED.risk_level,
           audience = EXCLUDED.audience,
           category = EXCLUDED.category,
-          published = EXCLUDED.published,
+          published = insights.published,
           linked_sources = EXCLUDED.linked_sources,
           updated_at = NOW()
         `,
@@ -230,7 +230,7 @@ export async function generateInsights(): Promise<number> {
           risk_level = EXCLUDED.risk_level,
           audience = EXCLUDED.audience,
           category = EXCLUDED.category,
-          published = EXCLUDED.published,
+          published = insights.published,
           linked_sources = EXCLUDED.linked_sources,
           updated_at = NOW()
         `,

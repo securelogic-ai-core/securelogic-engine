@@ -139,6 +139,12 @@ services:
       - key: APP_BASE_URL
         sync: false
 
+      # Anthropic API key — required for LLM signal enrichment, executive synthesis,
+      # thesis headline, cross-domain analysis, and action summary generation.
+      # Without this, all briefs fall back to generic template content.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
       # Optional: override log verbosity (default: info)
       - key: LOG_LEVEL
         sync: false
