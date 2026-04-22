@@ -4,7 +4,7 @@ import { getSession } from "@/lib/session";
 import { getIssues, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFrameworks, getFrameworkReadiness, type DashboardSummary, type PostureSnapshot, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
-import { FindingsDonut, DomainPostureBars, ActionsRing, InventoryGrid, FrameworkGaps, VendorRiskCard, PostureScoreTile, RisksBreakdown, ComplianceCoverage, RiskHeatmap } from "./DashboardCharts";
+import { FindingsDonut, DomainPostureBars, ActionsRing, InventoryGrid, FrameworkGaps, VendorRiskCard, PostureScoreTile, RisksBreakdown, ComplianceCoverage, RiskHeatmap, OpenItemsAging } from "./DashboardCharts";
 import { PostureTrendChart } from "./PostureTrendChart";
 import { LastLoginBanner } from "./LastLoginBanner";
 
@@ -329,6 +329,11 @@ function PostureDashboard({
         <FindingsDonut findings={findings} />
         <DomainPostureBars domains={domains} />
         <ActionsRing actions={actions} />
+      </div>
+
+      {/* Row 1b: Open items aging (full width) */}
+      <div className="mb-4">
+        <OpenItemsAging findings={findings} actions={actions} />
       </div>
 
       {/* Row 2: Vendor risk | Framework gaps | Compliance coverage */}

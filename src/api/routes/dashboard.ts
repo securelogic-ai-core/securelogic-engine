@@ -216,12 +216,58 @@ router.get(
         buildFindingsBySeverity(findingCountResult.rows);
 
       // -------------------------------------------------------
-      // 4. Action counts — open and overdue
+      // 3b. Findings aging — avg/max age and bucket counts
+      // -------------------------------------------------------
+      const findingsAgingResult = await pg.query<{
+        avg_age_days: string | null;
+        max_age_days: string | null;
+        older_than_30: string;
+        older_than_7:  string;
+      }>(
+        `
+        SELECT
+          ROUND(AVG(
+            EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
+          ) FILTER (
+            WHERE status NOT IN ('resolved', 'closed', 'accepted')
+          ))::text AS avg_age_days,
+          MAX(
+            EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
+          )::int FILTER (
+            WHERE status NOT IN ('resolved', 'closed', 'accepted')
+          )::text AS max_age_days,
+          COUNT(*) FILTER (
+            WHERE status NOT IN ('resolved', 'closed', 'accepted')
+              AND created_at < NOW() - INTERVAL '30 days'
+          )::text AS older_than_30,
+          COUNT(*) FILTER (
+            WHERE status NOT IN ('resolved', 'closed', 'accepted')
+              AND created_at <  NOW() - INTERVAL '7 days'
+              AND created_at >= NOW() - INTERVAL '30 days'
+          )::text AS older_than_7
+        FROM findings
+        WHERE organization_id = $1
+        `,
+        [organizationId]
+      );
+
+      const findingsAgingRow = findingsAgingResult.rows[0];
+      const findingsAvgAge     = findingsAgingRow?.avg_age_days != null ? parseFloat(findingsAgingRow.avg_age_days) : null;
+      const findingsMaxAge     = findingsAgingRow?.max_age_days != null ? parseInt(findingsAgingRow.max_age_days, 10) : null;
+      const findingsOlderThan30 = parseInt(findingsAgingRow?.older_than_30 ?? "0", 10);
+      const findingsOlderThan7  = parseInt(findingsAgingRow?.older_than_7  ?? "0", 10);
+
+      // -------------------------------------------------------
+      // 4. Action counts — open, overdue, and aging
       // -------------------------------------------------------
       const actionCountResult = await pg.query<{
         open_count: string;
         in_progress_count: string;
         overdue_count: string;
+        avg_age_days: string | null;
+        max_age_days: string | null;
+        older_than_30: string;
+        older_than_7:  string;
       }>(
         `
         SELECT
@@ -230,7 +276,26 @@ router.get(
           COUNT(*) FILTER (
             WHERE due_date < CURRENT_DATE
               AND status NOT IN ('closed', 'accepted')
-          )::text AS overdue_count
+          )::text AS overdue_count,
+          ROUND(AVG(
+            EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
+          ) FILTER (
+            WHERE status NOT IN ('closed', 'accepted')
+          ))::text AS avg_age_days,
+          MAX(
+            EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
+          )::int FILTER (
+            WHERE status NOT IN ('closed', 'accepted')
+          )::text AS max_age_days,
+          COUNT(*) FILTER (
+            WHERE status NOT IN ('closed', 'accepted')
+              AND created_at < NOW() - INTERVAL '30 days'
+          )::text AS older_than_30,
+          COUNT(*) FILTER (
+            WHERE status NOT IN ('closed', 'accepted')
+              AND created_at <  NOW() - INTERVAL '7 days'
+              AND created_at >= NOW() - INTERVAL '30 days'
+          )::text AS older_than_7
         FROM actions
         WHERE organization_id = $1
           AND status NOT IN ('closed', 'accepted')
@@ -239,9 +304,13 @@ router.get(
       );
 
       const actionRow = actionCountResult.rows[0];
-      const openActionCount       = actionRow ? parseInt(actionRow.open_count, 10)        : 0;
-      const inProgressActionCount = actionRow ? parseInt(actionRow.in_progress_count, 10) : 0;
-      const overdueActionCount    = actionRow ? parseInt(actionRow.overdue_count, 10)      : 0;
+      const openActionCount        = actionRow ? parseInt(actionRow.open_count, 10)        : 0;
+      const inProgressActionCount  = actionRow ? parseInt(actionRow.in_progress_count, 10) : 0;
+      const overdueActionCount     = actionRow ? parseInt(actionRow.overdue_count, 10)      : 0;
+      const actionsAvgAge          = actionRow?.avg_age_days != null ? parseFloat(actionRow.avg_age_days) : null;
+      const actionsMaxAge          = actionRow?.max_age_days != null ? parseInt(actionRow.max_age_days, 10) : null;
+      const actionsOlderThan30     = parseInt(actionRow?.older_than_30 ?? "0", 10);
+      const actionsOlderThan7      = parseInt(actionRow?.older_than_7  ?? "0", 10);
 
       // -------------------------------------------------------
       // 4b. Overdue controls count
@@ -465,13 +534,21 @@ router.get(
         },
         domains: domainRows,
         findings: {
-          open: totalOpenFindings,
-          by_severity: bySeverity
+          open:          totalOpenFindings,
+          by_severity:   bySeverity,
+          avg_age_days:  findingsAvgAge,
+          max_age_days:  findingsMaxAge,
+          older_than_30: findingsOlderThan30,
+          older_than_7:  findingsOlderThan7,
         },
         actions: {
-          open: openActionCount,
-          in_progress: inProgressActionCount,
-          overdue: overdueActionCount
+          open:          openActionCount,
+          in_progress:   inProgressActionCount,
+          overdue:       overdueActionCount,
+          avg_age_days:  actionsAvgAge,
+          max_age_days:  actionsMaxAge,
+          older_than_30: actionsOlderThan30,
+          older_than_7:  actionsOlderThan7,
         },
         controls_cadence: {
           overdue: overdueControlsCount

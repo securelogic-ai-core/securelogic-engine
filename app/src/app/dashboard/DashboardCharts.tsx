@@ -257,6 +257,136 @@ export function ActionsRing({ actions }: { actions: DashboardSummary["actions"] 
   );
 }
 
+// ── OpenItemsAging ─────────────────────────────────────────────
+
+function AgingSection({
+  label,
+  href,
+  open,
+  avgAge,
+  maxAge,
+  olderThan30,
+  olderThan7,
+}: {
+  label:       string;
+  href:        string;
+  open:        number;
+  avgAge:      number | null | undefined;
+  maxAge:      number | null | undefined;
+  olderThan30: number;
+  olderThan7:  number;
+}) {
+  const lessThan7 = Math.max(0, open - olderThan30 - olderThan7);
+
+  const buckets = [
+    { label: ">30 days", count: olderThan30, color: "#ef4444", bg: "rgba(239,68,68,0.15)" },
+    { label: "7–30 days", count: olderThan7,  color: "#f59e0b", bg: "rgba(245,158,11,0.15)" },
+    { label: "<7 days",  count: lessThan7,   color: "#00c4b4", bg: "rgba(0,196,180,0.12)" },
+  ];
+
+  return (
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: TEXT_MUTED }}>
+        {label}
+      </p>
+
+      {/* Avg age */}
+      <p className="font-bold leading-none mb-0.5" style={{ fontSize: "26px", color: open > 0 ? "#f1f5f9" : TEXT_MUTED }}>
+        {avgAge != null && avgAge > 0 ? Math.round(avgAge) : "—"}
+      </p>
+      <p className="text-xs mb-3" style={{ color: TEXT_MUTED }}>avg days open</p>
+
+      {/* Buckets */}
+      <div className="space-y-1.5">
+        {buckets.map(({ label: bl, count, color, bg }) => (
+          <div key={bl} className="flex items-center justify-between gap-2">
+            <span className="text-xs" style={{ color: TEXT_MUTED }}>{bl}</span>
+            <span
+              style={{
+                background:   count > 0 ? bg    : "rgba(100,116,139,0.08)",
+                color:        count > 0 ? color : "#475569",
+                fontSize:     "10px",
+                fontWeight:   600,
+                padding:      "1px 7px",
+                borderRadius: "20px",
+                minWidth:     "24px",
+                textAlign:    "center",
+              }}
+            >
+              {count}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Oldest */}
+      {maxAge != null && maxAge > 0 && (
+        <p className="mt-2 text-xs" style={{ color: TEXT_MUTED }}>
+          Oldest: {maxAge}d
+        </p>
+      )}
+
+      <Link href={href} className="block mt-3 text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+        View {label.toLowerCase()} →
+      </Link>
+    </div>
+  );
+}
+
+export function OpenItemsAging({
+  findings,
+  actions,
+}: {
+  findings: DashboardSummary["findings"];
+  actions:  DashboardSummary["actions"];
+}) {
+  const findingsOpen = findings.open;
+  const actionsOpen  = (actions.open ?? 0) + (actions.in_progress ?? 0);
+  const bothEmpty    = findingsOpen === 0 && actionsOpen === 0;
+
+  return (
+    <div className="rounded-xl border p-5" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
+      <div className="flex items-baseline justify-between mb-4">
+        <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
+          Open Items Aging
+        </p>
+        <Link href="/findings" className="text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+          View all →
+        </Link>
+      </div>
+
+      {bothEmpty ? (
+        <div className="flex items-center gap-2 py-2">
+          <span style={{ color: "#22c55e", fontSize: "18px" }}>✓</span>
+          <p className="text-sm" style={{ color: "#86efac" }}>No open items. All clear.</p>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: "32px" }}>
+          <AgingSection
+            label="Findings"
+            href="/findings?status=open"
+            open={findingsOpen}
+            avgAge={findings.avg_age_days}
+            maxAge={findings.max_age_days}
+            olderThan30={findings.older_than_30 ?? 0}
+            olderThan7={findings.older_than_7 ?? 0}
+          />
+          <div style={{ width: "1px", background: SLATE_LINE, flexShrink: 0 }} />
+          <AgingSection
+            label="Actions"
+            href="/actions"
+            open={actionsOpen}
+            avgAge={actions.avg_age_days}
+            maxAge={actions.max_age_days}
+            olderThan30={actions.older_than_30 ?? 0}
+            olderThan7={actions.older_than_7 ?? 0}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── InventoryGrid ──────────────────────────────────────────────
 
 export function InventoryGrid({
