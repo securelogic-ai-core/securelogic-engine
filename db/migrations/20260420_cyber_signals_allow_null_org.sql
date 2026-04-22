@@ -17,34 +17,50 @@
 --
 --    These types route correctly through intelligenceBriefGenerator.mapSignalToCategory().
 
-ALTER TABLE cyber_signals
-  ALTER COLUMN organization_id DROP NOT NULL;
+-- FRESH-DEPLOY GUARD: On a clean database this migration runs before
+-- 20260430_cyber_signals_ingestion.sql (which creates the table). Wrapping
+-- every statement in a single DO block lets us bail out early when the table
+-- does not yet exist. On existing deployments the table is present and all
+-- changes apply exactly as before.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_tables
+    WHERE schemaname = 'public' AND tablename = 'cyber_signals'
+  ) THEN
+    RAISE NOTICE 'cyber_signals not yet created; 20260420 is a no-op (20260430 handles fresh deploy)';
+    RETURN;
+  END IF;
 
--- Partial unique index: one global signal per dedup_hash when org is NULL.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_cyber_signals_global_dedup
-  ON cyber_signals (dedup_hash)
-  WHERE organization_id IS NULL;
+  ALTER TABLE cyber_signals
+    ALTER COLUMN organization_id DROP NOT NULL;
 
--- Expand signal_type constraint to include bridge-mapped values.
-ALTER TABLE cyber_signals
-  DROP CONSTRAINT IF EXISTS cyber_signals_signal_type_check;
+  -- Partial unique index: one global signal per dedup_hash when org is NULL.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_cyber_signals_global_dedup
+    ON cyber_signals (dedup_hash)
+    WHERE organization_id IS NULL;
 
-ALTER TABLE cyber_signals
-  ADD CONSTRAINT cyber_signals_signal_type_check
-    CHECK (signal_type IN (
-      'cve',
-      'threat_actor',
-      'advisory',
-      'breach',
-      'patch',
-      'malware',
-      'geopolitical',
-      'regulatory_change',
-      'third_party_breach',
-      'data_exposure',
-      'patch_advisory',
-      'vulnerability',
-      'regulatory',
-      'vendor_incident',
-      'general'
-    ));
+  -- Expand signal_type constraint to include bridge-mapped values.
+  ALTER TABLE cyber_signals
+    DROP CONSTRAINT IF EXISTS cyber_signals_signal_type_check;
+
+  ALTER TABLE cyber_signals
+    ADD CONSTRAINT cyber_signals_signal_type_check
+      CHECK (signal_type IN (
+        'cve',
+        'threat_actor',
+        'advisory',
+        'breach',
+        'patch',
+        'malware',
+        'geopolitical',
+        'regulatory_change',
+        'third_party_breach',
+        'data_exposure',
+        'patch_advisory',
+        'vulnerability',
+        'regulatory',
+        'vendor_incident',
+        'general'
+      ));
+END $$;
