@@ -54,13 +54,22 @@ export default function MfaSection({ totpEnabled: initialEnabled }: MfaSectionPr
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ code: code.trim() })
       });
-      const data = await res.json() as { backup_codes?: string[]; error?: string };
+      const data = await res.json() as { backup_codes?: string[]; error?: string; detail?: string };
       if (!res.ok || data.error) {
-        setError(data.error === "invalid_code" ? "Incorrect code. Try again." : "Verification failed.");
+        setError(
+          data.error === "invalid_code" ? "Incorrect code. Try again." :
+          data.detail                   ? data.detail :
+          data.error                    ? data.error :
+          "Verification failed."
+        );
         setLoading(false);
         return;
       }
-      setBackupCodes(data.backup_codes ?? []);
+      if (!data.backup_codes?.length) {
+        setError("Backup codes could not be generated. Please try again.");
+        return;
+      }
+      setBackupCodes(data.backup_codes);
       setStep("backup");
     } catch {
       setError("Network error. Please try again.");
@@ -209,25 +218,36 @@ export default function MfaSection({ totpEnabled: initialEnabled }: MfaSectionPr
       {/* ── Setup step 2: backup codes ── */}
       {step === "backup" && (
         <div className="mt-5 border-t border-slate-100 pt-5 space-y-4">
-          <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
-            <p className="text-sm font-semibold text-amber-800 mb-1">Save these backup codes</p>
-            <p className="text-xs text-amber-700">
-              Store them somewhere safe. Each code can only be used once and will not be shown again.
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            {backupCodes.map((c) => (
-              <span key={c} className="font-mono text-sm bg-slate-50 border border-slate-200 rounded px-3 py-1.5 text-center tracking-wider">
-                {c}
-              </span>
-            ))}
-          </div>
-          <button
-            onClick={copyAll}
-            className="w-full border border-slate-300 hover:border-slate-400 text-slate-700 text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-          >
-            {copied ? "Copied!" : "Copy all codes"}
-          </button>
+          {backupCodes.length === 0 ? (
+            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+              <p className="text-sm font-semibold text-red-800 mb-1">Backup codes unavailable</p>
+              <p className="text-xs text-red-700">
+                Something went wrong — backup codes could not be generated. Please disable and re-enable MFA to try again.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+                <p className="text-sm font-semibold text-amber-800 mb-1">Save these backup codes</p>
+                <p className="text-xs text-amber-700">
+                  Store them somewhere safe. Each code can only be used once and will not be shown again.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {backupCodes.map((c) => (
+                  <span key={c} className="font-mono text-sm bg-slate-50 border border-slate-200 rounded px-3 py-1.5 text-center tracking-wider">
+                    {c}
+                  </span>
+                ))}
+              </div>
+              <button
+                onClick={copyAll}
+                className="w-full border border-slate-300 hover:border-slate-400 text-slate-700 text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+              >
+                {copied ? "Copied!" : "Copy all codes"}
+              </button>
+            </>
+          )}
           <button
             onClick={finishSetup}
             className="w-full bg-teal-600 hover:bg-teal-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
