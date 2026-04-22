@@ -7,5 +7,5 @@ export async function POST(request: Request) {
   const cookieStore = await cookies();
   const session = await getIronSession<SessionData>(cookieStore, getSessionOptions());
   session.destroy();
-  return NextResponse.redirect(new URL("/login", request.url));
+  return NextResponse.redirect(new URL("/login", request.url), { status: 303 });
 }
