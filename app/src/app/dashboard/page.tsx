@@ -4,7 +4,7 @@ import { getSession } from "@/lib/session";
 import { getIssues, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFrameworks, getFrameworkReadiness, type DashboardSummary, type PostureSnapshot, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
-import { FindingsDonut, DomainPostureBars, ActionsRing, InventoryGrid, FrameworkGaps, VendorRiskCard, PostureScoreTile, RisksBreakdown, ComplianceCoverage } from "./DashboardCharts";
+import { FindingsDonut, DomainPostureBars, ActionsRing, InventoryGrid, FrameworkGaps, VendorRiskCard, PostureScoreTile, RisksBreakdown, ComplianceCoverage, RiskHeatmap } from "./DashboardCharts";
 import { PostureTrendChart } from "./PostureTrendChart";
 import { LastLoginBanner } from "./LastLoginBanner";
 
@@ -312,10 +312,11 @@ function PostureDashboard({
         Security Posture
       </h2>
 
-      {/* Row 0: Posture score | Risks breakdown */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+      {/* Row 0: Posture score | Risks breakdown | Risk heatmap */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <PostureScoreTile posture={posture} />
         <RisksBreakdown risks_summary={risks_summary} />
+        <RiskHeatmap risks_summary={risks_summary} />
       </div>
 
       {/* Row 0b: Posture score trend (full width) */}
