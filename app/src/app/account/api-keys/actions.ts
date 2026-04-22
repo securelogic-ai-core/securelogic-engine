@@ -6,11 +6,15 @@ import type { ApiKeyRecord } from "@/lib/api";
 const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
 
 export async function createKeyAction(
-  label: string
+  label: string,
+  expiresAt?: string | null
 ): Promise<{ rawKey: string; key: ApiKeyRecord } | { error: string }> {
   const session = await getSession();
   const token   = session.jwtToken ?? null;
   if (!token) return { error: "Not authenticated" };
+
+  const body: Record<string, unknown> = { label };
+  if (expiresAt) body.expires_at = expiresAt;
 
   let res: Response;
   try {
@@ -20,7 +24,7 @@ export async function createKeyAction(
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ label }),
+      body: JSON.stringify(body),
       cache: "no-store",
     });
   } catch {

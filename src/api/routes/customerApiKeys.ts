@@ -37,6 +37,7 @@ interface ApiKeyRow {
   last_used_at: string | null;
   created_at: string;
   revoked_at: string | null;
+  expires_at: string | null;
   created_by_user_id: string | null;
   created_by_name: string | null;
 }
@@ -61,7 +62,7 @@ router.get(
     try {
       const result = await pg.query<ApiKeyRow>(
         `SELECT k.id, k.organization_id, k.label, k.entitlement_level,
-                k.status, k.last_used_at, k.created_at, k.revoked_at,
+                k.status, k.last_used_at, k.created_at, k.revoked_at, k.expires_at,
                 k.created_by_user_id,
                 (SELECT u.name FROM users u WHERE u.id = k.created_by_user_id) AS created_by_name
          FROM api_keys k
@@ -97,6 +98,21 @@ router.post(
     if (!rawLabel) { res.status(400).json({ error: "label_required" }); return; }
     if (rawLabel.length > 100) { res.status(400).json({ error: "label_too_long", max: 100 }); return; }
 
+    let expiresAt: Date | null = null;
+    if (req.body?.expires_at != null && req.body.expires_at !== "") {
+      const parsed = new Date(req.body.expires_at as string);
+      const twoYearsFromNow = new Date();
+      twoYearsFromNow.setFullYear(twoYearsFromNow.getFullYear() + 2);
+      if (isNaN(parsed.getTime()) || parsed <= new Date() || parsed > twoYearsFromNow) {
+        res.status(400).json({
+          error: "invalid_expires_at",
+          detail: "Expiry must be a future date within 2 years."
+        });
+        return;
+      }
+      expiresAt = parsed;
+    }
+
     try {
       // Inherit entitlement from the org's existing primary key
       const entitlementResult = await pg.query<{ entitlement_level: string }>(
@@ -112,11 +128,11 @@ router.post(
 
       const inserted = await pg.query<ApiKeyRow>(
         `INSERT INTO api_keys
-           (organization_id, label, key_hash, entitlement_level, status, created_by_user_id)
-         VALUES ($1, $2, $3, $4, 'active', $5)
+           (organization_id, label, key_hash, entitlement_level, status, created_by_user_id, expires_at)
+         VALUES ($1, $2, $3, $4, 'active', $5, $6)
          RETURNING id, organization_id, label, entitlement_level, status,
-                   last_used_at, created_at, revoked_at, created_by_user_id`,
-        [orgId, rawLabel, keyHash, entitlementLevel, userId]
+                   last_used_at, created_at, revoked_at, expires_at, created_by_user_id`,
+        [orgId, rawLabel, keyHash, entitlementLevel, userId, expiresAt]
       );
 
       const newKey = inserted.rows[0]!;
