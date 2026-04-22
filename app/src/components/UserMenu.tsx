@@ -124,6 +124,11 @@ export default function UserMenu({ name, email, role, organizationName, isPlatfo
             <MenuLink href="/settings/risk-scale" onClick={() => setOpen(false)} icon={<GearIcon />}>
               Settings
             </MenuLink>
+            {role === "admin" && (
+              <MenuLink href="/settings/security" onClick={() => setOpen(false)}>
+                Security
+              </MenuLink>
+            )}
             {isSsoEligible && role === "admin" && (
               <MenuLink href="/settings/sso" onClick={() => setOpen(false)}>
                 SSO Configuration

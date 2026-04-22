@@ -95,6 +95,10 @@ function LoginForm() {
         setLoading(false);
         return;
       }
+      if (data.error === "mfa_enrollment_required") {
+        router.push("/account?mfa_required=1");
+        return;
+      }
       setError(
         data.error === "invalid_credentials"
           ? "Invalid email or password."

@@ -80,6 +80,7 @@ import topRisksSummaryRouter from "./topRisksSummary.js";
 import billingRouter from "./billing.js";
 import customerAuthRouter from "./customerAuth.js";
 import mfaRouter from "./mfa.js";
+import orgSettingsRouter from "./orgSettings.js";
 import publicBriefSignupRouter from "./publicBriefSignup.js";
 import intelligenceBriefsRouter from "./intelligenceBriefs.js";
 import adminBriefsRouter from "./adminBriefs.js";
@@ -196,6 +197,9 @@ export function buildRoutes(opts: RoutesOptions): Router {
 
   // MFA routes — mix of public (verify, use-backup) and JWT-protected (setup, disable, reset)
   router.use("/api", mfaRouter);
+
+  // Org-level security settings — JWT-protected
+  router.use("/api", orgSettingsRouter);
 
   // SAML 2.0 SSO — public endpoints (check-domain, login, acs, metadata) + protected config endpoints
   router.use("/api", ssoRouter);

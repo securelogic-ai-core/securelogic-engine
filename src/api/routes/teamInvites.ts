@@ -290,8 +290,9 @@ router.get(
           created_at: string;
           last_used_at: string | null;
           lockout_until: string | null;
+          totp_enabled: boolean;
         }>(
-          `SELECT id, email, name, role, status, created_at, NULL AS last_used_at, lockout_until
+          `SELECT id, email, name, role, status, created_at, NULL AS last_used_at, lockout_until, totp_enabled
            FROM users
            WHERE organization_id = $1 AND status != 'inactive'
            ORDER BY created_at ASC`,

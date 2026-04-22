@@ -275,6 +275,22 @@ export default function TeamManagement({
                   </div>
 
                   <div className="flex items-center gap-3">
+                    {/* MFA badge */}
+                    <span
+                      style={{
+                        fontSize: "11px",
+                        fontWeight: 600,
+                        padding: "2px 7px",
+                        borderRadius: "20px",
+                        background: member.totp_enabled
+                          ? "rgba(16,185,129,0.12)"
+                          : "rgba(148,163,184,0.1)",
+                        color: member.totp_enabled ? "#34d399" : "#64748b",
+                      }}
+                    >
+                      {member.totp_enabled ? "MFA" : "No MFA"}
+                    </span>
+
                     {/* Role selector or badge */}
                     {canEditRole ? (
                       <select
