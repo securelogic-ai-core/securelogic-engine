@@ -8,7 +8,7 @@ export function LogoutButton() {
   async function handleLogout() {
     setSigningOut(true);
     try {
-      await fetch("/api/auth-logout", { method: "POST", redirect: "manual" });
+      await fetch("/api/logout", { method: "POST", redirect: "manual" });
     } catch {
       // ignore — session may already be cleared
     }
