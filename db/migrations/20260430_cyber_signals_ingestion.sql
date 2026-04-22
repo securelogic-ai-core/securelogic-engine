@@ -35,7 +35,10 @@
 
 CREATE TABLE IF NOT EXISTS cyber_signals (
   id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id     UUID        NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  -- NULL allowed: globally-ingested signals (not scoped to any org) have NULL here.
+  -- The NOT NULL constraint was dropped by 20260420 on existing deploys; on a
+  -- fresh deploy this column is created nullable from the start.
+  organization_id     UUID        NULL     REFERENCES organizations(id) ON DELETE CASCADE,
 
   -- Signal provenance
   source              TEXT        NOT NULL,
@@ -81,9 +84,16 @@ CREATE TABLE IF NOT EXISTS cyber_signals (
   )
 );
 
--- Deduplication: one signal per (org, hash).
+-- Deduplication: one signal per (org, hash) for org-scoped signals.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cyber_signals_dedup
   ON cyber_signals (organization_id, dedup_hash);
+
+-- Deduplication for global (NULL-org) signals: one per dedup_hash.
+-- On existing deployments this index is created by 20260420; IF NOT EXISTS
+-- makes it a no-op. On fresh deployments 20260420 is skipped so this creates it.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cyber_signals_global_dedup
+  ON cyber_signals (dedup_hash)
+  WHERE organization_id IS NULL;
 
 -- Primary list access pattern: newest first, per org.
 CREATE INDEX IF NOT EXISTS idx_cyber_signals_org_created
