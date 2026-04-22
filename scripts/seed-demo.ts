@@ -14,8 +14,10 @@
  */
 
 import { config } from "dotenv";
+// Load env files as fallbacks only — shell-provided env vars (e.g. DATABASE_URL
+// passed on the CLI) always win because override is not set.
+config({ path: ".env.local" });
 config({ path: ".env" });
-config({ path: ".env.local", override: true });
 
 import { Pool } from "pg";
 import argon2 from "argon2";
@@ -28,10 +30,16 @@ if (!DATABASE_URL) { console.error("DATABASE_URL is not set"); process.exit(1); 
 const RESET      = process.argv.includes("--reset");
 const DEMO_SLUG  = "meridian-financial-services";
 const DEMO_PASS  = "Demo1234!";
-// Org whose frameworks we copy
+// Org whose frameworks we copy — must exist in the source DB.
 const SRC_ORG_ID = "3124d8a3-34c0-4696-8c91-64ef0d4eeb17";
 
-const pool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
+// SEED_SRC_DATABASE_URL lets you copy frameworks from a different DB (e.g.
+// production) when seeding a fresh demo instance. Falls back to DATABASE_URL
+// so the script works unchanged when seeding an org on the same DB.
+const SEED_SRC_DATABASE_URL = process.env.SEED_SRC_DATABASE_URL ?? DATABASE_URL;
+
+const pool    = new Pool({ connectionString: DATABASE_URL,       ssl: { rejectUnauthorized: false } });
+const srcPool = new Pool({ connectionString: SEED_SRC_DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
 function ok(msg: string)   { console.log(`  ✓ ${msg}`); }
 function step(msg: string) { console.log(`\n${msg}`); }
@@ -102,7 +110,13 @@ async function main() {
   // ── 3. Frameworks ─────────────────────────────────────────────────────────────
   step("Step 3 — Frameworks (copy from source org)");
 
-  const srcFws = await pool.query<{ id: string; name: string; version: string }>(
+  if (!process.env.SEED_SRC_DATABASE_URL) {
+    console.log(`  → SEED_SRC_DATABASE_URL not set; framework copy skipped.`);
+    console.log(`  → Set it to the source DB URL to copy frameworks and requirements.`);
+  }
+
+  // Read from srcPool (may point to a different DB than pool)
+  const srcFws = await srcPool.query<{ id: string; name: string; version: string }>(
     `SELECT id, name, version FROM frameworks WHERE organization_id = $1`, [SRC_ORG_ID]
   );
 
@@ -114,7 +128,7 @@ async function main() {
     );
     const newFwId = fwRow.rows[0]!.id;
 
-    const reqs = await pool.query<{ reference_id: string; title: string; description: string | null }>(
+    const reqs = await srcPool.query<{ reference_id: string; title: string; description: string | null }>(
       `SELECT reference_id, title, description FROM requirements WHERE framework_id = $1`, [sf.id]
     );
     for (const req of reqs.rows) {
@@ -661,6 +675,7 @@ async function main() {
 `);
 
   await pool.end();
+  if (process.env.SEED_SRC_DATABASE_URL) await srcPool.end();
 }
 
 main().catch((e: unknown) => {
