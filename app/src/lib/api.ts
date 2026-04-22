@@ -150,11 +150,19 @@ export type DashboardSummary = {
       Moderate: number;
       Low: number;
     };
+    avg_age_days?:  number | null;
+    max_age_days?:  number | null;
+    older_than_30?: number;
+    older_than_7?:  number;
   };
   actions: {
     open: number;
     in_progress: number;
     overdue: number;
+    avg_age_days?:  number | null;
+    max_age_days?:  number | null;
+    older_than_30?: number;
+    older_than_7?:  number;
   };
   controls_cadence: {
     overdue: number;
