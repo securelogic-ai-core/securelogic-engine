@@ -227,24 +227,22 @@ router.get(
         `
         SELECT
           ROUND(AVG(
-            EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
-          ) FILTER (
-            WHERE status NOT IN ('resolved', 'closed', 'accepted')
+            CASE WHEN status NOT IN ('resolved', 'closed', 'accepted')
+            THEN EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
+            ELSE NULL END
           ))::text AS avg_age_days,
           MAX(
-            EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
-          )::int FILTER (
-            WHERE status NOT IN ('resolved', 'closed', 'accepted')
-          )::text AS max_age_days,
-          COUNT(*) FILTER (
-            WHERE status NOT IN ('resolved', 'closed', 'accepted')
-              AND created_at < NOW() - INTERVAL '30 days'
-          )::text AS older_than_30,
-          COUNT(*) FILTER (
-            WHERE status NOT IN ('resolved', 'closed', 'accepted')
-              AND created_at <  NOW() - INTERVAL '7 days'
-              AND created_at >= NOW() - INTERVAL '30 days'
-          )::text AS older_than_7
+            CASE WHEN status NOT IN ('resolved', 'closed', 'accepted')
+            THEN EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
+            ELSE NULL END
+          )::int::text AS max_age_days,
+          COUNT(CASE WHEN status NOT IN ('resolved', 'closed', 'accepted')
+            AND created_at < NOW() - INTERVAL '30 days'
+            THEN 1 END)::text AS older_than_30,
+          COUNT(CASE WHEN status NOT IN ('resolved', 'closed', 'accepted')
+            AND created_at <  NOW() - INTERVAL '7 days'
+            AND created_at >= NOW() - INTERVAL '30 days'
+            THEN 1 END)::text AS older_than_7
         FROM findings
         WHERE organization_id = $1
         `,
@@ -271,31 +269,28 @@ router.get(
       }>(
         `
         SELECT
-          COUNT(*) FILTER (WHERE status = 'open')::text        AS open_count,
-          COUNT(*) FILTER (WHERE status = 'in_progress')::text AS in_progress_count,
-          COUNT(*) FILTER (
-            WHERE due_date < CURRENT_DATE
-              AND status NOT IN ('closed', 'accepted')
-          )::text AS overdue_count,
+          COUNT(CASE WHEN status = 'open' THEN 1 END)::text        AS open_count,
+          COUNT(CASE WHEN status = 'in_progress' THEN 1 END)::text AS in_progress_count,
+          COUNT(CASE WHEN due_date < CURRENT_DATE
+            AND status NOT IN ('closed', 'accepted')
+            THEN 1 END)::text AS overdue_count,
           ROUND(AVG(
-            EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
-          ) FILTER (
-            WHERE status NOT IN ('closed', 'accepted')
+            CASE WHEN status NOT IN ('closed', 'accepted')
+            THEN EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
+            ELSE NULL END
           ))::text AS avg_age_days,
           MAX(
-            EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
-          )::int FILTER (
-            WHERE status NOT IN ('closed', 'accepted')
-          )::text AS max_age_days,
-          COUNT(*) FILTER (
-            WHERE status NOT IN ('closed', 'accepted')
-              AND created_at < NOW() - INTERVAL '30 days'
-          )::text AS older_than_30,
-          COUNT(*) FILTER (
-            WHERE status NOT IN ('closed', 'accepted')
-              AND created_at <  NOW() - INTERVAL '7 days'
-              AND created_at >= NOW() - INTERVAL '30 days'
-          )::text AS older_than_7
+            CASE WHEN status NOT IN ('closed', 'accepted')
+            THEN EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
+            ELSE NULL END
+          )::int::text AS max_age_days,
+          COUNT(CASE WHEN status NOT IN ('closed', 'accepted')
+            AND created_at < NOW() - INTERVAL '30 days'
+            THEN 1 END)::text AS older_than_30,
+          COUNT(CASE WHEN status NOT IN ('closed', 'accepted')
+            AND created_at <  NOW() - INTERVAL '7 days'
+            AND created_at >= NOW() - INTERVAL '30 days'
+            THEN 1 END)::text AS older_than_7
         FROM actions
         WHERE organization_id = $1
           AND status NOT IN ('closed', 'accepted')
