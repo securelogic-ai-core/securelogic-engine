@@ -125,7 +125,10 @@ export async function requireApiKey(
 
     const result = await pg.query(
       `
-      SELECT *
+      SELECT id, organization_id, label, key_hash, entitlement_level,
+             status, last_used_at, created_at, revoked_at, expires_at,
+             stripe_customer_id, payment_failed_at, stripe_subscription_tier,
+             created_by_user_id
       FROM api_keys
       WHERE key_hash = $1
       LIMIT 1
@@ -181,14 +184,28 @@ export async function requireApiKey(
       return;
     }
 
-    await pg.query(
-      `
-      UPDATE api_keys
-      SET last_used_at = NOW()
-      WHERE id = $1
-      `,
+    if (apiKey.expires_at !== null && apiKey.expires_at !== undefined && new Date(apiKey.expires_at as string) <= new Date()) {
+      writeAuditEvent({
+        organizationId: apiKey.organization_id as string ?? null,
+        actorApiKeyId: apiKey.id as string ?? null,
+        actorUserId: null,
+        eventType: "auth.expired_api_key",
+        resourceType: "api_key",
+        resourceId: apiKey.id as string ?? null,
+        payload: { route: req.originalUrl, method: req.method, expires_at: apiKey.expires_at },
+        ipAddress: req.ip ?? null
+      });
+      res.status(403).json({
+        error: "api_key_expired",
+        detail: "API key has expired. Please rotate or create a new key."
+      });
+      return;
+    }
+
+    pg.query(
+      `UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`,
       [apiKey.id]
-    );
+    ).catch(() => { /* silent */ });
 
     (req as any).apiKey = apiKey;
     next();

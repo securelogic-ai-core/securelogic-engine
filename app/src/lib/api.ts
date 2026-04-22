@@ -736,6 +736,7 @@ export type ApiKeyRecord = {
   last_used_at: string | null;
   created_at: string;
   revoked_at: string | null;
+  expires_at?: string | null;
   created_by_user_id: string | null;
   created_by_name: string | null;
 };

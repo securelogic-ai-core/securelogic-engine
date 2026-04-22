@@ -36,6 +36,45 @@ function formatDate(dateStr: string): string {
   });
 }
 
+function formatExpiry(expiresAt: string | null | undefined): React.ReactNode {
+  if (!expiresAt) return null;
+  const expDate = new Date(expiresAt);
+  const now = new Date();
+  if (expDate <= now) {
+    return (
+      <span style={{ fontSize: "11px", color: "#ef4444", fontWeight: 600 }}>
+        Expired
+      </span>
+    );
+  }
+  const daysLeft = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  if (daysLeft <= 30) {
+    return (
+      <span style={{ fontSize: "11px", color: "#f59e0b", fontWeight: 600, display: "flex", alignItems: "center", gap: "4px" }}>
+        <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#f59e0b", display: "inline-block" }} />
+        Expires in {daysLeft}d
+      </span>
+    );
+  }
+  return (
+    <span style={{ fontSize: "11px", color: "#64748b" }}>
+      Expires {expDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+    </span>
+  );
+}
+
+function minDateStr(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function maxDateStr(): string {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() + 2);
+  return d.toISOString().slice(0, 10);
+}
+
 function RawKeyReveal({ rawKey, onDone }: { rawKey: string; onDone: () => void }) {
   const [copied, setCopied] = useState(false);
 
@@ -116,6 +155,7 @@ function CreateForm({
   onCancel: () => void;
 }) {
   const [label, setLabel]         = useState("");
+  const [expiresAt, setExpiresAt] = useState("");
   const [error, setError]         = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -127,7 +167,7 @@ function CreateForm({
     setError(null);
 
     startTransition(async () => {
-      const result = await createKeyAction(trimmed);
+      const result = await createKeyAction(trimmed, expiresAt ? new Date(expiresAt).toISOString() : null);
       if ("error" in result) {
         setError(result.error);
       } else {
@@ -152,57 +192,84 @@ function CreateForm({
       {error && (
         <p style={{ margin: "0 0 12px", fontSize: "13px", color: "#fca5a5" }}>{error}</p>
       )}
-      <form onSubmit={handleSubmit} style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
-        <input
-          type="text"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          maxLength={100}
-          placeholder="e.g. Production, CI/CD, Zapier integration"
-          required
-          style={{
-            flex: 1,
-            background: "#060d18",
-            border: "1px solid #1e2d45",
-            borderRadius: "8px",
-            padding: "10px 14px",
-            fontSize: "14px",
-            color: "#f1f5f9",
-            outline: "none",
-          }}
-        />
-        <button
-          type="submit"
-          disabled={isPending}
-          style={{
-            padding: "10px 20px",
-            background: isPending ? "#009e91" : "#00c4b4",
-            border: "none",
-            borderRadius: "8px",
-            color: "#fff",
-            fontSize: "14px",
-            fontWeight: 600,
-            cursor: isPending ? "not-allowed" : "pointer",
-            opacity: isPending ? 0.7 : 1,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {isPending ? "Creating…" : "Create Key"}
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          style={{
-            padding: "10px 16px",
-            background: "transparent",
-            border: "none",
-            color: "#64748b",
-            fontSize: "14px",
-            cursor: "pointer",
-          }}
-        >
-          Cancel
-        </button>
+      <form onSubmit={handleSubmit}>
+        <div style={{ display: "flex", gap: "10px", alignItems: "flex-start", marginBottom: "10px" }}>
+          <input
+            type="text"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            maxLength={100}
+            placeholder="e.g. Production, CI/CD, Zapier integration"
+            required
+            style={{
+              flex: 1,
+              background: "#060d18",
+              border: "1px solid #1e2d45",
+              borderRadius: "8px",
+              padding: "10px 14px",
+              fontSize: "14px",
+              color: "#f1f5f9",
+              outline: "none",
+            }}
+          />
+          <button
+            type="submit"
+            disabled={isPending}
+            style={{
+              padding: "10px 20px",
+              background: isPending ? "#009e91" : "#00c4b4",
+              border: "none",
+              borderRadius: "8px",
+              color: "#fff",
+              fontSize: "14px",
+              fontWeight: 600,
+              cursor: isPending ? "not-allowed" : "pointer",
+              opacity: isPending ? 0.7 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {isPending ? "Creating…" : "Create Key"}
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{
+              padding: "10px 16px",
+              background: "transparent",
+              border: "none",
+              color: "#64748b",
+              fontSize: "14px",
+              cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <label style={{ fontSize: "12px", color: "#64748b", whiteSpace: "nowrap" }}>
+            Expiry (optional)
+          </label>
+          <input
+            type="date"
+            value={expiresAt}
+            onChange={(e) => setExpiresAt(e.target.value)}
+            min={minDateStr()}
+            max={maxDateStr()}
+            style={{
+              background: "#060d18",
+              border: "1px solid #1e2d45",
+              borderRadius: "6px",
+              padding: "6px 10px",
+              fontSize: "13px",
+              color: "#f1f5f9",
+              outline: "none",
+              colorScheme: "dark",
+            }}
+          />
+          <span style={{ fontSize: "11px", color: "#475569" }}>
+            Leave blank for no expiry
+          </span>
+        </div>
       </form>
     </div>
   );
@@ -214,6 +281,9 @@ export function ApiKeysList({ initialKeys, usage }: Props) {
   const [newRawKey, setNewRawKey] = useState<string | null>(null);
   const [revoking, setRevoking]   = useState<string | null>(null);
   const [revokeError, setRevokeError] = useState<{ id: string; msg: string } | null>(null);
+  const [rotating, setRotating]   = useState<string | null>(null);
+  const [rotateExpiry, setRotateExpiry] = useState("");
+  const [rotateError, setRotateError] = useState<{ id: string; msg: string } | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const usageByKeyId = new Map(usage.map((u) => [u.key_id, u]));
@@ -228,6 +298,7 @@ export function ApiKeysList({ initialKeys, usage }: Props) {
   function handleRevoke(keyId: string) {
     setRevoking(keyId);
     setRevokeError(null);
+    setRotating(null);
   }
 
   function confirmRevoke(keyId: string) {
@@ -246,6 +317,49 @@ export function ApiKeysList({ initialKeys, usage }: Props) {
         );
         setRevoking(null);
       }
+    });
+  }
+
+  function handleRotate(keyId: string) {
+    setRotating(keyId);
+    setRotateExpiry("");
+    setRotateError(null);
+    setRevoking(null);
+  }
+
+  function confirmRotate(oldKeyId: string, label: string) {
+    startTransition(async () => {
+      const expiresIso = rotateExpiry ? new Date(rotateExpiry).toISOString() : null;
+
+      // Step 1: create new key
+      const createResult = await createKeyAction(label, expiresIso);
+      if ("error" in createResult) {
+        setRotateError({ id: oldKeyId, msg: createResult.error });
+        return;
+      }
+
+      // Step 2: revoke old key
+      const revokeResult = await revokeKeyAction(oldKeyId);
+      if ("error" in revokeResult) {
+        // New key created but old key revoke failed — show new key anyway, report error
+        setKeys((prev) => [{ ...createResult.key, created_by_name: null }, ...prev]);
+        setRotating(null);
+        setNewRawKey(createResult.rawKey);
+        setRotateError({ id: oldKeyId, msg: `New key created, but old key could not be revoked: ${revokeResult.error}` });
+        return;
+      }
+
+      // Both succeeded
+      setKeys((prev) => {
+        const withNew: ApiKeyRecord[] = [{ ...createResult.key, created_by_name: null }, ...prev];
+        return withNew.map((k) =>
+          k.id === oldKeyId
+            ? { ...k, status: "revoked" as const, revoked_at: new Date().toISOString() }
+            : k
+        );
+      });
+      setRotating(null);
+      setNewRawKey(createResult.rawKey);
     });
   }
 
@@ -288,7 +402,9 @@ export function ApiKeysList({ initialKeys, usage }: Props) {
           const usageSummary = usageByKeyId.get(key.id);
           const isLastActive = key.status === "active" && activeCount <= 1;
           const isRevoking   = revoking === key.id;
-          const thisError    = revokeError?.id === key.id ? revokeError.msg : null;
+          const isRotating   = rotating === key.id;
+          const thisRevokeError = revokeError?.id === key.id ? revokeError.msg : null;
+          const thisRotateError = rotateError?.id === key.id ? rotateError.msg : null;
 
           return (
             <div
@@ -322,31 +438,83 @@ export function ApiKeysList({ initialKeys, usage }: Props) {
                 )}
               </div>
 
-              {/* Center: usage */}
-              <div style={{ textAlign: "right", minWidth: "120px" }}>
+              {/* Center: usage + expiry */}
+              <div style={{ textAlign: "right", minWidth: "140px" }}>
                 <p style={{ margin: "0 0 2px", fontSize: "12px", color: "#64748b" }}>
                   {key.last_used_at
                     ? `Last used ${formatDate(key.last_used_at)}`
                     : "Never used"}
                 </p>
                 {usageSummary && (
-                  <p style={{ margin: 0, fontSize: "12px", color: "#94a3b8" }}>
+                  <p style={{ margin: "0 0 4px", fontSize: "12px", color: "#94a3b8" }}>
                     {usageSummary.total_requests.toLocaleString()} calls (30d)
                   </p>
                 )}
+                {formatExpiry(key.expires_at)}
               </div>
 
               {/* Right: actions */}
-              <div style={{ minWidth: "120px", textAlign: "right" }}>
+              <div style={{ minWidth: "140px", textAlign: "right" }}>
                 {key.status === "active" && (
                   <>
-                    {isLastActive ? (
-                      <span
-                        style={{ fontSize: "11px", color: "#94a3b8", fontStyle: "italic" }}
-                        title="Create a replacement key before revoking this one"
-                      >
-                        Last key
-                      </span>
+                    {isRotating ? (
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
+                        <span style={{ fontSize: "12px", color: "#64748b" }}>Rotate key?</span>
+                        <input
+                          type="date"
+                          value={rotateExpiry}
+                          onChange={(e) => setRotateExpiry(e.target.value)}
+                          min={minDateStr()}
+                          max={maxDateStr()}
+                          placeholder="New expiry (optional)"
+                          style={{
+                            background: "#f8fafc",
+                            border: "1px solid #e2e8f0",
+                            borderRadius: "5px",
+                            padding: "4px 8px",
+                            fontSize: "11px",
+                            color: "#1e293b",
+                            outline: "none",
+                          }}
+                        />
+                        <div style={{ display: "flex", gap: "6px" }}>
+                          <button
+                            onClick={() => confirmRotate(key.id, key.label)}
+                            disabled={isPending}
+                            style={{
+                              padding: "4px 10px",
+                              background: "rgba(0,196,180,0.12)",
+                              border: "1px solid rgba(0,196,180,0.4)",
+                              borderRadius: "6px",
+                              color: "#00c4b4",
+                              fontSize: "12px",
+                              fontWeight: 600,
+                              cursor: isPending ? "not-allowed" : "pointer",
+                            }}
+                          >
+                            {isPending ? "…" : "Confirm"}
+                          </button>
+                          <button
+                            onClick={() => setRotating(null)}
+                            style={{
+                              padding: "4px 10px",
+                              background: "transparent",
+                              border: "1px solid #e2e8f0",
+                              borderRadius: "6px",
+                              color: "#64748b",
+                              fontSize: "12px",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                        {thisRotateError && (
+                          <p style={{ margin: 0, fontSize: "11px", color: "#dc2626", maxWidth: "160px", textAlign: "right" }}>
+                            {thisRotateError}
+                          </p>
+                        )}
+                      </div>
                     ) : isRevoking ? (
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }}>
                         <span style={{ fontSize: "12px", color: "#64748b" }}>Confirm revoke?</span>
@@ -382,26 +550,52 @@ export function ApiKeysList({ initialKeys, usage }: Props) {
                             Cancel
                           </button>
                         </div>
-                        {thisError && (
-                          <p style={{ margin: 0, fontSize: "11px", color: "#dc2626" }}>{thisError}</p>
+                        {thisRevokeError && (
+                          <p style={{ margin: 0, fontSize: "11px", color: "#dc2626" }}>{thisRevokeError}</p>
                         )}
                       </div>
+                    ) : isLastActive ? (
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
+                        <span
+                          style={{ fontSize: "11px", color: "#94a3b8", fontStyle: "italic" }}
+                          title="Create a replacement key before revoking or rotating this one"
+                        >
+                          Last key
+                        </span>
+                      </div>
                     ) : (
-                      <button
-                        onClick={() => handleRevoke(key.id)}
-                        style={{
-                          padding: "5px 12px",
-                          background: "transparent",
-                          border: "1px solid rgba(220,38,38,0.3)",
-                          borderRadius: "6px",
-                          color: "#dc2626",
-                          fontSize: "12px",
-                          fontWeight: 500,
-                          cursor: "pointer",
-                        }}
-                      >
-                        Revoke
-                      </button>
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
+                        <button
+                          onClick={() => handleRotate(key.id)}
+                          style={{
+                            padding: "5px 12px",
+                            background: "transparent",
+                            border: "1px solid rgba(0,196,180,0.4)",
+                            borderRadius: "6px",
+                            color: "#00c4b4",
+                            fontSize: "12px",
+                            fontWeight: 500,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Rotate
+                        </button>
+                        <button
+                          onClick={() => handleRevoke(key.id)}
+                          style={{
+                            padding: "5px 12px",
+                            background: "transparent",
+                            border: "1px solid rgba(220,38,38,0.3)",
+                            borderRadius: "6px",
+                            color: "#dc2626",
+                            fontSize: "12px",
+                            fontWeight: 500,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Revoke
+                        </button>
+                      </div>
                     )}
                   </>
                 )}
