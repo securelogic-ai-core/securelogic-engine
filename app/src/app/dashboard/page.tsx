@@ -308,9 +308,32 @@ function PostureDashboard({
 
   return (
     <div>
-      <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-4">
-        Security Posture
-      </h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">
+          Security Posture
+        </h2>
+        <a
+          href="/api/export/executive-report"
+          download="executive-report.pdf"
+          target="_blank"
+          rel="noreferrer"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "5px",
+            padding: "5px 12px",
+            borderRadius: "6px",
+            fontSize: "12px",
+            fontWeight: 600,
+            border: "1px solid rgba(0,196,180,0.4)",
+            color: "#00c4b4",
+            background: "transparent",
+            textDecoration: "none",
+          }}
+        >
+          &#8595; Executive Report
+        </a>
+      </div>
 
       {/* Row 0: Posture score | Risks breakdown | Risk heatmap */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
