@@ -46,7 +46,7 @@ const BILLING_ERRORS: Record<string, string> = {
 export default async function AccountPage({
   searchParams,
 }: {
-  searchParams: Promise<{ billing_error?: string }>;
+  searchParams: Promise<{ billing_error?: string; mfa_required?: string }>;
 }) {
   const session = await getSession();
 
@@ -73,8 +73,9 @@ export default async function AccountPage({
   const isPlatform    = isPaid;
   const isAdmin       = userRole === "admin";
   const planName      = planDisplayName(me.entitlementLevel);
-  const { billing_error: billingError } = await searchParams;
+  const { billing_error: billingError, mfa_required: mfaRequired } = await searchParams;
   const billingErrorMessage = billingError ? BILLING_ERRORS[billingError] ?? null : null;
+  const showMfaBanner = mfaRequired === "1";
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-12">
@@ -156,6 +157,25 @@ export default async function AccountPage({
             >
               {isAdmin ? "Manage Team →" : "View Team →"}
             </Link>
+          </div>
+        )}
+
+        {/* MFA enrollment required banner — shown when org requires MFA but user hasn't enrolled */}
+        {showMfaBanner && session.jwtToken && (
+          <div
+            style={{
+              background: "rgba(217,119,6,0.1)",
+              border: "1px solid rgba(217,119,6,0.35)",
+              borderRadius: "12px",
+              padding: "16px 20px",
+            }}
+          >
+            <p style={{ margin: "0 0 4px", fontSize: "14px", fontWeight: 700, color: "#fbbf24" }}>
+              Your organisation requires two-factor authentication
+            </p>
+            <p style={{ margin: 0, fontSize: "13px", color: "#fcd34d", lineHeight: "1.5" }}>
+              Please set up 2FA below to continue. You will not be able to sign in until MFA is enabled.
+            </p>
           </div>
         )}
 

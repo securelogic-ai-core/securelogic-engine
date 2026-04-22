@@ -624,6 +624,30 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
       return;
     }
 
+    // Org-level MFA enforcement: block login if the org requires MFA and
+    // the user has not yet enrolled. Identity is proven at this point —
+    // we block completion, not discovery.
+    const orgMfaResult = await pg.query<{ require_mfa: boolean }>(
+      `SELECT require_mfa FROM organizations WHERE id = $1 LIMIT 1`,
+      [user.organization_id]
+    );
+    if (orgMfaResult.rows[0]?.require_mfa && !user.totp_enabled) {
+      writeAuditEvent({
+        organizationId: user.organization_id,
+        actorUserId:    user.id,
+        eventType:      "auth.login_blocked_mfa_required",
+        resourceType:   "user",
+        resourceId:     user.id,
+        payload:        { reason: "org_requires_mfa" },
+        ipAddress:      req.ip ?? null
+      });
+      res.status(403).json({
+        error:  "mfa_enrollment_required",
+        detail: "Your organisation requires MFA. Please enable two-factor authentication in your account settings before signing in."
+      });
+      return;
+    }
+
     // MFA challenge — issue a short-lived token instead of a full session
     if (user.totp_enabled) {
       const mfaToken = signMfaChallenge(user.id, user.organization_id);

@@ -671,6 +671,7 @@ export type TeamMember = {
   created_at: string;
   last_used_at: string | null;
   lockout_until?: string | null;
+  totp_enabled?: boolean;
 };
 
 export type PendingInvite = {
@@ -1273,6 +1274,20 @@ export async function getTeamMembers(token: string): Promise<TeamResponse | null
     const res = await engineFetch("/api/team/members", token);
     if (!res.ok) return null;
     return res.json() as Promise<TeamResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export type OrgSettings = {
+  require_mfa: boolean;
+};
+
+export async function getOrgSettings(token: string): Promise<OrgSettings | null> {
+  try {
+    const res = await engineFetch("/api/org/settings", token);
+    if (!res.ok) return null;
+    return res.json() as Promise<OrgSettings>;
   } catch {
     return null;
   }
