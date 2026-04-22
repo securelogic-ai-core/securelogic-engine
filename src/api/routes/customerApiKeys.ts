@@ -192,7 +192,7 @@ router.get(
            FROM api_keys k
            LEFT JOIN api_usage_daily u
              ON u.api_key_id = k.id
-             AND u.date >= CURRENT_DATE - $2
+             AND u.date >= CURRENT_DATE - $2::int
            WHERE k.organization_id = $1
            GROUP BY k.id, k.label, k.status
            ORDER BY total_requests DESC`,
