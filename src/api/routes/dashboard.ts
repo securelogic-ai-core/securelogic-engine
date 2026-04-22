@@ -321,6 +321,32 @@ router.get(
       }
 
       // -------------------------------------------------------
+      // 5c. Open risk counts by likelihood × impact (heatmap)
+      // -------------------------------------------------------
+      const riskHeatmapResult = await pg.query<{
+        likelihood: string;
+        impact: string;
+        count: string;
+      }>(
+        `
+        SELECT likelihood, impact, COUNT(*)::text AS count
+        FROM risks
+        WHERE organization_id = $1
+          AND status NOT IN ('closed', 'transferred')
+          AND likelihood IS NOT NULL
+          AND impact IS NOT NULL
+        GROUP BY likelihood, impact
+        `,
+        [organizationId]
+      );
+
+      const byLikelihoodImpact = riskHeatmapResult.rows.map((row) => ({
+        likelihood: row.likelihood,
+        impact:     row.impact,
+        count:      parseInt(row.count, 10),
+      }));
+
+      // -------------------------------------------------------
       // 5. Object inventory counts — all live entity types
       // -------------------------------------------------------
       const inventoryResult = await pg.query<{
@@ -453,7 +479,8 @@ router.get(
         risks_summary: {
           open: totalOpenRisks,
           by_risk_rating: openRisksByRating,
-          by_domain: openRisksByDomain
+          by_domain: openRisksByDomain,
+          by_likelihood_impact: byLikelihoodImpact,
         },
         dependency_summary: {
           open: totalOpenDeps,

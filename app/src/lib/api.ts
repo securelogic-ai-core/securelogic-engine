@@ -168,6 +168,11 @@ export type DashboardSummary = {
       Low: number;
     };
     by_domain?: Record<string, number>;
+    by_likelihood_impact?: Array<{
+      likelihood: string;
+      impact: string;
+      count: number;
+    }>;
   };
   inventory: {
     vendors: number;

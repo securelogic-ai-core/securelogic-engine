@@ -543,6 +543,161 @@ export function RisksBreakdown({
   );
 }
 
+// ── RiskHeatmap ────────────────────────────────────────────────
+
+const LIKELIHOOD_LEVELS = [
+  "very_likely",
+  "likely",
+  "possible",
+  "unlikely",
+  "rare",
+] as const;
+
+const IMPACT_LEVELS = [
+  "Low",
+  "Moderate",
+  "High",
+  "Critical",
+] as const;
+
+const LIKELIHOOD_LABELS: Record<string, string> = {
+  very_likely: "Very Likely",
+  likely:      "Likely",
+  possible:    "Possible",
+  unlikely:    "Unlikely",
+  rare:        "Rare",
+};
+
+// Matrix indexed [likelihoodIdx][impactIdx], values: "red" | "amber" | "green"
+// likelihood rows: very_likely=0, likely=1, possible=2, unlikely=3, rare=4
+// impact cols:     Low=0, Moderate=1, High=2, Critical=3
+const CELL_ZONE: ReadonlyArray<ReadonlyArray<"red" | "amber" | "green">> = [
+  ["amber", "red",   "red",   "red"  ], // very_likely
+  ["green", "amber", "red",   "red"  ], // likely
+  ["green", "amber", "amber", "red"  ], // possible
+  ["green", "green", "amber", "amber"], // unlikely
+  ["green", "green", "green", "amber"], // rare
+];
+
+const ZONE_STYLE = {
+  red:   { bg: "rgba(239,68,68,0.25)",   border: "rgba(239,68,68,0.5)"   },
+  amber: { bg: "rgba(245,158,11,0.20)",  border: "rgba(245,158,11,0.4)"  },
+  green: { bg: "rgba(34,197,94,0.15)",   border: "rgba(34,197,94,0.3)"   },
+};
+
+function cellZone(likelihood: string, impact: string): "red" | "amber" | "green" {
+  const li = LIKELIHOOD_LEVELS.indexOf(likelihood as typeof LIKELIHOOD_LEVELS[number]);
+  const ii = IMPACT_LEVELS.indexOf(impact as typeof IMPACT_LEVELS[number]);
+  if (li < 0 || ii < 0) return "green";
+  return CELL_ZONE[li]![ii]!;
+}
+
+export function RiskHeatmap({
+  risks_summary,
+}: {
+  risks_summary: DashboardSummary["risks_summary"];
+}) {
+  const cells = risks_summary?.by_likelihood_impact ?? [];
+
+  const cellMap = new Map<string, number>();
+  for (const c of cells) {
+    cellMap.set(`${c.likelihood}|${c.impact}`, c.count);
+  }
+
+  const hasData = cells.length > 0;
+
+  return (
+    <div className="rounded-xl border p-5" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
+      <div className="flex items-baseline justify-between mb-4">
+        <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
+          Risk Heatmap
+        </p>
+        <Link href="/risks" className="text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+          All risks →
+        </Link>
+      </div>
+
+      {!hasData ? (
+        <p className="text-xs text-center py-4" style={{ color: TEXT_MUTED }}>No risk data available.</p>
+      ) : (
+        <div>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: "6px" }}>
+            {/* Y-axis labels */}
+            <div style={{ display: "flex", flexDirection: "column", width: "72px", flexShrink: 0 }}>
+              {LIKELIHOOD_LEVELS.map((lh) => (
+                <div
+                  key={lh}
+                  style={{ height: "34px", display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: "6px" }}
+                >
+                  <span style={{ fontSize: "9px", color: TEXT_MUTED, textAlign: "right", lineHeight: 1.2 }}>
+                    {LIKELIHOOD_LABELS[lh]}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Grid + X-axis */}
+            <div style={{ flex: 1 }}>
+              <div
+                style={{
+                  display:               "grid",
+                  gridTemplateColumns:   "repeat(4, 1fr)",
+                  gridTemplateRows:      "repeat(5, 34px)",
+                  gap:                   "2px",
+                }}
+              >
+                {LIKELIHOOD_LEVELS.map((lh) =>
+                  IMPACT_LEVELS.map((imp) => {
+                    const count = cellMap.get(`${lh}|${imp}`) ?? 0;
+                    const zone  = cellZone(lh, imp);
+                    const { bg, border } = ZONE_STYLE[zone];
+                    return (
+                      <div
+                        key={`${lh}|${imp}`}
+                        title={`${LIKELIHOOD_LABELS[lh]} × ${imp}: ${count} risk${count !== 1 ? "s" : ""}`}
+                        style={{
+                          background:     bg,
+                          border:         `1px solid ${border}`,
+                          borderRadius:   "3px",
+                          display:        "flex",
+                          alignItems:     "center",
+                          justifyContent: "center",
+                          fontSize:       "13px",
+                          fontWeight:     700,
+                          color:          count > 0 ? "#f1f5f9" : "transparent",
+                          cursor:         count > 0 ? "default" : "default",
+                        }}
+                      >
+                        {count > 0 ? count : "·"}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* X-axis labels */}
+              <div
+                style={{
+                  display:             "grid",
+                  gridTemplateColumns: "repeat(4, 1fr)",
+                  gap:                 "2px",
+                  marginTop:           "4px",
+                }}
+              >
+                {IMPACT_LEVELS.map((imp) => (
+                  <div key={imp} style={{ textAlign: "center" }}>
+                    <span style={{ fontSize: "9px", color: TEXT_MUTED }}>{imp}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── FrameworkGaps ──────────────────────────────────────────────
 
 export function FrameworkGaps({
