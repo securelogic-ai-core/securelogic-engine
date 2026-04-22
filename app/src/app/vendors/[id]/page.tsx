@@ -13,6 +13,7 @@ import {
 } from "@/lib/api";
 import { CompleteReviewSection } from "./CompleteReviewSection";
 import { RecalculateScoreButton } from "./RecalculateScoreButton";
+import { ArchiveVendorButton } from "./ArchiveVendorButton";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -554,7 +555,15 @@ function RiskSummaryCard({
 // Sidebar: Actions
 // ─────────────────────────────────────────────────────────────
 
-function ActionsCard({ vendorId }: { vendorId: string }) {
+function ActionsCard({
+  vendorId,
+  vendorName,
+  vendorStatus,
+}: {
+  vendorId: string;
+  vendorName: string;
+  vendorStatus: string;
+}) {
   return (
     <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
       <h3
@@ -604,6 +613,9 @@ function ActionsCard({ vendorId }: { vendorId: string }) {
         >
           Assess Against Framework
         </Link>
+        {vendorStatus === "active" && (
+          <ArchiveVendorButton vendorId={vendorId} vendorName={vendorName} />
+        )}
       </div>
     </div>
   );
@@ -715,7 +727,7 @@ export default async function VendorDetailPage({
             reviewCount={reviews.length}
             lastActivityDate={lastActivityDate}
           />
-          <ActionsCard vendorId={vendor.id} />
+          <ActionsCard vendorId={vendor.id} vendorName={vendor.name} vendorStatus={vendor.status} />
         </div>
       </div>
     </div>

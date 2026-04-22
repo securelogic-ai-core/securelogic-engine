@@ -30,12 +30,16 @@ export default async function VendorsPage({
 
   const sp = await searchParams;
   const critFilter = sp.criticality ?? null;
+  const showInactive = sp.show_inactive === "1";
 
-  const [vendorsData, assessmentsData, findingsData] = await Promise.all([
+  const [activeData, archivedData, assessmentsData, findingsData] = await Promise.all([
     getVendors(token, "active"),
+    showInactive ? getVendors(token, "archived") : Promise.resolve(null),
     getVendorAssessments(token, 100),
     getFindings(token, { domain: "Vendor Risk", status: "open", limit: 100 }),
   ]);
+
+  const vendorsData = activeData;
 
   // Build vendor_id → assessment count and assessmentId → vendorId map.
   const assessmentCountByVendor = new Map<string, number>();
@@ -59,7 +63,11 @@ export default async function VendorsPage({
     }
   }
 
-  const allVendors = vendorsData?.vendors ?? [];
+  const activeVendors = vendorsData?.vendors ?? [];
+  const archivedVendors = archivedData?.vendors ?? [];
+  const allVendors = showInactive
+    ? [...activeVendors, ...archivedVendors]
+    : activeVendors;
 
   // Local criticality counts for pill badges.
   const critCounts = {
@@ -110,11 +118,18 @@ export default async function VendorsPage({
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          {allVendors.length > 0 && !critFilter && (
+          {activeVendors.length > 0 && !critFilter && (
             <span className="text-sm" style={{ color: "#94a3b8" }}>
-              {allVendors.length} active
+              {activeVendors.length} active
             </span>
           )}
+          <Link
+            href={showInactive ? "/vendors" : "/vendors?show_inactive=1"}
+            className="inline-flex items-center gap-1 text-xs font-medium transition-opacity hover:opacity-80"
+            style={{ color: showInactive ? "#94a3b8" : "#475569" }}
+          >
+            {showInactive ? "Hide inactive" : "Show inactive"}
+          </Link>
           <Link
             href="/vendors/risk"
             className="inline-flex items-center gap-1 text-xs font-medium transition-opacity hover:opacity-80"
@@ -299,9 +314,13 @@ function VendorRow({
         month: "short", day: "numeric", year: "numeric",
       })
     : null;
+  const isArchived = vendor.status === "archived";
 
   return (
-    <div className="bg-brand-surface border border-brand-line hover:border-slate-500 rounded-xl p-5 cursor-pointer transition-colors">
+    <div
+      className="bg-brand-surface border border-brand-line hover:border-slate-500 rounded-xl p-5 cursor-pointer transition-colors"
+      style={isArchived ? { opacity: 0.65 } : undefined}
+    >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -309,6 +328,14 @@ function VendorRow({
               {vendor.name}
             </span>
             <CriticalityBadge value={vendor.criticality} />
+            {isArchived && (
+              <span
+                className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                style={{ background: "rgba(100,116,139,0.15)", color: "#64748b", border: "1px solid rgba(100,116,139,0.2)" }}
+              >
+                Inactive
+              </span>
+            )}
           </div>
           {vendor.service_description && (
             <p className="mt-1 text-xs line-clamp-2" style={{ color: "#94a3b8" }}>
