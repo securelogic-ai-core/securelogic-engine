@@ -669,7 +669,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
       onboarding_completed_at: string | null;
     }>(
       `SELECT o.name,
-              COALESCE(k.entitlement_level, 'starter') AS entitlement_level,
+              COALESCE(k.entitlement_level, o.entitlement_level, 'starter') AS entitlement_level,
               o.onboarding_completed_at
        FROM organizations o
        LEFT JOIN api_keys k ON k.organization_id = o.id AND k.status = 'active'
@@ -985,7 +985,8 @@ router.get("/auth/me", requireAuth, async (req, res) => {
         payment_failed_at: string | null;
         onboarding_completed_at: string | null;
       }>(
-        `SELECT o.name, COALESCE(k.entitlement_level, 'starter') AS entitlement_level,
+        `SELECT o.name,
+                COALESCE(k.entitlement_level, o.entitlement_level, 'starter') AS entitlement_level,
                 k.payment_failed_at,
                 o.onboarding_completed_at
          FROM organizations o
