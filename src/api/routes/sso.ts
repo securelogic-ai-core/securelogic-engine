@@ -12,7 +12,7 @@
  */
 
 import { Router, type Request, type Response } from "express";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import * as samlify from "samlify";
 import { pg } from "../infra/postgres.js";
 import { signJwt } from "../lib/jwt.js";
@@ -43,7 +43,7 @@ const checkDomainLimiter = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.ip ?? "unknown",
+  keyGenerator: (req) => req.ip ? ipKeyGenerator(req.ip) : "unknown",
   message: { error: "rate_limit_exceeded" },
 });
 

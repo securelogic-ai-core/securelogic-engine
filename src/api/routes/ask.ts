@@ -16,7 +16,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
@@ -68,7 +68,7 @@ const askRateLimit = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => (req as any).organizationId ?? req.ip ?? "unknown",
+  keyGenerator: (req) => (req as any).organizationId ?? (req.ip ? ipKeyGenerator(req.ip) : "unknown"),
   message: {
     error: "rate_limit_exceeded",
     message: "Too many questions. Wait 60 seconds.",
