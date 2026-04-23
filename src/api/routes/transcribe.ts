@@ -1,6 +1,6 @@
 import { Router } from "express";
 import multer from "multer";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import OpenAI from "openai";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -42,7 +42,7 @@ const transcribeRateLimit = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
   keyGenerator: (req) =>
-    (req as any).organizationId ?? req.ip ?? "unknown",
+    (req as any).organizationId ?? (req.ip ? ipKeyGenerator(req.ip) : "unknown"),
   message: {
     error: "rate_limit_exceeded",
     message: "Too many transcription requests. Wait 60 seconds."
