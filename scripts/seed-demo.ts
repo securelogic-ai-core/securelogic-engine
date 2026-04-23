@@ -107,6 +107,17 @@ async function main() {
   ok(`Admin:   admin@meridianfinancial.demo  (${adminId})`);
   ok(`Analyst: analyst@meridianfinancial.demo (${analystId})`);
 
+  // Demo platform api_keys row — carries entitlement_level so the login/me
+  // COALESCE has a key-scoped value to read even if future code prefers it
+  // over the org-level value. key_hash is a non-auth placeholder.
+  await pool.query(
+    `INSERT INTO api_keys
+       (organization_id, label, key_hash, entitlement_level, status, created_by_user_id)
+     VALUES ($1, $2, $3, 'premium', 'active', $4)`,
+    [orgId, "Demo Platform Key", `demo-hash-not-for-auth-${orgId}`, adminId]
+  );
+  ok(`API key row created (entitlement_level=premium)`);
+
   // ── 3. Frameworks ─────────────────────────────────────────────────────────────
   step("Step 3 — Frameworks (copy from source org)");
 
