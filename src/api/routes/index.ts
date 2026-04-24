@@ -90,6 +90,7 @@ import auditPackageRouter from "./auditPackage.js";
 import gapReportRouter from "./gapReport.js";
 import findingsExportRouter from "./findingsExport.js";
 import alertPreferencesRouter from "./alertPreferences.js";
+import dashboardPreferencesRouter from "./dashboardPreferences.js";
 import policiesRouter from "./policies.js";
 import ssoRouter from "./sso.js";
 import customerApiKeysRouter from "./customerApiKeys.js";
@@ -424,6 +425,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", gapReportRouter);
   router.use("/api", findingsExportRouter);
   router.use("/api", alertPreferencesRouter);
+  router.use("/api", dashboardPreferencesRouter);
   router.use("/api", policiesRouter);
   router.use("/api", webhooksRouter);
   router.use("/api", askRouter);

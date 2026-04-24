@@ -1293,6 +1293,69 @@ export async function getOrgSettings(token: string): Promise<OrgSettings | null>
   }
 }
 
+export type TileConfig = {
+  id: string;
+  visible: boolean;
+  order: number;
+};
+
+export type DashboardPreferences = {
+  layout: TileConfig[];
+  source: "personal" | "org_default" | "system_default";
+};
+
+export async function getDashboardPreferences(token: string): Promise<DashboardPreferences | null> {
+  try {
+    const res = await engineFetch("/api/dashboard/preferences", token);
+    if (!res.ok) return null;
+    return res.json() as Promise<DashboardPreferences>;
+  } catch {
+    return null;
+  }
+}
+
+export async function updateDashboardPreferences(
+  token: string,
+  layout: TileConfig[]
+): Promise<DashboardPreferences | null> {
+  try {
+    const res = await engineFetch("/api/dashboard/preferences", token, {
+      method: "PUT",
+      body: JSON.stringify({ layout }),
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<DashboardPreferences>;
+  } catch {
+    return null;
+  }
+}
+
+export async function resetDashboardPreferences(token: string): Promise<DashboardPreferences | null> {
+  try {
+    const res = await engineFetch("/api/dashboard/preferences", token, { method: "DELETE" });
+    if (!res.ok) return null;
+    return res.json() as Promise<DashboardPreferences>;
+  } catch {
+    return null;
+  }
+}
+
+export async function updateOrgDashboardPreferences(
+  token: string,
+  layout: TileConfig[]
+): Promise<DashboardPreferences | null> {
+  try {
+    const res = await engineFetch("/api/dashboard/preferences/org", token, {
+      method: "PUT",
+      body: JSON.stringify({ layout }),
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<DashboardPreferences>;
+  } catch {
+    return null;
+  }
+}
+
 export async function getInvitePreview(token: string): Promise<InvitePreviewResponse | null> {
   try {
     const res = await fetch(
