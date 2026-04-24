@@ -202,6 +202,7 @@ router.post("/billing/portal", requireApiKey, async (req, res) => {
 
     const apiKey = (req as any).apiKey as Record<string, unknown>;
     const apiKeyId = typeof apiKey.id === "string" ? apiKey.id : null;
+    const apiKeyLabel = typeof apiKey.label === "string" ? apiKey.label : null;
 
     if (!apiKeyId) {
       res.status(400).json({ error: "api_key_identity_missing" });
@@ -213,15 +214,27 @@ router.post("/billing/portal", requireApiKey, async (req, res) => {
       [apiKeyId]
     );
 
-    const customerId = result.rows[0]?.stripe_customer_id as string | null;
+    let customerId = result.rows[0]?.stripe_customer_id as string | null;
 
     if (!customerId) {
-      logger.warn(
-        { event: "billing_portal_no_customer", apiKeyId },
-        "POST /api/billing/portal: no stripe_customer_id — key has not been through checkout"
-      );
-      res.status(404).json({ error: "no_billing_account" });
-      return;
+      // Auto-provision a Stripe customer for admins whose entitlement was
+      // granted outside of checkout (manual grant, seed, migration).
+      // resolveStripeCustomer re-reads the row and returns any existing ID
+      // before creating a new one, so this stays idempotent under retries.
+      try {
+        customerId = await resolveStripeCustomer(apiKeyId, apiKeyLabel);
+        logger.info(
+          { event: "billing_portal_customer_autoprovisioned", apiKeyId, customerId },
+          "POST /api/billing/portal: auto-provisioned Stripe customer for admin with no prior checkout"
+        );
+      } catch (err) {
+        logger.error(
+          { event: "billing_portal_customer_provision_failed", apiKeyId, err },
+          "POST /api/billing/portal: failed to auto-provision Stripe customer"
+        );
+        res.status(503).json({ error: "billing_not_configured" });
+        return;
+      }
     }
 
     // STRIPE_PORTAL_CONFIGURATION_ID — set this env var to a portal configuration ID
