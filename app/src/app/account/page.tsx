@@ -46,7 +46,7 @@ const BILLING_ERRORS: Record<string, string> = {
 export default async function AccountPage({
   searchParams,
 }: {
-  searchParams: Promise<{ billing_error?: string; mfa_required?: string }>;
+  searchParams: Promise<{ billing_error?: string; reason?: string; mfa_required?: string }>;
 }) {
   const session = await getSession();
 
@@ -73,7 +73,7 @@ export default async function AccountPage({
   const isPlatform    = isPaid;
   const isAdmin       = userRole === "admin";
   const planName      = planDisplayName(me.entitlementLevel);
-  const { billing_error: billingError, mfa_required: mfaRequired } = await searchParams;
+  const { billing_error: billingError, reason: billingReason, mfa_required: mfaRequired } = await searchParams;
   const billingErrorMessage = billingError ? BILLING_ERRORS[billingError] ?? null : null;
   const showMfaBanner = mfaRequired === "1";
 
@@ -110,6 +110,11 @@ export default async function AccountPage({
       {billingErrorMessage && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg px-5 py-4">
           <p className="text-sm text-red-700">{billingErrorMessage}</p>
+          {billingReason && (
+            <p className="mt-1 text-xs text-red-600 font-mono break-all">
+              Reason: {billingReason}
+            </p>
+          )}
         </div>
       )}
 

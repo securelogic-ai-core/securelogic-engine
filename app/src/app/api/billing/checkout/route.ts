@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { createCheckoutSession } from "@/lib/api";
+import { getOrigin } from "@/lib/getOrigin";
 
 /**
  * POST /api/billing/checkout
@@ -15,20 +16,6 @@ import { createCheckoutSession } from "@/lib/api";
  *
  * Body (form-encoded): tier = "professional" | "team"
  */
-/**
- * Resolves the public-facing origin from request headers.
- *
- * Behind Render's reverse proxy, request.url contains the internal
- * Next.js URL (localhost:3000). The real external origin is in the
- * x-forwarded-proto and x-forwarded-host headers.
- */
-function getOrigin(request: Request): string {
-  const proto = request.headers.get("x-forwarded-proto") ?? "https";
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  if (host) return `${proto}://${host}`;
-  return new URL(request.url).origin;
-}
-
 export async function POST(request: Request) {
   const origin = getOrigin(request);
   const session = await getSession();
@@ -54,11 +41,13 @@ export async function POST(request: Request) {
 
   const result = await createCheckoutSession(token, tier);
 
-  if (!result) {
-    return NextResponse.redirect(`${origin}/account?billing_error=checkout_failed`, {
-      status: 303,
-    });
+  if ("error" in result) {
+    const reason = encodeURIComponent(result.error);
+    return NextResponse.redirect(
+      `${origin}/account?billing_error=checkout_failed&reason=${reason}`,
+      { status: 303 }
+    );
   }
 
-  return NextResponse.redirect(result.checkoutUrl, { status: 303 });
+  return NextResponse.redirect(result.url, { status: 303 });
 }
