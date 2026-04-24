@@ -32,9 +32,9 @@ export async function POST(request: Request) {
 
   const result = await createCheckoutSession(token, tier);
 
-  if (!result) {
-    return NextResponse.json({ error: "checkout_failed" }, { status: 500 });
+  if ("error" in result) {
+    return NextResponse.json({ error: result.error }, { status: 500 });
   }
 
-  return NextResponse.json({ checkoutUrl: result.checkoutUrl });
+  return NextResponse.json({ checkoutUrl: result.url });
 }

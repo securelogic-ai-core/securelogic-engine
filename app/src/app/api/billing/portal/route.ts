@@ -1,20 +1,16 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { createPortalSession } from "@/lib/api";
+import { getOrigin } from "@/lib/getOrigin";
 
 /**
  * POST /api/billing/portal
  *
  * Creates a Stripe billing portal session via the engine and issues a
- * 303 redirect to the Stripe-hosted portal page.
+ * 303 redirect to the Stripe-hosted portal page. On failure, redirects
+ * back to /account with both a generic billing_error code and a
+ * reason= param carrying the engine's error string for debugging.
  */
-function getOrigin(request: Request): string {
-  const proto = request.headers.get("x-forwarded-proto") ?? "https";
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  if (host) return `${proto}://${host}`;
-  return new URL(request.url).origin;
-}
-
 export async function POST(request: Request) {
   const origin = getOrigin(request);
   const session = await getSession();
@@ -27,11 +23,13 @@ export async function POST(request: Request) {
 
   const result = await createPortalSession(token);
 
-  if (!result) {
-    return NextResponse.redirect(`${origin}/account?billing_error=portal_failed`, {
-      status: 303,
-    });
+  if ("error" in result) {
+    const reason = encodeURIComponent(result.error);
+    return NextResponse.redirect(
+      `${origin}/account?billing_error=portal_failed&reason=${reason}`,
+      { status: 303 }
+    );
   }
 
-  return NextResponse.redirect(result.portalUrl, { status: 303 });
+  return NextResponse.redirect(result.url, { status: 303 });
 }

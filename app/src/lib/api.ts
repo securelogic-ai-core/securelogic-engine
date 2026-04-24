@@ -620,8 +620,7 @@ export type ControlAssessmentsResponse = {
   assessments: ControlAssessment[];
 };
 
-export type BillingCheckoutResponse = { checkoutUrl: string };
-export type BillingPortalResponse   = { portalUrl: string };
+export type BillingSessionResult = { url: string } | { error: string };
 
 // ─── Customer auth types ────────────────────────────────────────────────────
 
@@ -855,28 +854,46 @@ export async function getIssue(
 export async function createCheckoutSession(
   apiKey: string,
   tier: "professional" | "teams" | "team"
-): Promise<BillingCheckoutResponse | null> {
+): Promise<BillingSessionResult> {
   try {
     const res = await engineFetch("/api/billing/checkout", apiKey, {
       method: "POST",
       body: JSON.stringify({ tier }),
     });
-    if (!res.ok) return null;
-    return res.json() as Promise<BillingCheckoutResponse>;
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+      return { error: body.message ?? body.error ?? res.statusText ?? "unknown" };
+    }
+    const data = (await res.json()) as { checkoutUrl?: string };
+    if (!data.checkoutUrl) return { error: "missing_checkout_url" };
+    return { url: data.checkoutUrl };
   } catch {
-    return null;
+    return { error: "network_error" };
   }
 }
 
 export async function createPortalSession(
   apiKey: string
-): Promise<BillingPortalResponse | null> {
+): Promise<BillingSessionResult> {
   try {
     const res = await engineFetch("/api/billing/portal", apiKey, { method: "POST" });
-    if (!res.ok) return null;
-    return res.json() as Promise<BillingPortalResponse>;
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+      return { error: body.message ?? body.error ?? res.statusText ?? "unknown" };
+    }
+    const data = (await res.json()) as { portalUrl?: string };
+    if (!data.portalUrl) return { error: "missing_portal_url" };
+    return { url: data.portalUrl };
   } catch {
-    return null;
+    return { error: "network_error" };
+  }
+}
+
+export async function engineLogout(token: string): Promise<void> {
+  try {
+    await engineFetch("/api/auth/logout", token, { method: "POST" });
+  } catch {
+    // Fire-and-forget — sign-out proceeds even if the engine is unreachable
   }
 }
 
