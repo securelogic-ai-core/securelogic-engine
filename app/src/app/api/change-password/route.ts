@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 
-const ENGINE_URL = process.env.ENGINE_URL ?? "https://securelogic-engine.onrender.com";
+const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
 
 export async function POST(request: Request) {
   try {

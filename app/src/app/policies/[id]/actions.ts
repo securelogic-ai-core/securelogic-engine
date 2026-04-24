@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getSession } from "@/lib/session";
 
-const ENGINE_URL = process.env.ENGINE_URL ?? "http://localhost:3001";
+const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
 
 async function getToken(): Promise<string | null> {
   const session = await getSession();
