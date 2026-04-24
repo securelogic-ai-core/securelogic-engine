@@ -21,7 +21,14 @@ export async function POST(request: Request) {
     return NextResponse.redirect(`${origin}/login`, { status: 303 });
   }
 
-  const result = await createPortalSession(token);
+  // Retry once on network_error to absorb Render cold-start dyno boot,
+  // which can exceed engineFetch's 15s abort on the first request after
+  // an idle period. A 3s pause is typically enough for boot to complete.
+  let result = await createPortalSession(token);
+  if ("error" in result && result.error === "network_error") {
+    await new Promise((r) => setTimeout(r, 3000));
+    result = await createPortalSession(token);
+  }
 
   if ("error" in result) {
     const reason = encodeURIComponent(result.error);
