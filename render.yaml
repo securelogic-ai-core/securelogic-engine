@@ -214,6 +214,12 @@ services:
       - key: ENGINE_API_URL
         sync: false
 
+      # Public URL of the securelogic-engine service, bundled into the
+      # browser for SSO check-domain and SSO login redirects.
+      # Must be the public Render URL (reachable from end-user browsers).
+      - key: NEXT_PUBLIC_ENGINE_URL
+        sync: false
+
       # Secret used to encrypt the iron-session cookie.
       # Must be at least 32 characters. Generate with: openssl rand -hex 32
       - key: SESSION_SECRET
