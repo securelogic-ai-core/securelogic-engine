@@ -26,6 +26,9 @@
     "ci": "bash scripts/check-contract-version.sh && npm run typecheck && npm run build",
     "build:contracts": "cd packages/contracts && npm run build"
   },
+  "overrides": {
+    "uuid": "^14.0.0"
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.85.0",
     "ajv": "^8.18.0",
@@ -61,7 +64,7 @@
     "stripe": "^22.0.0",
     "svix": "^1.89.0",
     "typescript": "~5.9.3",
-    "uuid": "^13.0.0",
+    "uuid": "^14.0.0",
     "zod": "^4.3.4"
   },
   "devDependencies": {
