@@ -1,11 +1,10 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getIssues, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFrameworks, getFrameworkReadiness, type DashboardSummary, type PostureSnapshot, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
+import { getIssues, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFrameworks, getFrameworkReadiness, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
-import { FindingsDonut, DomainPostureBars, ActionsRing, InventoryGrid, FrameworkGaps, VendorRiskCard, PostureScoreTile, RisksBreakdown, ComplianceCoverage, RiskHeatmap, OpenItemsAging } from "./DashboardCharts";
-import { PostureTrendChart } from "./PostureTrendChart";
+import { PostureDashboard } from "./PostureDashboard";
 import { LastLoginBanner } from "./LastLoginBanner";
 
 export const revalidate = 0;
@@ -212,7 +211,12 @@ export default async function DashboardPage({
       {isPlatformUser ? (
         dashboardSummary && (
           <div className="mt-10">
-            <PostureDashboard summary={dashboardSummary} frameworkPairs={frameworkReadinessPairs} postureSnapshots={postureHistory?.snapshots ?? []} />
+            <PostureDashboard
+              summary={dashboardSummary}
+              frameworkPairs={frameworkReadinessPairs}
+              postureSnapshots={postureHistory?.snapshots ?? []}
+              userRole={session.userRole ?? "viewer"}
+            />
           </div>
         )
       ) : (
@@ -285,89 +289,6 @@ function ManageBillingButton() {
       <p className="mt-2 text-xs text-slate-400 text-center">
         Upgrade, downgrade, or cancel anytime
       </p>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// Posture Dashboard — Layer 5: posture-dashboard-ui
-// Consumes GET /api/dashboard/summary (Layer 4, closed).
-// ─────────────────────────────────────────────────────────────
-
-
-function PostureDashboard({
-  summary,
-  frameworkPairs,
-  postureSnapshots,
-}: {
-  summary: DashboardSummary;
-  frameworkPairs: Array<{ framework: Framework; readiness: FrameworkReadiness | null }>;
-  postureSnapshots: PostureSnapshot[];
-}) {
-  const { posture, domains, findings, actions, controls_cadence, inventory, vendor_risk, risks_summary } = summary;
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">
-          Security Posture
-        </h2>
-        <a
-          href="/api/export/executive-report"
-          download="executive-report.pdf"
-          target="_blank"
-          rel="noreferrer"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "5px",
-            padding: "5px 12px",
-            borderRadius: "6px",
-            fontSize: "12px",
-            fontWeight: 600,
-            border: "1px solid rgba(0,196,180,0.4)",
-            color: "#00c4b4",
-            background: "transparent",
-            textDecoration: "none",
-          }}
-        >
-          &#8595; Executive Report
-        </a>
-      </div>
-
-      {/* Row 0: Posture score | Risks breakdown | Risk heatmap */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-        <PostureScoreTile posture={posture} />
-        <RisksBreakdown risks_summary={risks_summary} />
-        <RiskHeatmap risks_summary={risks_summary} />
-      </div>
-
-      {/* Row 0b: Posture score trend (full width) */}
-      <div className="mb-4">
-        <PostureTrendChart snapshots={postureSnapshots} />
-      </div>
-
-      {/* Row 1: Findings donut | Domain bars | Actions ring */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-        <FindingsDonut findings={findings} />
-        <DomainPostureBars domains={domains} />
-        <ActionsRing actions={actions} />
-      </div>
-
-      {/* Row 1b: Open items aging (full width) */}
-      <div className="mb-4">
-        <OpenItemsAging findings={findings} actions={actions} />
-      </div>
-
-      {/* Row 2: Vendor risk | Framework gaps | Compliance coverage */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-        <VendorRiskCard vendor_risk={vendor_risk} />
-        <FrameworkGaps pairs={frameworkPairs} />
-        <ComplianceCoverage frameworkPairs={frameworkPairs} />
-      </div>
-
-      {/* Row 3: Inventory grid (full width) */}
-      <InventoryGrid inventory={inventory} controls_cadence={controls_cadence} />
     </div>
   );
 }
