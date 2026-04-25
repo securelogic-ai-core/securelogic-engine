@@ -56,12 +56,32 @@ function isValidApiKeyId(value: unknown): value is string {
 }
 
 /**
+ * Raw tier strings that are known to the billing system. Values fall into
+ * three buckets:
+ *   - Current checkout tiers:  professional, teams, platform, platform_annual
+ *   - Legacy (pre-overhaul):   team, paid, admin
+ *
+ * Anything outside this set is logged as stripe_unknown_tier. The function
+ * still returns a sensible default ("paid") so webhook delivery is never
+ * blocked by a bad metadata value, but the warning ensures silent drift
+ * between the product catalog and this whitelist is loud in logs.
+ */
+const KNOWN_TIERS = new Set([
+  "professional", "teams", "platform", "platform_annual",
+  "team", "paid", "admin"
+]);
+
+/**
  * Resolves the SecureLogic entitlement tier from the Stripe event metadata.
  *
- * - "professional" → Brief Pro (individual) — entitlement_level="professional"
- * - "teams"        → Brief Pro Teams (multi-seat) — entitlement_level="professional"
- * - "team"         → Platform Professional — stored as "paid" in Redis for backward compat
- * - anything else  → falls back to "paid" (legacy events that predate tier metadata)
+ * Returns a value from the Redis Tier union ("professional" | "paid"):
+ *   - "professional" → Brief tier (entitlement_level="professional")
+ *       raw: "professional", "teams"
+ *   - "paid"         → full platform tier (entitlement_level="premium")
+ *       raw: "platform", "platform_annual", legacy "team"/"paid"/"admin"
+ *
+ * Unknown raw values are logged as stripe_unknown_tier and default to "paid"
+ * for forward compatibility with legacy events that predate tier metadata.
  */
 function resolveTierFromMetadata(event: Stripe.Event): "professional" | "paid" {
   const obj = event.data.object as any;
@@ -70,7 +90,20 @@ function resolveTierFromMetadata(event: Stripe.Event): "professional" | "paid" {
     obj?.subscription_details?.metadata?.tier ??
     null;
 
-  return rawTier === "professional" || rawTier === "teams" ? "professional" : "paid";
+  if (!rawTier || !KNOWN_TIERS.has(rawTier)) {
+    logger.warn(
+      { event: "stripe_unknown_tier", rawTier, stripeEventType: event.type },
+      "stripeWebhook: unknown or missing tier in metadata — defaulting to 'paid'"
+    );
+    return "paid";
+  }
+
+  if (rawTier === "professional" || rawTier === "teams") {
+    return "professional";
+  }
+
+  // platform, platform_annual, team (legacy), paid (legacy), admin (legacy)
+  return "paid";
 }
 
 /**
@@ -148,28 +181,52 @@ function extractRawSubscriptionTier(event: Stripe.Event): string | null {
     obj?.metadata?.tier ??
     obj?.subscription_details?.metadata?.tier ??
     null;
-  if (raw === "professional" || raw === "teams" || raw === "team") return raw;
+  if (
+    raw === "professional" ||
+    raw === "teams" ||
+    raw === "platform" ||
+    raw === "platform_annual" ||
+    raw === "team"
+  ) {
+    return raw;
+  }
   return null;
 }
 
 /**
- * Maps a Redis EntitlementRecord tier to the Postgres entitlement_level value.
+ * Maps a tier string to the Postgres entitlement_level value.
  *
- * Tier → DB level:
- *   professional → "professional"  ($49/mo — Professional plan)
- *   paid         → "premium"       ($249/mo — Team plan, or legacy paid events)
- *   admin        → "premium"       (enterprise/admin — full access)
- *   free         → "starter"
+ * Accepts both Redis EntitlementRecord tiers ("free"|"professional"|"paid"|"admin")
+ * and raw Stripe metadata tiers ("teams"|"platform"|"platform_annual"), so the
+ * function is safe against either source of truth.
+ *
+ *   professional, teams                  → "professional"  (Brief access)
+ *   platform, platform_annual, paid, admin → "premium"      (full platform)
+ *   free (or anything else)              → "starter"
  */
-function tierToDbLevel(tier: EntitlementRecord["tier"]): string {
-  if (tier === "professional") return "professional";
-  if (tier === "paid" || tier === "admin") return "premium";
+function tierToDbLevel(tier: string): string {
+  if (tier === "professional" || tier === "teams") {
+    return "professional";
+  }
+  if (
+    tier === "platform" ||
+    tier === "platform_annual" ||
+    tier === "paid" ||
+    tier === "admin"
+  ) {
+    return "premium";
+  }
   return "starter";
 }
 
 /**
  * Best-effort sync of entitlement level (and optionally stripe_customer_id)
  * to the Postgres api_keys table. Errors are logged but never thrown.
+ *
+ * The two updates (api_keys.entitlement_level + organizations.plan) must
+ * stay in lock-step: if the second fails after the first succeeds, the
+ * dashboard will show divergent state (key upgraded, org still starter).
+ * They run in a single transaction so either both land or neither does.
  *
  * stripe_customer_id is written here as a belt-and-suspenders fallback.
  * The primary write happens at checkout creation time in billing.ts so
@@ -194,8 +251,11 @@ async function syncToDb(
   // On a successful grant, also clear any stale payment_failed_at stamp.
   const clearPaymentFailed = entitlement.activeSubscription;
 
+  const client = await pg.connect();
   try {
-    const keyResult = await pg.query(
+    await client.query("BEGIN");
+
+    const keyResult = await client.query(
       `
       UPDATE api_keys
       SET
@@ -207,6 +267,17 @@ async function syncToDb(
       `,
       [level, apiKeyId, customerId, rawSubscriptionTier, clearPaymentFailed]
     );
+
+    await client.query(
+      `
+      UPDATE organizations
+      SET plan = $1
+      WHERE id = (SELECT organization_id FROM api_keys WHERE id = $2 LIMIT 1)
+      `,
+      [orgPlan, apiKeyId]
+    );
+
+    await client.query("COMMIT");
 
     const rows = keyResult.rowCount ?? 0;
 
@@ -220,27 +291,26 @@ async function syncToDb(
         { event: "stripe_webhook_db_sync_ok", apiKeyId, level, customerId },
         "stripeWebhook: api_keys.entitlement_level updated"
       );
+      logger.info(
+        { event: "stripe_webhook_org_plan_synced", apiKeyId, orgPlan },
+        "stripeWebhook: organizations.plan synced"
+      );
     }
-
-    // Sync organizations.plan to mirror the billing tier change.
-    await pg.query(
-      `
-      UPDATE organizations
-      SET plan = $1
-      WHERE id = (SELECT organization_id FROM api_keys WHERE id = $2 LIMIT 1)
-      `,
-      [orgPlan, apiKeyId]
-    );
-
-    logger.info(
-      { event: "stripe_webhook_org_plan_synced", apiKeyId, orgPlan },
-      "stripeWebhook: organizations.plan synced"
-    );
   } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackErr) {
+      logger.error(
+        { event: "stripe_webhook_db_rollback_failed", rollbackErr },
+        "stripeWebhook: ROLLBACK failed after sync error (non-fatal)"
+      );
+    }
     logger.error(
       { event: "stripe_webhook_db_sync_failed", err },
       "stripeWebhook: failed to sync entitlement to DB (non-fatal)"
     );
+  } finally {
+    client.release();
   }
 }
 
@@ -321,6 +391,63 @@ async function syncSubscriber(
     logger.error(
       { event: "stripe_webhook_subscriber_sync_failed", customerId, err },
       "stripeWebhook: failed to sync subscriber record (non-fatal)"
+    );
+  }
+}
+
+/**
+ * When a customer upgrades to a Platform plan (platform or platform_annual),
+ * cancel any other active subscriptions on the same Stripe customer. This
+ * prevents a subscriber who previously paid for a Brief plan from being
+ * double-charged once they move onto a full-platform subscription.
+ *
+ * The newly-created platform subscription (identified by newSubscriptionId)
+ * is excluded from cancellation so we never cancel the very subscription
+ * that just granted access.
+ *
+ * Non-fatal: any failure is logged and swallowed so webhook delivery is
+ * never blocked by a housekeeping cancel step.
+ */
+async function cancelPriorBriefSubscriptions(
+  customerId: string,
+  newSubscriptionId: string | null
+): Promise<void> {
+  try {
+    const subs = await getStripe().subscriptions.list({
+      customer: customerId,
+      status: "active"
+    });
+
+    for (const sub of subs.data) {
+      if (sub.id === newSubscriptionId) continue;
+
+      try {
+        await getStripe().subscriptions.cancel(sub.id, { prorate: true });
+        logger.info(
+          {
+            event: "stripe_brief_sub_cancelled_on_platform_upgrade",
+            cancelledSubId: sub.id,
+            newSubId: newSubscriptionId,
+            customerId
+          },
+          "stripeWebhook: cancelled prior Brief subscription on platform upgrade"
+        );
+      } catch (err) {
+        logger.error(
+          {
+            event: "stripe_brief_sub_cancel_failed",
+            cancelledSubId: sub.id,
+            customerId,
+            err
+          },
+          "stripeWebhook: failed to cancel prior Brief subscription (non-fatal)"
+        );
+      }
+    }
+  } catch (err) {
+    logger.error(
+      { event: "stripe_brief_sub_cancel_failed", customerId, err },
+      "stripeWebhook: failed to list prior subscriptions for platform upgrade (non-fatal)"
     );
   }
 }
@@ -479,6 +606,25 @@ export async function stripeWebhook(
     // Write to Redis (supplementary cache) then sync to Postgres (primary)
     await setEntitlementInRedis(apiKeyId, entitlement);
     await syncToDb(apiKeyId, entitlement, customerId, rawSubscriptionTier);
+
+    // Platform upgrade: cancel any prior Brief subscriptions on the same
+    // customer so they don't pay twice. Only fires for checkout.session.completed
+    // (so we have session.subscription to exclude) with raw tier
+    // "platform" or "platform_annual", and only after a successful grant.
+    if (
+      eventType === "checkout.session.completed" &&
+      entitlement.activeSubscription &&
+      customerId &&
+      (rawSubscriptionTier === "platform" || rawSubscriptionTier === "platform_annual")
+    ) {
+      const session = event.data.object as Stripe.Checkout.Session;
+      const newSubscriptionId =
+        typeof session.subscription === "string"
+          ? session.subscription
+          : session.subscription?.id ?? null;
+
+      await cancelPriorBriefSubscriptions(customerId, newSubscriptionId);
+    }
 
     // Sync subscriber record so newsletter delivery includes this subscriber.
     // Fire-and-forget wrapper: errors logged inside syncSubscriber, never thrown.

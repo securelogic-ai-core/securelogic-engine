@@ -15,7 +15,9 @@ const REQUIRED_ENV_PROD = [
   "STRIPE_SECRET_KEY",
   "STRIPE_WEBHOOK_SECRET",
   "STRIPE_PRICE_ID_PROFESSIONAL",
-  "STRIPE_PRICE_ID_TEAM",
+  "STRIPE_PRICE_ID_TEAMS",
+  "STRIPE_PRICE_ID_PLATFORM",
+  "STRIPE_PRICE_ID_PLATFORM_ANNUAL",
   "STRIPE_SUCCESS_URL",
   "STRIPE_CANCEL_URL",
   "STRIPE_PORTAL_RETURN_URL",
@@ -54,7 +56,12 @@ const OPTIONAL_ENV = [
   "FIELD_ENCRYPTION_KEY",
   // Brief signup — organization_id used for public marketing signups.
   // Defaults to the canonical SecureLogic brief org when not set.
-  "BRIEF_ORG_ID"
+  "BRIEF_ORG_ID",
+  // Legacy Stripe price ID — kept for backward compatibility with old
+  // "team" tier metadata still referenced by the webhook's legacy
+  // tier whitelist. No new checkouts use this env var; required price
+  // IDs are PROFESSIONAL, TEAMS, PLATFORM, and PLATFORM_ANNUAL.
+  "STRIPE_PRICE_ID_TEAM"
 ] as const;
 
 function isNonEmptyString(v: unknown): v is string {

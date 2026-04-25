@@ -59,40 +59,43 @@ async function resolveStripeCustomer(
 /* =========================================================
    TIER → STRIPE PRICE ID MAPPING
 
-   Three paid tiers:
-     professional  →  STRIPE_PRICE_ID_PROFESSIONAL  (Brief Pro, individual)
-     teams         →  STRIPE_PRICE_ID_TEAM           (Brief Pro Teams, multi-seat)
-     team          →  STRIPE_PRICE_ID_TEAM            (Platform Professional)
+   Five tiers (one free, four paid):
+     starter          →  (no Stripe — default free plan)
+     professional     →  STRIPE_PRICE_ID_PROFESSIONAL      ($29/mo)
+     teams            →  STRIPE_PRICE_ID_TEAMS             ($189/mo, up to 10 seats)
+     platform         →  STRIPE_PRICE_ID_PLATFORM          ($1,099/mo)
+     platform_annual  →  STRIPE_PRICE_ID_PLATFORM_ANNUAL   ($12,000/yr)
 
-   Both "professional" and "teams" grant entitlement_level="professional"
-   (same brief content access). "team" grants entitlement_level="premium"
-   (full platform access).
+   Entitlement mapping:
+     professional, teams                 → entitlement_level="professional" (Brief access)
+     platform, platform_annual           → entitlement_level="premium"      (full platform)
 
    The tier is passed in the request body, validated here, and stored in
    Stripe session/subscription metadata so the webhook can write the
-   correct entitlement_level on completion.
+   correct entitlement_level on completion. The legacy "team" tier is
+   no longer accepted for new checkouts; any pre-existing "team" Stripe
+   subscriptions are handled by the webhook's legacy tier whitelist.
    ========================================================= */
 
-const VALID_TIERS = new Set(["professional", "teams", "team"]);
+const VALID_TIERS = new Set(["professional", "teams", "platform", "platform_annual"]);
 
-function resolvePriceId(tier: string): string | null {
-  if (tier === "professional") {
-    return process.env.STRIPE_PRICE_ID_PROFESSIONAL?.trim() ?? null;
-  }
-  if (tier === "teams") {
-    return process.env.STRIPE_PRICE_ID_TEAM?.trim() ?? null;
-  }
-  if (tier === "team") {
-    return process.env.STRIPE_PRICE_ID_TEAM?.trim() ?? null;
-  }
-  return null;
+function resolvePriceId(tier: string): string {
+  const map: Record<string, string | undefined> = {
+    professional:    process.env.STRIPE_PRICE_ID_PROFESSIONAL?.trim(),
+    teams:           process.env.STRIPE_PRICE_ID_TEAMS?.trim(),
+    platform:        process.env.STRIPE_PRICE_ID_PLATFORM?.trim(),
+    platform_annual: process.env.STRIPE_PRICE_ID_PLATFORM_ANNUAL?.trim(),
+  };
+  const priceId = map[tier];
+  if (!priceId) throw new Error(`Unknown tier: ${tier}`);
+  return priceId;
 }
 
 /* =========================================================
    CREATE CHECKOUT SESSION
    POST /api/billing/checkout
 
-   Body: { tier: "professional" | "team" }
+   Body: { tier: "professional" | "teams" | "platform" | "platform_annual" }
 
    Creates a Stripe subscription checkout session for the
    calling API key. A Stripe Customer is created (or reused)
@@ -105,27 +108,34 @@ router.post("/billing/checkout", requireApiKey, async (req, res) => {
     const tierRaw = typeof req.body?.tier === "string" ? req.body.tier.trim().toLowerCase() : null;
 
     if (!tierRaw || !VALID_TIERS.has(tierRaw)) {
-      res.status(400).json({ error: "invalid_tier", valid: ["professional", "teams", "team"] });
+      res.status(400).json({
+        error: "invalid_tier",
+        valid: ["professional", "teams", "platform", "platform_annual"],
+      });
       return;
     }
 
-    const tier = tierRaw as "professional" | "teams" | "team";
-    const priceId = resolvePriceId(tier);
+    const tier = tierRaw as "professional" | "teams" | "platform" | "platform_annual";
+
+    let priceId: string;
+    try {
+      priceId = resolvePriceId(tier);
+    } catch (err) {
+      // resolvePriceId throws when the required STRIPE_PRICE_ID_* env var is absent.
+      logger.error(
+        { event: "billing_checkout_misconfigured", tier, err },
+        "POST /api/billing/checkout: Stripe price ID env var not configured"
+      );
+      res.status(503).json({ error: "billing_not_configured" });
+      return;
+    }
+
     const successUrl =
       process.env.STRIPE_SUCCESS_URL?.trim() ??
       "https://app.securelogicai.com/dashboard?upgraded=true";
     const cancelUrl =
       process.env.STRIPE_CANCEL_URL?.trim() ??
       "https://app.securelogicai.com/dashboard";
-
-    if (!priceId) {
-      logger.error(
-        { event: "billing_checkout_misconfigured", tier },
-        "POST /api/billing/checkout: Stripe price ID env var not configured"
-      );
-      res.status(503).json({ error: "billing_not_configured" });
-      return;
-    }
 
     const apiKey = (req as any).apiKey as Record<string, unknown>;
     const apiKeyId = typeof apiKey.id === "string" ? apiKey.id : null;

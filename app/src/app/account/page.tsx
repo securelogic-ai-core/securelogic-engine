@@ -7,7 +7,7 @@ import ChangePasswordSection from "./security/ChangePasswordSection";
 
 function planDisplayName(entitlementLevel: string): string {
   switch (entitlementLevel) {
-    case "premium":      return "Team";
+    case "premium":      return "Platform Professional";
     case "professional": return "Professional";
     case "admin":        return "Enterprise";
     default:             return "Free";
@@ -281,18 +281,40 @@ export default async function AccountPage({
                       type="submit"
                       className="w-full border border-teal-600 text-teal-600 hover:bg-teal-50 text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                     >
-                      Brief Pro — $29/mo
+                      Professional — $29/mo
                     </button>
                   </form>
                   <form action="/api/billing/checkout" method="POST">
-                    <input type="hidden" name="tier" value="team" />
+                    <input type="hidden" name="tier" value="teams" />
+                    <button
+                      type="submit"
+                      className="w-full border border-teal-600 text-teal-600 hover:bg-teal-50 text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
+                    >
+                      Team Professional — $189/mo
+                    </button>
+                  </form>
+                  <form action="/api/billing/checkout" method="POST">
+                    <input type="hidden" name="tier" value="platform" />
                     <button
                       type="submit"
                       className="w-full bg-teal-600 hover:bg-teal-500 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                     >
-                      Platform Professional — $799/mo
+                      Platform Professional — $1,099/mo
                     </button>
                   </form>
+                  <form action="/api/billing/checkout" method="POST">
+                    <input type="hidden" name="tier" value="platform_annual" />
+                    <button
+                      type="submit"
+                      className="w-full bg-teal-600 hover:bg-teal-500 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
+                    >
+                      Platform Annual — $12,000/yr
+                    </button>
+                  </form>
+                  <p className="text-xs text-slate-500 pt-1">
+                    Platform plans include all Brief features. Any existing Brief
+                    subscription will be cancelled automatically on upgrade.
+                  </p>
                 </div>
               ) : (
                 <p className="text-xs text-slate-400">Only admins can manage billing.</p>
