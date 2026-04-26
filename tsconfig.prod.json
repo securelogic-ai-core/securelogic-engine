@@ -39,6 +39,10 @@
     "src/dev/**",
     "src/_*",
     "src/cli.ts",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "**/__tests__/**",
+    "src/api/tests/**",
     "node_modules",
     "dist",
     "packages"

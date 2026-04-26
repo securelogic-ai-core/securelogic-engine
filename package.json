@@ -63,7 +63,6 @@
     "securelogic-contracts": "^0.1.2",
     "stripe": "^22.0.0",
     "svix": "^1.89.0",
-    "typescript": "~5.9.3",
     "uuid": "^14.0.0",
     "zod": "^4.3.4"
   },
@@ -87,6 +86,7 @@
     "eslint": "^9.39.2",
     "eslint-plugin-boundaries": "^6.0.2",
     "tsx": "^4.21.0",
+    "typescript": "~5.9.3",
     "vitest": "~4.0.16"
   }
 }
