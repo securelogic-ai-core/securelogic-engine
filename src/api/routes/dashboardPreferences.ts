@@ -77,8 +77,9 @@ async function resolveLayout(
      LIMIT 1`,
     [organizationId, userId]
   );
-  if (personal.rows.length > 0) {
-    return { layout: personal.rows[0].layout, source: "personal" };
+  const personalRow = personal.rows[0];
+  if (personalRow) {
+    return { layout: personalRow.layout, source: "personal" };
   }
 
   const orgDefault = await pg.query<PrefRow>(
@@ -87,8 +88,9 @@ async function resolveLayout(
      LIMIT 1`,
     [organizationId]
   );
-  if (orgDefault.rows.length > 0) {
-    return { layout: orgDefault.rows[0].layout, source: "org_default" };
+  const orgDefaultRow = orgDefault.rows[0];
+  if (orgDefaultRow) {
+    return { layout: orgDefaultRow.layout, source: "org_default" };
   }
 
   return { layout: SYSTEM_DEFAULT, source: "system_default" };
@@ -260,11 +262,12 @@ router.get(
         [organizationId]
       );
 
-      if (result.rows.length === 0) {
+      const orgRow = result.rows[0];
+      if (!orgRow) {
         res.status(200).json({ layout: SYSTEM_DEFAULT, source: "system_default" });
         return;
       }
-      res.status(200).json({ layout: result.rows[0].layout, source: "org_default" });
+      res.status(200).json({ layout: orgRow.layout, source: "org_default" });
     } catch (err) {
       logger.error({ event: "dashboard_org_prefs_get_failed", err }, "GET /api/dashboard/preferences/org failed");
       res.status(500).json({ error: "dashboard_org_prefs_get_failed" });

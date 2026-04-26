@@ -189,15 +189,14 @@ router.put(
       [presetName]
     );
 
-    if (presetResult.rowCount === 0) {
+    const preset = presetResult.rows[0];
+    if (!preset) {
       res.status(400).json({
         error: "invalid_preset_name",
         message: `Unknown preset '${presetName}'. Valid values: standard, nist, simple, custom.`,
       });
       return;
     }
-
-    const preset = presetResult.rows[0];
 
     // custom_levels requires premium
     if (customLevels !== null && customLevels !== undefined) {
