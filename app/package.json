@@ -9,7 +9,10 @@
     "typecheck": "tsc --noEmit"
   },
   "overrides": {
-    "uuid": "^14.0.0"
+    "uuid": "^14.0.0",
+    "next": {
+      "postcss": "^8.5.12"
+    }
   },
   "dependencies": {
     "autoprefixer": "^10.4.0",
