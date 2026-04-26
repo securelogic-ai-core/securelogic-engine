@@ -3,7 +3,7 @@ services:
     name: securelogic-engine
     env: node
     plan: starter
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --include=dev && npm run build
     startCommand: npm run migrate && npm start
     autoDeploy: true
     healthCheckPath: /health
