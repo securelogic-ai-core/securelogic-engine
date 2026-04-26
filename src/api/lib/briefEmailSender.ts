@@ -174,7 +174,7 @@ export function filterBriefForFreeTier(data: BriefEmailData): BriefEmailData {
     why_it_matters:
       item.why_it_matters && item.why_it_matters.length > 150
         ? item.why_it_matters.slice(0, 147) + "\u2026"
-        : item.why_it_matters,
+        : item.why_it_matters ?? null,
     recommended_actions: null,
   });
 

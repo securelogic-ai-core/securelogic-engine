@@ -376,13 +376,14 @@ router.delete(
         [targetUserId, orgId]
       );
 
-      if (targetResult.rows.length === 0) {
+      const target = targetResult.rows[0];
+      if (!target) {
         res.status(404).json({ error: "member_not_found" });
         return;
       }
 
       // Prevent removing the last admin
-      if (targetResult.rows[0].role === "admin") {
+      if (target.role === "admin") {
         const adminCount = await pg.query<{ count: string }>(
           `SELECT COUNT(*)::text AS count FROM users
            WHERE organization_id = $1 AND role = 'admin' AND status = 'active'`,
@@ -462,13 +463,14 @@ router.patch(
         [targetUserId, orgId]
       );
 
-      if (targetResult.rows.length === 0) {
+      const target = targetResult.rows[0];
+      if (!target) {
         res.status(404).json({ error: "member_not_found" });
         return;
       }
 
       // Prevent demoting the last admin
-      if (targetResult.rows[0].role === "admin" && newRole !== "admin") {
+      if (target.role === "admin" && newRole !== "admin") {
         const adminCount = await pg.query<{ count: string }>(
           `SELECT COUNT(*)::text AS count FROM users
            WHERE organization_id = $1 AND role = 'admin' AND status = 'active'`,
