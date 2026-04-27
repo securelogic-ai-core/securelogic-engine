@@ -40,6 +40,7 @@ router.get("/me", requireApiKey, async (req, res, next) => {
         k.id              AS api_key_id,
         k.label           AS api_key_label,
         k.entitlement_level,
+        k.stripe_subscription_tier,
         k.status          AS api_key_status,
         k.last_used_at,
         k.created_at      AS api_key_created_at
@@ -71,6 +72,7 @@ router.get("/me", requireApiKey, async (req, res, next) => {
       apiKeyLabel:        row.api_key_label,
       apiKeyStatus:       row.api_key_status,
       entitlementLevel,
+      stripeSubscriptionTier: row.stripe_subscription_tier ?? null,
       billingActive,
       lastUsedAt:         row.last_used_at,
       apiKeyCreatedAt:    row.api_key_created_at
