@@ -104,10 +104,6 @@ export type IssuesResponse = {
   issues: NewsletterIssue[];
 };
 
-export type RegisterResponse =
-  | { ok: true; apiKey: string; organizationId: string; entitlementLevel: string; note: string }
-  | { error: string };
-
 export type PostureSnapshot = {
   id: string;
   snapshot_date: string;
@@ -1157,19 +1153,6 @@ export async function getControlAssessments(
   } catch {
     return null;
   }
-}
-
-export async function registerOrg(
-  name: string,
-  email: string
-): Promise<RegisterResponse> {
-  const res = await fetch(`${ENGINE_URL}/api/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, email }),
-    cache: "no-store",
-  });
-  return res.json() as Promise<RegisterResponse>;
 }
 
 // ─── Customer auth engine calls ─────────────────────────────────────────────

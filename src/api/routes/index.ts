@@ -2,7 +2,6 @@ import { Router, type Request, type Response } from "express";
 
 import adminOpsDashboardRouter from "./adminOpsDashboard.js";
 import unsubscribeRouter from "./unsubscribe.js";
-import registerRouter from "./register.js";
 import accountRouter from "./account.js";
 import accountRecoveryRouter from "./accountRecovery.js";
 
@@ -189,8 +188,6 @@ export function buildRoutes(opts: RoutesOptions): Router {
   // Public marketing signup — no API key, rate-limited (5/IP/min)
   router.use("/api", publicBriefSignupRouter);
 
-  // Self-service registration — public, rate-limited (5/IP/hour)
-  router.use("/api", registerRouter);
   router.use("/api", accountRecoveryRouter);
 
   // Customer email/password auth — public (rate-limited), JWT-issuing

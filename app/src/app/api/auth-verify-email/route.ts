@@ -25,10 +25,13 @@ export async function POST(request: Request) {
     // Persist session so the user lands directly on the app
     const me = await getAuthMe(result.token);
     let onboardingCompleted = false;
+    let pendingPlan: "professional" | "team" | null = null;
+
+    const cookieStore = await cookies();
+    const session = await getIronSession<SessionData>(cookieStore, getSessionOptions());
+
     if (me) {
       onboardingCompleted = me.onboardingCompleted ?? false;
-      const cookieStore = await cookies();
-      const session = await getIronSession<SessionData>(cookieStore, getSessionOptions());
       session.jwtToken             = result.token;
       session.userId               = me.id;
       session.email                = me.email;
@@ -38,10 +41,18 @@ export async function POST(request: Request) {
       session.entitlementLevel     = me.entitlementLevel;
       session.billingActive        = me.billingActive;
       session.onboardingCompleted  = onboardingCompleted;
-      await session.save();
     }
 
-    return NextResponse.json({ ok: true, onboardingCompleted });
+    // Replay the plan the user picked at /signup, if any. Cleared either way
+    // so a stale value cannot be reused.
+    if (session.pendingPlan === "professional" || session.pendingPlan === "team") {
+      pendingPlan = session.pendingPlan;
+    }
+    delete session.pendingPlan;
+
+    await session.save();
+
+    return NextResponse.json({ ok: true, onboardingCompleted, pendingPlan });
   } catch {
     return NextResponse.json({ error: "verification_failed" }, { status: 500 });
   }

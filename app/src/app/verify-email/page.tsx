@@ -10,12 +10,40 @@ import {
   AuthLink,
 } from "@/components/AuthCard";
 
+type PaidTier = "professional" | "team";
+
+function parsePlanParam(raw: string | null): PaidTier | null {
+  if (raw === "professional" || raw === "team") return raw;
+  return null;
+}
+
+function planLabel(tier: PaidTier): string {
+  return tier === "team" ? "Platform Professional — $799/mo" : "Brief Pro — $29/mo";
+}
+
+function postToCheckout(tier: PaidTier): void {
+  // Build a real form and submit it so the browser follows the 303 redirect
+  // that /api/billing/checkout issues — fetch() would not give us a top-level
+  // navigation to the Stripe-hosted checkout URL.
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = "/api/billing/checkout";
+  const tierInput = document.createElement("input");
+  tierInput.type  = "hidden";
+  tierInput.name  = "tier";
+  tierInput.value = tier;
+  form.appendChild(tierInput);
+  document.body.appendChild(form);
+  form.submit();
+}
+
 function VerifyEmailContent() {
   const searchParams = useSearchParams();
   const router       = useRouter();
 
   const tokenParam = searchParams.get("token");
   const emailParam = searchParams.get("email") ?? "";
+  const planParam  = parsePlanParam(searchParams.get("plan"));
 
   const [loading,   setLoading]   = useState(!!tokenParam);
   const [resending, setResending] = useState(false);
@@ -36,7 +64,12 @@ function VerifyEmailContent() {
         body: JSON.stringify({ token: tokenParam }),
       });
 
-      const data = (await res.json()) as { ok?: boolean; error?: string; onboardingCompleted?: boolean };
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        onboardingCompleted?: boolean;
+        pendingPlan?: PaidTier | null;
+      };
 
       if (!res.ok) {
         setError(
@@ -45,6 +78,13 @@ function VerifyEmailContent() {
             : "Verification failed. The link may be invalid."
         );
         setLoading(false);
+        return;
+      }
+
+      // If the user picked a paid plan at signup and the cookie is still
+      // intact (same browser), go straight to Stripe checkout.
+      if (data.pendingPlan === "professional" || data.pendingPlan === "team") {
+        postToCheckout(data.pendingPlan);
         return;
       }
 
@@ -176,6 +216,12 @@ function VerifyEmailContent() {
           Click the link in the email to activate your account. The link
           expires in 24 hours.
         </p>
+        {planParam && (
+          <p style={{ margin: "12px 0 0", fontSize: "14px", color: "#94a3b8" }}>
+            After verifying, you&apos;ll continue to{" "}
+            <strong style={{ color: "#f1f5f9" }}>{planLabel(planParam)}</strong> checkout.
+          </p>
+        )}
       </div>
 
       <AuthError message={error} />
