@@ -45,6 +45,8 @@ export default function SuccessPage() {
           const isPaid =
             level === "premium" ||
             level === "professional" ||
+            level === "platform" ||
+            level === "team" ||
             level === "admin";
 
           if (isPaid) {
@@ -79,7 +81,7 @@ export default function SuccessPage() {
   // Auto-redirect once session is refreshed
   useEffect(() => {
     if (status !== "ready") return;
-    const timer = setTimeout(() => router.push("/dashboard"), 1000);
+    const timer = setTimeout(() => router.push("/dashboard?upgraded=true"), 1000);
     return () => clearTimeout(timer);
   }, [status, router]);
 
