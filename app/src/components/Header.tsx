@@ -279,7 +279,7 @@ export function Header({
                 Sign In
               </Link>
               <a
-                href={`${SITE_URL}/pricing/`}
+                href="/register"
                 className="bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium px-4 py-1.5 rounded transition-colors"
               >
                 Get Started
@@ -369,7 +369,7 @@ export function Header({
                 </Link>
                 <div className="px-3 py-2">
                   <a
-                    href={`${SITE_URL}/pricing/`}
+                    href="/register"
                     className="inline-block bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium px-4 py-1.5 rounded transition-colors"
                   >
                     Get Started
