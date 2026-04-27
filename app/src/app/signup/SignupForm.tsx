@@ -11,15 +11,27 @@ import {
   AuthDivider,
 } from "@/components/AuthCard";
 
-type PaidTier = "professional" | "team";
+type PaidTier = "professional" | "teams" | "platform" | "platform_annual";
 
 function parsePlanParam(raw: string | null): PaidTier | null {
-  if (raw === "professional" || raw === "team") return raw;
+  if (
+    raw === "professional" ||
+    raw === "teams" ||
+    raw === "platform" ||
+    raw === "platform_annual"
+  ) {
+    return raw;
+  }
   return null;
 }
 
 function planLabel(tier: PaidTier): string {
-  return tier === "team" ? "Platform Professional — $799/mo" : "Brief Pro — $29/mo";
+  switch (tier) {
+    case "professional":    return "Professional — $29/mo";
+    case "teams":           return "Team Professional — $189/mo";
+    case "platform":        return "Platform Professional — $1,099/mo";
+    case "platform_annual": return "Platform Annual — $12,000/yr";
+  }
 }
 
 interface Props {

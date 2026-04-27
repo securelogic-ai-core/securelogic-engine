@@ -12,7 +12,7 @@ import { createCheckoutSession } from "@/lib/api";
  * The client calls this, receives the URL, then does
  * window.location.href = checkoutUrl.
  *
- * Body (JSON): { tier: "professional" | "team" }
+ * Body (JSON): { tier: "professional" | "teams" | "platform" | "platform_annual" }
  */
 export async function POST(request: Request) {
   const session = await getSession();
@@ -22,10 +22,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
 
-  let tier: "professional" | "team" = "professional";
+  let tier: "professional" | "teams" | "platform" | "platform_annual" = "professional";
   try {
     const body = (await request.json()) as { tier?: string };
-    if (body.tier === "team") tier = "team";
+    if (body.tier === "teams") tier = "teams";
+    else if (body.tier === "platform") tier = "platform";
+    else if (body.tier === "platform_annual") tier = "platform_annual";
   } catch {
     // fall through to default tier
   }
