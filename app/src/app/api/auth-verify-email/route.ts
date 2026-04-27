@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     // Persist session so the user lands directly on the app
     const me = await getAuthMe(result.token);
     let onboardingCompleted = false;
-    let pendingPlan: "professional" | "team" | null = null;
+    let pendingPlan: "professional" | "teams" | "platform" | "platform_annual" | null = null;
 
     const cookieStore = await cookies();
     const session = await getIronSession<SessionData>(cookieStore, getSessionOptions());
@@ -45,7 +45,12 @@ export async function POST(request: Request) {
 
     // Replay the plan the user picked at /signup, if any. Cleared either way
     // so a stale value cannot be reused.
-    if (session.pendingPlan === "professional" || session.pendingPlan === "team") {
+    if (
+      session.pendingPlan === "professional" ||
+      session.pendingPlan === "teams" ||
+      session.pendingPlan === "platform" ||
+      session.pendingPlan === "platform_annual"
+    ) {
       pendingPlan = session.pendingPlan;
     }
     delete session.pendingPlan;

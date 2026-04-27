@@ -20,7 +20,13 @@ export async function POST(request: Request) {
     const email            = typeof body.email === "string" ? body.email.trim() : "";
     const password         = typeof body.password === "string" ? body.password : "";
     const promoCode        = typeof body.promoCode === "string" && body.promoCode.trim() ? body.promoCode.trim() : undefined;
-    const plan             = body.plan === "professional" || body.plan === "team" ? body.plan : null;
+    const plan             =
+      body.plan === "professional" ||
+      body.plan === "teams" ||
+      body.plan === "platform" ||
+      body.plan === "platform_annual"
+        ? body.plan
+        : null;
 
     if (!organizationName || !name || !email || !password) {
       return NextResponse.json({ error: "missing_fields" }, { status: 400 });
