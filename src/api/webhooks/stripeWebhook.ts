@@ -72,7 +72,44 @@ const KNOWN_TIERS = new Set([
 ]);
 
 /**
- * Resolves the SecureLogic entitlement tier from the Stripe event metadata.
+ * Map of Stripe price IDs → raw tier labels, built at module load from
+ * STRIPE_PRICE_ID_PROFESSIONAL / _TEAMS / _PLATFORM / _PLATFORM_ANNUAL.
+ *
+ * Used by resolveTier and extractRawSubscriptionTier so subscription events
+ * derive the tier directly from the current price, which is the only
+ * reliable source for portal-driven upgrades and downgrades — Stripe leaves
+ * a subscription's metadata untouched when a customer changes plans through
+ * the Stripe Customer Portal. Entries are only added for env vars that are
+ * set, so missing config gracefully degrades to metadata-based resolution.
+ */
+const PRICE_ID_TO_TIER: Record<string, string> = (() => {
+  const map: Record<string, string> = {};
+  const envPairs: Array<[string, string]> = [
+    ["STRIPE_PRICE_ID_PROFESSIONAL",    "professional"],
+    ["STRIPE_PRICE_ID_TEAMS",           "teams"],
+    ["STRIPE_PRICE_ID_PLATFORM",        "platform"],
+    ["STRIPE_PRICE_ID_PLATFORM_ANNUAL", "platform_annual"]
+  ];
+  for (const [envVar, tier] of envPairs) {
+    const id = process.env[envVar]?.trim();
+    if (id) map[id] = tier;
+  }
+  return map;
+})();
+
+/**
+ * Returns the raw tier label for a subscription's first price item, or null
+ * if the price ID is not in the env-configured map. SecureLogic plans are
+ * single-item, so the first item is authoritative for the current catalog.
+ */
+function resolveTierFromPriceId(subscription: Stripe.Subscription): string | null {
+  const priceId = subscription.items?.data?.[0]?.price?.id;
+  if (!priceId) return null;
+  return PRICE_ID_TO_TIER[priceId] ?? null;
+}
+
+/**
+ * Resolves the SecureLogic entitlement tier for a Stripe event.
  *
  * Returns a value from the Redis Tier union ("professional" | "paid"):
  *   - "professional" → Brief tier (entitlement_level="professional")
@@ -80,10 +117,29 @@ const KNOWN_TIERS = new Set([
  *   - "paid"         → full platform tier (entitlement_level="premium")
  *       raw: "platform", "platform_annual", legacy "team"/"paid"/"admin"
  *
+ * For customer.subscription.* events, the subscription's current price ID
+ * is the source of truth — portal-driven upgrades/downgrades change the
+ * price without rewriting metadata, so metadata can be stale. If price-ID
+ * resolution fails (env var missing, unknown price), falls back to metadata.
+ * Non-subscription events (checkout.session.completed, etc.) read metadata
+ * directly, preserving prior behavior.
+ *
  * Unknown raw values are logged as stripe_unknown_tier and default to "paid"
  * for forward compatibility with legacy events that predate tier metadata.
  */
-function resolveTierFromMetadata(event: Stripe.Event): "professional" | "paid" {
+function resolveTier(event: Stripe.Event): "professional" | "paid" {
+  if (event.type.startsWith("customer.subscription.")) {
+    const subscription = event.data.object as Stripe.Subscription;
+    const priceTier = resolveTierFromPriceId(subscription);
+    if (priceTier === "professional" || priceTier === "teams") {
+      return "professional";
+    }
+    if (priceTier === "platform" || priceTier === "platform_annual") {
+      return "paid";
+    }
+    // priceTier === null → fall through to metadata
+  }
+
   const obj = event.data.object as any;
   const rawTier =
     obj?.metadata?.tier ??
@@ -168,14 +224,26 @@ function extractCustomerId(event: Stripe.Event): string | null {
 }
 
 /**
- * Extracts the raw subscription tier string from checkout or subscription metadata.
- * Returns 'professional' or 'team' when present; null for legacy/unknown events.
+ * Extracts the raw subscription tier string for storage in
+ * api_keys.stripe_subscription_tier. Returns 'professional', 'teams',
+ * 'platform', 'platform_annual', or legacy 'team' when known; null otherwise.
  *
- * This is distinct from resolveTierFromMetadata(): that function normalises 'team'
- * → 'paid' for Redis/entitlement purposes. This function preserves the original
- * value so it can be stored in stripe_subscription_tier for future feature gating.
+ * For customer.subscription.* events, the subscription's price ID is the
+ * source of truth (portal-driven plan changes don't rewrite metadata).
+ * Falls back to checkout/subscription metadata for non-subscription events
+ * or when no env-configured price matches.
+ *
+ * This is distinct from resolveTier(): that function normalises 'team' →
+ * 'paid' for Redis/entitlement purposes. This function preserves the
+ * original value so it can be stored for future feature gating.
  */
 function extractRawSubscriptionTier(event: Stripe.Event): string | null {
+  if (event.type.startsWith("customer.subscription.")) {
+    const subscription = event.data.object as Stripe.Subscription;
+    const priceTier = resolveTierFromPriceId(subscription);
+    if (priceTier) return priceTier;
+  }
+
   const obj = event.data.object as any;
   const raw =
     obj?.metadata?.tier ??
@@ -576,7 +644,7 @@ export async function stripeWebhook(
         ? (event.data.object as Stripe.Subscription)
         : null;
 
-    const metadataTier = resolveTierFromMetadata(event);
+    const metadataTier = resolveTier(event);
     const entitlement = classifySubscriptionEvent(eventType, subscription, metadataTier);
 
     if (!entitlement) {
