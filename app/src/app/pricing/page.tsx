@@ -12,7 +12,7 @@ const PLANS = [
       "Weekly email digest",
     ],
     cta: "Get Started",
-    href: "/register",
+    href: "/signup",
     style: "default" as const,
   },
   {
@@ -27,7 +27,7 @@ const PLANS = [
       "Complete archive",
     ],
     cta: "Get Started",
-    href: "/register?plan=professional",
+    href: "/signup?plan=professional",
     style: "outline" as const,
   },
   {
@@ -42,7 +42,7 @@ const PLANS = [
       "Early access to new modules",
     ],
     cta: "Get Started",
-    href: "/register?plan=team",
+    href: "/signup?plan=team",
     style: "primary" as const,
     badge: "Most Popular",
   },

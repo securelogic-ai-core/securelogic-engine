@@ -73,7 +73,7 @@ export default function LandingPage() {
 
           <div className="flex items-center justify-center gap-4">
             <Link
-              href="/register"
+              href="/signup"
               className="bg-teal-600 hover:bg-teal-500 text-white font-semibold px-8 py-3 rounded-lg transition-colors"
             >
               Get Started Free
@@ -168,7 +168,7 @@ export default function LandingPage() {
               ))}
             </ul>
             <Link
-              href="/register"
+              href="/signup"
               className="block text-center bg-slate-900 hover:bg-slate-800 text-white font-medium py-2.5 rounded-lg transition-colors text-sm"
             >
               Get Started
@@ -198,7 +198,7 @@ export default function LandingPage() {
               ))}
             </ul>
             <Link
-              href="/register?plan=professional"
+              href="/signup?plan=professional"
               className="block text-center border border-teal-600 text-teal-600 hover:bg-teal-50 font-medium py-2.5 rounded-lg transition-colors text-sm"
             >
               Get Started
@@ -231,7 +231,7 @@ export default function LandingPage() {
               ))}
             </ul>
             <Link
-              href="/register?plan=team"
+              href="/signup?plan=team"
               className="block text-center bg-white text-teal-700 hover:bg-teal-50 font-medium py-2.5 rounded-lg transition-colors text-sm"
             >
               Get Started
@@ -280,7 +280,7 @@ export default function LandingPage() {
             Join security and risk leaders receiving the SecureLogic AI Intelligence Brief.
           </p>
           <Link
-            href="/register"
+            href="/signup"
             className="inline-block bg-teal-600 hover:bg-teal-500 text-white font-semibold px-10 py-3 rounded-lg transition-colors"
           >
             Create Free Account
