@@ -69,6 +69,7 @@ function VerifyEmailContent() {
         error?: string;
         onboardingCompleted?: boolean;
         pendingPlan?: PaidTier | null;
+        entitlementLevel?: string;
       };
 
       if (!res.ok) {
@@ -88,7 +89,12 @@ function VerifyEmailContent() {
         return;
       }
 
-      router.push(data.onboardingCompleted ? "/dashboard" : "/getting-started");
+      const isPlatform = data.entitlementLevel === "premium";
+      router.push(
+        data.onboardingCompleted || !isPlatform
+          ? "/dashboard"
+          : "/getting-started"
+      );
       router.refresh();
     }
 
