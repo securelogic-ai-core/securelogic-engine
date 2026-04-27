@@ -27,7 +27,7 @@ export interface SessionData {
 
   // Pre-auth: paid tier the user picked on /signup, replayed by
   // /verify-email after the email-verification step to redirect into checkout.
-  pendingPlan?: "professional" | "team";
+  pendingPlan?: "professional" | "teams" | "platform" | "platform_annual";
 }
 
 /**
