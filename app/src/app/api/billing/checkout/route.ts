@@ -14,7 +14,7 @@ import { getOrigin } from "@/lib/getOrigin";
  * HTML <form method="POST"> buttons follow 303 redirects automatically —
  * no client-side JavaScript required for the happy path.
  *
- * Body (form-encoded): tier = "professional" | "team"
+ * Body (form-encoded): tier = "professional" | "teams" | "platform" | "platform_annual"
  */
 export async function POST(request: Request) {
   const origin = getOrigin(request);
@@ -28,12 +28,13 @@ export async function POST(request: Request) {
 
   // Parse tier from form data. Default to "professional" so existing buttons
   // without a tier field continue to work (forward compat).
-  let tier: "professional" | "teams" | "team" = "professional";
+  let tier: "professional" | "teams" | "platform" | "platform_annual" = "professional";
   try {
     const form = await request.formData();
     const raw = form.get("tier");
-    if (raw === "team") tier = "team";
-    else if (raw === "teams") tier = "teams";
+    if (raw === "teams") tier = "teams";
+    else if (raw === "platform") tier = "platform";
+    else if (raw === "platform_annual") tier = "platform_annual";
   } catch {
     // formData() throws if content-type is not multipart/form-data —
     // fall through to the default tier

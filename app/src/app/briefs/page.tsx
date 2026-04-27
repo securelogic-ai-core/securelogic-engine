@@ -137,7 +137,7 @@ export default async function BriefsPage() {
           </p>
           <div className="flex items-center justify-center gap-3 flex-wrap">
             <CheckoutButton tier="professional" label="Professional — $29/mo" variant="solid" />
-            <CheckoutButton tier="team" label="Team — $209/mo" variant="outline" />
+            <CheckoutButton tier="teams" label="Team — $209/mo" variant="outline" />
           </div>
         </div>
       )}
@@ -150,7 +150,7 @@ function CheckoutButton({
   label,
   variant = "outline",
 }: {
-  tier: "professional" | "team";
+  tier: "professional" | "teams" | "platform" | "platform_annual";
   label: string;
   variant?: "outline" | "solid";
 }) {

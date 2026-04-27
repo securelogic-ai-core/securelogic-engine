@@ -849,7 +849,7 @@ export async function getIssue(
 
 export async function createCheckoutSession(
   apiKey: string,
-  tier: "professional" | "teams" | "team"
+  tier: "professional" | "teams" | "platform" | "platform_annual"
 ): Promise<BillingSessionResult> {
   try {
     const res = await engineFetch("/api/billing/checkout", apiKey, {

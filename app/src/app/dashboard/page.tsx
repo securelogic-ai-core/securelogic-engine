@@ -385,7 +385,7 @@ function SamplePostureDashboard() {
         {/* Upgrade CTA */}
         <div className="mt-4 text-center">
           <form action="/api/billing/checkout" method="POST">
-            <input type="hidden" name="tier" value="team" />
+            <input type="hidden" name="tier" value="platform" />
             <button
               type="submit"
               className="inline-flex items-center gap-2 bg-teal-700 hover:bg-teal-600 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
