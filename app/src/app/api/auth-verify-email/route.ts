@@ -52,7 +52,12 @@ export async function POST(request: Request) {
 
     await session.save();
 
-    return NextResponse.json({ ok: true, onboardingCompleted, pendingPlan });
+    return NextResponse.json({
+      ok: true,
+      onboardingCompleted,
+      pendingPlan,
+      entitlementLevel: me?.entitlementLevel ?? "starter"
+    });
   } catch {
     return NextResponse.json({ error: "verification_failed" }, { status: 500 });
   }
