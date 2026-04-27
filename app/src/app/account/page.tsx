@@ -1,18 +1,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
-import { getMe, getAuthMe } from "@/lib/api";
+import { getMe, getAuthMe, planDisplayName } from "@/lib/api";
 import MfaSection from "./security/MfaSection";
 import ChangePasswordSection from "./security/ChangePasswordSection";
-
-function planDisplayName(entitlementLevel: string): string {
-  switch (entitlementLevel) {
-    case "premium":      return "Platform Professional";
-    case "professional": return "Professional";
-    case "admin":        return "Enterprise";
-    default:             return "Free";
-  }
-}
 
 function RoleBadge({ role }: { role: string }) {
   const styles: Record<string, { bg: string; color: string }> = {
@@ -72,7 +63,7 @@ export default async function AccountPage({
   const hasPaymentFailure = me.billingActive === false && me.entitlementLevel !== "starter";
   const isPlatform    = isPaid;
   const isAdmin       = userRole === "admin";
-  const planName      = planDisplayName(me.entitlementLevel);
+  const planName      = planDisplayName(me.entitlementLevel, me.stripeSubscriptionTier);
   const { billing_error: billingError, reason: billingReason, mfa_required: mfaRequired } = await searchParams;
   const billingErrorMessage = billingError ? BILLING_ERRORS[billingError] ?? null : null;
   const showMfaBanner = mfaRequired === "1";

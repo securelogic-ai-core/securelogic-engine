@@ -21,10 +21,37 @@ export type MeResponse = {
   apiKeyLabel: string;
   apiKeyStatus: string;
   entitlementLevel: string;
+  stripeSubscriptionTier?: string | null;
   billingActive: boolean;
   lastUsedAt: string | null;
   apiKeyCreatedAt: string;
 };
+
+/**
+ * Single source of truth for the human-readable plan label rendered across
+ * the account page, dashboard, and any future surface. Prefers the precise
+ * Stripe tier (which distinguishes Platform Annual from Platform Monthly,
+ * and Team Professional from solo Professional); falls back to the coarser
+ * entitlement_level when the Stripe tier is absent (legacy rows, free).
+ */
+export function planDisplayName(
+  entitlementLevel: string,
+  stripeSubscriptionTier?: string | null
+): string {
+  switch (stripeSubscriptionTier) {
+    case "professional":    return "Professional";
+    case "teams":           return "Team Professional";
+    case "platform":        return "Platform Professional";
+    case "platform_annual": return "Platform Annual";
+    case "team":            return "Platform Professional";
+  }
+  switch (entitlementLevel) {
+    case "premium":      return "Platform Professional";
+    case "professional": return "Professional";
+    case "admin":        return "Enterprise";
+    default:             return "Free";
+  }
+}
 
 export type BriefSignal = {
   // Identity
