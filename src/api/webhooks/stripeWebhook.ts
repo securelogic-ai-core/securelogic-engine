@@ -671,6 +671,41 @@ export async function stripeWebhook(
     const customerId = extractCustomerId(event);
     const rawSubscriptionTier = extractRawSubscriptionTier(event);
 
+    // Stale-revoke guard: when upgrading tiers, Stripe cancels the old
+    // subscription after creating the new one. The resulting delete event
+    // would otherwise downgrade entitlement_level back to 'starter' even
+    // though the user is now on a higher-paying subscription. If the row's
+    // current stripe_subscription_tier is paid AND differs from the
+    // canceled subscription's tier, treat this revoke as superseded.
+    if (entitlement.tier === "free") {
+      const { rows } = await pg.query<{ stripe_subscription_tier: string | null }>(
+        `SELECT stripe_subscription_tier FROM api_keys WHERE id = $1 LIMIT 1`,
+        [apiKeyId]
+      );
+      const currentTier = rows[0]?.stripe_subscription_tier ?? null;
+      const PAID_TIERS = new Set(["professional", "teams", "platform", "platform_annual", "team"]);
+
+      if (
+        currentTier &&
+        PAID_TIERS.has(currentTier) &&
+        rawSubscriptionTier &&
+        rawSubscriptionTier !== currentTier
+      ) {
+        logger.info(
+          {
+            event: "stripe_webhook_revoke_skipped_stale",
+            stripeEventType: eventType,
+            apiKeyId,
+            currentTier,
+            canceledTier: rawSubscriptionTier
+          },
+          "stripeWebhook: skipping revoke — canceled tier differs from active tier (superseded subscription)"
+        );
+        respond({ received: true, ignored: true, reason: "superseded" });
+        return;
+      }
+    }
+
     // Write to Redis (supplementary cache) then sync to Postgres (primary)
     await setEntitlementInRedis(apiKeyId, entitlement);
     await syncToDb(apiKeyId, entitlement, customerId, rawSubscriptionTier);
