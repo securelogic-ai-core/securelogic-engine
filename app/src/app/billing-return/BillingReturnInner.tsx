@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 
 /**
  * /billing-return — Post-Stripe-portal landing page.
@@ -14,7 +14,6 @@ import { useRouter, useSearchParams } from "next/navigation";
  * not stranded on this page after a no-op portal visit.
  */
 export default function BillingReturnInner() {
-  const router = useRouter();
   const searchParams = useSearchParams();
 
   useEffect(() => {
@@ -27,7 +26,7 @@ export default function BillingReturnInner() {
     const POLL_MS = 1500;
 
     function redirect() {
-      if (!cancelled) router.push("/account");
+      if (!cancelled) window.location.href = "/account";
     }
 
     async function poll() {
@@ -73,7 +72,7 @@ export default function BillingReturnInner() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [router, searchParams]);
+  }, [searchParams]);
 
   return (
     <div className="max-w-lg mx-auto px-6 py-20 text-center">
