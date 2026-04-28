@@ -132,7 +132,7 @@ router.post("/billing/checkout", requireApiKey, async (req, res) => {
 
     const successUrl =
       process.env.STRIPE_SUCCESS_URL?.trim() ??
-      "https://app.securelogicai.com/dashboard?upgraded=true";
+      `${(process.env.APP_BASE_URL ?? "https://app.securelogicai.com").replace(/\/$/, "")}/success`;
     const cancelUrl =
       process.env.STRIPE_CANCEL_URL?.trim() ??
       "https://app.securelogicai.com/dashboard";
