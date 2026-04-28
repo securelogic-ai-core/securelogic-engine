@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 
 function planDisplayName(entitlementLevel: string | null): string {
   switch (entitlementLevel) {
@@ -113,12 +112,12 @@ export default function SuccessPage() {
               Intelligence Brief content.
             </p>
             <p className="text-slate-400 text-xs mb-6">Redirecting to your dashboard…</p>
-            <Link
-              href="/dashboard"
+            <a
+              href="/dashboard?upgraded=true"
               className="inline-block bg-teal-600 hover:bg-teal-500 text-white font-semibold px-8 py-2.5 rounded-lg transition-colors text-sm"
             >
               Go to Dashboard →
-            </Link>
+            </a>
           </>
         )}
 
@@ -136,12 +135,12 @@ export default function SuccessPage() {
               Your payment was processed successfully. Your account will reflect
               the upgrade shortly — please visit your dashboard or account page.
             </p>
-            <Link
-              href="/dashboard"
+            <a
+              href="/dashboard?upgraded=true"
               className="inline-block bg-teal-600 hover:bg-teal-500 text-white font-semibold px-8 py-2.5 rounded-lg transition-colors text-sm"
             >
               Go to Dashboard →
-            </Link>
+            </a>
           </>
         )}
       </div>
