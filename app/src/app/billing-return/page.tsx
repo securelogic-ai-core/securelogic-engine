@@ -7,30 +7,69 @@ import { useRouter } from "next/navigation";
  * /billing-return — Post-Stripe-portal landing page.
  *
  * Stripe redirects here after a customer manages their subscription in the
- * Customer Portal (STRIPE_PORTAL_RETURN_URL). Refreshes the session cookie
- * once so the account page reflects any tier changes, then redirects to
- * /account regardless of refresh outcome.
+ * Customer Portal (STRIPE_PORTAL_RETURN_URL). Polls /api/session/refresh
+ * until the engine reports a different entitlement than the first response
+ * (the "before" baseline), then redirects to /account. If the entitlement
+ * never changes within the polling window, redirects anyway so the user is
+ * not stranded on this page after a no-op portal visit.
  */
 export default function BillingReturnPage() {
   const router = useRouter();
 
   useEffect(() => {
     let cancelled = false;
+    let attempts = 0;
+    let baseline: string | null | undefined = undefined;
+    const MAX_ATTEMPTS = 10;
+    const POLL_MS = 1500;
 
-    async function refreshAndRedirect() {
-      try {
-        await fetch("/api/session/refresh", { method: "POST" });
-      } catch {
-        // Refresh failure is non-fatal — /account will read whatever the
-        // session cookie currently has, and the user can re-trigger from there.
-      }
+    function redirect() {
       if (!cancelled) router.push("/account");
     }
 
-    refreshAndRedirect();
+    async function poll() {
+      if (cancelled) return;
+
+      attempts++;
+
+      try {
+        const res = await fetch("/api/session/refresh", { method: "POST" });
+
+        if (cancelled) return;
+
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          const level: string | null = data?.entitlementLevel ?? null;
+
+          if (baseline === undefined) {
+            // First successful response — record the pre-portal entitlement.
+            baseline = level;
+          } else if (level !== baseline) {
+            // Engine has reported a new entitlement — portal change applied.
+            redirect();
+            return;
+          }
+        }
+      } catch {
+        // Network/refresh failure on a single attempt is non-fatal — keep
+        // polling until either the entitlement changes or we exhaust attempts.
+      }
+
+      if (attempts >= MAX_ATTEMPTS) {
+        redirect();
+        return;
+      }
+
+      setTimeout(poll, POLL_MS);
+    }
+
+    // Initial delay so the portal-driven subscription update has time to
+    // propagate to the engine before the first /api/me read.
+    const timer = setTimeout(poll, POLL_MS);
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [router]);
 
