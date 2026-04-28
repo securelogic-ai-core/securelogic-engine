@@ -215,7 +215,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
       `SELECT id, signal_type, severity, normalized_summary,
               affected_cve, affected_vendor, source, ingestion_timestamp
        FROM cyber_signals
-       WHERE organization_id = $1
+       WHERE (organization_id = $1 OR organization_id IS NULL)
          AND ingestion_timestamp >= $2
          AND ingestion_timestamp < $3
        ORDER BY ingestion_timestamp DESC`,
