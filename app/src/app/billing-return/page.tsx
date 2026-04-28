@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 /**
  * /billing-return — Post-Stripe-portal landing page.
@@ -15,11 +15,14 @@ import { useRouter } from "next/navigation";
  */
 export default function BillingReturnPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   useEffect(() => {
+    const fromParam = searchParams.get("from");
     let cancelled = false;
     let attempts = 0;
-    let baseline: string | null | undefined = undefined;
+    let baseline: string | null | undefined =
+      fromParam !== null ? fromParam : undefined;
     const MAX_ATTEMPTS = 10;
     const POLL_MS = 1500;
 
@@ -42,7 +45,6 @@ export default function BillingReturnPage() {
           const level: string | null = data?.entitlementLevel ?? null;
 
           if (baseline === undefined) {
-            // First successful response — record the pre-portal entitlement.
             baseline = level;
           } else if (level !== baseline) {
             // Engine has reported a new entitlement — portal change applied.
@@ -71,7 +73,7 @@ export default function BillingReturnPage() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [router]);
+  }, [router, searchParams]);
 
   return (
     <div className="max-w-lg mx-auto px-6 py-20 text-center">
