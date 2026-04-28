@@ -378,7 +378,7 @@ function SamplePostureDashboard() {
               type="submit"
               className="inline-flex items-center gap-2 bg-teal-700 hover:bg-teal-600 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
             >
-              Upgrade to Platform Professional — $799/mo
+              Upgrade to Platform Professional — $1,099/mo
             </button>
           </form>
         </div>
