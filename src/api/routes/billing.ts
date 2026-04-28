@@ -135,7 +135,7 @@ router.post("/billing/checkout", requireApiKey, async (req, res) => {
       `${(process.env.APP_BASE_URL ?? "https://app.securelogicai.com").replace(/\/$/, "")}/success`;
     const cancelUrl =
       process.env.STRIPE_CANCEL_URL?.trim() ??
-      "https://app.securelogicai.com/dashboard";
+      `${(process.env.APP_BASE_URL ?? "https://app.securelogicai.com").replace(/\/$/, "")}/dashboard`;
 
     const apiKey = (req as any).apiKey as Record<string, unknown>;
     const apiKeyId = typeof apiKey.id === "string" ? apiKey.id : null;
