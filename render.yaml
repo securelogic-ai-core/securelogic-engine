@@ -67,7 +67,13 @@ services:
       - key: STRIPE_PRICE_ID_PROFESSIONAL
         sync: false
 
-      - key: STRIPE_PRICE_ID_TEAM
+      - key: STRIPE_PRICE_ID_TEAMS
+        sync: false
+
+      - key: STRIPE_PRICE_ID_PLATFORM
+        sync: false
+
+      - key: STRIPE_PRICE_ID_PLATFORM_ANNUAL
         sync: false
 
       # URLs Stripe redirects to after checkout
