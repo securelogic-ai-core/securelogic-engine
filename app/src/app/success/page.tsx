@@ -25,8 +25,11 @@ export default function SuccessPage() {
   useEffect(() => {
     let cancelled = false;
     let attempts = 0;
-    const MAX_ATTEMPTS = 8;
-    const POLL_MS = 1500;
+    const FAST_ATTEMPTS = 6;
+    const SLOW_ATTEMPTS = 6;
+    const FAST_POLL_MS = 1500;
+    const SLOW_POLL_MS = 3000;
+    const MAX_ATTEMPTS = FAST_ATTEMPTS + SLOW_ATTEMPTS;
 
     async function poll() {
       if (cancelled) return;
@@ -53,14 +56,24 @@ export default function SuccessPage() {
           }
         }
 
+        // 401: session is permanently unauthenticated — no point retrying
+        if (res.status === 401) {
+          if (!cancelled) setStatus("error");
+          return;
+        }
+
         attempts++;
         if (attempts >= MAX_ATTEMPTS) {
           if (!cancelled) setStatus("error");
           return;
         }
 
-        // Entitlement not yet upgraded — webhook still in flight, retry
-        setTimeout(poll, POLL_MS);
+        // Entitlement not yet upgraded — webhook still in flight, retry.
+        // Fast cadence for the common case (webhook lands in 1–9s), then
+        // slower cadence so the tail covers up to ~27s without hammering
+        // the engine.
+        const nextDelay = attempts < FAST_ATTEMPTS ? FAST_POLL_MS : SLOW_POLL_MS;
+        setTimeout(poll, nextDelay);
       } catch {
         if (!cancelled) setStatus("error");
       }
