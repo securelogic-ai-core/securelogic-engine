@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 function planDisplayName(entitlementLevel: string | null): string {
@@ -21,7 +20,6 @@ function planDisplayName(entitlementLevel: string | null): string {
  * webhook, then auto-redirects to the dashboard.
  */
 export default function SuccessPage() {
-  const router = useRouter();
   const [status, setStatus] = useState<"refreshing" | "ready" | "error">("refreshing");
   const [planName, setPlanName] = useState<string>("Premium");
 
@@ -81,9 +79,9 @@ export default function SuccessPage() {
   // Auto-redirect once session is refreshed
   useEffect(() => {
     if (status !== "ready") return;
-    const timer = setTimeout(() => router.push("/dashboard?upgraded=true"), 1000);
+    const timer = setTimeout(() => { window.location.href = "/dashboard?upgraded=true"; }, 1000);
     return () => clearTimeout(timer);
-  }, [status, router]);
+  }, [status]);
 
   return (
     <div className="max-w-lg mx-auto px-6 py-20 text-center">
