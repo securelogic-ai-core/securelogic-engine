@@ -403,7 +403,7 @@ router.post("/intelligence-briefs/subscribers", requireEntitlement("standard"), 
 // "subscribers" as a brief UUID parameter.
 // ---------------------------------------------------------------------------
 
-router.get("/intelligence-briefs/subscribers", async (req, res) => {
+router.get("/intelligence-briefs/subscribers", requireEntitlement("standard"), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
 
   const includeInactive = req.query["include_inactive"] === "true";
@@ -486,9 +486,9 @@ router.delete("/intelligence-briefs/subscribers/:id", requireEntitlement("standa
 // IMPORTANT: defined before /:id routes.
 // ---------------------------------------------------------------------------
 
-router.get("/intelligence-briefs/subscribers/:id/preferences", async (req, res) => {
+router.get("/intelligence-briefs/subscribers/:id/preferences", requireEntitlement("standard"), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
-  const { id: subscriberId } = req.params;
+  const { id: subscriberId } = req.params as { id: string };
 
   if (!UUID_RE.test(subscriberId)) {
     return res.status(400).json({ error: "invalid_subscriber_id" });
