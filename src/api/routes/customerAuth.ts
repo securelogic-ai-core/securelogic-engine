@@ -331,9 +331,9 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
       );
 
       const userResult = await client.query(
-        `INSERT INTO users (organization_id, email, name, password_hash,
+        `INSERT INTO users (organization_id, email, name, role, password_hash,
                             email_verified, email_verification_token, email_verification_expires_at)
-         VALUES ($1, $2, $3, $4, FALSE, $5, $6)
+         VALUES ($1, $2, $3, 'admin', $4, FALSE, $5, $6)
          RETURNING id`,
         [orgId, email, name, passwordHash, verificationToken, verificationExpires]
       );
