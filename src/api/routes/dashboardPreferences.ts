@@ -4,6 +4,7 @@ import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { requireEntitlement } from "../middleware/requireEntitlement.js";
 
 const router = Router();
 
@@ -137,6 +138,7 @@ router.put(
   "/dashboard/preferences",
   requireApiKey,
   attachOrganizationContext,
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const userId = req.userId;
@@ -195,6 +197,7 @@ router.delete(
   "/dashboard/preferences",
   requireApiKey,
   attachOrganizationContext,
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const userId = req.userId;
@@ -243,6 +246,7 @@ router.get(
   "/dashboard/preferences/org",
   requireApiKey,
   attachOrganizationContext,
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       if (req.userRole !== "admin") {
@@ -284,6 +288,7 @@ router.put(
   "/dashboard/preferences/org",
   requireApiKey,
   attachOrganizationContext,
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       if (req.userRole !== "admin") {
