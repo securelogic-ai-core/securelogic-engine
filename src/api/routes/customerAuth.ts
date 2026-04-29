@@ -339,6 +339,13 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
       );
       userId = userResult.rows[0].id as string;
 
+      await client.query(
+        `INSERT INTO intelligence_brief_subscribers (organization_id, email, name, active)
+         VALUES ($1, $2, $3, TRUE)
+         ON CONFLICT (organization_id, email) DO NOTHING`,
+        [orgId, email, name]
+      );
+
       await client.query("COMMIT");
     } catch (err) {
       await client.query("ROLLBACK");
