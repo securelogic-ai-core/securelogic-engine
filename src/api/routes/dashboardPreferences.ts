@@ -60,6 +60,13 @@ function validateLayout(raw: unknown): { ok: true; layout: TileConfig[] } | { ok
   if (layout.filter((t) => t.visible).length === 0) {
     return { ok: false, error: "at_least_one_tile_required" };
   }
+  const seenOrders = new Set<number>();
+  for (const t of layout) {
+    if (seenOrders.has(t.order)) {
+      return { ok: false, error: "duplicate_order_values" };
+    }
+    seenOrders.add(t.order);
+  }
   return { ok: true, layout };
 }
 
