@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   DashboardSummary,
   Framework,
@@ -69,12 +69,13 @@ const SYSTEM_DEFAULT_LAYOUT: TileConfig[] = [
   { id: "inventory_grid",      visible: true, order: 11 },
 ];
 
-function isVisible(layout: TileConfig[], id: string): boolean {
-  const tile = layout.find((t) => t.id === id);
-  // Default to visible for any tile not present in the saved layout
-  // (e.g. new tile added after the user saved an older layout).
-  return tile ? tile.visible : true;
-}
+// Tiles that span the full grid width. All other tiles render as
+// one-third width on large screens. Drives lg:col-span-3 on render.
+const FULL_WIDTH_TILE_IDS = new Set<string>([
+  "posture_trend",
+  "open_items_aging",
+  "inventory_grid",
+]);
 
 export function PostureDashboard({ summary, frameworkPairs, postureSnapshots, userRole }: Props) {
   const { posture, domains, findings, actions, controls_cadence, inventory, vendor_risk, risks_summary } = summary;
@@ -109,6 +110,35 @@ export function PostureDashboard({ summary, frameworkPairs, postureSnapshots, us
     setSource(next.source);
     setShowPanel(false);
     setToast(message);
+  }
+
+  // Tiles render in a single sorted grid. Saved layouts are merged with the
+  // system default so unknown saved tiles drop and missing tiles backfill from
+  // the default. Hidden tiles are filtered out before sorting by order.
+  const sortedVisibleTiles = useMemo(
+    () =>
+      buildFullLayout(layout)
+        .filter((t) => t.visible)
+        .sort((a, b) => a.order - b.order),
+    [layout]
+  );
+
+  function renderTile(id: string) {
+    switch (id) {
+      case "posture_score":       return <PostureScoreTile posture={posture} />;
+      case "risks_breakdown":     return <RisksBreakdown risks_summary={risks_summary} />;
+      case "risk_heatmap":        return <RiskHeatmap risks_summary={risks_summary} />;
+      case "posture_trend":       return <PostureTrendChart snapshots={postureSnapshots} />;
+      case "findings_donut":      return <FindingsDonut findings={findings} />;
+      case "domain_posture":      return <DomainPostureBars domains={domains} />;
+      case "actions_ring":        return <ActionsRing actions={actions} />;
+      case "open_items_aging":    return <OpenItemsAging findings={findings} actions={actions} />;
+      case "vendor_risk":         return <VendorRiskCard vendor_risk={vendor_risk} />;
+      case "framework_gaps":      return <FrameworkGaps pairs={frameworkPairs} />;
+      case "compliance_coverage": return <ComplianceCoverage frameworkPairs={frameworkPairs} />;
+      case "inventory_grid":      return <InventoryGrid inventory={inventory} controls_cadence={controls_cadence} />;
+      default:                    return null;
+    }
   }
 
   return (
@@ -161,45 +191,18 @@ export function PostureDashboard({ summary, frameworkPairs, postureSnapshots, us
         </div>
       </div>
 
-      {/* Row 0: Posture score | Risks breakdown | Risk heatmap */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-        {isVisible(layout, "posture_score")   && <PostureScoreTile posture={posture} />}
-        {isVisible(layout, "risks_breakdown") && <RisksBreakdown risks_summary={risks_summary} />}
-        {isVisible(layout, "risk_heatmap")    && <RiskHeatmap risks_summary={risks_summary} />}
+        {sortedVisibleTiles.map((tile) => {
+          const node = renderTile(tile.id);
+          if (!node) return null;
+          const fullWidth = FULL_WIDTH_TILE_IDS.has(tile.id);
+          return (
+            <div key={tile.id} className={fullWidth ? "lg:col-span-3" : ""}>
+              {node}
+            </div>
+          );
+        })}
       </div>
-
-      {/* Row 0b: Posture score trend (full width) */}
-      {isVisible(layout, "posture_trend") && (
-        <div className="mb-4">
-          <PostureTrendChart snapshots={postureSnapshots} />
-        </div>
-      )}
-
-      {/* Row 1: Findings donut | Domain bars | Actions ring */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-        {isVisible(layout, "findings_donut") && <FindingsDonut findings={findings} />}
-        {isVisible(layout, "domain_posture") && <DomainPostureBars domains={domains} />}
-        {isVisible(layout, "actions_ring")   && <ActionsRing actions={actions} />}
-      </div>
-
-      {/* Row 1b: Open items aging (full width) */}
-      {isVisible(layout, "open_items_aging") && (
-        <div className="mb-4">
-          <OpenItemsAging findings={findings} actions={actions} />
-        </div>
-      )}
-
-      {/* Row 2: Vendor risk | Framework gaps | Compliance coverage */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-        {isVisible(layout, "vendor_risk")         && <VendorRiskCard vendor_risk={vendor_risk} />}
-        {isVisible(layout, "framework_gaps")      && <FrameworkGaps pairs={frameworkPairs} />}
-        {isVisible(layout, "compliance_coverage") && <ComplianceCoverage frameworkPairs={frameworkPairs} />}
-      </div>
-
-      {/* Row 3: Inventory grid (full width) */}
-      {isVisible(layout, "inventory_grid") && (
-        <InventoryGrid inventory={inventory} controls_cadence={controls_cadence} />
-      )}
 
       {showPanel && (
         <CustomizePanel
@@ -241,8 +244,6 @@ export function PostureDashboard({ summary, frameworkPairs, postureSnapshots, us
 // checked tile's toggle.
 // ─────────────────────────────────────────────────────────────
 
-const ALL_TILE_IDS = SYSTEM_DEFAULT_LAYOUT.map((t) => t.id);
-
 function buildFullLayout(layout: TileConfig[]): TileConfig[] {
   // Merge saved layout with system default so every known tile has an entry.
   // Unknown tile IDs in the saved layout are dropped.
@@ -263,7 +264,9 @@ function CustomizePanel({
   onClose: () => void;
   onSaved: (next: DashboardPreferences, message: string) => void;
 }) {
-  const [draft, setDraft] = useState<TileConfig[]>(() => buildFullLayout(initialLayout));
+  const [draft, setDraft] = useState<TileConfig[]>(() =>
+    [...buildFullLayout(initialLayout)].sort((a, b) => a.order - b.order)
+  );
   const [applyAsOrgDefault, setApplyAsOrgDefault] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -280,6 +283,20 @@ function CustomizePanel({
         return { ...t, visible: !t.visible };
       })
     );
+  }
+
+  // Swap a tile with its neighbour and renumber order to array index.
+  // Renumbering avoids duplicate-order rejection on save.
+  function moveTile(id: string, direction: "up" | "down") {
+    setDraft((prev) => {
+      const idx = prev.findIndex((t) => t.id === id);
+      if (idx < 0) return prev;
+      const target = direction === "up" ? idx - 1 : idx + 1;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[target]] = [next[target]!, next[idx]!];
+      return next.map((t, i) => ({ ...t, order: i }));
+    });
   }
 
   async function handleSave() {
@@ -388,11 +405,27 @@ function CustomizePanel({
         </div>
 
         <div style={{ padding: "12px 8px", overflowY: "auto", flex: 1 }}>
-          {ALL_TILE_IDS.map((id) => {
-            const tile = draft.find((t) => t.id === id)!;
-            const disabled = tile.visible && visibleCount <= 1;
+          {draft.map((tile, idx) => {
+            const id = tile.id;
+            const checkboxDisabled = tile.visible && visibleCount <= 1;
+            const canMoveUp = idx > 0;
+            const canMoveDown = idx < draft.length - 1;
+            const arrowStyle = (enabled: boolean) => ({
+              width: "28px",
+              height: "28px",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: "6px",
+              border: "1px solid #334155",
+              background: "transparent",
+              color: enabled ? "#cbd5e1" : "#475569",
+              cursor: enabled ? "pointer" : "not-allowed",
+              fontSize: "14px",
+              padding: 0,
+            });
             return (
-              <label
+              <div
                 key={id}
                 style={{
                   display: "flex",
@@ -400,19 +433,48 @@ function CustomizePanel({
                   gap: "12px",
                   padding: "10px 16px",
                   borderRadius: "8px",
-                  cursor: disabled ? "not-allowed" : "pointer",
-                  opacity: disabled ? 0.6 : 1,
+                  opacity: checkboxDisabled ? 0.6 : 1,
                 }}
               >
-                <input
-                  type="checkbox"
-                  checked={tile.visible}
-                  disabled={disabled}
-                  onChange={() => toggle(id)}
-                  style={{ width: "16px", height: "16px", cursor: disabled ? "not-allowed" : "pointer", accentColor: "#00c4b4" }}
-                />
-                <span style={{ fontSize: "14px", color: "#f1f5f9" }}>{TILE_LABELS[id]}</span>
-              </label>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                    cursor: checkboxDisabled ? "not-allowed" : "pointer",
+                    flex: 1,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={tile.visible}
+                    disabled={checkboxDisabled}
+                    onChange={() => toggle(id)}
+                    style={{ width: "16px", height: "16px", cursor: checkboxDisabled ? "not-allowed" : "pointer", accentColor: "#00c4b4" }}
+                  />
+                  <span style={{ fontSize: "14px", color: "#f1f5f9" }}>{TILE_LABELS[id]}</span>
+                </label>
+                <div style={{ display: "inline-flex", gap: "4px" }}>
+                  <button
+                    type="button"
+                    onClick={() => moveTile(id, "up")}
+                    disabled={!canMoveUp}
+                    aria-label={`Move ${TILE_LABELS[id]} up`}
+                    style={arrowStyle(canMoveUp)}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveTile(id, "down")}
+                    disabled={!canMoveDown}
+                    aria-label={`Move ${TILE_LABELS[id]} down`}
+                    style={arrowStyle(canMoveDown)}
+                  >
+                    ↓
+                  </button>
+                </div>
+              </div>
             );
           })}
 
