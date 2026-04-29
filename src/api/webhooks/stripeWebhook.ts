@@ -364,6 +364,51 @@ async function syncToDb(
         "stripeWebhook: organizations.plan synced"
       );
     }
+
+    // Paid-tier upgrade: auto-subscribe the org's primary (oldest) user to the
+    // Intelligence Brief if the org has no active subscriber yet. Best-effort —
+    // failures are logged but never bubble up to the webhook handler.
+    if (rows > 0 && (level === "professional" || level === "premium")) {
+      try {
+        const subscribeResult = await pg.query(
+          `
+          INSERT INTO intelligence_brief_subscribers (organization_id, email, name, active)
+          SELECT u.organization_id,
+                 LOWER(TRIM(u.email)),
+                 NULLIF(u.name, ''),
+                 TRUE
+          FROM users u
+          JOIN api_keys k ON k.organization_id = u.organization_id
+          WHERE k.id = $1
+            AND NOT EXISTS (
+              SELECT 1 FROM intelligence_brief_subscribers ibs
+              WHERE ibs.organization_id = u.organization_id
+                AND ibs.active = TRUE
+            )
+          ORDER BY u.created_at ASC
+          LIMIT 1
+          ON CONFLICT (organization_id, email) DO UPDATE
+            SET active          = TRUE,
+                unsubscribed_at = NULL,
+                updated_at      = NOW()
+          RETURNING id
+          `,
+          [apiKeyId]
+        );
+
+        if ((subscribeResult.rowCount ?? 0) > 0) {
+          logger.info(
+            { event: "stripe_webhook_brief_auto_subscribed", apiKeyId, level },
+            "stripeWebhook: auto-subscribed org primary user to Intelligence Brief"
+          );
+        }
+      } catch (subscribeErr) {
+        logger.error(
+          { event: "stripe_webhook_brief_auto_subscribe_failed", apiKeyId, err: subscribeErr },
+          "stripeWebhook: failed to auto-subscribe org to Intelligence Brief (non-fatal)"
+        );
+      }
+    }
   } catch (err) {
     try {
       await client.query("ROLLBACK");
