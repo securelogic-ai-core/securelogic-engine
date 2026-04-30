@@ -112,6 +112,91 @@ export function repairTruncatedJson(input: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// CVE grounding validator — exported for unit testing
+// ---------------------------------------------------------------------------
+
+const CVE_PATTERN = /CVE-\d{4}-\d{4,7}/gi;
+
+/**
+ * Build the set of CVE identifiers that appear anywhere in the brief's
+ * source items. Used to validate that LLM-generated actions only reference
+ * CVEs that are actually in the input — anything else is a hallucination.
+ *
+ * Scans every text-bearing field on each item. CVE strings are normalized
+ * to uppercase before insertion so lookup is case-insensitive.
+ */
+export function buildAllowedCveSet(items: BriefItem[]): Set<string> {
+  const cves = new Set<string>();
+  for (const item of items) {
+    const fields: Array<string | null | undefined> = [
+      item.affected_cve,
+      item.title,
+      item.summary,
+      item.why_it_matters,
+      item.analysis,
+      item.recommended_actions ?? null
+    ];
+    for (const field of fields) {
+      if (typeof field !== "string") continue;
+      const matches = field.match(CVE_PATTERN);
+      if (matches) {
+        for (const m of matches) cves.add(m.toUpperCase());
+      }
+    }
+  }
+  return cves;
+}
+
+export type GroundingResult = {
+  kept: string[];
+  dropped: Array<{ action: string; offendingCves: string[] }>;
+};
+
+/**
+ * Filter LLM-generated action strings against an allowed-CVE set.
+ *
+ * Decision rules:
+ * - Zero CVE citations → kept. Vendor/product-only actions are legitimate.
+ * - All cited CVEs in the allowed set → kept.
+ * - One or more cited CVEs not in the allowed set → dropped entirely.
+ *   Mixed grounding is treated as contaminated; partial fabrication poisons
+ *   the surrounding claim.
+ *
+ * Empty or non-string entries are silently skipped.
+ */
+export function validateActionGrounding(
+  actions: string[],
+  allowedCves: Set<string>
+): GroundingResult {
+  const kept: string[] = [];
+  const dropped: Array<{ action: string; offendingCves: string[] }> = [];
+
+  for (const action of actions) {
+    if (typeof action !== "string" || action.trim().length === 0) {
+      continue;
+    }
+
+    const cited = action.match(CVE_PATTERN) ?? [];
+    if (cited.length === 0) {
+      kept.push(action);
+      continue;
+    }
+
+    const offending = cited.filter(
+      (c) => !allowedCves.has(c.toUpperCase())
+    );
+
+    if (offending.length === 0) {
+      kept.push(action);
+    } else {
+      dropped.push({ action, offendingCves: offending });
+    }
+  }
+
+  return { kept, dropped };
+}
+
+// ---------------------------------------------------------------------------
 // 1. synthesizeBrief — 2-3 sentence executive opening
 // ---------------------------------------------------------------------------
 
@@ -282,14 +367,23 @@ async function generateActionSummary(
   if (items.length === 0) return null;
 
   const signalLines = items
-    .slice(0, 12)
+    .slice(0, 25)
     .map((it) => {
       const cat = it.category.toUpperCase();
       const sev = it.severity.toUpperCase();
-      const analysis = analysisTextFor(it).slice(0, 200);
-      return `[${cat} / ${sev}] ${it.title}: ${analysis}`;
+      const cve = it.affected_cve ?? "—";
+      const vendor = it.affected_vendor ?? "—";
+      const analysis = analysisTextFor(it).slice(0, 400);
+      return `[${cat} / ${sev}] ${it.title}\n  CVE: ${cve}\n  Vendor: ${vendor}\n  Analysis: ${analysis}`;
     })
-    .join("\n");
+    .join("\n\n");
+
+  const systemPrompt =
+    "You are a risk intelligence analyst writing the action summary section of an executive brief. " +
+    "You are working from a fixed list of source signals. Every action you propose must cite an " +
+    "identifier (CVE, vendor, product, threat actor) that appears verbatim in the input. If you " +
+    "cannot find a concrete action grounded in the input, return fewer items rather than fabricating. " +
+    "Hallucinating CVEs or product names destroys the brief's credibility.";
 
   const prompt = `You are a risk intelligence analyst creating an action summary for a CISO. This is the section they will hand to their team on Monday morning.
 
@@ -297,6 +391,7 @@ From the signals below, extract the most important actions into three lists. Eac
 - Name a responsible function (security team, compliance team, procurement, legal, IT)
 - Name a specific task (not "review your controls" — a concrete action)
 - Be derived from a specific signal, not a general best practice
+- STRICT GROUNDING: You may only reference CVEs, vendors, products, threat actors, exploits, and exploitation claims that appear in the Signals list above. Do not introduce any CVE number, product name, or threat actor not present in the input. If you cannot find three concrete this-week actions in the source signals, return one or two items. Returning fewer grounded actions is required; returning more fabricated ones is forbidden.
 
 Signals this week:
 ${signalLines}
@@ -323,6 +418,7 @@ Include 2-3 items per list. Omit a list item if there is no specific signal to s
     const message = await client.messages.create({
       model: CLAUDE_MODEL,
       max_tokens: 1000,
+      system: systemPrompt,
       messages: [{ role: "user", content: prompt }]
     });
 
@@ -352,14 +448,43 @@ Include 2-3 items per list. Omit a list item if there is no specific signal to s
     const thisMonth = Array.isArray(parsed.thisMonth) ? (parsed.thisMonth as string[]) : [];
     const monitor = Array.isArray(parsed.monitor) ? (parsed.monitor as string[]) : [];
 
-    if (thisWeek.length === 0 && thisMonth.length === 0 && monitor.length === 0) {
+    const allowedCves = buildAllowedCveSet(items);
+
+    const thisWeekResult = validateActionGrounding(thisWeek, allowedCves);
+    const thisMonthResult = validateActionGrounding(thisMonth, allowedCves);
+    const monitorResult = validateActionGrounding(monitor, allowedCves);
+
+    for (const list of [
+      { name: "this_week" as const, result: thisWeekResult },
+      { name: "this_month" as const, result: thisMonthResult },
+      { name: "monitor" as const, result: monitorResult }
+    ]) {
+      for (const drop of list.result.dropped) {
+        console.warn(
+          JSON.stringify({
+            event: "synthesis_action_summary_cve_hallucination",
+            list: list.name,
+            action: drop.action,
+            offendingCves: drop.offendingCves,
+            allowedCveCount: allowedCves.size
+          })
+        );
+      }
+    }
+
+    const totalKept =
+      thisWeekResult.kept.length +
+      thisMonthResult.kept.length +
+      monitorResult.kept.length;
+
+    if (totalKept === 0) {
       return null;
     }
 
     return {
-      this_week: thisWeek,
-      this_month: thisMonth,
-      monitor
+      this_week: thisWeekResult.kept,
+      this_month: thisMonthResult.kept,
+      monitor: monitorResult.kept
     };
   } catch (err) {
     logger.warn(
