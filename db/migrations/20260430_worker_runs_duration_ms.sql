@@ -1,0 +1,25 @@
+-- Migration: worker_runs_duration_ms
+-- Depends on: 001_securelogic_platform.sql (worker_runs table) and
+--             20260319_worker_runs.sql (which intended to add this column
+--             but used CREATE TABLE IF NOT EXISTS and was a no-op when
+--             worker_runs already existed from 001).
+--
+-- Adds: worker_runs.duration_ms (nullable INTEGER, populated by
+--       workerLogger.completeWorkerRun as EXTRACT(EPOCH ...)*1000).
+--
+-- Backstory:
+--   On prod (40-day incrementally-migrated history) the column was
+--   added via untracked manual ALTER. On staging (single-shot migration
+--   bootstrap on 2026-04-26) the column was missing and the worker's
+--   completeWorkerRun and cleanupStaleRuns calls crashed, leaving
+--   worker_runs rows stuck in 'running' state.
+--
+-- Effect:
+--   - Staging: adds the column.
+--   - Prod:    no-op (column already exists).
+--   - Tracking: formalizes the previously-untracked column in committed
+--               migrations.
+--
+-- Idempotent: safe to re-run.
+
+ALTER TABLE worker_runs ADD COLUMN IF NOT EXISTS duration_ms INTEGER;
