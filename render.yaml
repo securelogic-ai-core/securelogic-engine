@@ -116,7 +116,10 @@ services:
   # =========================================================
   # INTELLIGENCE WORKER (background)
   # Long-running process — runs the signal pipeline every hour.
-  # Uses the same Postgres and Redis instances as the API service.
+  # Uses the same Postgres instance as the API service.
+  #
+  # Keep both worker definitions in lockstep; staging mirrors
+  # prod env-vars except where listed.
   # =========================================================
 
   - type: worker
@@ -134,15 +137,17 @@ services:
       - key: DATABASE_URL
         sync: false
 
-      # Shared with API service — same Redis instance
-      - key: REDIS_URL
-        sync: false
-
       # Email delivery for newsletter sends
       - key: RESEND_API_KEY
         sync: false
 
       - key: NEWSLETTER_FROM_EMAIL
+        sync: false
+
+      # Public URL embedded in newsletter HTML links (read-online,
+      # unsubscribe). Referenced by sendNewsletter.ts and
+      # renderNewsletterHtml.ts. Distinct from APP_BASE_URL.
+      - key: NEWSLETTER_APP_URL
         sync: false
 
       # Worker failure alerts (e.g. Slack incoming webhook)
@@ -162,6 +167,65 @@ services:
       # Anthropic API key — required for LLM signal enrichment, executive synthesis,
       # thesis headline, cross-domain analysis, and action summary generation.
       # Without this, all briefs fall back to generic template content.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      # Optional: override log verbosity (default: info)
+      - key: LOG_LEVEL
+        sync: false
+
+  # =========================================================
+  # INTELLIGENCE WORKER — STAGING (background)
+  # Tracks the develop branch. Mirrors the production worker
+  # above; NODE_ENV is staging and dashboard values point at
+  # the staging Postgres / Resend / Anthropic credentials.
+  # Keep this block in lockstep with securelogic-intelligence-worker.
+  # =========================================================
+
+  - type: worker
+    name: securelogic-intelligence-worker-staging
+    env: node
+    plan: starter
+    branch: develop
+    buildCommand: npm install --include=dev && tsc -p services/intelligence-worker/tsconfig.json
+    startCommand: node dist-intelligence-worker/services/intelligence-worker/src/scheduler.js
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: staging
+
+      # Staging Postgres — populate with the securelogic_staging URL in dashboard
+      - key: DATABASE_URL
+        sync: false
+
+      # Email delivery for newsletter sends — staging Resend key recommended
+      - key: RESEND_API_KEY
+        sync: false
+
+      - key: NEWSLETTER_FROM_EMAIL
+        sync: false
+
+      # Public URL embedded in newsletter HTML links (read-online,
+      # unsubscribe). Distinct from APP_BASE_URL.
+      - key: NEWSLETTER_APP_URL
+        sync: false
+
+      # Worker failure alerts. Recommend a separate staging channel
+      # so staging noise doesn't reach the production alert channel.
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+
+      # Must match the staging API service value — used to sign unsubscribe tokens
+      # that the staging API verifies at GET /unsubscribe
+      - key: UNSUBSCRIBE_SECRET
+        sync: false
+
+      # Base URL of the staging API — used to build unsubscribe links
+      # appended to outbound newsletter emails
+      - key: APP_BASE_URL
+        sync: false
+
+      # Currently unused by the worker; reserved for future Path 4 enrichment paths.
       - key: ANTHROPIC_API_KEY
         sync: false
 
