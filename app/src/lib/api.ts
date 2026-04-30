@@ -178,14 +178,42 @@ export type IntelligenceBriefItem = {
   analyst_notes: string | null;
 };
 
+/**
+ * Brief-level synthesis embedded in content_json.synthesis. Mirrors the
+ * engine's BriefSynthesis type (src/api/lib/briefSynthesizer.ts) — duplicated
+ * here intentionally because frontend and engine are separate npm packages
+ * and don't share types directly. Keep in sync if the engine shape changes.
+ */
+export type BriefSynthesisActionSummary = {
+  this_week: string[];
+  this_month: string[];
+  monitor: string[];
+};
+
+export type BriefSynthesis = {
+  thesis: string | null;
+  executive_summary: string | null;
+  cross_domain_analysis: string | null;
+  action_summary: BriefSynthesisActionSummary | null;
+};
+
 export type IntelligenceBriefListResponse = {
   briefs: IntelligenceBrief[];
   next_cursor: { cursor_period_end: string; cursor_id: string } | null;
 };
 
-/** Detail-shape brief — full content_json/markdown plus embedded items. */
+/**
+ * Detail-shape brief — full content_json/markdown plus embedded items.
+ *
+ * content_json is loosely typed (the engine writes a richer structure but
+ * the frontend currently only reads .synthesis). Intersection with
+ * Record<string, unknown> preserves access to other fields without forcing
+ * the frontend to mirror the full shape.
+ */
 export type IntelligenceBriefDetailResponse = IntelligenceBrief & {
-  content_json: Record<string, unknown> | null;
+  content_json:
+    | ({ synthesis?: BriefSynthesis | null } & Record<string, unknown>)
+    | null;
   content_markdown: string;
   items: IntelligenceBriefItem[];
 };
