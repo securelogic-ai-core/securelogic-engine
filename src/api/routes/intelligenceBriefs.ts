@@ -36,7 +36,10 @@ import { personalizeBriefItems } from "../lib/briefPersonalizationService.js";
 import { sendBrief } from "../lib/briefEmailSender.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { encryptField, decryptField } from "../lib/fieldEncryption.js";
-import { enrichBriefSynthesis } from "../lib/briefSynthesizer.js";
+import {
+  enrichBriefSynthesis,
+  runSynthesisSafely
+} from "../lib/briefSynthesizer.js";
 
 /**
  * Decrypt and parse content_json from the DB.
@@ -255,9 +258,16 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
       items: personalizedItems
     };
 
+    // Brief-level synthesis (4 Claude calls). Runs against personalizedItems
+    // so the synthesis reflects what the user will actually see in the brief.
+    // Non-fatal: failures resolve to null and the brief publishes without
+    // synthesis content.
+    const synthesis = await runSynthesisSafely(personalizedItems);
+    const contentJsonWithSynthesis = { ...result.content_json, synthesis };
+
     // Update brief to published — encrypt content_json before storage.
     // JSON.stringify wraps the encrypted string so PostgreSQL accepts it as a valid JSONB value.
-    const contentJsonStr = JSON.stringify(encryptField(JSON.stringify(result.content_json)));
+    const contentJsonStr = JSON.stringify(encryptField(JSON.stringify(contentJsonWithSynthesis)));
 
     await client.query(
       `UPDATE intelligence_briefs
