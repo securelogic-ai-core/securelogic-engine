@@ -962,11 +962,33 @@ export async function getIssue(
 }
 
 /**
+ * Fetch a single intelligence brief by id.
+ *
+ * Returns the full detail-shape (content_json with synthesis, content_markdown,
+ * embedded items). Returns null on 404, network failure, or any non-2xx response.
+ *
+ * Pattern matches getIssue: callers can compose with Promise.all and treat
+ * a null result as "not this entity type" rather than "error".
+ */
+export async function getIntelligenceBrief(
+  apiKey: string,
+  id: string
+): Promise<IntelligenceBriefDetailResponse | null> {
+  try {
+    const res = await engineFetch(`/api/intelligence-briefs/${id}`, apiKey);
+    if (!res.ok) return null;
+    return (await res.json()) as IntelligenceBriefDetailResponse;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Fetch the most recent intelligence brief for the org with all items embedded.
  *
  * Two-step: GET /api/intelligence-briefs?limit=1 to find the latest brief id,
- * then GET /api/intelligence-briefs/{id} for the full payload (the list
- * endpoint is metadata-only — items only come back via the detail route).
+ * then getIntelligenceBrief() for the full payload (the list endpoint is
+ * metadata-only — items only come back via the detail route).
  *
  * Returns null when no briefs exist or any request fails.
  */
@@ -981,13 +1003,7 @@ export async function getLatestBrief(
     const latest = list.briefs?.[0];
     if (!latest) return null;
 
-    const detailRes = await engineFetch(
-      `/api/intelligence-briefs/${latest.id}`,
-      apiKey
-    );
-    if (!detailRes.ok) return null;
-
-    return (await detailRes.json()) as IntelligenceBriefDetailResponse;
+    return await getIntelligenceBrief(apiKey, latest.id);
   } catch {
     return null;
   }

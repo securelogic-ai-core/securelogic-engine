@@ -1,16 +1,19 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
-import { getIssue } from "@/lib/api";
+import { getIssue, getIntelligenceBrief } from "@/lib/api";
 import type {
   NewsletterIssue,
   BriefSections,
   BriefSignal,
   ActionSummary,
+  IntelligenceBriefDetailResponse,
 } from "@/lib/api";
 import { ScrollSpyTOC, type TocEntry } from "@/components/ScrollSpyTOC";
 import { CollapsibleSignalList } from "@/components/CollapsibleSignalList";
 import { PrintButton } from "@/components/PrintButton";
+import { IntelligenceBriefHero } from "@/components/IntelligenceBriefHero";
+import { IntelligenceBriefDetailItems } from "@/components/IntelligenceBriefDetailItems";
 
 function formatDate(date: string): string {
   return new Date(date).toLocaleDateString("en-US", {
@@ -937,6 +940,32 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
   );
 }
 
+function IntelligenceBriefDetailView({
+  brief,
+}: {
+  brief: IntelligenceBriefDetailResponse;
+}) {
+  return (
+    <div className="min-h-screen bg-brand-bg">
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+        <div className="mb-6">
+          <Link
+            href="/dashboard"
+            className="text-brand-teal hover:text-teal-300 text-sm font-medium transition-colors"
+          >
+            ← Back to dashboard
+          </Link>
+        </div>
+
+        <div className="space-y-12">
+          <IntelligenceBriefHero brief={brief} />
+          <IntelligenceBriefDetailItems brief={brief} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default async function BriefDetailPage({
   params,
 }: {
@@ -950,17 +979,27 @@ export default async function BriefDetailPage({
     redirect("/login");
   }
 
-  const issue = await getIssue(token, id);
+  // Parallel probe: this UUID could be either an intelligence brief or a
+  // legacy newsletter issue. Bias toward intelligence brief on the coalescer
+  // since that's the forward path; newsletter is fallback for legacy links.
+  const [intelligenceBrief, issue] = await Promise.all([
+    getIntelligenceBrief(token, id),
+    getIssue(token, id),
+  ]);
 
-  if (!issue) notFound();
-
-  if (issue.locked) {
-    return <LockedBrief issue={issue} />;
+  if (intelligenceBrief) {
+    return <IntelligenceBriefDetailView brief={intelligenceBrief} />;
   }
 
-  if (!hasRenderableContent(issue)) {
-    return <EmptyBrief issue={issue} />;
+  if (issue) {
+    if (issue.locked) {
+      return <LockedBrief issue={issue} />;
+    }
+    if (!hasRenderableContent(issue)) {
+      return <EmptyBrief issue={issue} />;
+    }
+    return <BriefReader issue={issue} />;
   }
 
-  return <BriefReader issue={issue} />;
+  notFound();
 }
