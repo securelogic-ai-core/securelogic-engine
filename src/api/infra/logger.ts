@@ -59,7 +59,8 @@ export const logger = pino({
    */
   base: {
     service: "securelogic-engine",
-    env: process.env.NODE_ENV ?? "development"
+    env: process.env.NODE_ENV ?? "development",
+    appEnv: process.env.APP_ENV ?? null
   },
 
   /**
