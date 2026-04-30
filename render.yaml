@@ -114,6 +114,116 @@ services:
         sync: false
 
   # =========================================================
+  # SECURELOGIC ENGINE — STAGING (web)
+  # Tracks the develop branch. Mirrors the production engine
+  # above; NODE_ENV stays "production" so all prod-conditional
+  # safety checks remain active (Redis fail-closed, admin
+  # rate-limit fail-closed, scheduler/encryption secret
+  # enforcement, audit/retention assertions, validateEnv
+  # required-env list).
+  #
+  # APP_ENV=staging is the labeling-only differentiator used
+  # by the logger pino base to tell staging from prod in log
+  # output. Every other env var must be set to staging
+  # credentials in the dashboard.
+  #
+  # Keep this block in lockstep with securelogic-engine above.
+  # =========================================================
+
+  - type: web
+    name: securelogic-engine-staging
+    env: node
+    plan: starter
+    branch: develop
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm run migrate && node dist/api/server.js
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Labeling-only — distinguishes staging from prod in logs.
+      # Prod leaves this unset (appEnv: null in pino base).
+      - key: APP_ENV
+        value: staging
+
+      # Staging Postgres — populate with the securelogic_staging URL in dashboard
+      - key: DATABASE_URL
+        sync: false
+
+      # Staging Redis — populate in dashboard
+      - key: REDIS_URL
+        sync: false
+
+      - key: SECURELOGIC_ADMIN_KEY
+        sync: false
+
+      - key: SECURELOGIC_ADMIN_ALLOWED_IPS
+        sync: false
+
+      - key: SECURELOGIC_SIGNING_SECRET
+        sync: false
+
+      - key: LEMON_WEBHOOK_SECRET
+        sync: false
+
+      - key: SESSION_SECRET
+        sync: false
+
+      - key: JWT_SECRET
+        sync: false
+
+      - key: MFA_SECRET_KEY
+        sync: false
+
+      - key: APP_BASE_URL
+        sync: false
+
+      - key: STRIPE_SECRET_KEY
+        sync: false
+
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+
+      - key: STRIPE_PRICE_ID_PROFESSIONAL
+        sync: false
+
+      - key: STRIPE_PRICE_ID_TEAMS
+        sync: false
+
+      - key: STRIPE_PRICE_ID_PLATFORM
+        sync: false
+
+      - key: STRIPE_PRICE_ID_PLATFORM_ANNUAL
+        sync: false
+
+      - key: STRIPE_SUCCESS_URL
+        sync: false
+
+      - key: STRIPE_CANCEL_URL
+        sync: false
+
+      - key: STRIPE_PORTAL_RETURN_URL
+        sync: false
+
+      - key: RESEND_WEBHOOK_SECRET
+        sync: false
+
+      - key: RESEND_API_KEY
+        sync: false
+
+      - key: NEWSLETTER_FROM_EMAIL
+        sync: false
+
+      # Webhook URL for worker failure alerts (e.g. Slack incoming webhook)
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+
+      - key: OPENAI_API_KEY
+        sync: false
+
+  # =========================================================
   # INTELLIGENCE WORKER (background)
   # Long-running process — runs the signal pipeline every hour.
   # Uses the same Postgres instance as the API service.
