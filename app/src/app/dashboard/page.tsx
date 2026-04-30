@@ -4,6 +4,7 @@ import { getSession } from "@/lib/session";
 import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFrameworks, getFrameworkReadiness, planDisplayName, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { IntelligenceBriefCard } from "@/components/IntelligenceBriefCard";
+import { IntelligenceBriefHero } from "@/components/IntelligenceBriefHero";
 import { UpgradeCard } from "@/components/UpgradeCard";
 import { PostureDashboard } from "./PostureDashboard";
 import { LastLoginBanner } from "./LastLoginBanner";
@@ -133,7 +134,10 @@ export default async function DashboardPage({
           </h2>
 
           {latestBrief ? (
-            <IntelligenceBriefCard brief={latestBrief} />
+            <div className="space-y-6">
+              <IntelligenceBriefHero brief={latestBrief} />
+              <IntelligenceBriefCard brief={latestBrief} />
+            </div>
           ) : latestIssue ? (
             <BriefCard issue={latestIssue} />
           ) : (
