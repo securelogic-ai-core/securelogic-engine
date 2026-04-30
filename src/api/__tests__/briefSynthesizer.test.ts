@@ -1,9 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   enrichBriefSynthesis,
   repairTruncatedJson,
   buildAllowedCveSet,
   validateActionGrounding,
+  runSynthesisSafely,
+  synthesisRuntime,
   type BriefSynthesis
 } from "../lib/briefSynthesizer.js";
 import type { BriefItem } from "../lib/intelligenceBriefGenerator.js";
@@ -197,5 +199,76 @@ describe("validateActionGrounding", () => {
     );
     expect(result.kept).toHaveLength(1);
     expect(result.dropped).toHaveLength(0);
+  });
+});
+
+describe("runSynthesisSafely", () => {
+  const realImpl = synthesisRuntime.enrichBriefSynthesis;
+
+  beforeEach(() => {
+    synthesisRuntime.enrichBriefSynthesis = realImpl;
+  });
+
+  afterEach(() => {
+    synthesisRuntime.enrichBriefSynthesis = realImpl;
+  });
+
+  it("returns null on empty items without invoking enrichBriefSynthesis", async () => {
+    const spy = vi.fn();
+    synthesisRuntime.enrichBriefSynthesis = spy;
+    const result = await runSynthesisSafely([]);
+    expect(result).toBeNull();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("returns null when enrichBriefSynthesis throws", async () => {
+    synthesisRuntime.enrichBriefSynthesis = vi
+      .fn()
+      .mockRejectedValue(new Error("upstream failure"));
+    const result = await runSynthesisSafely([sampleItem]);
+    expect(result).toBeNull();
+  });
+
+  it("returns the synthesis fixture on success", async () => {
+    const fixture: BriefSynthesis = {
+      thesis: "Test thesis.",
+      executive_summary: "Test summary.",
+      cross_domain_analysis: null,
+      action_summary: {
+        this_week: ["Security team: patch CVE-2018-1002208."],
+        this_month: [],
+        monitor: []
+      }
+    };
+    synthesisRuntime.enrichBriefSynthesis = vi.fn().mockResolvedValue(fixture);
+    const result = await runSynthesisSafely([sampleItem]);
+    expect(result).toEqual(fixture);
+  });
+
+  it("derives activeCategories from unique item.category values", async () => {
+    const spy = vi.fn().mockResolvedValue({
+      thesis: null,
+      executive_summary: null,
+      cross_domain_analysis: null,
+      action_summary: null
+    });
+    synthesisRuntime.enrichBriefSynthesis = spy;
+
+    const items: BriefItem[] = [
+      { ...sampleItem, cyber_signal_id: "sig-1", category: "vulnerability" },
+      { ...sampleItem, cyber_signal_id: "sig-2", category: "vulnerability" },
+      { ...sampleItem, cyber_signal_id: "sig-3", category: "regulatory" },
+      { ...sampleItem, cyber_signal_id: "sig-4", category: "threat_actor" }
+    ];
+
+    await runSynthesisSafely(items);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    const passedCategories = spy.mock.calls[0]![3] as string[];
+    expect([...passedCategories].sort()).toEqual([
+      "regulatory",
+      "threat_actor",
+      "vulnerability"
+    ]);
   });
 });

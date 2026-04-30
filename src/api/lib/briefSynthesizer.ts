@@ -552,3 +552,61 @@ export async function enrichBriefSynthesis(
     action_summary
   };
 }
+
+// ---------------------------------------------------------------------------
+// runSynthesisSafely — caller-friendly orchestration wrapper
+// ---------------------------------------------------------------------------
+
+/**
+ * Module-level dispatch object so unit tests can replace the underlying
+ * synthesis implementation without restructuring callers. ESM live bindings
+ * make it impossible to vi.mock a function that's called from inside its
+ * own module by name; routing the call through a property on this object
+ * gives tests a stable seam.
+ *
+ * Production code should not touch this object — call runSynthesisSafely
+ * instead.
+ */
+export const synthesisRuntime: {
+  enrichBriefSynthesis: typeof enrichBriefSynthesis;
+} = {
+  enrichBriefSynthesis
+};
+
+/**
+ * Non-fatal wrapper around enrichBriefSynthesis intended for use by brief
+ * generation orchestrators (briefScheduler.ts daily cron and the POST
+ * /generate route). Behaviour:
+ *
+ * - Empty items → returns null without making any LLM call.
+ * - Reconstructs activeCategories from the unique set of item.category values.
+ * - On any thrown error from enrichBriefSynthesis, logs a brief_synthesis_failed
+ *   warn event and returns null so the caller can persist the brief with
+ *   synthesis: null rather than failing the whole generation.
+ *
+ * periodStart / periodEnd are accepted by enrichBriefSynthesis but currently
+ * unused by the prompts (see _periodStart / _periodEnd above). Pass empty
+ * strings until prompts use them; plumb real values through then.
+ */
+export async function runSynthesisSafely(
+  items: BriefItem[]
+): Promise<BriefSynthesis | null> {
+  if (items.length === 0) return null;
+
+  const activeCategories = Array.from(new Set(items.map((it) => it.category)));
+
+  try {
+    return await synthesisRuntime.enrichBriefSynthesis(
+      items,
+      "",
+      "",
+      activeCategories
+    );
+  } catch (err) {
+    logger.warn(
+      { event: "brief_synthesis_failed", err, itemCount: items.length },
+      "Brief-level synthesis failed — proceeding without synthesis"
+    );
+    return null;
+  }
+}

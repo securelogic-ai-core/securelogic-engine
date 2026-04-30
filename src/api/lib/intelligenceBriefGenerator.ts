@@ -107,6 +107,13 @@ export type BriefContentJson = {
   medium_count: number;
   low_count: number;
   categories: BriefCategoryGroup[];
+  /**
+   * Brief-level synthesis (thesis, executive summary, cross-domain analysis,
+   * action summary). Populated by callers via runSynthesisSafely after item
+   * enrichment. Optional/nullable so existing briefs without synthesis still
+   * conform to this type when read back from the DB.
+   */
+  synthesis?: import("./briefSynthesizer.js").BriefSynthesis | null;
 };
 
 // ---------------------------------------------------------------------------
