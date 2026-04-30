@@ -51,6 +51,7 @@ import {
   type CyberSignalForBrief,
   type BriefItem
 } from "./intelligenceBriefGenerator.js";
+import { runSynthesisSafely } from "./briefSynthesizer.js";
 import { sendBrief } from "./briefEmailSender.js";
 
 // ---------------------------------------------------------------------------
@@ -258,6 +259,11 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
     throw enrichErr;
   }
 
+  // Brief-level synthesis (4 Claude calls). Non-fatal: failures resolve to
+  // null and the brief publishes without synthesis content.
+  const synthesis = await runSynthesisSafely(enrichedItems);
+  const contentJsonWithSynthesis = { ...base.content_json, synthesis };
+
   // ── Phase 3: Insert items + publish (own transaction, explicit fail-safe) ───
   //
   // The publish UPDATE is the last step. If it fails the brief must not remain
@@ -327,7 +333,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
         briefId,
         base.signal_count,
         base.item_count,
-        JSON.stringify(base.content_json),
+        JSON.stringify(contentJsonWithSynthesis),
         base.content_markdown
       ]
     );
