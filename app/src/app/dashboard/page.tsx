@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getIssues, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFrameworks, getFrameworkReadiness, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
+import { getIssues, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFrameworks, getFrameworkReadiness, planDisplayName, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
 import { PostureDashboard } from "./PostureDashboard";
@@ -64,7 +64,7 @@ export default async function DashboardPage({
   const isTeamTier = entitlementLevel === "team";
   const isPlatformPro = entitlementLevel === "premium" || entitlementLevel === "platform";
   const isBriefPro = entitlementLevel === "professional";
-  const planName = planDisplayName(entitlementLevel);
+  const planName = planDisplayName(entitlementLevel, me?.stripeSubscriptionTier);
   const displayName = session.name ?? me?.organizationName ?? session.organizationName ?? null;
   const orgName = me?.organizationName ?? session.organizationName;
 
@@ -260,18 +260,6 @@ function OnboardingBanner() {
   );
 }
 
-function planDisplayName(entitlementLevel: string): string {
-  switch (entitlementLevel) {
-    case "professional":    return "Brief Pro";
-    case "premium":
-    case "platform":        return "Platform Professional";
-    case "team":            return "Platform Team";
-    case "free":
-    case "starter":
-    default:                return "Free";
-  }
-}
-
 function ManageBillingButton() {
   return (
     <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
@@ -390,7 +378,7 @@ function SamplePostureDashboard() {
               type="submit"
               className="inline-flex items-center gap-2 bg-teal-700 hover:bg-teal-600 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
             >
-              Upgrade to Platform Professional — $799/mo
+              Upgrade to Platform Professional — $1,099/mo
             </button>
           </form>
         </div>

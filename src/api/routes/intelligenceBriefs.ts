@@ -74,21 +74,24 @@ function parseIsoDate(raw: string): Date | null {
 }
 
 // ---------------------------------------------------------------------------
-// Middleware — all routes require API key + org context + standard entitlement
+// Middleware — all routes require API key + org context.
+// Read routes (GET list, GET detail) are reachable on starter tier so free
+// orgs see the briefs the platform produces for them. Mutating routes
+// (generate, send, subscribers, preferences) keep requireEntitlement("standard")
+// inline below — paid tier only.
 // ---------------------------------------------------------------------------
 
 router.use(
   "/intelligence-briefs",
   requireApiKey,
-  attachOrganizationContext,
-  requireEntitlement("standard")
+  attachOrganizationContext
 );
 
 // ---------------------------------------------------------------------------
 // POST /api/intelligence-briefs/generate
 // ---------------------------------------------------------------------------
 
-router.post("/intelligence-briefs/generate", async (req, res) => {
+router.post("/intelligence-briefs/generate", requireEntitlement("standard"), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
 
   // Accept optional period_start / period_end; default to last 7 days.
@@ -356,7 +359,7 @@ router.post("/intelligence-briefs/generate", async (req, res) => {
 // Upserts on (organization_id, email): reactivates if previously unsubscribed.
 // ---------------------------------------------------------------------------
 
-router.post("/intelligence-briefs/subscribers", async (req, res) => {
+router.post("/intelligence-briefs/subscribers", requireEntitlement("standard"), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
 
   const rawEmail = String(req.body?.email ?? "").trim().toLowerCase();
@@ -400,7 +403,7 @@ router.post("/intelligence-briefs/subscribers", async (req, res) => {
 // "subscribers" as a brief UUID parameter.
 // ---------------------------------------------------------------------------
 
-router.get("/intelligence-briefs/subscribers", async (req, res) => {
+router.get("/intelligence-briefs/subscribers", requireEntitlement("standard"), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
 
   const includeInactive = req.query["include_inactive"] === "true";
@@ -444,9 +447,9 @@ router.get("/intelligence-briefs/subscribers", async (req, res) => {
 // Hard delete is intentionally not supported — preserves audit history.
 // ---------------------------------------------------------------------------
 
-router.delete("/intelligence-briefs/subscribers/:id", async (req, res) => {
+router.delete("/intelligence-briefs/subscribers/:id", requireEntitlement("standard"), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
-  const { id: subscriberId } = req.params;
+  const { id: subscriberId } = req.params as { id: string };
 
   if (!UUID_RE.test(subscriberId)) {
     return res.status(400).json({ error: "invalid_subscriber_id" });
@@ -483,9 +486,9 @@ router.delete("/intelligence-briefs/subscribers/:id", async (req, res) => {
 // IMPORTANT: defined before /:id routes.
 // ---------------------------------------------------------------------------
 
-router.get("/intelligence-briefs/subscribers/:id/preferences", async (req, res) => {
+router.get("/intelligence-briefs/subscribers/:id/preferences", requireEntitlement("standard"), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
-  const { id: subscriberId } = req.params;
+  const { id: subscriberId } = req.params as { id: string };
 
   if (!UUID_RE.test(subscriberId)) {
     return res.status(400).json({ error: "invalid_subscriber_id" });
@@ -538,9 +541,9 @@ const VALID_PREF_CATEGORIES = new Set([
   "general"
 ]);
 
-router.patch("/intelligence-briefs/subscribers/:id/preferences", async (req, res) => {
+router.patch("/intelligence-briefs/subscribers/:id/preferences", requireEntitlement("standard"), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
-  const { id: subscriberId } = req.params;
+  const { id: subscriberId } = req.params as { id: string };
 
   if (!UUID_RE.test(subscriberId)) {
     return res.status(400).json({ error: "invalid_subscriber_id" });
@@ -645,9 +648,9 @@ router.patch("/intelligence-briefs/subscribers/:id/preferences", async (req, res
 // Trigger delivery of a published brief to all active subscribers.
 // ---------------------------------------------------------------------------
 
-router.post("/intelligence-briefs/:id/send", async (req, res) => {
+router.post("/intelligence-briefs/:id/send", requireEntitlement("standard"), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
-  const { id } = req.params;
+  const { id } = req.params as { id: string };
 
   if (!UUID_RE.test(id)) {
     return res.status(400).json({ error: "invalid_brief_id" });

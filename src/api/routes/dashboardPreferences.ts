@@ -4,6 +4,7 @@ import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { requireEntitlement } from "../middleware/requireEntitlement.js";
 
 const router = Router();
 
@@ -58,6 +59,13 @@ function validateLayout(raw: unknown): { ok: true; layout: TileConfig[] } | { ok
   }
   if (layout.filter((t) => t.visible).length === 0) {
     return { ok: false, error: "at_least_one_tile_required" };
+  }
+  const seenOrders = new Set<number>();
+  for (const t of layout) {
+    if (seenOrders.has(t.order)) {
+      return { ok: false, error: "duplicate_order_values" };
+    }
+    seenOrders.add(t.order);
   }
   return { ok: true, layout };
 }
@@ -137,6 +145,7 @@ router.put(
   "/dashboard/preferences",
   requireApiKey,
   attachOrganizationContext,
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const userId = req.userId;
@@ -195,6 +204,7 @@ router.delete(
   "/dashboard/preferences",
   requireApiKey,
   attachOrganizationContext,
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const userId = req.userId;
@@ -243,6 +253,7 @@ router.get(
   "/dashboard/preferences/org",
   requireApiKey,
   attachOrganizationContext,
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       if (req.userRole !== "admin") {
@@ -284,6 +295,7 @@ router.put(
   "/dashboard/preferences/org",
   requireApiKey,
   attachOrganizationContext,
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       if (req.userRole !== "admin") {

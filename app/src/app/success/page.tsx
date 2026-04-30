@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
 
 function planDisplayName(entitlementLevel: string | null): string {
   switch (entitlementLevel) {
@@ -21,15 +19,17 @@ function planDisplayName(entitlementLevel: string | null): string {
  * webhook, then auto-redirects to the dashboard.
  */
 export default function SuccessPage() {
-  const router = useRouter();
   const [status, setStatus] = useState<"refreshing" | "ready" | "error">("refreshing");
   const [planName, setPlanName] = useState<string>("Premium");
 
   useEffect(() => {
     let cancelled = false;
     let attempts = 0;
-    const MAX_ATTEMPTS = 8;
-    const POLL_MS = 1500;
+    const FAST_ATTEMPTS = 6;
+    const SLOW_ATTEMPTS = 6;
+    const FAST_POLL_MS = 1500;
+    const SLOW_POLL_MS = 3000;
+    const MAX_ATTEMPTS = FAST_ATTEMPTS + SLOW_ATTEMPTS;
 
     async function poll() {
       if (cancelled) return;
@@ -45,6 +45,8 @@ export default function SuccessPage() {
           const isPaid =
             level === "premium" ||
             level === "professional" ||
+            level === "platform" ||
+            level === "team" ||
             level === "admin";
 
           if (isPaid) {
@@ -54,14 +56,24 @@ export default function SuccessPage() {
           }
         }
 
+        // 401: session is permanently unauthenticated — no point retrying
+        if (res.status === 401) {
+          if (!cancelled) setStatus("error");
+          return;
+        }
+
         attempts++;
         if (attempts >= MAX_ATTEMPTS) {
           if (!cancelled) setStatus("error");
           return;
         }
 
-        // Entitlement not yet upgraded — webhook still in flight, retry
-        setTimeout(poll, POLL_MS);
+        // Entitlement not yet upgraded — webhook still in flight, retry.
+        // Fast cadence for the common case (webhook lands in 1–9s), then
+        // slower cadence so the tail covers up to ~27s without hammering
+        // the engine.
+        const nextDelay = attempts < FAST_ATTEMPTS ? FAST_POLL_MS : SLOW_POLL_MS;
+        setTimeout(poll, nextDelay);
       } catch {
         if (!cancelled) setStatus("error");
       }
@@ -79,9 +91,9 @@ export default function SuccessPage() {
   // Auto-redirect once session is refreshed
   useEffect(() => {
     if (status !== "ready") return;
-    const timer = setTimeout(() => router.push("/dashboard"), 1000);
+    const timer = setTimeout(() => { window.location.href = "/dashboard?upgraded=true"; }, 1000);
     return () => clearTimeout(timer);
-  }, [status, router]);
+  }, [status]);
 
   return (
     <div className="max-w-lg mx-auto px-6 py-20 text-center">
@@ -113,12 +125,12 @@ export default function SuccessPage() {
               Intelligence Brief content.
             </p>
             <p className="text-slate-400 text-xs mb-6">Redirecting to your dashboard…</p>
-            <Link
-              href="/dashboard"
+            <a
+              href="/dashboard?upgraded=true"
               className="inline-block bg-teal-600 hover:bg-teal-500 text-white font-semibold px-8 py-2.5 rounded-lg transition-colors text-sm"
             >
               Go to Dashboard →
-            </Link>
+            </a>
           </>
         )}
 
@@ -136,12 +148,12 @@ export default function SuccessPage() {
               Your payment was processed successfully. Your account will reflect
               the upgrade shortly — please visit your dashboard or account page.
             </p>
-            <Link
-              href="/dashboard"
+            <a
+              href="/dashboard?upgraded=true"
               className="inline-block bg-teal-600 hover:bg-teal-500 text-white font-semibold px-8 py-2.5 rounded-lg transition-colors text-sm"
             >
               Go to Dashboard →
-            </Link>
+            </a>
           </>
         )}
       </div>

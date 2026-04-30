@@ -72,7 +72,44 @@ const KNOWN_TIERS = new Set([
 ]);
 
 /**
- * Resolves the SecureLogic entitlement tier from the Stripe event metadata.
+ * Map of Stripe price IDs → raw tier labels, built at module load from
+ * STRIPE_PRICE_ID_PROFESSIONAL / _TEAMS / _PLATFORM / _PLATFORM_ANNUAL.
+ *
+ * Used by resolveTier and extractRawSubscriptionTier so subscription events
+ * derive the tier directly from the current price, which is the only
+ * reliable source for portal-driven upgrades and downgrades — Stripe leaves
+ * a subscription's metadata untouched when a customer changes plans through
+ * the Stripe Customer Portal. Entries are only added for env vars that are
+ * set, so missing config gracefully degrades to metadata-based resolution.
+ */
+const PRICE_ID_TO_TIER: Record<string, string> = (() => {
+  const map: Record<string, string> = {};
+  const envPairs: Array<[string, string]> = [
+    ["STRIPE_PRICE_ID_PROFESSIONAL",    "professional"],
+    ["STRIPE_PRICE_ID_TEAMS",           "teams"],
+    ["STRIPE_PRICE_ID_PLATFORM",        "platform"],
+    ["STRIPE_PRICE_ID_PLATFORM_ANNUAL", "platform_annual"]
+  ];
+  for (const [envVar, tier] of envPairs) {
+    const id = process.env[envVar]?.trim();
+    if (id) map[id] = tier;
+  }
+  return map;
+})();
+
+/**
+ * Returns the raw tier label for a subscription's first price item, or null
+ * if the price ID is not in the env-configured map. SecureLogic plans are
+ * single-item, so the first item is authoritative for the current catalog.
+ */
+function resolveTierFromPriceId(subscription: Stripe.Subscription): string | null {
+  const priceId = subscription.items?.data?.[0]?.price?.id;
+  if (!priceId) return null;
+  return PRICE_ID_TO_TIER[priceId] ?? null;
+}
+
+/**
+ * Resolves the SecureLogic entitlement tier for a Stripe event.
  *
  * Returns a value from the Redis Tier union ("professional" | "paid"):
  *   - "professional" → Brief tier (entitlement_level="professional")
@@ -80,10 +117,29 @@ const KNOWN_TIERS = new Set([
  *   - "paid"         → full platform tier (entitlement_level="premium")
  *       raw: "platform", "platform_annual", legacy "team"/"paid"/"admin"
  *
+ * For customer.subscription.* events, the subscription's current price ID
+ * is the source of truth — portal-driven upgrades/downgrades change the
+ * price without rewriting metadata, so metadata can be stale. If price-ID
+ * resolution fails (env var missing, unknown price), falls back to metadata.
+ * Non-subscription events (checkout.session.completed, etc.) read metadata
+ * directly, preserving prior behavior.
+ *
  * Unknown raw values are logged as stripe_unknown_tier and default to "paid"
  * for forward compatibility with legacy events that predate tier metadata.
  */
-function resolveTierFromMetadata(event: Stripe.Event): "professional" | "paid" {
+function resolveTier(event: Stripe.Event): "professional" | "paid" {
+  if (event.type.startsWith("customer.subscription.")) {
+    const subscription = event.data.object as Stripe.Subscription;
+    const priceTier = resolveTierFromPriceId(subscription);
+    if (priceTier === "professional" || priceTier === "teams") {
+      return "professional";
+    }
+    if (priceTier === "platform" || priceTier === "platform_annual") {
+      return "paid";
+    }
+    // priceTier === null → fall through to metadata
+  }
+
   const obj = event.data.object as any;
   const rawTier =
     obj?.metadata?.tier ??
@@ -168,14 +224,26 @@ function extractCustomerId(event: Stripe.Event): string | null {
 }
 
 /**
- * Extracts the raw subscription tier string from checkout or subscription metadata.
- * Returns 'professional' or 'team' when present; null for legacy/unknown events.
+ * Extracts the raw subscription tier string for storage in
+ * api_keys.stripe_subscription_tier. Returns 'professional', 'teams',
+ * 'platform', 'platform_annual', or legacy 'team' when known; null otherwise.
  *
- * This is distinct from resolveTierFromMetadata(): that function normalises 'team'
- * → 'paid' for Redis/entitlement purposes. This function preserves the original
- * value so it can be stored in stripe_subscription_tier for future feature gating.
+ * For customer.subscription.* events, the subscription's price ID is the
+ * source of truth (portal-driven plan changes don't rewrite metadata).
+ * Falls back to checkout/subscription metadata for non-subscription events
+ * or when no env-configured price matches.
+ *
+ * This is distinct from resolveTier(): that function normalises 'team' →
+ * 'paid' for Redis/entitlement purposes. This function preserves the
+ * original value so it can be stored for future feature gating.
  */
 function extractRawSubscriptionTier(event: Stripe.Event): string | null {
+  if (event.type.startsWith("customer.subscription.")) {
+    const subscription = event.data.object as Stripe.Subscription;
+    const priceTier = resolveTierFromPriceId(subscription);
+    if (priceTier) return priceTier;
+  }
+
   const obj = event.data.object as any;
   const raw =
     obj?.metadata?.tier ??
@@ -295,6 +363,51 @@ async function syncToDb(
         { event: "stripe_webhook_org_plan_synced", apiKeyId, orgPlan },
         "stripeWebhook: organizations.plan synced"
       );
+    }
+
+    // Paid-tier upgrade: auto-subscribe the org's primary (oldest) user to the
+    // Intelligence Brief if the org has no active subscriber yet. Best-effort —
+    // failures are logged but never bubble up to the webhook handler.
+    if (rows > 0 && (level === "professional" || level === "premium")) {
+      try {
+        const subscribeResult = await pg.query(
+          `
+          INSERT INTO intelligence_brief_subscribers (organization_id, email, name, active)
+          SELECT u.organization_id,
+                 LOWER(TRIM(u.email)),
+                 NULLIF(u.name, ''),
+                 TRUE
+          FROM users u
+          JOIN api_keys k ON k.organization_id = u.organization_id
+          WHERE k.id = $1
+            AND NOT EXISTS (
+              SELECT 1 FROM intelligence_brief_subscribers ibs
+              WHERE ibs.organization_id = u.organization_id
+                AND ibs.active = TRUE
+            )
+          ORDER BY u.created_at ASC
+          LIMIT 1
+          ON CONFLICT (organization_id, email) DO UPDATE
+            SET active          = TRUE,
+                unsubscribed_at = NULL,
+                updated_at      = NOW()
+          RETURNING id
+          `,
+          [apiKeyId]
+        );
+
+        if ((subscribeResult.rowCount ?? 0) > 0) {
+          logger.info(
+            { event: "stripe_webhook_brief_auto_subscribed", apiKeyId, level },
+            "stripeWebhook: auto-subscribed org primary user to Intelligence Brief"
+          );
+        }
+      } catch (subscribeErr) {
+        logger.error(
+          { event: "stripe_webhook_brief_auto_subscribe_failed", apiKeyId, err: subscribeErr },
+          "stripeWebhook: failed to auto-subscribe org to Intelligence Brief (non-fatal)"
+        );
+      }
     }
   } catch (err) {
     try {
@@ -576,7 +689,7 @@ export async function stripeWebhook(
         ? (event.data.object as Stripe.Subscription)
         : null;
 
-    const metadataTier = resolveTierFromMetadata(event);
+    const metadataTier = resolveTier(event);
     const entitlement = classifySubscriptionEvent(eventType, subscription, metadataTier);
 
     if (!entitlement) {
@@ -602,6 +715,41 @@ export async function stripeWebhook(
     // Extract customer ID and raw tier for DB sync
     const customerId = extractCustomerId(event);
     const rawSubscriptionTier = extractRawSubscriptionTier(event);
+
+    // Stale-revoke guard: when upgrading tiers, Stripe cancels the old
+    // subscription after creating the new one. The resulting delete event
+    // would otherwise downgrade entitlement_level back to 'starter' even
+    // though the user is now on a higher-paying subscription. If the row's
+    // current stripe_subscription_tier is paid AND differs from the
+    // canceled subscription's tier, treat this revoke as superseded.
+    if (entitlement.tier === "free") {
+      const { rows } = await pg.query<{ stripe_subscription_tier: string | null }>(
+        `SELECT stripe_subscription_tier FROM api_keys WHERE id = $1 LIMIT 1`,
+        [apiKeyId]
+      );
+      const currentTier = rows[0]?.stripe_subscription_tier ?? null;
+      const PAID_TIERS = new Set(["professional", "teams", "platform", "platform_annual", "team"]);
+
+      if (
+        currentTier &&
+        PAID_TIERS.has(currentTier) &&
+        rawSubscriptionTier &&
+        rawSubscriptionTier !== currentTier
+      ) {
+        logger.info(
+          {
+            event: "stripe_webhook_revoke_skipped_stale",
+            stripeEventType: eventType,
+            apiKeyId,
+            currentTier,
+            canceledTier: rawSubscriptionTier
+          },
+          "stripeWebhook: skipping revoke — canceled tier differs from active tier (superseded subscription)"
+        );
+        respond({ received: true, ignored: true, reason: "superseded" });
+        return;
+      }
+    }
 
     // Write to Redis (supplementary cache) then sync to Postgres (primary)
     await setEntitlementInRedis(apiKeyId, entitlement);

@@ -132,10 +132,10 @@ router.post("/billing/checkout", requireApiKey, async (req, res) => {
 
     const successUrl =
       process.env.STRIPE_SUCCESS_URL?.trim() ??
-      "https://app.securelogicai.com/dashboard?upgraded=true";
+      `${(process.env.APP_BASE_URL ?? "https://app.securelogicai.com").replace(/\/$/, "")}/success`;
     const cancelUrl =
       process.env.STRIPE_CANCEL_URL?.trim() ??
-      "https://app.securelogicai.com/dashboard";
+      `${(process.env.APP_BASE_URL ?? "https://app.securelogicai.com").replace(/\/$/, "")}/dashboard`;
 
     const apiKey = (req as any).apiKey as Record<string, unknown>;
     const apiKeyId = typeof apiKey.id === "string" ? apiKey.id : null;
@@ -219,12 +219,16 @@ router.post("/billing/portal", requireApiKey, async (req, res) => {
       return;
     }
 
-    const result = await pg.query(
-      `SELECT stripe_customer_id FROM api_keys WHERE id = $1 LIMIT 1`,
+    const result = await pg.query<{
+      stripe_customer_id: string | null;
+      entitlement_level:  string | null;
+    }>(
+      `SELECT stripe_customer_id, entitlement_level FROM api_keys WHERE id = $1 LIMIT 1`,
       [apiKeyId]
     );
 
-    let customerId = result.rows[0]?.stripe_customer_id as string | null;
+    const row = result.rows[0];
+    let customerId = row?.stripe_customer_id ?? null;
 
     if (!customerId) {
       // Auto-provision a Stripe customer for admins whose entitlement was
@@ -266,9 +270,14 @@ router.post("/billing/portal", requireApiKey, async (req, res) => {
     // upgrades, downgrades, and cancellations require the portal configuration to be set.
     const portalConfigId = process.env.STRIPE_PORTAL_CONFIGURATION_ID?.trim() || undefined;
 
+    // Append the pre-portal entitlement so /billing-return can detect changes
+    // on the very first poll without burning an attempt establishing baseline.
+    const returnUrlWithFrom =
+      returnUrl + "?from=" + encodeURIComponent(row?.entitlement_level ?? "free");
+
     const portalSession = await getStripe().billingPortal.sessions.create({
       customer: customerId,
-      return_url: returnUrl,
+      return_url: returnUrlWithFrom,
       ...(portalConfigId ? { configuration: portalConfigId } : {}),
     });
 
