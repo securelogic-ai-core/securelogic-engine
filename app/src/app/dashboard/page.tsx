@@ -1,8 +1,9 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getIssues, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFrameworks, getFrameworkReadiness, planDisplayName, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
+import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFrameworks, getFrameworkReadiness, planDisplayName, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
+import { IntelligenceBriefCard } from "@/components/IntelligenceBriefCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
 import { PostureDashboard } from "./PostureDashboard";
 import { LastLoginBanner } from "./LastLoginBanner";
@@ -29,9 +30,10 @@ export default async function DashboardPage({
   // getMe() is the source of truth for entitlement — never rely on the
   // session cookie alone, which may be stale after a Stripe upgrade.
   // getAuthMe() provides user-level data (including suppression status) for JWT sessions.
-  const [me, issuesData, dashboardSummary, authMe, postureHistory] = await Promise.all([
+  const [me, issuesData, latestBrief, dashboardSummary, authMe, postureHistory] = await Promise.all([
     getMe(token),
     getIssues(token),
+    getLatestBrief(token),
     getDashboardSummary(token),
     session.jwtToken ? getAuthMe(session.jwtToken) : Promise.resolve(null),
     getPostureHistory(token, 90),
@@ -130,7 +132,9 @@ export default async function DashboardPage({
             Latest Brief
           </h2>
 
-          {latestIssue ? (
+          {latestBrief ? (
+            <IntelligenceBriefCard brief={latestBrief} />
+          ) : latestIssue ? (
             <BriefCard issue={latestIssue} />
           ) : (
             <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
