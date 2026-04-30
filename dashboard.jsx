@@ -8,9 +8,20 @@
  * Configuration — edit the two fields below before use:
  */
 
+// Session JWT is stored in sessionStorage after sign-in and read by apiFetch.
+// Never hardcode credentials here — the dashboard authenticates via
+// POST /api/auth/login and uses the returned bearer token for all requests.
 const CONFIG = {
-  apiBase: "/api",   // SecureLogic API base URL
-  apiKey: "sl_a335d59064a56e79b457c1ee1be67dca",
+  apiBase: "/api",
+};
+
+const TOKEN_KEY = "sl-operator-jwt";
+
+const getToken   = () => sessionStorage.getItem(TOKEN_KEY);
+const setToken   = (t) => { if (t) sessionStorage.setItem(TOKEN_KEY, t); };
+const clearToken = () => {
+  sessionStorage.removeItem(TOKEN_KEY);
+  window.dispatchEvent(new Event("sl-auth-cleared"));
 };
 
 // ─── Brand tokens ────────────────────────────────────────────────────────────
@@ -53,14 +64,19 @@ const SEV_COLORS = {
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
 async function apiFetch(path, opts = {}) {
+  const token = getToken();
   const res = await fetch(`${CONFIG.apiBase}${path}`, {
     ...opts,
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": CONFIG.apiKey,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(opts.headers || {}),
     },
   });
+  if (res.status === 401) {
+    clearToken();
+    throw new Error("Session expired. Please sign in again.");
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || err.message || `HTTP ${res.status}`);
@@ -193,7 +209,7 @@ function SectionHeader({ title, action }) {
   );
 }
 
-function Btn({ children, onClick, variant = "primary", disabled = false, small = false, style = {} }) {
+function Btn({ children, onClick, variant = "primary", disabled = false, small = false, style = {}, type = "button" }) {
   const base = {
     display: "inline-flex", alignItems: "center", gap: 6,
     padding: small ? "6px 12px" : "8px 16px",
@@ -208,7 +224,7 @@ function Btn({ children, onClick, variant = "primary", disabled = false, small =
     danger:   { ...base, background: "#fef2f2", color: C.danger },
     ghost:    { ...base, background: "transparent", color: C.textMuted, padding: small ? "4px 8px" : "6px 12px" },
   };
-  return <button style={styles[variant] || styles.primary} onClick={onClick} disabled={disabled}>{children}</button>;
+  return <button type={type} style={styles[variant] || styles.primary} onClick={onClick} disabled={disabled}>{children}</button>;
 }
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
@@ -283,7 +299,7 @@ const NAV_ITEMS = [
   { id: "settings",  label: "Settings",           icon: "⚙" },
 ];
 
-function Sidebar({ active, onNav }) {
+function Sidebar({ active, onNav, session, onSignOut }) {
   return (
     <nav style={{
       position: "fixed", top: 0, left: 0, bottom: 0, width: 220,
@@ -314,7 +330,30 @@ function Sidebar({ active, onNav }) {
         ))}
       </div>
 
-      <div style={{ padding: "12px 20px", borderTop: `1px solid ${C.sidebarBorder}` }}>
+      {session && (
+        <div style={{ padding: "12px 16px", borderTop: `1px solid ${C.sidebarBorder}` }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "#ffffffcc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {session.name || session.email}
+          </div>
+          <div style={{ fontSize: 10, color: "#ffffff66", marginTop: 2, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            {session.role || "member"}
+          </div>
+          <button
+            type="button"
+            onClick={onSignOut}
+            style={{
+              display: "block", width: "100%", padding: "6px 10px",
+              background: "transparent", color: "#ffffffaa",
+              border: `1px solid ${C.sidebarBorder}`, borderRadius: 6,
+              fontSize: 11, fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            Sign out
+          </button>
+        </div>
+      )}
+
+      <div style={{ padding: "10px 20px", borderTop: `1px solid ${C.sidebarBorder}` }}>
         <div style={{ fontSize: 10, color: "#ffffff33", textTransform: "uppercase", letterSpacing: "0.06em" }}>
           v2.0 · Platform
         </div>
@@ -1012,7 +1051,7 @@ function SettingsRow({ label, sub, children }) {
   );
 }
 
-function SettingsView({ toast }) {
+function SettingsView({ toast, session }) {
   const [me, setMe] = React.useState(null);
   const [subscribers, setSubscribers] = React.useState([]);
   const [loadingMe, setLoadingMe] = React.useState(true);
@@ -1060,20 +1099,29 @@ function SettingsView({ toast }) {
 
       {/* Account */}
       <SettingsSection title="Account">
-        {loadingMe ? <LoadingSpinner size={16} /> : me ? (
+        {loadingMe ? <LoadingSpinner size={16} /> : (
           <>
-            <SettingsRow label="Organization" sub="Registered organization name">
-              <span style={{ fontSize: 13, color: C.textMuted }}>{me.organization_name || me.organizationName || "—"}</span>
-            </SettingsRow>
-            <SettingsRow label="Plan / Entitlement" sub="Current subscription tier">
-              <StatusBadge status={me.entitlement_level || me.entitlementLevel || "starter"} />
-            </SettingsRow>
-            <SettingsRow label="API Key" sub="Used in CONFIG.apiKey at top of this file">
-              <span style={{ fontSize: 12, fontFamily: "monospace", color: C.textFaint }}>••••••••{CONFIG.apiKey.slice(-6)}</span>
-            </SettingsRow>
+            {session && (
+              <SettingsRow label="Signed in as" sub="Active operator session — sign out from the sidebar">
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{session.name || session.email}</div>
+                  <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>{session.email} · {session.role || "member"}</div>
+                </div>
+              </SettingsRow>
+            )}
+            {me ? (
+              <>
+                <SettingsRow label="Organization" sub="Registered organization name">
+                  <span style={{ fontSize: 13, color: C.textMuted }}>{me.organization_name || me.organizationName || session?.organizationName || "—"}</span>
+                </SettingsRow>
+                <SettingsRow label="Plan / Entitlement" sub="Current subscription tier">
+                  <StatusBadge status={me.entitlement_level || me.entitlementLevel || session?.entitlementLevel || "starter"} />
+                </SettingsRow>
+              </>
+            ) : !session ? (
+              <EmptyState icon="⚠" title="Account data unavailable" subtitle="Account endpoint did not return data." />
+            ) : null}
           </>
-        ) : (
-          <EmptyState icon="⚠" title="Account data unavailable" subtitle="Check API key and base URL in CONFIG." />
         )}
       </SettingsSection>
 
@@ -1153,8 +1201,8 @@ function SettingsView({ toast }) {
             }}>
 {`const CONFIG = {
   apiBase: "${CONFIG.apiBase}",
-  apiKey: "sl_a335d59064a56e79b457c1ee1be67dca",
-};`}
+};
+// Session JWT lives in sessionStorage["${TOKEN_KEY}"], set on sign-in.`}
             </pre>
           )}
         </div>
@@ -1164,19 +1212,299 @@ function SettingsView({ toast }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Authentication
+// ─────────────────────────────────────────────────────────────────────────────
+
+function AuthShell({ title, subtitle, children }) {
+  return (
+    <div style={{
+      minHeight: "100vh", background: C.bg,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+      padding: 20,
+    }}>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        * { box-sizing: border-box; }
+        select:focus, input:focus { outline: 2px solid #00c4b4; outline-offset: 1px; }
+      `}</style>
+      <Card style={{ padding: "32px 36px", width: "100%", maxWidth: 380 }}>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 4 }}>
+            <span>Secure</span><span style={{ color: C.accent }}>Logic</span>
+            <sup style={{ color: C.accent, fontSize: 10, fontWeight: 900, marginLeft: 1 }}>AI</sup>
+          </div>
+          <div style={{ fontSize: 11, color: C.textFaint, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            Operator Console
+          </div>
+        </div>
+        <h2 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700, color: C.text }}>{title}</h2>
+        {subtitle && <p style={{ margin: "0 0 20px", fontSize: 12, color: C.textMuted }}>{subtitle}</p>}
+        {children}
+      </Card>
+    </div>
+  );
+}
+
+function AuthInput({ style, ...rest }) {
+  return (
+    <input
+      style={{
+        width: "100%", padding: "9px 12px", borderRadius: 7,
+        border: `1px solid ${C.border}`, fontSize: 13,
+        background: C.surface, color: C.text, marginBottom: 10,
+        ...style,
+      }}
+      {...rest}
+    />
+  );
+}
+
+function AuthError({ message }) {
+  if (!message) return null;
+  return (
+    <div style={{
+      background: "#fef2f2", color: "#991b1b",
+      padding: "8px 10px", borderRadius: 6, fontSize: 12,
+      marginBottom: 10, border: "1px solid #fecaca",
+    }}>
+      {message}
+    </div>
+  );
+}
+
+function AuthSubmit({ busy, disabled, label, busyLabel }) {
+  return (
+    <button
+      type="submit"
+      disabled={busy || disabled}
+      style={{
+        display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+        width: "100%", padding: "9px 16px",
+        borderRadius: 7, fontSize: 13, fontWeight: 600,
+        cursor: (busy || disabled) ? "not-allowed" : "pointer", border: "none",
+        opacity: (busy || disabled) ? 0.5 : 1, transition: "background 0.15s",
+        background: C.accent, color: "#fff",
+      }}
+    >
+      {busy ? busyLabel : label}
+    </button>
+  );
+}
+
+function LoginScreen({ onAuthed, onMfaRequired }) {
+  const [email, setEmail]       = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [error, setError]       = React.useState(null);
+  const [busy, setBusy]         = React.useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`${CONFIG.apiBase}/auth/login`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ email, password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+      }
+      if (data.mfa_required && data.mfa_token) {
+        onMfaRequired(data.mfa_token);
+        return;
+      }
+      if (!data.token || !data.user) {
+        throw new Error("login_response_missing_token");
+      }
+      onAuthed(data.token, data.user);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <AuthShell title="Sign in" subtitle="Use your SecureLogic AI account credentials.">
+      <form onSubmit={submit}>
+        <AuthInput
+          type="email" placeholder="Email" autoComplete="email"
+          required value={email}
+          onChange={e => setEmail(e.target.value)} disabled={busy}
+        />
+        <AuthInput
+          type="password" placeholder="Password" autoComplete="current-password"
+          required value={password}
+          onChange={e => setPassword(e.target.value)} disabled={busy}
+        />
+        <AuthError message={error} />
+        <AuthSubmit
+          busy={busy} disabled={!email || !password}
+          label="Sign in" busyLabel="Signing in…"
+        />
+      </form>
+    </AuthShell>
+  );
+}
+
+function MfaScreen({ mfaToken, onAuthed, onCancel }) {
+  const [code, setCode]           = React.useState("");
+  const [useBackup, setUseBackup] = React.useState(false);
+  const [error, setError]         = React.useState(null);
+  const [busy, setBusy]           = React.useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const path = useBackup ? "/auth/mfa/use-backup" : "/auth/mfa/verify";
+      const body = useBackup
+        ? { backup_code: code, mfa_token: mfaToken }
+        : { code, mfa_token: mfaToken };
+      const res = await fetch(`${CONFIG.apiBase}${path}`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+      }
+      if (!data.token || !data.user) {
+        throw new Error("mfa_response_missing_token");
+      }
+      onAuthed(data.token, data.user);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <AuthShell
+      title="Two-factor authentication"
+      subtitle={useBackup ? "Enter one of your backup codes." : "Enter the 6-digit code from your authenticator app."}
+    >
+      <form onSubmit={submit}>
+        <AuthInput
+          type="text"
+          placeholder={useBackup ? "Backup code" : "000000"}
+          autoComplete="one-time-code"
+          inputMode={useBackup ? "text" : "numeric"}
+          required value={code}
+          onChange={e => setCode(e.target.value)} disabled={busy}
+          style={{
+            fontFamily:    useBackup ? "inherit"   : "monospace",
+            letterSpacing: useBackup ? "normal"    : "0.2em",
+            textAlign:     useBackup ? "left"      : "center",
+          }}
+        />
+        <AuthError message={error} />
+        <AuthSubmit
+          busy={busy} disabled={!code}
+          label="Verify" busyLabel="Verifying…"
+        />
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
+          <Btn
+            onClick={() => { setUseBackup(b => !b); setCode(""); setError(null); }}
+            variant="ghost" small
+          >
+            {useBackup ? "Use authenticator code" : "Use backup code"}
+          </Btn>
+          <Btn onClick={onCancel} variant="ghost" small>Cancel</Btn>
+        </div>
+      </form>
+    </AuthShell>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Root App
 // ─────────────────────────────────────────────────────────────────────────────
 
 function App() {
-  const [view, setView] = React.useState("overview");
+  const [view, setView]         = React.useState("overview");
+  const [authPhase, setAuthPhase] = React.useState(() => getToken() ? "checking" : "login");
+  const [session, setSession]   = React.useState(null);
+  const [mfaToken, setMfaToken] = React.useState(null);
   const { toasts, toast, dismiss } = useToast();
+
+  // Re-prompt for sign-in whenever apiFetch encounters a 401.
+  React.useEffect(() => {
+    const onCleared = () => { setSession(null); setMfaToken(null); setAuthPhase("login"); };
+    window.addEventListener("sl-auth-cleared", onCleared);
+    return () => window.removeEventListener("sl-auth-cleared", onCleared);
+  }, []);
+
+  // Boot-time validation: if a token was in sessionStorage on load, confirm it
+  // is still valid by hitting /auth/me; otherwise drop it and show login.
+  React.useEffect(() => {
+    if (authPhase !== "checking") return;
+    let cancelled = false;
+    apiFetch("/auth/me")
+      .then(u => { if (!cancelled) { setSession(u); setAuthPhase("authed"); } })
+      .catch(() => { if (!cancelled) { clearToken(); setSession(null); setAuthPhase("login"); } });
+    return () => { cancelled = true; };
+  }, [authPhase]);
+
+  const handleAuthed = (token, user) => {
+    setToken(token);
+    setSession(user);
+    setMfaToken(null);
+    setAuthPhase("authed");
+  };
+
+  const handleMfaRequired = (challengeToken) => {
+    setMfaToken(challengeToken);
+    setAuthPhase("mfa");
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await apiFetch("/auth/logout", { method: "POST", body: JSON.stringify({}) });
+    } catch { /* logout is best-effort; the client always drops the token */ }
+    clearToken();
+    setSession(null);
+    setMfaToken(null);
+    setAuthPhase("login");
+  };
+
+  if (authPhase === "checking") {
+    return (
+      <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <LoadingSpinner />
+      </div>
+    );
+  }
+
+  if (authPhase === "login") {
+    return <LoginScreen onAuthed={handleAuthed} onMfaRequired={handleMfaRequired} />;
+  }
+
+  if (authPhase === "mfa") {
+    return (
+      <MfaScreen
+        mfaToken={mfaToken}
+        onAuthed={handleAuthed}
+        onCancel={() => { setMfaToken(null); setAuthPhase("login"); }}
+      />
+    );
+  }
 
   const renderView = () => {
     switch (view) {
       case "overview": return <OverviewView toast={toast} />;
       case "briefs":   return <BriefsView toast={toast} />;
       case "signals":  return <SignalsView toast={toast} />;
-      case "settings": return <SettingsView toast={toast} />;
+      case "settings": return <SettingsView toast={toast} session={session} />;
       default:         return <OverviewView toast={toast} />;
     }
   };
@@ -1193,7 +1521,7 @@ function App() {
         select:focus, input:focus { outline: 2px solid #00c4b4; outline-offset: 1px; }
       `}</style>
 
-      <Sidebar active={view} onNav={setView} />
+      <Sidebar active={view} onNav={setView} session={session} onSignOut={handleSignOut} />
 
       <main style={{ marginLeft: 220, minHeight: "100vh", padding: "32px 36px" }}>
         <div style={{ maxWidth: 1100 }}>
