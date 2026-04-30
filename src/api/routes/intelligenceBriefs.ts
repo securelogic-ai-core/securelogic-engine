@@ -166,7 +166,8 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
          affected_cve,
          affected_vendor,
          source,
-         ingestion_timestamp
+         ingestion_timestamp,
+         raw_payload
        FROM cyber_signals
        WHERE (organization_id = $1 OR organization_id IS NULL)
          AND ingestion_timestamp >= $2

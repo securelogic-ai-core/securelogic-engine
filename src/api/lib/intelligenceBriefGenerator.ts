@@ -59,6 +59,14 @@ export type CyberSignalForBrief = {
   affected_vendor: string | null;
   source: string;
   ingestion_timestamp: string;
+  /**
+   * Source-feed payload as stored in cyber_signals.raw_payload (jsonb).
+   * The worker bridge writes { title, summary } here; engine adapters
+   * write source-specific shapes that may or may not include `title`.
+   * Optional in the type because tests construct fixtures inline; in
+   * production the column is always populated.
+   */
+  raw_payload?: Record<string, unknown> | null;
 };
 
 export type BriefItem = {
@@ -252,24 +260,54 @@ export function buildBriefItems(signals: ReadonlyArray<CyberSignalForBrief>): Br
 // ---------------------------------------------------------------------------
 
 /**
+ * Some RSS source feeds (notably CISA's cybersecurity-advisories feed,
+ * whose contentSnippet begins with the rendered page's "View CSAF" link
+ * and "Summary" heading) inject boilerplate ahead of the real prose.
+ * Strip these prefixes before using normalized_summary as a title,
+ * otherwise items render with "View CSAF Summary…" as their title.
+ *
+ * The optional groups handle either prefix appearing alone or together.
+ */
+const TITLE_BOILERPLATE_RE = /^\s*(view\s+csaf\s*)?(summary\s*)?/i;
+
+function cleanSummaryForTitle(raw: string): string {
+  return raw.replace(TITLE_BOILERPLATE_RE, "").replace(/\s+/g, " ").trim();
+}
+
+/**
  * Derive a concise title for a brief item.
  *
  * Priority:
- *   1. Use normalized_summary if ≤ 80 chars
- *   2. Truncate normalized_summary to 77 chars + "..."
- *   3. If summary is empty, build from CVE/vendor/signal_type
+ *   1. raw_payload.title — the source-feed title preserved by the worker
+ *      bridge (e.g. "ABB PCM600"). Truncated to 77 chars + "..." if > 80.
+ *   2. normalized_summary, with known boilerplate prefixes stripped and
+ *      whitespace collapsed, same truncation rule.
+ *   3. If both are empty, build from CVE/vendor/signal_type.
  */
 function buildItemTitle(signal: CyberSignalForBrief): string {
-  const summary = signal.normalized_summary.trim();
+  // Stage 1 — source-feed title from raw_payload.
+  const payloadTitle =
+    signal.raw_payload && typeof signal.raw_payload === "object"
+      ? (signal.raw_payload as Record<string, unknown>)["title"]
+      : null;
+  if (typeof payloadTitle === "string") {
+    const trimmed = payloadTitle.trim();
+    if (trimmed.length > 0) {
+      return trimmed.length <= 80 ? trimmed : `${trimmed.slice(0, 77)}...`;
+    }
+  }
+
+  // Stage 2 — fall back to normalized_summary with boilerplate stripped.
+  const summary = cleanSummaryForTitle(signal.normalized_summary);
   if (summary.length === 0) {
+    // Stage 3 — synthesize from metadata.
     const parts: string[] = [];
     if (signal.affected_cve) parts.push(signal.affected_cve);
     if (signal.affected_vendor) parts.push(signal.affected_vendor);
     parts.push(signal.signal_type.toUpperCase());
     return parts.join(" — ");
   }
-  if (summary.length <= 80) return summary;
-  return `${summary.slice(0, 77)}...`;
+  return summary.length <= 80 ? summary : `${summary.slice(0, 77)}...`;
 }
 
 // ---------------------------------------------------------------------------
