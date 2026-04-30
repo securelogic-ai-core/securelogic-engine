@@ -131,6 +131,65 @@ export type IssuesResponse = {
   issues: NewsletterIssue[];
 };
 
+// =========================================================
+// INTELLIGENCE BRIEF TYPES
+// =========================================================
+
+export type IntelligenceBriefStatus = "draft" | "generating" | "published" | "failed";
+
+export type IntelligenceBriefCategory =
+  | "vulnerability"
+  | "threat_actor"
+  | "vendor_incident"
+  | "regulatory"
+  | "general";
+
+export type IntelligenceBriefRelevance = "high" | "medium" | "low";
+
+/** List-shape brief — metadata only (no content_json, no items). */
+export type IntelligenceBrief = {
+  id: string;
+  period_start: string;
+  period_end: string;
+  status: IntelligenceBriefStatus;
+  signal_count: number;
+  item_count: number;
+  generated_at: string | null;
+  published_at: string | null;
+  created_at: string;
+};
+
+export type IntelligenceBriefItem = {
+  id: string;
+  category: IntelligenceBriefCategory | string;
+  relevance: IntelligenceBriefRelevance | string;
+  title: string;
+  summary: string;
+  affected_cve: string | null;
+  affected_vendor: string | null;
+  source_slug: string | null;
+  signal_type: string | null;
+  severity: string | null;
+  cyber_signal_id: string | null;
+  ingestion_timestamp: string | null;
+  sort_order: number;
+  why_it_matters: string | null;
+  recommended_actions: string | null;
+  analyst_notes: string | null;
+};
+
+export type IntelligenceBriefListResponse = {
+  briefs: IntelligenceBrief[];
+  next_cursor: { cursor_period_end: string; cursor_id: string } | null;
+};
+
+/** Detail-shape brief — full content_json/markdown plus embedded items. */
+export type IntelligenceBriefDetailResponse = IntelligenceBrief & {
+  content_json: Record<string, unknown> | null;
+  content_markdown: string;
+  items: IntelligenceBriefItem[];
+};
+
 export type PostureSnapshot = {
   id: string;
   snapshot_date: string;
@@ -869,6 +928,38 @@ export async function getIssue(
     if (!res.ok) return null;
     const body = (await res.json()) as { issue: NewsletterIssue };
     return body.issue ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch the most recent intelligence brief for the org with all items embedded.
+ *
+ * Two-step: GET /api/intelligence-briefs?limit=1 to find the latest brief id,
+ * then GET /api/intelligence-briefs/{id} for the full payload (the list
+ * endpoint is metadata-only — items only come back via the detail route).
+ *
+ * Returns null when no briefs exist or any request fails.
+ */
+export async function getLatestBrief(
+  apiKey: string
+): Promise<IntelligenceBriefDetailResponse | null> {
+  try {
+    const listRes = await engineFetch("/api/intelligence-briefs?limit=1", apiKey);
+    if (!listRes.ok) return null;
+
+    const list = (await listRes.json()) as IntelligenceBriefListResponse;
+    const latest = list.briefs?.[0];
+    if (!latest) return null;
+
+    const detailRes = await engineFetch(
+      `/api/intelligence-briefs/${latest.id}`,
+      apiKey
+    );
+    if (!detailRes.ok) return null;
+
+    return (await detailRes.json()) as IntelligenceBriefDetailResponse;
   } catch {
     return null;
   }
