@@ -1,5 +1,5 @@
 /**
- * briefScheduler.ts — Weekly Intelligence Brief pipeline runner.
+ * briefScheduler.ts — Daily Intelligence Brief pipeline runner.
  *
  * Processes every organization that has at least one active Intelligence Brief
  * subscriber, running the complete pipeline for each:
@@ -357,11 +357,11 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 /**
- * Run the full weekly Intelligence Brief pipeline for every org with active
+ * Run the full daily Intelligence Brief pipeline for every org with active
  * subscribers.
  *
  * Called by:
- *   - schedulerRunner.ts (node-cron, every Monday 7AM UTC)
+ *   - schedulerRunner.ts (node-cron, every day 7AM UTC)
  *   - POST /api/admin/briefs/run-scheduler (manual trigger for testing)
  *
  * @returns  Run summary with per-source signal counts, org counts, email counts.
