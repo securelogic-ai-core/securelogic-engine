@@ -223,6 +223,13 @@ services:
       - key: OPENAI_API_KEY
         sync: false
 
+      # Anthropic API key — required for LLM signal enrichment in the
+      # intelligence brief generator (src/api/lib/intelligenceBriefGenerator.ts).
+      # Without this, every brief item falls back to generic template content
+      # via fallbackWhyItMatters() and fallbackRecommendedActions().
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
   # =========================================================
   # INTELLIGENCE WORKER (background)
   # Long-running process — runs the signal pipeline every hour.
