@@ -36,6 +36,7 @@ import { personalizeBriefItems } from "../lib/briefPersonalizationService.js";
 import { sendBrief } from "../lib/briefEmailSender.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { encryptField, decryptField } from "../lib/fieldEncryption.js";
+import { enrichBriefSynthesis } from "../lib/briefSynthesizer.js";
 
 /**
  * Decrypt and parse content_json from the DB.
@@ -697,6 +698,120 @@ router.post("/intelligence-briefs/:id/send", requireEntitlement("standard"), asy
     return res.status(500).json({ error: "internal_error" });
   }
 });
+
+// ---------------------------------------------------------------------------
+// POST /api/intelligence-briefs/:id/synthesis-preview
+// Re-runs brief-level synthesis on an existing brief's items and returns
+// the synthesis JSON without persisting. Prototype endpoint for iterating
+// on synthesis prompt quality before wiring synthesis into generateBrief().
+// ---------------------------------------------------------------------------
+
+router.post(
+  "/intelligence-briefs/:id/synthesis-preview",
+  requireEntitlement("standard"),
+  async (req, res) => {
+    const orgId = (req as any).organizationContext?.organizationId as string;
+    const { id } = req.params as { id: string };
+
+    if (!UUID_RE.test(id)) {
+      return res.status(400).json({ error: "invalid_brief_id" });
+    }
+
+    try {
+      const briefResult = await pg.query<{
+        id: string;
+        period_start: string;
+        period_end: string;
+      }>(
+        `SELECT id, period_start, period_end
+         FROM intelligence_briefs
+         WHERE id = $1 AND organization_id = $2`,
+        [id, orgId]
+      );
+
+      if (briefResult.rows.length === 0) {
+        return res.status(404).json({ error: "brief_not_found" });
+      }
+
+      const brief = briefResult.rows[0]!;
+
+      const itemsResult = await pg.query<{
+        cyber_signal_id: string | null;
+        category: string;
+        relevance: string;
+        title: string;
+        summary: string;
+        affected_cve: string | null;
+        affected_vendor: string | null;
+        source_slug: string | null;
+        signal_type: string | null;
+        severity: string | null;
+        ingestion_timestamp: string | null;
+        sort_order: string;
+        why_it_matters: string | null;
+        recommended_actions: string | null;
+        analyst_notes: string | null;
+      }>(
+        `SELECT cyber_signal_id, category, relevance, title, summary,
+                affected_cve, affected_vendor, source_slug, signal_type,
+                severity, ingestion_timestamp, sort_order,
+                why_it_matters, recommended_actions, analyst_notes
+         FROM intelligence_brief_items
+         WHERE brief_id = $1 AND organization_id = $2
+         ORDER BY sort_order ASC`,
+        [id, orgId]
+      );
+
+      if (itemsResult.rows.length === 0) {
+        return res.status(409).json({
+          error: "brief_has_no_items",
+          message: "Cannot synthesize a brief with zero items"
+        });
+      }
+
+      const items: BriefItem[] = itemsResult.rows.map((r) => ({
+        cyber_signal_id: r.cyber_signal_id ?? "",
+        category: r.category as BriefItem["category"],
+        relevance: r.relevance as BriefItem["relevance"],
+        title: r.title,
+        summary: r.summary,
+        affected_cve: r.affected_cve,
+        affected_vendor: r.affected_vendor,
+        source_slug: r.source_slug ?? "",
+        signal_type: r.signal_type ?? "",
+        severity: r.severity ?? "Low",
+        ingestion_timestamp: r.ingestion_timestamp ?? "",
+        sort_order: parseInt(r.sort_order, 10),
+        analysis: null,
+        why_it_matters: r.why_it_matters,
+        recommended_actions: r.recommended_actions,
+        analyst_notes: r.analyst_notes
+      }));
+
+      const activeCategories = Array.from(new Set(items.map((it) => it.category)));
+
+      const synthesis = await enrichBriefSynthesis(
+        items,
+        brief.period_start,
+        brief.period_end,
+        activeCategories
+      );
+
+      return res.status(200).json(synthesis);
+    } catch (err) {
+      logger.error(
+        { event: "synthesis_preview_failed", orgId, briefId: id, err },
+        "POST /api/intelligence-briefs/:id/synthesis-preview failed"
+      );
+      const isProd = process.env.NODE_ENV === "production";
+      const detail = err instanceof Error ? err.message : String(err);
+      return res.status(500).json({
+        error: "internal_error",
+        ...(isProd ? {} : { detail })
+      });
+    }
+  }
+);
 
 // ---------------------------------------------------------------------------
 // GET /api/intelligence-briefs
