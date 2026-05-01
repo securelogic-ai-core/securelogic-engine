@@ -1,9 +1,11 @@
 /**
- * regulatoryFeedAdapter.test.ts — Unit tests for regulatory feed adapter.
+ * regulatoryHelpers.test.ts — Unit tests for regulatory mapping helpers.
+ *
+ * Relocated from regulatoryFeedAdapter.test.ts. Assertions are byte-identical
+ * to the legacy file; the helper functions themselves were moved without
+ * code changes, so unchanged tests + unchanged code = unchanged behavior.
  *
  * All tests are pure — no I/O, no network, no DB.
- * Tests cover: relevance filtering (irrelevant items skipped), severity
- * derivation, summary building, and the full mapRegulatoryItemToSignal pipeline.
  */
 
 import { describe, it, expect } from "vitest";
@@ -14,7 +16,7 @@ import {
   mapRegulatoryItemToSignal,
   RELEVANCE_KEYWORDS,
   type RegulatoryFeedItem
-} from "../lib/regulatoryFeedAdapter.js";
+} from "../../lib/feedAdapter/regulatoryHelpers.js";
 
 // ---------------------------------------------------------------------------
 // isRegulatoryItemRelevant
