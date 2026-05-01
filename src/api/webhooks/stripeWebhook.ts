@@ -288,80 +288,114 @@ function tierToDbLevel(tier: string): string {
 }
 
 /**
- * Best-effort sync of entitlement level (and optionally stripe_customer_id)
- * to the Postgres api_keys table. Errors are logged but never thrown.
+ * Resolve the SecureLogic organization_id for a Stripe event.
  *
- * The two updates (api_keys.entitlement_level + organizations.plan) must
- * stay in lock-step: if the second fails after the first succeeds, the
- * dashboard will show divergent state (key upgraded, org still starter).
- * They run in a single transaction so either both land or neither does.
+ * Two paths, tried in order:
+ *  1. Customer-id lookup against organizations.stripe_customer_id — the
+ *     durable path. Survives api_key rotation: every webhook event for a
+ *     given customer always lands on the same org row.
+ *  2. api_key_id lookup, used only when path 1 misses. This is the
+ *     first-checkout case: the customer was just created, the metadata
+ *     carries the api_key_id from billing.ts, but organizations.stripe_customer_id
+ *     hasn't been backfilled yet (the webhook write itself is the backfill).
  *
- * stripe_customer_id is written here as a belt-and-suspenders fallback.
- * The primary write happens at checkout creation time in billing.ts so
- * portal access never depends on webhook delivery. This write uses
- * ON CONFLICT DO NOTHING semantics via COALESCE to avoid overwriting
- * an already-stored customer ID.
+ * Returns null when both paths miss; the caller logs and ignores the event.
  */
-async function syncToDb(
-  apiKeyId: string,
+async function resolveOrgIdForEvent(
+  customerId: string | null,
+  apiKeyId: string | null
+): Promise<{ orgId: string | null; resolvedBy: "stripe_customer_id" | "api_key_id" | "none" }> {
+  if (customerId) {
+    const result = await pg.query<{ id: string }>(
+      `SELECT id FROM organizations WHERE stripe_customer_id = $1 LIMIT 1`,
+      [customerId]
+    );
+    if (result.rows[0]?.id) {
+      return { orgId: result.rows[0].id, resolvedBy: "stripe_customer_id" };
+    }
+  }
+
+  if (apiKeyId) {
+    const result = await pg.query<{ organization_id: string }>(
+      `SELECT organization_id FROM api_keys WHERE id = $1 LIMIT 1`,
+      [apiKeyId]
+    );
+    if (result.rows[0]?.organization_id) {
+      return { orgId: result.rows[0].organization_id, resolvedBy: "api_key_id" };
+    }
+  }
+
+  return { orgId: null, resolvedBy: "none" };
+}
+
+/**
+ * Sync entitlement state to the organizations row. Errors are logged but
+ * never thrown — the webhook must always return 200 to Stripe.
+ *
+ * organizations.entitlement_level is the source of truth for entitlement.
+ * organizations.plan is kept in lock-step (same value) to support legacy
+ * reads (e.g. /api/me); both columns should be retired into one in a
+ * follow-up cleanup PR.
+ *
+ * Subscription identifiers (stripe_subscription_id, stripe_subscription_tier)
+ * are stored to support the stale-revoke guard in the main handler: a
+ * customer.subscription.deleted event whose sub.id no longer matches the
+ * org's current sub.id is a superseded subscription and must not downgrade.
+ */
+async function syncOrgEntitlement(
+  orgId: string,
   entitlement: EntitlementRecord,
   customerId: string | null,
-  rawSubscriptionTier: string | null
+  subscriptionId: string | null,
+  rawSubscriptionTier: string | null,
+  subscriptionStatus: string | null,
+  apiKeyId: string | null
 ): Promise<void> {
   const level = tierToDbLevel(entitlement.tier);
 
-  // organizations.plan uses the same vocabulary as entitlement_level for paid tiers.
-  // starter is the floor for downgrades; standard is not written by billing.
-  const orgPlan =
-    level === "professional" ? "professional" :
-    level === "premium"      ? "premium"      : "starter";
-
-  // On a successful grant, also clear any stale payment_failed_at stamp.
+  // On a successful grant, clear any stale payment_failed_at stamp.
   const clearPaymentFailed = entitlement.activeSubscription;
 
   const client = await pg.connect();
   try {
     await client.query("BEGIN");
 
-    const keyResult = await client.query(
-      `
-      UPDATE api_keys
-      SET
-        entitlement_level        = $1,
-        stripe_customer_id       = COALESCE(stripe_customer_id, $3),
-        stripe_subscription_tier = COALESCE($4, stripe_subscription_tier),
-        payment_failed_at        = CASE WHEN $5 THEN NULL ELSE payment_failed_at END
-      WHERE id = $2
-      `,
-      [level, apiKeyId, customerId, rawSubscriptionTier, clearPaymentFailed]
-    );
-
-    await client.query(
+    const updateResult = await client.query(
       `
       UPDATE organizations
-      SET plan = $1
-      WHERE id = (SELECT organization_id FROM api_keys WHERE id = $2 LIMIT 1)
+         SET entitlement_level          = $1,
+             plan                       = $1,
+             stripe_customer_id         = COALESCE(stripe_customer_id, $3),
+             stripe_subscription_id     = COALESCE($4, stripe_subscription_id),
+             stripe_subscription_tier   = COALESCE($5, stripe_subscription_tier),
+             stripe_subscription_status = COALESCE($6, stripe_subscription_status),
+             payment_failed_at          = CASE WHEN $7 THEN NULL ELSE payment_failed_at END
+       WHERE id = $2
       `,
-      [orgPlan, apiKeyId]
+      [
+        level,
+        orgId,
+        customerId,
+        subscriptionId,
+        rawSubscriptionTier,
+        subscriptionStatus,
+        clearPaymentFailed,
+      ]
     );
 
     await client.query("COMMIT");
 
-    const rows = keyResult.rowCount ?? 0;
+    const rows = updateResult.rowCount ?? 0;
 
     if (rows === 0) {
       logger.warn(
-        { event: "stripe_webhook_db_sync_no_match", apiKeyId, level },
-        "stripeWebhook: api_keys row not found — DB entitlement not updated"
+        { event: "stripe_webhook_db_sync_no_match", orgId, apiKeyId, level },
+        "stripeWebhook: organizations row not found — entitlement not updated"
       );
     } else {
       logger.info(
-        { event: "stripe_webhook_db_sync_ok", apiKeyId, level, customerId },
-        "stripeWebhook: api_keys.entitlement_level updated"
-      );
-      logger.info(
-        { event: "stripe_webhook_org_plan_synced", apiKeyId, orgPlan },
-        "stripeWebhook: organizations.plan synced"
+        { event: "stripe_webhook_db_sync_ok", orgId, apiKeyId, level, customerId },
+        "stripeWebhook: organizations.entitlement_level updated"
       );
     }
 
@@ -378,8 +412,7 @@ async function syncToDb(
                  NULLIF(u.name, ''),
                  TRUE
           FROM users u
-          JOIN api_keys k ON k.organization_id = u.organization_id
-          WHERE k.id = $1
+          WHERE u.organization_id = $1
             AND NOT EXISTS (
               SELECT 1 FROM intelligence_brief_subscribers ibs
               WHERE ibs.organization_id = u.organization_id
@@ -393,18 +426,18 @@ async function syncToDb(
                 updated_at      = NOW()
           RETURNING id
           `,
-          [apiKeyId]
+          [orgId]
         );
 
         if ((subscribeResult.rowCount ?? 0) > 0) {
           logger.info(
-            { event: "stripe_webhook_brief_auto_subscribed", apiKeyId, level },
+            { event: "stripe_webhook_brief_auto_subscribed", orgId, level },
             "stripeWebhook: auto-subscribed org primary user to Intelligence Brief"
           );
         }
       } catch (subscribeErr) {
         logger.error(
-          { event: "stripe_webhook_brief_auto_subscribe_failed", apiKeyId, err: subscribeErr },
+          { event: "stripe_webhook_brief_auto_subscribe_failed", orgId, err: subscribeErr },
           "stripeWebhook: failed to auto-subscribe org to Intelligence Brief (non-fatal)"
         );
       }
@@ -566,10 +599,11 @@ async function cancelPriorBriefSubscriptions(
 }
 
 /**
- * Handles invoice.payment_failed: stamps payment_failed_at on the api_key row
- * so the billing UI can surface a dunning state. Does NOT revoke access — Stripe
- * will send customer.subscription.updated (past_due) and eventually
- * customer.subscription.deleted after its retry cycle, which will revoke.
+ * Handles invoice.payment_failed: stamps payment_failed_at on the
+ * organizations row so the billing UI can surface a dunning state. Does
+ * NOT revoke access — Stripe will send customer.subscription.updated
+ * (past_due) and eventually customer.subscription.deleted after its retry
+ * cycle, which will revoke.
  */
 async function handlePaymentFailed(event: Stripe.Event): Promise<void> {
   const obj = event.data.object as any;
@@ -586,7 +620,7 @@ async function handlePaymentFailed(event: Stripe.Event): Promise<void> {
   try {
     const result = await pg.query(
       `
-      UPDATE api_keys
+      UPDATE organizations
       SET payment_failed_at = NOW()
       WHERE stripe_customer_id = $1
       `,
@@ -712,39 +746,63 @@ export async function stripeWebhook(
       return;
     }
 
-    // Extract customer ID and raw tier for DB sync
+    // Extract customer ID, sub ID, raw tier, and status for DB sync
     const customerId = extractCustomerId(event);
     const rawSubscriptionTier = extractRawSubscriptionTier(event);
+    const subscriptionId = subscription?.id ?? null;
+    const subscriptionStatus = subscription?.status ?? null;
 
-    // Stale-revoke guard: when upgrading tiers, Stripe cancels the old
-    // subscription after creating the new one. The resulting delete event
-    // would otherwise downgrade entitlement_level back to 'starter' even
-    // though the user is now on a higher-paying subscription. If the row's
-    // current stripe_subscription_tier is paid AND differs from the
-    // canceled subscription's tier, treat this revoke as superseded.
-    if (entitlement.tier === "free") {
-      const { rows } = await pg.query<{ stripe_subscription_tier: string | null }>(
-        `SELECT stripe_subscription_tier FROM api_keys WHERE id = $1 LIMIT 1`,
-        [apiKeyId]
+    // Resolve org. Primary path: organizations.stripe_customer_id. Fallback:
+    // api_keys.id → organization_id (used for first-checkout events where
+    // the customer hasn't been backfilled onto the org yet).
+    const { orgId, resolvedBy } = await resolveOrgIdForEvent(customerId, apiKeyId);
+
+    if (!orgId) {
+      logger.warn(
+        {
+          event: "stripe_webhook_org_not_resolved",
+          stripeEventType: eventType,
+          customerId,
+          apiKeyId
+        },
+        "stripeWebhook: could not resolve organization_id from event — ignoring"
       );
-      const currentTier = rows[0]?.stripe_subscription_tier ?? null;
-      const PAID_TIERS = new Set(["professional", "teams", "platform", "platform_annual", "team"]);
+      respond({ received: true, ignored: true, reason: "org_not_resolved" });
+      return;
+    }
 
-      if (
-        currentTier &&
-        PAID_TIERS.has(currentTier) &&
-        rawSubscriptionTier &&
-        rawSubscriptionTier !== currentTier
-      ) {
+    logger.info(
+      { event: "stripe_webhook_org_resolved", orgId, resolvedBy, apiKeyId, customerId },
+      "stripeWebhook: resolved organization for event"
+    );
+
+    // Stale-revoke guard. Only applies to customer.subscription.deleted: when
+    // upgrading tiers, Stripe cancels the old subscription after creating the
+    // new one, and the resulting delete event would otherwise downgrade
+    // entitlement back to 'starter'. If the deleted sub.id no longer matches
+    // the org's current stripe_subscription_id, the cancellation is for a
+    // superseded subscription and must be ignored.
+    //
+    // The guard only fires on .deleted events. customer.subscription.updated
+    // events that legitimately change sub state (past_due, canceled status
+    // on the live sub) flow through normally.
+    if (eventType === "customer.subscription.deleted" && subscriptionId) {
+      const { rows } = await pg.query<{ stripe_subscription_id: string | null }>(
+        `SELECT stripe_subscription_id FROM organizations WHERE id = $1 LIMIT 1`,
+        [orgId]
+      );
+      const currentSubId = rows[0]?.stripe_subscription_id ?? null;
+
+      if (currentSubId && currentSubId !== subscriptionId) {
         logger.info(
           {
             event: "stripe_webhook_revoke_skipped_stale",
             stripeEventType: eventType,
-            apiKeyId,
-            currentTier,
-            canceledTier: rawSubscriptionTier
+            orgId,
+            currentSubId,
+            canceledSubId: subscriptionId
           },
-          "stripeWebhook: skipping revoke — canceled tier differs from active tier (superseded subscription)"
+          "stripeWebhook: skipping revoke — canceled sub.id differs from current (superseded subscription)"
         );
         respond({ received: true, ignored: true, reason: "superseded" });
         return;
@@ -753,7 +811,15 @@ export async function stripeWebhook(
 
     // Write to Redis (supplementary cache) then sync to Postgres (primary)
     await setEntitlementInRedis(apiKeyId, entitlement);
-    await syncToDb(apiKeyId, entitlement, customerId, rawSubscriptionTier);
+    await syncOrgEntitlement(
+      orgId,
+      entitlement,
+      customerId,
+      subscriptionId,
+      rawSubscriptionTier,
+      subscriptionStatus,
+      apiKeyId
+    );
 
     // Platform upgrade: cancel any prior Brief subscriptions on the same
     // customer so they don't pay twice. Only fires for checkout.session.completed
@@ -787,6 +853,7 @@ export async function stripeWebhook(
       {
         event: "stripe_webhook_entitlement_written",
         stripeEventType: eventType,
+        orgId,
         apiKeyId,
         redisTier: entitlement.tier,
         dbLevel: tierToDbLevel(entitlement.tier)

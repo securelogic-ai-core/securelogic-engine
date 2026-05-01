@@ -12,23 +12,28 @@ const router = Router();
    ========================================================= */
 
 /**
- * Returns the Stripe customer ID for the given api_keys row.
+ * Returns the Stripe customer ID for the given organization.
  *
- * If one already exists in our DB, returns it immediately (idempotent —
- * prevents duplicate customers when checkout is called more than once).
+ * If one already exists on the organizations row, returns it immediately
+ * (idempotent — prevents duplicate customers when checkout is called more
+ * than once).
  *
- * Otherwise creates a new Stripe Customer, persists the ID, and returns it.
- * Storing the ID before checkout completes means the portal endpoint never
- * depends on webhook delivery timing.
+ * Otherwise creates a new Stripe Customer, persists the ID on the org, and
+ * returns it. Storing the ID before checkout completes means the portal
+ * endpoint never depends on webhook delivery timing.
+ *
+ * The created Stripe customer carries both organization_id (durable) and
+ * api_key_id (legacy compatibility for in-flight webhook events) in its
+ * metadata.
  */
 async function resolveStripeCustomer(
-  apiKeyId: string,
-  apiKeyLabel: string | null
+  organizationId: string,
+  description: string | null,
+  apiKeyId: string | null
 ): Promise<string> {
-  // Check whether we already have a customer for this key
   const existing = await pg.query(
-    `SELECT stripe_customer_id FROM api_keys WHERE id = $1 LIMIT 1`,
-    [apiKeyId]
+    `SELECT stripe_customer_id FROM organizations WHERE id = $1 LIMIT 1`,
+    [organizationId]
   );
 
   const existingCustomerId = existing.rows[0]?.stripe_customer_id as string | null;
@@ -37,20 +42,22 @@ async function resolveStripeCustomer(
     return existingCustomerId;
   }
 
-  // Create a new Stripe Customer and store it immediately
   const customer = await getStripe().customers.create({
-    description: apiKeyLabel ?? `api_key:${apiKeyId}`,
-    metadata: { api_key_id: apiKeyId }
+    description: description ?? `org:${organizationId}`,
+    metadata: {
+      organization_id: organizationId,
+      ...(apiKeyId ? { api_key_id: apiKeyId } : {}),
+    },
   });
 
   await pg.query(
-    `UPDATE api_keys SET stripe_customer_id = $1 WHERE id = $2`,
-    [customer.id, apiKeyId]
+    `UPDATE organizations SET stripe_customer_id = $1 WHERE id = $2`,
+    [customer.id, organizationId]
   );
 
   logger.info(
-    { event: "stripe_customer_created", apiKeyId, customerId: customer.id },
-    "Stripe customer created and stored"
+    { event: "stripe_customer_created", organizationId, customerId: customer.id },
+    "Stripe customer created and stored on organization"
   );
 
   return customer.id;
@@ -103,7 +110,7 @@ function resolvePriceId(tier: string): string {
    regardless of webhook delivery timing.
    ========================================================= */
 
-router.post("/billing/checkout", requireApiKey, async (req, res) => {
+router.post("/billing/checkout", requireApiKey, attachOrganizationContext, async (req, res) => {
   try {
     const tierRaw = typeof req.body?.tier === "string" ? req.body.tier.trim().toLowerCase() : null;
 
@@ -140,25 +147,30 @@ router.post("/billing/checkout", requireApiKey, async (req, res) => {
     const apiKey = (req as any).apiKey as Record<string, unknown>;
     const apiKeyId = typeof apiKey.id === "string" ? apiKey.id : null;
     const apiKeyLabel = typeof apiKey.label === "string" ? apiKey.label : null;
+    const orgId = (req as any).organizationContext?.organizationId as string | null;
 
-    if (!apiKeyId) {
+    if (!apiKeyId || !orgId) {
       res.status(400).json({ error: "api_key_identity_missing" });
       return;
     }
 
-    // Resolve (or create) a Stripe Customer before creating the session.
-    // This stores stripe_customer_id in our DB immediately — portal access
+    // Resolve (or create) a Stripe Customer for the organization. Storing
+    // stripe_customer_id on the org row immediately means portal access
     // does not depend on webhook timing.
-    const customerId = await resolveStripeCustomer(apiKeyId, apiKeyLabel);
+    const customerId = await resolveStripeCustomer(orgId, apiKeyLabel, apiKeyId);
 
     const session = await getStripe().checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
       line_items: [{ price: priceId, quantity: 1 }],
-      // tier + api_key_id flow into checkout.session.completed
-      metadata: { api_key_id: apiKeyId, tier },
-      // tier + api_key_id flow into all subscription lifecycle events
-      subscription_data: { metadata: { api_key_id: apiKeyId, tier } },
+      // organization_id + tier flow into checkout.session.completed.
+      // api_key_id is preserved for backward compatibility with in-flight
+      // webhook events from prior subs.
+      metadata: { organization_id: orgId, api_key_id: apiKeyId, tier },
+      // Same metadata propagated to all subscription lifecycle events.
+      subscription_data: {
+        metadata: { organization_id: orgId, api_key_id: apiKeyId, tier },
+      },
       success_url: successUrl,
       cancel_url: cancelUrl
     });
@@ -197,7 +209,7 @@ router.post("/billing/checkout", requireApiKey, async (req, res) => {
    the key — set at checkout creation time, not at webhook time.
    ========================================================= */
 
-router.post("/billing/portal", requireApiKey, async (req, res) => {
+router.post("/billing/portal", requireApiKey, attachOrganizationContext, async (req, res) => {
   try {
     const returnUrl = process.env.STRIPE_PORTAL_RETURN_URL?.trim();
 
@@ -213,37 +225,32 @@ router.post("/billing/portal", requireApiKey, async (req, res) => {
     const apiKey = (req as any).apiKey as Record<string, unknown>;
     const apiKeyId = typeof apiKey.id === "string" ? apiKey.id : null;
     const apiKeyLabel = typeof apiKey.label === "string" ? apiKey.label : null;
+    const ctx = (req as any).organizationContext as
+      | { organizationId: string | null; entitlementLevel: string | null; stripeCustomerId: string | null }
+      | undefined;
+    const orgId = ctx?.organizationId ?? null;
 
-    if (!apiKeyId) {
+    if (!apiKeyId || !orgId) {
       res.status(400).json({ error: "api_key_identity_missing" });
       return;
     }
 
-    const result = await pg.query<{
-      stripe_customer_id: string | null;
-      entitlement_level:  string | null;
-    }>(
-      `SELECT stripe_customer_id, entitlement_level FROM api_keys WHERE id = $1 LIMIT 1`,
-      [apiKeyId]
-    );
-
-    const row = result.rows[0];
-    let customerId = row?.stripe_customer_id ?? null;
+    let customerId = ctx?.stripeCustomerId ?? null;
 
     if (!customerId) {
-      // Auto-provision a Stripe customer for admins whose entitlement was
+      // Auto-provision a Stripe customer for orgs whose entitlement was
       // granted outside of checkout (manual grant, seed, migration).
       // resolveStripeCustomer re-reads the row and returns any existing ID
       // before creating a new one, so this stays idempotent under retries.
       try {
-        customerId = await resolveStripeCustomer(apiKeyId, apiKeyLabel);
+        customerId = await resolveStripeCustomer(orgId, apiKeyLabel, apiKeyId);
         logger.info(
-          { event: "billing_portal_customer_autoprovisioned", apiKeyId, customerId },
-          "POST /api/billing/portal: auto-provisioned Stripe customer for admin with no prior checkout"
+          { event: "billing_portal_customer_autoprovisioned", orgId, customerId },
+          "POST /api/billing/portal: auto-provisioned Stripe customer for org with no prior checkout"
         );
       } catch (err) {
         logger.error(
-          { event: "billing_portal_customer_provision_failed", apiKeyId, err },
+          { event: "billing_portal_customer_provision_failed", orgId, err },
           "POST /api/billing/portal: failed to auto-provision Stripe customer"
         );
         res.status(503).json({ error: "billing_not_configured" });
@@ -273,7 +280,7 @@ router.post("/billing/portal", requireApiKey, async (req, res) => {
     // Append the pre-portal entitlement so /billing-return can detect changes
     // on the very first poll without burning an attempt establishing baseline.
     const returnUrlWithFrom =
-      returnUrl + "?from=" + encodeURIComponent(row?.entitlement_level ?? "free");
+      returnUrl + "?from=" + encodeURIComponent(ctx?.entitlementLevel ?? "free");
 
     const portalSession = await getStripe().billingPortal.sessions.create({
       customer: customerId,
@@ -308,33 +315,40 @@ router.post("/billing/portal", requireApiKey, async (req, res) => {
 
 router.get("/billing/subscription", requireApiKey, attachOrganizationContext, async (req, res) => {
   try {
-    const apiKey = (req as any).apiKey as Record<string, unknown>;
-    const apiKeyId = typeof apiKey.id === "string" ? apiKey.id : null;
+    const orgId = (req as any).organizationContext?.organizationId as string | null;
 
-    if (!apiKeyId) {
+    if (!orgId) {
       res.status(400).json({ error: "api_key_identity_missing" });
       return;
     }
 
     const result = await pg.query<{
-      entitlement_level:        string;
-      stripe_customer_id:       string | null;
-      payment_failed_at:        string | null;
-      stripe_subscription_tier: string | null;
+      entitlement_level:           string;
+      stripe_customer_id:          string | null;
+      payment_failed_at:           string | null;
+      stripe_subscription_tier:    string | null;
+      stripe_subscription_status:  string | null;
     }>(
       `SELECT entitlement_level, stripe_customer_id,
-              payment_failed_at, stripe_subscription_tier
-       FROM api_keys WHERE id = $1 LIMIT 1`,
-      [apiKeyId]
+              payment_failed_at, stripe_subscription_tier,
+              stripe_subscription_status
+         FROM organizations WHERE id = $1 LIMIT 1`,
+      [orgId]
     );
 
     if (result.rows.length === 0) {
-      res.status(404).json({ error: "api_key_not_found" });
+      res.status(404).json({ error: "organization_not_found" });
       return;
     }
 
     const row = result.rows[0]!;
-    const { entitlement_level, stripe_customer_id, payment_failed_at, stripe_subscription_tier } = row;
+    const {
+      entitlement_level,
+      stripe_customer_id,
+      payment_failed_at,
+      stripe_subscription_tier,
+      stripe_subscription_status,
+    } = row;
 
     // Derive a human-readable tier label from entitlement_level
     const tier =
@@ -386,15 +400,25 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
       }
     } catch (err) {
       // Stripe unavailable — fall back to DB-derived status so the endpoint
-      // always returns a useful response rather than a 500.
+      // always returns a useful response rather than a 500. Prefer the cached
+      // stripe_subscription_status (written by webhook); if it's NULL on
+      // legacy rows, infer from entitlement_level.
       logger.warn(
-        { event: "billing_subscription_stripe_fallback", apiKeyId, err },
+        { event: "billing_subscription_stripe_fallback", orgId, err },
         "GET /api/billing/subscription: Stripe API call failed, using DB state"
       );
 
-      status = (entitlement_level === "professional" || entitlement_level === "premium")
-        ? "active"
-        : "none";
+      if (stripe_subscription_status === "active" || stripe_subscription_status === "trialing") {
+        status = "active";
+      } else if (stripe_subscription_status === "past_due") {
+        status = "past_due";
+      } else if (stripe_subscription_status === "canceled" || stripe_subscription_status === "unpaid") {
+        status = "canceled";
+      } else {
+        status = (entitlement_level === "professional" || entitlement_level === "premium")
+          ? "active"
+          : "none";
+      }
     }
 
     res.status(200).json({

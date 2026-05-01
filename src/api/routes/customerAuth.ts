@@ -325,8 +325,8 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
       orgId = orgResult.rows[0].id as string;
 
       await client.query(
-        `INSERT INTO api_keys (organization_id, label, key_hash, entitlement_level, status)
-         VALUES ($1, $2, $3, 'starter', 'active')`,
+        `INSERT INTO api_keys (organization_id, label, key_hash, status)
+         VALUES ($1, $2, $3, 'active')`,
         [orgId, email, keyHash]
       );
 
@@ -675,14 +675,10 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
       entitlement_level: string;
       onboarding_completed_at: string | null;
     }>(
-      `SELECT o.name,
-              COALESCE(k.entitlement_level, o.entitlement_level, 'starter') AS entitlement_level,
-              o.onboarding_completed_at
-       FROM organizations o
-       LEFT JOIN api_keys k ON k.organization_id = o.id AND k.status = 'active'
-       WHERE o.id = $1
-       ORDER BY k.created_at ASC
-       LIMIT 1`,
+      `SELECT name, entitlement_level, onboarding_completed_at
+         FROM organizations
+        WHERE id = $1
+        LIMIT 1`,
       [user.organization_id]
     );
 
@@ -992,15 +988,10 @@ router.get("/auth/me", requireAuth, async (req, res) => {
         payment_failed_at: string | null;
         onboarding_completed_at: string | null;
       }>(
-        `SELECT o.name,
-                COALESCE(k.entitlement_level, o.entitlement_level, 'starter') AS entitlement_level,
-                k.payment_failed_at,
-                o.onboarding_completed_at
-         FROM organizations o
-         LEFT JOIN api_keys k ON k.organization_id = o.id AND k.status = 'active'
-         WHERE o.id = $1
-         ORDER BY k.created_at ASC
-         LIMIT 1`,
+        `SELECT name, entitlement_level, payment_failed_at, onboarding_completed_at
+           FROM organizations
+          WHERE id = $1
+          LIMIT 1`,
         [orgId]
       ),
       pg.query<{ id: string }>(

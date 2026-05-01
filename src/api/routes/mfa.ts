@@ -69,13 +69,10 @@ async function buildFullLoginResponse(userId: string, orgId: string, role: strin
       [userId]
     ),
     pg.query<{ name: string; entitlement_level: string; onboarding_completed_at: string | null }>(
-      `SELECT o.name,
-              COALESCE(k.entitlement_level, 'starter') AS entitlement_level,
-              o.onboarding_completed_at
-       FROM organizations o
-       LEFT JOIN api_keys k ON k.organization_id = o.id AND k.status = 'active'
-       WHERE o.id = $1
-       ORDER BY k.created_at ASC LIMIT 1`,
+      `SELECT name, entitlement_level, onboarding_completed_at
+         FROM organizations
+        WHERE id = $1
+        LIMIT 1`,
       [orgId]
     )
   ]);
