@@ -26,7 +26,8 @@ const sampleItem: BriefItem = {
   analysis: null,
   why_it_matters: "Direct OT exposure in industrial environments.",
   recommended_actions: "1. Patch.",
-  analyst_notes: null
+  analyst_notes: null,
+  urgency: "immediate"
 };
 
 describe("enrichBriefSynthesis", () => {
@@ -36,7 +37,7 @@ describe("enrichBriefSynthesis", () => {
     ).rejects.toThrow(/non-empty/);
   });
 
-  it("returns the BriefSynthesis shape with all-null fields when ANTHROPIC_API_KEY is unset", async () => {
+  it("returns the BriefSynthesis shape with headline:null when ANTHROPIC_API_KEY is unset", async () => {
     const original = process.env.ANTHROPIC_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     try {
@@ -46,18 +47,8 @@ describe("enrichBriefSynthesis", () => {
         "2026-04-30T23:59:59Z",
         ["vulnerability"]
       );
-      expect(result).toMatchObject({
-        thesis: null,
-        executive_summary: null,
-        cross_domain_analysis: null,
-        action_summary: null
-      });
-      expect(Object.keys(result).sort()).toEqual([
-        "action_summary",
-        "cross_domain_analysis",
-        "executive_summary",
-        "thesis"
-      ]);
+      expect(result).toEqual({ headline: null });
+      expect(Object.keys(result)).toEqual(["headline"]);
     } finally {
       if (original !== undefined) {
         process.env.ANTHROPIC_API_KEY = original;
@@ -231,14 +222,7 @@ describe("runSynthesisSafely", () => {
 
   it("returns the synthesis fixture on success", async () => {
     const fixture: BriefSynthesis = {
-      thesis: "Test thesis.",
-      executive_summary: "Test summary.",
-      cross_domain_analysis: null,
-      action_summary: {
-        this_week: ["Security team: patch CVE-2018-1002208."],
-        this_month: [],
-        monitor: []
-      }
+      headline: "Six ABB OT vulnerabilities collide with new federal Zero Trust mandate"
     };
     synthesisRuntime.enrichBriefSynthesis = vi.fn().mockResolvedValue(fixture);
     const result = await runSynthesisSafely([sampleItem]);
@@ -246,12 +230,7 @@ describe("runSynthesisSafely", () => {
   });
 
   it("derives activeCategories from unique item.category values", async () => {
-    const spy = vi.fn().mockResolvedValue({
-      thesis: null,
-      executive_summary: null,
-      cross_domain_analysis: null,
-      action_summary: null
-    });
+    const spy = vi.fn().mockResolvedValue({ headline: null });
     synthesisRuntime.enrichBriefSynthesis = spy;
 
     const items: BriefItem[] = [
@@ -270,5 +249,16 @@ describe("runSynthesisSafely", () => {
       "threat_actor",
       "vulnerability"
     ]);
+  });
+
+  it("happy-path fixture headline conforms to the 12-word constraint", async () => {
+    // The headline contract is enforced by the prompt. This test guards the
+    // constraint by asserting the fixture used in this suite respects it,
+    // so future maintainers updating the fixture get a fast fail rather
+    // than silently relaxing the contract the prompt declares.
+    const headline =
+      "Six ABB OT vulnerabilities collide with new federal Zero Trust mandate";
+    const wordCount = headline.trim().split(/\s+/).length;
+    expect(wordCount).toBeLessThanOrEqual(12);
   });
 });

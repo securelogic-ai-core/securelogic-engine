@@ -1,21 +1,24 @@
 /**
- * briefSynthesizer.ts — Brief-level synthesis (top-of-brief intelligence).
+ * briefSynthesizer.ts — Brief-level synthesis (top-of-brief headline).
  *
- * Produces the executive front-page content the spec mandates: a 2-3
- * sentence editorial opening, a one-sentence thesis headline, optional
- * cross-domain pattern detection, and a structured action summary
- * (this week / this month / monitor).
+ * Produces a single 1-line headline that names the central pattern across
+ * the day's signals. Per-signal urgency, action, and context now live on
+ * each BriefItem (set by intelligenceBriefGenerator.enrichItemWithClaude),
+ * so the brief no longer needs an editorial layer above the items.
  *
  * Architecturally separate from intelligenceBriefGenerator.ts. The latter
- * runs item-level enrichment (one Claude call per item). This module runs
- * brief-level synthesis (4 Claude calls per brief, aggregating across all
- * items). Different scope, different prompts, different output shapes.
+ * runs item-level enrichment (one Claude call per item, per-item urgency
+ * classified there). This module runs brief-level synthesis (one Claude
+ * call total) to produce a 12-word headline.
  *
- * Prompts ported verbatim from the legacy worker
- * (services/intelligence-worker/src/pipeline/llmClient.ts) where they
- * were tuned against the spec's banned-phrases list and weak-vs-premium
- * examples in docs/intelligence-brief-spec.md. Do not modify the prompt
- * language casually — they're load-bearing.
+ * History — this module previously ran four Claude calls per brief
+ * (executive summary, thesis headline, cross-domain analysis, action
+ * summary). The customer rejected that magazine-shaped output; we
+ * collapsed back to the per-item urgency design from earlier briefs and
+ * kept only the single headline. The CVE grounding + JSON repair helpers
+ * are retained — they have a known imminent caller (per-item enrichment
+ * validator, follow-up PR) and are the defense layer against the kind of
+ * CVE hallucination documented in PR #25.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -34,34 +37,18 @@ function getClient(): Anthropic | null {
 // Types
 // ---------------------------------------------------------------------------
 
-export type BriefSynthesisActionSummary = {
-  this_week: string[];
-  this_month: string[];
-  monitor: string[];
-};
-
 export type BriefSynthesis = {
-  thesis: string | null;
-  executive_summary: string | null;
-  cross_domain_analysis: string | null;
-  action_summary: BriefSynthesisActionSummary | null;
+  /**
+   * 1-line declarative sentence (max 12 words) naming the central pattern
+   * across the day's signals. Null when ANTHROPIC_API_KEY is unset, the
+   * Claude call fails, or the model returns empty text.
+   */
+  headline: string | null;
 };
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Pick the best available analysis text for a BriefItem.
- *
- * Items just produced by buildBriefItems + enrichBriefItems carry `analysis`
- * (Claude-generated). Items loaded from intelligence_brief_items in the DB
- * do NOT carry analysis (column not persisted) but do carry why_it_matters.
- * Both fall back to summary when neither is available.
- */
-function analysisTextFor(item: BriefItem): string {
-  return item.analysis ?? item.why_it_matters ?? item.summary ?? "";
-}
 
 function extractText(message: { content: Array<{ type: string; text?: string }> }): string {
   return message.content
@@ -72,7 +59,21 @@ function extractText(message: { content: Array<{ type: string; text?: string }> 
 }
 
 // ---------------------------------------------------------------------------
-// repairTruncatedJson — exported for unit testing
+// CVE grounding + JSON repair helpers
+// ---------------------------------------------------------------------------
+//
+// Retained for re-use by the per-item enrichment validator (planned in a
+// follow-up PR). Do not delete during synthesis collapses — these are the
+// defense layer against CVE hallucination.
+//
+// Earlier briefs produced fabricated CVE identifiers in LLM-generated
+// action text (PR #25 documented the incident). The enrichment prompt
+// rewrite in this PR tightens recommended_actions[0] to a single
+// imperative; once that line starts referencing CVEs by number,
+// validateActionGrounding is the planned guard against the same class
+// of hallucination at the per-item layer. repairTruncatedJson covers
+// max_tokens cuts on any future structured-list output. They have unit
+// tests, cost nothing at runtime, and have a known imminent caller.
 // ---------------------------------------------------------------------------
 
 /**
@@ -84,10 +85,7 @@ function extractText(message: { content: Array<{ type: string; text?: string }> 
  * trimming any trailing partial-string token. The output is not guaranteed
  * to parse — callers should still wrap JSON.parse in a try.
  *
- * Repair logic mirrors the legacy worker's action-summary in-line repair
- * (services/intelligence-worker/src/pipeline/llmClient.ts), wrapped here
- * with a try-parse guard so the helper is safe to call on any input. The
- * trailing-string regex was tuned for the realistic Claude truncation
+ * The trailing-string regex was tuned for the realistic Claude truncation
  * pattern (mid-token cut); already-closed strings followed by missing
  * structural closers may not repair cleanly.
  */
@@ -111,15 +109,11 @@ export function repairTruncatedJson(input: string): string {
   return repaired;
 }
 
-// ---------------------------------------------------------------------------
-// CVE grounding validator — exported for unit testing
-// ---------------------------------------------------------------------------
-
 const CVE_PATTERN = /CVE-\d{4}-\d{4,7}/gi;
 
 /**
  * Build the set of CVE identifiers that appear anywhere in the brief's
- * source items. Used to validate that LLM-generated actions only reference
+ * source items. Used to validate that LLM-generated text only references
  * CVEs that are actually in the input — anything else is a hallucination.
  *
  * Scans every text-bearing field on each item. CVE strings are normalized
@@ -197,299 +191,51 @@ export function validateActionGrounding(
 }
 
 // ---------------------------------------------------------------------------
-// 1. synthesizeBrief — 2-3 sentence executive opening
+// generateHeadline — single declarative sentence, max 12 words
 // ---------------------------------------------------------------------------
 
-async function synthesizeBrief(
-  items: BriefItem[],
-  activeCategories: string[],
-  totalCount: number
-): Promise<string | null> {
+async function generateHeadline(items: BriefItem[]): Promise<string | null> {
   const client = getClient();
   if (!client) return null;
   if (items.length === 0) return null;
 
-  const topItems = items.slice(0, 5);
-  const signalLines = topItems
-    .map((it, i) => `${i + 1}. [${it.severity.toUpperCase()}] ${it.title}`)
-    .join("\n");
-
-  const prompt = `You are the editor of a premium enterprise risk intelligence brief read by CISOs, risk leaders, and compliance teams at large organizations.
-
-This week's brief covers ${totalCount} signals across: ${activeCategories.join(", ")}.
-
-Top priority signals this week:
-${signalLines}
-
-Write the "Intelligence Synthesis" — a 2-3 sentence editorial opening for this week's brief. Requirements:
-- Sentence 1: Name the dominant risk theme or pattern this week. Be specific — name the actual threat, regulation, or event driving the theme.
-- Sentence 2: Name the single most time-sensitive development and why it is urgent right now (not next month).
-- Sentence 3 (if a cross-domain pattern exists): Identify where signals from different categories point at the same underlying enterprise risk.
-- Write with editorial authority — make a clear argument about what matters, not a summary of what exists
-- Do not use the phrase "this week's signals" as your opening
-- Do not reference yourself or the brief format
-
-This text will be the first thing a CISO reads. It must earn their attention in the first sentence.
-
-Return plain text only.`;
-
-  try {
-    const message = await client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 400,
-      messages: [{ role: "user", content: prompt }]
-    });
-    const text = extractText(message);
-    return text || null;
-  } catch (err) {
-    logger.warn(
-      { event: "synthesis_brief_failed", err },
-      "Brief synthesis call failed"
-    );
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 2. generateThesisHeadline — single declarative sentence
-// ---------------------------------------------------------------------------
-
-async function generateThesisHeadline(
-  synthesis: string,
-  items: BriefItem[]
-): Promise<string | null> {
-  const client = getClient();
-  if (!client) return null;
-
   const signalLines = items
-    .slice(0, 3)
+    .slice(0, 8)
     .map((it) => `[${it.severity.toUpperCase()}] ${it.title}`)
     .join("\n");
 
-  const prompt = `Write a single-sentence thesis headline for this week's intelligence brief. It should capture the dominant risk theme as a declarative statement — not a title, not a question.
+  const prompt = `Write a single-sentence headline for this intelligence brief.
 
-Synthesis: ${synthesis}
-
-Top signals:
+Signals:
 ${signalLines}
 
-Example good headlines:
+HARD CONSTRAINTS:
+- Maximum 12 words.
+- Single declarative sentence, present tense.
+- Names the central pattern across the day's signals — what ties them together.
+- No editorial setup, no questions, no "this week" framing.
+
+Examples of the right shape:
+- "Six ABB OT vulnerabilities collide with new federal Zero Trust mandate."
+- "Healthcare ransomware wave hits 337K records as Rhysida tooling proliferates."
+
+Counter-examples (too long, embedded clauses, magazine-style — DO NOT do this):
 - "AI governance liability collides with active exploit exposure in a high-pressure week for enterprise risk teams."
-- "Regulatory enforcement timelines compress as three simultaneous compliance deadlines converge on the same enterprise functions."
 
 Return plain text only. One sentence. No trailing period needed.`;
 
   try {
     const message = await client.messages.create({
       model: CLAUDE_MODEL,
-      max_tokens: 80,
+      max_tokens: 60,
       messages: [{ role: "user", content: prompt }]
     });
     const text = extractText(message).replace(/\.$/, "");
     return text || null;
   } catch (err) {
     logger.warn(
-      { event: "synthesis_thesis_failed", err },
-      "Thesis headline generation failed"
-    );
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 3. generateCrossDomainAnalysis — pattern across categories
-// ---------------------------------------------------------------------------
-
-async function generateCrossDomainAnalysis(
-  items: BriefItem[]
-): Promise<string | null> {
-  const client = getClient();
-  if (!client) return null;
-
-  // Need signals from at least 2 different categories
-  const categories = new Set(items.map((it) => it.category));
-  if (categories.size < 2) return null;
-
-  const signalLines = items
-    .slice(0, 10)
-    .map((it) => {
-      const cat = it.category.toUpperCase();
-      const sev = it.severity.toUpperCase();
-      const analysis = analysisTextFor(it).slice(0, 150);
-      return `[${cat} / ${sev}] ${it.title}: ${analysis}`;
-    })
-    .join("\n");
-
-  const prompt = `You are a senior risk intelligence analyst writing for enterprise security and compliance leaders.
-
-Review these signals from this week's brief and identify the most significant pattern that connects signals across different risk categories. Not every brief will have one — only write this if a genuine connection exists.
-
-This week's signals:
-${signalLines}
-
-If a meaningful cross-domain pattern exists: write 1-2 paragraphs that:
-- Name the specific signals involved (use their actual titles)
-- Explain the connecting risk thread in concrete terms
-- State what this means for an enterprise — what single work item or risk conversation this creates
-- Do NOT write generic observations like "signals this week span multiple domains"
-
-If no meaningful cross-domain pattern exists, return exactly: NO_PATTERN
-
-Return plain text only.`;
-
-  try {
-    const message = await client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 400,
-      messages: [{ role: "user", content: prompt }]
-    });
-    const text = extractText(message);
-    if (!text || text === "NO_PATTERN") return null;
-    return text;
-  } catch (err) {
-    logger.warn(
-      { event: "synthesis_cross_domain_failed", err },
-      "Cross-domain analysis generation failed"
-    );
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 4. generateActionSummary — JSON { this_week, this_month, monitor }
-// ---------------------------------------------------------------------------
-
-async function generateActionSummary(
-  items: BriefItem[]
-): Promise<BriefSynthesisActionSummary | null> {
-  const client = getClient();
-  if (!client) return null;
-  if (items.length === 0) return null;
-
-  const signalLines = items
-    .slice(0, 25)
-    .map((it) => {
-      const cat = it.category.toUpperCase();
-      const sev = it.severity.toUpperCase();
-      const cve = it.affected_cve ?? "—";
-      const vendor = it.affected_vendor ?? "—";
-      const analysis = analysisTextFor(it).slice(0, 400);
-      return `[${cat} / ${sev}] ${it.title}\n  CVE: ${cve}\n  Vendor: ${vendor}\n  Analysis: ${analysis}`;
-    })
-    .join("\n\n");
-
-  const systemPrompt =
-    "You are a risk intelligence analyst writing the action summary section of an executive brief. " +
-    "You are working from a fixed list of source signals. Every action you propose must cite an " +
-    "identifier (CVE, vendor, product, threat actor) that appears verbatim in the input. If you " +
-    "cannot find a concrete action grounded in the input, return fewer items rather than fabricating. " +
-    "Hallucinating CVEs or product names destroys the brief's credibility.";
-
-  const prompt = `You are a risk intelligence analyst creating an action summary for a CISO. This is the section they will hand to their team on Monday morning.
-
-From the signals below, extract the most important actions into three lists. Each action must:
-- Name a responsible function (security team, compliance team, procurement, legal, IT)
-- Name a specific task (not "review your controls" — a concrete action)
-- Be derived from a specific signal, not a general best practice
-- STRICT GROUNDING: You may only reference CVEs, vendors, products, threat actors, exploits, and exploitation claims that appear in the Signals list above. Do not introduce any CVE number, product name, or threat actor not present in the input. If you cannot find three concrete this-week actions in the source signals, return one or two items. Returning fewer grounded actions is required; returning more fabricated ones is forbidden.
-
-Signals this week:
-${signalLines}
-
-Return valid JSON only — no markdown, no code fences:
-{
-  "thisWeek": [
-    "Security team: [specific action tied to a specific signal, within 72 hours]",
-    "Compliance team: [specific action, within this week]"
-  ],
-  "thisMonth": [
-    "Procurement: [specific action from a vendor risk or regulatory signal]",
-    "Security team: [specific medium-term action]"
-  ],
-  "monitor": [
-    "[Specific development to watch — what signal, what to watch for, timeframe]",
-    "[Another monitoring item]"
-  ]
-}
-
-Include 2-3 items per list. Omit a list item if there is no specific signal to support it.`;
-
-  try {
-    const message = await client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 1000,
-      system: systemPrompt,
-      messages: [{ role: "user", content: prompt }]
-    });
-
-    const raw = extractText(message);
-    const cleaned = raw
-      .replace(/^```(?:json)?\n?/m, "")
-      .replace(/\n?```$/m, "")
-      .trim();
-
-    let parsed: { thisWeek?: unknown; thisMonth?: unknown; monitor?: unknown };
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch {
-      const repaired = repairTruncatedJson(cleaned);
-      logger.warn(
-        {
-          event: "synthesis_action_summary_json_repaired",
-          originalLength: cleaned.length,
-          repairedLength: repaired.length
-        },
-        "Action summary JSON was truncated — attempted repair"
-      );
-      parsed = JSON.parse(repaired);
-    }
-
-    const thisWeek = Array.isArray(parsed.thisWeek) ? (parsed.thisWeek as string[]) : [];
-    const thisMonth = Array.isArray(parsed.thisMonth) ? (parsed.thisMonth as string[]) : [];
-    const monitor = Array.isArray(parsed.monitor) ? (parsed.monitor as string[]) : [];
-
-    const allowedCves = buildAllowedCveSet(items);
-
-    const thisWeekResult = validateActionGrounding(thisWeek, allowedCves);
-    const thisMonthResult = validateActionGrounding(thisMonth, allowedCves);
-    const monitorResult = validateActionGrounding(monitor, allowedCves);
-
-    for (const list of [
-      { name: "this_week" as const, result: thisWeekResult },
-      { name: "this_month" as const, result: thisMonthResult },
-      { name: "monitor" as const, result: monitorResult }
-    ]) {
-      for (const drop of list.result.dropped) {
-        console.warn(
-          JSON.stringify({
-            event: "synthesis_action_summary_cve_hallucination",
-            list: list.name,
-            action: drop.action,
-            offendingCves: drop.offendingCves,
-            allowedCveCount: allowedCves.size
-          })
-        );
-      }
-    }
-
-    const totalKept =
-      thisWeekResult.kept.length +
-      thisMonthResult.kept.length +
-      monitorResult.kept.length;
-
-    if (totalKept === 0) {
-      return null;
-    }
-
-    return {
-      this_week: thisWeekResult.kept,
-      this_month: thisMonthResult.kept,
-      monitor: monitorResult.kept
-    };
-  } catch (err) {
-    logger.warn(
-      { event: "synthesis_action_summary_failed", err },
-      "Action summary generation failed"
+      { event: "synthesis_headline_failed", err },
+      "Headline generation failed"
     );
     return null;
   }
@@ -500,17 +246,10 @@ Include 2-3 items per list. Omit a list item if there is no specific signal to s
 // ---------------------------------------------------------------------------
 
 /**
- * Run the full brief-level synthesis pipeline.
+ * Run the brief-level synthesis pipeline.
  *
- * Sequencing:
- *   1. synthesizeBrief — produces editorial 2-3 sentence opening.
- *   2. generateThesisHeadline — depends on the synthesis output above.
- *   3. generateCrossDomainAnalysis + generateActionSummary — independent of
- *      thesis/synthesis, run in parallel.
- *
- * Total: 4 Claude calls per brief (2 sequential at the start, then 2 in
- * parallel). Each call is non-fatal: on failure the corresponding field
- * lands as null and the rest of the synthesis still returns.
+ * One Claude call: generateHeadline. On failure the headline lands as null
+ * and the brief publishes without a headline.
  *
  * Throws on empty items[] — synthesis with zero signals has no meaning.
  *
@@ -518,39 +257,23 @@ Include 2-3 items per list. Omit a list item if there is no specific signal to s
  * @param _periodStart      ISO-8601 — currently unused. Reserved for future
  *                          prompts that mention the coverage window.
  * @param _periodEnd        ISO-8601 — same.
- * @param activeCategories  Distinct category labels present in the items.
+ * @param _activeCategories Distinct category labels present in the items.
+ *                          Currently unused; the headline prompt sees the
+ *                          signals directly.
  */
 export async function enrichBriefSynthesis(
   items: BriefItem[],
   _periodStart: string,
   _periodEnd: string,
-  activeCategories: string[]
+  _activeCategories: string[]
 ): Promise<BriefSynthesis> {
   if (items.length === 0) {
     throw new Error("enrichBriefSynthesis: items[] must be non-empty");
   }
 
-  const executive_summary = await synthesizeBrief(
-    items,
-    activeCategories,
-    items.length
-  );
+  const headline = await generateHeadline(items);
 
-  const thesis = executive_summary
-    ? await generateThesisHeadline(executive_summary, items)
-    : null;
-
-  const [cross_domain_analysis, action_summary] = await Promise.all([
-    generateCrossDomainAnalysis(items),
-    generateActionSummary(items)
-  ]);
-
-  return {
-    thesis,
-    executive_summary,
-    cross_domain_analysis,
-    action_summary
-  };
+  return { headline };
 }
 
 // ---------------------------------------------------------------------------
@@ -576,17 +299,12 @@ export const synthesisRuntime: {
 /**
  * Non-fatal wrapper around enrichBriefSynthesis intended for use by brief
  * generation orchestrators (briefScheduler.ts daily cron and the POST
- * /generate route). Behaviour:
+ * /generate route).
  *
  * - Empty items → returns null without making any LLM call.
- * - Reconstructs activeCategories from the unique set of item.category values.
- * - On any thrown error from enrichBriefSynthesis, logs a brief_synthesis_failed
- *   warn event and returns null so the caller can persist the brief with
- *   synthesis: null rather than failing the whole generation.
- *
- * periodStart / periodEnd are accepted by enrichBriefSynthesis but currently
- * unused by the prompts (see _periodStart / _periodEnd above). Pass empty
- * strings until prompts use them; plumb real values through then.
+ * - On any thrown error, logs brief_synthesis_failed and returns null so
+ *   the caller can persist the brief with synthesis: null rather than
+ *   failing the whole generation.
  */
 export async function runSynthesisSafely(
   items: BriefItem[]
