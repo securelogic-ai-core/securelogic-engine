@@ -13,6 +13,9 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 
 vi.mock("../infra/postgres.js", () => ({
   pg: { query: vi.fn(), connect: vi.fn() }
@@ -254,8 +257,25 @@ describe("GET /api/intelligence-briefs — archive list", () => {
   });
 
   it("orders briefs by period_end DESC (most recent coverage period first)", () => {
-    // ORDER BY period_end DESC, id DESC
+    // ORDER BY period_end DESC, generated_at DESC NULLS LAST, id ASC
     expect(true).toBe(true);
+  });
+
+  it("orders briefs by recency within a period (generated_at over UUID alphabet)", () => {
+    // Regression guard: multiple briefs can share the same period_end (manual
+    // /generate triggers, cron retries). The list endpoint must surface the
+    // most-recently-generated brief first within a period — not whichever
+    // UUID happens to sort first. Asserting the SQL string in the route
+    // source is enough to catch a regression where someone drops the
+    // generated_at sort key.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const routeSrc = readFileSync(
+      resolve(here, "../routes/intelligenceBriefs.ts"),
+      "utf8"
+    );
+    expect(routeSrc).toContain(
+      "ORDER BY period_end DESC, generated_at DESC NULLS LAST, id ASC"
+    );
   });
 
   it("parses signal_count and item_count as integers in response", () => {

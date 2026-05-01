@@ -857,6 +857,12 @@ router.get("/intelligence-briefs", async (req, res) => {
       conditions.push(`status = $${params.length}`);
     }
 
+    // Cursor is intentionally a 2-tuple (period_end, id). The new ORDER BY
+    // adds generated_at as a secondary sort, but extending the cursor to
+    // (period_end, generated_at, id) would require an OR-chain (NULLS LAST +
+    // mixed direction can't be expressed as a single tuple comparison) for an
+    // edge case — pagination spanning multiple briefs in the same period —
+    // we don't observe in practice. Extend if it becomes a real issue.
     if (hasCursor) {
       params.push(cursorPeriodEnd!, cursorId!);
       conditions.push(
@@ -866,6 +872,10 @@ router.get("/intelligence-briefs", async (req, res) => {
 
     const whereClause = conditions.join(" AND ");
 
+    // Order by period_end first (newest period), then by generated_at within
+    // a period (so the most-recently-generated brief wins when multiple briefs
+    // share a period — manual triggers, retries). id is the deterministic
+    // final tiebreaker for cursor stability.
     const result = await pg.query<{
       id: string;
       period_start: string;
@@ -881,7 +891,7 @@ router.get("/intelligence-briefs", async (req, res) => {
               generated_at, published_at, created_at
        FROM intelligence_briefs
        WHERE ${whereClause}
-       ORDER BY period_end DESC, id DESC
+       ORDER BY period_end DESC, generated_at DESC NULLS LAST, id ASC
        LIMIT $2`,
       params
     );
