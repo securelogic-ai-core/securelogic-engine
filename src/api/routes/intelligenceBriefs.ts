@@ -29,15 +29,13 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import {
   generateBrief,
   enrichBriefItems,
-  type CyberSignalForBrief,
-  type BriefItem
+  type CyberSignalForBrief
 } from "../lib/intelligenceBriefGenerator.js";
 import { personalizeBriefItems } from "../lib/briefPersonalizationService.js";
 import { sendBrief } from "../lib/briefEmailSender.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { encryptField, decryptField } from "../lib/fieldEncryption.js";
 import {
-  enrichBriefSynthesis,
   runSynthesisSafely
 } from "../lib/briefSynthesizer.js";
 
@@ -205,18 +203,18 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
       }));
     }
 
-    // Insert brief items (18 columns per item including personalization fields)
+    // Insert brief items (19 columns per item including personalization + urgency)
     if (personalizedItems.length > 0) {
       const itemValues: unknown[] = [];
       const itemPlaceholders: string[] = [];
 
       personalizedItems.forEach((item, idx: number) => {
-        const b = idx * 18;
+        const b = idx * 19;
         itemPlaceholders.push(
           `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, ` +
           `$${b + 6}, $${b + 7}, $${b + 8}, $${b + 9}, $${b + 10}, ` +
           `$${b + 11}, $${b + 12}, $${b + 13}, $${b + 14}, $${b + 15}, ` +
-          `$${b + 16}, $${b + 17}, $${b + 18})`
+          `$${b + 16}, $${b + 17}, $${b + 18}, $${b + 19})`
         );
         itemValues.push(
           orgId,
@@ -236,7 +234,8 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
           item.recommended_actions ?? null,
           item.analyst_notes ?? null,
           item.is_personalized,
-          item.platform_context ? JSON.stringify(item.platform_context) : null
+          item.platform_context ? JSON.stringify(item.platform_context) : null,
+          item.urgency ?? null
         );
       });
 
@@ -246,7 +245,8 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
             title, summary, affected_cve, affected_vendor, source_slug,
             signal_type, severity, sort_order,
             why_it_matters, recommended_actions, analyst_notes,
-            is_personalized, platform_context)
+            is_personalized, platform_context,
+            urgency)
          VALUES ${itemPlaceholders.join(", ")}`,
         itemValues
       );
@@ -258,10 +258,9 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
       items: personalizedItems
     };
 
-    // Brief-level synthesis (4 Claude calls). Runs against personalizedItems
-    // so the synthesis reflects what the user will actually see in the brief.
-    // Non-fatal: failures resolve to null and the brief publishes without
-    // synthesis content.
+    // Brief-level synthesis — one Claude call producing a 12-word headline.
+    // Runs against personalizedItems so it reflects what the user will see.
+    // Non-fatal: failure resolves to null and the brief publishes without one.
     const synthesis = await runSynthesisSafely(personalizedItems);
     const contentJsonWithSynthesis = { ...result.content_json, synthesis };
 
@@ -710,120 +709,6 @@ router.post("/intelligence-briefs/:id/send", requireEntitlement("standard"), asy
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/intelligence-briefs/:id/synthesis-preview
-// Re-runs brief-level synthesis on an existing brief's items and returns
-// the synthesis JSON without persisting. Prototype endpoint for iterating
-// on synthesis prompt quality before wiring synthesis into generateBrief().
-// ---------------------------------------------------------------------------
-
-router.post(
-  "/intelligence-briefs/:id/synthesis-preview",
-  requireEntitlement("standard"),
-  async (req, res) => {
-    const orgId = (req as any).organizationContext?.organizationId as string;
-    const { id } = req.params as { id: string };
-
-    if (!UUID_RE.test(id)) {
-      return res.status(400).json({ error: "invalid_brief_id" });
-    }
-
-    try {
-      const briefResult = await pg.query<{
-        id: string;
-        period_start: string;
-        period_end: string;
-      }>(
-        `SELECT id, period_start, period_end
-         FROM intelligence_briefs
-         WHERE id = $1 AND organization_id = $2`,
-        [id, orgId]
-      );
-
-      if (briefResult.rows.length === 0) {
-        return res.status(404).json({ error: "brief_not_found" });
-      }
-
-      const brief = briefResult.rows[0]!;
-
-      const itemsResult = await pg.query<{
-        cyber_signal_id: string | null;
-        category: string;
-        relevance: string;
-        title: string;
-        summary: string;
-        affected_cve: string | null;
-        affected_vendor: string | null;
-        source_slug: string | null;
-        signal_type: string | null;
-        severity: string | null;
-        ingestion_timestamp: string | null;
-        sort_order: string;
-        why_it_matters: string | null;
-        recommended_actions: string | null;
-        analyst_notes: string | null;
-      }>(
-        `SELECT cyber_signal_id, category, relevance, title, summary,
-                affected_cve, affected_vendor, source_slug, signal_type,
-                severity, ingestion_timestamp, sort_order,
-                why_it_matters, recommended_actions, analyst_notes
-         FROM intelligence_brief_items
-         WHERE brief_id = $1 AND organization_id = $2
-         ORDER BY sort_order ASC`,
-        [id, orgId]
-      );
-
-      if (itemsResult.rows.length === 0) {
-        return res.status(409).json({
-          error: "brief_has_no_items",
-          message: "Cannot synthesize a brief with zero items"
-        });
-      }
-
-      const items: BriefItem[] = itemsResult.rows.map((r) => ({
-        cyber_signal_id: r.cyber_signal_id ?? "",
-        category: r.category as BriefItem["category"],
-        relevance: r.relevance as BriefItem["relevance"],
-        title: r.title,
-        summary: r.summary,
-        affected_cve: r.affected_cve,
-        affected_vendor: r.affected_vendor,
-        source_slug: r.source_slug ?? "",
-        signal_type: r.signal_type ?? "",
-        severity: r.severity ?? "Low",
-        ingestion_timestamp: r.ingestion_timestamp ?? "",
-        sort_order: parseInt(r.sort_order, 10),
-        analysis: null,
-        why_it_matters: r.why_it_matters,
-        recommended_actions: r.recommended_actions,
-        analyst_notes: r.analyst_notes
-      }));
-
-      const activeCategories = Array.from(new Set(items.map((it) => it.category)));
-
-      const synthesis = await enrichBriefSynthesis(
-        items,
-        brief.period_start,
-        brief.period_end,
-        activeCategories
-      );
-
-      return res.status(200).json(synthesis);
-    } catch (err) {
-      logger.error(
-        { event: "synthesis_preview_failed", orgId, briefId: id, err },
-        "POST /api/intelligence-briefs/:id/synthesis-preview failed"
-      );
-      const isProd = process.env.NODE_ENV === "production";
-      const detail = err instanceof Error ? err.message : String(err);
-      return res.status(500).json({
-        error: "internal_error",
-        ...(isProd ? {} : { detail })
-      });
-    }
-  }
-);
-
-// ---------------------------------------------------------------------------
 // GET /api/intelligence-briefs
 // Archive list — cursor-paginated, ordered by period_end DESC (most recent
 // coverage period first). Supports ?status filter; defaults to all statuses.
@@ -985,11 +870,13 @@ router.get("/intelligence-briefs/:id", async (req, res) => {
       why_it_matters: string | null;
       recommended_actions: string | null;
       analyst_notes: string | null;
+      urgency: string | null;
     }>(
       `SELECT id, category, relevance, title, summary, affected_cve, affected_vendor,
               source_slug, signal_type, severity, cyber_signal_id,
               ingestion_timestamp, sort_order,
-              why_it_matters, recommended_actions, analyst_notes
+              why_it_matters, recommended_actions, analyst_notes,
+              urgency
        FROM intelligence_brief_items
        WHERE brief_id = $1 AND organization_id = $2
        ORDER BY sort_order ASC`,
@@ -1024,7 +911,8 @@ router.get("/intelligence-briefs/:id", async (req, res) => {
         sort_order: parseInt(item.sort_order, 10),
         why_it_matters: item.why_it_matters,
         recommended_actions: item.recommended_actions,
-        analyst_notes: item.analyst_notes
+        analyst_notes: item.analyst_notes,
+        urgency: item.urgency
       }))
     });
   } catch (err) {

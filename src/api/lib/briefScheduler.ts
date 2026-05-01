@@ -259,8 +259,8 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
     throw enrichErr;
   }
 
-  // Brief-level synthesis (4 Claude calls). Non-fatal: failures resolve to
-  // null and the brief publishes without synthesis content.
+  // Brief-level synthesis — one Claude call producing a 12-word headline.
+  // Non-fatal: failure resolves to null and the brief publishes without one.
   const synthesis = await runSynthesisSafely(enrichedItems);
   const contentJsonWithSynthesis = { ...base.content_json, synthesis };
 
@@ -279,11 +279,12 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
       const itemPlaceholders: string[] = [];
 
       enrichedItems.forEach((item: BriefItem, idx: number) => {
-        const b = idx * 16;
+        const b = idx * 17;
         itemPlaceholders.push(
           `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, ` +
           `$${b + 6}, $${b + 7}, $${b + 8}, $${b + 9}, $${b + 10}, ` +
-          `$${b + 11}, $${b + 12}, $${b + 13}, $${b + 14}, $${b + 15}, $${b + 16})`
+          `$${b + 11}, $${b + 12}, $${b + 13}, $${b + 14}, $${b + 15}, ` +
+          `$${b + 16}, $${b + 17})`
         );
         itemValues.push(
           orgId,
@@ -301,7 +302,8 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
           item.sort_order,
           item.why_it_matters ?? null,
           item.recommended_actions ?? null,
-          item.analyst_notes ?? null
+          item.analyst_notes ?? null,
+          item.urgency ?? null
         );
       });
 
@@ -310,7 +312,8 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
            (organization_id, brief_id, cyber_signal_id, category, relevance,
             title, summary, affected_cve, affected_vendor, source_slug,
             signal_type, severity, sort_order,
-            why_it_matters, recommended_actions, analyst_notes)
+            why_it_matters, recommended_actions, analyst_notes,
+            urgency)
          VALUES ${itemPlaceholders.join(", ")}`,
         itemValues
       );
