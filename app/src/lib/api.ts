@@ -197,12 +197,15 @@ export type IntelligenceBriefItem = {
  * here intentionally because frontend and engine are separate npm packages
  * and don't share types directly. Keep in sync if the engine shape changes.
  *
- * The synthesis layer was collapsed to a single 12-word headline in PR D1;
- * per-signal urgency, action, and context now live on each brief item rather
- * than in a brief-level editorial layer above them.
+ * D1 collapsed this layer to a single 12-word headline. The exec-summary
+ * pass added teaser (one-sentence dashboard hook) and exec_summary (three-
+ * sentence directive paragraph). Both fields are nullable; older briefs
+ * have only headline populated.
  */
 export type BriefSynthesis = {
   headline: string | null;
+  teaser?: string | null;
+  exec_summary?: string | null;
 };
 
 export type IntelligenceBriefListResponse = {

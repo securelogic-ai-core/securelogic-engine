@@ -79,3 +79,9 @@ securelogic-engine@*
 # LOCAL LOGS
 # =========================
 type-errors.log
+# =========================
+# Intelligence brief synthesis driver — local test corpus
+# =========================
+# scripts/run-exec-summary-once.mjs reads this. Useful locally as a fixed
+# input for prompt iteration; not source.
+synthesis-wired-verify.json
