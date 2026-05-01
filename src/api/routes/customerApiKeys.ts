@@ -32,7 +32,6 @@ interface ApiKeyRow {
   id: string;
   organization_id: string;
   label: string;
-  entitlement_level: string;
   status: string;
   last_used_at: string | null;
   created_at: string;
@@ -61,7 +60,7 @@ router.get(
 
     try {
       const result = await pg.query<ApiKeyRow>(
-        `SELECT k.id, k.organization_id, k.label, k.entitlement_level,
+        `SELECT k.id, k.organization_id, k.label,
                 k.status, k.last_used_at, k.created_at, k.revoked_at, k.expires_at,
                 k.created_by_user_id,
                 (SELECT u.name FROM users u WHERE u.id = k.created_by_user_id) AS created_by_name
@@ -114,25 +113,19 @@ router.post(
     }
 
     try {
-      // Inherit entitlement from the org's existing primary key
-      const entitlementResult = await pg.query<{ entitlement_level: string }>(
-        `SELECT entitlement_level FROM api_keys
-         WHERE organization_id = $1 AND status = 'active'
-         ORDER BY created_at ASC LIMIT 1`,
-        [orgId]
-      );
-      const entitlementLevel = entitlementResult.rows[0]?.entitlement_level ?? "starter";
-
+      // Entitlement is a property of the organization, not the api_key.
+      // New keys do not stamp entitlement_level; the column remains nullable
+      // for new rows and is populated on legacy rows only.
       const rawKey  = generateApiKey();
       const keyHash = crypto.createHash("sha256").update(rawKey).digest("hex");
 
       const inserted = await pg.query<ApiKeyRow>(
         `INSERT INTO api_keys
-           (organization_id, label, key_hash, entitlement_level, status, created_by_user_id, expires_at)
-         VALUES ($1, $2, $3, $4, 'active', $5, $6)
-         RETURNING id, organization_id, label, entitlement_level, status,
+           (organization_id, label, key_hash, status, created_by_user_id, expires_at)
+         VALUES ($1, $2, $3, 'active', $4, $5)
+         RETURNING id, organization_id, label, status,
                    last_used_at, created_at, revoked_at, expires_at, created_by_user_id`,
-        [orgId, rawLabel, keyHash, entitlementLevel, userId, expiresAt]
+        [orgId, rawLabel, keyHash, userId, expiresAt]
       );
 
       const newKey = inserted.rows[0]!;
