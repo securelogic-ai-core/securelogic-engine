@@ -32,24 +32,41 @@ function countByUrgency(items: ReadonlyArray<IntelligenceBriefItem>): UrgencyCou
   return counts;
 }
 
+type CardAccent = {
+  /** Inline-style hex for the left-border stripe. Hex (not Tailwind tokens) so the brand teal can match the palette exactly. */
+  stripe: string;
+  /** Eyebrow text — stacked above the date. */
+  eyebrow: string;
+  /** Eyebrow text colour (hex). Distinct from stripe — slightly darker for contrast against slate-800 surface. */
+  eyebrowColor: string;
+};
+
 /**
- * Map item-level urgency mix to the card's left-border accent. Echoes the
- * BriefCard.tsx vocabulary (red → orange → teal default), but driven by
- * urgency rather than legacy severity counts.
+ * Map the urgency mix to the card's stripe + eyebrow.
+ *
+ *   any immediate>0 → red    ("Immediate action")
+ *   else any near_term>0 → amber ("Near-term focus")
+ *   else                 → teal  ("Today's intelligence")
+ *
+ * Hex codes rather than Tailwind tokens because the inline-style stripe
+ * needs an exact value and the eyebrow contrasts against slate-800.
  */
-function borderAccent(counts: UrgencyCounts): string {
-  if (counts.immediate > 0) return "border-l-red-500";
-  if (counts.near_term > 0) return "border-l-orange-400";
-  return "border-l-brand-teal";
+function cardAccent(counts: UrgencyCounts): CardAccent {
+  if (counts.immediate > 0) {
+    return { stripe: "#E24B4A", eyebrow: "Immediate action", eyebrowColor: "#A32D2D" };
+  }
+  if (counts.near_term > 0) {
+    return { stripe: "#EF9F27", eyebrow: "Near-term focus", eyebrowColor: "#854F0B" };
+  }
+  return { stripe: "#1D9E75", eyebrow: "Today's intelligence", eyebrowColor: "#0F6E56" };
 }
 
 /**
- * Build the single-line teaser from the urgency mix. Zero-count buckets
- * are omitted so a brief with only near-term items reads "3 near-term"
- * rather than "0 immediate · 3 near-term · 0 monitoring".
+ * Fallback teaser built from the urgency mix when synthesis.teaser is null.
+ * Used for legacy briefs (pre-exec-summary) and briefs whose synthesis
+ * call failed. Zero-count buckets are omitted.
  *
- * Returns null when no item carries any urgency (legacy briefs pre-D1
- * with all-null urgency, or empty briefs) — caller hides the teaser
+ * Returns null when no item carries any urgency — caller hides the teaser
  * rather than rendering a placeholder.
  */
 function urgencyTeaser(counts: UrgencyCounts): string | null {
@@ -65,18 +82,26 @@ export function IntelligenceBriefDashboardCard({
   brief,
 }: IntelligenceBriefDashboardCardProps) {
   const date = formatDate(brief.period_end);
-  const headline = brief.content_json?.synthesis?.headline ?? null;
+  const synthesis = brief.content_json?.synthesis ?? null;
+  const headline = synthesis?.headline ?? null;
   const counts = countByUrgency(brief.items);
-  const accent = borderAccent(counts);
-  const teaser = urgencyTeaser(counts);
+  const accent = cardAccent(counts);
+  const teaser = synthesis?.teaser ?? urgencyTeaser(counts);
   const title = headline ?? "Daily Intelligence Brief";
 
   return (
     <Link href={`/briefs/${brief.id}`} className="block group">
       <div
-        className={`bg-brand-surface border border-brand-line border-l-4 ${accent} rounded-xl p-6 hover:border-slate-600 transition-all`}
+        className="bg-brand-surface border border-brand-line border-l-4 rounded-xl p-6 hover:border-slate-600 transition-all"
+        style={{ borderLeftColor: accent.stripe }}
       >
-        <p className="text-xs text-slate-500 font-semibold uppercase tracking-wide">
+        <p
+          className="text-xs font-bold uppercase tracking-wide"
+          style={{ color: accent.eyebrowColor }}
+        >
+          {accent.eyebrow}
+        </p>
+        <p className="text-xs text-slate-500 font-medium mt-0.5">
           Intelligence Brief · {date}
         </p>
 
