@@ -146,6 +146,18 @@ export type IntelligenceBriefCategory =
 
 export type IntelligenceBriefRelevance = "high" | "medium" | "low";
 
+/**
+ * Per-item time-horizon urgency band, classified by the engine's enrichment
+ * pipeline. Mirrors BriefUrgency in src/api/lib/intelligenceBriefGenerator.ts.
+ *
+ *   immediate — act this week
+ *   near_term — act this month
+ *   far_term  — monitor
+ *
+ * Null on items generated before the urgency column was added (2026-06-02).
+ */
+export type IntelligenceBriefUrgency = "immediate" | "near_term" | "far_term";
+
 /** List-shape brief — metadata only (no content_json, no items). */
 export type IntelligenceBrief = {
   id: string;
@@ -176,6 +188,7 @@ export type IntelligenceBriefItem = {
   why_it_matters: string | null;
   recommended_actions: string | null;
   analyst_notes: string | null;
+  urgency: IntelligenceBriefUrgency | null;
 };
 
 /**
@@ -183,18 +196,13 @@ export type IntelligenceBriefItem = {
  * engine's BriefSynthesis type (src/api/lib/briefSynthesizer.ts) — duplicated
  * here intentionally because frontend and engine are separate npm packages
  * and don't share types directly. Keep in sync if the engine shape changes.
+ *
+ * The synthesis layer was collapsed to a single 12-word headline in PR D1;
+ * per-signal urgency, action, and context now live on each brief item rather
+ * than in a brief-level editorial layer above them.
  */
-export type BriefSynthesisActionSummary = {
-  this_week: string[];
-  this_month: string[];
-  monitor: string[];
-};
-
 export type BriefSynthesis = {
-  thesis: string | null;
-  executive_summary: string | null;
-  cross_domain_analysis: string | null;
-  action_summary: BriefSynthesisActionSummary | null;
+  headline: string | null;
 };
 
 export type IntelligenceBriefListResponse = {
