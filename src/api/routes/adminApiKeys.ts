@@ -132,16 +132,30 @@ router.post("/api-keys", async (req, res) => {
       return;
     }
 
+    // Entitlement is an org property. If the admin is granting a non-starter
+    // tier, lift the org's entitlement_level (and plan, kept in lock-step).
+    // Skip when the request asks for 'starter' to avoid silently downgrading
+    // a paying org if an admin creates an additional key.
+    if (entitlementLevel !== "starter") {
+      await pg.query(
+        `UPDATE organizations
+            SET entitlement_level = $1,
+                plan              = $1
+          WHERE id = $2 AND entitlement_level <> $1`,
+        [entitlementLevel, organizationId]
+      );
+    }
+
     const rawKey = generateApiKey();
     const keyHash = crypto.createHash("sha256").update(rawKey).digest("hex");
 
     const result = await pg.query(
       `
-      INSERT INTO api_keys (organization_id, label, key_hash, entitlement_level, status, created_at)
-      VALUES ($1, $2, $3, $4, 'active', NOW())
-      RETURNING id, organization_id, label, entitlement_level, status, created_at
+      INSERT INTO api_keys (organization_id, label, key_hash, status, created_at)
+      VALUES ($1, $2, $3, 'active', NOW())
+      RETURNING id, organization_id, label, status, created_at
       `,
-      [organizationId, label, keyHash, entitlementLevel]
+      [organizationId, label, keyHash]
     );
 
     const row = result.rows[0];
@@ -154,7 +168,7 @@ router.post("/api-keys", async (req, res) => {
         entitlement_level: entitlementLevel,
         keyPrefix: rawKey.slice(0, 6)
       },
-      "admin: api key created"
+      "admin: api key created and org entitlement set"
     );
 
     res.status(201).json({
