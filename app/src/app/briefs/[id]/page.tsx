@@ -12,8 +12,7 @@ import type {
 import { ScrollSpyTOC, type TocEntry } from "@/components/ScrollSpyTOC";
 import { CollapsibleSignalList } from "@/components/CollapsibleSignalList";
 import { PrintButton } from "@/components/PrintButton";
-import { IntelligenceBriefHero } from "@/components/IntelligenceBriefHero";
-import { IntelligenceBriefDetailItems } from "@/components/IntelligenceBriefDetailItems";
+import { IntelligenceBriefSignalGroup } from "@/components/IntelligenceBriefSignalGroup";
 
 function formatDate(date: string): string {
   return new Date(date).toLocaleDateString("en-US", {
@@ -945,6 +944,9 @@ function IntelligenceBriefDetailView({
 }: {
   brief: IntelligenceBriefDetailResponse;
 }) {
+  const headline = brief.content_json?.synthesis?.headline ?? null;
+  const date = formatDate(brief.period_end);
+
   return (
     <div className="min-h-screen bg-brand-bg">
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -957,10 +959,18 @@ function IntelligenceBriefDetailView({
           </Link>
         </div>
 
-        <div className="space-y-12">
-          <IntelligenceBriefHero brief={brief} />
-          <IntelligenceBriefDetailItems brief={brief} />
-        </div>
+        <header className="mb-10">
+          <p className="text-xs text-slate-500 font-semibold uppercase tracking-widest">
+            Intelligence Brief · {date}
+          </p>
+          {headline && (
+            <h1 className="mt-3 text-slate-100 font-bold text-2xl sm:text-3xl leading-tight max-w-prose">
+              {headline}
+            </h1>
+          )}
+        </header>
+
+        <IntelligenceBriefSignalGroup brief={brief} />
       </div>
     </div>
   );
