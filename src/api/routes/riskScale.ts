@@ -30,7 +30,7 @@ type RawPreset = {
 };
 
 function isPremium(req: any): boolean {
-  const entitlement = req.apiKey?.entitlement_level ?? "";
+  const entitlement = req.organizationContext?.entitlementLevel ?? "";
   const norm = typeof entitlement === "string" ? entitlement.toLowerCase() : "";
   return norm === "premium" || norm === "platform" || norm === "team";
 }

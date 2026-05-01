@@ -39,11 +39,11 @@ function buildWhere(
   }
 
   if (plan === "free") {
-    conditions.push(`COALESCE(k.entitlement_level, 'starter') IN ('starter', 'free')`);
+    conditions.push(`COALESCE(o.entitlement_level, 'starter') IN ('starter', 'free')`);
   } else if (plan === "professional") {
-    conditions.push(`k.entitlement_level = 'professional'`);
+    conditions.push(`o.entitlement_level = 'professional'`);
   } else if (plan === "platform" || plan === "premium") {
-    conditions.push(`k.entitlement_level IN ('premium', 'platform', 'team')`);
+    conditions.push(`o.entitlement_level IN ('premium', 'platform', 'team')`);
   }
 
   if (active === "true") {
@@ -64,15 +64,10 @@ function buildWhere(
   };
 }
 
-const LATERAL_KEY = `
-  LEFT JOIN LATERAL (
-    SELECT entitlement_level
-    FROM api_keys ak
-    WHERE ak.organization_id = ibs.organization_id AND ak.status = 'active'
-    ORDER BY ak.created_at ASC
-    LIMIT 1
-  ) k ON true
-`;
+// Entitlement now lives on organizations (single source of truth, written
+// only by the Stripe webhook). The previous LATERAL join against api_keys
+// was removed; queries below read directly from the org JOIN they already
+// have.
 
 /* =========================================================
    GET /admin/brief-subscribers/summary
@@ -83,16 +78,15 @@ router.get("/brief-subscribers/summary", async (_req, res) => {
     const result = await pg.query(`
       SELECT
         COUNT(*) FILTER (WHERE ibs.active = true)::int AS total_active,
-        COUNT(*) FILTER (WHERE ibs.active = true AND COALESCE(k.entitlement_level, 'starter') IN ('starter', 'free'))::int AS free_count,
-        COUNT(*) FILTER (WHERE ibs.active = true AND k.entitlement_level = 'professional')::int AS professional_count,
-        COUNT(*) FILTER (WHERE ibs.active = true AND k.entitlement_level IN ('premium', 'platform', 'team'))::int AS platform_count,
+        COUNT(*) FILTER (WHERE ibs.active = true AND COALESCE(o.entitlement_level, 'starter') IN ('starter', 'free'))::int AS free_count,
+        COUNT(*) FILTER (WHERE ibs.active = true AND o.entitlement_level = 'professional')::int AS professional_count,
+        COUNT(*) FILTER (WHERE ibs.active = true AND o.entitlement_level IN ('premium', 'platform', 'team'))::int AS platform_count,
         COUNT(*) FILTER (WHERE es.id IS NOT NULL)::int AS suppressed_count,
         COUNT(*) FILTER (WHERE ibs.active = true AND ibs.subscribed_at >= NOW() - INTERVAL '7 days')::int AS new_last_7_days,
         COUNT(*) FILTER (WHERE ibs.active = true AND ibs.subscribed_at >= NOW() - INTERVAL '30 days')::int AS new_last_30_days,
         COUNT(*) FILTER (WHERE ibs.active = false AND ibs.unsubscribed_at >= NOW() - INTERVAL '30 days')::int AS churn_last_30_days
       FROM intelligence_brief_subscribers ibs
       LEFT JOIN organizations o ON o.id = ibs.organization_id
-      ${LATERAL_KEY}
       LEFT JOIN email_suppressions es ON LOWER(es.email) = LOWER(ibs.email)
     `);
 
@@ -145,7 +139,7 @@ router.get("/brief-subscribers", async (req, res) => {
            ibs.name,
            ibs.organization_id,
            COALESCE(o.name, '—') AS organization_name,
-           COALESCE(k.entitlement_level, 'starter') AS plan,
+           COALESCE(o.entitlement_level, 'starter') AS plan,
            ibs.active,
            ibs.subscribed_at,
            ibs.unsubscribed_at,
@@ -153,11 +147,10 @@ router.get("/brief-subscribers", async (req, res) => {
            CASE WHEN es.id IS NOT NULL THEN true ELSE false END AS email_suppressed
          FROM intelligence_brief_subscribers ibs
          LEFT JOIN organizations o ON o.id = ibs.organization_id
-         ${LATERAL_KEY}
          LEFT JOIN intelligence_brief_sends s ON s.subscriber_id = ibs.id
          LEFT JOIN email_suppressions es ON LOWER(es.email) = LOWER(ibs.email)
          ${mainWhere.clause}
-         GROUP BY ibs.id, o.name, k.entitlement_level, es.id
+         GROUP BY ibs.id, o.name, o.entitlement_level, es.id
          ORDER BY ibs.subscribed_at DESC, ibs.id DESC
          LIMIT $1 OFFSET $2`,
         mainParams
@@ -166,7 +159,6 @@ router.get("/brief-subscribers", async (req, res) => {
         `SELECT COUNT(DISTINCT ibs.id)::int AS total
          FROM intelligence_brief_subscribers ibs
          LEFT JOIN organizations o ON o.id = ibs.organization_id
-         ${LATERAL_KEY}
          LEFT JOIN email_suppressions es ON LOWER(es.email) = LOWER(ibs.email)
          ${countWhere.clause}`,
         countParams
