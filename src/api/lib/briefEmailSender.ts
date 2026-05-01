@@ -32,6 +32,7 @@
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { renderBriefEmail, renderBriefEmailText, type BriefEmailData, type EmailBriefItem, type EmailBriefCategory } from "./briefEmailRenderer.js";
+import type { BriefSynthesis } from "./briefSynthesizer.js";
 
 const RESEND_API_URL = "https://api.resend.com/emails";
 
@@ -49,7 +50,11 @@ type BriefRow = {
   high_count: string;
   medium_count: string;
   low_count: string;
-  content_json: Record<string, unknown>;
+  // Intersection with Record<string, unknown> mirrors the frontend pattern
+  // on IntelligenceBriefDetailResponse.content_json (app/src/lib/api.ts):
+  // narrows the one field this module actually reads (synthesis) without
+  // forcing a full mirror of the engine's BriefContentJson shape here.
+  content_json: { synthesis?: BriefSynthesis | null } & Record<string, unknown>;
 };
 
 type BriefItemRow = {
@@ -444,6 +449,14 @@ export async function sendBrief(
   const signalCount = parseInt(brief.signal_count, 10) || 0;
   const allItems = itemsResult.rows;
 
+  // Brief-level synthesis lives at content_json.synthesis. Read once here
+  // and pass into every per-subscriber emailData literal below; the
+  // renderer's executive_headline / executive_summary fields are already
+  // null-safe so legacy briefs without synthesis render unchanged.
+  const synthesis = brief.content_json?.synthesis ?? null;
+  const executiveHeadline = synthesis?.headline ?? null;
+  const executiveSummary = synthesis?.exec_summary ?? null;
+
   // 5. Batch-check which subscriber emails are suppressed before sending.
   const subscriberEmails = subscribersResult.rows.map(s => s.email.toLowerCase());
   const suppressedResult = await pg.query<{ email: string }>(
@@ -524,7 +537,9 @@ export async function sendBrief(
       high_count,
       medium_count,
       low_count,
-      categories
+      categories,
+      executive_headline: executiveHeadline,
+      executive_summary: executiveSummary
     };
 
     // For free-tier organisations, send the Brief Lite version:

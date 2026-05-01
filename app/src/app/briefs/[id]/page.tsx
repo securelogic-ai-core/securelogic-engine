@@ -944,8 +944,31 @@ function IntelligenceBriefDetailView({
 }: {
   brief: IntelligenceBriefDetailResponse;
 }) {
-  const headline = brief.content_json?.synthesis?.headline ?? null;
+  const synthesis = brief.content_json?.synthesis ?? null;
+  const headline = synthesis?.headline ?? null;
+  const execSummary = synthesis?.exec_summary ?? null;
   const date = formatDate(brief.period_end);
+
+  // Inline rather than extracting to a util — IntelligenceBriefDashboardCard
+  // has its own copy and cross-importing between app/src/components and
+  // app/src/app would be more churn than the six lines saved.
+  const counts = { immediate: 0, near_term: 0, far_term: 0 };
+  for (const item of brief.items) {
+    if (item.urgency === "immediate") counts.immediate++;
+    else if (item.urgency === "near_term") counts.near_term++;
+    else if (item.urgency === "far_term") counts.far_term++;
+  }
+  const totalUrgency = counts.immediate + counts.near_term + counts.far_term;
+  const showExecSection = execSummary !== null || totalUrgency > 0;
+
+  // TOC labels — note "Watching" maps to far_term / #watching anchor on the
+  // signal group. Vocabulary divergence is intentional (see anchor comment
+  // in IntelligenceBriefSignalGroup.tsx).
+  const tocBuckets: Array<{ label: string; anchor: string; count: number }> = [
+    { label: "Immediate", anchor: "immediate", count: counts.immediate },
+    { label: "Near-term", anchor: "near-term", count: counts.near_term },
+    { label: "Watching", anchor: "watching", count: counts.far_term },
+  ];
 
   return (
     <div className="min-h-screen bg-brand-bg">
@@ -969,6 +992,33 @@ function IntelligenceBriefDetailView({
             </h1>
           )}
         </header>
+
+        {showExecSection && (
+          <section className="mb-10">
+            {execSummary && (
+              <p className="text-slate-200 text-base leading-relaxed max-w-prose mb-6">
+                {execSummary}
+              </p>
+            )}
+            <nav className="flex flex-wrap items-center gap-3">
+              {tocBuckets.map((b) => {
+                const dim = b.count === 0 ? "opacity-40 pointer-events-none" : "";
+                return (
+                  <a
+                    key={b.anchor}
+                    href={`#${b.anchor}`}
+                    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-700 text-sm text-slate-300 hover:text-slate-100 hover:border-slate-500 transition-colors ${dim}`}
+                  >
+                    <span className="font-semibold">{b.label}</span>
+                    <span className="text-xs text-slate-500 tabular-nums">
+                      {b.count}
+                    </span>
+                  </a>
+                );
+              })}
+            </nav>
+          </section>
+        )}
 
         <IntelligenceBriefSignalGroup brief={brief} />
       </div>
