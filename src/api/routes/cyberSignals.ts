@@ -54,10 +54,10 @@ import { fetchCisaKevSignals } from "../lib/cisaKevAdapter.js";
 import { fetchNvdSignals } from "../lib/nvdAdapter.js";
 import { fetchCisaAlerts } from "../lib/cisaAlertsAdapter.js";
 import {
-  fetchAllThreatIntelFeeds,
-  VALID_THREAT_INTEL_SOURCES
-} from "../lib/threatIntelRssAdapter.js";
-import { fetchRegulatoryFeeds } from "../lib/regulatoryFeedAdapter.js";
+  fetchAllFeeds,
+  THREAT_INTEL_FEED_IDS,
+  REGULATORY_FEED_IDS
+} from "../lib/feedAdapter/index.js";
 import { fetchMitreAttackSignals } from "../lib/mitreAttackAdapter.js";
 import { fetchMitreAtlasSignals } from "../lib/mitreAtlasAdapter.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
@@ -1055,7 +1055,7 @@ router.post(
     let requestedSources: string[] | undefined;
     if ("sources" in body && Array.isArray(body.sources)) {
       const filtered = (body.sources as unknown[])
-        .filter((s): s is string => typeof s === "string" && VALID_THREAT_INTEL_SOURCES.has(s));
+        .filter((s): s is string => typeof s === "string" && THREAT_INTEL_FEED_IDS.has(s));
       requestedSources = filtered.length > 0 ? filtered : undefined;
     }
 
@@ -1066,9 +1066,10 @@ router.post(
     const errors: string[] = [];
 
     try {
-      const { signals, results: sourceResults } = await fetchAllThreatIntelFeeds(
-        requestedSources
-      );
+      // Scope the run to the threat-intel feeds. If the caller supplied a
+      // `sources` array, narrow further; otherwise fan out to all three.
+      const ids = requestedSources ?? [...THREAT_INTEL_FEED_IDS];
+      const { signals, results: sourceResults } = await fetchAllFeeds({ ids });
 
       fetched = signals.length;
 
@@ -1228,7 +1229,9 @@ router.post(
     const errors: string[] = [];
 
     try {
-      const { signals, results: sourceResults } = await fetchRegulatoryFeeds();
+      const { signals, results: sourceResults } = await fetchAllFeeds({
+        ids: [...REGULATORY_FEED_IDS]
+      });
 
       fetched = signals.length;
 
