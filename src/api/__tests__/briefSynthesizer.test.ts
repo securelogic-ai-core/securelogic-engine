@@ -37,7 +37,7 @@ describe("enrichBriefSynthesis", () => {
     ).rejects.toThrow(/non-empty/);
   });
 
-  it("returns the BriefSynthesis shape with headline:null when ANTHROPIC_API_KEY is unset", async () => {
+  it("returns the full BriefSynthesis shape with all fields null when ANTHROPIC_API_KEY is unset", async () => {
     const original = process.env.ANTHROPIC_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     try {
@@ -47,8 +47,16 @@ describe("enrichBriefSynthesis", () => {
         "2026-04-30T23:59:59Z",
         ["vulnerability"]
       );
-      expect(result).toEqual({ headline: null });
-      expect(Object.keys(result)).toEqual(["headline"]);
+      expect(result).toEqual({
+        headline: null,
+        teaser: null,
+        exec_summary: null
+      });
+      expect(Object.keys(result).sort()).toEqual([
+        "exec_summary",
+        "headline",
+        "teaser"
+      ]);
     } finally {
       if (original !== undefined) {
         process.env.ANTHROPIC_API_KEY = original;
@@ -222,7 +230,11 @@ describe("runSynthesisSafely", () => {
 
   it("returns the synthesis fixture on success", async () => {
     const fixture: BriefSynthesis = {
-      headline: "Six ABB OT vulnerabilities collide with new federal Zero Trust mandate"
+      headline: "Six ABB OT vulnerabilities collide with new federal Zero Trust mandate",
+      teaser:
+        "Six critical ABB OT advisories and an actively exploited cPanel zero-day demand patch decisions across industrial and hosting infrastructure this week.",
+      exec_summary:
+        "Patch CVE-2026-41940 in cPanel, WHM, and WP Squared within 24 hours — CISA has added it to KEV with confirmed active exploitation since late February. OT security engineers and ICS plant managers running affected ABB systems should confirm patch availability and isolate affected nodes from external access by Friday. Apply the GitHub RCE patch for CVE-2026-3854 before end of business Wednesday, and assign an owner to the CISA Zero Trust OT guidance for a 30-day implementation review."
     };
     synthesisRuntime.enrichBriefSynthesis = vi.fn().mockResolvedValue(fixture);
     const result = await runSynthesisSafely([sampleItem]);
