@@ -34,8 +34,11 @@ import { logger } from "../infra/logger.js";
 import { fetchCisaKevSignals } from "./cisaKevAdapter.js";
 import { fetchNvdSignals } from "./nvdAdapter.js";
 import { fetchCisaAlerts } from "./cisaAlertsAdapter.js";
-import { fetchAllThreatIntelFeeds } from "./threatIntelRssAdapter.js";
-import { fetchRegulatoryFeeds } from "./regulatoryFeedAdapter.js";
+import {
+  fetchAllFeeds,
+  THREAT_INTEL_FEED_IDS,
+  REGULATORY_FEED_IDS
+} from "./feedAdapter/index.js";
 import {
   validateCyberSignalIngest,
   type CyberSignalIngestInput
@@ -472,7 +475,9 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   let threatIntelSignals: CyberSignalIngestInput[] = [];
 
   try {
-    const { signals, results } = await fetchAllThreatIntelFeeds();
+    const { signals, results } = await fetchAllFeeds({
+      ids: [...THREAT_INTEL_FEED_IDS]
+    });
     threatIntelSignals = signals;
     summary.signals_fetched.threat_intel_rss = signals.length;
     // Log per-source results
@@ -493,7 +498,9 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   let regulatorySignals: CyberSignalIngestInput[] = [];
 
   try {
-    const { signals, results } = await fetchRegulatoryFeeds();
+    const { signals, results } = await fetchAllFeeds({
+      ids: [...REGULATORY_FEED_IDS]
+    });
     regulatorySignals = signals;
     summary.signals_fetched.regulatory = signals.length;
     for (const [src, r] of Object.entries(results)) {
