@@ -47,6 +47,7 @@ export type PipelineResult = {
 // ---------------------------------------------------------------------------
 
 const CATEGORY_TO_SIGNAL_TYPE: Record<string, string> = {
+  VULNERABILITY: "patch_advisory",
   SECURITY_INCIDENT: "threat_actor",
   REGULATION: "regulatory_change",
   COMPLIANCE_UPDATE: "regulatory_change",
