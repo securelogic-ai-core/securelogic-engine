@@ -38,6 +38,7 @@ import { encryptField, decryptField } from "../lib/fieldEncryption.js";
 import {
   runSynthesisSafely
 } from "../lib/briefSynthesizer.js";
+import { getSourceDisplayName } from "../lib/sourceDisplayNames.js";
 
 /**
  * Decrypt and parse content_json from the DB.
@@ -904,6 +905,7 @@ router.get("/intelligence-briefs/:id", async (req, res) => {
         affected_cve: item.affected_cve,
         affected_vendor: item.affected_vendor,
         source_slug: item.source_slug,
+        source_display: getSourceDisplayName(item.source_slug),
         signal_type: item.signal_type,
         severity: item.severity,
         cyber_signal_id: item.cyber_signal_id,
