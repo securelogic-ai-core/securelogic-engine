@@ -35,6 +35,7 @@
  */
 
 import type { CyberSignalIngestInput } from "./cyberSignalValidation.js";
+import { getEtag, setEtag } from "./feedEtagStore.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -70,6 +71,9 @@ type CisaKevFeed = {
 
 export const CISA_KEV_FEED_URL =
   "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
+
+/** Redis key holding the most recently observed ETag for the KEV catalog. */
+export const CISA_KEV_ETAG_KEY = "kev:catalog:etag";
 
 const CVE_RE = /^CVE-\d{4}-\d{4,}$/i;
 
@@ -177,22 +181,48 @@ export function mapKevEntryToSignal(
 /**
  * Fetch the CISA KEV feed and return mapped signal inputs.
  *
+ * Conditional GET semantics:
+ *   - Sends `If-None-Match` with the cached ETag (Redis-backed) if present.
+ *   - On HTTP 304 the catalog is unchanged since the last fetch: returns
+ *     `{ signals: [], total: 0, skipped: 0, fromCache: true }` without
+ *     parsing a body.
+ *   - On HTTP 200 captures the response `ETag` header for next call and
+ *     proceeds with the existing parse + map pipeline.
+ *
  * - Skips entries that fail mapKevEntryToSignal (malformed CVE IDs).
  * - Does not validate against VALID_SOURCES / VALID_SIGNAL_TYPES — that is
  *   the ingest pipeline's responsibility.
- * - Throws on network errors or malformed JSON so the caller can handle them.
+ * - Throws on non-2xx-non-304 HTTP responses or malformed JSON so the caller
+ *   can handle them.
+ *
+ * @returns { signals, total, skipped, fromCache }
+ *   total    = vulnerability count in the catalog (0 on cache hit)
+ *   skipped  = entries dropped by the mapper (0 on cache hit)
+ *   fromCache = true when the upstream returned 304 Not Modified
  */
 export async function fetchCisaKevSignals(): Promise<{
   signals: CyberSignalIngestInput[];
   total: number;
   skipped: number;
+  fromCache: boolean;
 }> {
-  const response = await fetch(CISA_KEV_FEED_URL, {
-    headers: {
-      "Accept": "application/json",
-      "User-Agent": "SecureLogic-AI/1.0 (CISA KEV Adapter)"
-    }
-  });
+  const cachedEtag = await getEtag(CISA_KEV_ETAG_KEY);
+
+  const headers: Record<string, string> = {
+    "Accept": "application/json",
+    "User-Agent": "SecureLogic-AI/1.0 (CISA KEV Adapter)"
+  };
+  if (cachedEtag) {
+    headers["If-None-Match"] = cachedEtag;
+  }
+
+  const response = await fetch(CISA_KEV_FEED_URL, { headers });
+
+  // 304 Not Modified — catalog unchanged since the cached ETag was issued.
+  // Skip the parse entirely and signal the caller via fromCache.
+  if (response.status === 304) {
+    return { signals: [], total: 0, skipped: 0, fromCache: true };
+  }
 
   if (!response.ok) {
     throw new Error(
@@ -220,9 +250,17 @@ export async function fetchCisaKevSignals(): Promise<{
     signals.push(mapped);
   }
 
+  // Persist the new ETag for next call. Best-effort: a Redis failure here
+  // does not propagate — the next call will simply do an unconditional fetch.
+  const newEtag = response.headers.get("etag");
+  if (newEtag) {
+    await setEtag(CISA_KEV_ETAG_KEY, newEtag);
+  }
+
   return {
     signals,
     total: feed.vulnerabilities.length,
-    skipped
+    skipped,
+    fromCache: false
   };
 }
