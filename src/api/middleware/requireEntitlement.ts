@@ -11,16 +11,21 @@ const entitlementRank: Record<EntitlementLevel, number> = {
 
 export function requireEntitlement(minimumLevel: EntitlementLevel) {
   return (req: Request, res: Response, next: NextFunction) => {
-    const apiKey = (req as any).apiKey as Record<string, unknown> | undefined;
+    const ctx = (req as any).organizationContext as
+      | { entitlementLevel: string | null }
+      | undefined;
 
-    if (!apiKey) {
+    if (!ctx) {
+      // Programming error: requireEntitlement was mounted without
+      // attachOrganizationContext upstream. 401 preserves the prior
+      // contract for callers that may react to it.
       res.status(401).json({ error: "api_key_required" });
       return;
     }
 
     const currentLevelRaw =
-      typeof apiKey.entitlement_level === "string"
-        ? apiKey.entitlement_level.toLowerCase()
+      typeof ctx.entitlementLevel === "string"
+        ? ctx.entitlementLevel.toLowerCase()
         : "starter";
 
     const currentLevel: EntitlementLevel =

@@ -93,9 +93,12 @@ export async function requireApiKey(
       }
 
       const orgKeyResult = await pg.query(
-        `SELECT * FROM api_keys
-         WHERE organization_id = $1 AND status = 'active'
-         ORDER BY created_at DESC LIMIT 1`,
+        `SELECT id, organization_id, label, key_hash, status,
+                last_used_at, created_at, revoked_at, expires_at,
+                created_by_user_id
+           FROM api_keys
+          WHERE organization_id = $1 AND status = 'active'
+          ORDER BY created_at DESC LIMIT 1`,
         [payload.org]
       );
 
@@ -125,9 +128,8 @@ export async function requireApiKey(
 
     const result = await pg.query(
       `
-      SELECT id, organization_id, label, key_hash, entitlement_level,
-             status, last_used_at, created_at, revoked_at, expires_at,
-             stripe_customer_id, payment_failed_at, stripe_subscription_tier,
+      SELECT id, organization_id, label, key_hash, status,
+             last_used_at, created_at, revoked_at, expires_at,
              created_by_user_id
       FROM api_keys
       WHERE key_hash = $1

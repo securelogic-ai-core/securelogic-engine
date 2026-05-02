@@ -1,10 +1,11 @@
 /**
- * threatIntelRssAdapter.test.ts — Unit tests for threat intel RSS adapter.
+ * threatIntelHelpers.test.ts — Unit tests for threat-intel mapping helpers.
+ *
+ * Relocated from threatIntelRssAdapter.test.ts. Assertions are byte-identical
+ * to the legacy file; the helper functions themselves were moved without
+ * code changes, so unchanged tests + unchanged code = unchanged behavior.
  *
  * All tests are pure — no I/O, no network, no DB.
- * Tests cover: signal_type keyword routing, severity escalation rules,
- * vendor name matching from lookup list, CVE extraction, summary building,
- * and the mapRssItemToSignal pipeline.
  */
 
 import { describe, it, expect } from "vitest";
@@ -17,7 +18,7 @@ import {
   mapRssItemToSignal,
   KNOWN_VENDORS,
   type RssFeedItem
-} from "../lib/threatIntelRssAdapter.js";
+} from "../../lib/feedAdapter/threatIntelHelpers.js";
 
 // ---------------------------------------------------------------------------
 // deriveRssSignalType

@@ -238,6 +238,72 @@ describe("buildBriefItems — title truncation", () => {
     const title = buildBriefItems([signal])[0]!.title;
     expect(title).toBe("MALWARE");
   });
+
+  it("uses raw_payload.title when present and non-empty", () => {
+    const signal: CyberSignalForBrief = {
+      id: "s",
+      signal_type: "advisory",
+      severity: "Critical",
+      normalized_summary: "View CSAF\nSummary\nSuccessful exploitation could allow a...",
+      affected_cve: null,
+      affected_vendor: null,
+      source: "regulatory_cisa",
+      ingestion_timestamp: "2026-05-01T00:00:00.000Z",
+      raw_payload: { title: "ABB PCM600" }
+    };
+    const title = buildBriefItems([signal])[0]!.title;
+    expect(title).toBe("ABB PCM600");
+  });
+
+  it("falls back to normalized_summary when raw_payload.title is missing", () => {
+    const signal: CyberSignalForBrief = {
+      id: "s",
+      signal_type: "advisory",
+      severity: "High",
+      normalized_summary: "Real summary text here",
+      affected_cve: null,
+      affected_vendor: null,
+      source: "rss",
+      ingestion_timestamp: "2026-05-01T00:00:00.000Z",
+      raw_payload: null
+    };
+    const title = buildBriefItems([signal])[0]!.title;
+    expect(title).toBe("Real summary text here");
+  });
+
+  it("strips 'View CSAF Summary' boilerplate from normalized_summary fallback", () => {
+    const signal: CyberSignalForBrief = {
+      id: "s",
+      signal_type: "advisory",
+      severity: "Critical",
+      normalized_summary: "View CSAF\nSummary\nSuccessful exploitation could allow remote code execution",
+      affected_cve: null,
+      affected_vendor: null,
+      source: "regulatory_cisa",
+      ingestion_timestamp: "2026-05-01T00:00:00.000Z",
+      raw_payload: null
+    };
+    const title = buildBriefItems([signal])[0]!.title;
+    expect(title.startsWith("View CSAF")).toBe(false);
+    expect(title.startsWith("Summary")).toBe(false);
+    expect(title.startsWith("Successful exploitation")).toBe(true);
+  });
+
+  it("falls back when raw_payload.title is whitespace-only", () => {
+    const signal: CyberSignalForBrief = {
+      id: "s",
+      signal_type: "advisory",
+      severity: "High",
+      normalized_summary: "Actual summary",
+      affected_cve: null,
+      affected_vendor: null,
+      source: "rss",
+      ingestion_timestamp: "2026-05-01T00:00:00.000Z",
+      raw_payload: { title: "   " }
+    };
+    const title = buildBriefItems([signal])[0]!.title;
+    expect(title).toBe("Actual summary");
+  });
 });
 
 // ====================================================================

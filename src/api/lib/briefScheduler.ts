@@ -1,5 +1,5 @@
 /**
- * briefScheduler.ts — Weekly Intelligence Brief pipeline runner.
+ * briefScheduler.ts — Daily Intelligence Brief pipeline runner.
  *
  * Processes every organization that has at least one active Intelligence Brief
  * subscriber, running the complete pipeline for each:
@@ -34,8 +34,13 @@ import { logger } from "../infra/logger.js";
 import { fetchCisaKevSignals } from "./cisaKevAdapter.js";
 import { fetchNvdSignals } from "./nvdAdapter.js";
 import { fetchCisaAlerts } from "./cisaAlertsAdapter.js";
-import { fetchAllThreatIntelFeeds } from "./threatIntelRssAdapter.js";
-import { fetchRegulatoryFeeds } from "./regulatoryFeedAdapter.js";
+import { fetchMitreAttackSignals } from "./mitreAttackAdapter.js";
+import { fetchMitreAtlasSignals } from "./mitreAtlasAdapter.js";
+import {
+  fetchAllFeeds,
+  THREAT_INTEL_FEED_IDS,
+  REGULATORY_FEED_IDS
+} from "./feedAdapter/index.js";
 import {
   validateCyberSignalIngest,
   type CyberSignalIngestInput
@@ -51,6 +56,7 @@ import {
   type CyberSignalForBrief,
   type BriefItem
 } from "./intelligenceBriefGenerator.js";
+import { runSynthesisSafely } from "./briefSynthesizer.js";
 import { sendBrief } from "./briefEmailSender.js";
 
 // ---------------------------------------------------------------------------
@@ -71,6 +77,8 @@ export type SchedulerRunSummary = {
     cisa_kev: number;
     nvd: number;
     cisa_alerts: number;
+    mitre_attack: number;
+    mitre_atlas: number;
     threat_intel_rss: number;
     regulatory: number;
   };
@@ -213,7 +221,8 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
 
     const signalsResult = await phase1Client.query<CyberSignalForBrief>(
       `SELECT id, signal_type, severity, normalized_summary,
-              affected_cve, affected_vendor, source, ingestion_timestamp
+              affected_cve, affected_vendor, source, ingestion_timestamp,
+              raw_payload
        FROM cyber_signals
        WHERE (organization_id = $1 OR organization_id IS NULL)
          AND ingestion_timestamp >= $2
@@ -257,6 +266,11 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
     throw enrichErr;
   }
 
+  // Brief-level synthesis — one Claude call producing a 12-word headline.
+  // Non-fatal: failure resolves to null and the brief publishes without one.
+  const synthesis = await runSynthesisSafely(enrichedItems);
+  const contentJsonWithSynthesis = { ...base.content_json, synthesis };
+
   // ── Phase 3: Insert items + publish (own transaction, explicit fail-safe) ───
   //
   // The publish UPDATE is the last step. If it fails the brief must not remain
@@ -272,11 +286,12 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
       const itemPlaceholders: string[] = [];
 
       enrichedItems.forEach((item: BriefItem, idx: number) => {
-        const b = idx * 16;
+        const b = idx * 17;
         itemPlaceholders.push(
           `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, ` +
           `$${b + 6}, $${b + 7}, $${b + 8}, $${b + 9}, $${b + 10}, ` +
-          `$${b + 11}, $${b + 12}, $${b + 13}, $${b + 14}, $${b + 15}, $${b + 16})`
+          `$${b + 11}, $${b + 12}, $${b + 13}, $${b + 14}, $${b + 15}, ` +
+          `$${b + 16}, $${b + 17})`
         );
         itemValues.push(
           orgId,
@@ -294,7 +309,8 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
           item.sort_order,
           item.why_it_matters ?? null,
           item.recommended_actions ?? null,
-          item.analyst_notes ?? null
+          item.analyst_notes ?? null,
+          item.urgency ?? null
         );
       });
 
@@ -303,7 +319,8 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
            (organization_id, brief_id, cyber_signal_id, category, relevance,
             title, summary, affected_cve, affected_vendor, source_slug,
             signal_type, severity, sort_order,
-            why_it_matters, recommended_actions, analyst_notes)
+            why_it_matters, recommended_actions, analyst_notes,
+            urgency)
          VALUES ${itemPlaceholders.join(", ")}`,
         itemValues
       );
@@ -326,7 +343,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
         briefId,
         base.signal_count,
         base.item_count,
-        JSON.stringify(base.content_json),
+        JSON.stringify(contentJsonWithSynthesis),
         base.content_markdown
       ]
     );
@@ -357,11 +374,11 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 /**
- * Run the full weekly Intelligence Brief pipeline for every org with active
+ * Run the full daily Intelligence Brief pipeline for every org with active
  * subscribers.
  *
  * Called by:
- *   - schedulerRunner.ts (node-cron, every Monday 7AM UTC)
+ *   - schedulerRunner.ts (node-cron, every day 7AM UTC)
  *   - POST /api/admin/briefs/run-scheduler (manual trigger for testing)
  *
  * @returns  Run summary with per-source signal counts, org counts, email counts.
@@ -374,6 +391,8 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
       cisa_kev: 0,
       nvd: 0,
       cisa_alerts: 0,
+      mitre_attack: 0,
+      mitre_atlas: 0,
       threat_intel_rss: 0,
       regulatory: 0
     },
@@ -459,10 +478,54 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     logger.error({ event: "scheduler_cisa_alerts_failed", err }, "CISA Alerts fetch failed — continuing");
   }
 
+  // MITRE ATT&CK — Tier-1 STIX bundle of techniques + threat groups.
+  // Adapter sends If-None-Match against a Redis-cached ETag; on 304 the
+  // signals array is empty and fromCache is true. Daily cron is fine
+  // because most days hit the cache (PR #35).
+  let mitreAttackSignals: CyberSignalIngestInput[] = [];
+
+  try {
+    const { signals, total, fromCache } = await fetchMitreAttackSignals();
+    mitreAttackSignals = signals;
+    summary.signals_fetched.mitre_attack = signals.length;
+    logger.info(
+      { event: "scheduler_mitre_attack_fetched", total, mapped: signals.length, fromCache },
+      fromCache
+        ? "MITRE ATT&CK feed cache hit (304) — skipping parse"
+        : "MITRE ATT&CK feed fetched"
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    summary.errors.push(`mitre_attack_fetch_failed: ${msg}`);
+    logger.error({ event: "scheduler_mitre_attack_failed", err }, "MITRE ATT&CK fetch failed — continuing");
+  }
+
+  // MITRE ATLAS — Tier-1 STIX bundle of AI-system attack techniques.
+  // Same conditional-GET semantics as ATT&CK.
+  let mitreAtlasSignals: CyberSignalIngestInput[] = [];
+
+  try {
+    const { signals, total, fromCache } = await fetchMitreAtlasSignals();
+    mitreAtlasSignals = signals;
+    summary.signals_fetched.mitre_atlas = signals.length;
+    logger.info(
+      { event: "scheduler_mitre_atlas_fetched", total, mapped: signals.length, fromCache },
+      fromCache
+        ? "MITRE ATLAS feed cache hit (304) — skipping parse"
+        : "MITRE ATLAS feed fetched"
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    summary.errors.push(`mitre_atlas_fetch_failed: ${msg}`);
+    logger.error({ event: "scheduler_mitre_atlas_failed", err }, "MITRE ATLAS fetch failed — continuing");
+  }
+
   let threatIntelSignals: CyberSignalIngestInput[] = [];
 
   try {
-    const { signals, results } = await fetchAllThreatIntelFeeds();
+    const { signals, results } = await fetchAllFeeds({
+      ids: [...THREAT_INTEL_FEED_IDS]
+    });
     threatIntelSignals = signals;
     summary.signals_fetched.threat_intel_rss = signals.length;
     // Log per-source results
@@ -483,7 +546,9 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   let regulatorySignals: CyberSignalIngestInput[] = [];
 
   try {
-    const { signals, results } = await fetchRegulatoryFeeds();
+    const { signals, results } = await fetchAllFeeds({
+      ids: [...REGULATORY_FEED_IDS]
+    });
     regulatorySignals = signals;
     summary.signals_fetched.regulatory = signals.length;
     for (const [src, r] of Object.entries(results)) {
@@ -579,6 +644,56 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
         const msg = err instanceof Error ? err.message : String(err);
         summary.errors.push(`org:${orgId} cisa_alerts_ingest_fatal: ${msg}`);
         logger.error({ event: "scheduler_cisa_alerts_ingest_failed", orgId, err }, "CISA Alerts ingest failed for org");
+      }
+    }
+
+    // Ingest MITRE ATT&CK signals for this org
+    if (mitreAttackSignals.length > 0) {
+      try {
+        const result = await ingestSignalsForOrg(mitreAttackSignals, orgId);
+        logger.info(
+          {
+            event: "scheduler_mitre_attack_ingested",
+            orgId,
+            inserted: result.inserted,
+            skippedDuplicate: result.skippedDuplicate,
+            skippedInvalid: result.skippedInvalid,
+            errors: result.errors.length
+          },
+          "MITRE ATT&CK ingested for org"
+        );
+        for (const e of result.errors) {
+          summary.errors.push(`org:${orgId} mitre_attack_ingest: ${e}`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        summary.errors.push(`org:${orgId} mitre_attack_ingest_fatal: ${msg}`);
+        logger.error({ event: "scheduler_mitre_attack_ingest_failed", orgId, err }, "MITRE ATT&CK ingest failed for org");
+      }
+    }
+
+    // Ingest MITRE ATLAS signals for this org
+    if (mitreAtlasSignals.length > 0) {
+      try {
+        const result = await ingestSignalsForOrg(mitreAtlasSignals, orgId);
+        logger.info(
+          {
+            event: "scheduler_mitre_atlas_ingested",
+            orgId,
+            inserted: result.inserted,
+            skippedDuplicate: result.skippedDuplicate,
+            skippedInvalid: result.skippedInvalid,
+            errors: result.errors.length
+          },
+          "MITRE ATLAS ingested for org"
+        );
+        for (const e of result.errors) {
+          summary.errors.push(`org:${orgId} mitre_atlas_ingest: ${e}`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        summary.errors.push(`org:${orgId} mitre_atlas_ingest_fatal: ${msg}`);
+        logger.error({ event: "scheduler_mitre_atlas_ingest_failed", orgId, err }, "MITRE ATLAS ingest failed for org");
       }
     }
 

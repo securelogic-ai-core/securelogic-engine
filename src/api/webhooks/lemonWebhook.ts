@@ -32,7 +32,11 @@ function toDbEntitlementLevel(tier: EntitlementRecord["tier"]): string {
 }
 
 /**
- * Best-effort update of api_keys.entitlement_level in Postgres.
+ * Best-effort update of organizations.entitlement_level in Postgres.
+ *
+ * Maps the Lemon-provided raw API key → api_keys.organization_id → org row.
+ * organizations.entitlement_level is the source of truth; the per-key
+ * entitlement column is no longer written.
  *
  * RULES:
  * - Errors are logged but never thrown — the webhook must always return 200.
@@ -50,7 +54,10 @@ async function syncEntitlementToDb(
     const keyHash = crypto.createHash("sha256").update(apiKey).digest("hex");
 
     const result = await pg.query(
-      `UPDATE api_keys SET entitlement_level = $1 WHERE key_hash = $2`,
+      `UPDATE organizations
+          SET entitlement_level = $1,
+              plan              = $1
+        WHERE id = (SELECT organization_id FROM api_keys WHERE key_hash = $2 LIMIT 1)`,
       [level, keyHash]
     );
 
@@ -63,7 +70,7 @@ async function syncEntitlementToDb(
           apiKeyPrefix: apiKey.slice(0, 6),
           level
         },
-        "lemonWebhook: api_keys row not found for key — DB entitlement not updated"
+        "lemonWebhook: organization not found for key — DB entitlement not updated"
       );
     } else {
       logger.info(
@@ -72,7 +79,7 @@ async function syncEntitlementToDb(
           apiKeyPrefix: apiKey.slice(0, 6),
           level
         },
-        "lemonWebhook: api_keys.entitlement_level updated"
+        "lemonWebhook: organizations.entitlement_level updated"
       );
     }
   } catch (err) {
@@ -282,10 +289,11 @@ export async function lemonWebhook(req: Request, res: Response): Promise<void> {
 
     /**
      * Write entitlement to Redis (supplementary cache).
-     * Then sync to Postgres api_keys.entitlement_level (primary, source of truth).
+     * Then sync to organizations.entitlement_level (primary, source of truth).
      *
-     * All entitlement enforcement reads from Postgres — the DB row is the
-     * authoritative source. Redis is retained as a supplementary cache.
+     * All entitlement enforcement reads from organizations.entitlement_level
+     * (loaded onto req.organizationContext by attachOrganizationContext
+     * middleware). Redis is retained as a supplementary cache.
      */
     await setEntitlementInRedis(apiKey, entitlement);
     await syncEntitlementToDb(apiKey, entitlement);

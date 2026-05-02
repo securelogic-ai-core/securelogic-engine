@@ -48,15 +48,15 @@ export type PipelineResult = {
 
 const CATEGORY_TO_SIGNAL_TYPE: Record<string, string> = {
   SECURITY_INCIDENT: "threat_actor",
-  REGULATION: "regulatory",
-  COMPLIANCE_UPDATE: "regulatory",
-  VENDOR_RISK: "vendor_incident",
-  AI_GOVERNANCE: "general",
-  GENERAL: "general"
+  REGULATION: "regulatory_change",
+  COMPLIANCE_UPDATE: "regulatory_change",
+  VENDOR_RISK: "third_party_breach",
+  AI_GOVERNANCE: "advisory",
+  GENERAL: "advisory"
 };
 
 function mapCategoryToSignalType(category: string): string {
-  return CATEGORY_TO_SIGNAL_TYPE[category.toUpperCase()] ?? "general";
+  return CATEGORY_TO_SIGNAL_TYPE[category.toUpperCase()] ?? "advisory";
 }
 
 // Maps 0-1 impact score → cyber_signals severity values.
@@ -137,7 +137,13 @@ async function bridgeSignalsToCyberSignals(
       }
     } catch (err) {
       logger.error(
-        { event: "cyber_signal_bridge_failed", source: signal.source, err },
+        {
+          event: "cyber_signal_bridge_failed",
+          source: signal.source,
+          attempted_signal_type: signalType,
+          category: signal.category,
+          err
+        },
         "Bridge to cyber_signals failed"
       );
     }

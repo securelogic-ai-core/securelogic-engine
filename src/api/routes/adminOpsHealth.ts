@@ -73,9 +73,8 @@ router.get("/ops/health", async (_req, res) => {
         SELECT COUNT(DISTINCT u.id)::int AS suppressed_paying_count
         FROM users u
         INNER JOIN organizations o ON o.id = u.organization_id
-        INNER JOIN api_keys k ON k.organization_id = o.id AND k.status = 'active'
         INNER JOIN email_suppressions es ON LOWER(es.email) = LOWER(u.email)
-        WHERE k.entitlement_level IN ('professional', 'premium', 'platform', 'team')
+        WHERE o.entitlement_level IN ('professional', 'premium', 'platform', 'team')
           AND o.status = 'active'
         `
       )
