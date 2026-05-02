@@ -59,8 +59,12 @@ import type { StixBundle, StixExternalReference, StixObject } from "./mitreAttac
 // Constants
 // ---------------------------------------------------------------------------
 
+// Updated 2026-05-02: MITRE moved the ATLAS STIX bundle from the
+// `mitre-atlas/atlas-data` repo to `mitre-atlas/atlas-navigator-data`. The
+// old URL now returns 404. The smoke test in __tests__/mitreBundleUrls.live.test.ts
+// (gated on MITRE_SMOKE_TEST=1) is the trip-wire for the next reorganization.
 export const MITRE_ATLAS_BUNDLE_URL =
-  "https://raw.githubusercontent.com/mitre-atlas/atlas-data/main/dist/stix-atlas.json";
+  "https://raw.githubusercontent.com/mitre-atlas/atlas-navigator-data/main/dist/stix-atlas.json";
 
 /** Redis key holding the most recently observed ETag for the ATLAS bundle. */
 export const MITRE_ATLAS_ETAG_KEY = "mitre:atlas:etag";
