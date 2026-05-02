@@ -368,6 +368,139 @@ describe("buildBriefItems — sort order", () => {
 });
 
 // ====================================================================
+// buildBriefItems — CVE de-dup (merge by affected_cve)
+// ====================================================================
+
+describe("buildBriefItems — CVE de-dup", () => {
+  const cveSignal = (
+    id: string,
+    source: string,
+    cve: string | null,
+    severity: string = "Critical",
+    ts: string = "2026-05-01T10:00:00.000Z"
+  ): CyberSignalForBrief => ({
+    id,
+    signal_type: "cve",
+    severity,
+    normalized_summary: `Signal ${id}`,
+    affected_cve: cve,
+    affected_vendor: "Microsoft",
+    source,
+    ingestion_timestamp: ts
+  });
+
+  it("collapses 3 same-CVE rows (KEV, NVD, news) into 1 item with KEV primary", () => {
+    const signals = [
+      cveSignal("a", "nvd", "CVE-2026-1111"),
+      cveSignal("b", "cisa_kev", "CVE-2026-1111"),
+      cveSignal("c", "security_news_bleepingcomputer", "CVE-2026-1111")
+    ];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(1);
+    expect(items[0]!.source_slug).toBe("cisa_kev");
+    expect(items[0]!.cyber_signal_id).toBe("b");
+    expect(items[0]!.corroborating_sources).toEqual([
+      "nvd",
+      "security_news_bleepingcomputer"
+    ]);
+  });
+
+  it("collapses 2 same-CVE rows (NVD, news) into 1 item with NVD primary", () => {
+    const signals = [
+      cveSignal("a", "security_news_krebs", "CVE-2026-2222"),
+      cveSignal("b", "nvd", "CVE-2026-2222")
+    ];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(1);
+    expect(items[0]!.source_slug).toBe("nvd");
+    expect(items[0]!.corroborating_sources).toEqual(["security_news_krebs"]);
+  });
+
+  it("leaves 2 different-CVE rows as 2 items, no corroborating_sources", () => {
+    const signals = [
+      cveSignal("a", "cisa_kev", "CVE-2026-3001"),
+      cveSignal("b", "nvd", "CVE-2026-3002")
+    ];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(2);
+    expect(items[0]!.corroborating_sources).toBeUndefined();
+    expect(items[1]!.corroborating_sources).toBeUndefined();
+  });
+
+  it("leaves a single CVE-less row unchanged with no corroborating_sources", () => {
+    const signals = [cveSignal("a", "rss", null, "Moderate")];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(1);
+    expect(items[0]!.corroborating_sources).toBeUndefined();
+  });
+
+  it("mixed: 3-row group + 2-row group + 1 no-CVE → 3 items", () => {
+    const signals = [
+      cveSignal("a", "cisa_kev", "CVE-2026-4001"),
+      cveSignal("b", "nvd", "CVE-2026-4001"),
+      cveSignal("c", "security_news_bleepingcomputer", "CVE-2026-4001"),
+      cveSignal("d", "nvd", "CVE-2026-4002"),
+      cveSignal("e", "cisa_alerts", "CVE-2026-4002"),
+      cveSignal("f", "rss", null, "Moderate")
+    ];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(3);
+
+    const merged4001 = items.find((i) => i.affected_cve === "CVE-2026-4001")!;
+    expect(merged4001.source_slug).toBe("cisa_kev");
+    expect(merged4001.corroborating_sources).toEqual([
+      "nvd",
+      "security_news_bleepingcomputer"
+    ]);
+
+    const merged4002 = items.find((i) => i.affected_cve === "CVE-2026-4002")!;
+    expect(merged4002.source_slug).toBe("nvd");
+    expect(merged4002.corroborating_sources).toEqual(["cisa_alerts"]);
+  });
+
+  it("groups by uppercase trimmed CVE (case- and whitespace-insensitive)", () => {
+    const signals = [
+      cveSignal("a", "nvd", "cve-2026-5555"),
+      cveSignal("b", "cisa_kev", "  CVE-2026-5555  ")
+    ];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(1);
+    expect(items[0]!.source_slug).toBe("cisa_kev");
+  });
+
+  it("treats whitespace-only CVE as CVE-less (no merge across blanks)", () => {
+    const signals = [
+      cveSignal("a", "rss", "   "),
+      cveSignal("b", "nvd", "   ")
+    ];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(2);
+  });
+
+  it("dedupes corroborating_sources when same source appears twice in a CVE group", () => {
+    const signals = [
+      cveSignal("a", "cisa_kev", "CVE-2026-6666"),
+      cveSignal("b", "nvd", "CVE-2026-6666", "Critical", "2026-05-01T10:00:00.000Z"),
+      cveSignal("c", "nvd", "CVE-2026-6666", "Critical", "2026-05-01T09:00:00.000Z")
+    ];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(1);
+    expect(items[0]!.source_slug).toBe("cisa_kev");
+    expect(items[0]!.corroborating_sources).toEqual(["nvd"]);
+  });
+
+  it("when two highest-priority rows tie, picks the most recent by ingestion_timestamp", () => {
+    const signals = [
+      cveSignal("older", "nvd", "CVE-2026-7777", "Critical", "2026-04-30T08:00:00.000Z"),
+      cveSignal("newer", "nvd", "CVE-2026-7777", "Critical", "2026-05-01T08:00:00.000Z")
+    ];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(1);
+    expect(items[0]!.cyber_signal_id).toBe("newer");
+  });
+});
+
+// ====================================================================
 // buildContentJson
 // ====================================================================
 
