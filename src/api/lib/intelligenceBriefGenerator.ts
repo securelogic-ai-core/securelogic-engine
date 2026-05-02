@@ -113,6 +113,17 @@ export type BriefItem = {
    * urgency column existed.
    */
   urgency?: BriefUrgency | null;
+  /**
+   * Other sources that ingested the same CVE and were collapsed into this
+   * canonical item by the CVE-merge pass in buildBriefItems. Distinct,
+   * sorted by source priority (highest first). Undefined when no merge
+   * occurred (the common case: most items have no corroborators).
+   *
+   * Carried through content_json only — not persisted to the per-row
+   * intelligence_brief_items table (no migration). Frontend may read it
+   * off the content_json blob to render a "seen in N sources" indicator.
+   */
+  corroborating_sources?: string[];
 };
 
 export type BriefCategoryGroup = {
@@ -241,22 +252,126 @@ export function scoreRelevance(severity: string, affectedCve: string | null): Br
 }
 
 // ---------------------------------------------------------------------------
+// Source priority ladder (for CVE-merge canonicalization)
+// ---------------------------------------------------------------------------
+
+/**
+ * When the same CVE is ingested across multiple sources, the merged brief
+ * item takes its primary fields from the highest-priority source (lowest
+ * number wins). KEV ranks first because it carries federal due-date and
+ * known-exploitation context; NVD next because it carries authoritative
+ * CVSS metrics; CISA alerts third (advisory context). PSIRT vendor feeds
+ * outrank generic news. Anything unknown falls to the bottom — news rows
+ * are merged away in favour of canonical sources but never become canonical
+ * themselves when a structured-feed alternative exists.
+ *
+ * Spec: docs/brief-content-audit.md §2 (Bug 2 fix scope).
+ */
+function sourcePriority(source: string): number {
+  const s = source.toLowerCase().trim();
+  if (s === "cisa_kev") return 0;
+  if (s === "nvd") return 1;
+  if (s === "cisa_alerts") return 2;
+  if (s.startsWith("psirt_")) return 3;
+  if (s.startsWith("security_news_")) return 4;
+  return 5;
+}
+
+// ---------------------------------------------------------------------------
+// mergeBriefItemsByCve  (pure)
+// ---------------------------------------------------------------------------
+
+/**
+ * Collapse multiple BriefItems sharing the same CVE into one canonical item.
+ *
+ * The cyber_signals dedup_hash uniquely identifies (source, signal_type, cve,
+ * vendor) per organization, which means the same CVE legitimately appears as
+ * separate rows when ingested from KEV, NVD, news, etc. (preserving provenance
+ * at the signal layer). At the brief layer the user wants one card per CVE.
+ *
+ * Algorithm:
+ *   1. Partition into CVE-bearing (non-empty affected_cve) vs CVE-less.
+ *   2. Group CVE-bearing items by uppercase-trimmed CVE.
+ *   3. For each group, sort by [sourcePriority asc, ingestion_timestamp desc]
+ *      and take the first as canonical. Distinct other source slugs become
+ *      corroborating_sources, sorted by the same priority ladder.
+ *   4. CVE-less items pass through unchanged.
+ *
+ * Order of returned items is not guaranteed; the caller re-sorts.
+ */
+function mergeBriefItemsByCve(items: ReadonlyArray<BriefItem>): BriefItem[] {
+  const noCveItems: BriefItem[] = [];
+  const groups = new Map<string, BriefItem[]>();
+
+  for (const item of items) {
+    const cveKey = item.affected_cve?.trim().toUpperCase();
+    if (!cveKey) {
+      noCveItems.push(item);
+      continue;
+    }
+    const bucket = groups.get(cveKey);
+    if (bucket) {
+      bucket.push(item);
+    } else {
+      groups.set(cveKey, [item]);
+    }
+  }
+
+  const merged: BriefItem[] = [];
+
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      merged.push(group[0]!);
+      continue;
+    }
+
+    const sorted = [...group].sort((a, b) => {
+      const pDiff = sourcePriority(a.source_slug) - sourcePriority(b.source_slug);
+      if (pDiff !== 0) return pDiff;
+      return b.ingestion_timestamp.localeCompare(a.ingestion_timestamp);
+    });
+
+    const canonical = sorted[0]!;
+    const others = sorted.slice(1);
+
+    const seen = new Set<string>([canonical.source_slug]);
+    const corroborating: string[] = [];
+    for (const other of others) {
+      if (!seen.has(other.source_slug)) {
+        seen.add(other.source_slug);
+        corroborating.push(other.source_slug);
+      }
+    }
+
+    merged.push(
+      corroborating.length > 0
+        ? { ...canonical, corroborating_sources: corroborating }
+        : canonical
+    );
+  }
+
+  return [...merged, ...noCveItems];
+}
+
+// ---------------------------------------------------------------------------
 // buildBriefItems
 // ---------------------------------------------------------------------------
 
 /**
  * Convert an array of cyber signal rows into sorted BriefItems.
  *
- * Items are sorted by:
- *   1. relevance: high → medium → low
- *   2. ingestion_timestamp DESC (most recent first within each relevance tier)
- *
- * sort_order is assigned as a 0-based integer after sorting.
+ * Pipeline:
+ *   1. Map each signal 1:1 to a BriefItem.
+ *   2. Merge items sharing the same CVE down to one canonical item per CVE
+ *      (mergeBriefItemsByCve). Other source slugs are preserved on
+ *      corroborating_sources for downstream "seen in N sources" rendering.
+ *   3. Sort by relevance (high→medium→low) then ingestion_timestamp DESC.
+ *   4. Assign 0-based sort_order.
  */
 export function buildBriefItems(signals: ReadonlyArray<CyberSignalForBrief>): BriefItem[] {
   const RELEVANCE_RANK: Record<BriefRelevance, number> = { high: 0, medium: 1, low: 2 };
 
-  const items: BriefItem[] = signals.map((s) => ({
+  const rawItems: BriefItem[] = signals.map((s) => ({
     cyber_signal_id: s.id,
     category: mapSignalToCategory(s.signal_type),
     relevance: scoreRelevance(s.severity, s.affected_cve),
@@ -270,6 +385,8 @@ export function buildBriefItems(signals: ReadonlyArray<CyberSignalForBrief>): Br
     ingestion_timestamp: new Date(s.ingestion_timestamp).toISOString(),
     sort_order: 0 // assigned below
   }));
+
+  const items = mergeBriefItemsByCve(rawItems);
 
   items.sort((a, b) => {
     const rankDiff = RELEVANCE_RANK[a.relevance] - RELEVANCE_RANK[b.relevance];
