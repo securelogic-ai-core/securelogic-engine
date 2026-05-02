@@ -254,6 +254,13 @@ services:
       - key: DATABASE_URL
         sync: false
 
+      # Shared with API service — same Redis instance.
+      # Required for the 15-minute KEV poll's ETag short-circuit
+      # (kevPoller.ts → fetchCisaKevSignals → feedEtagStore).
+      # Without this, every poll fetches the full catalog instead of 304.
+      - key: REDIS_URL
+        sync: false
+
       # Email delivery for newsletter sends
       - key: RESEND_API_KEY
         sync: false
@@ -313,6 +320,13 @@ services:
 
       # Staging Postgres — populate with the securelogic_staging URL in dashboard
       - key: DATABASE_URL
+        sync: false
+
+      # Staging Redis — populate with the staging Redis URL in dashboard.
+      # Required for the 15-minute KEV poll's ETag short-circuit
+      # (kevPoller.ts → fetchCisaKevSignals → feedEtagStore).
+      # Without this, every poll fetches the full catalog instead of 304.
+      - key: REDIS_URL
         sync: false
 
       # Email delivery for newsletter sends — staging Resend key recommended
