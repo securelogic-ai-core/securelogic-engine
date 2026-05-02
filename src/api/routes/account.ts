@@ -2,6 +2,7 @@ import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 
 const router = Router();
 
@@ -17,7 +18,7 @@ const router = Router();
    Never exposes key_hash, stripe_customer_id, or revoked_at.
    ========================================================= */
 
-router.get("/me", requireApiKey, async (req, res, next) => {
+router.get("/me", requireApiKey, attachOrganizationContext, async (req, res, next) => {
   try {
     const apiKey = (req as any).apiKey as Record<string, unknown>;
     const orgId = typeof apiKey.organization_id === "string"
@@ -32,18 +33,18 @@ router.get("/me", requireApiKey, async (req, res, next) => {
     const result = await pg.query(
       `
       SELECT
-        o.id              AS organization_id,
-        o.name            AS organization_name,
-        o.slug            AS organization_slug,
-        o.plan            AS organization_plan,
-        o.status          AS organization_status,
-        k.id              AS api_key_id,
-        k.label           AS api_key_label,
-        k.entitlement_level,
-        k.stripe_subscription_tier,
-        k.status          AS api_key_status,
+        o.id                         AS organization_id,
+        o.name                       AS organization_name,
+        o.slug                       AS organization_slug,
+        o.plan                       AS organization_plan,
+        o.status                     AS organization_status,
+        o.entitlement_level          AS entitlement_level,
+        o.stripe_subscription_tier   AS stripe_subscription_tier,
+        k.id                         AS api_key_id,
+        k.label                      AS api_key_label,
+        k.status                     AS api_key_status,
         k.last_used_at,
-        k.created_at      AS api_key_created_at
+        k.created_at                 AS api_key_created_at
       FROM api_keys k
       JOIN organizations o ON o.id = k.organization_id
       WHERE k.id = $1

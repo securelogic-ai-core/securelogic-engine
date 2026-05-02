@@ -131,6 +131,104 @@ export type IssuesResponse = {
   issues: NewsletterIssue[];
 };
 
+// =========================================================
+// INTELLIGENCE BRIEF TYPES
+// =========================================================
+
+export type IntelligenceBriefStatus = "draft" | "generating" | "published" | "failed";
+
+export type IntelligenceBriefCategory =
+  | "vulnerability"
+  | "threat_actor"
+  | "vendor_incident"
+  | "regulatory"
+  | "general";
+
+export type IntelligenceBriefRelevance = "high" | "medium" | "low";
+
+/**
+ * Per-item time-horizon urgency band, classified by the engine's enrichment
+ * pipeline. Mirrors BriefUrgency in src/api/lib/intelligenceBriefGenerator.ts.
+ *
+ *   immediate — act this week
+ *   near_term — act this month
+ *   far_term  — monitor
+ *
+ * Null on items generated before the urgency column was added (2026-06-02).
+ */
+export type IntelligenceBriefUrgency = "immediate" | "near_term" | "far_term";
+
+/** List-shape brief — metadata only (no content_json, no items). */
+export type IntelligenceBrief = {
+  id: string;
+  period_start: string;
+  period_end: string;
+  status: IntelligenceBriefStatus;
+  signal_count: number;
+  item_count: number;
+  generated_at: string | null;
+  published_at: string | null;
+  created_at: string;
+};
+
+export type IntelligenceBriefItem = {
+  id: string;
+  category: IntelligenceBriefCategory | string;
+  relevance: IntelligenceBriefRelevance | string;
+  title: string;
+  summary: string;
+  affected_cve: string | null;
+  affected_vendor: string | null;
+  source_slug: string | null;
+  signal_type: string | null;
+  severity: string | null;
+  cyber_signal_id: string | null;
+  ingestion_timestamp: string | null;
+  sort_order: number;
+  why_it_matters: string | null;
+  recommended_actions: string | null;
+  analyst_notes: string | null;
+  urgency: IntelligenceBriefUrgency | null;
+};
+
+/**
+ * Brief-level synthesis embedded in content_json.synthesis. Mirrors the
+ * engine's BriefSynthesis type (src/api/lib/briefSynthesizer.ts) — duplicated
+ * here intentionally because frontend and engine are separate npm packages
+ * and don't share types directly. Keep in sync if the engine shape changes.
+ *
+ * D1 collapsed this layer to a single 12-word headline. The exec-summary
+ * pass added teaser (one-sentence dashboard hook) and exec_summary (three-
+ * sentence directive paragraph). Both fields are nullable; older briefs
+ * have only headline populated.
+ */
+export type BriefSynthesis = {
+  headline: string | null;
+  teaser?: string | null;
+  exec_summary?: string | null;
+};
+
+export type IntelligenceBriefListResponse = {
+  briefs: IntelligenceBrief[];
+  next_cursor: { cursor_period_end: string; cursor_id: string } | null;
+};
+
+/**
+ * Detail-shape brief — full content_json/markdown plus embedded items.
+ *
+ * content_json is loosely typed (the engine writes a richer structure but
+ * the frontend currently only reads .synthesis). Intersection with
+ * Record<string, unknown> preserves access to other fields without forcing
+ * the frontend to mirror the full shape.
+ */
+export type IntelligenceBriefDetailResponse = IntelligenceBrief & {
+  content_json:
+    | ({ synthesis?: BriefSynthesis | null } & Record<string, unknown>)
+    | null;
+  content_markdown: string;
+  items: IntelligenceBriefItem[];
+};
+
 export type PostureSnapshot = {
   id: string;
   snapshot_date: string;
@@ -869,6 +967,54 @@ export async function getIssue(
     if (!res.ok) return null;
     const body = (await res.json()) as { issue: NewsletterIssue };
     return body.issue ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch a single intelligence brief by id.
+ *
+ * Returns the full detail-shape (content_json with synthesis, content_markdown,
+ * embedded items). Returns null on 404, network failure, or any non-2xx response.
+ *
+ * Pattern matches getIssue: callers can compose with Promise.all and treat
+ * a null result as "not this entity type" rather than "error".
+ */
+export async function getIntelligenceBrief(
+  apiKey: string,
+  id: string
+): Promise<IntelligenceBriefDetailResponse | null> {
+  try {
+    const res = await engineFetch(`/api/intelligence-briefs/${id}`, apiKey);
+    if (!res.ok) return null;
+    return (await res.json()) as IntelligenceBriefDetailResponse;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch the most recent intelligence brief for the org with all items embedded.
+ *
+ * Two-step: GET /api/intelligence-briefs?limit=1 to find the latest brief id,
+ * then getIntelligenceBrief() for the full payload (the list endpoint is
+ * metadata-only — items only come back via the detail route).
+ *
+ * Returns null when no briefs exist or any request fails.
+ */
+export async function getLatestBrief(
+  apiKey: string
+): Promise<IntelligenceBriefDetailResponse | null> {
+  try {
+    const listRes = await engineFetch("/api/intelligence-briefs?limit=1", apiKey);
+    if (!listRes.ok) return null;
+
+    const list = (await listRes.json()) as IntelligenceBriefListResponse;
+    const latest = list.briefs?.[0];
+    if (!latest) return null;
+
+    return await getIntelligenceBrief(apiKey, latest.id);
   } catch {
     return null;
   }

@@ -49,6 +49,21 @@ function getClient(): Anthropic | null {
 export type BriefCategory = "vulnerability" | "threat_actor" | "vendor_incident" | "regulatory" | "general";
 export type BriefRelevance = "high" | "medium" | "low";
 
+/**
+ * Per-item time-horizon urgency band, classified by enrichItemWithClaude.
+ *
+ *   immediate — act this week  (KEV, active exploitation, federal deadline,
+ *                                CVSS 9+ with public PoC and likely vendor presence)
+ *   near_term — act this month (critical/high vulns with patches available,
+ *                                exploitation likely but not yet confirmed,
+ *                                near-term regulatory deadlines)
+ *   far_term  — monitor        (emerging patterns, advisory-only items,
+ *                                longer-horizon regulatory shifts)
+ *
+ * NULL on items generated before the urgency column was added (2026-06-02).
+ */
+export type BriefUrgency = "immediate" | "near_term" | "far_term";
+
 /** Minimal shape required from the cyber_signals DB row */
 export type CyberSignalForBrief = {
   id: string;
@@ -59,6 +74,14 @@ export type CyberSignalForBrief = {
   affected_vendor: string | null;
   source: string;
   ingestion_timestamp: string;
+  /**
+   * Source-feed payload as stored in cyber_signals.raw_payload (jsonb).
+   * The worker bridge writes { title, summary } here; engine adapters
+   * write source-specific shapes that may or may not include `title`.
+   * Optional in the type because tests construct fixtures inline; in
+   * production the column is always populated.
+   */
+  raw_payload?: Record<string, unknown> | null;
 };
 
 export type BriefItem = {
@@ -82,6 +105,14 @@ export type BriefItem = {
   recommended_actions?: string | null;
   /** Optional freeform analyst context. */
   analyst_notes?: string | null;
+  /**
+   * Time-horizon priority band. Populated by enrichBriefItems() after
+   * generation; falls back to 'near_term' on enrichment failure (the
+   * conservative default — same as treating an unknown item as "act this
+   * month"). Null only on items loaded from briefs generated before the
+   * urgency column existed.
+   */
+  urgency?: BriefUrgency | null;
 };
 
 export type BriefCategoryGroup = {
@@ -99,6 +130,13 @@ export type BriefContentJson = {
   medium_count: number;
   low_count: number;
   categories: BriefCategoryGroup[];
+  /**
+   * Brief-level synthesis (thesis, executive summary, cross-domain analysis,
+   * action summary). Populated by callers via runSynthesisSafely after item
+   * enrichment. Optional/nullable so existing briefs without synthesis still
+   * conform to this type when read back from the DB.
+   */
+  synthesis?: import("./briefSynthesizer.js").BriefSynthesis | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -252,24 +290,54 @@ export function buildBriefItems(signals: ReadonlyArray<CyberSignalForBrief>): Br
 // ---------------------------------------------------------------------------
 
 /**
+ * Some RSS source feeds (notably CISA's cybersecurity-advisories feed,
+ * whose contentSnippet begins with the rendered page's "View CSAF" link
+ * and "Summary" heading) inject boilerplate ahead of the real prose.
+ * Strip these prefixes before using normalized_summary as a title,
+ * otherwise items render with "View CSAF Summary…" as their title.
+ *
+ * The optional groups handle either prefix appearing alone or together.
+ */
+const TITLE_BOILERPLATE_RE = /^\s*(view\s+csaf\s*)?(summary\s*)?/i;
+
+function cleanSummaryForTitle(raw: string): string {
+  return raw.replace(TITLE_BOILERPLATE_RE, "").replace(/\s+/g, " ").trim();
+}
+
+/**
  * Derive a concise title for a brief item.
  *
  * Priority:
- *   1. Use normalized_summary if ≤ 80 chars
- *   2. Truncate normalized_summary to 77 chars + "..."
- *   3. If summary is empty, build from CVE/vendor/signal_type
+ *   1. raw_payload.title — the source-feed title preserved by the worker
+ *      bridge (e.g. "ABB PCM600"). Truncated to 77 chars + "..." if > 80.
+ *   2. normalized_summary, with known boilerplate prefixes stripped and
+ *      whitespace collapsed, same truncation rule.
+ *   3. If both are empty, build from CVE/vendor/signal_type.
  */
 function buildItemTitle(signal: CyberSignalForBrief): string {
-  const summary = signal.normalized_summary.trim();
+  // Stage 1 — source-feed title from raw_payload.
+  const payloadTitle =
+    signal.raw_payload && typeof signal.raw_payload === "object"
+      ? (signal.raw_payload as Record<string, unknown>)["title"]
+      : null;
+  if (typeof payloadTitle === "string") {
+    const trimmed = payloadTitle.trim();
+    if (trimmed.length > 0) {
+      return trimmed.length <= 80 ? trimmed : `${trimmed.slice(0, 77)}...`;
+    }
+  }
+
+  // Stage 2 — fall back to normalized_summary with boilerplate stripped.
+  const summary = cleanSummaryForTitle(signal.normalized_summary);
   if (summary.length === 0) {
+    // Stage 3 — synthesize from metadata.
     const parts: string[] = [];
     if (signal.affected_cve) parts.push(signal.affected_cve);
     if (signal.affected_vendor) parts.push(signal.affected_vendor);
     parts.push(signal.signal_type.toUpperCase());
     return parts.join(" — ");
   }
-  if (summary.length <= 80) return summary;
-  return `${summary.slice(0, 77)}...`;
+  return summary.length <= 80 ? summary : `${summary.slice(0, 77)}...`;
 }
 
 // ---------------------------------------------------------------------------
@@ -401,23 +469,29 @@ const CLAUDE_SYSTEM_PROMPT =
 /**
  * Derive fallback why_it_matters text when Claude enrichment fails.
  * Ensures every item has non-empty content even without API access.
+ *
+ * Constrained to the same shape the Claude prompt produces: ≤2 sentences,
+ * consequence-first, no throat-clearing.
  */
 function fallbackWhyItMatters(item: BriefItem): string {
   const vendor = item.affected_vendor ? `${item.affected_vendor} ` : "";
   const cve = item.affected_cve ? ` (${item.affected_cve})` : "";
   return (
-    `This ${item.severity.toLowerCase()} ${item.signal_type} affects ${vendor}environments${cve}. ` +
-    `Active exploitation or high exploitation probability has been identified. ` +
-    `Organizations with ${vendor || "affected "}products should treat this as a priority remediation item.`
+    `${vendor}environments${cve} face active exploitation risk at ${item.severity.toLowerCase()} severity. ` +
+    `Unpatched systems are exposed until remediation is verified.`
   );
 }
 
 /**
  * Derive fallback recommended_actions text when Claude enrichment fails.
+ *
+ * Item 1 follows the prompt's tight format (owner: verb object by deadline)
+ * so the frontend's first-line render still produces a usable action card.
  */
 function fallbackRecommendedActions(item: BriefItem): string {
+  const target = item.affected_cve ?? item.affected_vendor ?? "affected systems";
   const lines: string[] = [
-    "1. Identify all affected systems in your environment."
+    `1. Security: patch ${target} on internet-facing assets within this week.`
   ];
   if (item.affected_cve) {
     lines.push(`2. Review the vendor advisory for ${item.affected_cve} and apply available patches.`);
@@ -430,6 +504,26 @@ function fallbackRecommendedActions(item: BriefItem): string {
     "5. Escalate to incident response if active exploitation is suspected."
   );
   return lines.join("\n");
+}
+
+/**
+ * Default urgency band when enrichment cannot classify (API key missing,
+ * call failure, parse failure, LLM returned a string outside the rubric).
+ *
+ * 'near_term' is the conservative middle: more urgent than monitor-only,
+ * less urgent than drop-everything-this-week. Treats an unknown item as
+ * "act this month" rather than under- or over-prioritising it.
+ */
+const URGENCY_FALLBACK: BriefUrgency = "near_term";
+
+const URGENCY_VALUES: ReadonlyArray<BriefUrgency> = [
+  "immediate",
+  "near_term",
+  "far_term"
+];
+
+function isBriefUrgency(value: unknown): value is BriefUrgency {
+  return typeof value === "string" && (URGENCY_VALUES as readonly string[]).includes(value);
 }
 
 /**
@@ -455,12 +549,32 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
       analysis: null,
       why_it_matters: fallbackWhyItMatters(item),
       recommended_actions: fallbackRecommendedActions(item),
-      analyst_notes: null
+      analyst_notes: null,
+      urgency: URGENCY_FALLBACK
     };
   }
 
   const vendorLine = item.affected_vendor ? `Vendor/Product: ${item.affected_vendor}\n` : "";
   const cveLine = item.affected_cve ? `CVE: ${item.affected_cve}\n` : "";
+
+  // Signal-type-specific analysis guidance — preserved from the prior prompt
+  // because each signal type has different stakes (CVE attack vectors vs.
+  // regulatory deadlines vs. breach scope).
+  const analysisGuidance = (() => {
+    if (item.affected_cve) {
+      return `Explain the vulnerability in ${item.affected_vendor ?? "the affected product"}, the attack vector (remote/local, auth required, exploit complexity), and what an attacker can achieve post-exploitation.`;
+    }
+    if (item.signal_type === "threat_actor" || item.signal_type === "malware") {
+      return "Describe the threat actor's TTPs, the targeted sectors or systems, and the kill chain stage this represents.";
+    }
+    if (item.signal_type === "regulatory_change") {
+      return "Explain what the regulation or guidance requires, which teams or systems it applies to, and the compliance deadline or enforcement trigger.";
+    }
+    if (item.signal_type === "breach" || item.signal_type === "third_party_breach") {
+      return "Describe the breach scope, what data or systems were compromised, and the third-party exposure risk for downstream customers.";
+    }
+    return "Be specific to the signal — name the technology, vendor, or actor involved.";
+  })();
 
   const userPrompt =
     `Signal: ${item.summary}\n` +
@@ -469,23 +583,42 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
     `Severity: ${item.severity}\n` +
     `Signal type: ${item.signal_type}\n` +
     `Category: ${item.category}\n\n` +
-    `Return JSON only with exactly three fields:\n\n` +
+    `Return JSON only with exactly four fields: analysis, why_it_matters, recommended_actions, urgency.\n\n` +
+
     `- analysis: 3-4 sentences. Must be specific to this signal type (${item.signal_type}). ` +
-    `${item.affected_cve ? `Explain the vulnerability in ${item.affected_vendor ?? "the affected product"}, the attack vector (remote/local, auth required, exploit complexity), and what an attacker can achieve post-exploitation.` : ""}` +
-    `${item.signal_type === "threat_actor" || item.signal_type === "malware" ? `Describe the threat actor's TTPs, the targeted sectors or systems, and the kill chain stage this represents.` : ""}` +
-    `${item.signal_type === "regulatory_change" ? `Explain what the regulation or guidance requires, which teams or systems it applies to, and the compliance deadline or enforcement trigger.` : ""}` +
-    `${item.signal_type === "breach" || item.signal_type === "third_party_breach" ? `Describe the breach scope, what data or systems were compromised, and the third-party exposure risk for downstream customers.` : ""}` +
-    ` Do not use generic phrases like 'reflects active malicious tradecraft'. Reference the specific ` +
+    `${analysisGuidance} ` +
+    `Do not use generic phrases like 'reflects active malicious tradecraft'. Reference the specific ` +
     `technology, regulation, or actor by name.\n\n` +
-    `- why_it_matters: 2-3 sentences in business-impact framing. Name which teams are affected ` +
-    `(e.g. SOC, DevSecOps, legal, finance, cloud platform). State what breaks or what liability arises ` +
-    `if this is ignored. Reference any relevant compliance frameworks (HIPAA, SOC 2, NIST, EU AI Act) ` +
-    `if applicable.\n\n` +
-    `- recommended_actions: A plain numbered list of 3-5 concrete actions. Each action must be ` +
-    `executable this week or this month — not a policy reminder. Include specific steps: ` +
-    `patch version numbers if applicable, detection queries or log sources to check, ` +
-    `configuration changes to make, vendor contacts to engage, or regulatory filings to prepare. ` +
-    `Format: "1. [action]\\n2. [action]\\n..." — no markdown, no sub-bullets.`;
+
+    `- why_it_matters: HARD LIMIT 40 words across at most 2 sentences. ` +
+    `Lead with the consequence — what breaks, what liability arises, who is exposed. ` +
+    `No throat-clearing, no "this is important because", no setup. ` +
+    `Reference compliance frameworks (HIPAA, SOC 2, NIST, EU AI Act) only if directly triggered.\n\n` +
+
+    `- recommended_actions: a plain newline-numbered list of 3-5 concrete actions, ` +
+    `format "1. [action]\\n2. [action]\\n...". No markdown, no sub-bullets.\n` +
+    `  ITEM 1 IS CONSTRAINED: max 25 words, single imperative sentence, ` +
+    `format "Owner: verb object by deadline." ` +
+    `Examples: ` +
+    `"Security: patch CVE-2026-41940 on internet-facing cPanel by Friday." ` +
+    `"Compliance: file initial breach notification with HHS within 60 days." ` +
+    `Owner must be a function (Security, Compliance, Procurement, Legal, IT, ` +
+    `DevSecOps, SOC, Cloud Platform). Verb must be specific (patch, file, audit, ` +
+    `block, rotate, contact) — not "review" or "consider".\n` +
+    `  Items 2-5 are unconstrained — longer detailed actions are fine here.\n\n` +
+
+    `- urgency: a single string, one of "immediate" | "near_term" | "far_term". ` +
+    `Classify using this rubric:\n` +
+    `    immediate — act this week. KEV-listed, active exploitation confirmed, ` +
+    `federal remediation deadline triggered, or CVSS 9+ with public PoC and the ` +
+    `vendor is plausibly in the org's environment.\n` +
+    `    near_term — act this month. Critical/high-severity vulnerabilities with ` +
+    `patches available, exploitation likely but not yet confirmed, regulatory ` +
+    `guidance with stated near-term compliance dates.\n` +
+    `    far_term  — monitor. Emerging threat patterns, advisory-only items, ` +
+    `vendor announcements without confirmed exploitation, longer-horizon ` +
+    `regulatory shifts.\n` +
+    `  Choose exactly one. Do not invent other values.`;
 
   try {
     const message = await client.messages.create({
@@ -508,6 +641,7 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
       analysis?: string;
       why_it_matters?: string;
       recommended_actions?: string;
+      urgency?: string;
     };
 
     const analysis =
@@ -525,12 +659,17 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
         ? parsed.recommended_actions.trim()
         : fallbackRecommendedActions(item);
 
+    const urgency: BriefUrgency = isBriefUrgency(parsed.urgency)
+      ? parsed.urgency
+      : URGENCY_FALLBACK;
+
     return {
       ...item,
       analysis,
       why_it_matters: whyItMatters,
       recommended_actions: recommendedActions,
-      analyst_notes: null
+      analyst_notes: null,
+      urgency
     };
   } catch (err) {
     logger.warn(
@@ -542,7 +681,8 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
       analysis: null,
       why_it_matters: fallbackWhyItMatters(item),
       recommended_actions: fallbackRecommendedActions(item),
-      analyst_notes: null
+      analyst_notes: null,
+      urgency: URGENCY_FALLBACK
     };
   }
 }

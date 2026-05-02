@@ -29,13 +29,15 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import {
   generateBrief,
   enrichBriefItems,
-  type CyberSignalForBrief,
-  type BriefItem
+  type CyberSignalForBrief
 } from "../lib/intelligenceBriefGenerator.js";
 import { personalizeBriefItems } from "../lib/briefPersonalizationService.js";
 import { sendBrief } from "../lib/briefEmailSender.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { encryptField, decryptField } from "../lib/fieldEncryption.js";
+import {
+  runSynthesisSafely
+} from "../lib/briefSynthesizer.js";
 
 /**
  * Decrypt and parse content_json from the DB.
@@ -166,7 +168,8 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
          affected_cve,
          affected_vendor,
          source,
-         ingestion_timestamp
+         ingestion_timestamp,
+         raw_payload
        FROM cyber_signals
        WHERE (organization_id = $1 OR organization_id IS NULL)
          AND ingestion_timestamp >= $2
@@ -200,18 +203,18 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
       }));
     }
 
-    // Insert brief items (18 columns per item including personalization fields)
+    // Insert brief items (19 columns per item including personalization + urgency)
     if (personalizedItems.length > 0) {
       const itemValues: unknown[] = [];
       const itemPlaceholders: string[] = [];
 
       personalizedItems.forEach((item, idx: number) => {
-        const b = idx * 18;
+        const b = idx * 19;
         itemPlaceholders.push(
           `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, ` +
           `$${b + 6}, $${b + 7}, $${b + 8}, $${b + 9}, $${b + 10}, ` +
           `$${b + 11}, $${b + 12}, $${b + 13}, $${b + 14}, $${b + 15}, ` +
-          `$${b + 16}, $${b + 17}, $${b + 18})`
+          `$${b + 16}, $${b + 17}, $${b + 18}, $${b + 19})`
         );
         itemValues.push(
           orgId,
@@ -231,7 +234,8 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
           item.recommended_actions ?? null,
           item.analyst_notes ?? null,
           item.is_personalized,
-          item.platform_context ? JSON.stringify(item.platform_context) : null
+          item.platform_context ? JSON.stringify(item.platform_context) : null,
+          item.urgency ?? null
         );
       });
 
@@ -241,7 +245,8 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
             title, summary, affected_cve, affected_vendor, source_slug,
             signal_type, severity, sort_order,
             why_it_matters, recommended_actions, analyst_notes,
-            is_personalized, platform_context)
+            is_personalized, platform_context,
+            urgency)
          VALUES ${itemPlaceholders.join(", ")}`,
         itemValues
       );
@@ -253,9 +258,15 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
       items: personalizedItems
     };
 
+    // Brief-level synthesis — one Claude call producing a 12-word headline.
+    // Runs against personalizedItems so it reflects what the user will see.
+    // Non-fatal: failure resolves to null and the brief publishes without one.
+    const synthesis = await runSynthesisSafely(personalizedItems);
+    const contentJsonWithSynthesis = { ...result.content_json, synthesis };
+
     // Update brief to published — encrypt content_json before storage.
     // JSON.stringify wraps the encrypted string so PostgreSQL accepts it as a valid JSONB value.
-    const contentJsonStr = JSON.stringify(encryptField(JSON.stringify(result.content_json)));
+    const contentJsonStr = JSON.stringify(encryptField(JSON.stringify(contentJsonWithSynthesis)));
 
     await client.query(
       `UPDATE intelligence_briefs
@@ -731,6 +742,12 @@ router.get("/intelligence-briefs", async (req, res) => {
       conditions.push(`status = $${params.length}`);
     }
 
+    // Cursor is intentionally a 2-tuple (period_end, id). The new ORDER BY
+    // adds generated_at as a secondary sort, but extending the cursor to
+    // (period_end, generated_at, id) would require an OR-chain (NULLS LAST +
+    // mixed direction can't be expressed as a single tuple comparison) for an
+    // edge case — pagination spanning multiple briefs in the same period —
+    // we don't observe in practice. Extend if it becomes a real issue.
     if (hasCursor) {
       params.push(cursorPeriodEnd!, cursorId!);
       conditions.push(
@@ -740,6 +757,10 @@ router.get("/intelligence-briefs", async (req, res) => {
 
     const whereClause = conditions.join(" AND ");
 
+    // Order by period_end first (newest period), then by generated_at within
+    // a period (so the most-recently-generated brief wins when multiple briefs
+    // share a period — manual triggers, retries). id is the deterministic
+    // final tiebreaker for cursor stability.
     const result = await pg.query<{
       id: string;
       period_start: string;
@@ -755,7 +776,7 @@ router.get("/intelligence-briefs", async (req, res) => {
               generated_at, published_at, created_at
        FROM intelligence_briefs
        WHERE ${whereClause}
-       ORDER BY period_end DESC, id DESC
+       ORDER BY period_end DESC, generated_at DESC NULLS LAST, id ASC
        LIMIT $2`,
       params
     );
@@ -849,11 +870,13 @@ router.get("/intelligence-briefs/:id", async (req, res) => {
       why_it_matters: string | null;
       recommended_actions: string | null;
       analyst_notes: string | null;
+      urgency: string | null;
     }>(
       `SELECT id, category, relevance, title, summary, affected_cve, affected_vendor,
               source_slug, signal_type, severity, cyber_signal_id,
               ingestion_timestamp, sort_order,
-              why_it_matters, recommended_actions, analyst_notes
+              why_it_matters, recommended_actions, analyst_notes,
+              urgency
        FROM intelligence_brief_items
        WHERE brief_id = $1 AND organization_id = $2
        ORDER BY sort_order ASC`,
@@ -888,7 +911,8 @@ router.get("/intelligence-briefs/:id", async (req, res) => {
         sort_order: parseInt(item.sort_order, 10),
         why_it_matters: item.why_it_matters,
         recommended_actions: item.recommended_actions,
-        analyst_notes: item.analyst_notes
+        analyst_notes: item.analyst_notes,
+        urgency: item.urgency
       }))
     });
   } catch (err) {

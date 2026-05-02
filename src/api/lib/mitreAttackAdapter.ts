@@ -55,6 +55,7 @@
  */
 
 import type { CyberSignalIngestInput } from "./cyberSignalValidation.js";
+import { getEtag, setEtag } from "./feedEtagStore.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -62,6 +63,9 @@ import type { CyberSignalIngestInput } from "./cyberSignalValidation.js";
 
 export const MITRE_ATTACK_BUNDLE_URL =
   "https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json";
+
+/** Redis key holding the most recently observed ETag for the ATT&CK bundle. */
+export const MITRE_ATTACK_ETAG_KEY = "mitre:attack:etag";
 
 /** Object types extracted from the ATT&CK bundle. */
 export const ATTACK_OBJECT_TYPES = new Set([
@@ -283,26 +287,48 @@ export function mapStixObjectToSignal(
 /**
  * Fetch the MITRE ATT&CK Enterprise STIX bundle and return mapped signal inputs.
  *
+ * Conditional GET semantics:
+ *   - Sends `If-None-Match` with the cached ETag (Redis-backed) if present.
+ *   - On HTTP 304 the upstream bundle is unchanged since the last fetch:
+ *     returns `{ signals: [], total: 0, skipped: 0, fromCache: true }`
+ *     without parsing a body.
+ *   - On HTTP 200 captures the response `ETag` header for next call and
+ *     proceeds with the existing parse + map pipeline.
+ *
  * - Skips deprecated, revoked, and unidentified objects.
  * - Does not validate against VALID_SOURCES / VALID_SIGNAL_TYPES — that is
  *   the ingest pipeline's responsibility.
- * - Throws on network errors or malformed JSON so the caller can handle them.
+ * - Throws on non-2xx-non-304 HTTP responses or malformed JSON so the caller
+ *   can handle them.
  *
- * @returns { signals, total, skipped }
- *   total   = raw STIX object count in the bundle (all types)
- *   skipped = count of objects filtered out (wrong type, deprecated, etc.)
+ * @returns { signals, total, skipped, fromCache }
+ *   total    = raw STIX object count in the bundle (0 on cache hit)
+ *   skipped  = count of objects filtered out (0 on cache hit)
+ *   fromCache = true when the upstream returned 304 Not Modified
  */
 export async function fetchMitreAttackSignals(): Promise<{
   signals: CyberSignalIngestInput[];
   total: number;
   skipped: number;
+  fromCache: boolean;
 }> {
-  const response = await fetch(MITRE_ATTACK_BUNDLE_URL, {
-    headers: {
-      "Accept": "application/json",
-      "User-Agent": "SecureLogic-AI/1.0 (MITRE ATT&CK Adapter)"
-    }
-  });
+  const cachedEtag = await getEtag(MITRE_ATTACK_ETAG_KEY);
+
+  const headers: Record<string, string> = {
+    "Accept": "application/json",
+    "User-Agent": "SecureLogic-AI/1.0 (MITRE ATT&CK Adapter)"
+  };
+  if (cachedEtag) {
+    headers["If-None-Match"] = cachedEtag;
+  }
+
+  const response = await fetch(MITRE_ATTACK_BUNDLE_URL, { headers });
+
+  // 304 Not Modified — bundle unchanged since the cached ETag was issued.
+  // Skip the parse entirely and signal the caller via fromCache.
+  if (response.status === 304) {
+    return { signals: [], total: 0, skipped: 0, fromCache: true };
+  }
 
   if (!response.ok) {
     throw new Error(
@@ -330,9 +356,17 @@ export async function fetchMitreAttackSignals(): Promise<{
     signals.push(mapped);
   }
 
+  // Persist the new ETag for next call. Best-effort: a Redis failure here
+  // does not propagate — the next call will simply do an unconditional fetch.
+  const newEtag = response.headers.get("etag");
+  if (newEtag) {
+    await setEtag(MITRE_ATTACK_ETAG_KEY, newEtag);
+  }
+
   return {
     signals,
     total: bundle.objects.length,
-    skipped
+    skipped,
+    fromCache: false
   };
 }

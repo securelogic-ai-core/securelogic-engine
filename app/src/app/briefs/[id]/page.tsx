@@ -1,16 +1,18 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
-import { getIssue } from "@/lib/api";
+import { getIssue, getIntelligenceBrief } from "@/lib/api";
 import type {
   NewsletterIssue,
   BriefSections,
   BriefSignal,
   ActionSummary,
+  IntelligenceBriefDetailResponse,
 } from "@/lib/api";
 import { ScrollSpyTOC, type TocEntry } from "@/components/ScrollSpyTOC";
 import { CollapsibleSignalList } from "@/components/CollapsibleSignalList";
 import { PrintButton } from "@/components/PrintButton";
+import { IntelligenceBriefSignalGroup } from "@/components/IntelligenceBriefSignalGroup";
 
 function formatDate(date: string): string {
   return new Date(date).toLocaleDateString("en-US", {
@@ -937,6 +939,93 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
   );
 }
 
+function IntelligenceBriefDetailView({
+  brief,
+}: {
+  brief: IntelligenceBriefDetailResponse;
+}) {
+  const synthesis = brief.content_json?.synthesis ?? null;
+  const headline = synthesis?.headline ?? null;
+  const execSummary = synthesis?.exec_summary ?? null;
+  const date = formatDate(brief.period_end);
+
+  // Inline rather than extracting to a util — IntelligenceBriefDashboardCard
+  // has its own copy and cross-importing between app/src/components and
+  // app/src/app would be more churn than the six lines saved.
+  const counts = { immediate: 0, near_term: 0, far_term: 0 };
+  for (const item of brief.items) {
+    if (item.urgency === "immediate") counts.immediate++;
+    else if (item.urgency === "near_term") counts.near_term++;
+    else if (item.urgency === "far_term") counts.far_term++;
+  }
+  const totalUrgency = counts.immediate + counts.near_term + counts.far_term;
+  const showExecSection = execSummary !== null || totalUrgency > 0;
+
+  // TOC labels — note "Watching" maps to far_term / #watching anchor on the
+  // signal group. Vocabulary divergence is intentional (see anchor comment
+  // in IntelligenceBriefSignalGroup.tsx).
+  const tocBuckets: Array<{ label: string; anchor: string; count: number }> = [
+    { label: "Immediate", anchor: "immediate", count: counts.immediate },
+    { label: "Near-term", anchor: "near-term", count: counts.near_term },
+    { label: "Watching", anchor: "watching", count: counts.far_term },
+  ];
+
+  return (
+    <div className="min-h-screen bg-brand-bg">
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+        <div className="mb-6">
+          <Link
+            href="/dashboard"
+            className="text-brand-teal hover:text-teal-300 text-sm font-medium transition-colors"
+          >
+            ← Back to dashboard
+          </Link>
+        </div>
+
+        <header className="mb-10">
+          <p className="text-xs text-slate-500 font-semibold uppercase tracking-widest">
+            Intelligence Brief · {date}
+          </p>
+          {headline && (
+            <h1 className="mt-3 text-slate-100 font-bold text-2xl sm:text-3xl leading-tight max-w-prose">
+              {headline}
+            </h1>
+          )}
+        </header>
+
+        {showExecSection && (
+          <section className="mb-10">
+            {execSummary && (
+              <p className="text-slate-200 text-base leading-relaxed max-w-prose mb-6">
+                {execSummary}
+              </p>
+            )}
+            <nav className="flex flex-wrap items-center gap-3">
+              {tocBuckets.map((b) => {
+                const dim = b.count === 0 ? "opacity-40 pointer-events-none" : "";
+                return (
+                  <a
+                    key={b.anchor}
+                    href={`#${b.anchor}`}
+                    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-700 text-sm text-slate-300 hover:text-slate-100 hover:border-slate-500 transition-colors ${dim}`}
+                  >
+                    <span className="font-semibold">{b.label}</span>
+                    <span className="text-xs text-slate-500 tabular-nums">
+                      {b.count}
+                    </span>
+                  </a>
+                );
+              })}
+            </nav>
+          </section>
+        )}
+
+        <IntelligenceBriefSignalGroup brief={brief} />
+      </div>
+    </div>
+  );
+}
+
 export default async function BriefDetailPage({
   params,
 }: {
@@ -950,17 +1039,27 @@ export default async function BriefDetailPage({
     redirect("/login");
   }
 
-  const issue = await getIssue(token, id);
+  // Parallel probe: this UUID could be either an intelligence brief or a
+  // legacy newsletter issue. Bias toward intelligence brief on the coalescer
+  // since that's the forward path; newsletter is fallback for legacy links.
+  const [intelligenceBrief, issue] = await Promise.all([
+    getIntelligenceBrief(token, id),
+    getIssue(token, id),
+  ]);
 
-  if (!issue) notFound();
-
-  if (issue.locked) {
-    return <LockedBrief issue={issue} />;
+  if (intelligenceBrief) {
+    return <IntelligenceBriefDetailView brief={intelligenceBrief} />;
   }
 
-  if (!hasRenderableContent(issue)) {
-    return <EmptyBrief issue={issue} />;
+  if (issue) {
+    if (issue.locked) {
+      return <LockedBrief issue={issue} />;
+    }
+    if (!hasRenderableContent(issue)) {
+      return <EmptyBrief issue={issue} />;
+    }
+    return <BriefReader issue={issue} />;
   }
 
-  return <BriefReader issue={issue} />;
+  notFound();
 }
