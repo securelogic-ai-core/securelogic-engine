@@ -34,6 +34,8 @@ import { logger } from "../infra/logger.js";
 import { fetchCisaKevSignals } from "./cisaKevAdapter.js";
 import { fetchNvdSignals } from "./nvdAdapter.js";
 import { fetchCisaAlerts } from "./cisaAlertsAdapter.js";
+import { fetchMitreAttackSignals } from "./mitreAttackAdapter.js";
+import { fetchMitreAtlasSignals } from "./mitreAtlasAdapter.js";
 import {
   fetchAllFeeds,
   THREAT_INTEL_FEED_IDS,
@@ -75,6 +77,8 @@ export type SchedulerRunSummary = {
     cisa_kev: number;
     nvd: number;
     cisa_alerts: number;
+    mitre_attack: number;
+    mitre_atlas: number;
     threat_intel_rss: number;
     regulatory: number;
   };
@@ -387,6 +391,8 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
       cisa_kev: 0,
       nvd: 0,
       cisa_alerts: 0,
+      mitre_attack: 0,
+      mitre_atlas: 0,
       threat_intel_rss: 0,
       regulatory: 0
     },
@@ -470,6 +476,48 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`cisa_alerts_fetch_failed: ${msg}`);
     logger.error({ event: "scheduler_cisa_alerts_failed", err }, "CISA Alerts fetch failed — continuing");
+  }
+
+  // MITRE ATT&CK — Tier-1 STIX bundle of techniques + threat groups.
+  // Adapter sends If-None-Match against a Redis-cached ETag; on 304 the
+  // signals array is empty and fromCache is true. Daily cron is fine
+  // because most days hit the cache (PR #35).
+  let mitreAttackSignals: CyberSignalIngestInput[] = [];
+
+  try {
+    const { signals, total, fromCache } = await fetchMitreAttackSignals();
+    mitreAttackSignals = signals;
+    summary.signals_fetched.mitre_attack = signals.length;
+    logger.info(
+      { event: "scheduler_mitre_attack_fetched", total, mapped: signals.length, fromCache },
+      fromCache
+        ? "MITRE ATT&CK feed cache hit (304) — skipping parse"
+        : "MITRE ATT&CK feed fetched"
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    summary.errors.push(`mitre_attack_fetch_failed: ${msg}`);
+    logger.error({ event: "scheduler_mitre_attack_failed", err }, "MITRE ATT&CK fetch failed — continuing");
+  }
+
+  // MITRE ATLAS — Tier-1 STIX bundle of AI-system attack techniques.
+  // Same conditional-GET semantics as ATT&CK.
+  let mitreAtlasSignals: CyberSignalIngestInput[] = [];
+
+  try {
+    const { signals, total, fromCache } = await fetchMitreAtlasSignals();
+    mitreAtlasSignals = signals;
+    summary.signals_fetched.mitre_atlas = signals.length;
+    logger.info(
+      { event: "scheduler_mitre_atlas_fetched", total, mapped: signals.length, fromCache },
+      fromCache
+        ? "MITRE ATLAS feed cache hit (304) — skipping parse"
+        : "MITRE ATLAS feed fetched"
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    summary.errors.push(`mitre_atlas_fetch_failed: ${msg}`);
+    logger.error({ event: "scheduler_mitre_atlas_failed", err }, "MITRE ATLAS fetch failed — continuing");
   }
 
   let threatIntelSignals: CyberSignalIngestInput[] = [];
@@ -596,6 +644,56 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
         const msg = err instanceof Error ? err.message : String(err);
         summary.errors.push(`org:${orgId} cisa_alerts_ingest_fatal: ${msg}`);
         logger.error({ event: "scheduler_cisa_alerts_ingest_failed", orgId, err }, "CISA Alerts ingest failed for org");
+      }
+    }
+
+    // Ingest MITRE ATT&CK signals for this org
+    if (mitreAttackSignals.length > 0) {
+      try {
+        const result = await ingestSignalsForOrg(mitreAttackSignals, orgId);
+        logger.info(
+          {
+            event: "scheduler_mitre_attack_ingested",
+            orgId,
+            inserted: result.inserted,
+            skippedDuplicate: result.skippedDuplicate,
+            skippedInvalid: result.skippedInvalid,
+            errors: result.errors.length
+          },
+          "MITRE ATT&CK ingested for org"
+        );
+        for (const e of result.errors) {
+          summary.errors.push(`org:${orgId} mitre_attack_ingest: ${e}`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        summary.errors.push(`org:${orgId} mitre_attack_ingest_fatal: ${msg}`);
+        logger.error({ event: "scheduler_mitre_attack_ingest_failed", orgId, err }, "MITRE ATT&CK ingest failed for org");
+      }
+    }
+
+    // Ingest MITRE ATLAS signals for this org
+    if (mitreAtlasSignals.length > 0) {
+      try {
+        const result = await ingestSignalsForOrg(mitreAtlasSignals, orgId);
+        logger.info(
+          {
+            event: "scheduler_mitre_atlas_ingested",
+            orgId,
+            inserted: result.inserted,
+            skippedDuplicate: result.skippedDuplicate,
+            skippedInvalid: result.skippedInvalid,
+            errors: result.errors.length
+          },
+          "MITRE ATLAS ingested for org"
+        );
+        for (const e of result.errors) {
+          summary.errors.push(`org:${orgId} mitre_atlas_ingest: ${e}`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        summary.errors.push(`org:${orgId} mitre_atlas_ingest_fatal: ${msg}`);
+        logger.error({ event: "scheduler_mitre_atlas_ingest_failed", orgId, err }, "MITRE ATLAS ingest failed for org");
       }
     }
 
