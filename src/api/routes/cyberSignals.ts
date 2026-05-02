@@ -62,6 +62,17 @@ import { fetchMitreAttackSignals } from "../lib/mitreAttackAdapter.js";
 import { fetchMitreAtlasSignals } from "../lib/mitreAtlasAdapter.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { encryptField } from "../lib/fieldEncryption.js";
+import { getSourceDisplayName } from "../lib/sourceDisplayNames.js";
+
+/**
+ * Add `source_display` to a signal row read from the DB. The display name is
+ * derived from `source` at response time so renames don't require a backfill.
+ */
+function withSourceDisplay<T extends { source: string }>(
+  signal: T
+): T & { source_display: string } {
+  return { ...signal, source_display: getSourceDisplayName(signal.source) };
+}
 
 const router = Router();
 
@@ -418,8 +429,9 @@ router.get(
         params
       );
 
-      const signals = result.rows;
-      const last = signals.length > 0 ? signals[signals.length - 1] : null;
+      const rawSignals = result.rows;
+      const last = rawSignals.length > 0 ? rawSignals[rawSignals.length - 1] : null;
+      const signals = rawSignals.map(withSourceDisplay);
 
       res.status(200).json({
         count: signals.length,
@@ -485,7 +497,7 @@ router.get(
         return;
       }
 
-      const signal = signalResult.rows[0];
+      const signal = withSourceDisplay(signalResult.rows[0]);
 
       // Fetch the linked finding if one exists. Use source_type + source_id
       // rather than linked_finding_id to stay consistent with the platform
