@@ -40,6 +40,8 @@ const NOVELTY_2 =
  */
 const CATEGORY_RELEVANCE: Record<Category, number> = {
   SECURITY_INCIDENT: 5,
+  // VULNERABILITY uses the same control mapping as SECURITY_INCIDENT until tuned per docs/brief-content-audit.md follow-up. Bug 1 (PR #43) added the category.
+  VULNERABILITY:     5,
   AI_GOVERNANCE:     4,
   VENDOR_RISK:       4,
   REGULATION:        4,
