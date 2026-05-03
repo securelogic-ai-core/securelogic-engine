@@ -425,11 +425,11 @@ function PrioritySignalCard({
         </div>
 
         {action && (
-          <div className="mb-4 bg-teal-50 rounded-lg p-4 border border-teal-100">
-            <p className="text-xs font-bold text-teal-700 uppercase tracking-wide mb-1.5">
+          <div className="mb-4 bg-slate-700/40 rounded-lg p-4 border border-slate-700/50">
+            <p className="text-xs font-bold text-teal-300 uppercase tracking-wide mb-1.5">
               Action
             </p>
-            <p className="text-sm text-slate-800 leading-relaxed font-medium">{action}</p>
+            <p className="text-sm text-slate-200 leading-relaxed font-medium">{action}</p>
           </div>
         )}
 
