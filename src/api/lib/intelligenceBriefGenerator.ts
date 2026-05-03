@@ -151,6 +151,37 @@ export type BriefContentJson = {
 };
 
 // ---------------------------------------------------------------------------
+// Hard caps and bucket targets
+// ---------------------------------------------------------------------------
+
+/**
+ * Hard cap on items in any single brief. Goal: a reader scans the entire
+ * brief in ~60 seconds. Capping the per-brief item count is enforced by
+ * capByUrgencyBuckets after enrichment classifies urgency.
+ */
+export const BRIEF_MAX_ITEMS = 12;
+
+/**
+ * Pre-enrichment shortlist size. ~2× BRIEF_MAX_ITEMS so the post-enrichment
+ * urgency-bucket pass has headroom to fill all three zones, while still
+ * saving ~60% of Claude API cost vs enriching everything.
+ */
+export const ENRICHMENT_SHORTLIST = 24;
+
+/**
+ * Per-zone target counts. Sum equals BRIEF_MAX_ITEMS. When a zone is
+ * under-supplied the slack flows to the middle (immediate→near, far→near).
+ * When near is under-supplied its slack flows down to far. Total kept
+ * never exceeds BRIEF_MAX_ITEMS; under-supply across all zones produces
+ * a smaller brief (graceful degradation).
+ */
+export const URGENCY_BUCKET_TARGETS: Record<BriefUrgency, number> = {
+  immediate: 3,
+  near_term: 7,
+  far_term: 2
+};
+
+// ---------------------------------------------------------------------------
 // Category labels (for human-readable output)
 // ---------------------------------------------------------------------------
 
@@ -351,6 +382,157 @@ function mergeBriefItemsByCve(items: ReadonlyArray<BriefItem>): BriefItem[] {
   }
 
   return [...merged, ...noCveItems];
+}
+
+// ---------------------------------------------------------------------------
+// Composite ranking key (pre- and post-enrichment)
+// ---------------------------------------------------------------------------
+
+/**
+ * Severity rank — Critical > High > Moderate > Low > unknown. Lower is
+ * higher priority, so the comparator returns `a - b` for ascending sort.
+ */
+function severityRank(severity: string): number {
+  const s = severity.toLowerCase();
+  if (s === "critical") return 0;
+  if (s === "high") return 1;
+  if (s === "moderate") return 2;
+  if (s === "low") return 3;
+  return 4;
+}
+
+/**
+ * Comparator used by both the pre-enrichment shortlist and the
+ * post-enrichment intra-bucket ranking.
+ *
+ * Composite key (descending priority):
+ *   1. is_kev      — items sourced from cisa_kev win (strongest "actively
+ *                     exploited in the wild" signal we have)
+ *   2. severity    — Critical > High > Moderate > Low
+ *   3. has_cve     — CVE-bearing items beat CVE-less
+ *   4. source_priority — KEV(0) > NVD(1) > CISA Alerts(2) > PSIRT(3)
+ *                         > security_news_*(4) > other(5). KEV is already
+ *                         tied at step 1; this disambiguates the rest.
+ *   5. recency     — newer ingestion_timestamp first
+ */
+function compareBriefItemsForRanking(a: BriefItem, b: BriefItem): number {
+  const aKev = a.source_slug === "cisa_kev" ? 1 : 0;
+  const bKev = b.source_slug === "cisa_kev" ? 1 : 0;
+  if (aKev !== bKev) return bKev - aKev;
+
+  const sevDiff = severityRank(a.severity) - severityRank(b.severity);
+  if (sevDiff !== 0) return sevDiff;
+
+  const aCve = a.affected_cve && a.affected_cve.trim().length > 0 ? 1 : 0;
+  const bCve = b.affected_cve && b.affected_cve.trim().length > 0 ? 1 : 0;
+  if (aCve !== bCve) return bCve - aCve;
+
+  const spDiff = sourcePriority(a.source_slug) - sourcePriority(b.source_slug);
+  if (spDiff !== 0) return spDiff;
+
+  return b.ingestion_timestamp.localeCompare(a.ingestion_timestamp);
+}
+
+// ---------------------------------------------------------------------------
+// shortlistTopK  (pure)
+// ---------------------------------------------------------------------------
+
+/**
+ * Pre-enrichment cap. Sort by composite ranking key, take top k. Used by
+ * generateBrief() to trim the candidate set before paying Claude per-item
+ * enrichment cost.
+ *
+ * Returns a fresh array; does not mutate input. When items.length ≤ k the
+ * full input is returned (still sorted, so the caller has a stable order).
+ */
+export function shortlistTopK(
+  items: ReadonlyArray<BriefItem>,
+  k: number
+): BriefItem[] {
+  if (k <= 0) return [];
+  const sorted = [...items].sort(compareBriefItemsForRanking);
+  return sorted.length <= k ? sorted : sorted.slice(0, k);
+}
+
+// ---------------------------------------------------------------------------
+// capByUrgencyBuckets  (pure)
+// ---------------------------------------------------------------------------
+
+/**
+ * Post-enrichment cap. Bucket items by urgency, rank each bucket by the
+ * composite key, then fill BRIEF_MAX_ITEMS slots per URGENCY_BUCKET_TARGETS
+ * with spillover.
+ *
+ * Spillover rules (slack = unused target capacity in a zone):
+ *   - immediate slack  → near_term
+ *   - far_term  slack  → near_term
+ *   - near_term slack  → far_term  (residual after near absorbs slack)
+ *
+ * Total kept ≤ BRIEF_MAX_ITEMS. If every zone is under-supplied the brief
+ * comes out smaller — no synthetic backfill, no special-case.
+ *
+ * Items with null urgency (only possible from older code paths) are
+ * treated as URGENCY_FALLBACK ("near_term") — same default the
+ * enrichment fallback uses when Claude classification fails.
+ *
+ * Output items are emitted immediate → near_term → far_term and have
+ * sort_order reassigned 0..N-1. Input items are not mutated.
+ */
+export function capByUrgencyBuckets(
+  enriched: ReadonlyArray<BriefItem>
+): {
+  items: BriefItem[];
+  counts: Record<BriefUrgency, number>;
+} {
+  const groups: Record<BriefUrgency, BriefItem[]> = {
+    immediate: [],
+    near_term: [],
+    far_term: []
+  };
+  for (const item of enriched) {
+    const u: BriefUrgency = item.urgency ?? URGENCY_FALLBACK;
+    groups[u].push(item);
+  }
+
+  for (const key of Object.keys(groups) as BriefUrgency[]) {
+    groups[key].sort(compareBriefItemsForRanking);
+  }
+
+  const T = URGENCY_BUCKET_TARGETS;
+
+  const supplyImm = groups.immediate.length;
+  const supplyNear = groups.near_term.length;
+  const supplyFar = groups.far_term.length;
+
+  const takeImm = Math.min(T.immediate, supplyImm);
+  const immSlack = T.immediate - takeImm;
+
+  const takeFarInitial = Math.min(T.far_term, supplyFar);
+  const farSlack = T.far_term - takeFarInitial;
+
+  // Near absorbs slack from both immediate and far.
+  const nearEffective = T.near_term + immSlack + farSlack;
+  const takeNear = Math.min(nearEffective, supplyNear);
+  const nearSlack = nearEffective - takeNear;
+
+  // Residual near slack flows to far, capped by far's remaining supply.
+  const farRemaining = supplyFar - takeFarInitial;
+  const takeFar = takeFarInitial + Math.min(nearSlack, farRemaining);
+
+  const taken: BriefItem[] = [
+    ...groups.immediate.slice(0, takeImm),
+    ...groups.near_term.slice(0, takeNear),
+    ...groups.far_term.slice(0, takeFar)
+  ].map((item, i) => ({ ...item, sort_order: i }));
+
+  return {
+    items: taken,
+    counts: {
+      immediate: takeImm,
+      near_term: takeNear,
+      far_term: takeFar
+    }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -821,22 +1003,59 @@ export async function enrichBriefItems(
 }
 
 // ---------------------------------------------------------------------------
-// generateBrief
+// generateBrief  (pre-enrichment, pure)
 // ---------------------------------------------------------------------------
 
 /**
- * Top-level pure generator: takes signals, returns a complete brief payload
- * ready for DB insertion.
+ * Pre-enrichment stage of brief generation. Pure; preserves the
+ * "no I/O in generator.ts" invariant (line 4).
  *
- * Returns:
- *   { items, content_json, content_markdown, signal_count, item_count }
+ * Pipeline:
+ *   1. buildBriefItems(signals)         — map + CVE-merge + sort
+ *   2. shortlistTopK(items, ENRICHMENT_SHORTLIST) — top-K by composite key
  *
- * The caller is responsible for DB writes (brief row + item rows).
+ * The shortlist is what the scheduler hands to enrichBriefItems(). After
+ * enrichment, the scheduler calls capByUrgencyBuckets() then
+ * finalizeBrief() to produce the persisted content.
+ *
+ * signal_count is the raw cyber_signals input count (NOT the shortlist
+ * size or the eventual capped count) — this is what gets stored on
+ * intelligence_briefs.signal_count for "we processed N signals to
+ * produce this brief" reporting.
  */
 export function generateBrief(
-  signals: ReadonlyArray<CyberSignalForBrief>,
+  signals: ReadonlyArray<CyberSignalForBrief>
+): {
+  shortlist: BriefItem[];
+  signal_count: number;
+} {
+  const items = buildBriefItems(signals);
+  const shortlist = shortlistTopK(items, ENRICHMENT_SHORTLIST);
+
+  return {
+    shortlist,
+    signal_count: signals.length
+  };
+}
+
+// ---------------------------------------------------------------------------
+// finalizeBrief  (post-enrichment, post-cap, pure)
+// ---------------------------------------------------------------------------
+
+/**
+ * Post-enrichment stage. Caller has already run enrichBriefItems() on the
+ * shortlist and capByUrgencyBuckets() on the enriched output. This packages
+ * the capped items into the persisted content shapes.
+ *
+ * Pure; takes signal_count from the original generateBrief() return so the
+ * persisted intelligence_briefs.signal_count reflects the raw input, not
+ * the post-cap count.
+ */
+export function finalizeBrief(
+  cappedItems: ReadonlyArray<BriefItem>,
   periodStart: string,
-  periodEnd: string
+  periodEnd: string,
+  signalCount: number
 ): {
   items: BriefItem[];
   content_json: BriefContentJson;
@@ -844,15 +1063,19 @@ export function generateBrief(
   signal_count: number;
   item_count: number;
 } {
-  const items = buildBriefItems(signals);
-  const content_json = buildContentJson(items, periodStart, periodEnd, signals.length);
+  const content_json = buildContentJson(
+    cappedItems,
+    periodStart,
+    periodEnd,
+    signalCount
+  );
   const content_markdown = buildContentMarkdown(content_json);
 
   return {
-    items,
+    items: [...cappedItems],
     content_json,
     content_markdown,
-    signal_count: signals.length,
-    item_count: items.length
+    signal_count: signalCount,
+    item_count: cappedItems.length
   };
 }
