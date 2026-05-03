@@ -58,7 +58,10 @@ import {
   type CyberSignalForBrief,
   type BriefItem
 } from "./intelligenceBriefGenerator.js";
-import { runSynthesisSafely } from "./briefSynthesizer.js";
+import {
+  runSynthesisSafely,
+  fetchPriorBriefContext
+} from "./briefSynthesizer.js";
 import { sendBrief } from "./briefEmailSender.js";
 
 // ---------------------------------------------------------------------------
@@ -296,7 +299,12 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
   // Non-fatal: failure resolves to null and the brief publishes without one.
   // Run on cappedItems so headline/teaser describe what's actually in the
   // brief, not what was dropped.
-  const synthesis = await runSynthesisSafely(cappedItems);
+  //
+  // Prior-brief context drives the exec summary's week-on-week calibration
+  // sentence. Returns null on first-brief-ever cases; the prompt drops to
+  // a 3-sentence summary in that case.
+  const priorContext = await fetchPriorBriefContext(orgId, briefId);
+  const synthesis = await runSynthesisSafely(cappedItems, priorContext);
 
   const finalized = finalizeBrief(
     cappedItems,
