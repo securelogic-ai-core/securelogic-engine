@@ -36,28 +36,13 @@ import {
 import { personalizeBriefItems } from "../lib/briefPersonalizationService.js";
 import { sendBrief } from "../lib/briefEmailSender.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
-import { encryptField, decryptField } from "../lib/fieldEncryption.js";
+import { encryptField } from "../lib/fieldEncryption.js";
 import {
-  runSynthesisSafely
+  runSynthesisSafely,
+  fetchPriorBriefContext
 } from "../lib/briefSynthesizer.js";
+import { parseContentJson } from "../lib/parseBriefContentJson.js";
 import { getSourceDisplayName } from "../lib/sourceDisplayNames.js";
-
-/**
- * Decrypt and parse content_json from the DB.
- * Handles encrypted rows (JSON-string value) and legacy plaintext JSONB objects.
- */
-function parseContentJson(value: unknown): Record<string, unknown> | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value === "string") {
-    try {
-      return JSON.parse(decryptField(value)) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
-  }
-  if (typeof value === "object") return value as Record<string, unknown>;
-  return null;
-}
 
 const router = Router();
 
@@ -292,7 +277,11 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
     // Brief-level synthesis — one Claude call producing a 12-word headline.
     // Runs against personalizedItems so it reflects what the user will see.
     // Non-fatal: failure resolves to null and the brief publishes without one.
-    const synthesis = await runSynthesisSafely(personalizedItems);
+    //
+    // Prior-brief context drives the exec summary's week-on-week calibration
+    // sentence. Null on first-brief-ever cases.
+    const priorContext = await fetchPriorBriefContext(orgId, briefId);
+    const synthesis = await runSynthesisSafely(personalizedItems, priorContext);
     const contentJsonWithSynthesis = { ...result.content_json, synthesis };
 
     // Update brief to published — encrypt content_json before storage.
