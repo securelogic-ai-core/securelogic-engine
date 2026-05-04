@@ -237,3 +237,8 @@ Do not:
 - build read surfaces that outrun weak underlying data
 - confuse the Brief with the core platform
 - allow docs to become stale after major package work
+
+## Backlog (deferred until prerequisites land)
+Items surfaced during package work that are out of scope for the active package and waiting on a specific prerequisite. Not a wishlist — each entry must name the prerequisite and the reason it cannot be done now.
+
+- **HTTP test harness for link routes.** Prerequisite: all four parallel link tables in place (signal-to-vendor done; signal-to-AI-system in flight; signal-to-control and signal-to-obligation pending). Reason to defer: structural source-pattern tests are the right call per slice; introducing a behavioral HTTP harness mid-pattern would be architectural drift. Once the four are landed, backfill behavioral tests as one focused harness package covering all four route surfaces uniformly.
