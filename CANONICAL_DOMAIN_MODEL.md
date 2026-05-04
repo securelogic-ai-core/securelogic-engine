@@ -1,8 +1,8 @@
-# SecureLogic AI Canonical Risk Model
+# SecureLogic AI Canonical Domain Model
 
 ## Purpose
 
-This document defines the canonical object model for risk and posture across the SecureLogic AI platform.
+This document defines the canonical domain object model for the SecureLogic AI platform.
 
 It is the authoritative reference for what domain objects exist, what they own, and how they relate.
 
@@ -330,7 +330,7 @@ If a future module is tempted to store these as JSON blobs in a publication obje
 ## Amendment Protocol
 
 To add a new canonical object:
-1. Define it in PLATFORM_DOMAIN_MODEL.md first
+1. Define it in this document first
 2. Write the migration
 3. Write the API routes with org-scoping and entitlement gating
 4. Add it to the table above with package attribution
