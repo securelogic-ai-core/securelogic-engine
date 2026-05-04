@@ -174,7 +174,7 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
     const base = generateBrief(signals);
 
     // Enrich items with Claude analyst commentary (non-fatal — always resolves)
-    const enrichedItems = await enrichBriefItems(base.shortlist);
+    const enrichedItems = await enrichBriefItems(base.shortlist, orgId);
 
     // Apply the urgency-bucket cap before personalization so we only pay
     // personalization cost for items that will actually appear in the brief.
@@ -281,7 +281,7 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
     // Prior-brief context drives the exec summary's week-on-week calibration
     // sentence. Null on first-brief-ever cases.
     const priorContext = await fetchPriorBriefContext(orgId, briefId);
-    const synthesis = await runSynthesisSafely(personalizedItems, priorContext);
+    const synthesis = await runSynthesisSafely(personalizedItems, priorContext, orgId);
     const contentJsonWithSynthesis = { ...result.content_json, synthesis };
 
     // Update brief to published — encrypt content_json before storage.

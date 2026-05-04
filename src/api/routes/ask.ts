@@ -402,6 +402,10 @@ router.post(
 
       let answer: string;
       try {
+        logger.info(
+          { event: "llm_call_start", purpose: "ask_query", model: "claude-sonnet-4-20250514", organizationId },
+          "LLM call: ask query"
+        );
         const response = await client.messages.create({
           model: "claude-sonnet-4-20250514",
           max_tokens: 1024,
@@ -412,7 +416,7 @@ router.post(
         const textBlock = response.content.find((b) => b.type === "text");
         answer = textBlock && "text" in textBlock ? textBlock.text : "";
       } catch (claudeErr) {
-        logger.error({ event: "ask_claude_failed", claudeErr }, "Claude API call failed");
+        logger.error({ event: "ask_claude_failed", organizationId, claudeErr }, "Claude API call failed");
         res.status(502).json({ error: "ask_failed", message: "Unable to process query" });
         return;
       }

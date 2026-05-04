@@ -62,7 +62,7 @@ router.get(
         affected_vendor: s.affected_vendor ?? null
       }));
 
-      const context = await analyzeVendorSignalContext(vendor.name, signalsForAnalysis);
+      const context = await analyzeVendorSignalContext(vendor.name, signalsForAnalysis, orgId);
 
       if (!context) {
         res.status(200).json({

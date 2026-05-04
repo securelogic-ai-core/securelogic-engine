@@ -19,8 +19,14 @@ router.get(
   async (req, res) => {
     try {
       const userId: string | undefined = (req as any).userId;
+      const organizationId: string | undefined =
+        (req as any).organizationContext?.organizationId;
       if (!userId) {
         res.status(403).json({ error: "jwt_required" });
+        return;
+      }
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
         return;
       }
 
@@ -32,8 +38,8 @@ router.get(
       }>(
         `SELECT critical_finding_immediate, high_finding_immediate, daily_digest, weekly_summary
          FROM user_alert_preferences
-         WHERE user_id = $1`,
-        [userId]
+         WHERE user_id = $1 AND organization_id = $2`,
+        [userId, organizationId]
       );
 
       if (result.rows.length === 0) {
@@ -75,8 +81,14 @@ router.patch(
   async (req, res) => {
     try {
       const userId: string | undefined = (req as any).userId;
+      const organizationId: string | undefined =
+        (req as any).organizationContext?.organizationId;
       if (!userId) {
         res.status(403).json({ error: "jwt_required" });
+        return;
+      }
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
         return;
       }
 
@@ -97,14 +109,15 @@ router.patch(
         return;
       }
 
+      // Param positions: $1 = user_id, $2 = organization_id, $3..$N = update values
       const setClauses = Object.keys(updates)
-        .map((k, i) => `${k} = $${i + 2}`)
+        .map((k, i) => `${k} = $${i + 3}`)
         .join(", ");
-      const values = [userId, ...Object.values(updates)];
+      const values = [userId, organizationId, ...Object.values(updates)];
 
       await pg.query(
-        `INSERT INTO user_alert_preferences (user_id, ${Object.keys(updates).join(", ")})
-         VALUES ($1, ${Object.keys(updates).map((_, i) => `$${i + 2}`).join(", ")})
+        `INSERT INTO user_alert_preferences (user_id, organization_id, ${Object.keys(updates).join(", ")})
+         VALUES ($1, $2, ${Object.keys(updates).map((_, i) => `$${i + 3}`).join(", ")})
          ON CONFLICT (user_id) DO UPDATE SET ${setClauses}, updated_at = NOW()`,
         values
       );
@@ -116,8 +129,8 @@ router.patch(
         weekly_summary: boolean;
       }>(
         `SELECT critical_finding_immediate, high_finding_immediate, daily_digest, weekly_summary
-         FROM user_alert_preferences WHERE user_id = $1`,
-        [userId]
+         FROM user_alert_preferences WHERE user_id = $1 AND organization_id = $2`,
+        [userId, organizationId]
       );
 
       res.status(200).json({ preferences: result.rows[0] });

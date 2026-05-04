@@ -79,12 +79,23 @@ export async function analyzeVendorSignalContext(
     signal_type: string;
     normalized_summary: string;
     affected_vendor: string | null;
-  }>
+  }>,
+  organizationId: string | null = null
 ): Promise<VendorSignalContext | null> {
   const client = getClient();
   if (!client) return null;
 
   if (signals.length === 0) return null;
+
+  logger.info(
+    {
+      event: "llm_call_start",
+      purpose: "vendor_signal_context",
+      model: "claude-haiku-4-5-20251001",
+      organizationId
+    },
+    "LLM call: vendor signal context"
+  );
 
   const signalLines = signals
     .slice(0, 20)
@@ -142,7 +153,10 @@ If no signals match, return matchedSignals as an empty array, overallRiskSummary
       suggestedAssessmentSeverity: parsed.suggestedAssessmentSeverity ?? null
     };
   } catch (err) {
-    logger.warn({ event: "vendor_signal_context_failed", vendorName, err }, "Vendor signal context analysis failed");
+    logger.warn(
+      { event: "vendor_signal_context_failed", vendorName, organizationId, err },
+      "Vendor signal context analysis failed"
+    );
     return null;
   }
 }
@@ -325,10 +339,21 @@ If no meaningful context can be derived, set suggestedSeverity to null and provi
 export async function analyzeAssessmentDocument(
   documentText: string,
   vendorName: string,
-  documentHint?: string
+  documentHint?: string,
+  organizationId: string | null = null
 ): Promise<DocumentAnalysisResult | null> {
   const client = getClient();
   if (!client) return null;
+
+  logger.info(
+    {
+      event: "llm_call_start",
+      purpose: "vendor_doc_analysis",
+      model: "claude-sonnet-4-6",
+      organizationId
+    },
+    "LLM call: vendor document analysis"
+  );
 
   // Truncate to ~30k chars to stay within context limits while preserving the
   // most actionable sections (executive summary, findings, exceptions).
@@ -402,7 +427,10 @@ If the document contains no security findings, return an empty findings array wi
       keyGaps: Array.isArray(parsed.keyGaps) ? parsed.keyGaps : []
     };
   } catch (err) {
-    logger.warn({ event: "document_analysis_failed", vendorName, err }, "Assessment document analysis failed");
+    logger.warn(
+      { event: "document_analysis_failed", vendorName, organizationId, err },
+      "Assessment document analysis failed"
+    );
     return null;
   }
 }

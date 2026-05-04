@@ -261,7 +261,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
 
   let enrichedItems: BriefItem[];
   try {
-    enrichedItems = await enrichBriefItems(base.shortlist);
+    enrichedItems = await enrichBriefItems(base.shortlist, orgId);
   } catch (enrichErr) {
     await pg
       .query(
@@ -304,7 +304,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
   // sentence. Returns null on first-brief-ever cases; the prompt drops to
   // a 3-sentence summary in that case.
   const priorContext = await fetchPriorBriefContext(orgId, briefId);
-  const synthesis = await runSynthesisSafely(cappedItems, priorContext);
+  const synthesis = await runSynthesisSafely(cappedItems, priorContext, orgId);
 
   const finalized = finalizeBrief(
     cappedItems,
