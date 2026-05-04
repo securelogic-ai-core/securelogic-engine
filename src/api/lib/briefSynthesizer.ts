@@ -328,10 +328,18 @@ export function validateActionGrounding(
 // generateHeadline — single declarative sentence, max 12 words
 // ---------------------------------------------------------------------------
 
-async function generateHeadline(items: BriefItem[]): Promise<string | null> {
+async function generateHeadline(
+  items: BriefItem[],
+  organizationId: string | null = null
+): Promise<string | null> {
   const client = getClient();
   if (!client) return null;
   if (items.length === 0) return null;
+
+  logger.info(
+    { event: "llm_call_start", purpose: "brief_headline", model: CLAUDE_MODEL, organizationId },
+    "LLM call: brief headline"
+  );
 
   const signalLines = items
     .slice(0, 8)
@@ -368,7 +376,7 @@ Return plain text only. One sentence. No trailing period needed.`;
     return text || null;
   } catch (err) {
     logger.warn(
-      { event: "synthesis_headline_failed", err },
+      { event: "synthesis_headline_failed", organizationId, err },
       "Headline generation failed"
     );
     return null;
@@ -531,12 +539,18 @@ Return JSON only — no surrounding prose, no markdown fences.`;
  */
 async function generateExecSummary(
   items: BriefItem[],
-  priorContext: PriorBriefContext | null
+  priorContext: PriorBriefContext | null,
+  organizationId: string | null = null
 ): Promise<{ teaser: string | null; exec_summary: string | null }> {
   const empty = { teaser: null, exec_summary: null };
   const client = getClient();
   if (!client) return empty;
   if (items.length === 0) return empty;
+
+  logger.info(
+    { event: "llm_call_start", purpose: "brief_exec_summary", model: CLAUDE_MODEL, organizationId },
+    "LLM call: brief exec summary"
+  );
 
   const signalLines = buildExecSummarySignalLines(items);
   const userPrompt = buildExecSummaryUserPrompt(signalLines, priorContext);
@@ -576,7 +590,7 @@ async function generateExecSummary(
     return { teaser, exec_summary };
   } catch (err) {
     logger.warn(
-      { event: "synthesis_exec_summary_failed", err },
+      { event: "synthesis_exec_summary_failed", organizationId, err },
       "Exec summary generation failed"
     );
     return empty;
@@ -618,15 +632,16 @@ export async function enrichBriefSynthesis(
   _periodStart: string,
   _periodEnd: string,
   _activeCategories: string[],
-  priorContext: PriorBriefContext | null
+  priorContext: PriorBriefContext | null,
+  organizationId: string | null = null
 ): Promise<BriefSynthesis> {
   if (items.length === 0) {
     throw new Error("enrichBriefSynthesis: items[] must be non-empty");
   }
 
   const [headline, exec] = await Promise.all([
-    generateHeadline(items),
-    generateExecSummary(items, priorContext)
+    generateHeadline(items, organizationId),
+    generateExecSummary(items, priorContext, organizationId)
   ]);
 
   return {
@@ -673,7 +688,8 @@ export const synthesisRuntime: {
  */
 export async function runSynthesisSafely(
   items: BriefItem[],
-  priorContext: PriorBriefContext | null
+  priorContext: PriorBriefContext | null,
+  organizationId: string | null = null
 ): Promise<BriefSynthesis | null> {
   if (items.length === 0) return null;
 
@@ -685,11 +701,12 @@ export async function runSynthesisSafely(
       "",
       "",
       activeCategories,
-      priorContext
+      priorContext,
+      organizationId
     );
   } catch (err) {
     logger.warn(
-      { event: "brief_synthesis_failed", err, itemCount: items.length },
+      { event: "brief_synthesis_failed", organizationId, err, itemCount: items.length },
       "Brief-level synthesis failed — proceeding without synthesis"
     );
     return null;

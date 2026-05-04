@@ -836,11 +836,14 @@ function isBriefUrgency(value: unknown): value is BriefUrgency {
  * Requires ANTHROPIC_API_KEY in the environment. If the key is absent,
  * fallback content is returned immediately without making any API call.
  */
-async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
+async function enrichItemWithClaude(
+  item: BriefItem,
+  organizationId: string | null = null
+): Promise<BriefItem> {
   const client = getClient();
   if (!client) {
     logger.warn(
-      { event: "brief_enrichment_fallback", reason: "ANTHROPIC_API_KEY not set", signal_id: item.cyber_signal_id },
+      { event: "brief_enrichment_fallback", reason: "ANTHROPIC_API_KEY not set", signal_id: item.cyber_signal_id, organizationId },
       "Brief enrichment falling back to defaults"
     );
     return {
@@ -852,6 +855,17 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
       urgency: URGENCY_FALLBACK
     };
   }
+
+  logger.info(
+    {
+      event: "llm_call_start",
+      purpose: "brief_item_enrichment",
+      model: "claude-haiku-4-5",
+      organizationId,
+      signal_id: item.cyber_signal_id
+    },
+    "LLM call: brief item enrichment"
+  );
 
   const vendorLine = item.affected_vendor ? `Vendor/Product: ${item.affected_vendor}\n` : "";
   const cveLine = item.affected_cve ? `CVE: ${item.affected_cve}\n` : "";
@@ -972,7 +986,7 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
     };
   } catch (err) {
     logger.warn(
-      { event: "brief_enrichment_fallback", reason: "Exception during enrichment", signal_id: item.cyber_signal_id, err },
+      { event: "brief_enrichment_fallback", reason: "Exception during enrichment", signal_id: item.cyber_signal_id, organizationId, err },
       "Brief enrichment falling back to defaults"
     );
     return {
@@ -997,9 +1011,10 @@ async function enrichItemWithClaude(item: BriefItem): Promise<BriefItem> {
  * @returns      Same items with why_it_matters and recommended_actions populated.
  */
 export async function enrichBriefItems(
-  items: ReadonlyArray<BriefItem>
+  items: ReadonlyArray<BriefItem>,
+  organizationId: string | null = null
 ): Promise<BriefItem[]> {
-  return Promise.all(items.map((item) => enrichItemWithClaude(item)));
+  return Promise.all(items.map((item) => enrichItemWithClaude(item, organizationId)));
 }
 
 // ---------------------------------------------------------------------------
