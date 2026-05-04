@@ -5,7 +5,9 @@ import { logger } from "../../../../src/api/infra/logger.js";
 // Hard cap per feed fetch — prevents a slow host from blocking the pipeline.
 const FEED_TIMEOUT_MS = 15_000;
 
-const parser = new Parser();
+const parser = new Parser({
+  headers: { "User-Agent": "SecureLogic AI info@securelogicai.com" }
+});
 
 function parseWithTimeout(url: string): Promise<Parser.Output<Record<string, unknown>>> {
   return Promise.race([
@@ -22,7 +24,7 @@ const FEEDS = [
     source: "regulatory_cisa"
   },
   {
-    url: "https://csrc.nist.gov/news.rss",
+    url: "https://www.nist.gov/news-events/cybersecurity/rss.xml",
     source: "regulatory_nist"
   }
 ];

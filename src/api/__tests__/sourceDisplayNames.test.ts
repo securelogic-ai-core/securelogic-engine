@@ -59,6 +59,7 @@ describe("SOURCE_DISPLAY_NAMES — explicit mappings", () => {
       "regulatory_cisa",
       "regulatory_nist",
       "regulatory_ftc",
+      "regulatory_ftc_consumer_protection",
       "regulatory_sec_8k",
       "regulatory_nydfs",
       "regulatory_enisa",

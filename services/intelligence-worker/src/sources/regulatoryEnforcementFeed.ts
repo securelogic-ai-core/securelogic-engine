@@ -25,7 +25,9 @@ import { logger } from "../../../../src/api/infra/logger.js";
 const FEED_TIMEOUT_MS = 15_000;
 const MAX_ITEMS_PER_FEED = 10;
 
-const parser = new Parser();
+const parser = new Parser({
+  headers: { "User-Agent": "SecureLogic AI info@securelogicai.com" }
+});
 
 function parseWithTimeout(url: string): Promise<Parser.Output<Record<string, unknown>>> {
   return Promise.race([
@@ -41,8 +43,12 @@ function parseWithTimeout(url: string): Promise<Parser.Output<Record<string, unk
 
 const FEEDS = [
   {
-    url: "https://www.ftc.gov/feeds/press-release-rss.xml",
+    url: "https://www.ftc.gov/feeds/press-release.xml",
     source: "regulatory_ftc"
+  },
+  {
+    url: "https://www.ftc.gov/feeds/press-release-consumer-protection.xml",
+    source: "regulatory_ftc_consumer_protection"
   },
   {
     // SEC EDGAR current 8-K Atom feed — covers material cybersecurity event disclosures

@@ -70,6 +70,7 @@ export const SOURCE_DISPLAY_NAMES: Record<string, string> = {
   regulatory_enisa: "ENISA",
   regulatory_fsb: "FSB",
   regulatory_ftc: "FTC",
+  regulatory_ftc_consumer_protection: "FTC Consumer Protection",
   regulatory_ico: "ICO",
   regulatory_nist: "NIST",
   regulatory_nydfs: "NYDFS",
