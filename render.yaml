@@ -45,6 +45,12 @@ services:
       - key: JWT_SECRET
         sync: false
 
+      # Scheduler trigger secret (min 32 chars) — bearer token for
+      # POST /api/admin/briefs/run-scheduler. Required at boot in production
+      # per validateEnv.ts; engine refuses to start without it.
+      - key: SCHEDULER_SECRET
+        sync: false
+
       # TOTP secret encryption key — AES-256-GCM, encrypts TOTP secrets at rest.
       # Falls back to JWT_SECRET if not set.
       # Generate with: openssl rand -hex 32
@@ -172,6 +178,9 @@ services:
         sync: false
 
       - key: JWT_SECRET
+        sync: false
+
+      - key: SCHEDULER_SECRET
         sync: false
 
       - key: MFA_SECRET_KEY
