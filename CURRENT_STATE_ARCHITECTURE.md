@@ -170,15 +170,22 @@ The final product must support strict tenant isolation, but this must remain an 
 
 ## Current architectural reality by area
 ### Identity and tenanting
+The authoritative source for the tenant model, identity, query scoping, role model, file/object storage rules, background-job rules, internal-admin access, audit logging, and entitlement vocabulary is `TENANT_ISOLATION_STANDARD.md`.
+
 Current expectation:
 - multi-tenant SaaS model
-- organization-scoped data
-- user access tied to organization context
+- organization-scoped data (`organizations.id` is the tenant unit)
+- user access tied to organization context, resolved via the standard middleware chain (`requireApiKey → attachOrganizationContext → requireEntitlement`)
 - no customer data commingling permitted
 
-Status:
-- organization scoping exists conceptually and in domain design
-- tenant isolation standards must remain explicit and enforced in all future work
+Status (honest):
+- the request-time tenant model is real: `attachOrganizationContext` is the sole loader of `entitlement_level`, JWT bridge always swaps to an active API key, and customer auth is in production
+- query scoping is route-by-route discipline; ~74% of route files reference `organization_id` directly, the rest are health/public/auth/admin (unverified)
+- there is no Postgres Row-Level Security yet — query scoping is the only defense
+- file/object storage is in-memory only; there is no blob layer
+- per-org background jobs follow the canonical posture-worker pattern; the intelligence worker is global and fans out per-org at consumption time (consumption path not yet independently verified)
+- audit logging is wired but coverage across mutations is uneven
+- the standard surfaces 11 specific code risks (R1–R11 in `TENANT_ISOLATION_STANDARD.md` §11) that drive the recommended `tenant-isolation-enforcement` follow-on package
 
 ### Brief generation
 Current expectation:

@@ -414,11 +414,12 @@ Before doing any work, read and align to these files in this exact order:
 1. PRODUCT_VISION.md
 2. CURRENT_STATE_ARCHITECTURE.md
 3. CANONICAL_DOMAIN_MODEL.md
-4. BUILD_SEQUENCE.md
-5. FINAL_PRODUCT_STANDARD.md
-6. CLAUDE.md
+4. TENANT_ISOLATION_STANDARD.md
+5. BUILD_SEQUENCE.md
+6. FINAL_PRODUCT_STANDARD.md
+7. CLAUDE.md
 
-These documents are the controlling source of truth for product intent, current architecture, build order, and final quality standards.
+These documents are the controlling source of truth for product intent, current architecture, the tenant isolation model, build order, and final quality standards.
 
 ### Non-negotiable rules
 - Do not infer the roadmap from convenience.

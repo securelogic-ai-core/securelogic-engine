@@ -76,13 +76,17 @@ Required:
 ### 1. Tenant isolation
 No customer data commingling is acceptable.
 
-Required:
+The authoritative source for the tenant model and isolation rules is `TENANT_ISOLATION_STANDARD.md`. The summary requirements below are non-exhaustive; every package that touches customer data MUST conform to that standard in full.
+
+Required (summary):
 - every customer-data table must be tenant-scoped
 - every authenticated request must resolve organization context
 - every query must enforce tenant boundaries
 - every file/object storage path must be tenant-scoped
 - every background job and AI job must preserve tenant context
 - internal/admin access must be controlled and auditable
+
+If `TENANT_ISOLATION_STANDARD.md` and any other doc disagree on a tenant rule, `TENANT_ISOLATION_STANDARD.md` wins until explicitly amended via its §14 protocol.
 
 ### 2. Deterministic data model
 Every major platform object must be explicitly modeled.
@@ -191,6 +195,7 @@ Stale docs are treated as defects.
 - PRODUCT_VISION.md = what the product is
 - CURRENT_STATE_ARCHITECTURE.md = what exists now
 - CANONICAL_DOMAIN_MODEL.md = what objects exist
+- TENANT_ISOLATION_STANDARD.md = the tenant model and isolation rules every package must follow
 - BUILD_SEQUENCE.md = what gets built next and in what order
 - FINAL_PRODUCT_STANDARD.md = what “done right” means
 - CLAUDE.md = how Claude should execute
