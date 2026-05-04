@@ -69,6 +69,7 @@ import aiSystemGovernanceContextRouter from "./aiSystemGovernanceContext.js";
 import risksRouter from "./risks.js";
 import riskTreatmentsRouter from "./riskTreatments.js";
 import cyberSignalsRouter from "./cyberSignals.js";
+import signalVendorLinksRouter from "./signalVendorLinks.js";
 import dashboardRouter from "./dashboard.js";
 import postureRouter from "./posture.js";
 import signalsRouter from "./signals.js";
@@ -408,6 +409,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", risksRouter);
   router.use("/api", riskTreatmentsRouter);
   router.use("/api", cyberSignalsRouter);
+  router.use("/api", signalVendorLinksRouter);
   router.use("/api", dashboardRouter);
   router.use("/api", postureRouter);
   router.use("/api", signalsRouter);

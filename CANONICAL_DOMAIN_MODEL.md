@@ -44,6 +44,7 @@ They must not be re-declared differently in each module.
 | Posture Snapshot | posture_snapshots + domain_scores | POST /api/posture/snapshot, GET /api/posture/latest, GET /api/posture/history | Complete — package platform-foundation-findings-actions-posture |
 | Assessment | assessments | POST /api/assess, GET /api/assessments/:id | Complete — prior package |
 | Signal | signals | signals API | Complete — prior package |
+| Signal Vendor Link | signal_vendor_links | POST /api/signal-vendor-links, DELETE /api/signal-vendor-links/:id, GET /api/vendors/:id/signals, GET /api/cyber-signals/:id/vendors | Complete — package signal-to-vendor-linkage |
 | Organization | organizations | admin API | Profile fields complete — package org-profile-context-weighting |
 | Vendor | vendors (extended) | POST /api/vendors, GET /api/vendors, GET /api/vendors/:id, PATCH /api/vendors/:id | Complete — package vendor-risk-primitives |
 | Vendor Assessment | vendor_assessments | POST /api/vendor-assessments, GET /api/vendor-assessments, GET /api/vendor-assessments/:id | Complete — package vendor-assessment-workflow |
@@ -232,8 +233,9 @@ Organization
   ├── Vendors (organization_id FK)
   │     ├── Vendor Assessments (vendor_id FK → vendor_assessments)
   │     │     └── Findings (source_type='vendor_review', source_id=vendor_assessments.id)
-  │     └── Vendor Reviews (vendor_id FK → vendor_reviews, mutable workflow)
-  │           └── Findings (source_type='vendor_cycle_review', source_id=vendor_reviews.id)
+  │     ├── Vendor Reviews (vendor_id FK → vendor_reviews, mutable workflow)
+  │     │     └── Findings (source_type='vendor_cycle_review', source_id=vendor_reviews.id)
+  │     └── Signal Vendor Links (organization_id FK, signal_id FK → cyber_signals, vendor_id FK → vendors)
   ├── AI Systems (organization_id FK)
   │     ├── Governance Reviews (ai_system_id FK → governance_reviews, point-in-time)
   │     │     └── Findings (source_type='ai_review', source_id=governance_reviews.id)
