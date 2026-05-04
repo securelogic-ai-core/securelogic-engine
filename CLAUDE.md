@@ -404,3 +404,50 @@ Your default standing assignment in this repository is:
    - with the Intelligence Brief as one premium service offering, not the core architecture
 
 If there is any tension between "finishing the current feature" and "building the platform correctly," prioritize building the platform correctly.
+
+---
+
+## Governing product and build documents
+
+Before doing any work, read and align to these files in this exact order:
+
+1. PRODUCT_VISION.md
+2. CURRENT_STATE_ARCHITECTURE.md
+3. CANONICAL_DOMAIN_MODEL.md
+4. BUILD_SEQUENCE.md
+5. FINAL_PRODUCT_STANDARD.md
+6. CLAUDE.md
+
+These documents are the controlling source of truth for product intent, current architecture, build order, and final quality standards.
+
+### Non-negotiable rules
+- Do not infer the roadmap from convenience.
+- Do not treat Platform Annual as a separate product tier.
+- The active commercial model is:
+  - Intelligence Brief — Free
+  - Brief Pro
+  - Team Professional
+  - Platform Professional
+  - Enterprise
+- Platform Annual is only the annual billing option for Platform Professional.
+- The Platform is the main product.
+- The Intelligence Brief is the wedge.
+- Staging is for validation.
+- Demo is for presentation.
+- Production is for clients.
+- Do not use Demo as a substitute for Staging.
+- Do not broaden scope beyond the active package.
+- Do not commit without explicit authorization.
+- Stop after package completion and present exact commit scope.
+
+### Execution behavior
+At the start of each build session:
+1. Read the governing docs in the required order.
+2. Summarize the active product truth, current state, and active package in 5 bullets maximum.
+3. Confirm the package objective before making changes.
+4. Follow BUILD_SEQUENCE.md for what comes next.
+5. Follow FINAL_PRODUCT_STANDARD.md for what "done" means.
+
+If any governing document conflicts with code, surface the conflict explicitly before continuing.
+If any governing document is stale, stop and request a doc-sync decision before major package work continues.
+
