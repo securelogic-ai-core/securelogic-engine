@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import {
@@ -6,8 +6,21 @@ import {
   isUuid
 } from "../lib/signalAiSystemLinkValidation.js";
 
+// Mocks for the behavioral test section at the bottom of this file.
+// vitest hoists vi.mock to the top of the module, so these take effect
+// before the route file is imported below. Pure-validator and structural
+// tests above this point do not import the route runtime and are unaffected.
+vi.mock("../infra/postgres.js", () => ({
+  pg: { query: vi.fn() }
+}));
+vi.mock("../lib/auditLog.js", () => ({
+  writeAuditEvent: vi.fn()
+}));
+
 const VALID_SIGNAL_UUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const VALID_AI_SYSTEM_UUID = "c3d4e5f6-a7b8-9012-cdef-123456789012";
+const VALID_ORG_UUID = "11111111-1111-4111-8111-111111111111";
+const VALID_LINK_UUID = "33333333-3333-4333-8333-333333333333";
 
 // ====================================================================
 // validateSignalAiSystemLinkCreate — body shape
@@ -445,5 +458,161 @@ describe("signal_ai_system_links migration", () => {
     expect(MIGRATION_SOURCE).not.toMatch(/ALTER TABLE ai_systems/);
     expect(MIGRATION_SOURCE).not.toMatch(/ALTER TABLE findings/);
     expect(MIGRATION_SOURCE).not.toMatch(/ALTER TABLE risks/);
+  });
+});
+
+// ====================================================================
+// Behavioral tests — IMPORTANT, READ THIS BEFORE EXTENDING
+//
+// These are the only behavioral tests in this repo. They cover two
+// specific edge cases that cannot be verified structurally:
+//
+//   (1) parseLimit fractional/non-numeric input → 400 invalid_limit
+//   (2) Idempotent insert under ON CONFLICT → 200 with existing row
+//
+// The full HTTP test harness remains in BUILD_SEQUENCE.md backlog (see
+// "HTTP test harness for link routes"). DO NOT extend behavioral
+// coverage piecemeal here — backfill via the harness package once all
+// four link tables (vendor, AI system, control, obligation) are in
+// place. The scope of this section is fixed at 4 cases per route.
+//
+// Mocks: pg.query and writeAuditEvent. Handlers are imported by name
+// from the route file (which exports them for direct invocation).
+// ====================================================================
+
+import { pg } from "../infra/postgres.js";
+import {
+  createSignalAiSystemLink,
+  listSignalsForAiSystem
+} from "../routes/signalAiSystemLinks.js";
+
+const mockQuery = pg.query as unknown as ReturnType<typeof vi.fn>;
+
+function makeRes() {
+  const res: Record<string, unknown> = {};
+  res.status = vi.fn().mockReturnValue(res);
+  res.json = vi.fn().mockReturnValue(res);
+  return res as { status: ReturnType<typeof vi.fn>; json: ReturnType<typeof vi.fn> };
+}
+
+describe("signalAiSystemLinks — behavioral edge cases", () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+  });
+
+  // ---- parseLimit cases ----
+
+  it("GET /api/ai-systems/:id/signals — fractional limit returns 400 invalid_limit", async () => {
+    const req = {
+      query: { limit: "50.5" },
+      params: { id: VALID_AI_SYSTEM_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalsForAiSystem>[0];
+    const res = makeRes();
+
+    await listSignalsForAiSystem(
+      req,
+      res as unknown as Parameters<typeof listSignalsForAiSystem>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "invalid_limit" })
+    );
+    // The handler must short-circuit before hitting pg — no SQL must run.
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("GET /api/ai-systems/:id/signals — non-numeric limit returns 400 invalid_limit", async () => {
+    const req = {
+      query: { limit: "abc" },
+      params: { id: VALID_AI_SYSTEM_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalsForAiSystem>[0];
+    const res = makeRes();
+
+    await listSignalsForAiSystem(
+      req,
+      res as unknown as Parameters<typeof listSignalsForAiSystem>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "invalid_limit" })
+    );
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  // ---- concurrent-insert cases ----
+
+  it("POST /api/signal-ai-system-links — INSERT happy path returns 201 created:true", async () => {
+    const newLink = {
+      id: VALID_LINK_UUID,
+      organization_id: VALID_ORG_UUID,
+      signal_id: VALID_SIGNAL_UUID,
+      ai_system_id: VALID_AI_SYSTEM_UUID,
+      note: null,
+      created_by_user_id: null,
+      created_at: "2026-05-04T22:00:00.000Z",
+      deleted_at: null
+    };
+    mockQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] }) // ai_system pre-flight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] }) // signal pre-flight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [newLink] }); // INSERT success
+
+    const req = {
+      body: { signal_id: VALID_SIGNAL_UUID, ai_system_id: VALID_AI_SYSTEM_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof createSignalAiSystemLink>[0];
+    const res = makeRes();
+
+    await createSignalAiSystemLink(
+      req,
+      res as unknown as Parameters<typeof createSignalAiSystemLink>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ link: newLink, created: true })
+    );
+    expect(mockQuery).toHaveBeenCalledTimes(3);
+  });
+
+  it("POST /api/signal-ai-system-links — ON CONFLICT path returns 200 created:false (no 500)", async () => {
+    const existingLink = {
+      id: VALID_LINK_UUID,
+      organization_id: VALID_ORG_UUID,
+      signal_id: VALID_SIGNAL_UUID,
+      ai_system_id: VALID_AI_SYSTEM_UUID,
+      note: "previous link",
+      created_by_user_id: null,
+      created_at: "2026-05-01T10:00:00.000Z",
+      deleted_at: null
+    };
+    mockQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] })       // ai_system pre-flight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] })       // signal pre-flight
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })         // INSERT conflict
+      .mockResolvedValueOnce({ rowCount: 1, rows: [existingLink] }); // SELECT existing
+
+    const req = {
+      body: { signal_id: VALID_SIGNAL_UUID, ai_system_id: VALID_AI_SYSTEM_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof createSignalAiSystemLink>[0];
+    const res = makeRes();
+
+    await createSignalAiSystemLink(
+      req,
+      res as unknown as Parameters<typeof createSignalAiSystemLink>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ link: existingLink, created: false })
+    );
+    expect(mockQuery).toHaveBeenCalledTimes(4);
   });
 });
