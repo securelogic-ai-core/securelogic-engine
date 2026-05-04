@@ -45,6 +45,7 @@ They must not be re-declared differently in each module.
 | Assessment | assessments | POST /api/assess, GET /api/assessments/:id | Complete — prior package |
 | Signal | signals | signals API | Complete — prior package |
 | Signal Vendor Link | signal_vendor_links | POST /api/signal-vendor-links, DELETE /api/signal-vendor-links/:id, GET /api/vendors/:id/signals, GET /api/cyber-signals/:id/vendors | Complete — package signal-to-vendor-linkage |
+| Signal AI System Link | signal_ai_system_links | POST /api/signal-ai-system-links, DELETE /api/signal-ai-system-links/:id, GET /api/ai-systems/:id/signals, GET /api/cyber-signals/:id/ai-systems | Complete — package signal-to-AI-system-linkage |
 | Organization | organizations | admin API | Profile fields complete — package org-profile-context-weighting |
 | Vendor | vendors (extended) | POST /api/vendors, GET /api/vendors, GET /api/vendors/:id, PATCH /api/vendors/:id | Complete — package vendor-risk-primitives |
 | Vendor Assessment | vendor_assessments | POST /api/vendor-assessments, GET /api/vendor-assessments, GET /api/vendor-assessments/:id | Complete — package vendor-assessment-workflow |
@@ -239,8 +240,9 @@ Organization
   ├── AI Systems (organization_id FK)
   │     ├── Governance Reviews (ai_system_id FK → governance_reviews, point-in-time)
   │     │     └── Findings (source_type='ai_review', source_id=governance_reviews.id)
-  │     └── AI Governance Assessments (ai_system_id FK → ai_governance_assessments, mutable)
-  │           └── Findings (source_type='ai_governance_review', source_id=ai_governance_assessments.id)
+  │     ├── AI Governance Assessments (ai_system_id FK → ai_governance_assessments, mutable)
+  │     │     └── Findings (source_type='ai_governance_review', source_id=ai_governance_assessments.id)
+  │     └── Signal AI System Links (organization_id FK; cyber_signals ↔ ai_systems — external-signal connectivity, parallel to Signal Vendor Links; permits global-org signals)
   ├── Frameworks (organization_id FK)
   │     └── Requirements (framework_id FK)
   ├── Controls (organization_id FK)
