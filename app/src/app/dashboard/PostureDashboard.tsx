@@ -191,13 +191,20 @@ export function PostureDashboard({ summary, frameworkPairs, postureSnapshots, us
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+      {/* auto-rows-fr equalizes row heights across each implicit row of
+          the grid. Tiles in the same row stretch to the tallest tile;
+          combined with h-full on each tile wrapper, the inner card
+          backgrounds fill the available height so card edges align. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 auto-rows-fr gap-4 2xl:gap-6 mb-4">
         {sortedVisibleTiles.map((tile) => {
           const node = renderTile(tile.id);
           if (!node) return null;
           const fullWidth = FULL_WIDTH_TILE_IDS.has(tile.id);
+          // sm:col-span-2 and lg:col-span-3 let full-width tiles span the
+          // visible columns at each breakpoint without re-flowing.
+          const colSpanCls = fullWidth ? "sm:col-span-2 lg:col-span-3" : "";
           return (
-            <div key={tile.id} className={fullWidth ? "lg:col-span-3" : ""}>
+            <div key={tile.id} className={`${colSpanCls} h-full`}>
               {node}
             </div>
           );
