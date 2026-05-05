@@ -434,7 +434,9 @@ function pendingSuggestionRow(targetType = "vendor") {
     target_type: targetType,
     target_id: VALID_TARGET_UUID,
     match_reason: "vendor_name_ilike",
-    match_score: "0.850",
+    // 75 = High severity (0.75) × high vendor criticality (0.75) × 1.0 × 100,
+    // a plausible computeRiskScore output rather than an arbitrary fixture.
+    match_score: 75,
     created_at: "2026-05-05T00:00:00.000Z",
     accepted_at: null,
     accepted_by_user_id: null,
@@ -1107,7 +1109,7 @@ describe("signalMatchSuggestions — recompute-score handler", () => {
       })
       .mockResolvedValueOnce({                                                                     // match_score UPDATE
         rowCount: 1,
-        rows: [{ ...pendingSuggestionRow("vendor"), match_score: "56.000" }]
+        rows: [{ ...pendingSuggestionRow("vendor"), match_score: 56 }]
       });
 
     const res = makeRes();
@@ -1140,7 +1142,7 @@ describe("signalMatchSuggestions — recompute-score handler", () => {
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })                                     // weights: NONE
       .mockResolvedValueOnce({                                                                // UPDATE
         rowCount: 1,
-        rows: [{ ...pendingSuggestionRow("vendor"), match_score: "100.000" }]
+        rows: [{ ...pendingSuggestionRow("vendor"), match_score: 100 }]
       });
 
     const res = makeRes();
@@ -1166,7 +1168,7 @@ describe("signalMatchSuggestions — recompute-score handler", () => {
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })                                   // weights: defaults
       .mockResolvedValueOnce({                                                              // UPDATE
         rowCount: 1,
-        rows: [{ ...pendingSuggestionRow("vendor"), match_score: "100.000" }]
+        rows: [{ ...pendingSuggestionRow("vendor"), match_score: 100 }]
       });
 
     const res = makeRes();
@@ -1197,7 +1199,7 @@ describe("signalMatchSuggestions — recompute-score handler", () => {
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })                                  // weights: defaults
       .mockResolvedValueOnce({                                                            // UPDATE
         rowCount: 1,
-        rows: [{ ...pendingSuggestionRow("control"), match_score: "50.000" }]
+        rows: [{ ...pendingSuggestionRow("control"), match_score: 50 }]
       });
 
     const res = makeRes();
@@ -1225,7 +1227,7 @@ describe("signalMatchSuggestions — recompute-score handler", () => {
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })                                   // weights: defaults
       .mockResolvedValueOnce({                                                              // UPDATE
         rowCount: 1,
-        rows: [{ ...pendingSuggestionRow("vendor"), match_score: "38.000" }]
+        rows: [{ ...pendingSuggestionRow("vendor"), match_score: 38 }]
       });
 
     const res = makeRes();
@@ -1253,7 +1255,7 @@ describe("signalMatchSuggestions — recompute-score handler", () => {
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })                                   // weights: defaults
       .mockResolvedValueOnce({
         rowCount: 1,
-        rows: [{ ...pendingSuggestionRow("obligation"), match_score: "75.000" }]
+        rows: [{ ...pendingSuggestionRow("obligation"), match_score: 75 }]
       });
 
     const res = makeRes();
@@ -1283,7 +1285,7 @@ describe("signalMatchSuggestions — recompute-score handler", () => {
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
       .mockResolvedValueOnce({
         rowCount: 1,
-        rows: [{ ...pendingSuggestionRow("obligation"), match_score: "100.000" }]
+        rows: [{ ...pendingSuggestionRow("obligation"), match_score: 100 }]
       });
 
     const res = makeRes();
@@ -1306,7 +1308,7 @@ describe("signalMatchSuggestions — recompute-score handler", () => {
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
       .mockResolvedValueOnce({
         rowCount: 1,
-        rows: [{ ...pendingSuggestionRow("obligation"), match_score: "38.000" }]
+        rows: [{ ...pendingSuggestionRow("obligation"), match_score: 38 }]
       });
 
     const res = makeRes();
