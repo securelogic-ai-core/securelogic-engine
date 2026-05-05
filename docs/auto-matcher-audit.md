@@ -6,6 +6,79 @@
 
 ---
 
+## Execution log (2026-05-05) — real data findings
+
+### Environment correction (added 2026-05-05, post-run)
+
+The §2/§3 queries were run against the `DATABASE_URL` configured in `.env.local`. **That URL pointed at production**, not staging. The repo has three Postgres instances (demo, staging, prod); `.env.local` was set to prod at the time of the audit run. Confirmed retroactively by the operator.
+
+All queries were read-only `SELECT` statements; **no writes occurred**. Prod is byte-identical to its state before the audit. Verified by enumerating every statement issued (all `SELECT` or pure introspection; the one query that errored failed at the SQL parser before reaching any data path).
+
+The empty-data observations below are **expected and correct for prod** — there are no customers on the platform yet, so zero organizations / vendors / AI systems / findings is the right state for that environment. The numbers are not diagnostic of anything wrong; they're a snapshot of a platform with no tenants.
+
+The §3 spot-check **still cannot be performed from prod for this reason**, and the original blocker stands: assessing matcher accuracy requires a DB where (a) at least one organization exists, (b) it has vendors and/or AI systems seeded, and (c) signals have been ingested via the API path that calls the matcher. **Demo or staging is the correct target** for §3, not prod. `.env.local` is being repointed; queries will re-run once the new connection is provided.
+
+### What stands regardless of which DB was queried
+
+The architectural finding is code-level and is independent of the DB query results:
+
+> The intelligence-worker pipeline (`services/intelligence-worker/src/pipeline/runPipeline.ts:103` and `services/intelligence-worker/src/kevPoller.ts:81`) inserts directly into `cyber_signals` and **does NOT call `cyberSignalProcessingService.processSignal()`**. (Verified by grep: the only `processSignal` references in the worker tree are a local helper in `editorial/executiveWriter.ts:79` that processes brief items — not the matcher.)
+
+This was discovered by reading code, not by querying data, and remains true regardless of which DB is targeted. The matcher only runs when signals are POSTed via the API routes (`POST /api/cyber-signals`, `POST /api/cyber-signals/fetch/*`). The bulk-ingest worker path stores signals with `processed = false` and never invokes the matcher.
+
+The implication is unchanged: **the matcher is not a load-bearing component of the platform's actual signal-processing flow today.** The customer-facing claim "we surface relevant signals" is not currently delivered by this matcher in the bulk-ingest path. Verifying whether this claim is delivered at all requires understanding the brief-generation path, which is a separate investigation.
+
+### §2.1 — prod numbers (last 7 days, prod environment)
+
+For reference only — not generalizable to staging or demo, where the matcher has presumably fired against seeded data.
+
+| Query | Result (prod) |
+|---|---|
+| (a) Total signals last 7 days | **1,683** |
+| (b) Signals with finding | **0** |
+| (b) Signals without finding | **1,683 (100%)** |
+| (c) Domain distribution among findings | n/a — no findings to distribute |
+| (d) Multi-entity matches | 0 (vacuously) |
+| (e) Source distribution (top 6) | cisa_kev: 1587 / regulatory_cisa: 21 / security_news_thehackernews: 17 / security_news_bleepingcomputer: 15 / security_news_theregister: 10 / vendor_risk_securityweek: 8 |
+
+Total signals across all time on prod: **1,722**. **All 1,722 are global** (`organization_id IS NULL`). Zero are org-scoped. This confirms the worker pipeline is running and ingesting public-source signals into prod, even with no customer tenants present.
+
+### §2.2 — environmental snapshot (prod)
+
+| Entity | Count in prod |
+|---|---|
+| `organizations` | 0 |
+| `vendors` | 0 |
+| `ai_systems` | 0 |
+| `findings` (any source_type) | 0 |
+| `cyber_signals` (total) | 1,722 |
+| `cyber_signals` (last 7 days) | 1,683 |
+| `cyber_signals` with `processed = false` | 1,722 (every row) |
+
+Prod has the platform schema and an active worker ingesting global signals, but no customer data. Expected for a pre-launch platform with no tenants. The presence of 1,683/week worker-ingested signals with `processed = false` is a useful empirical confirmation that the worker→matcher wiring gap is a live operational characteristic, not a theoretical one.
+
+### §3 — accuracy spot-check (still blocked)
+
+Cannot be performed from prod (zero findings, zero matched signals). Will be re-run once `.env.local` is repointed at demo or staging — those environments are expected to have at least the seeded `Meridian Financial Services` org (per `seed-demo.ts`) and any link-route POSTs the operator made earlier today.
+
+### Updated implication for §6 recommendations
+
+The §6 recommendations stand. The priority order shifts the same way regardless of which DB was queried, because the architectural finding (worker doesn't invoke matcher) is code-level:
+
+- **R1 (don't extend matcher to controls/obligations) — still right.**
+- **R2 (decide if matcher quality is good enough) — premature.** The matcher hasn't run in production volume because the worker pipeline doesn't invoke it. Quality is unmeasurable until either (a) the audit re-runs against demo/staging where the matcher has actually fired, or (b) the wiring changes to invoke the matcher on worker-ingested signals.
+- **R3 (add tests) — still right and now more urgent.**
+- **The architectural question — whose responsibility is it to run the matcher? — remains the most important unresolved question.** Three options outlined in earlier section: (a) worker iterates active orgs and runs `processSignal` per-org per cycle, (b) a separate per-org consumer drains the global signal pool, (c) the matcher remains API-only and customer-facing surfacing happens via the brief path.
+
+### What I did NOT do
+
+- Did not change `cyberSignalProcessingService.ts`, the worker pipeline, or any other code.
+- Did not seed test data into prod to force the matcher to fire.
+- Did not modify `.env.local`.
+- Did not write to any DB. Every statement issued was a `SELECT` or a SQL-syntax-erroring `SELECT`.
+
+---
+
 ## 1. What the matcher actually does
 
 ### 1.1 Algorithm
