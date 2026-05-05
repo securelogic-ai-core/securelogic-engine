@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { PostureSnapshot } from "@/lib/api";
+import { CompactEmptyState } from "./DashboardCharts";
 
 const TEAL       = "#00c4b4";
 const SLATE_LINE = "#1e293b";
@@ -84,9 +85,9 @@ export function PostureTrendChart({ snapshots }: { snapshots: PostureSnapshot[] 
 
       {/* Chart or empty state */}
       {filtered.length < 2 ? (
-        <p className="text-xs py-6 text-center" style={{ color: TEXT_MUTED }}>
-          Not enough data yet. Check back after the next scheduled snapshot.
-        </p>
+        <CompactEmptyState
+          message="Not enough data yet. Check back after the next scheduled snapshot."
+        />
       ) : (
         <svg
           viewBox={`0 0 ${CHART_W} ${CHART_H}`}

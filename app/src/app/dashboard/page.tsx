@@ -8,6 +8,7 @@ import { UpgradeCard } from "@/components/UpgradeCard";
 import { PostureDashboard } from "./PostureDashboard";
 import { LastLoginBanner } from "./LastLoginBanner";
 import { IndustryTemplatesBanner } from "./IndustryTemplatesBanner";
+import { CompactEmptyState } from "./DashboardCharts";
 
 export const revalidate = 0;
 
@@ -440,13 +441,12 @@ function FrameworkReadinessWidget({
       </div>
 
       {pairs.length === 0 ? (
-        <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
-          <p className="text-sm mb-2" style={{ color: "#94a3b8" }}>
-            No frameworks activated yet.
-          </p>
-          <Link href="/frameworks" className="text-xs font-medium hover:underline" style={{ color: "#00c4b4" }}>
-            Activate a framework →
-          </Link>
+        <div className="bg-brand-surface border border-brand-line rounded-xl">
+          <CompactEmptyState
+            message="No frameworks activated yet."
+            ctaLabel="Activate a framework →"
+            ctaHref="/frameworks"
+          />
         </div>
       ) : (
         <div className="bg-brand-surface border border-brand-line rounded-xl divide-y" style={{ "--tw-divide-opacity": "1" } as React.CSSProperties}>

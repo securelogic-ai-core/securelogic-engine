@@ -21,11 +21,74 @@ const SLATE_LINE = "#1e293b";
 const TEXT_MUTED = "#64748b";
 const SURFACE    = "var(--color-brand-surface, #111827)";
 
+// Shared donut geometry used by FindingsDonut, ActionsRing, and
+// VendorRiskCard so the three donuts on the dashboard render at the
+// same physical size. Pre-normalization, FindingsDonut was 100px /
+// effective-15px stroke, ActionsRing was 80px / 12px, VendorRiskCard
+// was 80px / 12px. Single source of truth here; downstream cx/cy/r
+// are derived.
+const DONUT_SIZE   = 144;                // diameter in CSS pixels
+const DONUT_STROKE = 16;                 // ring thickness
+const DONUT_C      = DONUT_SIZE / 2;     // center cx and cy
+const DONUT_R      = (DONUT_SIZE - DONUT_STROKE) / 2;
+const DONUT_CIRC   = 2 * Math.PI * DONUT_R;
+
 function scoreColor(score: number): string {
   if (score >= 80) return "#22c55e";
   if (score >= 60) return "#f59e0b";
   if (score >= 40) return "#f97316";
   return "#ef4444";
+}
+
+/**
+ * CompactEmptyState — shared empty-state body used inside cards whose
+ * primary content has no data yet. Renders at roughly 60% the height
+ * of a populated card by virtue of dropping the chart/list/grid that
+ * would otherwise fill the card body.
+ *
+ * The wrapping <div className="rounded-xl border ..."> stays on each
+ * card; this component is rendered INSIDE that wrapper, replacing the
+ * card body. The card retains its title and any header CTA.
+ *
+ * Used by (in this file):
+ *   - ComplianceCoverage  (no frameworks assessed)
+ *   - FrameworkGaps       (no frameworks activated)
+ *   - DomainPostureBars   (no domain data — single-populated renders
+ *                          the actual bar, not a stub)
+ *   - RiskHeatmap         (no risk data)
+ *
+ * Exported and reused in:
+ *   - PostureTrendChart.tsx (insufficient snapshots)
+ *   - dashboard/page.tsx → FrameworkReadinessWidget (none activated)
+ */
+export function CompactEmptyState({
+  message,
+  ctaLabel,
+  ctaHref,
+}: {
+  message: string;
+  ctaLabel?: string;
+  ctaHref?: string;
+}) {
+  return (
+    <div
+      className="flex flex-col items-center justify-center text-center py-6 gap-2"
+      style={{ minHeight: "104px" }}
+    >
+      <p className="text-xs" style={{ color: TEXT_MUTED }}>
+        {message}
+      </p>
+      {ctaLabel && ctaHref && (
+        <Link
+          href={ctaHref}
+          className="text-xs font-medium hover:opacity-80 transition-opacity"
+          style={{ color: TEAL }}
+        >
+          {ctaLabel}
+        </Link>
+      )}
+    </div>
+  );
 }
 
 function TrendArrow({ direction }: { direction?: string | null }) {
@@ -42,8 +105,6 @@ export function FindingsDonut({
 }: {
   findings: DashboardSummary["findings"];
 }) {
-  const cx = 60, cy = 60, r = 45, sw = 18;
-  const CIRC = 2 * Math.PI * r;
   const total = findings.open;
 
   const segments = (["Critical", "High", "Moderate", "Low"] as const).map((sev) => ({
@@ -55,43 +116,43 @@ export function FindingsDonut({
   let accumulated = 0;
 
   return (
-    <div className="rounded-xl border p-5" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
+    <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
       <p className="text-xs font-semibold uppercase tracking-wide mb-4" style={{ color: TEXT_MUTED }}>
         Open Findings
       </p>
       <div className="flex items-center gap-5">
         <div className="flex-shrink-0">
-          <svg viewBox="0 0 120 120" width="100" height="100">
-            <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={sw} />
+          <svg viewBox={`0 0 ${DONUT_SIZE} ${DONUT_SIZE}`} width={DONUT_SIZE} height={DONUT_SIZE}>
+            <circle cx={DONUT_C} cy={DONUT_C} r={DONUT_R} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={DONUT_STROKE} />
             {total > 0 ? (
               segments.filter((s) => s.count > 0).map(({ sev, count, color }) => {
-                const arc = (count / total) * CIRC;
+                const arc = (count / total) * DONUT_CIRC;
                 const offset = -accumulated;
                 accumulated += arc;
                 return (
                   <circle
                     key={sev}
-                    cx={cx} cy={cy} r={r}
-                    fill="none" stroke={color} strokeWidth={sw}
-                    strokeDasharray={`${arc} ${CIRC - arc}`}
+                    cx={DONUT_C} cy={DONUT_C} r={DONUT_R}
+                    fill="none" stroke={color} strokeWidth={DONUT_STROKE}
+                    strokeDasharray={`${arc} ${DONUT_CIRC - arc}`}
                     strokeDashoffset={offset}
-                    transform={`rotate(-90 ${cx} ${cy})`}
+                    transform={`rotate(-90 ${DONUT_C} ${DONUT_C})`}
                     strokeLinecap="butt"
                   />
                 );
               })
             ) : (
               <circle
-                cx={cx} cy={cy} r={r}
-                fill="none" stroke="#22c55e" strokeWidth={sw}
-                strokeDasharray={`${CIRC} 0`}
-                transform={`rotate(-90 ${cx} ${cy})`}
+                cx={DONUT_C} cy={DONUT_C} r={DONUT_R}
+                fill="none" stroke="#22c55e" strokeWidth={DONUT_STROKE}
+                strokeDasharray={`${DONUT_CIRC} 0`}
+                transform={`rotate(-90 ${DONUT_C} ${DONUT_C})`}
               />
             )}
-            <text x={cx} y={cy - 6} textAnchor="middle" fill="#f1f5f9" fontSize="20" fontWeight="700">
+            <text x={DONUT_C} y={DONUT_C - 6} textAnchor="middle" fill="#f1f5f9" fontSize="28" fontWeight="700">
               {total}
             </text>
-            <text x={cx} y={cy + 10} textAnchor="middle" fill={TEXT_MUTED} fontSize="9">
+            <text x={DONUT_C} y={DONUT_C + 16} textAnchor="middle" fill={TEXT_MUTED} fontSize="11">
               findings
             </text>
           </svg>
@@ -126,7 +187,7 @@ export function FindingsDonut({
 
 export function DomainPostureBars({ domains }: { domains: DomainScore[] }) {
   return (
-    <div className="rounded-xl border p-5" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
+    <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
       <div className="flex items-baseline justify-between mb-4">
         <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
           Domain Scores
@@ -136,7 +197,11 @@ export function DomainPostureBars({ domains }: { domains: DomainScore[] }) {
         </Link>
       </div>
       {domains.length === 0 ? (
-        <p className="text-xs" style={{ color: TEXT_MUTED }}>No domain data yet.</p>
+        <CompactEmptyState
+          message="No domain data yet."
+          ctaLabel="View posture →"
+          ctaHref="/posture"
+        />
       ) : (
         <div className="space-y-3">
           {domains.slice(0, 6).map((d) => {
@@ -173,59 +238,57 @@ export function DomainPostureBars({ domains }: { domains: DomainScore[] }) {
 // ── ActionsRing ────────────────────────────────────────────────
 
 export function ActionsRing({ actions }: { actions: DashboardSummary["actions"] }) {
-  const cx = 40, cy = 40, r = 28, sw = 12;
-  const CIRC = 2 * Math.PI * r;
   const openCount       = actions.open        ?? 0;
   const inProgressCount = actions.in_progress ?? 0;
   const overdueCount    = actions.overdue      ?? 0;
   const total = openCount + inProgressCount;
-  const openArc        = total > 0 ? (openCount        / total) * CIRC : 0;
-  const inProgressArc  = total > 0 ? (inProgressCount  / total) * CIRC : 0;
+  const openArc        = total > 0 ? (openCount        / total) * DONUT_CIRC : 0;
+  const inProgressArc  = total > 0 ? (inProgressCount  / total) * DONUT_CIRC : 0;
 
   return (
-    <div className="rounded-xl border p-5" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
+    <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
       <p className="text-xs font-semibold uppercase tracking-wide mb-4" style={{ color: TEXT_MUTED }}>
         Actions
       </p>
       <div className="flex items-center gap-5">
         <div className="flex-shrink-0">
-          <svg viewBox="0 0 80 80" width="80" height="80">
-            <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={sw} />
+          <svg viewBox={`0 0 ${DONUT_SIZE} ${DONUT_SIZE}`} width={DONUT_SIZE} height={DONUT_SIZE}>
+            <circle cx={DONUT_C} cy={DONUT_C} r={DONUT_R} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={DONUT_STROKE} />
             {total > 0 ? (
               <>
                 {openCount > 0 && (
                   <circle
-                    cx={cx} cy={cy} r={r}
-                    fill="none" stroke={TEAL} strokeWidth={sw}
-                    strokeDasharray={`${openArc} ${CIRC - openArc}`}
+                    cx={DONUT_C} cy={DONUT_C} r={DONUT_R}
+                    fill="none" stroke={TEAL} strokeWidth={DONUT_STROKE}
+                    strokeDasharray={`${openArc} ${DONUT_CIRC - openArc}`}
                     strokeDashoffset={0}
-                    transform={`rotate(-90 ${cx} ${cy})`}
+                    transform={`rotate(-90 ${DONUT_C} ${DONUT_C})`}
                     strokeLinecap="butt"
                   />
                 )}
                 {inProgressCount > 0 && (
                   <circle
-                    cx={cx} cy={cy} r={r}
-                    fill="none" stroke={AMBER} strokeWidth={sw}
-                    strokeDasharray={`${inProgressArc} ${CIRC - inProgressArc}`}
+                    cx={DONUT_C} cy={DONUT_C} r={DONUT_R}
+                    fill="none" stroke={AMBER} strokeWidth={DONUT_STROKE}
+                    strokeDasharray={`${inProgressArc} ${DONUT_CIRC - inProgressArc}`}
                     strokeDashoffset={-openArc}
-                    transform={`rotate(-90 ${cx} ${cy})`}
+                    transform={`rotate(-90 ${DONUT_C} ${DONUT_C})`}
                     strokeLinecap="butt"
                   />
                 )}
               </>
             ) : (
               <circle
-                cx={cx} cy={cy} r={r}
-                fill="none" stroke="#22c55e" strokeWidth={sw}
-                strokeDasharray={`${CIRC} 0`}
-                transform={`rotate(-90 ${cx} ${cy})`}
+                cx={DONUT_C} cy={DONUT_C} r={DONUT_R}
+                fill="none" stroke="#22c55e" strokeWidth={DONUT_STROKE}
+                strokeDasharray={`${DONUT_CIRC} 0`}
+                transform={`rotate(-90 ${DONUT_C} ${DONUT_C})`}
               />
             )}
-            <text x={cx} y={cy - 4} textAnchor="middle" fill="#f1f5f9" fontSize="14" fontWeight="700">
+            <text x={DONUT_C} y={DONUT_C - 4} textAnchor="middle" fill="#f1f5f9" fontSize="24" fontWeight="700">
               {total}
             </text>
-            <text x={cx} y={cy + 9} textAnchor="middle" fill={TEXT_MUTED} fontSize="8">
+            <text x={DONUT_C} y={DONUT_C + 16} textAnchor="middle" fill={TEXT_MUTED} fontSize="11">
               active
             </text>
           </svg>
@@ -345,7 +408,7 @@ export function OpenItemsAging({
   const bothEmpty    = findingsOpen === 0 && actionsOpen === 0;
 
   return (
-    <div className="rounded-xl border p-5" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
+    <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
       <div className="flex items-baseline justify-between mb-4">
         <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
           Open Items Aging
@@ -361,7 +424,7 @@ export function OpenItemsAging({
           <p className="text-sm" style={{ color: "#86efac" }}>No open items. All clear.</p>
         </div>
       ) : (
-        <div style={{ display: "flex", gap: "32px" }}>
+        <div className="flex flex-col sm:flex-row gap-4 sm:gap-8">
           <AgingSection
             label="Findings"
             href="/findings?status=open"
@@ -371,7 +434,7 @@ export function OpenItemsAging({
             olderThan30={findings.older_than_30 ?? 0}
             olderThan7={findings.older_than_7 ?? 0}
           />
-          <div style={{ width: "1px", background: SLATE_LINE, flexShrink: 0 }} />
+          <div className="hidden sm:block" style={{ width: "1px", background: SLATE_LINE, flexShrink: 0 }} />
           <AgingSection
             label="Actions"
             href="/actions"
@@ -410,7 +473,7 @@ export function InventoryGrid({
   if ((inventory.obligations ?? 0) > 0) secondaryRows.push({ label: "Obligations", count: inventory.obligations!, href: "/obligations" });
 
   return (
-    <div className="rounded-xl border p-5" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
+    <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
       <p className="text-xs font-semibold uppercase tracking-wide mb-4" style={{ color: TEXT_MUTED }}>
         Inventory
       </p>
@@ -466,8 +529,6 @@ export function VendorRiskCard({
     high_or_critical: 0,
   };
 
-  const cx = 40, cy = 40, r = 28, sw = 12;
-  const CIRC = 2 * Math.PI * r;
   const total = vr.total;
 
   const segments = [
@@ -481,7 +542,7 @@ export function VendorRiskCard({
   let accumulated = 0;
 
   return (
-    <div className="rounded-xl border p-5" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
+    <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
       <div className="flex items-baseline justify-between mb-4">
         <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
           Vendor Risk
@@ -501,28 +562,28 @@ export function VendorRiskCard({
       ) : (
         <div className="flex items-center gap-5">
           <div className="flex-shrink-0">
-            <svg viewBox="0 0 80 80" width="80" height="80">
-              <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={sw} />
+            <svg viewBox={`0 0 ${DONUT_SIZE} ${DONUT_SIZE}`} width={DONUT_SIZE} height={DONUT_SIZE}>
+              <circle cx={DONUT_C} cy={DONUT_C} r={DONUT_R} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={DONUT_STROKE} />
               {segments.map(({ key, count, color }) => {
-                const arc = (count / total) * CIRC;
+                const arc = (count / total) * DONUT_CIRC;
                 const offset = -accumulated;
                 accumulated += arc;
                 return (
                   <circle
                     key={key}
-                    cx={cx} cy={cy} r={r}
-                    fill="none" stroke={color} strokeWidth={sw}
-                    strokeDasharray={`${arc} ${CIRC - arc}`}
+                    cx={DONUT_C} cy={DONUT_C} r={DONUT_R}
+                    fill="none" stroke={color} strokeWidth={DONUT_STROKE}
+                    strokeDasharray={`${arc} ${DONUT_CIRC - arc}`}
                     strokeDashoffset={offset}
-                    transform={`rotate(-90 ${cx} ${cy})`}
+                    transform={`rotate(-90 ${DONUT_C} ${DONUT_C})`}
                     strokeLinecap="butt"
                   />
                 );
               })}
-              <text x={cx} y={cy - 4} textAnchor="middle" fill="#f1f5f9" fontSize="14" fontWeight="700">
+              <text x={DONUT_C} y={DONUT_C - 4} textAnchor="middle" fill="#f1f5f9" fontSize="24" fontWeight="700">
                 {total}
               </text>
-              <text x={cx} y={cy + 9} textAnchor="middle" fill={TEXT_MUTED} fontSize="8">
+              <text x={DONUT_C} y={DONUT_C + 16} textAnchor="middle" fill={TEXT_MUTED} fontSize="11">
                 vendors
               </text>
             </svg>
@@ -641,7 +702,7 @@ export function RisksBreakdown({
   ];
 
   return (
-    <div className="rounded-xl border p-5" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
+    <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
       <div className="flex items-baseline justify-between mb-4">
         <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
           Open Risks
@@ -737,7 +798,7 @@ export function RiskHeatmap({
   const hasData = cells.length > 0;
 
   return (
-    <div className="rounded-xl border p-5" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
+    <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
       <div className="flex items-baseline justify-between mb-4">
         <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
           Risk Heatmap
@@ -748,7 +809,11 @@ export function RiskHeatmap({
       </div>
 
       {!hasData ? (
-        <p className="text-xs text-center py-4" style={{ color: TEXT_MUTED }}>No risk data available.</p>
+        <CompactEmptyState
+          message="No risk data available."
+          ctaLabel="Open risk register →"
+          ctaHref="/risks"
+        />
       ) : (
         <div>
           <div style={{ display: "flex", alignItems: "flex-start", gap: "6px" }}>
@@ -841,7 +906,7 @@ export function FrameworkGaps({
     .slice(0, 3);
 
   return (
-    <div className="rounded-xl border p-5" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
+    <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
       <div className="flex items-baseline justify-between mb-4">
         <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
           Framework Gaps
@@ -851,12 +916,11 @@ export function FrameworkGaps({
         </Link>
       </div>
       {sorted.length === 0 ? (
-        <div className="flex items-center justify-between">
-          <p className="text-xs" style={{ color: TEXT_MUTED }}>No frameworks activated yet.</p>
-          <Link href="/frameworks" className="text-xs font-medium hover:opacity-80" style={{ color: TEAL }}>
-            Add framework →
-          </Link>
-        </div>
+        <CompactEmptyState
+          message="No frameworks activated yet."
+          ctaLabel="Add framework →"
+          ctaHref="/frameworks"
+        />
       ) : (
         <div className="space-y-4">
           {sorted.map(({ framework, readiness }) => {
@@ -927,7 +991,7 @@ export function ComplianceCoverage({
   );
 
   return (
-    <div className="rounded-xl border p-5" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
+    <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
       <div className="flex items-baseline justify-between mb-4">
         <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
           Compliance Coverage
@@ -937,34 +1001,31 @@ export function ComplianceCoverage({
         </Link>
       </div>
 
-      {/* Aggregate number */}
-      <div className="mb-4">
-        {overallPct !== null ? (
-          <>
-            <p className="text-4xl font-bold leading-none" style={{ color: TEAL }}>
-              {overallPct}%
-            </p>
-            <p className="mt-1 text-xs" style={{ color: "#94a3b8" }}>
-              {totalSatisfied} of {totalRequirements} requirements satisfied
-            </p>
-          </>
-        ) : (
-          <>
-            <p className="text-2xl font-bold" style={{ color: TEXT_MUTED }}>—</p>
-            <p className="mt-1 text-xs" style={{ color: TEXT_MUTED }}>No frameworks assessed yet.</p>
-          </>
-        )}
-      </div>
-
-      {/* Per-framework rows */}
+      {/* Single empty state when no frameworks have been assessed.
+          Pre-fix: both the aggregate-number block AND the per-framework
+          block emitted "No frameworks assessed yet" simultaneously,
+          rendering the message twice on the same card. The aggregate
+          block now renders only when there's actual data; the empty
+          state collapses into the compact CTA path below. */}
       {sorted.length === 0 ? (
-        <div className="flex items-center justify-between">
-          <p className="text-xs" style={{ color: TEXT_MUTED }}>No frameworks assessed yet.</p>
-          <Link href="/frameworks" className="text-xs font-medium hover:opacity-80" style={{ color: TEAL }}>
-            Add framework →
-          </Link>
-        </div>
+        <CompactEmptyState
+          message="No frameworks assessed yet."
+          ctaLabel="Add framework →"
+          ctaHref="/frameworks"
+        />
       ) : (
+        <>
+          {/* Aggregate number — only when data exists */}
+          {overallPct !== null && (
+            <div className="mb-4">
+              <p className="text-4xl font-bold leading-none" style={{ color: TEAL }}>
+                {overallPct}%
+              </p>
+              <p className="mt-1 text-xs" style={{ color: "#94a3b8" }}>
+                {totalSatisfied} of {totalRequirements} requirements satisfied
+              </p>
+            </div>
+          )}
         <div className="space-y-3">
           {sorted.map(({ framework, readiness }) => {
             const score     = readiness?.readiness_score   ?? 0;
@@ -1005,6 +1066,7 @@ export function ComplianceCoverage({
             );
           })}
         </div>
+        </>
       )}
     </div>
   );
