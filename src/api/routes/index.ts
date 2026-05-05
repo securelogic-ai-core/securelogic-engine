@@ -74,6 +74,7 @@ import signalAiSystemLinksRouter from "./signalAiSystemLinks.js";
 import signalControlLinksRouter from "./signalControlLinks.js";
 import signalObligationLinksRouter from "./signalObligationLinks.js";
 import signalMatchSuggestionsRouter from "./signalMatchSuggestions.js";
+import templatesRouter from "./templates.js";
 import aiSystemVendorDependenciesRouter from "./aiSystemVendorDependencies.js";
 import riskScoringWeightsRouter from "./riskScoringWeights.js";
 import dashboardRouter from "./dashboard.js";
@@ -420,6 +421,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", signalControlLinksRouter);
   router.use("/api", signalObligationLinksRouter);
   router.use("/api", signalMatchSuggestionsRouter);
+  router.use("/api", templatesRouter);
   router.use("/api", aiSystemVendorDependenciesRouter);
   router.use("/api", riskScoringWeightsRouter);
   router.use("/api", dashboardRouter);

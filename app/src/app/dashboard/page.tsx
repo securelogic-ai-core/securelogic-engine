@@ -7,6 +7,7 @@ import { IntelligenceBriefDashboardCard } from "@/components/IntelligenceBriefDa
 import { UpgradeCard } from "@/components/UpgradeCard";
 import { PostureDashboard } from "./PostureDashboard";
 import { LastLoginBanner } from "./LastLoginBanner";
+import { IndustryTemplatesBanner } from "./IndustryTemplatesBanner";
 
 export const revalidate = 0;
 
@@ -107,6 +108,10 @@ export default async function DashboardPage({
           </div>
         </div>
       )}
+
+      {/* Industry templates banner — first 7 days, dismissible.
+          Self-gates on env var + user state; renders null when not applicable. */}
+      <IndustryTemplatesBanner authMe={authMe} />
 
       {/* Onboarding banner — shown until onboarding is complete */}
       {isPlatformUser && !onboardingCompleted && (

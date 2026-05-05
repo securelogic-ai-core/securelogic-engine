@@ -29,7 +29,8 @@
     "src/engine/**/*.ts",
     "src/runtime/**/*.ts",
     "src/reporting/**/*.ts",
-    "src/contracts/**/*.ts"
+    "src/contracts/**/*.ts",
+    "src/templates/**/*.ts"
   ],
 
   "exclude": [

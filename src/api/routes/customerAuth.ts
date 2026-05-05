@@ -971,8 +971,22 @@ router.get("/auth/me", requireAuth, async (req, res) => {
     const userId = req.jwtPayload!.sub;
     const orgId  = req.jwtPayload!.org;
 
-    const userResult = await pg.query<{ id: string; email: string; name: string; role: string; totp_enabled: boolean; previous_login_at: string | null }>(
-      `SELECT id, email, name, role, totp_enabled, previous_login_at FROM users WHERE id = $1 LIMIT 1`,
+    const userResult = await pg.query<{
+      id: string;
+      email: string;
+      name: string;
+      role: string;
+      totp_enabled: boolean;
+      previous_login_at: string | null;
+      created_at: string;
+      dismissed_banner_keys: string[] | null;
+    }>(
+      // COALESCE on dismissed_banner_keys defends against legacy rows
+      // that pre-date the column DEFAULT (rolling deploy window).
+      `SELECT id, email, name, role, totp_enabled, previous_login_at,
+              created_at,
+              COALESCE(dismissed_banner_keys, '{}'::TEXT[]) AS dismissed_banner_keys
+         FROM users WHERE id = $1 LIMIT 1`,
       [userId]
     );
 
@@ -1016,7 +1030,9 @@ router.get("/auth/me", requireAuth, async (req, res) => {
       emailSuppressed,
       onboardingCompleted: org?.onboarding_completed_at !== null && org?.onboarding_completed_at !== undefined,
       totpEnabled:         user.totp_enabled ?? false,
-      previousLoginAt:     user.previous_login_at ?? null
+      previousLoginAt:     user.previous_login_at ?? null,
+      userCreatedAt:       user.created_at,
+      dismissedBannerKeys: user.dismissed_banner_keys ?? []
     });
   } catch (err) {
     logger.error({ event: "auth_me_failed", err }, "GET /api/auth/me failed");
