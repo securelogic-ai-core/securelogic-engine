@@ -46,6 +46,7 @@ They must not be re-declared differently in each module.
 | Signal | signals | signals API | Complete — prior package |
 | Signal Vendor Link | signal_vendor_links | POST /api/signal-vendor-links, DELETE /api/signal-vendor-links/:id, GET /api/vendors/:id/signals, GET /api/cyber-signals/:id/vendors | Complete — package signal-to-vendor-linkage |
 | Signal AI System Link | signal_ai_system_links | POST /api/signal-ai-system-links, DELETE /api/signal-ai-system-links/:id, GET /api/ai-systems/:id/signals, GET /api/cyber-signals/:id/ai-systems | Complete — package signal-to-AI-system-linkage |
+| Signal Control Link | signal_control_links | POST /api/signal-control-links, DELETE /api/signal-control-links/:id, GET /api/controls/:id/signals, GET /api/cyber-signals/:id/controls | Complete — package signal-to-control-linkage |
 | Organization | organizations | admin API | Profile fields complete — package org-profile-context-weighting |
 | Vendor | vendors (extended) | POST /api/vendors, GET /api/vendors, GET /api/vendors/:id, PATCH /api/vendors/:id | Complete — package vendor-risk-primitives |
 | Vendor Assessment | vendor_assessments | POST /api/vendor-assessments, GET /api/vendor-assessments, GET /api/vendor-assessments/:id | Complete — package vendor-assessment-workflow |
@@ -247,8 +248,9 @@ Organization
   │     └── Requirements (framework_id FK)
   ├── Controls (organization_id FK)
   │     ├── Control Mappings (control_id FK → requirements)
-  │     └── Control Assessments (control_id FK → control_assessments)
-  │           └── Findings (source_type='control_test', source_id=control_assessments.id, domain='General')
+  │     ├── Control Assessments (control_id FK → control_assessments)
+  │     │     └── Findings (source_type='control_test', source_id=control_assessments.id, domain='General')
+  │     └── Signal Control Links (organization_id FK; cyber_signals ↔ controls — external-signal connectivity, parallel to Signal Vendor / AI System Links; permits global-org signals)
   └── Obligations (organization_id FK)
         ├── Obligation Mappings (obligation_id FK → obligation_mappings → requirements)
         └── Obligation Assessments (obligation_id FK → obligation_assessments)
