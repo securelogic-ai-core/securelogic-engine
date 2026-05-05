@@ -33,11 +33,44 @@ const DONUT_C      = DONUT_SIZE / 2;     // center cx and cy
 const DONUT_R      = (DONUT_SIZE - DONUT_STROKE) / 2;
 const DONUT_CIRC   = 2 * Math.PI * DONUT_R;
 
+/**
+ * scoreColor — colorizer for POSTURE-style metrics (higher = better).
+ *
+ * Use for: framework readiness % (satisfied / total_requirements),
+ * compliance coverage %, control implementation %.
+ *
+ * High score → green; low score → red.
+ *
+ * DO NOT use for the posture engine's domain risk scores — those are
+ * RISK-style (higher = worse). Use riskColor for those.
+ */
 function scoreColor(score: number): string {
   if (score >= 80) return "#22c55e";
   if (score >= 60) return "#f59e0b";
   if (score >= 40) return "#f97316";
   return "#ef4444";
+}
+
+/**
+ * riskColor — colorizer for RISK-style metrics (higher = worse).
+ *
+ * Use for: posture engine's domain risk scores
+ * (DomainRiskAggregationEngineV2 output, materialized as
+ * domain_scores.score). The engine's bands are Critical ≥85,
+ * High ≥65, Moderate ≥40, else Low — see
+ * src/engine/policy/defaultScoringPolicy.ts and
+ * src/engine/scoring/v2/DomainRiskAggregationEngineV2.ts:49-54.
+ *
+ * High score → red; low score → green. The bar color matches the
+ * severity badge already shown alongside the score.
+ *
+ * DO NOT use for posture-style metrics — use scoreColor instead.
+ */
+function riskColor(score: number): string {
+  if (score >= 85) return "#ef4444"; // Critical
+  if (score >= 65) return "#f97316"; // High
+  if (score >= 40) return "#f59e0b"; // Moderate
+  return "#22c55e";                   // Low
 }
 
 /**
@@ -206,7 +239,11 @@ export function DomainPostureBars({ domains }: { domains: DomainScore[] }) {
         <div className="space-y-3">
           {domains.slice(0, 6).map((d) => {
             const score = d.score ?? 0;
-            const color = scoreColor(score);
+            // riskColor (not scoreColor): the engine produces a risk
+            // score where higher = more risk. Pre-fix the bar
+            // colorizer was inverted, rendering Critical-risk
+            // domains green.
+            const color = riskColor(score);
             return (
               <Link
                 key={d.domain}
