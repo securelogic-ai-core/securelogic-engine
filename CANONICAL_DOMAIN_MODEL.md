@@ -49,6 +49,7 @@ They must not be re-declared differently in each module.
 | Signal Control Link | signal_control_links | POST /api/signal-control-links, DELETE /api/signal-control-links/:id, GET /api/controls/:id/signals, GET /api/cyber-signals/:id/controls | Complete — package signal-to-control-linkage |
 | Signal Obligation Link | signal_obligation_links | POST /api/signal-obligation-links, DELETE /api/signal-obligation-links/:id, GET /api/obligations/:id/signals, GET /api/cyber-signals/:id/obligations | Complete — package signal-to-obligation-linkage |
 | Signal Match Suggestion | signal_match_suggestions | GET /api/signal-match-suggestions (?sort, ?offset), GET /api/signal-match-suggestions/counts, POST /api/signal-match-suggestions/:id/accept, POST /api/signal-match-suggestions/:id/dismiss | Complete — packages signal-match-suggestions + matcher-queue-ui. Primary consumption surface is /queue with embedded views planned on signal and entity detail pages. |
+| Industry Starter Template | (no table — static TS modules in src/templates/; loaded data lands in vendors/ai_systems/obligations/controls with template_source attribution) | GET /api/templates, GET /api/templates/:industry, POST /api/templates/load | Complete — package industry-starter-templates. v1 ships dark in production behind SECURELOGIC_INDUSTRY_TEMPLATES_ENABLED until domain expert review clears `needs_review:true` entries. Surfaces: /templates page, dashboard banner (first 7 days). |
 | AI System Vendor Dependency | ai_system_vendor_dependencies | POST /api/ai-system-vendor-dependencies, DELETE /api/ai-system-vendor-dependencies/:id, GET /api/ai-systems/:id/vendors, GET /api/vendors/:id/ai-systems | Complete — package ai-system-vendor-dependencies (matcher cascade is a separate package) |
 | Risk Scoring Weights | risk_scoring_weights | GET /api/risk-scoring-weights, PUT /api/risk-scoring-weights, POST /api/signal-match-suggestions/:id/recompute-score | Complete — package obligation-aware-risk-scoring (matcher rewire to invoke at suggestion-creation is a separate package) |
 | Organization | organizations | admin API | Profile fields complete — package org-profile-context-weighting |
@@ -236,13 +237,13 @@ Organization
   ├── Dependencies (organization_id FK)
   │     └── Dependency Assessments (dependency_id FK → dependency_assessments)
   │           └── Findings (source_type='dependency_review', source_id=dependency_assessments.id)
-  ├── Vendors (organization_id FK)
+  ├── Vendors (organization_id FK; template_source TEXT NULL carries the industry-starter-template id ('healthcare-saas' / 'fintech' / 'b2b-ai') for analytics-only attribution; manually-entered rows have NULL. template_metadata JSONB NULL carries curation-time flags { processes_pii, processes_phi, processes_payment_data, processes_ai_inference, baa_required } under a `flags` sub-key when loaded from a template; manually-entered rows have NULL.)
   │     ├── Vendor Assessments (vendor_id FK → vendor_assessments)
   │     │     └── Findings (source_type='vendor_review', source_id=vendor_assessments.id)
   │     ├── Vendor Reviews (vendor_id FK → vendor_reviews, mutable workflow)
   │     │     └── Findings (source_type='vendor_cycle_review', source_id=vendor_reviews.id)
   │     └── Signal Vendor Links (organization_id FK, signal_id FK → cyber_signals, vendor_id FK → vendors)
-  ├── AI Systems (organization_id FK)
+  ├── AI Systems (organization_id FK; template_source TEXT NULL — wired but unused in v1 templates; the customer's AI features are entered manually after template load.)
   │     ├── Governance Reviews (ai_system_id FK → governance_reviews, point-in-time)
   │     │     └── Findings (source_type='ai_review', source_id=governance_reviews.id)
   │     ├── AI Governance Assessments (ai_system_id FK → ai_governance_assessments, mutable)
@@ -251,12 +252,12 @@ Organization
   │     └── Signal AI System Links (organization_id FK; cyber_signals ↔ ai_systems — external-signal connectivity, parallel to Signal Vendor Links; permits global-org signals)
   ├── Frameworks (organization_id FK)
   │     └── Requirements (framework_id FK)
-  ├── Controls (organization_id FK)
+  ├── Controls (organization_id FK; template_source TEXT NULL carries industry-starter-template id when loaded from a template. Framework linkage from a template is established via control_mappings → a synthetic requirements row per (framework, template) titled '{Template Name} template baseline'. Pre-existing controls skipped via ON CONFLICT DO NOTHING are NOT retroactively framework-tagged.)
   │     ├── Control Mappings (control_id FK → requirements)
   │     ├── Control Assessments (control_id FK → control_assessments)
   │     │     └── Findings (source_type='control_test', source_id=control_assessments.id, domain='General')
   │     └── Signal Control Links (organization_id FK; cyber_signals ↔ controls — external-signal connectivity, parallel to Signal Vendor / AI System Links; permits global-org signals)
-  ├── Obligations (organization_id FK)
+  ├── Obligations (organization_id FK; template_source TEXT NULL carries industry-starter-template id when loaded from a template. Dedup at template-load time is via the table's UNIQUE (organization_id, title); jurisdiction is not part of the unique, so the same regulation_name across templates skips on second load.)
   │     ├── Obligation Mappings (obligation_id FK → obligation_mappings → requirements)
   │     ├── Obligation Assessments (obligation_id FK → obligation_assessments)
   │     │     └── Findings (source_type='obligation_review', source_id=obligation_assessments.id, domain=obligation.domain)

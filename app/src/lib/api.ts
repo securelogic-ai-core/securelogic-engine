@@ -787,6 +787,8 @@ export type AuthMeResponse = {
   onboardingCompleted?: boolean;
   totpEnabled?: boolean;
   previousLoginAt?: string | null;
+  userCreatedAt?: string;
+  dismissedBannerKeys?: string[];
 };
 
 export type TeamMember = {
@@ -2953,5 +2955,47 @@ export async function dismissSignalMatchSuggestion(
   } catch {
     return { error: "network_error" };
   }
+}
+
+
+// =========================================================
+// INDUSTRY STARTER TEMPLATES (Package 5)
+// =========================================================
+
+export type IndustryTemplateId = "healthcare-saas" | "fintech" | "b2b-ai";
+
+export type IndustryTemplateSummary = {
+  id: IndustryTemplateId;
+  name: string;
+  description: string;
+  version: string;
+  last_reviewed_at: string;
+  counts: { vendors: number; ai_systems: number; obligations: number; controls: number };
+  review_blocked: boolean;
+};
+
+export type IndustryTemplateDetail = IndustryTemplateSummary & {
+  vendors:     Array<{ id: string; name: string; criticality: string; category: string; description: string; flags?: Record<string, boolean>; needs_review?: boolean }>;
+  ai_systems:  Array<{ id: string; name: string; use_case: string; criticality: string; data_classification?: string; needs_review?: boolean }>;
+  obligations: Array<{ id: string; regulation_name: string; jurisdiction: string; priority: string; description: string; needs_review?: boolean }>;
+  controls:    Array<{ id: string; name: string; description: string; framework_ref: string; needs_review?: boolean }>;
+};
+
+/** Returns null on 404 (gate closed) or any non-2xx. */
+export async function getIndustryTemplates(token: string): Promise<{ templates: IndustryTemplateSummary[] } | null> {
+  try {
+    const res = await engineFetch("/api/templates", token);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ templates: IndustryTemplateSummary[] }>;
+  } catch { return null; }
+}
+
+export async function getIndustryTemplate(token: string, industryId: IndustryTemplateId): Promise<IndustryTemplateDetail | null> {
+  try {
+    const res = await engineFetch(`/api/templates/${industryId}`, token);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { template: IndustryTemplateDetail };
+    return body.template ?? null;
+  } catch { return null; }
 }
 
