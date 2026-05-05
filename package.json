@@ -14,6 +14,7 @@
     "migrate": "tsx scripts/runMigrations.ts",
     "seed:demo": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx scripts/seed-demo.ts'",
     "seed:demo:reset": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx scripts/seed-demo.ts --reset'",
+    "seed:staging": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx scripts/seed-staging.ts'",
     "test:pg-stores": "tsx services/intelligence-worker/src/storage/testPostgresStores.ts",
     "clean": "rm -rf dist",
     "build": "rm -rf dist && tsc -p tsconfig.prod.json && cp -r src/api/public dist/api/public",
