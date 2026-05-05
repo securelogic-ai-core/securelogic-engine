@@ -1,14 +1,22 @@
 import { setInterval } from "node:timers";
 import { runWorker, validateWorkerEnv } from "./runner.js";
+import { runKevPoll } from "./kevPoller.js";
 import { logger } from "../../../src/api/infra/logger.js";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
+const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 
 async function start() {
   validateWorkerEnv();
   logger.info({ event: "scheduler_start" }, "SecureLogic AI Scheduler starting");
 
   await runWorker();
+
+  // KEV fast-cadence poll — independent of the hourly pipeline. Fires once
+  // immediately after the first runWorker() so the catalog is current at
+  // boot, then every 15 minutes. The poll itself is cache-aware: 304 hits
+  // cost <1s, full fetches only when CISA publishes a new catalog.
+  await runKevPoll();
 
   setInterval(async () => {
     try {
@@ -19,6 +27,8 @@ async function start() {
       logger.error({ event: "cycle_failed", err: error }, "Scheduled intelligence cycle failed");
     }
   }, ONE_HOUR_MS);
+
+  setInterval(runKevPoll, FIFTEEN_MINUTES_MS);
 }
 
 start().catch((error) => {

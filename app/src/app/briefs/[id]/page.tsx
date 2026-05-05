@@ -384,7 +384,7 @@ function PrioritySignalCard({
 
   const tierBarBg =
     tier === "IMMEDIATE"
-      ? "bg-red-600"
+      ? "bg-rose-800"
       : tier === "NEAR-TERM"
       ? "bg-orange-500"
       : "bg-slate-800";
@@ -395,7 +395,7 @@ function PrioritySignalCard({
 
   return (
     <div className={`border border-slate-700 border-l-4 ${riskColor(risk)} rounded-xl overflow-hidden shadow-sm`}>
-      <div className={`${tierBarBg} px-5 py-2.5 flex items-center justify-between gap-3`}>
+      <div className={`${tierBarBg} px-5 py-[9px] flex items-center gap-3`}>
         <div className="flex items-center gap-2.5 min-w-0">
           <span className="text-xs font-bold text-white uppercase tracking-widest flex-shrink-0">
             {tierLabel(tier)}
@@ -405,11 +405,6 @@ function PrioritySignalCard({
             {categoryLabel(signal.category)}
           </span>
         </div>
-        {rank !== undefined && (
-          <span className="text-xs font-semibold text-white/50 uppercase tracking-widest flex-shrink-0">
-            #{rank}
-          </span>
-        )}
       </div>
 
       <div className={`${cardBg} p-6`}>
@@ -430,11 +425,11 @@ function PrioritySignalCard({
         </div>
 
         {action && (
-          <div className="mb-4 bg-teal-50 rounded-lg p-4 border border-teal-100">
-            <p className="text-xs font-bold text-teal-700 uppercase tracking-wide mb-1.5">
+          <div className="mb-4 bg-slate-700/40 rounded-lg p-4 border border-slate-700/50">
+            <p className="text-xs font-bold text-teal-300 uppercase tracking-wide mb-1.5">
               Action
             </p>
-            <p className="text-sm text-slate-800 leading-relaxed font-medium">{action}</p>
+            <p className="text-sm text-slate-200 leading-relaxed font-medium">{action}</p>
           </div>
         )}
 

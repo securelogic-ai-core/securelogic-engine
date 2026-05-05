@@ -318,7 +318,7 @@ export default async function SignalDetailPage({ params }: Props) {
                   {item.source_slug && (
                     <div>
                       <dt className="text-xs text-slate-500 uppercase tracking-wide mb-0.5">Feed</dt>
-                      <dd className="text-slate-300">{item.source_slug}</dd>
+                      <dd className="text-slate-300">{item.source_display || item.source_slug}</dd>
                     </div>
                   )}
                   {item.ingestion_timestamp && (

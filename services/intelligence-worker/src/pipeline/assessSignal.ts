@@ -26,6 +26,16 @@ const CATEGORY_ANSWERS: Record<Category, Record<string, boolean>> = {
     "GOV-002": true,  // risk ownership assumed defined
     "BC-001": true    // redundancy assumed present
   },
+  // VULNERABILITY uses the same control mapping as SECURITY_INCIDENT until tuned per docs/brief-content-audit.md follow-up. Bug 1 (PR #43) added the category.
+  VULNERABILITY: {
+    "SEC-001": false,
+    "SEC-003": false,
+    "SEC-006": false,
+    "MON-001": false,
+    "MON-004": false,
+    "GOV-002": true,
+    "BC-001": true
+  },
   REGULATION: {
     "GOV-001": false, // policy may not cover new requirement
     "GOV-002": false, // risk owner may not have assessed impact

@@ -13,6 +13,14 @@
  *     (quality is the priority here — these are the premium editorial sections)
  *
  * Typical brief cost: ~$0.05–0.15 total (haiku signals + sonnet synthesis).
+ *
+ * TENANT NOTE
+ * -----------
+ * Calls in this module operate on PUBLIC-SOURCE signal data only (CISA KEV,
+ * NVD, MITRE, public vendor advisories). Inputs are not customer-private,
+ * so cross-org batching is permitted under TENANT_ISOLATION_STANDARD.md §6.
+ * Per-org consumption (briefs, findings) happens in src/api/lib/* downstream
+ * with explicit organizationId logging.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -152,6 +160,14 @@ export async function analyzeSignal(
 ): Promise<SignalAnalysis | null> {
   const client = getClient();
   if (!client) return null;
+
+  // organizationId is intentionally null — this call operates on
+  // public-source signal data and is permitted to be batch-run for all orgs.
+  // See TENANT_ISOLATION_STANDARD.md §6.
+  logger.info(
+    { event: "llm_call_start", purpose: "signal_analysis", model: "claude-haiku-4-5-20251001", organizationId: null, title },
+    "LLM call: per-signal analysis (public-source)"
+  );
 
   try {
     const message = await client.messages.create({

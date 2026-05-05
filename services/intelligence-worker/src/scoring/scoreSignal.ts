@@ -19,6 +19,7 @@ const SOURCE_CREDIBILITY: Record<string, number> = {
   "regulatory_cisa":                0.25,
   "regulatory_nist":                0.20,
   "regulatory_ftc":                 0.20,
+  "regulatory_ftc_consumer_protection": 0.20,
   "regulatory_sec_8k":              0.20,
   "regulatory_nydfs":               0.20,
   "regulatory_enisa":               0.18,

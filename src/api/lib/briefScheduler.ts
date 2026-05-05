@@ -53,10 +53,15 @@ import {
 import {
   generateBrief,
   enrichBriefItems,
+  capByUrgencyBuckets,
+  finalizeBrief,
   type CyberSignalForBrief,
   type BriefItem
 } from "./intelligenceBriefGenerator.js";
-import { runSynthesisSafely } from "./briefSynthesizer.js";
+import {
+  runSynthesisSafely,
+  fetchPriorBriefContext
+} from "./briefSynthesizer.js";
 import { sendBrief } from "./briefEmailSender.js";
 
 // ---------------------------------------------------------------------------
@@ -234,7 +239,10 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
     const signals = signalsResult.rows;
 
     // generateBrief is pure — safe to run inside this transaction.
-    base = generateBrief(signals, periodStart.toISOString(), periodEnd.toISOString());
+    // Returns the pre-enrichment shortlist (top ENRICHMENT_SHORTLIST items
+    // by composite ranking key); enrichment runs on the shortlist, then
+    // capByUrgencyBuckets reduces to BRIEF_MAX_ITEMS.
+    base = generateBrief(signals);
 
     await phase1Client.query("COMMIT");
   } catch (err) {
@@ -253,7 +261,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
 
   let enrichedItems: BriefItem[];
   try {
-    enrichedItems = await enrichBriefItems(base.items);
+    enrichedItems = await enrichBriefItems(base.shortlist, orgId);
   } catch (enrichErr) {
     await pg
       .query(
@@ -266,10 +274,45 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
     throw enrichErr;
   }
 
+  // Apply the urgency-bucket cap. After this, cappedItems.length is bounded
+  // by BRIEF_MAX_ITEMS — this is what gets persisted and synthesized.
+  const { items: cappedItems, counts: urgencyCounts } =
+    capByUrgencyBuckets(enrichedItems);
+
+  logger.info(
+    {
+      event: "brief_capped",
+      brief_id: briefId,
+      org_id: orgId,
+      shortlisted: base.shortlist.length,
+      enriched: enrichedItems.length,
+      kept: cappedItems.length,
+      dropped: enrichedItems.length - cappedItems.length,
+      immediate: urgencyCounts.immediate,
+      near_term: urgencyCounts.near_term,
+      far_term: urgencyCounts.far_term
+    },
+    "Brief capped"
+  );
+
   // Brief-level synthesis — one Claude call producing a 12-word headline.
   // Non-fatal: failure resolves to null and the brief publishes without one.
-  const synthesis = await runSynthesisSafely(enrichedItems);
-  const contentJsonWithSynthesis = { ...base.content_json, synthesis };
+  // Run on cappedItems so headline/teaser describe what's actually in the
+  // brief, not what was dropped.
+  //
+  // Prior-brief context drives the exec summary's week-on-week calibration
+  // sentence. Returns null on first-brief-ever cases; the prompt drops to
+  // a 3-sentence summary in that case.
+  const priorContext = await fetchPriorBriefContext(orgId, briefId);
+  const synthesis = await runSynthesisSafely(cappedItems, priorContext, orgId);
+
+  const finalized = finalizeBrief(
+    cappedItems,
+    periodStart.toISOString(),
+    periodEnd.toISOString(),
+    base.signal_count
+  );
+  const contentJsonWithSynthesis = { ...finalized.content_json, synthesis };
 
   // ── Phase 3: Insert items + publish (own transaction, explicit fail-safe) ───
   //
@@ -281,11 +324,11 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
   try {
     await phase3Client.query("BEGIN");
 
-    if (enrichedItems.length > 0) {
+    if (finalized.items.length > 0) {
       const itemValues: unknown[] = [];
       const itemPlaceholders: string[] = [];
 
-      enrichedItems.forEach((item: BriefItem, idx: number) => {
+      finalized.items.forEach((item: BriefItem, idx: number) => {
         const b = idx * 17;
         itemPlaceholders.push(
           `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, ` +
@@ -341,10 +384,10 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
        WHERE id = $1`,
       [
         briefId,
-        base.signal_count,
-        base.item_count,
+        finalized.signal_count,
+        finalized.item_count,
         JSON.stringify(contentJsonWithSynthesis),
-        base.content_markdown
+        finalized.content_markdown
       ]
     );
 

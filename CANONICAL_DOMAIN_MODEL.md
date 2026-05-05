@@ -1,8 +1,8 @@
-# SecureLogic AI Canonical Risk Model
+# SecureLogic AI Canonical Domain Model
 
 ## Purpose
 
-This document defines the canonical object model for risk and posture across the SecureLogic AI platform.
+This document defines the canonical domain object model for the SecureLogic AI platform.
 
 It is the authoritative reference for what domain objects exist, what they own, and how they relate.
 
@@ -44,6 +44,10 @@ They must not be re-declared differently in each module.
 | Posture Snapshot | posture_snapshots + domain_scores | POST /api/posture/snapshot, GET /api/posture/latest, GET /api/posture/history | Complete — package platform-foundation-findings-actions-posture |
 | Assessment | assessments | POST /api/assess, GET /api/assessments/:id | Complete — prior package |
 | Signal | signals | signals API | Complete — prior package |
+| Signal Vendor Link | signal_vendor_links | POST /api/signal-vendor-links, DELETE /api/signal-vendor-links/:id, GET /api/vendors/:id/signals, GET /api/cyber-signals/:id/vendors | Complete — package signal-to-vendor-linkage |
+| Signal AI System Link | signal_ai_system_links | POST /api/signal-ai-system-links, DELETE /api/signal-ai-system-links/:id, GET /api/ai-systems/:id/signals, GET /api/cyber-signals/:id/ai-systems | Complete — package signal-to-AI-system-linkage |
+| Signal Control Link | signal_control_links | POST /api/signal-control-links, DELETE /api/signal-control-links/:id, GET /api/controls/:id/signals, GET /api/cyber-signals/:id/controls | Complete — package signal-to-control-linkage |
+| Signal Obligation Link | signal_obligation_links | POST /api/signal-obligation-links, DELETE /api/signal-obligation-links/:id, GET /api/obligations/:id/signals, GET /api/cyber-signals/:id/obligations | Complete — package signal-to-obligation-linkage |
 | Organization | organizations | admin API | Profile fields complete — package org-profile-context-weighting |
 | Vendor | vendors (extended) | POST /api/vendors, GET /api/vendors, GET /api/vendors/:id, PATCH /api/vendors/:id | Complete — package vendor-risk-primitives |
 | Vendor Assessment | vendor_assessments | POST /api/vendor-assessments, GET /api/vendor-assessments, GET /api/vendor-assessments/:id | Complete — package vendor-assessment-workflow |
@@ -232,23 +236,27 @@ Organization
   ├── Vendors (organization_id FK)
   │     ├── Vendor Assessments (vendor_id FK → vendor_assessments)
   │     │     └── Findings (source_type='vendor_review', source_id=vendor_assessments.id)
-  │     └── Vendor Reviews (vendor_id FK → vendor_reviews, mutable workflow)
-  │           └── Findings (source_type='vendor_cycle_review', source_id=vendor_reviews.id)
+  │     ├── Vendor Reviews (vendor_id FK → vendor_reviews, mutable workflow)
+  │     │     └── Findings (source_type='vendor_cycle_review', source_id=vendor_reviews.id)
+  │     └── Signal Vendor Links (organization_id FK, signal_id FK → cyber_signals, vendor_id FK → vendors)
   ├── AI Systems (organization_id FK)
   │     ├── Governance Reviews (ai_system_id FK → governance_reviews, point-in-time)
   │     │     └── Findings (source_type='ai_review', source_id=governance_reviews.id)
-  │     └── AI Governance Assessments (ai_system_id FK → ai_governance_assessments, mutable)
-  │           └── Findings (source_type='ai_governance_review', source_id=ai_governance_assessments.id)
+  │     ├── AI Governance Assessments (ai_system_id FK → ai_governance_assessments, mutable)
+  │     │     └── Findings (source_type='ai_governance_review', source_id=ai_governance_assessments.id)
+  │     └── Signal AI System Links (organization_id FK; cyber_signals ↔ ai_systems — external-signal connectivity, parallel to Signal Vendor Links; permits global-org signals)
   ├── Frameworks (organization_id FK)
   │     └── Requirements (framework_id FK)
   ├── Controls (organization_id FK)
   │     ├── Control Mappings (control_id FK → requirements)
-  │     └── Control Assessments (control_id FK → control_assessments)
-  │           └── Findings (source_type='control_test', source_id=control_assessments.id, domain='General')
+  │     ├── Control Assessments (control_id FK → control_assessments)
+  │     │     └── Findings (source_type='control_test', source_id=control_assessments.id, domain='General')
+  │     └── Signal Control Links (organization_id FK; cyber_signals ↔ controls — external-signal connectivity, parallel to Signal Vendor / AI System Links; permits global-org signals)
   └── Obligations (organization_id FK)
         ├── Obligation Mappings (obligation_id FK → obligation_mappings → requirements)
-        └── Obligation Assessments (obligation_id FK → obligation_assessments)
-              └── Findings (source_type='obligation_review', source_id=obligation_assessments.id, domain=obligation.domain)
+        ├── Obligation Assessments (obligation_id FK → obligation_assessments)
+        │     └── Findings (source_type='obligation_review', source_id=obligation_assessments.id, domain=obligation.domain)
+        └── Signal Obligation Links (organization_id FK; cyber_signals ↔ obligations — external-signal connectivity, parallel to Signal Vendor / AI System / Control Links; permits global-org signals)
 ```
 
 ---
@@ -330,7 +338,7 @@ If a future module is tempted to store these as JSON blobs in a publication obje
 ## Amendment Protocol
 
 To add a new canonical object:
-1. Define it in PLATFORM_DOMAIN_MODEL.md first
+1. Define it in this document first
 2. Write the migration
 3. Write the API routes with org-scoping and entitlement gating
 4. Add it to the table above with package attribution
