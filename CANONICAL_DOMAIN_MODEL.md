@@ -49,6 +49,7 @@ They must not be re-declared differently in each module.
 | Signal Control Link | signal_control_links | POST /api/signal-control-links, DELETE /api/signal-control-links/:id, GET /api/controls/:id/signals, GET /api/cyber-signals/:id/controls | Complete — package signal-to-control-linkage |
 | Signal Obligation Link | signal_obligation_links | POST /api/signal-obligation-links, DELETE /api/signal-obligation-links/:id, GET /api/obligations/:id/signals, GET /api/cyber-signals/:id/obligations | Complete — package signal-to-obligation-linkage |
 | Signal Match Suggestion | signal_match_suggestions | GET /api/signal-match-suggestions, POST /api/signal-match-suggestions/:id/accept, POST /api/signal-match-suggestions/:id/dismiss | Complete — package signal-match-suggestions (matcher rewire is a separate package) |
+| AI System Vendor Dependency | ai_system_vendor_dependencies | POST /api/ai-system-vendor-dependencies, DELETE /api/ai-system-vendor-dependencies/:id, GET /api/ai-systems/:id/vendors, GET /api/vendors/:id/ai-systems | Complete — package ai-system-vendor-dependencies (matcher cascade is a separate package) |
 | Organization | organizations | admin API | Profile fields complete — package org-profile-context-weighting |
 | Vendor | vendors (extended) | POST /api/vendors, GET /api/vendors, GET /api/vendors/:id, PATCH /api/vendors/:id | Complete — package vendor-risk-primitives |
 | Vendor Assessment | vendor_assessments | POST /api/vendor-assessments, GET /api/vendor-assessments, GET /api/vendor-assessments/:id | Complete — package vendor-assessment-workflow |
@@ -245,6 +246,7 @@ Organization
   │     │     └── Findings (source_type='ai_review', source_id=governance_reviews.id)
   │     ├── AI Governance Assessments (ai_system_id FK → ai_governance_assessments, mutable)
   │     │     └── Findings (source_type='ai_governance_review', source_id=ai_governance_assessments.id)
+  │     ├── AI System Vendor Dependencies (organization_id FK; ai_systems ↔ vendors — typed by dependency_role {model_provider, runtime, registry, training_data, feature_store, mlops_platform, data_source, observability, other}; partial unique on (org, ai_system, vendor, role) WHERE deleted_at IS NULL so the same vendor can serve multiple roles for one AI system; the cascade-side query GET /api/vendors/:id/ai-systems is the edge a future matcher-cascade package will traverse to propagate vendor signals to dependent AI systems)
   │     └── Signal AI System Links (organization_id FK; cyber_signals ↔ ai_systems — external-signal connectivity, parallel to Signal Vendor Links; permits global-org signals)
   ├── Frameworks (organization_id FK)
   │     └── Requirements (framework_id FK)
