@@ -69,6 +69,11 @@ import {
   isTargetType,
   type TargetType
 } from "../lib/signalMatchSuggestionValidation.js";
+import {
+  computeRiskScore,
+  DEFAULT_WEIGHTS,
+  type RiskScoringWeights
+} from "../lib/riskScoring.js";
 
 const router = Router();
 
@@ -652,6 +657,267 @@ export async function dismissSignalMatchSuggestion(req: Request, res: Response):
 }
 
 /* =========================================================
+   POST /api/signal-match-suggestions/:id/recompute-score
+   Recompute match_score for a single pending suggestion using the org's
+   current risk_scoring_weights (or defaults if no row exists).
+
+   Reads:
+     - the suggestion (must belong to org, must be pending)
+     - the cyber_signals row (for severity + source; same-org or global)
+     - the entity row by target_type (for criticality / priority;
+       must belong to org)
+     - the org's risk_scoring_weights row (or DEFAULT_WEIGHTS)
+
+   Writes:
+     - match_score on the suggestion (UPDATE WHERE id AND org AND pending).
+     - audit event signal_match_suggestion.score_recomputed.
+
+   Returns: { suggestion, score, breakdown, explanation, weights_source }
+   where weights_source is 'configured' or 'default'. The breakdown and
+   explanation come straight from computeRiskScore so the caller can
+   surface a "why is this score X?" tooltip.
+
+   This package does NOT batch-recompute when weights change. The single-
+   row primitive here is the foundation for a future batch package.
+   ========================================================= */
+
+export async function recomputeSignalMatchSuggestionScore(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+
+  const suggestionId = String(req.params.id ?? "").trim();
+  if (!isUuid(suggestionId)) {
+    res.status(400).json({ error: "suggestion_id_must_be_uuid" });
+    return;
+  }
+
+  try {
+    // 1. Read the suggestion, scoped to org. Discriminate cross-org vs
+    //    terminal-state with a follow-up SELECT, same pattern as dismiss.
+    const suggestionRow = await pg.query(
+      `SELECT ${SUGGESTION_SELECT}
+         FROM signal_match_suggestions
+        WHERE id = $1 AND organization_id = $2
+        LIMIT 1`,
+      [suggestionId, organizationId]
+    );
+    if ((suggestionRow.rowCount ?? 0) === 0) {
+      res.status(404).json({ error: "signal_match_suggestion_not_found" });
+      return;
+    }
+    const suggestion = suggestionRow.rows[0] as {
+      id: string;
+      signal_id: string;
+      target_type: string;
+      target_id: string;
+      accepted_at: string | null;
+      dismissed_at: string | null;
+    };
+    if (suggestion.accepted_at !== null) {
+      res.status(409).json({ error: "signal_match_suggestion_already_accepted" });
+      return;
+    }
+    if (suggestion.dismissed_at !== null) {
+      res.status(409).json({ error: "signal_match_suggestion_already_dismissed" });
+      return;
+    }
+    if (!isTargetType(suggestion.target_type)) {
+      // Defensive — same posture as the accept handler.
+      logger.error(
+        { event: "signal_match_suggestion_invalid_target_type", suggestionId, targetType: suggestion.target_type },
+        "Suggestion has unrecognized target_type — schema drift?"
+      );
+      res.status(500).json({ error: "signal_match_suggestion_target_type_unknown" });
+      return;
+    }
+
+    // 2. Read the signal (severity + source). Same-org or global.
+    const signalResult = await pg.query<{ severity: string | null; source: string }>(
+      `SELECT severity, source FROM cyber_signals
+        WHERE id = $1
+          AND (organization_id = $2 OR organization_id IS NULL)
+        LIMIT 1`,
+      [suggestion.signal_id, organizationId]
+    );
+    if ((signalResult.rowCount ?? 0) === 0) {
+      res.status(404).json({ error: "cyber_signal_not_found" });
+      return;
+    }
+    const signalRow = signalResult.rows[0]!;
+
+    // 3. Read the entity row, dispatched by target_type. Tenant scoping
+    //    applies to all four target tables.
+    let entityCriticality: string | null = null;
+    let entityPriority: string | null = null;
+
+    if (suggestion.target_type === "vendor") {
+      const r = await pg.query<{ criticality: string | null }>(
+        `SELECT criticality FROM vendors WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        [suggestion.target_id, organizationId]
+      );
+      if ((r.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "target_not_found" });
+        return;
+      }
+      entityCriticality = r.rows[0]!.criticality;
+    } else if (suggestion.target_type === "ai_system") {
+      const r = await pg.query<{ criticality: string | null }>(
+        `SELECT criticality FROM ai_systems WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        [suggestion.target_id, organizationId]
+      );
+      if ((r.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "target_not_found" });
+        return;
+      }
+      entityCriticality = r.rows[0]!.criticality;
+    } else if (suggestion.target_type === "control") {
+      // Controls have no criticality column. Verify same-org existence
+      // only; the scoring function defaults entity weight and notes the
+      // reason in the explanation.
+      const r = await pg.query(
+        `SELECT 1 FROM controls WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        [suggestion.target_id, organizationId]
+      );
+      if ((r.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "target_not_found" });
+        return;
+      }
+    } else {
+      // obligation
+      const r = await pg.query<{ priority: string | null }>(
+        `SELECT priority FROM obligations WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        [suggestion.target_id, organizationId]
+      );
+      if ((r.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "target_not_found" });
+        return;
+      }
+      entityPriority = r.rows[0]!.priority;
+    }
+
+    // 4. Load the org's weights, or fall back to documented defaults.
+    const weightsResult = await pg.query<{
+      entity_criticality_weights: RiskScoringWeights["entity_criticality_weights"];
+      obligation_priority_weights: RiskScoringWeights["obligation_priority_weights"];
+      severity_weights: RiskScoringWeights["severity_weights"];
+    }>(
+      `SELECT entity_criticality_weights, obligation_priority_weights, severity_weights
+         FROM risk_scoring_weights
+        WHERE organization_id = $1
+        LIMIT 1`,
+      [organizationId]
+    );
+    const usingDefault = (weightsResult.rowCount ?? 0) === 0;
+    const weights: RiskScoringWeights = usingDefault
+      ? DEFAULT_WEIGHTS
+      : {
+          entity_criticality_weights: weightsResult.rows[0]!.entity_criticality_weights,
+          obligation_priority_weights: weightsResult.rows[0]!.obligation_priority_weights,
+          severity_weights: weightsResult.rows[0]!.severity_weights
+        };
+
+    // 5. Compute. Pure function — no further DB access.
+    const result = computeRiskScore({
+      signal: { severity: signalRow.severity, source: signalRow.source },
+      entity: {
+        type: suggestion.target_type,
+        criticality: entityCriticality,
+        priority: entityPriority
+      },
+      weights
+    });
+
+    // 6. Persist match_score. Re-asserts pending state in WHERE so a
+    //    concurrent accept/dismiss between read and write returns 409,
+    //    not a silent score update on a terminal row.
+    const updateResult = await pg.query(
+      `UPDATE signal_match_suggestions
+          SET match_score = $1
+        WHERE id = $2
+          AND organization_id = $3
+          AND accepted_at IS NULL
+          AND dismissed_at IS NULL
+        RETURNING ${SUGGESTION_SELECT}`,
+      [result.score, suggestionId, organizationId]
+    );
+    if ((updateResult.rowCount ?? 0) === 0) {
+      // The state changed between our read and our write. Discriminate.
+      const followup = await pg.query(
+        `SELECT accepted_at, dismissed_at
+           FROM signal_match_suggestions
+          WHERE id = $1 AND organization_id = $2
+          LIMIT 1`,
+        [suggestionId, organizationId]
+      );
+      if ((followup.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "signal_match_suggestion_not_found" });
+        return;
+      }
+      const row = followup.rows[0] as { accepted_at: string | null; dismissed_at: string | null };
+      if (row.accepted_at !== null) {
+        res.status(409).json({ error: "signal_match_suggestion_already_accepted" });
+        return;
+      }
+      res.status(409).json({ error: "signal_match_suggestion_already_dismissed" });
+      return;
+    }
+    const updatedSuggestion = updateResult.rows[0];
+
+    logger.info(
+      {
+        event: "signal_match_suggestion_score_recomputed",
+        organizationId,
+        suggestionId: updatedSuggestion.id,
+        signalId: suggestion.signal_id,
+        targetType: suggestion.target_type,
+        targetId: suggestion.target_id,
+        score: result.score,
+        weightsSource: usingDefault ? "default" : "configured"
+      },
+      "Signal match suggestion score recomputed"
+    );
+
+    writeAuditEvent({
+      organizationId,
+      actorApiKeyId: getApiKeyId(req),
+      actorUserId: req.userId ?? null,
+      eventType: "signal_match_suggestion.score_recomputed",
+      resourceType: "signal_match_suggestion",
+      resourceId: updatedSuggestion.id as string,
+      payload: {
+        signal_id: suggestion.signal_id,
+        target_type: suggestion.target_type,
+        target_id: suggestion.target_id,
+        score: result.score,
+        breakdown: result.breakdown,
+        weights_source: usingDefault ? "default" : "configured"
+      },
+      ipAddress: req.ip ?? null
+    });
+
+    res.status(200).json({
+      suggestion: updatedSuggestion,
+      score: result.score,
+      breakdown: result.breakdown,
+      explanation: result.explanation,
+      weights_source: usingDefault ? "default" : "configured"
+    });
+  } catch (err) {
+    logger.error(
+      { event: "signal_match_suggestion_recompute_failed", err },
+      "POST /api/signal-match-suggestions/:id/recompute-score failed"
+    );
+    res.status(500).json({ error: "signal_match_suggestion_recompute_failed" });
+  }
+}
+
+/* =========================================================
    Router wiring — handlers above are exported by name for direct
    invocation in targeted behavioral tests.
    ========================================================= */
@@ -678,6 +944,14 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("standard"),
   dismissSignalMatchSuggestion
+);
+
+router.post(
+  "/signal-match-suggestions/:id/recompute-score",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  recomputeSignalMatchSuggestionScore
 );
 
 export default router;

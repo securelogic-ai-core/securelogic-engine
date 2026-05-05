@@ -412,8 +412,10 @@ import { pg } from "../infra/postgres.js";
 import {
   acceptSignalMatchSuggestion,
   dismissSignalMatchSuggestion,
-  listSignalMatchSuggestions
+  listSignalMatchSuggestions,
+  recomputeSignalMatchSuggestionScore
 } from "../routes/signalMatchSuggestions.js";
+import { DEFAULT_WEIGHTS } from "../lib/riskScoring.js";
 
 const mockPgQuery = pg.query as unknown as ReturnType<typeof vi.fn>;
 
@@ -1066,5 +1068,383 @@ describe("signalMatchSuggestions — list handler", () => {
       expect.objectContaining({ error: "organization_context_missing" })
     );
     expect(mockPgQuery).not.toHaveBeenCalled();
+  });
+});
+
+// ====================================================================
+// recomputeSignalMatchSuggestionScore — score recompute handler
+// Mirrors the dispatch + scoring pipeline. Each test sets up the full
+// query tape (suggestion read, signal read, entity read, weights read,
+// match_score UPDATE) so the handler walks the real path.
+// ====================================================================
+
+describe("signalMatchSuggestions — recompute-score handler", () => {
+  beforeEach(() => {
+    mockPgQuery.mockReset();
+  });
+
+  function makeReq(overrides: Record<string, unknown> = {}) {
+    return {
+      params: { id: VALID_SUGGESTION_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1",
+      ...overrides
+    } as unknown as Parameters<typeof recomputeSignalMatchSuggestionScore>[0];
+  }
+
+  it("happy path (vendor target, weights row exists): returns 200 with score+breakdown+explanation, weights_source='configured'", async () => {
+    mockPgQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [pendingSuggestionRow("vendor")] })             // suggestion read
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ severity: "High", source: "nvd" }] })        // signal read
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ criticality: "high" }] })                    // vendor read
+      .mockResolvedValueOnce({                                                                     // weights read
+        rowCount: 1,
+        rows: [{
+          entity_criticality_weights: DEFAULT_WEIGHTS.entity_criticality_weights,
+          obligation_priority_weights: DEFAULT_WEIGHTS.obligation_priority_weights,
+          severity_weights: DEFAULT_WEIGHTS.severity_weights
+        }]
+      })
+      .mockResolvedValueOnce({                                                                     // match_score UPDATE
+        rowCount: 1,
+        rows: [{ ...pendingSuggestionRow("vendor"), match_score: "56.000" }]
+      });
+
+    const res = makeRes();
+    await recomputeSignalMatchSuggestionScore(
+      makeReq(),
+      res as unknown as Parameters<typeof recomputeSignalMatchSuggestionScore>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    // High severity (0.75) * high vendor criticality (0.75) * 1.0 (vendor) * 100 = 56.25 → rounded to 56.
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        score: 56,
+        breakdown: expect.objectContaining({
+          severity: 0.75,
+          entity: 0.75,
+          obligation: 1.0
+        }),
+        explanation: expect.any(String),
+        weights_source: "configured"
+      })
+    );
+  });
+
+  it("falls back to DEFAULT_WEIGHTS when no weights row exists for org (weights_source='default')", async () => {
+    mockPgQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [pendingSuggestionRow("vendor")] })       // suggestion
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ severity: "Critical", source: "nvd" }] }) // signal
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ criticality: "critical" }] })          // vendor
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                                     // weights: NONE
+      .mockResolvedValueOnce({                                                                // UPDATE
+        rowCount: 1,
+        rows: [{ ...pendingSuggestionRow("vendor"), match_score: "100.000" }]
+      });
+
+    const res = makeRes();
+    await recomputeSignalMatchSuggestionScore(
+      makeReq(),
+      res as unknown as Parameters<typeof recomputeSignalMatchSuggestionScore>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        score: 100,
+        weights_source: "default"
+      })
+    );
+  });
+
+  it("KEV-source signal with stored severity='Low' produces score reflecting KEV override (severity_w=1.0)", async () => {
+    mockPgQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [pendingSuggestionRow("vendor")] })     // suggestion
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ severity: "Low", source: "cisa-kev" }] }) // signal: Low + KEV
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ criticality: "critical" }] })        // vendor: critical
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                                   // weights: defaults
+      .mockResolvedValueOnce({                                                              // UPDATE
+        rowCount: 1,
+        rows: [{ ...pendingSuggestionRow("vendor"), match_score: "100.000" }]
+      });
+
+    const res = makeRes();
+    await recomputeSignalMatchSuggestionScore(
+      makeReq(),
+      res as unknown as Parameters<typeof recomputeSignalMatchSuggestionScore>[1]
+    );
+
+    // KEV override → severity_w = 1.0 even though stored severity is 'Low'
+    // critical vendor → entity_w = 1.0
+    // vendor → obligation_w = 1.0
+    // 1.0 * 1.0 * 1.0 * 100 = 100
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        score: 100,
+        breakdown: expect.objectContaining({ severity: 1.0 }),
+        explanation: expect.stringMatching(/KEV override applied/i)
+      })
+    );
+  });
+
+  it("control-typed suggestion always defaults entity dimension and flags it in explanation", async () => {
+    mockPgQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [pendingSuggestionRow("control")] })   // suggestion
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ severity: "Critical", source: "nvd" }] }) // signal: Critical
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] })                                // control existence check
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                                  // weights: defaults
+      .mockResolvedValueOnce({                                                            // UPDATE
+        rowCount: 1,
+        rows: [{ ...pendingSuggestionRow("control"), match_score: "50.000" }]
+      });
+
+    const res = makeRes();
+    await recomputeSignalMatchSuggestionScore(
+      makeReq(),
+      res as unknown as Parameters<typeof recomputeSignalMatchSuggestionScore>[1]
+    );
+
+    // Critical (1.0) * default 0.5 (control) * 1.0 (control entity) * 100 = 50
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        score: 50,
+        breakdown: expect.objectContaining({ entity: 0.5 }),
+        explanation: expect.stringMatching(/controls have no criticality column/i)
+      })
+    );
+  });
+
+  it("missing severity defaults severity weight and flags 'defaulted' in explanation", async () => {
+    mockPgQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [pendingSuggestionRow("vendor")] })     // suggestion
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ severity: null, source: "nvd" }] })  // signal: null severity
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ criticality: "high" }] })            // vendor
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                                   // weights: defaults
+      .mockResolvedValueOnce({                                                              // UPDATE
+        rowCount: 1,
+        rows: [{ ...pendingSuggestionRow("vendor"), match_score: "38.000" }]
+      });
+
+    const res = makeRes();
+    await recomputeSignalMatchSuggestionScore(
+      makeReq(),
+      res as unknown as Parameters<typeof recomputeSignalMatchSuggestionScore>[1]
+    );
+
+    // 0.5 default * 0.75 high vendor * 1.0 * 100 = 37.5 → rounds to 38
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        score: 38,
+        breakdown: expect.objectContaining({ severity: 0.5 }),
+        explanation: expect.stringMatching(/severity:\s*defaulted/i)
+      })
+    );
+  });
+
+  it("obligation-typed suggestion with priority='immediate' scores at full range (entity dim is type-by-design neutral)", async () => {
+    mockPgQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [pendingSuggestionRow("obligation")] }) // suggestion
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ severity: "High", source: "nvd" }] }) // signal
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ priority: "immediate" }] })          // obligation: immediate
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                                   // weights: defaults
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ ...pendingSuggestionRow("obligation"), match_score: "75.000" }]
+      });
+
+    const res = makeRes();
+    await recomputeSignalMatchSuggestionScore(
+      makeReq(),
+      res as unknown as Parameters<typeof recomputeSignalMatchSuggestionScore>[1]
+    );
+
+    // High (0.75) * 1.0 entity (obligation type-by-design neutral) * immediate (1.0) * 100 = 75
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        score: 75,
+        breakdown: expect.objectContaining({ entity: 1.0, obligation: 1.0 })
+      })
+    );
+    // Obligation entity dimension must NOT produce a 'defaulted' flag.
+    const responseArg = res.json.mock.calls[0][0] as { explanation: string };
+    expect(responseArg.explanation).not.toMatch(/entity:\s*defaulted/i);
+  });
+
+  it("Critical + obligation priority=immediate ⇒ 100 (full range reachable for obligations)", async () => {
+    mockPgQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [pendingSuggestionRow("obligation")] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ severity: "Critical", source: "nvd" }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ priority: "immediate" }] })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ ...pendingSuggestionRow("obligation"), match_score: "100.000" }]
+      });
+
+    const res = makeRes();
+    await recomputeSignalMatchSuggestionScore(
+      makeReq(),
+      res as unknown as Parameters<typeof recomputeSignalMatchSuggestionScore>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ score: 100 })
+    );
+  });
+
+  it("obligation with null priority: obligation dim defaults (flag), entity dim stays neutral (no flag)", async () => {
+    mockPgQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [pendingSuggestionRow("obligation")] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ severity: "High", source: "nvd" }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ priority: null }] })  // obligation: null priority
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ ...pendingSuggestionRow("obligation"), match_score: "38.000" }]
+      });
+
+    const res = makeRes();
+    await recomputeSignalMatchSuggestionScore(
+      makeReq(),
+      res as unknown as Parameters<typeof recomputeSignalMatchSuggestionScore>[1]
+    );
+
+    // High (0.75) * 1.0 entity (neutral) * 0.5 obligation (defaulted) * 100 = 37.5 → 38
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        score: 38,
+        breakdown: expect.objectContaining({ entity: 1.0, obligation: 0.5 }),
+        explanation: expect.stringMatching(/obligation:\s*defaulted/i)
+      })
+    );
+    const responseArg = res.json.mock.calls[0][0] as { explanation: string };
+    expect(responseArg.explanation).not.toMatch(/entity:\s*defaulted/i);
+  });
+
+  it("cross-tenant suggestion id: returns 404 (not 403) — no enumeration", async () => {
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    const res = makeRes();
+    await recomputeSignalMatchSuggestionScore(
+      makeReq(),
+      res as unknown as Parameters<typeof recomputeSignalMatchSuggestionScore>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "signal_match_suggestion_not_found" })
+    );
+    expect(mockPgQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("already-accepted suggestion: returns 409, no further DB access", async () => {
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 1, rows: [acceptedSuggestionRow()] });
+
+    const res = makeRes();
+    await recomputeSignalMatchSuggestionScore(
+      makeReq(),
+      res as unknown as Parameters<typeof recomputeSignalMatchSuggestionScore>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "signal_match_suggestion_already_accepted" })
+    );
+    expect(mockPgQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("already-dismissed suggestion: returns 409", async () => {
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 1, rows: [dismissedSuggestionRow()] });
+
+    const res = makeRes();
+    await recomputeSignalMatchSuggestionScore(
+      makeReq(),
+      res as unknown as Parameters<typeof recomputeSignalMatchSuggestionScore>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "signal_match_suggestion_already_dismissed" })
+    );
+  });
+
+  it("non-uuid id: returns 400 without DB access", async () => {
+    const res = makeRes();
+    await recomputeSignalMatchSuggestionScore(
+      makeReq({ params: { id: "not-a-uuid" } }),
+      res as unknown as Parameters<typeof recomputeSignalMatchSuggestionScore>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "suggestion_id_must_be_uuid" })
+    );
+    expect(mockPgQuery).not.toHaveBeenCalled();
+  });
+
+  it("signal not found / cross-org: returns 404 cyber_signal_not_found", async () => {
+    mockPgQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [pendingSuggestionRow("vendor")] })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // signal preflight: 0 rows
+
+    const res = makeRes();
+    await recomputeSignalMatchSuggestionScore(
+      makeReq(),
+      res as unknown as Parameters<typeof recomputeSignalMatchSuggestionScore>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "cyber_signal_not_found" })
+    );
+  });
+
+  it("target entity not found / cross-org: returns 404 target_not_found", async () => {
+    mockPgQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [pendingSuggestionRow("vendor")] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ severity: "High", source: "nvd" }] })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // vendor: 0 rows
+
+    const res = makeRes();
+    await recomputeSignalMatchSuggestionScore(
+      makeReq(),
+      res as unknown as Parameters<typeof recomputeSignalMatchSuggestionScore>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "target_not_found" })
+    );
+  });
+
+  it("race: suggestion accepted between read and update → 409 already_accepted", async () => {
+    mockPgQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [pendingSuggestionRow("vendor")] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ severity: "High", source: "nvd" }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ criticality: "high" }] })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })   // weights: defaults
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })   // UPDATE: 0 rows (state changed)
+      .mockResolvedValueOnce({                            // discriminator SELECT
+        rowCount: 1,
+        rows: [{ accepted_at: "2026-05-05T01:00:00.000Z", dismissed_at: null }]
+      });
+
+    const res = makeRes();
+    await recomputeSignalMatchSuggestionScore(
+      makeReq(),
+      res as unknown as Parameters<typeof recomputeSignalMatchSuggestionScore>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "signal_match_suggestion_already_accepted" })
+    );
   });
 });
