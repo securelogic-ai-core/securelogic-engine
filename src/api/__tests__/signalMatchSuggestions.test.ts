@@ -413,7 +413,8 @@ import {
   acceptSignalMatchSuggestion,
   dismissSignalMatchSuggestion,
   listSignalMatchSuggestions,
-  recomputeSignalMatchSuggestionScore
+  recomputeSignalMatchSuggestionScore,
+  getSignalMatchSuggestionCounts
 } from "../routes/signalMatchSuggestions.js";
 import { DEFAULT_WEIGHTS } from "../lib/riskScoring.js";
 
@@ -1070,6 +1071,369 @@ describe("signalMatchSuggestions — list handler", () => {
       expect.objectContaining({ error: "organization_context_missing" })
     );
     expect(mockPgQuery).not.toHaveBeenCalled();
+  });
+
+  // ====================================================================
+  // ?sort and ?offset extensions — Package 4 backend additions
+  // ====================================================================
+
+  it("default sort emits ORDER BY created_at DESC, id DESC (preserves prior caller behavior)", async () => {
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const req = {
+      query: {},
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    const sql = mockPgQuery.mock.calls[0][0] as string;
+    expect(sql).toMatch(/ORDER BY created_at DESC, id DESC/);
+    expect(sql).not.toMatch(/match_score DESC/);
+  });
+
+  it("?sort=created-desc emits the same ORDER BY as the default", async () => {
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const req = {
+      query: { sort: "created-desc" },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    const sql = mockPgQuery.mock.calls[0][0] as string;
+    expect(sql).toMatch(/ORDER BY created_at DESC, id DESC/);
+  });
+
+  it("?sort=score-desc emits ORDER BY match_score DESC NULLS LAST with stable tie-break on created_at, id", async () => {
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const req = {
+      query: { sort: "score-desc" },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    const sql = mockPgQuery.mock.calls[0][0] as string;
+    expect(sql).toMatch(/ORDER BY match_score DESC NULLS LAST, created_at DESC, id DESC/);
+  });
+
+  it("?sort=score-desc echoes back in the response body", async () => {
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const req = {
+      query: { sort: "score-desc" },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ sort: "score-desc" })
+    );
+  });
+
+  it("invalid ?sort returns 400 invalid_sort without hitting pg", async () => {
+    const req = {
+      query: { sort: "alphabetical" },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "invalid_sort" })
+    );
+    expect(mockPgQuery).not.toHaveBeenCalled();
+  });
+
+  it("?offset is passed as the final positional parameter alongside LIMIT", async () => {
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const req = {
+      query: { offset: "50" },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    const sql = mockPgQuery.mock.calls[0][0] as string;
+    const params = mockPgQuery.mock.calls[0][1] as unknown[];
+    expect(sql).toMatch(/LIMIT \$\d+ OFFSET \$\d+/);
+    // params: [orgId, limit, offset]
+    expect(params[params.length - 1]).toBe(50);
+  });
+
+  it("?offset=0 (default) sends 0, not undefined", async () => {
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const req = {
+      query: {},
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    const params = mockPgQuery.mock.calls[0][1] as unknown[];
+    expect(params[params.length - 1]).toBe(0);
+  });
+
+  it("negative ?offset is clamped to 0 (treated as 'from start', not 400)", async () => {
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const req = {
+      query: { offset: "-5" },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    const params = mockPgQuery.mock.calls[0][1] as unknown[];
+    expect(params[params.length - 1]).toBe(0);
+  });
+
+  it("fractional ?offset returns 400 invalid_offset without hitting pg", async () => {
+    const req = {
+      query: { offset: "10.5" },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "invalid_offset" })
+    );
+    expect(mockPgQuery).not.toHaveBeenCalled();
+  });
+
+  it("non-numeric ?offset returns 400 invalid_offset", async () => {
+    const req = {
+      query: { offset: "abc" },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "invalid_offset" })
+    );
+    expect(mockPgQuery).not.toHaveBeenCalled();
+  });
+});
+
+// ====================================================================
+// getSignalMatchSuggestionCounts — pending breakdown + lifetime_total
+// ====================================================================
+
+describe("signalMatchSuggestions — counts handler", () => {
+  beforeEach(() => {
+    mockPgQuery.mockReset();
+  });
+
+  it("happy path: returns total, by_target_type breakdown, and lifetime_total", async () => {
+    mockPgQuery.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [
+        {
+          total: "12",
+          vendor: "5",
+          ai_system: "3",
+          control: "2",
+          obligation: "2",
+          lifetime_total: "47"
+        }
+      ]
+    });
+
+    const req = {
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[0];
+    const res = makeRes();
+
+    await getSignalMatchSuggestionCounts(
+      req,
+      res as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      organizationId: VALID_ORG_UUID,
+      total: 12,
+      by_target_type: { vendor: 5, ai_system: 3, control: 2, obligation: 2 },
+      lifetime_total: 47
+    });
+    // pg.query was called once — single round-trip aggregate.
+    expect(mockPgQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("coerces bigint string counts to JS numbers", async () => {
+    // pg returns COUNT(*) as a string; the handler must coerce.
+    mockPgQuery.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [
+        {
+          total: "0",
+          vendor: "0",
+          ai_system: "0",
+          control: "0",
+          obligation: "0",
+          lifetime_total: "0"
+        }
+      ]
+    });
+
+    const req = {
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[0];
+    const res = makeRes();
+
+    await getSignalMatchSuggestionCounts(
+      req,
+      res as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[1]
+    );
+
+    const body = res.json.mock.calls[0][0] as Record<string, unknown>;
+    expect(body.total).toBe(0);
+    expect(body.lifetime_total).toBe(0);
+    const breakdown = body.by_target_type as Record<string, unknown>;
+    for (const v of Object.values(breakdown)) {
+      expect(typeof v).toBe("number");
+    }
+  });
+
+  it("filters all aggregates by organization_id", async () => {
+    mockPgQuery.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [
+        {
+          total: "0",
+          vendor: "0",
+          ai_system: "0",
+          control: "0",
+          obligation: "0",
+          lifetime_total: "0"
+        }
+      ]
+    });
+
+    const req = {
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[0];
+    const res = makeRes();
+
+    await getSignalMatchSuggestionCounts(
+      req,
+      res as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[1]
+    );
+
+    const sql = mockPgQuery.mock.calls[0][0] as string;
+    const params = mockPgQuery.mock.calls[0][1] as unknown[];
+    expect(sql).toMatch(/WHERE organization_id = \$1/);
+    expect(params).toEqual([VALID_ORG_UUID]);
+  });
+
+  it("pending breakdown excludes accepted and dismissed via FILTER predicates", async () => {
+    mockPgQuery.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [
+        {
+          total: "0",
+          vendor: "0",
+          ai_system: "0",
+          control: "0",
+          obligation: "0",
+          lifetime_total: "0"
+        }
+      ]
+    });
+
+    const req = {
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[0];
+    const res = makeRes();
+
+    await getSignalMatchSuggestionCounts(
+      req,
+      res as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[1]
+    );
+
+    const sql = mockPgQuery.mock.calls[0][0] as string;
+    expect(sql).toMatch(/FILTER \(WHERE accepted_at IS NULL AND dismissed_at IS NULL\)/);
+    // lifetime_total must be a plain COUNT(*) — no state predicate.
+    expect(sql).toMatch(/COUNT\(\*\)\s+AS lifetime_total/);
+  });
+
+  it("missing org context returns 403 organization_context_missing without hitting pg", async () => {
+    const req = {} as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[0];
+    const res = makeRes();
+
+    await getSignalMatchSuggestionCounts(
+      req,
+      res as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "organization_context_missing" })
+    );
+    expect(mockPgQuery).not.toHaveBeenCalled();
+  });
+
+  it("pg error returns 500 signal_match_suggestions_counts_failed", async () => {
+    mockPgQuery.mockRejectedValueOnce(new Error("connection refused"));
+
+    const req = {
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[0];
+    const res = makeRes();
+
+    await getSignalMatchSuggestionCounts(
+      req,
+      res as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "signal_match_suggestions_counts_failed" })
+    );
   });
 });
 

@@ -2808,3 +2808,150 @@ export async function saveRequirementResponse(
   }
 }
 
+// =========================================================
+// SIGNAL MATCH SUGGESTIONS — matcher queue UI
+//
+// The queue page (Package 4) reads pending suggestions and lets a user
+// accept (creates a signal_*_link) or dismiss (terminal). The list endpoint
+// supports sort + offset + filters; the counts endpoint feeds the
+// per-target-type filter chips and the first-time-empty state check
+// (lifetime_total > 0 means the org has had matcher activity, so an empty
+// pending list with active filters is a "no matches for these filters",
+// not "we've never seen any signals").
+// =========================================================
+
+export type SignalMatchTargetType =
+  | "vendor"
+  | "ai_system"
+  | "control"
+  | "obligation";
+
+export type SignalMatchSuggestionStatus = "pending" | "accepted" | "dismissed";
+
+export type SignalMatchSuggestion = {
+  id: string;
+  organization_id: string;
+  signal_id: string;
+  target_type: SignalMatchTargetType;
+  target_id: string;
+  match_reason: string | null;
+  match_score: number | null;
+  created_at: string;
+  accepted_at: string | null;
+  accepted_by_user_id: string | null;
+  accepted_link_id: string | null;
+  dismissed_at: string | null;
+  dismissed_by_user_id: string | null;
+  dismissal_reason: string | null;
+};
+
+export type SignalMatchSuggestionsResponse = {
+  count: number;
+  limit: number;
+  offset: number;
+  sort: "created-desc" | "score-desc";
+  organizationId: string;
+  status: SignalMatchSuggestionStatus;
+  suggestions: SignalMatchSuggestion[];
+};
+
+export type SignalMatchSuggestionCounts = {
+  organizationId: string;
+  total: number;
+  by_target_type: Record<SignalMatchTargetType, number>;
+  // lifetime_total counts ALL states (pending, accepted, dismissed). The
+  // queue UI uses it to distinguish a filtered-empty state from a
+  // first-time-empty state without a separate query — the alternative was
+  // a one-row helper in this file, but bundling it into /counts is one
+  // round-trip per page render rather than two.
+  lifetime_total: number;
+};
+
+export async function getSignalMatchSuggestions(
+  token: string,
+  params: {
+    status?: SignalMatchSuggestionStatus;
+    target_type?: SignalMatchTargetType;
+    signal_id?: string;
+    sort?: "created-desc" | "score-desc";
+    limit?: number;
+    offset?: number;
+  } = {}
+): Promise<SignalMatchSuggestionsResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (params.status)      qs.set("status",      params.status);
+    if (params.target_type) qs.set("target_type", params.target_type);
+    if (params.signal_id)   qs.set("signal_id",   params.signal_id);
+    if (params.sort)        qs.set("sort",        params.sort);
+    if (params.limit)       qs.set("limit",       String(params.limit));
+    if (params.offset)      qs.set("offset",      String(params.offset));
+    const path = `/api/signal-match-suggestions${qs.toString() ? `?${qs.toString()}` : ""}`;
+    const res = await engineFetch(path, token);
+    if (!res.ok) return null;
+    return res.json() as Promise<SignalMatchSuggestionsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getSignalMatchSuggestionCounts(
+  token: string
+): Promise<SignalMatchSuggestionCounts | null> {
+  try {
+    const res = await engineFetch("/api/signal-match-suggestions/counts", token);
+    if (!res.ok) return null;
+    return res.json() as Promise<SignalMatchSuggestionCounts>;
+  } catch {
+    return null;
+  }
+}
+
+export type AcceptSignalMatchSuggestionResult = {
+  suggestion: SignalMatchSuggestion;
+  link: { id: string } & Record<string, unknown>;
+  link_already_existed: boolean;
+};
+
+export async function acceptSignalMatchSuggestion(
+  token: string,
+  suggestionId: string,
+  body: { note?: string | null } = {}
+): Promise<AcceptSignalMatchSuggestionResult | { error: string }> {
+  try {
+    const res = await engineFetch(
+      `/api/signal-match-suggestions/${suggestionId}/accept`,
+      token,
+      { method: "POST", body: JSON.stringify(body) }
+    );
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      return { error: data.error ?? `accept_failed_${res.status}` };
+    }
+    return res.json() as Promise<AcceptSignalMatchSuggestionResult>;
+  } catch {
+    return { error: "network_error" };
+  }
+}
+
+export async function dismissSignalMatchSuggestion(
+  token: string,
+  suggestionId: string,
+  body: { dismissal_reason?: string | null } = {}
+): Promise<{ suggestion: SignalMatchSuggestion } | { error: string }> {
+  try {
+    const res = await engineFetch(
+      `/api/signal-match-suggestions/${suggestionId}/dismiss`,
+      token,
+      { method: "POST", body: JSON.stringify(body) }
+    );
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      return { error: data.error ?? `dismiss_failed_${res.status}` };
+    }
+    return res.json() as Promise<{ suggestion: SignalMatchSuggestion }>;
+  } catch {
+    return { error: "network_error" };
+  }
+}
+
