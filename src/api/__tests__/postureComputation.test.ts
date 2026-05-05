@@ -403,3 +403,89 @@ describe("computePosture — riskSignalCount in computation_rationale", () => {
     expect(r1.overall_severity).toBe(r2.overall_severity);
   });
 });
+
+// ----------------------------------------------------------------
+// Engine-consumption of synthetic vendor-inventory signals
+// ----------------------------------------------------------------
+//
+// These tests exercise `computePosture` with DbFindingForPosture entries
+// shaped exactly like the output of `vendorCriticalityToSignals`. The
+// engine doesn't distinguish synthetic from real — these confirm the
+// merged pipeline produces sensible Vendor Risk domain scores when
+// inventory state, not real findings, is the only signal source.
+//
+// The synthesis function itself is unit-tested in
+// inventoryToSignals.test.ts; these tests cover the consumption side.
+
+function makeSyntheticVendorSignal(
+  vendorId: string,
+  severity: "Low" | "Moderate" | "High" | "Critical"
+): DbFindingForPosture {
+  return {
+    id: `vendor-criticality:${vendorId}`,
+    title: `Active vendor with ${severity.toLowerCase()} criticality`,
+    domain: "Vendor Risk",
+    severity,
+  };
+}
+
+describe("computePosture — synthetic vendor-inventory signals", () => {
+  it("six high-criticality vendors with no real findings produce a non-zero Vendor Risk domain score", () => {
+    // Pre-package: zero findings + zero risks → overall_score null,
+    // empty domain_scores. With this package, the same org with six
+    // high-criticality vendors emits six synthetic High signals.
+    const synthetic = [
+      makeSyntheticVendorSignal("v1", "High"),
+      makeSyntheticVendorSignal("v2", "High"),
+      makeSyntheticVendorSignal("v3", "High"),
+      makeSyntheticVendorSignal("v4", "High"),
+      makeSyntheticVendorSignal("v5", "High"),
+      makeSyntheticVendorSignal("v6", "High"),
+    ];
+
+    const result = computePosture(synthetic, 0, 0, NEUTRAL);
+
+    expect(result.domain_scores).toHaveLength(1);
+    const vrDomain = result.domain_scores[0]!;
+    expect(vrDomain.domain).toBe("Vendor Risk");
+    // Engine math: max severity weight (High=70) + accumulation
+    // boost (log2(7)*15 capped at 30) = 70 + ~30 = 100. Six entries
+    // saturate the accumulation cap.
+    expect(vrDomain.score).toBeGreaterThanOrEqual(70);
+    expect(vrDomain.finding_count).toBe(6);
+    expect(result.overall_score).not.toBeNull();
+  });
+
+  it("synthetic signals merge with real findings without dedup (combined accumulation)", () => {
+    // Spec item 5: "A vendor with both criticality='critical' AND an
+    // open Critical finding contributes TWO Critical signals to
+    // Vendor Risk." Verify the engine doesn't surprise us by
+    // collapsing them.
+    const realFinding = makeFinding("real-1", "Critical", "Vendor Risk");
+    const synthetic = makeSyntheticVendorSignal("v1", "Critical");
+
+    const justReal = computePosture([realFinding], 0, 0, NEUTRAL);
+    const both = computePosture([realFinding, synthetic], 0, 0, NEUTRAL);
+
+    // Both reach the same domain. The two-signal case should never
+    // score LOWER than the one-signal case (engine accumulation is
+    // monotonic in N).
+    expect(both.domain_scores).toHaveLength(1);
+    expect(justReal.domain_scores).toHaveLength(1);
+    const bothVR = both.domain_scores[0]!;
+    const justRealVR = justReal.domain_scores[0]!;
+    expect(bothVR.finding_count).toBe(2);
+    expect(justRealVR.finding_count).toBe(1);
+    expect(bothVR.score! >= justRealVR.score!).toBe(true);
+  });
+
+  it("zero synthetic signals + zero real findings reproduces pre-package empty-state behavior", () => {
+    // Regression guard: an org with no inventory and no findings
+    // must score the same after this package as before. (overall
+    // null, no domain_scores.) This is the case the deploy notes
+    // promise won't change for any current empty-state org.
+    const result = computePosture([], 0, 0, NEUTRAL);
+    expect(result.overall_score).toBeNull();
+    expect(result.domain_scores).toEqual([]);
+  });
+});
