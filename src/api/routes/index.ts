@@ -73,6 +73,7 @@ import signalVendorLinksRouter from "./signalVendorLinks.js";
 import signalAiSystemLinksRouter from "./signalAiSystemLinks.js";
 import signalControlLinksRouter from "./signalControlLinks.js";
 import signalObligationLinksRouter from "./signalObligationLinks.js";
+import signalMatchSuggestionsRouter from "./signalMatchSuggestions.js";
 import dashboardRouter from "./dashboard.js";
 import postureRouter from "./posture.js";
 import signalsRouter from "./signals.js";
@@ -416,6 +417,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", signalAiSystemLinksRouter);
   router.use("/api", signalControlLinksRouter);
   router.use("/api", signalObligationLinksRouter);
+  router.use("/api", signalMatchSuggestionsRouter);
   router.use("/api", dashboardRouter);
   router.use("/api", postureRouter);
   router.use("/api", signalsRouter);

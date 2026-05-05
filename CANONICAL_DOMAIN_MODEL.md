@@ -48,6 +48,7 @@ They must not be re-declared differently in each module.
 | Signal AI System Link | signal_ai_system_links | POST /api/signal-ai-system-links, DELETE /api/signal-ai-system-links/:id, GET /api/ai-systems/:id/signals, GET /api/cyber-signals/:id/ai-systems | Complete — package signal-to-AI-system-linkage |
 | Signal Control Link | signal_control_links | POST /api/signal-control-links, DELETE /api/signal-control-links/:id, GET /api/controls/:id/signals, GET /api/cyber-signals/:id/controls | Complete — package signal-to-control-linkage |
 | Signal Obligation Link | signal_obligation_links | POST /api/signal-obligation-links, DELETE /api/signal-obligation-links/:id, GET /api/obligations/:id/signals, GET /api/cyber-signals/:id/obligations | Complete — package signal-to-obligation-linkage |
+| Signal Match Suggestion | signal_match_suggestions | GET /api/signal-match-suggestions, POST /api/signal-match-suggestions/:id/accept, POST /api/signal-match-suggestions/:id/dismiss | Complete — package signal-match-suggestions (matcher rewire is a separate package) |
 | Organization | organizations | admin API | Profile fields complete — package org-profile-context-weighting |
 | Vendor | vendors (extended) | POST /api/vendors, GET /api/vendors, GET /api/vendors/:id, PATCH /api/vendors/:id | Complete — package vendor-risk-primitives |
 | Vendor Assessment | vendor_assessments | POST /api/vendor-assessments, GET /api/vendor-assessments, GET /api/vendor-assessments/:id | Complete — package vendor-assessment-workflow |
@@ -252,11 +253,12 @@ Organization
   │     ├── Control Assessments (control_id FK → control_assessments)
   │     │     └── Findings (source_type='control_test', source_id=control_assessments.id, domain='General')
   │     └── Signal Control Links (organization_id FK; cyber_signals ↔ controls — external-signal connectivity, parallel to Signal Vendor / AI System Links; permits global-org signals)
-  └── Obligations (organization_id FK)
-        ├── Obligation Mappings (obligation_id FK → obligation_mappings → requirements)
-        ├── Obligation Assessments (obligation_id FK → obligation_assessments)
-        │     └── Findings (source_type='obligation_review', source_id=obligation_assessments.id, domain=obligation.domain)
-        └── Signal Obligation Links (organization_id FK; cyber_signals ↔ obligations — external-signal connectivity, parallel to Signal Vendor / AI System / Control Links; permits global-org signals)
+  ├── Obligations (organization_id FK)
+  │     ├── Obligation Mappings (obligation_id FK → obligation_mappings → requirements)
+  │     ├── Obligation Assessments (obligation_id FK → obligation_assessments)
+  │     │     └── Findings (source_type='obligation_review', source_id=obligation_assessments.id, domain=obligation.domain)
+  │     └── Signal Obligation Links (organization_id FK; cyber_signals ↔ obligations — external-signal connectivity, parallel to Signal Vendor / AI System / Control Links; permits global-org signals)
+  └── Signal Match Suggestions (organization_id FK, signal_id FK → cyber_signals; polymorphic by (target_type, target_id) over vendors/ai_systems/controls/obligations — same shape as findings(source_type, source_id) and evidence(source_type, source_id); decision state {pending, accepted, dismissed}; on accept, the row carries accepted_link_id pointing into the appropriate signal_*_links table identified by target_type)
 ```
 
 ---

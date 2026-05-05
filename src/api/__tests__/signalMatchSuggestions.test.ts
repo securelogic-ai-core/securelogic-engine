@@ -1,0 +1,1070 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "fs";
+import { resolve } from "path";
+import {
+  validateSignalMatchSuggestionAccept,
+  validateSignalMatchSuggestionDismiss,
+  isUuid,
+  isTargetType,
+  TARGET_TYPES
+} from "../lib/signalMatchSuggestionValidation.js";
+
+// Mocks for the behavioral test section at the bottom of this file.
+// vitest hoists vi.mock to the top of the module, so the mock-fn refs must
+// be declared via vi.hoisted to be initialized before the factory runs.
+// Pure-validator and structural tests above this point do not import the
+// route runtime and are unaffected.
+//
+// Two mocks: pg.connect (for the accept-handler transaction) and pg.query
+// (for the dismiss + list handlers, which run single statements outside a
+// transaction).
+const { mockClientQuery, mockClientRelease } = vi.hoisted(() => ({
+  mockClientQuery: vi.fn(),
+  mockClientRelease: vi.fn()
+}));
+vi.mock("../infra/postgres.js", () => ({
+  pg: {
+    query: vi.fn(),
+    connect: vi.fn().mockResolvedValue({
+      query: mockClientQuery,
+      release: mockClientRelease
+    })
+  }
+}));
+vi.mock("../lib/auditLog.js", () => ({
+  writeAuditEvent: vi.fn()
+}));
+
+const VALID_SUGGESTION_UUID = "11111111-1111-4111-8111-111111111111";
+const VALID_SIGNAL_UUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+const VALID_TARGET_UUID = "22222222-2222-4222-8222-222222222222";
+const VALID_ORG_UUID = "33333333-3333-4333-8333-333333333333";
+const VALID_LINK_UUID = "44444444-4444-4444-8444-444444444444";
+const OTHER_USER_UUID = "55555555-5555-4555-8555-555555555555";
+
+// ====================================================================
+// validateSignalMatchSuggestionAccept — body shape
+// ====================================================================
+
+describe("validateSignalMatchSuggestionAccept — body shape", () => {
+  it("accepts undefined body and returns null note", () => {
+    const r = validateSignalMatchSuggestionAccept(undefined);
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.note).toBeNull();
+  });
+
+  it("accepts null body and returns null note", () => {
+    const r = validateSignalMatchSuggestionAccept(null);
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.note).toBeNull();
+  });
+
+  it("accepts empty object body and returns null note", () => {
+    const r = validateSignalMatchSuggestionAccept({});
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.note).toBeNull();
+  });
+
+  it("rejects string body", () => {
+    const r = validateSignalMatchSuggestionAccept("hello");
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("request_body_must_be_object");
+  });
+
+  it("rejects array body", () => {
+    const r = validateSignalMatchSuggestionAccept([]);
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("request_body_must_be_object");
+  });
+});
+
+// ====================================================================
+// validateSignalMatchSuggestionAccept — note
+// ====================================================================
+
+describe("validateSignalMatchSuggestionAccept — note", () => {
+  it("trims a short note", () => {
+    const r = validateSignalMatchSuggestionAccept({ note: "   matched on cve  " });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.note).toBe("matched on cve");
+  });
+
+  it("normalizes whitespace-only note to null", () => {
+    const r = validateSignalMatchSuggestionAccept({ note: "   " });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.note).toBeNull();
+  });
+
+  it("accepts explicit null", () => {
+    const r = validateSignalMatchSuggestionAccept({ note: null });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.note).toBeNull();
+  });
+
+  it("rejects non-string note", () => {
+    const r = validateSignalMatchSuggestionAccept({ note: 42 });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("note_must_be_string");
+  });
+
+  it("rejects note longer than 500 chars", () => {
+    const r = validateSignalMatchSuggestionAccept({ note: "a".repeat(501) });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("note_too_long");
+  });
+
+  it("accepts note of exactly 500 chars", () => {
+    const r = validateSignalMatchSuggestionAccept({ note: "a".repeat(500) });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.note?.length).toBe(500);
+  });
+
+  it("never echoes any organization_id from body", () => {
+    const r = validateSignalMatchSuggestionAccept({
+      note: "x",
+      organization_id: "00000000-0000-0000-0000-000000000000"
+    });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(Object.keys(r.input).sort()).toEqual(["note"]);
+  });
+});
+
+// ====================================================================
+// validateSignalMatchSuggestionDismiss
+// ====================================================================
+
+describe("validateSignalMatchSuggestionDismiss", () => {
+  it("accepts undefined body", () => {
+    const r = validateSignalMatchSuggestionDismiss(undefined);
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.dismissal_reason).toBeNull();
+  });
+
+  it("accepts and trims a reason", () => {
+    const r = validateSignalMatchSuggestionDismiss({
+      dismissal_reason: "  not relevant to this org  "
+    });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.dismissal_reason).toBe("not relevant to this org");
+  });
+
+  it("rejects non-string reason", () => {
+    const r = validateSignalMatchSuggestionDismiss({ dismissal_reason: 9 });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("dismissal_reason_must_be_string");
+  });
+
+  it("rejects reason longer than 500 chars", () => {
+    const r = validateSignalMatchSuggestionDismiss({
+      dismissal_reason: "x".repeat(501)
+    });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("dismissal_reason_too_long");
+  });
+
+  it("rejects array body", () => {
+    const r = validateSignalMatchSuggestionDismiss([]);
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("request_body_must_be_object");
+  });
+
+  it("never echoes any organization_id from body", () => {
+    const r = validateSignalMatchSuggestionDismiss({
+      dismissal_reason: "x",
+      organization_id: "00000000-0000-0000-0000-000000000000"
+    });
+    expect("input" in r).toBe(true);
+    if ("input" in r)
+      expect(Object.keys(r.input).sort()).toEqual(["dismissal_reason"]);
+  });
+});
+
+// ====================================================================
+// isUuid + isTargetType + TARGET_TYPES
+// ====================================================================
+
+describe("isUuid", () => {
+  it("accepts a v4-shaped UUID", () => {
+    expect(isUuid(VALID_SUGGESTION_UUID)).toBe(true);
+  });
+  it("rejects empty", () => {
+    expect(isUuid("")).toBe(false);
+  });
+  it("rejects malformed", () => {
+    expect(isUuid("11111111-1111-4111-8111-1111")).toBe(false);
+  });
+  it("rejects non-string", () => {
+    expect(isUuid(42)).toBe(false);
+  });
+});
+
+describe("isTargetType", () => {
+  for (const t of TARGET_TYPES) {
+    it(`accepts ${t}`, () => {
+      expect(isTargetType(t)).toBe(true);
+    });
+  }
+  it("rejects unknown target_type", () => {
+    expect(isTargetType("risk")).toBe(false);
+  });
+  it("rejects empty string", () => {
+    expect(isTargetType("")).toBe(false);
+  });
+  it("rejects non-string", () => {
+    expect(isTargetType(null)).toBe(false);
+  });
+});
+
+describe("TARGET_TYPES enum", () => {
+  it("contains exactly the four canonical link target types", () => {
+    expect([...TARGET_TYPES].sort()).toEqual(
+      ["ai_system", "control", "obligation", "vendor"].sort()
+    );
+  });
+});
+
+// ====================================================================
+// Structural source guard for the route file.
+// Mirrors the prior link-route slices; behavioral tests below cover the
+// state-transition edge cases that cannot be verified structurally.
+// ====================================================================
+
+const ROUTE_FILE = resolve(__dirname, "../routes/signalMatchSuggestions.ts");
+const ROUTE_SOURCE = readFileSync(ROUTE_FILE, "utf8");
+
+describe("signalMatchSuggestions route — tenant isolation invariants", () => {
+  it("imports requireApiKey middleware", () => {
+    expect(ROUTE_SOURCE).toMatch(/from ["'][^"']*requireApiKey/);
+  });
+
+  it("imports attachOrganizationContext middleware", () => {
+    expect(ROUTE_SOURCE).toMatch(/from ["'][^"']*attachOrganizationContext/);
+  });
+
+  it("imports requireEntitlement middleware and gates on standard", () => {
+    expect(ROUTE_SOURCE).toMatch(/from ["'][^"']*requireEntitlement/);
+    expect(ROUTE_SOURCE).toMatch(/requireEntitlement\(["']standard["']\)/);
+  });
+
+  it("references organization_id in SQL", () => {
+    expect(ROUTE_SOURCE).toMatch(/organization_id/);
+  });
+
+  it("never reads organization_id from req.body", () => {
+    expect(ROUTE_SOURCE).not.toMatch(/req\.body\.organization_id/);
+    expect(ROUTE_SOURCE).not.toMatch(/req\.body\?\.organization_id/);
+  });
+
+  it("sources organizationId from req.organizationContext", () => {
+    expect(ROUTE_SOURCE).toMatch(/organizationContext/);
+  });
+
+  it("returns 403 organization_context_missing when org context is absent", () => {
+    expect(ROUTE_SOURCE).toMatch(/organization_context_missing/);
+  });
+
+  it("audit-logs via writeAuditEvent for accept and dismiss", () => {
+    expect(ROUTE_SOURCE).toMatch(/writeAuditEvent/);
+    expect(ROUTE_SOURCE).toMatch(/signal_match_suggestion\.accepted/);
+    expect(ROUTE_SOURCE).toMatch(/signal_match_suggestion\.dismissed/);
+  });
+
+  it("declares the three required endpoints", () => {
+    expect(ROUTE_SOURCE).toMatch(
+      /router\.get\(\s*["']\/signal-match-suggestions["']/
+    );
+    expect(ROUTE_SOURCE).toMatch(
+      /router\.post\(\s*["']\/signal-match-suggestions\/:id\/accept["']/
+    );
+    expect(ROUTE_SOURCE).toMatch(
+      /router\.post\(\s*["']\/signal-match-suggestions\/:id\/dismiss["']/
+    );
+  });
+
+  it("returns 404 (not 403) on cross-org access — no enumeration", () => {
+    expect(ROUTE_SOURCE).toMatch(/signal_match_suggestion_not_found/);
+    expect(ROUTE_SOURCE).toMatch(/target_not_found/);
+    expect(ROUTE_SOURCE).toMatch(/cyber_signal_not_found/);
+  });
+
+  it("wraps the accept handler in a transaction (BEGIN / COMMIT / ROLLBACK)", () => {
+    expect(ROUTE_SOURCE).toMatch(/await client\.query\(["']BEGIN["']\)/);
+    expect(ROUTE_SOURCE).toMatch(/await client\.query\(["']COMMIT["']\)/);
+    expect(ROUTE_SOURCE).toMatch(/await client\.query\(["']ROLLBACK["']\)/);
+  });
+
+  it("uses SELECT FOR UPDATE on the suggestion row inside the accept tx", () => {
+    expect(ROUTE_SOURCE).toMatch(
+      /FROM signal_match_suggestions[\s\S]*WHERE id = \$1 AND organization_id = \$2[\s\S]*FOR UPDATE/
+    );
+  });
+
+  it("link-table INSERT uses ON CONFLICT inference against the partial unique index (hardened template)", () => {
+    expect(ROUTE_SOURCE).toMatch(
+      /ON CONFLICT \(organization_id, signal_id, \$\{dispatch\.targetCol\}\)[\s\S]*WHERE deleted_at IS NULL[\s\S]*DO NOTHING/
+    );
+  });
+
+  it("link-table INSERT sets created_by_user_id from req.userId", () => {
+    expect(ROUTE_SOURCE).toMatch(
+      /INSERT INTO \$\{dispatch\.linkTable\}[\s\S]*created_by_user_id[\s\S]*req\.userId/
+    );
+  });
+
+  it("releases the pg client in finally", () => {
+    expect(ROUTE_SOURCE).toMatch(/finally[\s\S]*client\.release\(\)/);
+  });
+
+  it("dismiss handler scopes UPDATE to organization_id and pending state", () => {
+    expect(ROUTE_SOURCE).toMatch(
+      /UPDATE signal_match_suggestions[\s\S]*SET dismissed_at = NOW\(\)[\s\S]*WHERE id = \$3[\s\S]*AND organization_id = \$4[\s\S]*AND accepted_at IS NULL[\s\S]*AND dismissed_at IS NULL/
+    );
+  });
+
+  it("documents the global-signal asymmetry citing the standard", () => {
+    expect(ROUTE_SOURCE).toMatch(
+      /global[\s\S]*organization_id IS NULL|TENANT_ISOLATION_STANDARD\.md §1/
+    );
+  });
+
+  it("returns 409 on already-accepted and already-dismissed", () => {
+    expect(ROUTE_SOURCE).toMatch(/signal_match_suggestion_already_accepted/);
+    expect(ROUTE_SOURCE).toMatch(/signal_match_suggestion_already_dismissed/);
+  });
+});
+
+// ====================================================================
+// Migration shape guard
+// ====================================================================
+
+const MIGRATION_FILE = resolve(
+  __dirname,
+  "../../../db/migrations/20260505_signal_match_suggestions.sql"
+);
+const MIGRATION_SOURCE = readFileSync(MIGRATION_FILE, "utf8");
+
+describe("signal_match_suggestions migration", () => {
+  it("creates the signal_match_suggestions table", () => {
+    expect(MIGRATION_SOURCE).toMatch(
+      /CREATE TABLE IF NOT EXISTS signal_match_suggestions/
+    );
+  });
+
+  it("organization_id is NOT NULL and references organizations(id)", () => {
+    expect(MIGRATION_SOURCE).toMatch(
+      /organization_id\s+UUID\s+NOT NULL\s+REFERENCES organizations\(id\)/
+    );
+  });
+
+  it("signal_id references cyber_signals(id) ON DELETE CASCADE", () => {
+    expect(MIGRATION_SOURCE).toMatch(
+      /signal_id\s+UUID\s+NOT NULL\s+REFERENCES cyber_signals\(id\) ON DELETE CASCADE/
+    );
+  });
+
+  it("target_id has NO foreign key (polymorphic by query)", () => {
+    expect(MIGRATION_SOURCE).not.toMatch(
+      /target_id\s+UUID\s+NOT NULL\s+REFERENCES/
+    );
+  });
+
+  it("target_type CHECK enumerates exactly the four canonical types", () => {
+    expect(MIGRATION_SOURCE).toMatch(
+      /CHECK \(target_type IN \('vendor', 'ai_system', 'control', 'obligation'\)\)/
+    );
+  });
+
+  it("declares the three-state CHECK constraint (pending / accepted / dismissed)", () => {
+    expect(MIGRATION_SOURCE).toMatch(
+      /CONSTRAINT signal_match_suggestions_state_chk[\s\S]*accepted_at IS NULL[\s\S]*dismissed_at IS NULL[\s\S]*accepted_link_id IS NULL[\s\S]*OR[\s\S]*accepted_at IS NOT NULL[\s\S]*accepted_link_id IS NOT NULL[\s\S]*OR[\s\S]*dismissed_at IS NOT NULL/
+    );
+  });
+
+  it("creates the partial unique index keyed on (org, signal, target_type, target_id) WHERE pending", () => {
+    expect(MIGRATION_SOURCE).toMatch(
+      /CREATE UNIQUE INDEX IF NOT EXISTS idx_signal_match_suggestions_unique_pending[\s\S]*\(organization_id, signal_id, target_type, target_id\)[\s\S]*WHERE accepted_at IS NULL AND dismissed_at IS NULL/
+    );
+  });
+
+  it("creates the accepted_link_id reverse-lookup index keyed on (accepted_link_id, target_type)", () => {
+    expect(MIGRATION_SOURCE).toMatch(
+      /CREATE INDEX IF NOT EXISTS idx_signal_match_suggestions_accepted_link[\s\S]*\(accepted_link_id, target_type\)/
+    );
+  });
+
+  it("does not alter cyber_signals or any signal_*_links table", () => {
+    expect(MIGRATION_SOURCE).not.toMatch(/ALTER TABLE cyber_signals/);
+    expect(MIGRATION_SOURCE).not.toMatch(/ALTER TABLE signal_vendor_links/);
+    expect(MIGRATION_SOURCE).not.toMatch(/ALTER TABLE signal_ai_system_links/);
+    expect(MIGRATION_SOURCE).not.toMatch(/ALTER TABLE signal_control_links/);
+    expect(MIGRATION_SOURCE).not.toMatch(/ALTER TABLE signal_obligation_links/);
+  });
+});
+
+// ====================================================================
+// Behavioral tests — accept + dismiss + list edge cases
+//
+// Mocks: pg.query (for list/dismiss), pg.connect → client (for accept tx),
+// writeAuditEvent. Handlers are imported by name from the route file.
+// ====================================================================
+
+import { pg } from "../infra/postgres.js";
+import {
+  acceptSignalMatchSuggestion,
+  dismissSignalMatchSuggestion,
+  listSignalMatchSuggestions
+} from "../routes/signalMatchSuggestions.js";
+
+const mockPgQuery = pg.query as unknown as ReturnType<typeof vi.fn>;
+
+function makeRes() {
+  const res: Record<string, unknown> = {};
+  res.status = vi.fn().mockReturnValue(res);
+  res.json = vi.fn().mockReturnValue(res);
+  return res as { status: ReturnType<typeof vi.fn>; json: ReturnType<typeof vi.fn> };
+}
+
+function pendingSuggestionRow(targetType = "vendor") {
+  return {
+    id: VALID_SUGGESTION_UUID,
+    organization_id: VALID_ORG_UUID,
+    signal_id: VALID_SIGNAL_UUID,
+    target_type: targetType,
+    target_id: VALID_TARGET_UUID,
+    match_reason: "vendor_name_ilike",
+    match_score: "0.850",
+    created_at: "2026-05-05T00:00:00.000Z",
+    accepted_at: null,
+    accepted_by_user_id: null,
+    accepted_link_id: null,
+    dismissed_at: null,
+    dismissed_by_user_id: null,
+    dismissal_reason: null
+  };
+}
+
+function acceptedSuggestionRow(linkId = VALID_LINK_UUID) {
+  return {
+    ...pendingSuggestionRow(),
+    accepted_at: "2026-05-05T01:00:00.000Z",
+    accepted_by_user_id: OTHER_USER_UUID,
+    accepted_link_id: linkId
+  };
+}
+
+function dismissedSuggestionRow() {
+  return {
+    ...pendingSuggestionRow(),
+    dismissed_at: "2026-05-05T01:00:00.000Z",
+    dismissed_by_user_id: OTHER_USER_UUID,
+    dismissal_reason: "not relevant"
+  };
+}
+
+function newLinkRow() {
+  return {
+    id: VALID_LINK_UUID,
+    organization_id: VALID_ORG_UUID,
+    signal_id: VALID_SIGNAL_UUID,
+    vendor_id: VALID_TARGET_UUID,
+    note: null,
+    created_by_user_id: null,
+    created_at: "2026-05-05T01:00:00.000Z",
+    deleted_at: null
+  };
+}
+
+describe("signalMatchSuggestions — accept handler", () => {
+  beforeEach(() => {
+    mockClientQuery.mockReset();
+    mockClientRelease.mockReset();
+    mockPgQuery.mockReset();
+  });
+
+  it("happy path: pending → accepted, creates link row, returns 200 with both", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                 // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [pendingSuggestionRow()] }) // SELECT FOR UPDATE
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] })               // target preflight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] })               // signal preflight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [newLinkRow()] })     // INSERT link
+      .mockResolvedValueOnce({ rowCount: 1, rows: [acceptedSuggestionRow()] }) // UPDATE suggestion
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                // COMMIT
+
+    const req = {
+      body: { note: "confirmed match" },
+      params: { id: VALID_SUGGESTION_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof acceptSignalMatchSuggestion>[0];
+    const res = makeRes();
+
+    await acceptSignalMatchSuggestion(
+      req,
+      res as unknown as Parameters<typeof acceptSignalMatchSuggestion>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suggestion: expect.objectContaining({ accepted_link_id: VALID_LINK_UUID }),
+        link: expect.objectContaining({ id: VALID_LINK_UUID }),
+        link_already_existed: false
+      })
+    );
+    // 7 client.query calls: BEGIN, SELECT FOR UPDATE, target, signal, INSERT, UPDATE, COMMIT
+    expect(mockClientQuery).toHaveBeenCalledTimes(7);
+    expect(mockClientRelease).toHaveBeenCalledTimes(1);
+    // No COMMIT-then-ROLLBACK on the happy path
+    expect(mockClientQuery.mock.calls.some((c) => c[0] === "ROLLBACK")).toBe(false);
+  });
+
+  it("link-already-exists path: pending → accepted, INSERT conflicts, SELECT existing link, returns 200 link_already_existed:true", async () => {
+    const existingLink = { ...newLinkRow(), note: "manually created earlier" };
+    mockClientQuery
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                 // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [pendingSuggestionRow()] }) // SELECT FOR UPDATE
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] })               // target preflight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] })               // signal preflight
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                 // INSERT link → CONFLICT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [existingLink] })     // SELECT existing live link
+      .mockResolvedValueOnce({ rowCount: 1, rows: [acceptedSuggestionRow()] }) // UPDATE suggestion
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                // COMMIT
+
+    const req = {
+      body: {},
+      params: { id: VALID_SUGGESTION_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof acceptSignalMatchSuggestion>[0];
+    const res = makeRes();
+
+    await acceptSignalMatchSuggestion(
+      req,
+      res as unknown as Parameters<typeof acceptSignalMatchSuggestion>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suggestion: expect.objectContaining({ accepted_link_id: VALID_LINK_UUID }),
+        link: existingLink,
+        link_already_existed: true
+      })
+    );
+    // 8 client.query calls (one extra SELECT for the existing link)
+    expect(mockClientQuery).toHaveBeenCalledTimes(8);
+    expect(mockClientRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it("already-accepted: returns 409 and rolls back without writing", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                  // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [acceptedSuggestionRow()] }) // SELECT FOR UPDATE returns terminal row
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                 // ROLLBACK
+
+    const req = {
+      body: {},
+      params: { id: VALID_SUGGESTION_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof acceptSignalMatchSuggestion>[0];
+    const res = makeRes();
+
+    await acceptSignalMatchSuggestion(
+      req,
+      res as unknown as Parameters<typeof acceptSignalMatchSuggestion>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "signal_match_suggestion_already_accepted" })
+    );
+    // BEGIN, SELECT FOR UPDATE, ROLLBACK only — no link insert, no UPDATE
+    expect(mockClientQuery).toHaveBeenCalledTimes(3);
+    expect(mockClientQuery.mock.calls[2][0]).toBe("ROLLBACK");
+    expect(mockClientRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it("already-dismissed: returns 409 and rolls back without writing", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                   // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [dismissedSuggestionRow()] }) // SELECT FOR UPDATE
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                  // ROLLBACK
+
+    const req = {
+      body: {},
+      params: { id: VALID_SUGGESTION_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof acceptSignalMatchSuggestion>[0];
+    const res = makeRes();
+
+    await acceptSignalMatchSuggestion(
+      req,
+      res as unknown as Parameters<typeof acceptSignalMatchSuggestion>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "signal_match_suggestion_already_dismissed" })
+    );
+    expect(mockClientQuery).toHaveBeenCalledTimes(3);
+    expect(mockClientQuery.mock.calls[2][0]).toBe("ROLLBACK");
+  });
+
+  it("cross-tenant suggestion id: returns 404 (not 403) — no enumeration", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // SELECT FOR UPDATE → 0 rows
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // ROLLBACK
+
+    const req = {
+      body: {},
+      params: { id: VALID_SUGGESTION_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof acceptSignalMatchSuggestion>[0];
+    const res = makeRes();
+
+    await acceptSignalMatchSuggestion(
+      req,
+      res as unknown as Parameters<typeof acceptSignalMatchSuggestion>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "signal_match_suggestion_not_found" })
+    );
+    expect(mockClientQuery).toHaveBeenCalledTimes(3);
+  });
+
+  it("target row missing in this org: returns 404 target_not_found and rolls back", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                  // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [pendingSuggestionRow()] }) // SELECT FOR UPDATE
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                  // target preflight → 0 rows
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                 // ROLLBACK
+
+    const req = {
+      body: {},
+      params: { id: VALID_SUGGESTION_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof acceptSignalMatchSuggestion>[0];
+    const res = makeRes();
+
+    await acceptSignalMatchSuggestion(
+      req,
+      res as unknown as Parameters<typeof acceptSignalMatchSuggestion>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "target_not_found" })
+    );
+    // BEGIN, SELECT FOR UPDATE, target preflight, ROLLBACK
+    expect(mockClientQuery).toHaveBeenCalledTimes(4);
+    expect(mockClientQuery.mock.calls[3][0]).toBe("ROLLBACK");
+  });
+
+  it("signal not visible to this org and not global: returns 404 cyber_signal_not_found", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                  // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [pendingSuggestionRow()] }) // SELECT FOR UPDATE
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] })                // target preflight
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                  // signal preflight → 0 rows
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                 // ROLLBACK
+
+    const req = {
+      body: {},
+      params: { id: VALID_SUGGESTION_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof acceptSignalMatchSuggestion>[0];
+    const res = makeRes();
+
+    await acceptSignalMatchSuggestion(
+      req,
+      res as unknown as Parameters<typeof acceptSignalMatchSuggestion>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "cyber_signal_not_found" })
+    );
+    expect(mockClientQuery).toHaveBeenCalledTimes(5);
+    expect(mockClientQuery.mock.calls[4][0]).toBe("ROLLBACK");
+  });
+
+  it("non-uuid suggestion id: returns 400 without opening a tx", async () => {
+    const req = {
+      body: {},
+      params: { id: "not-a-uuid" },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof acceptSignalMatchSuggestion>[0];
+    const res = makeRes();
+
+    await acceptSignalMatchSuggestion(
+      req,
+      res as unknown as Parameters<typeof acceptSignalMatchSuggestion>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "suggestion_id_must_be_uuid" })
+    );
+    expect(mockClientQuery).not.toHaveBeenCalled();
+    expect(mockClientRelease).not.toHaveBeenCalled();
+  });
+
+  it("link INSERT failure mid-tx: returns 500, ROLLBACK issued, no UPDATE, suggestion stays pending", async () => {
+    // Simulates e.g. a transient pg error or a constraint violation after
+    // preflights pass. The handler MUST roll back and report 500; the
+    // suggestion row MUST NOT transition out of pending state.
+    mockClientQuery
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                   // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [pendingSuggestionRow()] }) // SELECT FOR UPDATE
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] })                 // target preflight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] })                 // signal preflight
+      .mockRejectedValueOnce(new Error("simulated link INSERT failure"))  // INSERT throws
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                  // ROLLBACK in catch
+
+    const req = {
+      body: {},
+      params: { id: VALID_SUGGESTION_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof acceptSignalMatchSuggestion>[0];
+    const res = makeRes();
+
+    await acceptSignalMatchSuggestion(
+      req,
+      res as unknown as Parameters<typeof acceptSignalMatchSuggestion>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "signal_match_suggestion_accept_failed" })
+    );
+    // Tx tape: BEGIN, SELECT FOR UPDATE, target, signal, INSERT (threw), ROLLBACK
+    expect(mockClientQuery).toHaveBeenCalledTimes(6);
+    // ROLLBACK must be the final statement issued.
+    expect(mockClientQuery.mock.calls[5][0]).toBe("ROLLBACK");
+    // No suggestion UPDATE was issued — suggestion stays pending.
+    const updateCalled = mockClientQuery.mock.calls.some(
+      (c) => typeof c[0] === "string" && /UPDATE signal_match_suggestions/.test(c[0])
+    );
+    expect(updateCalled).toBe(false);
+    // No COMMIT was issued.
+    expect(mockClientQuery.mock.calls.some((c) => c[0] === "COMMIT")).toBe(false);
+    // Client must be released even on failure.
+    expect(mockClientRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it("validator error short-circuits before opening a tx", async () => {
+    const req = {
+      body: { note: 42 },
+      params: { id: VALID_SUGGESTION_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof acceptSignalMatchSuggestion>[0];
+    const res = makeRes();
+
+    await acceptSignalMatchSuggestion(
+      req,
+      res as unknown as Parameters<typeof acceptSignalMatchSuggestion>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "note_must_be_string" })
+    );
+    expect(mockClientQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe("signalMatchSuggestions — dismiss handler", () => {
+  beforeEach(() => {
+    mockPgQuery.mockReset();
+    mockClientQuery.mockReset();
+  });
+
+  it("happy path: pending → dismissed, returns 200 with updated suggestion", async () => {
+    mockPgQuery.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [dismissedSuggestionRow()]
+    });
+
+    const req = {
+      body: { dismissal_reason: "not relevant" },
+      params: { id: VALID_SUGGESTION_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof dismissSignalMatchSuggestion>[0];
+    const res = makeRes();
+
+    await dismissSignalMatchSuggestion(
+      req,
+      res as unknown as Parameters<typeof dismissSignalMatchSuggestion>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suggestion: expect.objectContaining({ dismissed_at: expect.any(String) })
+      })
+    );
+    expect(mockPgQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("already-accepted: UPDATE returns 0, discriminator finds accepted_at → 409 already_accepted", async () => {
+    mockPgQuery
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })  // UPDATE returns 0
+      .mockResolvedValueOnce({                            // discriminator SELECT
+        rowCount: 1,
+        rows: [{ accepted_at: "2026-05-05T01:00:00.000Z", dismissed_at: null }]
+      });
+
+    const req = {
+      body: {},
+      params: { id: VALID_SUGGESTION_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof dismissSignalMatchSuggestion>[0];
+    const res = makeRes();
+
+    await dismissSignalMatchSuggestion(
+      req,
+      res as unknown as Parameters<typeof dismissSignalMatchSuggestion>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "signal_match_suggestion_already_accepted" })
+    );
+    expect(mockPgQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it("already-dismissed: UPDATE returns 0, discriminator finds dismissed_at → 409 already_dismissed", async () => {
+    mockPgQuery
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ accepted_at: null, dismissed_at: "2026-05-05T01:00:00.000Z" }]
+      });
+
+    const req = {
+      body: {},
+      params: { id: VALID_SUGGESTION_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof dismissSignalMatchSuggestion>[0];
+    const res = makeRes();
+
+    await dismissSignalMatchSuggestion(
+      req,
+      res as unknown as Parameters<typeof dismissSignalMatchSuggestion>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "signal_match_suggestion_already_dismissed" })
+    );
+    expect(mockPgQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it("cross-tenant or non-existent: UPDATE returns 0, discriminator finds nothing → 404", async () => {
+    mockPgQuery
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    const req = {
+      body: {},
+      params: { id: VALID_SUGGESTION_UUID },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof dismissSignalMatchSuggestion>[0];
+    const res = makeRes();
+
+    await dismissSignalMatchSuggestion(
+      req,
+      res as unknown as Parameters<typeof dismissSignalMatchSuggestion>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "signal_match_suggestion_not_found" })
+    );
+  });
+
+  it("non-uuid id: 400 without hitting pg", async () => {
+    const req = {
+      body: {},
+      params: { id: "nope" },
+      organizationContext: { organizationId: VALID_ORG_UUID },
+      ip: "127.0.0.1"
+    } as unknown as Parameters<typeof dismissSignalMatchSuggestion>[0];
+    const res = makeRes();
+
+    await dismissSignalMatchSuggestion(
+      req,
+      res as unknown as Parameters<typeof dismissSignalMatchSuggestion>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "suggestion_id_must_be_uuid" })
+    );
+    expect(mockPgQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe("signalMatchSuggestions — list handler", () => {
+  beforeEach(() => {
+    mockPgQuery.mockReset();
+  });
+
+  it("default status=pending, returns 200 with rows", async () => {
+    mockPgQuery.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [pendingSuggestionRow()]
+    });
+
+    const req = {
+      query: {},
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        count: 1,
+        status: "pending",
+        organizationId: VALID_ORG_UUID,
+        suggestions: expect.any(Array)
+      })
+    );
+    expect(mockPgQuery).toHaveBeenCalledTimes(1);
+    const sql = mockPgQuery.mock.calls[0][0] as string;
+    expect(sql).toMatch(/accepted_at IS NULL AND dismissed_at IS NULL/);
+  });
+
+  it("status=accepted filters via accepted_at IS NOT NULL", async () => {
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const req = {
+      query: { status: "accepted" },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    const sql = mockPgQuery.mock.calls[0][0] as string;
+    expect(sql).toMatch(/accepted_at IS NOT NULL/);
+  });
+
+  it("invalid status returns 400 without hitting pg", async () => {
+    const req = {
+      query: { status: "weird" },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "invalid_status" })
+    );
+    expect(mockPgQuery).not.toHaveBeenCalled();
+  });
+
+  it("invalid target_type returns 400", async () => {
+    const req = {
+      query: { target_type: "risk" },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "invalid_target_type" })
+    );
+    expect(mockPgQuery).not.toHaveBeenCalled();
+  });
+
+  it("fractional limit returns 400 invalid_limit", async () => {
+    const req = {
+      query: { limit: "10.5" },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "invalid_limit" })
+    );
+    expect(mockPgQuery).not.toHaveBeenCalled();
+  });
+
+  it("non-numeric limit returns 400 invalid_limit", async () => {
+    const req = {
+      query: { limit: "abc" },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "invalid_limit" })
+    );
+    expect(mockPgQuery).not.toHaveBeenCalled();
+  });
+
+  it("missing org context returns 403 organization_context_missing", async () => {
+    const req = {
+      query: {}
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "organization_context_missing" })
+    );
+    expect(mockPgQuery).not.toHaveBeenCalled();
+  });
+});
