@@ -164,6 +164,64 @@ Zero `INSERT`/`UPDATE`/`DELETE`/DDL. Staging is byte-identical to its state befo
 
 ---
 
+## §3 spot-check — closed (2026-05-05)
+
+The audit's blocking question — does the matcher actually do what §1.1 predicted? — is now answered empirically. Raw results and per-signal categorization in `docs/matcher-spot-check-2026-05-05.md`.
+
+### Test setup
+
+15 synthetic signals submitted against the canonical Staging Inc org's seeded inventory (10 vendors, 5 ai_systems). Direct invocation of `processSignal()` via `scripts/test-matcher-staging.ts` — same code path as `POST /api/cyber-signals`, minus HTTP/auth. Run script: `npm run test:matcher-staging`.
+
+### Results
+
+| Outcome | Count | What it says |
+|---|---|---|
+| Clearly correct hits | 7 | Microsoft, Cisco, Apple, Adobe, Apache, Microsoft Azure, Cisco Systems — all exact-name match cases |
+| False positives | 0 | No matcher-attributed match was wrong; ILIKE-equality precludes false positives by construction |
+| Correct misses | 6 | Oracle, Salesforce, Atlassian, GitHub, Snowflake (no inventory entries) plus AWS (acronym, no substring overlap with "Amazon Web Services") |
+| Algorithmic misses (false negatives) | 2 | Bloomberg → inventory has "Bloomberg Terminal"; Refinitiv → inventory has "Refinitiv Eikon" |
+
+The AWS case is technically a third near-miss, but the spot-check script's substring heuristic doesn't catch acronym-vs-expansion overlap. Counted as "no inventory overlap" in the data; operator-eye review would re-categorize it alongside Bloomberg and Refinitiv.
+
+### Operational characteristics
+
+- Zero errors. No 500s. No orphan rows.
+- Every match correctly created a finding (`source_type='cyber_signal'`, `domain='Vendor Risk'`).
+- Every match triggered a posture-snapshot recompute (the established side-effect path).
+- The matcher is well-defined on every input — including the no-match path. Its failure mode is silence, not loudness.
+
+### Conclusions
+
+**§1.1 confirmed empirically.** The matcher does ILIKE-equality and only ILIKE-equality. No surprising fallback, no fuzzy logic accidentally engaged, no edge-case crashes. What the SQL says is what runs.
+
+**Matcher quality, characterized:**
+- **Precision: 100%** across all 15 signals. Every match the matcher claimed was correct.
+- **Recall: ~70% on inventory-overlapping signals.** Of the 10 signals where some inventory vendor was related, 7 matched. The 3 misses were all symptoms of the same algorithmic gap: ILIKE-without-wildcards can't bridge brand→full-name (Bloomberg, Refinitiv) or acronym→expansion (AWS).
+
+**This is a precision-first foundation.** The matcher's failure mode is silence — false negatives, not false positives. Customers shown matcher output will not see noise; they will see fewer matches than they could. That tradeoff is acceptable and arguably desirable as the basis for a customer-facing suggestion queue, where false positives erode trust faster than false negatives erode value.
+
+### §6 status update
+
+The original §6 recommendations, re-evaluated against the spot-check evidence:
+
+- **R1 stands.** Don't extend the existing matcher to controls/obligations. They need a different algorithm class — controls have abstract names, obligations have regulatory citations. Neither is reachable via name-equality on `affected_vendor`. The spot-check did not test this; the conclusion stands on §5 analysis alone.
+- **R2 closes.** The matcher's quality is now characterized: 100% precision, ~70% recall on inventory-overlapping signals, predictable failure mode. The question "is this acceptable as the foundation for customer-facing suggestion work" answers yes for precision, no for recall. Recall improvements (wildcards / aliases / fuzzy / hybrid LLM, per the original R4) are the scope of the next package, not a blocker for further work on top of the matcher.
+- **R3 still right.** Zero test coverage on the matcher remains a real gap. The spot-check is empirical evidence the matcher works today; it is not a regression test. A vitest suite covering the matcher's documented behavior should land before any algorithmic changes per R4.
+
+### Most important unresolved item
+
+The architectural finding from the prod and staging runs: **the intelligence-worker bulk-ingest pipeline does not invoke `processSignal()`.** The matcher is reachable only from the API path. On staging, of 6,548 ingested signals across 21 sources, the worker pipeline alone produced 1,689 of them (the global pool); the API path produced 4,859 — and as the spot-check confirms, that path's matcher is fully operational at 100% precision.
+
+But neither path delivers the customer-facing claim "we surface relevant signals" today: the worker-ingested signals never reach the matcher (architectural gap), and the API-ingested signals only match exact-name vendors (recall gap). Closing one without the other is half a story.
+
+The next investigation worth scoping is **whose responsibility it is to invoke the matcher on worker-ingested signals.** Three options outlined in the prior execution-log section: (a) the worker fans out per-org and runs the matcher per ingest cycle, (b) a separate per-org consumer drains the global signal pool, (c) the matcher remains API-only and customer-facing surfacing happens via the brief path. The spot-check evidence makes this question concrete: a working matcher exists and is precise; the question is whether enough signals ever reach it.
+
+### Audit closes here
+
+This document closes as an investigation. The matcher is understood, its quality is characterized, and the open architectural question is named. Subsequent work — recall improvements, controls/obligations matching, suggestion-queue UI, tests, worker-pipeline wiring — is package-scoped, not investigation-scoped.
+
+---
+
 ## 1. What the matcher actually does
 
 ### 1.1 Algorithm
