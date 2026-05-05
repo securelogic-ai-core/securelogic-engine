@@ -35,6 +35,7 @@
  * manually linked later via a PATCH if the entity is added to the platform.
  */
 
+import type { PoolClient } from "pg";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import {
@@ -48,6 +49,11 @@ import {
   buildWorkflowSignalBreakdown,
   buildScoringRationaleExtension
 } from "./workflowScoringIntegration.js";
+import {
+  computeRiskScore,
+  DEFAULT_WEIGHTS,
+  type RiskScoringWeights
+} from "./riskScoring.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -75,6 +81,28 @@ export type ProcessingResult = {
   risks_flagged: number;
   /** Whether the posture snapshot was successfully recomputed after processing. */
   posture_recalculated: boolean;
+};
+
+/**
+ * Result of running runMatcherForSignal — the matcher-only pipeline
+ * (phases 1-3 of the original processSignal). Returned to the caller
+ * for logging / audit / further processing.
+ */
+export type MatcherResult = {
+  /** Vendor ID matched by affected_vendor (for orgId), or null. */
+  matched_vendor_id: string | null;
+  /** AI system ID matched by affected_vendor (for orgId), or null. */
+  matched_ai_system_id: string | null;
+  /** Finding row created by phase 3a, or null when no match. */
+  finding: Record<string, unknown> | null;
+  /** Suggestion row created by phase 3b. NULL when no match OR when ON CONFLICT skipped (a row already exists in any state per the partial unique index). */
+  suggestion_id: string | null;
+  /** Score in [0, 100] from computeRiskScore. NULL when no match (so no suggestion was attempted) OR when the suggestion existed already and was skipped. */
+  match_score: number | null;
+  /** Domain assigned by routing (Vendor Risk / AI Governance / Vulnerability / etc.). */
+  domain: string;
+  /** Which matcher branch fired. 'no_match' when neither vendor nor ai_system matched. */
+  matched_branch: "vendor_name_ilike" | "ai_system_name_ilike" | "no_match";
 };
 
 // ---------------------------------------------------------------------------
@@ -114,46 +142,107 @@ function resolveSignalDomain(
 }
 
 // ---------------------------------------------------------------------------
-// processSignal
+// runMatcherForSignal
 // ---------------------------------------------------------------------------
 
 /**
- * Run the full processing pipeline for a newly ingested (unprocessed) signal.
+ * Run the matcher-only pipeline for a (signal, org) pair.
  *
- * This function is called after the signal row has been committed. It opens
- * its own DB connection and runs vendor matching, finding creation, signal
- * update, risk exposure flagging, and posture snapshot in a single transaction
- * (except the posture snapshot, which is committed separately and is non-fatal
- * if it fails).
+ * Phases 1-3 of the historical processSignal pipeline:
+ *   1. Vendor ILIKE match  (org-scoped)
+ *   2. AI system ILIKE match (org-scoped, only if no vendor match)
+ *   3a. Finding INSERT (preserves existing reader contract — five live
+ *       readers still depend on findings WHERE source_type='cyber_signal'
+ *       per package 3.5 investigation. Dual-write is the steady state
+ *       until reader migration ships separately.)
+ *   3b. Suggestion INSERT into signal_match_suggestions, with match_score
+ *       computed at write time via computeRiskScore using the org's
+ *       weights (DEFAULT_WEIGHTS fallback when no row), and match_metadata
+ *       populated with { source, matched_branch, matched_string } for
+ *       queue UI display.
  *
- * @param signal  The fully committed cyber_signals row.
- * @returns       A ProcessingResult describing every side effect applied.
+ * SHARED IMPLEMENTATION (do not duplicate)
+ * ----------------------------------------
+ * processSignal calls into this function. Worker fan-out
+ * (runPipeline.ts, kevPoller.ts) calls it directly per (signal, org) pair.
+ * The matcher logic exists in exactly one place. Resist any temptation
+ * to inline a "lightweight matcher" elsewhere "for performance" or
+ * "because the worker is different" — code paths converge here so
+ * behavior stays unified and a fix in one place fixes all callers.
+ *
+ * IDEMPOTENCY CONTRACT
+ * --------------------
+ * The suggestion INSERT uses ON CONFLICT against the partial unique
+ * index idx_signal_match_suggestions_unique_pending, which excludes
+ * accepted and dismissed rows. Re-firing the matcher on the same
+ * (org, signal, target) pair when a pending suggestion already exists
+ * is a no-op (DO NOTHING returns 0 rows; suggestion_id is null in the
+ * result). After accept/dismiss, the matcher CAN re-suggest on a
+ * subsequent call — Package 1's deliberate design choice for accidental-
+ * dismissal recovery and weight-change re-surfacing.
+ *
+ * Note: the findings INSERT today has no ON CONFLICT guard. Re-firing
+ * the matcher on the same signal produces duplicate findings rows.
+ * Pre-existing bug surfaced in Package 3.5 investigation; deferred to
+ * a separate small package per the audit doc §7. Worker fan-out's
+ * per-cycle ingestion does not increase risk because dedup_hash on
+ * cyber_signals blocks signal repeats.
+ *
+ * TRANSACTION OWNERSHIP
+ * ---------------------
+ * Optional `client` parameter. When provided (typically by processSignal
+ * which has its own BEGIN/COMMIT spanning phases 1-5), this function
+ * uses the caller's client and does NOT issue BEGIN/COMMIT — the
+ * matcher writes are atomic with the caller's surrounding work.
+ * When omitted (typically by worker fan-out), this function opens its
+ * own connection and tx for matcher-only writes.
+ *
+ * @param signal The fully committed cyber_signals row to match against.
+ * @param orgId  The organization to match for. Must be a valid org id;
+ *               for global signals the worker fan-out passes each active
+ *               org's id in turn.
+ * @param externalClient Optional pg client to use; if provided, the caller
+ *                       owns the BEGIN/COMMIT and rollback semantics.
+ * @returns A MatcherResult describing the match outcome.
  */
-export async function processSignal(
-  signal: CyberSignalRecord
-): Promise<ProcessingResult> {
-  const { id: signalId, organization_id: orgId, signal_type: signalType, severity } = signal;
+export async function runMatcherForSignal(
+  signal: CyberSignalRecord,
+  orgId: string,
+  externalClient?: PoolClient
+): Promise<MatcherResult> {
+  const { id: signalId, signal_type: signalType, severity } = signal;
+
+  const ownsTransaction = externalClient === undefined;
+  const client: PoolClient = externalClient ?? (await pg.connect());
 
   let matchedVendorId: string | null = null;
   let matchedVendorName: string | null = null;
+  let matchedVendorCriticality: string | null = null;
   let matchedAiSystemId: string | null = null;
   let matchedAiSystemName: string | null = null;
+  let matchedAiSystemCriticality: string | null = null;
   let createdFinding: Record<string, unknown> | null = null;
-  let risksUpdated = 0;
-
-  const client = await pg.connect();
+  let suggestionId: string | null = null;
+  let matchScore: number | null = null;
+  let matchedBranch: MatcherResult["matched_branch"] = "no_match";
 
   try {
-    await client.query("BEGIN");
+    if (ownsTransaction) await client.query("BEGIN");
 
     // ---------------------------------------------------------------
-    // 1. Vendor matching — active vendors only, case-insensitive name
+    // 1. Vendor matching — active vendors only, case-insensitive name.
+    //    Selects criticality so phase 3b can compute the score in a
+    //    single read per match (no extra round-trip).
     // ---------------------------------------------------------------
 
     if (signal.affected_vendor !== null) {
-      const vendorResult = await client.query<{ id: string; name: string }>(
+      const vendorResult = await client.query<{
+        id: string;
+        name: string;
+        criticality: string | null;
+      }>(
         `
-        SELECT id, name
+        SELECT id, name, criticality
         FROM vendors
         WHERE organization_id = $1
           AND status = 'active'
@@ -164,18 +253,25 @@ export async function processSignal(
       );
 
       if ((vendorResult.rowCount ?? 0) > 0) {
-        matchedVendorId = vendorResult.rows[0]!.id;
-        matchedVendorName = vendorResult.rows[0]!.name;
+        const row = vendorResult.rows[0]!;
+        matchedVendorId = row.id;
+        matchedVendorName = row.name;
+        matchedVendorCriticality = row.criticality;
+        matchedBranch = "vendor_name_ilike";
       }
 
       // ---------------------------------------------------------------
-      // 2. AI system matching — if no vendor match, try ai_systems
+      // 2. AI system matching — only if no vendor match.
       // ---------------------------------------------------------------
 
       if (matchedVendorId === null) {
-        const aiResult = await client.query<{ id: string; name: string }>(
+        const aiResult = await client.query<{
+          id: string;
+          name: string;
+          criticality: string | null;
+        }>(
           `
-          SELECT id, name
+          SELECT id, name, criticality
           FROM ai_systems
           WHERE organization_id = $1
             AND name ILIKE $2
@@ -185,8 +281,11 @@ export async function processSignal(
         );
 
         if ((aiResult.rowCount ?? 0) > 0) {
-          matchedAiSystemId = aiResult.rows[0]!.id;
-          matchedAiSystemName = aiResult.rows[0]!.name;
+          const row = aiResult.rows[0]!;
+          matchedAiSystemId = row.id;
+          matchedAiSystemName = row.name;
+          matchedAiSystemCriticality = row.criticality;
+          matchedBranch = "ai_system_name_ilike";
         }
       }
     }
@@ -196,7 +295,9 @@ export async function processSignal(
     const domain = resolveSignalDomain(signalType, hasVendorMatch, hasAiMatch);
 
     // ---------------------------------------------------------------
-    // 3. Finding creation — only when a platform entity is matched
+    // 3a. Finding creation — only when a platform entity is matched.
+    //     Dual-write with the suggestion INSERT below; preserved for
+    //     reader compatibility (dashboard, recent-signals UI, posture).
     // ---------------------------------------------------------------
 
     if (hasVendorMatch || hasAiMatch) {
@@ -256,10 +357,218 @@ export async function processSignal(
       );
 
       createdFinding = findingResult.rows[0] ?? null;
+
+      // ---------------------------------------------------------------
+      // 3b. Suggestion INSERT + score compute.
+      //     Reads org weights (DEFAULT_WEIGHTS fallback), computes the
+      //     score, and INSERTs into signal_match_suggestions with
+      //     ON CONFLICT against the partial unique index. Conflict =
+      //     pending suggestion already exists; DO NOTHING returns 0
+      //     rows and we leave suggestion_id null in the result.
+      // ---------------------------------------------------------------
+
+      const targetType: "vendor" | "ai_system" = hasVendorMatch
+        ? "vendor"
+        : "ai_system";
+      const targetId = (hasVendorMatch ? matchedVendorId : matchedAiSystemId)!;
+      const targetCriticality = hasVendorMatch
+        ? matchedVendorCriticality
+        : matchedAiSystemCriticality;
+      const matchedString = signal.affected_vendor;
+
+      const weightsResult = await client.query<{
+        entity_criticality_weights: RiskScoringWeights["entity_criticality_weights"];
+        obligation_priority_weights: RiskScoringWeights["obligation_priority_weights"];
+        severity_weights: RiskScoringWeights["severity_weights"];
+      }>(
+        `SELECT entity_criticality_weights, obligation_priority_weights, severity_weights
+           FROM risk_scoring_weights
+          WHERE organization_id = $1
+          LIMIT 1`,
+        [orgId]
+      );
+      const weights: RiskScoringWeights =
+        (weightsResult.rowCount ?? 0) === 0
+          ? DEFAULT_WEIGHTS
+          : {
+              entity_criticality_weights:
+                weightsResult.rows[0]!.entity_criticality_weights,
+              obligation_priority_weights:
+                weightsResult.rows[0]!.obligation_priority_weights,
+              severity_weights: weightsResult.rows[0]!.severity_weights
+            };
+
+      const scoreResult = computeRiskScore({
+        signal: { severity, source: signal.source },
+        entity: {
+          type: targetType,
+          criticality: targetCriticality
+        },
+        weights
+      });
+      matchScore = scoreResult.score;
+
+      const matchMetadata = {
+        source: signal.source,
+        matched_branch: matchedBranch,
+        matched_string: matchedString
+      };
+
+      const suggestionInsert = await client.query<{ id: string }>(
+        `
+        INSERT INTO signal_match_suggestions (
+          organization_id, signal_id, target_type, target_id,
+          match_reason, match_score, match_metadata
+        )
+        VALUES ($1, $2::uuid, $3, $4::uuid, $5, $6, $7::jsonb)
+        ON CONFLICT (organization_id, signal_id, target_type, target_id)
+          WHERE accepted_at IS NULL AND dismissed_at IS NULL
+          DO NOTHING
+        RETURNING id
+        `,
+        [
+          orgId,
+          signalId,
+          targetType,
+          targetId,
+          matchedBranch,
+          matchScore,
+          JSON.stringify(matchMetadata)
+        ]
+      );
+
+      if ((suggestionInsert.rowCount ?? 0) > 0) {
+        suggestionId = suggestionInsert.rows[0]!.id;
+      } else {
+        // ON CONFLICT fired — pending suggestion already exists.
+        // Score not refreshed (recompute endpoint exists for that).
+        // Surface as null suggestion_id; matcher is idempotent.
+        matchScore = null;
+      }
     }
+
+    if (ownsTransaction) await client.query("COMMIT");
+
+    logger.info(
+      {
+        event: "matcher_run_for_signal",
+        orgId,
+        signalId,
+        matchedVendorId,
+        matchedAiSystemId,
+        matchedBranch,
+        findingId: createdFinding !== null ? (createdFinding.id as string) : null,
+        suggestionId,
+        matchScore,
+        domain
+      },
+      "Matcher run for signal"
+    );
+
+    return {
+      matched_vendor_id: matchedVendorId,
+      matched_ai_system_id: matchedAiSystemId,
+      finding: createdFinding,
+      suggestion_id: suggestionId,
+      match_score: matchScore,
+      domain,
+      matched_branch: matchedBranch
+    };
+  } catch (err) {
+    if (ownsTransaction) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // ignore rollback error
+      }
+    }
+    // When we don't own the tx, the caller's catch handles ROLLBACK.
+    // Either way, propagate so the caller can decide policy.
+    throw err;
+  } finally {
+    if (ownsTransaction) client.release();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// processSignal
+// ---------------------------------------------------------------------------
+
+/**
+ * Run the full processing pipeline for a newly ingested (unprocessed) signal.
+ *
+ * Calls runMatcherForSignal for phases 1-3 (matcher + dual-write of finding
+ * and suggestion), then layers phases 4-5 (signal-row update, risk exposure
+ * flagging) inside the same transaction. Phase 6 (posture snapshot) runs
+ * in a separate tx after the main one commits and is non-fatal.
+ *
+ * GLOBAL-SIGNAL EDGE CASE
+ * -----------------------
+ * When the source signal has organization_id IS NULL, this function
+ * short-circuits before phase 4. Global signals fan out to N orgs (via
+ * the worker path's per-org runMatcherForSignal calls); they have no
+ * single linked finding, no single org's posture to recompute, and no
+ * single org's risks to flag. Phases 4-6 do not apply.
+ *
+ * The invariant being enforced is row-based, not caller-based: any
+ * caller passing a row with org_id IS NULL gets the same skip semantics.
+ * If a future API path posts a global signal directly, the invariant
+ * holds without modification.
+ *
+ * @param signal  The fully committed cyber_signals row.
+ * @returns       A ProcessingResult describing every side effect applied.
+ */
+export async function processSignal(
+  signal: CyberSignalRecord
+): Promise<ProcessingResult> {
+  const { id: signalId, organization_id: orgId, signal_type: _signalType } = signal;
+
+  let matcherResult: MatcherResult | null = null;
+  let risksUpdated = 0;
+
+  // Global signals: matcher does not apply at the processSignal level.
+  // The worker fan-out is responsible for per-org matching of global
+  // signals; processSignal's phases 4-6 are org-scoped and would error
+  // or produce nonsense if executed against org_id IS NULL.
+  if (orgId === null) {
+    logger.info(
+      { event: "process_signal_global_skipped", signalId },
+      "processSignal called on global signal (org_id IS NULL); phases 4-6 do not apply"
+    );
+    return {
+      finding: null,
+      matched_vendor_id: null,
+      matched_ai_system_id: null,
+      risks_flagged: 0,
+      posture_recalculated: false
+    };
+  }
+
+  const client = await pg.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    // Phases 1-3: matcher + finding + suggestion. Shared client so
+    // the writes are atomic with phases 4-5 below.
+    matcherResult = await runMatcherForSignal(signal, orgId, client);
+
+    const createdFinding = matcherResult.finding;
+    const domain = matcherResult.domain;
 
     // ---------------------------------------------------------------
     // 4. Update signal: linked_finding_id + processed = true
+    //
+    //    NOTE on the linked_finding_id skip invariant: this column
+    //    only makes sense for org-scoped signals (one signal, one
+    //    org, one finding). For global signals (org_id IS NULL on
+    //    the source row) the invariant is "no single linked
+    //    finding" — N orgs can each produce their own finding via
+    //    the worker fan-out, and there is no canonical winner. The
+    //    short-circuit at the top of processSignal enforces this:
+    //    we only reach this UPDATE for org-scoped signals. The
+    //    invariant is row-based, not caller-based, so any future
+    //    path through processSignal honors the same skip.
     // ---------------------------------------------------------------
 
     await client.query(
@@ -308,9 +617,11 @@ export async function processSignal(
         event: "cyber_signal_processed",
         orgId,
         signalId,
-        matchedVendorId,
-        matchedAiSystemId,
+        matchedVendorId: matcherResult.matched_vendor_id,
+        matchedAiSystemId: matcherResult.matched_ai_system_id,
         findingId: createdFinding !== null ? (createdFinding.id as string) : null,
+        suggestionId: matcherResult.suggestion_id,
+        matchScore: matcherResult.match_score,
         domain,
         risksUpdated
       },
@@ -348,6 +659,7 @@ export async function processSignal(
   // ---------------------------------------------------------------
 
   let postureRecalculated = false;
+  const createdFinding = matcherResult?.finding ?? null;
 
   if (createdFinding !== null) {
     try {
@@ -368,8 +680,8 @@ export async function processSignal(
 
   return {
     finding: createdFinding,
-    matched_vendor_id: matchedVendorId,
-    matched_ai_system_id: matchedAiSystemId,
+    matched_vendor_id: matcherResult?.matched_vendor_id ?? null,
+    matched_ai_system_id: matcherResult?.matched_ai_system_id ?? null,
     risks_flagged: risksUpdated,
     posture_recalculated: postureRecalculated
   };
