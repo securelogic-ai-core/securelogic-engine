@@ -38,6 +38,10 @@ import { fetchCisaKevSignals } from "../../../src/api/lib/cisaKevAdapter.js";
 import { normalizeSignal } from "../../../src/api/lib/cyberSignalNormalizer.js";
 import { pg } from "../../../src/api/infra/postgres.js";
 import { logger } from "../../../src/api/infra/logger.js";
+import {
+  runMatcherForSignal,
+  type CyberSignalRecord
+} from "../../../src/api/lib/cyberSignalProcessingService.js";
 
 /**
  * Run a single KEV poll cycle.
@@ -72,12 +76,13 @@ export async function runKevPoll(): Promise<void> {
 
     let inserted = 0;
     let skipped = 0;
+    const insertedSignals: CyberSignalRecord[] = [];
 
     for (const signal of signals) {
       const normalized = normalizeSignal(signal);
 
       try {
-        const result = await pg.query(
+        const result = await pg.query<{ id: string }>(
           `INSERT INTO cyber_signals (
              organization_id,
              source,
@@ -112,6 +117,21 @@ export async function runKevPoll(): Promise<void> {
 
         if (result.rows.length > 0) {
           inserted++;
+          // Build the CyberSignalRecord shape for the matcher fan-out.
+          // organization_id is the empty-string sentinel because the row
+          // is global (NULL) — runMatcherForSignal takes orgId
+          // separately during fan-out, so the record's org_id field
+          // is unused on that path.
+          insertedSignals.push({
+            id: result.rows[0]!.id,
+            organization_id: "",
+            source: normalized.source,
+            signal_type: normalized.signal_type,
+            severity: normalized.severity,
+            normalized_summary: normalized.normalized_summary,
+            affected_vendor: normalized.affected_vendor,
+            affected_cve: normalized.affected_cve
+          });
         } else {
           skipped++;
         }
@@ -138,6 +158,13 @@ export async function runKevPoll(): Promise<void> {
       },
       "KEV poll completed"
     );
+
+    // Fan out the matcher to every active org for each newly-inserted
+    // KEV signal. Closes the worker→matcher gap (audit doc §6 / §7).
+    // Errors are logged per-pair and swallowed; never propagate.
+    if (insertedSignals.length > 0) {
+      await fanOutKevMatcher(insertedSignals);
+    }
   } catch (err) {
     logger.warn(
       {
@@ -148,4 +175,83 @@ export async function runKevPoll(): Promise<void> {
       "KEV poll failed — error swallowed, next tick will retry"
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// fanOutKevMatcher
+//
+// Mirrors the runPipeline.ts fan-out: query active orgs once, iterate
+// (signal, org) pairs with per-pair try/catch, log aggregate metrics.
+// Caller has already swallowed broader errors; this function additionally
+// swallows org-query and per-pair failures so KEV polling stays robust.
+// ---------------------------------------------------------------------------
+
+async function fanOutKevMatcher(
+  signals: CyberSignalRecord[]
+): Promise<void> {
+  const start = Date.now();
+  let pairsAttempted = 0;
+  let pairsSucceeded = 0;
+  let pairsFailed = 0;
+  let matchesProduced = 0;
+
+  let activeOrgs: Array<{ id: string }> = [];
+  try {
+    const orgsResult = await pg.query<{ id: string }>(
+      `SELECT id FROM organizations WHERE status = 'active' ORDER BY id`
+    );
+    activeOrgs = orgsResult.rows;
+  } catch (err) {
+    logger.warn(
+      { event: "kev_matcher_fanout_orgs_query_failed", err },
+      "KEV matcher fan-out: active-orgs query failed; skipping fan-out this cycle"
+    );
+    return;
+  }
+
+  if (activeOrgs.length === 0) {
+    logger.info(
+      { event: "kev_matcher_fanout_no_active_orgs", signalCount: signals.length },
+      "KEV matcher fan-out: no active orgs"
+    );
+    return;
+  }
+
+  for (const signal of signals) {
+    for (const org of activeOrgs) {
+      pairsAttempted++;
+      try {
+        const result = await runMatcherForSignal(signal, org.id);
+        pairsSucceeded++;
+        if (result.matched_branch !== "no_match") {
+          matchesProduced++;
+        }
+      } catch (err) {
+        pairsFailed++;
+        logger.warn(
+          {
+            event: "kev_matcher_fanout_pair_failed",
+            orgId: org.id,
+            signalId: signal.id,
+            err
+          },
+          "KEV matcher fan-out pair failed; continuing with remaining pairs"
+        );
+      }
+    }
+  }
+
+  logger.info(
+    {
+      event: "kev_matcher_fanout_complete",
+      signalCount: signals.length,
+      activeOrgCount: activeOrgs.length,
+      pairsAttempted,
+      pairsSucceeded,
+      pairsFailed,
+      matchesProduced,
+      elapsedMs: Date.now() - start
+    },
+    `KEV matcher fan-out complete — ${pairsSucceeded}/${pairsAttempted} pairs succeeded, ${matchesProduced} matches produced`
+  );
 }

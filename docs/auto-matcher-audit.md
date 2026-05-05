@@ -222,7 +222,36 @@ This document closes as an investigation. The matcher is understood, its quality
 
 ---
 
+## §7 Resolution — package matcher-rewire-and-worker-coverage
+
+The architectural item from §6 ("the worker pipeline does not invoke `processSignal()`") is **resolved** by package 3.5 (matcher-rewire-and-worker-coverage). Summary of what changed:
+
+- **`runMatcherForSignal(signal, orgId, client?)`** — extracted from the body of the historical `processSignal`. Covers phases 1-3 only: vendor / ai_system ILIKE matching, finding INSERT (dual-write), suggestion INSERT into `signal_match_suggestions` with `match_score` populated by `computeRiskScore` and `match_metadata` populated with `{ source, matched_branch, matched_string }`. Optional `client` parameter lets callers share a transaction; `processSignal` passes its own client so phases 1-3 are atomic with phases 4-5.
+- **`processSignal` is now a thin wrapper** — calls `runMatcherForSignal` with a shared client, then layers phases 4-5 (signal-row update, risk exposure flagging) inside the same transaction. Phase 6 (posture snapshot) remains a separate post-commit operation as before. For source signals with `organization_id IS NULL`, `processSignal` short-circuits before phase 4 — global signals fan out to N orgs and have no single linked finding to update. The invariant is row-based, not caller-based.
+- **Worker fan-out** — `runPipeline.ts` and `kevPoller.ts` both query active orgs (`SELECT id FROM organizations WHERE status = 'active' ORDER BY id`) once per cycle, then iterate every (signal, org) pair through `runMatcherForSignal`. Per-pair `try/catch` isolates failures so one broken pair never aborts the cycle. Aggregate metrics (`pairsAttempted`, `pairsSucceeded`, `pairsFailed`, `matchesProduced`, `elapsedMs`) logged at end of cycle for observability.
+- **Dual-write invariant** — the matcher continues to write findings rows (`source_type='cyber_signal'`) for backward compatibility with five live readers (`routes/cyberSignals.ts:505`, `routes/intelligence.ts:592` and `:670`, dashboard top-risks, posture computation). A future package will migrate readers to suggestions and let findings creation be removed; until then, dual-write is the steady state.
+
+### Correction to §1 / §2 claim ("matcher is reachable only from the API path")
+
+The original audit claim was incorrect. The matcher is reachable from **three** paths today:
+
+1. **API ingest** — `routes/cyberSignals.ts` (POST `/api/cyber-signals` plus six `/fetch/<source>` routes plus the reprocess route). 11 call sites total.
+2. **`briefScheduler.runScheduler`** — `lib/briefScheduler.ts:178` invokes `processSignal` per-org per-signal during the daily Intelligence Brief pipeline. This existed throughout the audit window and was not surfaced because the audit conflated "worker" (which had two definitions: the cron-based `intelligence-worker` service and the API-layer `briefScheduler`).
+3. **Worker fan-out** — `services/intelligence-worker/src/pipeline/runPipeline.ts` and `kevPoller.ts`, after this package. Operates on global signals (`organization_id IS NULL`); fans out to all `organizations.status='active'` orgs.
+
+### Side-finding (parked, deferred to a separate package)
+
+`processSignal`'s findings INSERT (`cyberSignalProcessingService.ts:217-256`) has no `ON CONFLICT` guard. Re-running `processSignal` on the same signal produces duplicate findings rows. The reprocess endpoint comment at `cyberSignals.ts:1701-1703` claims dedup ("checks for an existing finding... and skips creation if one already exists") but the code does not implement it. Pre-existing bug, surfaced in package 3.5 investigation, deferred to a separate small package. Worker fan-out's per-cycle ingestion does **not** increase risk because `dedup_hash` partial-unique on `cyber_signals` blocks signal repeats — re-firing requires the user to call the reprocess endpoint manually.
+
+### `match_score` column type fix (predecessor commit `fad02414`)
+
+Package 1's migration declared `match_score NUMERIC(4,3)` (max value `9.999`), intending a 0..1 confidence. Package 3's `computeRiskScore` returns an integer in `[0, 100]`. The mismatch was silent because no INSERT writer existed yet — package 3.5's matcher rewire would have been the first writer. The latent bug was fixed in commit `fad02414` (schema-fix-match-score-and-metadata) before package 3.5 proper, widening to `INTEGER` with `CHECK (match_score IS NULL OR match_score BETWEEN 0 AND 100)` and adding the `match_metadata JSONB` column the rewire populates.
+
+---
+
 ## 1. What the matcher actually does
+
+> **Note:** claims about matcher call sites in §1 and §2 below were subsequently corrected in §7. Read §7 first if scope is what matters.
 
 ### 1.1 Algorithm
 

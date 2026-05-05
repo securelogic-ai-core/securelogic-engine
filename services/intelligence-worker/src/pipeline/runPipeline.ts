@@ -31,6 +31,10 @@ import {
 import { sendNewsletter } from "../delivery/sendNewsletter.js";
 import { logger } from "../../../../src/api/infra/logger.js";
 import { pg } from "../../../../src/api/infra/postgres.js";
+import {
+  runMatcherForSignal,
+  type CyberSignalRecord
+} from "../../../../src/api/lib/cyberSignalProcessingService.js";
 
 export type PipelineResult = {
   signals: number;
@@ -84,9 +88,10 @@ type BridgeableSignal = {
 
 async function bridgeSignalsToCyberSignals(
   signals: BridgeableSignal[]
-): Promise<{ bridged: number; skipped: number }> {
+): Promise<{ bridged: number; skipped: number; insertedSignals: CyberSignalRecord[] }> {
   let bridged = 0;
   let skipped = 0;
+  const insertedSignals: CyberSignalRecord[] = [];
 
   for (const signal of signals) {
     const signalType = mapCategoryToSignalType(signal.category);
@@ -99,7 +104,7 @@ async function bridgeSignalsToCyberSignals(
     const normalizedSummary = signal.summary.slice(0, 2000) || signal.title;
 
     try {
-      const result = await pg.query(
+      const result = await pg.query<{ id: string }>(
         `INSERT INTO cyber_signals (
           organization_id,
           source,
@@ -133,6 +138,22 @@ async function bridgeSignalsToCyberSignals(
 
       if (result.rows.length > 0) {
         bridged++;
+        // Build the CyberSignalRecord shape from the data we have
+        // in scope. organization_id is "" sentinel because the row
+        // is global (NULL) — runMatcherForSignal takes orgId
+        // separately during fan-out, so the record's org_id field
+        // is unused on that path. We use empty string rather than
+        // null to keep the type non-nullable.
+        insertedSignals.push({
+          id: result.rows[0]!.id,
+          organization_id: "",
+          source: signal.source,
+          signal_type: signalType,
+          severity,
+          normalized_summary: normalizedSummary,
+          affected_vendor: signal.affectedVendor,
+          affected_cve: signal.affectedCve
+        });
       } else {
         skipped++;
       }
@@ -155,7 +176,127 @@ async function bridgeSignalsToCyberSignals(
     `Bridge complete — ${bridged} bridged, ${skipped} skipped as duplicates`
   );
 
-  return { bridged, skipped };
+  return { bridged, skipped, insertedSignals };
+}
+
+// ---------------------------------------------------------------------------
+// fanOutMatcherToActiveOrgs
+//
+// For each newly-inserted global signal, run the matcher against every
+// active org. Per-(signal, org) try/catch isolates failures — one broken
+// pair must not block the rest of the batch. The active-orgs query runs
+// once per cycle and is reused across all signals.
+//
+// Closes the worker→matcher gap identified in docs/auto-matcher-audit.md
+// §6: prior to this, global signals were stored but never matched against
+// any org's inventory.
+// ---------------------------------------------------------------------------
+
+async function fanOutMatcherToActiveOrgs(
+  signals: CyberSignalRecord[]
+): Promise<{
+  pairsAttempted: number;
+  pairsSucceeded: number;
+  pairsFailed: number;
+  matchesProduced: number;
+  elapsedMs: number;
+}> {
+  const start = Date.now();
+  let pairsAttempted = 0;
+  let pairsSucceeded = 0;
+  let pairsFailed = 0;
+  let matchesProduced = 0;
+
+  if (signals.length === 0) {
+    return {
+      pairsAttempted: 0,
+      pairsSucceeded: 0,
+      pairsFailed: 0,
+      matchesProduced: 0,
+      elapsedMs: 0
+    };
+  }
+
+  let activeOrgs: Array<{ id: string }> = [];
+  try {
+    const orgsResult = await pg.query<{ id: string }>(
+      `SELECT id FROM organizations WHERE status = 'active' ORDER BY id`
+    );
+    activeOrgs = orgsResult.rows;
+  } catch (err) {
+    logger.error(
+      { event: "matcher_fanout_orgs_query_failed", err },
+      "Active-orgs query failed; matcher fan-out skipped this cycle"
+    );
+    return {
+      pairsAttempted: 0,
+      pairsSucceeded: 0,
+      pairsFailed: 0,
+      matchesProduced: 0,
+      elapsedMs: Date.now() - start
+    };
+  }
+
+  if (activeOrgs.length === 0) {
+    logger.info(
+      { event: "matcher_fanout_no_active_orgs", signalCount: signals.length },
+      "No active orgs; matcher fan-out is a no-op"
+    );
+    return {
+      pairsAttempted: 0,
+      pairsSucceeded: 0,
+      pairsFailed: 0,
+      matchesProduced: 0,
+      elapsedMs: Date.now() - start
+    };
+  }
+
+  for (const signal of signals) {
+    for (const org of activeOrgs) {
+      pairsAttempted++;
+      try {
+        const result = await runMatcherForSignal(signal, org.id);
+        pairsSucceeded++;
+        if (result.matched_branch !== "no_match") {
+          matchesProduced++;
+        }
+      } catch (err) {
+        pairsFailed++;
+        logger.warn(
+          {
+            event: "matcher_fanout_pair_failed",
+            orgId: org.id,
+            signalId: signal.id,
+            err
+          },
+          "Matcher fan-out pair failed; continuing with remaining pairs"
+        );
+      }
+    }
+  }
+
+  const elapsedMs = Date.now() - start;
+  logger.info(
+    {
+      event: "matcher_fanout_complete",
+      signalCount: signals.length,
+      activeOrgCount: activeOrgs.length,
+      pairsAttempted,
+      pairsSucceeded,
+      pairsFailed,
+      matchesProduced,
+      elapsedMs
+    },
+    `Matcher fan-out complete — ${pairsSucceeded}/${pairsAttempted} pairs succeeded, ${matchesProduced} matches produced in ${elapsedMs}ms`
+  );
+
+  return {
+    pairsAttempted,
+    pairsSucceeded,
+    pairsFailed,
+    matchesProduced,
+    elapsedMs
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -353,9 +494,19 @@ export async function runPipeline(): Promise<PipelineResult> {
     );
   }
 
-  // Bridge ingested signals to cyber_signals for the Intelligence Brief pipeline.
+  // Bridge ingested signals to cyber_signals for the Intelligence Brief pipeline,
+  // then fan out the matcher to every active org for each newly-inserted signal.
+  // Closes the worker→matcher gap (audit doc §6 / §7).
   try {
-    await bridgeSignalsToCyberSignals(bridgeableSignals);
+    const bridgeResult = await bridgeSignalsToCyberSignals(bridgeableSignals);
+    try {
+      await fanOutMatcherToActiveOrgs(bridgeResult.insertedSignals);
+    } catch (err) {
+      logger.error(
+        { event: "matcher_fanout_unexpected_error", err },
+        "Matcher fan-out raised unexpectedly; continuing pipeline"
+      );
+    }
   } catch (err) {
     logger.error({ event: "cyber_signal_bridge_error", err }, "cyber_signals bridge failed");
   }
