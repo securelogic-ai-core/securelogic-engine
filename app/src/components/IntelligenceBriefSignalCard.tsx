@@ -12,7 +12,7 @@ interface IntelligenceBriefSignalCardProps {
 // ---------------------------------------------------------------------------
 
 const URGENCY_BAND_BG: Record<IntelligenceBriefUrgency, string> = {
-  immediate: "bg-red-600",
+  immediate: "bg-rose-800",
   near_term: "bg-orange-500",
   far_term: "bg-slate-700",
 };
@@ -108,7 +108,7 @@ export function IntelligenceBriefSignalCard({
       className={`border border-slate-700 border-l-4 ${relevanceBorderClass(item.relevance)} rounded-xl overflow-hidden shadow-sm`}
     >
       {/* Priority band */}
-      <div className={`${bandBg} px-5 py-2.5 flex items-center justify-between gap-3`}>
+      <div className={`${bandBg} px-5 py-[9px] flex items-center gap-3`}>
         <div className="flex items-center gap-2.5 min-w-0">
           <span className="text-xs font-bold text-white uppercase tracking-widest flex-shrink-0">
             {bandLabel}
@@ -118,9 +118,6 @@ export function IntelligenceBriefSignalCard({
             {categoryLabel(item.category)}
           </span>
         </div>
-        <span className="text-xs font-semibold text-white/50 uppercase tracking-widest flex-shrink-0">
-          #{index + 1}
-        </span>
       </div>
 
       {/* Body */}
@@ -139,11 +136,11 @@ export function IntelligenceBriefSignalCard({
         </div>
 
         {action && (
-          <div className="mb-4 bg-teal-50 rounded-lg p-4 border border-teal-100">
-            <p className="text-xs font-bold text-teal-700 uppercase tracking-wide mb-1.5">
+          <div className="mb-4 bg-slate-700/40 rounded-lg p-4 border border-slate-700/50">
+            <p className="text-xs font-bold text-teal-300 uppercase tracking-wide mb-1.5">
               Action
             </p>
-            <p className="text-sm text-slate-800 leading-relaxed font-medium">
+            <p className="text-sm text-slate-200 leading-relaxed font-medium">
               {action}
             </p>
           </div>

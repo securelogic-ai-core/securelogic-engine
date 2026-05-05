@@ -31,6 +31,8 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { logger } from "../infra/logger.js";
+import { pg } from "../infra/postgres.js";
+import { parseContentJson } from "./parseBriefContentJson.js";
 import type { BriefItem } from "./intelligenceBriefGenerator.js";
 
 const CLAUDE_MODEL = "claude-sonnet-4-6";
@@ -58,12 +60,28 @@ export type BriefSynthesis = {
    */
   teaser: string | null;
   /**
-   * Three-sentence directive paragraph (60–110 words). Sentence 1 is the
-   * most urgent action with a specific deadline. Sentence 2 names who is
-   * exposed and ends on a verb that role can take this week. Sentence 3
-   * is the instruction set for this week. Null on failure.
+   * 3-to-5 sentence executive summary (80–150 words). Names the headline
+   * event(s) of THIS week, names who is affected, and calibrates against
+   * the prior brief. Description, not action prescription — deadlines and
+   * imperative verbs live on the per-item cards. Null on failure.
    */
   exec_summary: string | null;
+};
+
+/**
+ * Context from the org's most-recent prior published brief, used by the
+ * exec summary prompt to write the week-on-week calibration sentence.
+ *
+ * Threaded through enrichBriefSynthesis → generateExecSummary →
+ * buildExecSummaryUserPrompt. When null, the prompt drops the calibration
+ * sentence and produces a 3-sentence summary instead of 3-5.
+ */
+export type PriorBriefContext = {
+  period_end: string;
+  headline: string | null;
+  exec_summary: string | null;
+  urgency_mix: { immediate: number; near_term: number; far_term: number };
+  category_mix: Record<string, number>;
 };
 
 // ---------------------------------------------------------------------------
@@ -76,6 +94,102 @@ function extractText(message: { content: Array<{ type: string; text?: string }> 
     .map((c) => (c as { type: "text"; text: string }).text)
     .join("")
     .trim();
+}
+
+// ---------------------------------------------------------------------------
+// fetchPriorBriefContext  (I/O — single DB query)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the org's most-recent published brief (excluding `currentBriefId`)
+ * and project it into the shape the exec summary prompt needs.
+ *
+ * Returns null when:
+ *   - no prior published brief exists for this org (first brief case),
+ *   - the prior brief's content_json fails to decrypt or parse,
+ *   - the prior brief's content_json doesn't carry a categories array.
+ *
+ * Both values are queried via parseContentJson, which transparently handles
+ * the encrypted shape (manual route writes) and the plaintext shape
+ * (scheduler writes). Synthesis fields and urgency/category mixes are
+ * derived from content_json itself — no JOIN to intelligence_brief_items
+ * needed.
+ *
+ * Non-fatal: any DB failure logs a warning and returns null so the caller
+ * can still publish the brief (without the calibration sentence).
+ */
+export async function fetchPriorBriefContext(
+  organizationId: string,
+  currentBriefId: string
+): Promise<PriorBriefContext | null> {
+  try {
+    const result = await pg.query<{
+      period_end: string;
+      content_json: unknown;
+    }>(
+      `SELECT period_end, content_json
+       FROM intelligence_briefs
+       WHERE organization_id = $1
+         AND status = 'published'
+         AND id != $2
+       ORDER BY published_at DESC NULLS LAST
+       LIMIT 1`,
+      [organizationId, currentBriefId]
+    );
+
+    const row = result.rows[0];
+    if (!row) return null;
+
+    const content = parseContentJson(row.content_json);
+    if (!content) return null;
+
+    const synthesis =
+      typeof content.synthesis === "object" && content.synthesis !== null
+        ? (content.synthesis as Record<string, unknown>)
+        : {};
+    const headline =
+      typeof synthesis.headline === "string" ? synthesis.headline : null;
+    const exec_summary =
+      typeof synthesis.exec_summary === "string"
+        ? synthesis.exec_summary
+        : null;
+
+    const categories = Array.isArray(content.categories)
+      ? (content.categories as Array<Record<string, unknown>>)
+      : [];
+
+    const urgency_mix = { immediate: 0, near_term: 0, far_term: 0 };
+    const category_mix: Record<string, number> = {};
+
+    for (const group of categories) {
+      const items = Array.isArray(group.items)
+        ? (group.items as Array<Record<string, unknown>>)
+        : [];
+      const cat =
+        typeof group.category === "string" ? group.category : "general";
+      category_mix[cat] = (category_mix[cat] ?? 0) + items.length;
+      for (const item of items) {
+        const u = item.urgency;
+        if (u === "immediate") urgency_mix.immediate++;
+        else if (u === "near_term") urgency_mix.near_term++;
+        else if (u === "far_term") urgency_mix.far_term++;
+      }
+    }
+
+    return {
+      period_end: row.period_end,
+      headline,
+      exec_summary,
+      urgency_mix,
+      category_mix
+    };
+  } catch (err) {
+    logger.warn(
+      { event: "prior_brief_context_fetch_failed", organizationId, err },
+      "Prior brief context fetch failed — synthesis will run without calibration"
+    );
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -214,10 +328,18 @@ export function validateActionGrounding(
 // generateHeadline — single declarative sentence, max 12 words
 // ---------------------------------------------------------------------------
 
-async function generateHeadline(items: BriefItem[]): Promise<string | null> {
+async function generateHeadline(
+  items: BriefItem[],
+  organizationId: string | null = null
+): Promise<string | null> {
   const client = getClient();
   if (!client) return null;
   if (items.length === 0) return null;
+
+  logger.info(
+    { event: "llm_call_start", purpose: "brief_headline", model: CLAUDE_MODEL, organizationId },
+    "LLM call: brief headline"
+  );
 
   const signalLines = items
     .slice(0, 8)
@@ -254,7 +376,7 @@ Return plain text only. One sentence. No trailing period needed.`;
     return text || null;
   } catch (err) {
     logger.warn(
-      { event: "synthesis_headline_failed", err },
+      { event: "synthesis_headline_failed", organizationId, err },
       "Headline generation failed"
     );
     return null;
@@ -265,22 +387,24 @@ Return plain text only. One sentence. No trailing period needed.`;
 // generateExecSummary — single Claude call producing { teaser, exec_summary }
 // ---------------------------------------------------------------------------
 //
-// The prompt below was iterated 5x against the 2026-04-30 staging brief
-// (53-item OT-heavy mix) before integration. Convergence properties at
-// max_tokens=350:
-//   - 3-run total word counts: 110 / 93 / 102 (target 60–110)
-//   - S1 deadlines: business intervals or named days, no bare "now"/"today"
-//   - S2 deadlines: named day, every run
-//   - Avoid-list (magazine voice / observational verbs / generic governance)
-//     held clean across runs
+// Prompt revision: the previous version optimized for "decision compression"
+// and produced output that read like another action item (deadlines in every
+// sentence, imperative verbs at S3). Customer feedback: the exec summary is
+// the thing the reader scrolls past to get to the items, when it should be
+// the thing they read to decide whether to keep reading. The prompt below
+// reframes the task as summary, not action prescription — per-item action
+// and deadlines remain on the signal cards.
 //
-// Do not relax max_tokens or strip per-sentence caps without re-running the
-// driver script (scripts/run-exec-summary-once.mjs) first.
+// Bumped max_tokens 350 → 450 to accommodate up to 5 sentences plus the
+// week-on-week calibration sentence. Temperature pinned at 0.5: the new
+// prompt is lighter on prescription, so a lower temp keeps voice stable.
 
-const EXEC_SUMMARY_SYSTEM_PROMPT =
+export const EXEC_SUMMARY_SYSTEM_PROMPT =
   "You are writing the executive summary for a weekly cyber risk intelligence brief read by CISOs, GRC leaders, and security engineers at mid-to-large enterprises. " +
-  "Your job is decision compression. Every sentence you write must leave the reader with a concrete decision lever in hand. " +
-  "You are writing a memo to a busy operator, not an essay.";
+  "The reader subscribes to this brief; they read the previous one and will read the next one. " +
+  "Your job is summary, not action prescription. Per-item action and deadlines live on the signal cards below — do not duplicate that work here. " +
+  "The executive summary's job is to tell the reader what is in this week's brief, who it affects, and how it differs from last week's. " +
+  "Voice: a senior analyst writing to a CISO who has seen 200 of these. Confident, specific, comparative, restrained. Not breathless, not corporate.";
 
 function trim(text: string | null | undefined, max: number): string {
   if (!text) return "";
@@ -290,7 +414,7 @@ function trim(text: string | null | undefined, max: number): string {
 
 function buildExecSummarySignalLines(items: BriefItem[]): string {
   return items
-    .slice(0, 10)
+    .slice(0, 12)
     .map((item, i) => {
       const urgency = (item.urgency ?? "unclassified").toUpperCase();
       const sev = (item.severity ?? "").toUpperCase();
@@ -324,47 +448,80 @@ function buildExecSummarySignalLines(items: BriefItem[]): string {
     .join("\n");
 }
 
-function buildExecSummaryUserPrompt(signalLines: string): string {
-  return `Below is the prioritized list of signals in this week's brief. Each is already enriched with urgency, why_it_matters, and one recommended action.
+function formatPriorBlock(prior: PriorBriefContext): string {
+  const periodEnd = String(prior.period_end).slice(0, 10);
+  const headlineText = prior.headline ?? "(none)";
+  const execText = prior.exec_summary ?? "(none)";
+  const u = prior.urgency_mix;
+  const catEntries = Object.entries(prior.category_mix).sort(
+    (a, b) => b[1] - a[1]
+  );
+  const catLine =
+    catEntries.length > 0
+      ? catEntries.map(([k, v]) => `${k}: ${v}`).join(", ")
+      : "(none)";
+  return [
+    `LAST WEEK's brief (period ending ${periodEnd}):`,
+    `- headline: "${headlineText}"`,
+    `- exec_summary: "${execText}"`,
+    `- urgency mix: ${u.immediate} immediate, ${u.near_term} near-term, ${u.far_term} far-term`,
+    `- category mix: ${catLine}`
+  ].join("\n");
+}
 
-Signals (top 10, in priority order):
-${signalLines}
+export function buildExecSummaryUserPrompt(
+  signalLines: string,
+  priorContext: PriorBriefContext | null
+): string {
+  const priorBlock = priorContext
+    ? `\n\n${formatPriorBlock(priorContext)}`
+    : "";
+
+  return `Below is the prioritized list of signals in this week's brief, plus context from last week's brief if available. Use this material to write the executive summary that opens this week's brief.
+
+Signals in THIS WEEK's brief (in priority order):
+${signalLines}${priorBlock}
 
 Return JSON only with exactly two fields: teaser, exec_summary.
 
 teaser
-- One sentence. 18–24 words.
+- One sentence. 18-24 words.
 - The dashboard-card hook. Names the central threat THIS BRIEF and the action it forces.
 - Must make a reader who skims past it understand what is at stake and why they should open the brief.
 
 exec_summary
-- Exactly three sentences. STRICT: 60–110 words total. Per-sentence caps: S1 20–30 words, S2 25–35 words, S3 25–40 words. If you would exceed 110 total, cut the CVE list in S1 to three vendors max. Do NOT truncate S3's instruction list — the actions are the deliverable.
-- The "if you read only this paragraph and skipped the rest of the brief, what would you do today?" passage.
-- Sentence 1: the most urgent thing that must happen — name the specific vendor/CVE/regulation, name the action. Must include a specific deadline (named day, calendar date, or business interval like "within 24 hours"). Reject "now", "immediately", "today" as standalone deadlines unless paired with a more specific bound (e.g. "today before market open" is acceptable, "today" alone is not).
-- Sentence 2: names who is specifically exposed (function/role/sector — not "organizations" generically) AND ends on a verb the named role can take, bounded by a specific deadline (named day of the week, calendar date, or business interval like "48 hours" or "before market open"). Acceptable verb shapes: "should pull X by Wednesday", "escalate Y by close of business Friday", "confirm Z within 48 hours". Reject observational verbs that describe state without prescribing action: "owns", "faces", "is exposed to", "must contend with", "is on the table", "is at risk". Reject vague time horizons: "soon", "this period", "in the near term", "going forward". The sentence must leave the named role with a lever they pull on a specific day, not a fact they remember.
-- Sentence 3: the instruction for this week. Must open with an imperative verb. Must leave the reader with a concrete decision lever in hand.
-- DIRECTIVE, not descriptive. Tells the reader what to decide, does not narrate what is happening.
+- 3 to 5 sentences. 80-150 words total.
+- This is a SUMMARY, not the action layer. Action and deadlines belong on the per-item cards. Do not embed deadlines like "by Friday" or "within 48 hours" in the exec summary.
+
+S1 — name the headline event(s) of THIS WEEK in plain language. Reference one or two specific items by vendor, CVE, regulation, or threat actor. No setup ("This week's signals show...", "The security landscape..." — never). If multiple items center on the same theme (e.g., three Cisco vulnerabilities, two regulatory items), say so explicitly — that's the headline. Don't pick one item arbitrarily and bury the cluster. The shape of the brief is itself information; if 8 of 12 items are vulnerabilities, that's the lede.
+
+S2 — name the specific function or sector that owns the dominant exposure this week (not "organizations" generically — name the function: "network engineering teams", "compliance leaders at listed companies", "hospital security teams"). Characterize what that group's working week looks like in light of these items in one sentence. Descriptive, not prescriptive. Do not list actions.
+
+S3 — calibrate against last week. What is different about THIS brief compared to LAST WEEK's? Use the prior brief's data above. Examples of valid calibrations: "the mix shifts hard toward vulnerabilities (8 of 12) vs last week's regulatory-heavy distribution (2 of 12)", "two new threat-actor lineages appear that were absent last week", "patch surface narrows considerably from last week's Cisco-and-Fortinet wave". If no prior brief is available (priorContext absent from the material above), OMIT this sentence and produce a 3-sentence summary from S1, S2, and one closing observation in the spirit of S4 — a notable absence, a comparison to a prior month's pattern, or a single second-order observation. Without prior calibration, the closing sentence becomes mandatory rather than optional.
+
+S4-S5 (optional, only if warranted) — a notable absence, a comparison to a prior month's pattern, or a single second-order observation. Skip these by default. Most weeks do not need them.
 
 HARD AVOID:
-1. Magazine voice — "has moved from X to Y", "the convergence of A and B is no coincidence", "this represents a systemic shift". You are writing a memo, not an essay.
-2. Pattern-claim filler — "this reflects a single underlying exposure", "represents a systemic trust failure", "is not just a patching event".
-3. Setup / throat-clearing — never open with "Industrial control system security has", "This week's signals show", "The security landscape is", or any framing sentence before the directive.
-4. Embedded-clause sprawl — no sentence with three commas. No em-dash mid-clause inside a 30-word run. Plain subject-verb-object.
-5. Generic governance/risk language — never write "organizations should review", "this highlights the importance", "teams should consider", "this underscores".
-6. Descriptive vs directive — every sentence must leave the reader with a concrete decision lever. The third sentence in particular must instruct, not observe. If a sentence could be deleted without changing what the reader does today, it is the wrong sentence.
+1. Magazine voice — "the convergence of X and Y", "this represents a systemic shift", "marks a pivotal moment", "has moved from X to Y".
+2. Setup / throat-clearing — "This week's signals show", "The security landscape", "Industrial control system security has", any framing sentence before the substance.
+3. Generic governance language — "organizations should review", "this highlights the importance", "teams should consider", "this underscores".
+4. False urgency — do not claim this week is unprecedented unless it actually is. Most weeks are not.
+5. Action prescription — no deadlines, no "by Wednesday", no imperative verbs aimed at the reader. The action layer lives on the per-item cards. The summary's job is description, not direction.
+6. Corporate hedging — "may", "could", "potentially". Say what you see.
+7. Embedded-clause sprawl — no sentence with three commas. No em-dash mid-clause inside a 30-word run.
 
 GOOD examples (the shape you are aiming for):
 
-Example A:
+Example A (with prior context — 4 sentences, 109 words):
 {
-  "teaser": "A Rhysida-affiliate hospital ransomware wave is in active triage with a 60-day HHS breach notification clock already running for affected health systems.",
-  "exec_summary": "Confirm whether your hospital network sits in the Rhysida-affiliate ransomware wave by Wednesday — three providers have published incident notices in the past five days and the EHR-tooling vector overlaps with widely used remote-access stacks. Hospital security leaders, IR retainers, and HIPAA privacy officers at regional health systems should pull EHR vendor exposure reports and confirm offline-backup integrity by Friday. Tighten EDR detections for Rhysida loaders this week, freeze elective patient-portal feature releases until the wave clears, and brief your privacy officer on the 60-day notification clock if any system shows compromise indicators."
+  "teaser": "Three of this week's twelve items center on actively-exploited Cisco IOS XE vulnerabilities now on the federal KEV list.",
+  "exec_summary": "Three of this week's twelve items center on actively-exploited Cisco IOS XE vulnerabilities (CVE-2026-XXXX, CVE-2026-YYYY) added to the federal KEV catalog within 48 hours of disclosure. Network engineering teams running internet-exposed IOS XE carry the dominant exposure this week — not the parallel ransomware coverage, which is steady-state. The mix shifts hard toward infrastructure vulnerabilities (8 of 12) compared to last week's breach-heavy distribution (3 of 12), reflecting the late-cycle Cisco patch release. Notably absent: any new SEC enforcement activity after three consecutive weeks of named-CISO actions."
 }
 
-Example B:
+Example B (no prior context — 3 sentences, 76 words):
 {
-  "teaser": "A credential-stuffing wave against a major payments processor has triggered SEC Item 1.05 disclosure clocks at three downstream brokerages this week.",
-  "exec_summary": "Determine materiality on the StackPay credential-stuffing breach by Tuesday — three downstream broker-dealers have filed Item 1.05 8-Ks and the SEC's 4-business-day disclosure window starts the moment your team confirms reasonable belief of material impact. CISOs, in-house counsel, and disclosure committee members at any firm with StackPay-routed payment flows should map customer exposure and escalate the materiality determination to the audit committee by Wednesday. Rotate StackPay API credentials today, force a session reset across all customer accounts that authenticated since March 1, and stage draft 8-K language with counsel before Thursday's market open."
+  "teaser": "The regulatory layer dominates this week: NYDFS amendments take effect November 1 alongside two named-CISO SEC actions.",
+  "exec_summary": "The regulatory layer dominates this week: NYDFS Cybersecurity Regulation amendments take effect November 1 alongside two SEC enforcement actions naming named CISOs. Compliance leaders at financial institutions and listed companies — not just security functions — carry the primary exposure on these items. Vulnerability and threat-actor activity is unusually quiet; the patching backlog is the lower priority this week."
 }
 
 Return JSON only — no surrounding prose, no markdown fences.`;
@@ -374,22 +531,35 @@ Return JSON only — no surrounding prose, no markdown fences.`;
  * Single Claude call producing { teaser, exec_summary }. Returns nulls
  * for both fields on any failure (API key absent, network error, JSON
  * parse error, missing fields). Never throws.
+ *
+ * `priorContext` (when provided) is rendered into the user prompt as a
+ * "LAST WEEK's brief" block so the model can write the week-on-week
+ * calibration sentence (S3). When null, the prompt instructions tell the
+ * model to omit S3 and produce a 3-sentence summary.
  */
 async function generateExecSummary(
-  items: BriefItem[]
+  items: BriefItem[],
+  priorContext: PriorBriefContext | null,
+  organizationId: string | null = null
 ): Promise<{ teaser: string | null; exec_summary: string | null }> {
   const empty = { teaser: null, exec_summary: null };
   const client = getClient();
   if (!client) return empty;
   if (items.length === 0) return empty;
 
+  logger.info(
+    { event: "llm_call_start", purpose: "brief_exec_summary", model: CLAUDE_MODEL, organizationId },
+    "LLM call: brief exec summary"
+  );
+
   const signalLines = buildExecSummarySignalLines(items);
-  const userPrompt = buildExecSummaryUserPrompt(signalLines);
+  const userPrompt = buildExecSummaryUserPrompt(signalLines, priorContext);
 
   try {
     const message = await client.messages.create({
       model: CLAUDE_MODEL,
-      max_tokens: 350,
+      max_tokens: 450,
+      temperature: 0.5,
       system: EXEC_SUMMARY_SYSTEM_PROMPT,
       messages: [{ role: "user", content: userPrompt }]
     });
@@ -420,7 +590,7 @@ async function generateExecSummary(
     return { teaser, exec_summary };
   } catch (err) {
     logger.warn(
-      { event: "synthesis_exec_summary_failed", err },
+      { event: "synthesis_exec_summary_failed", organizationId, err },
       "Exec summary generation failed"
     );
     return empty;
@@ -452,20 +622,26 @@ async function generateExecSummary(
  * @param _activeCategories Distinct category labels present in the items.
  *                          Currently unused; the prompts see the signals
  *                          directly.
+ * @param priorContext      Prior published brief's synthesis + mixes,
+ *                          fetched by callers via fetchPriorBriefContext.
+ *                          When null, the exec summary prompt drops the
+ *                          calibration sentence.
  */
 export async function enrichBriefSynthesis(
   items: BriefItem[],
   _periodStart: string,
   _periodEnd: string,
-  _activeCategories: string[]
+  _activeCategories: string[],
+  priorContext: PriorBriefContext | null,
+  organizationId: string | null = null
 ): Promise<BriefSynthesis> {
   if (items.length === 0) {
     throw new Error("enrichBriefSynthesis: items[] must be non-empty");
   }
 
   const [headline, exec] = await Promise.all([
-    generateHeadline(items),
-    generateExecSummary(items)
+    generateHeadline(items, organizationId),
+    generateExecSummary(items, priorContext, organizationId)
   ]);
 
   return {
@@ -504,9 +680,16 @@ export const synthesisRuntime: {
  * - On any thrown error, logs brief_synthesis_failed and returns null so
  *   the caller can persist the brief with synthesis: null rather than
  *   failing the whole generation.
+ *
+ * `priorContext` is opaque pass-through to enrichBriefSynthesis — callers
+ * fetch it via fetchPriorBriefContext before invoking this wrapper. Pass
+ * null for first-brief-ever cases or when the caller intentionally skips
+ * calibration.
  */
 export async function runSynthesisSafely(
-  items: BriefItem[]
+  items: BriefItem[],
+  priorContext: PriorBriefContext | null,
+  organizationId: string | null = null
 ): Promise<BriefSynthesis | null> {
   if (items.length === 0) return null;
 
@@ -517,11 +700,13 @@ export async function runSynthesisSafely(
       items,
       "",
       "",
-      activeCategories
+      activeCategories,
+      priorContext,
+      organizationId
     );
   } catch (err) {
     logger.warn(
-      { event: "brief_synthesis_failed", err, itemCount: items.length },
+      { event: "brief_synthesis_failed", organizationId, err, itemCount: items.length },
       "Brief-level synthesis failed — proceeding without synthesis"
     );
     return null;

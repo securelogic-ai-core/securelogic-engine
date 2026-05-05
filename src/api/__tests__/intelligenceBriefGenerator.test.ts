@@ -7,6 +7,12 @@ import {
   buildContentJson,
   buildContentMarkdown,
   generateBrief,
+  finalizeBrief,
+  shortlistTopK,
+  capByUrgencyBuckets,
+  BRIEF_MAX_ITEMS,
+  ENRICHMENT_SHORTLIST,
+  URGENCY_BUCKET_TARGETS,
   type CyberSignalForBrief,
   type BriefItem,
   type BriefContentJson
@@ -368,6 +374,139 @@ describe("buildBriefItems — sort order", () => {
 });
 
 // ====================================================================
+// buildBriefItems — CVE de-dup (merge by affected_cve)
+// ====================================================================
+
+describe("buildBriefItems — CVE de-dup", () => {
+  const cveSignal = (
+    id: string,
+    source: string,
+    cve: string | null,
+    severity: string = "Critical",
+    ts: string = "2026-05-01T10:00:00.000Z"
+  ): CyberSignalForBrief => ({
+    id,
+    signal_type: "cve",
+    severity,
+    normalized_summary: `Signal ${id}`,
+    affected_cve: cve,
+    affected_vendor: "Microsoft",
+    source,
+    ingestion_timestamp: ts
+  });
+
+  it("collapses 3 same-CVE rows (KEV, NVD, news) into 1 item with KEV primary", () => {
+    const signals = [
+      cveSignal("a", "nvd", "CVE-2026-1111"),
+      cveSignal("b", "cisa_kev", "CVE-2026-1111"),
+      cveSignal("c", "security_news_bleepingcomputer", "CVE-2026-1111")
+    ];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(1);
+    expect(items[0]!.source_slug).toBe("cisa_kev");
+    expect(items[0]!.cyber_signal_id).toBe("b");
+    expect(items[0]!.corroborating_sources).toEqual([
+      "nvd",
+      "security_news_bleepingcomputer"
+    ]);
+  });
+
+  it("collapses 2 same-CVE rows (NVD, news) into 1 item with NVD primary", () => {
+    const signals = [
+      cveSignal("a", "security_news_krebs", "CVE-2026-2222"),
+      cveSignal("b", "nvd", "CVE-2026-2222")
+    ];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(1);
+    expect(items[0]!.source_slug).toBe("nvd");
+    expect(items[0]!.corroborating_sources).toEqual(["security_news_krebs"]);
+  });
+
+  it("leaves 2 different-CVE rows as 2 items, no corroborating_sources", () => {
+    const signals = [
+      cveSignal("a", "cisa_kev", "CVE-2026-3001"),
+      cveSignal("b", "nvd", "CVE-2026-3002")
+    ];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(2);
+    expect(items[0]!.corroborating_sources).toBeUndefined();
+    expect(items[1]!.corroborating_sources).toBeUndefined();
+  });
+
+  it("leaves a single CVE-less row unchanged with no corroborating_sources", () => {
+    const signals = [cveSignal("a", "rss", null, "Moderate")];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(1);
+    expect(items[0]!.corroborating_sources).toBeUndefined();
+  });
+
+  it("mixed: 3-row group + 2-row group + 1 no-CVE → 3 items", () => {
+    const signals = [
+      cveSignal("a", "cisa_kev", "CVE-2026-4001"),
+      cveSignal("b", "nvd", "CVE-2026-4001"),
+      cveSignal("c", "security_news_bleepingcomputer", "CVE-2026-4001"),
+      cveSignal("d", "nvd", "CVE-2026-4002"),
+      cveSignal("e", "cisa_alerts", "CVE-2026-4002"),
+      cveSignal("f", "rss", null, "Moderate")
+    ];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(3);
+
+    const merged4001 = items.find((i) => i.affected_cve === "CVE-2026-4001")!;
+    expect(merged4001.source_slug).toBe("cisa_kev");
+    expect(merged4001.corroborating_sources).toEqual([
+      "nvd",
+      "security_news_bleepingcomputer"
+    ]);
+
+    const merged4002 = items.find((i) => i.affected_cve === "CVE-2026-4002")!;
+    expect(merged4002.source_slug).toBe("nvd");
+    expect(merged4002.corroborating_sources).toEqual(["cisa_alerts"]);
+  });
+
+  it("groups by uppercase trimmed CVE (case- and whitespace-insensitive)", () => {
+    const signals = [
+      cveSignal("a", "nvd", "cve-2026-5555"),
+      cveSignal("b", "cisa_kev", "  CVE-2026-5555  ")
+    ];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(1);
+    expect(items[0]!.source_slug).toBe("cisa_kev");
+  });
+
+  it("treats whitespace-only CVE as CVE-less (no merge across blanks)", () => {
+    const signals = [
+      cveSignal("a", "rss", "   "),
+      cveSignal("b", "nvd", "   ")
+    ];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(2);
+  });
+
+  it("dedupes corroborating_sources when same source appears twice in a CVE group", () => {
+    const signals = [
+      cveSignal("a", "cisa_kev", "CVE-2026-6666"),
+      cveSignal("b", "nvd", "CVE-2026-6666", "Critical", "2026-05-01T10:00:00.000Z"),
+      cveSignal("c", "nvd", "CVE-2026-6666", "Critical", "2026-05-01T09:00:00.000Z")
+    ];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(1);
+    expect(items[0]!.source_slug).toBe("cisa_kev");
+    expect(items[0]!.corroborating_sources).toEqual(["nvd"]);
+  });
+
+  it("when two highest-priority rows tie, picks the most recent by ingestion_timestamp", () => {
+    const signals = [
+      cveSignal("older", "nvd", "CVE-2026-7777", "Critical", "2026-04-30T08:00:00.000Z"),
+      cveSignal("newer", "nvd", "CVE-2026-7777", "Critical", "2026-05-01T08:00:00.000Z")
+    ];
+    const items = buildBriefItems(signals);
+    expect(items.length).toBe(1);
+    expect(items[0]!.cyber_signal_id).toBe("newer");
+  });
+});
+
+// ====================================================================
 // buildContentJson
 // ====================================================================
 
@@ -620,20 +759,33 @@ describe("buildContentMarkdown — empty brief", () => {
 });
 
 // ====================================================================
-// generateBrief — integration of all pure functions
+// generateBrief + finalizeBrief — integration of all pure functions
+//
+// generateBrief now returns the pre-enrichment shortlist + raw signal_count.
+// finalizeBrief produces content_json/markdown from the post-cap items.
+// These tests exercise both halves end-to-end without going through
+// enrichment (which would require Claude); they assume identity-pass for
+// the cap step (input items retain their urgency or default to near_term).
 // ====================================================================
 
 describe("generateBrief — empty signals", () => {
-  it("returns empty items for no signals", () => {
-    const result = generateBrief([], "2026-04-24T00:00:00.000Z", "2026-05-01T00:00:00.000Z");
-    expect(result.items).toEqual([]);
+  it("returns empty shortlist for no signals", () => {
+    const result = generateBrief([]);
+    expect(result.shortlist).toEqual([]);
     expect(result.signal_count).toBe(0);
-    expect(result.item_count).toBe(0);
   });
 
-  it("content_json has empty categories", () => {
-    const result = generateBrief([], "2026-04-24T00:00:00.000Z", "2026-05-01T00:00:00.000Z");
-    expect(result.content_json.categories).toEqual([]);
+  it("finalizeBrief over empty items has empty categories", () => {
+    const gen = generateBrief([]);
+    const finalized = finalizeBrief(
+      gen.shortlist,
+      "2026-04-24T00:00:00.000Z",
+      "2026-05-01T00:00:00.000Z",
+      gen.signal_count
+    );
+    expect(finalized.items).toEqual([]);
+    expect(finalized.item_count).toBe(0);
+    expect(finalized.content_json.categories).toEqual([]);
   });
 });
 
@@ -671,7 +823,13 @@ describe("generateBrief — field propagation", () => {
     }
   ];
 
-  const result = generateBrief(signals, "2026-04-24T00:00:00.000Z", "2026-05-01T00:00:00.000Z");
+  const gen = generateBrief(signals);
+  const result = finalizeBrief(
+    gen.shortlist,
+    "2026-04-24T00:00:00.000Z",
+    "2026-05-01T00:00:00.000Z",
+    gen.signal_count
+  );
 
   it("signal_count equals input signals length", () => {
     expect(result.signal_count).toBe(3);
@@ -728,7 +886,9 @@ describe("generateBrief — field propagation", () => {
     expect(item.relevance).toBe("low");
   });
 
-  it("high relevance item has lower sort_order than low relevance item", () => {
+  it("Critical CVE item has lower sort_order than Moderate item", () => {
+    // Composite key: severity → has_cve → source → recency. Critical+CVE
+    // beats Moderate+no-CVE on the severity tier.
     const highItem = result.items.find((i) => i.cyber_signal_id === "sig-crit")!;
     const lowItem = result.items.find((i) => i.cyber_signal_id === "sig-geo")!;
     expect(highItem.sort_order).toBeLessThan(lowItem.sort_order);
@@ -736,5 +896,242 @@ describe("generateBrief — field propagation", () => {
 
   it("content_markdown includes the brief heading", () => {
     expect(result.content_markdown).toContain("# SecureLogic AI — Intelligence Brief");
+  });
+});
+
+// ====================================================================
+// shortlistTopK + capByUrgencyBuckets — hard cap enforcement
+// ====================================================================
+
+function makeItem(overrides: Partial<BriefItem> = {}): BriefItem {
+  return {
+    cyber_signal_id: "sig-x",
+    category: "vulnerability",
+    relevance: "high",
+    title: "Test item",
+    summary: "summary",
+    affected_cve: "CVE-2026-0001",
+    affected_vendor: "Vendor",
+    source_slug: "nvd",
+    signal_type: "cve",
+    severity: "Critical",
+    ingestion_timestamp: "2026-05-01T00:00:00.000Z",
+    sort_order: 0,
+    urgency: "near_term",
+    ...overrides
+  };
+}
+
+describe("shortlistTopK — pre-enrichment cap", () => {
+  it("returns exactly ENRICHMENT_SHORTLIST items when input is much larger", () => {
+    const items = Array.from({ length: 64 }, (_, i) =>
+      makeItem({
+        cyber_signal_id: `sig-${i}`,
+        source_slug: i < 8 ? "cisa_kev" : i < 32 ? "nvd" : "security_news_x",
+        severity: i % 3 === 0 ? "Critical" : i % 3 === 1 ? "High" : "Moderate",
+        ingestion_timestamp: new Date(Date.UTC(2026, 4, 1, 0, i)).toISOString()
+      })
+    );
+    const out = shortlistTopK(items, ENRICHMENT_SHORTLIST);
+    expect(out.length).toBe(ENRICHMENT_SHORTLIST);
+    // Composite key sorts KEV first → first 8 should all be KEV-sourced.
+    for (let i = 0; i < 8; i++) {
+      expect(out[i]!.source_slug).toBe("cisa_kev");
+    }
+  });
+
+  it("returns full input (still sorted) when items.length <= k", () => {
+    const items = [
+      makeItem({
+        cyber_signal_id: "low",
+        severity: "Low",
+        source_slug: "nvd",
+        affected_cve: null
+      }),
+      makeItem({
+        cyber_signal_id: "crit-kev",
+        severity: "Critical",
+        source_slug: "cisa_kev"
+      })
+    ];
+    const out = shortlistTopK(items, 24);
+    expect(out.length).toBe(2);
+    expect(out[0]!.cyber_signal_id).toBe("crit-kev");
+  });
+
+  it("returns empty array for k=0", () => {
+    expect(shortlistTopK([makeItem()], 0)).toEqual([]);
+  });
+
+  it("does not mutate input order", () => {
+    const items = [
+      makeItem({ cyber_signal_id: "a", source_slug: "nvd", severity: "Low" }),
+      makeItem({ cyber_signal_id: "b", source_slug: "cisa_kev", severity: "Low" })
+    ];
+    shortlistTopK(items, 2);
+    // Originals remain in their starting order.
+    expect(items[0]!.cyber_signal_id).toBe("a");
+    expect(items[1]!.cyber_signal_id).toBe("b");
+  });
+});
+
+describe("composite ranking key precedence", () => {
+  it("KEV-Moderate beats NVD-Critical (KEV is the top-level sort)", () => {
+    const items = [
+      makeItem({
+        cyber_signal_id: "nvd-crit",
+        source_slug: "nvd",
+        severity: "Critical"
+      }),
+      makeItem({
+        cyber_signal_id: "kev-mod",
+        source_slug: "cisa_kev",
+        severity: "Moderate"
+      })
+    ];
+    const out = shortlistTopK(items, 2);
+    expect(out[0]!.cyber_signal_id).toBe("kev-mod");
+    expect(out[1]!.cyber_signal_id).toBe("nvd-crit");
+  });
+
+  it("Critical-KEV beats High-KEV within KEV tier (severity is second)", () => {
+    const items = [
+      makeItem({
+        cyber_signal_id: "kev-high",
+        source_slug: "cisa_kev",
+        severity: "High"
+      }),
+      makeItem({
+        cyber_signal_id: "kev-crit",
+        source_slug: "cisa_kev",
+        severity: "Critical"
+      })
+    ];
+    const out = shortlistTopK(items, 2);
+    expect(out[0]!.cyber_signal_id).toBe("kev-crit");
+  });
+
+  it("CVE-bearing beats CVE-less within same severity tier (has_cve is third)", () => {
+    const items = [
+      makeItem({
+        cyber_signal_id: "no-cve",
+        source_slug: "nvd",
+        severity: "High",
+        affected_cve: null
+      }),
+      makeItem({
+        cyber_signal_id: "with-cve",
+        source_slug: "nvd",
+        severity: "High",
+        affected_cve: "CVE-2026-1234"
+      })
+    ];
+    const out = shortlistTopK(items, 2);
+    expect(out[0]!.cyber_signal_id).toBe("with-cve");
+  });
+});
+
+describe("capByUrgencyBuckets — balanced input", () => {
+  it("returns exactly BRIEF_MAX_ITEMS for plentiful input across all zones", () => {
+    const items: BriefItem[] = [
+      ...Array.from({ length: 8 }, (_, i) =>
+        makeItem({ cyber_signal_id: `imm-${i}`, urgency: "immediate" })
+      ),
+      ...Array.from({ length: 10 }, (_, i) =>
+        makeItem({ cyber_signal_id: `near-${i}`, urgency: "near_term" })
+      ),
+      ...Array.from({ length: 6 }, (_, i) =>
+        makeItem({ cyber_signal_id: `far-${i}`, urgency: "far_term" })
+      )
+    ];
+    const out = capByUrgencyBuckets(items);
+    expect(out.items.length).toBe(BRIEF_MAX_ITEMS);
+    expect(out.counts.immediate).toBe(URGENCY_BUCKET_TARGETS.immediate);
+    expect(out.counts.near_term).toBe(URGENCY_BUCKET_TARGETS.near_term);
+    expect(out.counts.far_term).toBe(URGENCY_BUCKET_TARGETS.far_term);
+  });
+});
+
+describe("capByUrgencyBuckets — spillover", () => {
+  it("0 immediate + 12 near + 0 far → 12 near (immediate slack and far slack absorbed by near)", () => {
+    // imm slack = 3, far slack = 2 → near effective target 7+3+2=12.
+    // near supply 12 → near takes 12. Total = 12.
+    const items = Array.from({ length: 12 }, (_, i) =>
+      makeItem({ cyber_signal_id: `near-${i}`, urgency: "near_term" })
+    );
+    const out = capByUrgencyBuckets(items);
+    expect(out.counts.immediate).toBe(0);
+    expect(out.counts.near_term).toBe(12);
+    expect(out.counts.far_term).toBe(0);
+    expect(out.items.length).toBe(12);
+  });
+
+  it("12 immediate + 0 near + 0 far → 3 immediate (no spillover into empty zones)", () => {
+    // immediate target 3 satisfied. near and far have zero supply, so the
+    // 9 unused slots evaporate. Graceful degradation: brief is smaller.
+    const items = Array.from({ length: 12 }, (_, i) =>
+      makeItem({ cyber_signal_id: `imm-${i}`, urgency: "immediate" })
+    );
+    const out = capByUrgencyBuckets(items);
+    expect(out.counts.immediate).toBe(3);
+    expect(out.counts.near_term).toBe(0);
+    expect(out.counts.far_term).toBe(0);
+    expect(out.items.length).toBe(3);
+  });
+
+  it("near slack flows down to far when near is under-supplied", () => {
+    // 3 imm + 2 near + 5 far. near slack = 5, far has 5 supply minus initial
+    // take of 2 = 3 remaining → far absorbs +3 → far_take = 2+3 = 5.
+    const items: BriefItem[] = [
+      ...Array.from({ length: 3 }, (_, i) =>
+        makeItem({ cyber_signal_id: `imm-${i}`, urgency: "immediate" })
+      ),
+      ...Array.from({ length: 2 }, (_, i) =>
+        makeItem({ cyber_signal_id: `near-${i}`, urgency: "near_term" })
+      ),
+      ...Array.from({ length: 5 }, (_, i) =>
+        makeItem({ cyber_signal_id: `far-${i}`, urgency: "far_term" })
+      )
+    ];
+    const out = capByUrgencyBuckets(items);
+    expect(out.counts.immediate).toBe(3);
+    expect(out.counts.near_term).toBe(2);
+    expect(out.counts.far_term).toBe(5);
+    expect(out.items.length).toBe(10);
+  });
+});
+
+describe("capByUrgencyBuckets — sort_order + counts shape", () => {
+  it("reassigns sort_order contiguously 0..N-1 in output", () => {
+    const items: BriefItem[] = [
+      makeItem({ cyber_signal_id: "imm-1", urgency: "immediate", sort_order: 99 }),
+      makeItem({ cyber_signal_id: "imm-2", urgency: "immediate", sort_order: 99 }),
+      makeItem({ cyber_signal_id: "imm-3", urgency: "immediate", sort_order: 99 }),
+      makeItem({ cyber_signal_id: "near-1", urgency: "near_term", sort_order: 99 }),
+      makeItem({ cyber_signal_id: "far-1", urgency: "far_term", sort_order: 99 })
+    ];
+    const out = capByUrgencyBuckets(items);
+    for (let i = 0; i < out.items.length; i++) {
+      expect(out.items[i]!.sort_order).toBe(i);
+    }
+    // Input items remain unmutated.
+    expect(items[0]!.sort_order).toBe(99);
+  });
+
+  it("returns counts tuple matching the brief_capped log event shape", () => {
+    const items: BriefItem[] = [
+      makeItem({ cyber_signal_id: "i", urgency: "immediate" }),
+      makeItem({ cyber_signal_id: "n", urgency: "near_term" }),
+      makeItem({ cyber_signal_id: "f", urgency: "far_term" })
+    ];
+    const out = capByUrgencyBuckets(items);
+    expect(out.counts).toEqual({
+      immediate: 1,
+      near_term: 1,
+      far_term: 1
+    });
+    expect(
+      out.counts.immediate + out.counts.near_term + out.counts.far_term
+    ).toBe(out.items.length);
   });
 });

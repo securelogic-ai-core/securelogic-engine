@@ -45,6 +45,12 @@ services:
       - key: JWT_SECRET
         sync: false
 
+      # Scheduler trigger secret (min 32 chars) — bearer token for
+      # POST /api/admin/briefs/run-scheduler. Required at boot in production
+      # per validateEnv.ts; engine refuses to start without it.
+      - key: SCHEDULER_SECRET
+        sync: false
+
       # TOTP secret encryption key — AES-256-GCM, encrypts TOTP secrets at rest.
       # Falls back to JWT_SECRET if not set.
       # Generate with: openssl rand -hex 32
@@ -174,6 +180,9 @@ services:
       - key: JWT_SECRET
         sync: false
 
+      - key: SCHEDULER_SECRET
+        sync: false
+
       - key: MFA_SECRET_KEY
         sync: false
 
@@ -254,6 +263,13 @@ services:
       - key: DATABASE_URL
         sync: false
 
+      # Shared with API service — same Redis instance.
+      # Required for the 15-minute KEV poll's ETag short-circuit
+      # (kevPoller.ts → fetchCisaKevSignals → feedEtagStore).
+      # Without this, every poll fetches the full catalog instead of 304.
+      - key: REDIS_URL
+        sync: false
+
       # Email delivery for newsletter sends
       - key: RESEND_API_KEY
         sync: false
@@ -313,6 +329,13 @@ services:
 
       # Staging Postgres — populate with the securelogic_staging URL in dashboard
       - key: DATABASE_URL
+        sync: false
+
+      # Staging Redis — populate with the staging Redis URL in dashboard.
+      # Required for the 15-minute KEV poll's ETag short-circuit
+      # (kevPoller.ts → fetchCisaKevSignals → feedEtagStore).
+      # Without this, every poll fetches the full catalog instead of 304.
+      - key: REDIS_URL
         sync: false
 
       # Email delivery for newsletter sends — staging Resend key recommended

@@ -180,6 +180,13 @@ export type IntelligenceBriefItem = {
   affected_cve: string | null;
   affected_vendor: string | null;
   source_slug: string | null;
+  /**
+   * Human-readable label for source_slug (e.g. "BleepingComputer" for
+   * "security_news_bleepingcomputer"). Populated by the engine at API-response
+   * time; optional here because briefs returned by older engine deploys —
+   * before the source-display PR shipped — won't include it.
+   */
+  source_display?: string | null;
   signal_type: string | null;
   severity: string | null;
   cyber_signal_id: string | null;

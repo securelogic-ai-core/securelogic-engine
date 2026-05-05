@@ -29,32 +29,20 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import {
   generateBrief,
   enrichBriefItems,
+  capByUrgencyBuckets,
+  finalizeBrief,
   type CyberSignalForBrief
 } from "../lib/intelligenceBriefGenerator.js";
 import { personalizeBriefItems } from "../lib/briefPersonalizationService.js";
 import { sendBrief } from "../lib/briefEmailSender.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
-import { encryptField, decryptField } from "../lib/fieldEncryption.js";
+import { encryptField } from "../lib/fieldEncryption.js";
 import {
-  runSynthesisSafely
+  runSynthesisSafely,
+  fetchPriorBriefContext
 } from "../lib/briefSynthesizer.js";
-
-/**
- * Decrypt and parse content_json from the DB.
- * Handles encrypted rows (JSON-string value) and legacy plaintext JSONB objects.
- */
-function parseContentJson(value: unknown): Record<string, unknown> | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value === "string") {
-    try {
-      return JSON.parse(decryptField(value)) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
-  }
-  if (typeof value === "object") return value as Record<string, unknown>;
-  return null;
-}
+import { parseContentJson } from "../lib/parseBriefContentJson.js";
+import { getSourceDisplayName } from "../lib/sourceDisplayNames.js";
 
 const router = Router();
 
@@ -180,23 +168,46 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
 
     const signals = signalsResult.rows;
 
-    // Run pure generation then async Claude enrichment
-    const base = generateBrief(signals, periodStart.toISOString(), periodEnd.toISOString());
+    // Run pure generation — returns the pre-enrichment shortlist (top
+    // ENRICHMENT_SHORTLIST items by composite ranking key). Enrichment runs
+    // on the shortlist, then capByUrgencyBuckets reduces to BRIEF_MAX_ITEMS.
+    const base = generateBrief(signals);
 
     // Enrich items with Claude analyst commentary (non-fatal — always resolves)
-    const enrichedItems = await enrichBriefItems(base.items);
+    const enrichedItems = await enrichBriefItems(base.shortlist, orgId);
+
+    // Apply the urgency-bucket cap before personalization so we only pay
+    // personalization cost for items that will actually appear in the brief.
+    const { items: cappedItems, counts: urgencyCounts } =
+      capByUrgencyBuckets(enrichedItems);
+
+    logger.info(
+      {
+        event: "brief_capped",
+        brief_id: briefId,
+        org_id: orgId,
+        shortlisted: base.shortlist.length,
+        enriched: enrichedItems.length,
+        kept: cappedItems.length,
+        dropped: enrichedItems.length - cappedItems.length,
+        immediate: urgencyCounts.immediate,
+        near_term: urgencyCounts.near_term,
+        far_term: urgencyCounts.far_term
+      },
+      "Brief capped"
+    );
 
     // Personalize items — match against org's vendors, risks, AI systems, obligations.
     // Non-fatal: if personalization fails the brief still publishes without personalization.
     let personalizedItems: Awaited<ReturnType<typeof personalizeBriefItems>>;
     try {
-      personalizedItems = await personalizeBriefItems(enrichedItems, orgId);
+      personalizedItems = await personalizeBriefItems(cappedItems, orgId);
     } catch (personalizationErr) {
       logger.warn(
         { event: "brief_personalization_failed", orgId, briefId, err: personalizationErr },
         "Brief personalization failed — publishing without personalization data"
       );
-      personalizedItems = enrichedItems.map((item) => ({
+      personalizedItems = cappedItems.map((item) => ({
         ...item,
         is_personalized: false,
         platform_context: null
@@ -252,16 +263,25 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
       );
     }
 
-    // Rebuild content_json/markdown from personalized items
-    const result = {
-      ...base,
-      items: personalizedItems
-    };
+    // Build content_json/markdown from personalized items (post-cap).
+    // signal_count carries the raw input count from generateBrief so the
+    // persisted intelligence_briefs.signal_count reflects "we processed N
+    // signals" rather than the post-cap count.
+    const result = finalizeBrief(
+      personalizedItems,
+      periodStart.toISOString(),
+      periodEnd.toISOString(),
+      base.signal_count
+    );
 
     // Brief-level synthesis — one Claude call producing a 12-word headline.
     // Runs against personalizedItems so it reflects what the user will see.
     // Non-fatal: failure resolves to null and the brief publishes without one.
-    const synthesis = await runSynthesisSafely(personalizedItems);
+    //
+    // Prior-brief context drives the exec summary's week-on-week calibration
+    // sentence. Null on first-brief-ever cases.
+    const priorContext = await fetchPriorBriefContext(orgId, briefId);
+    const synthesis = await runSynthesisSafely(personalizedItems, priorContext, orgId);
     const contentJsonWithSynthesis = { ...result.content_json, synthesis };
 
     // Update brief to published — encrypt content_json before storage.
@@ -904,6 +924,7 @@ router.get("/intelligence-briefs/:id", async (req, res) => {
         affected_cve: item.affected_cve,
         affected_vendor: item.affected_vendor,
         source_slug: item.source_slug,
+        source_display: getSourceDisplayName(item.source_slug),
         signal_type: item.signal_type,
         severity: item.severity,
         cyber_signal_id: item.cyber_signal_id,

@@ -1,3 +1,19 @@
+> **DEPRECATED — non-governing**
+>
+> This document is legacy. It does not govern current build work.
+>
+> The governing source of truth is (read in this order):
+> 1. PRODUCT_VISION.md
+> 2. CURRENT_STATE_ARCHITECTURE.md
+> 3. CANONICAL_DOMAIN_MODEL.md
+> 4. BUILD_SEQUENCE.md
+> 5. FINAL_PRODUCT_STANDARD.md
+> 6. CLAUDE.md
+>
+> For build sequencing, use BUILD_SEQUENCE.md. Content below is preserved for historical reference only and may conflict with the governing docs above. Do not use it for product, architecture, or sequencing decisions.
+
+---
+
 # SecureLogic AI Sequenced Build Plan
 
 ## Purpose

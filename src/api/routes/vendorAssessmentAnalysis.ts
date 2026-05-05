@@ -33,6 +33,13 @@ router.post(
   upload.single("document"),
   async (req: Request, res: Response) => {
     try {
+      const organizationId: string | null =
+        (req as any).organizationContext?.organizationId ?? null;
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
       if (!req.file) {
         res.status(400).json({ error: "no_file_uploaded" });
         return;
@@ -60,7 +67,7 @@ router.post(
         return;
       }
 
-      const result = await analyzeAssessmentDocument(documentText, vendorName, documentHint);
+      const result = await analyzeAssessmentDocument(documentText, vendorName, documentHint, organizationId);
 
       if (!result) {
         res.status(503).json({ error: "analysis_unavailable" });

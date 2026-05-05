@@ -1,3 +1,19 @@
+> **DEPRECATED — non-governing**
+>
+> This document is legacy. It does not govern current build work.
+>
+> The governing source of truth is (read in this order):
+> 1. PRODUCT_VISION.md
+> 2. CURRENT_STATE_ARCHITECTURE.md
+> 3. CANONICAL_DOMAIN_MODEL.md
+> 4. BUILD_SEQUENCE.md
+> 5. FINAL_PRODUCT_STANDARD.md
+> 6. CLAUDE.md
+>
+> Content below is preserved for historical reference only and may conflict with the governing docs above. The "Phase 0 — Complete and Launch Intelligence Brief" framing in particular contradicts the platform-first stance in PRODUCT_VISION.md and FINAL_PRODUCT_STANDARD.md. Do not use this document for product, architecture, or sequencing decisions.
+
+---
+
 # SecureLogic AI — Execution Plan
 
 Read this after `CLAUDE.md`.
