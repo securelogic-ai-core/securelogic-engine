@@ -19,6 +19,7 @@ const NAV_ITEMS: NavItem[] = [
   { type: "link",  label: "Dashboard", href: "/dashboard" },
   { type: "link",  label: "Briefs",    href: "/briefs" },
   { type: "link",  label: "Ask",       href: "/ask",       platform: true },
+  { type: "link",  label: "Queue",     href: "/queue",     platform: true },
   { type: "group", label: "Assets",    platform: true,
     items: [
       { label: "Vendors",    href: "/vendors" },

@@ -79,7 +79,28 @@ const router = Router();
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
+const DEFAULT_OFFSET = 0;
+const MAX_OFFSET = 100_000;
 const INTEGER_RE = /^-?\d+$/;
+
+const SORT_KEYS = ["created-desc", "score-desc"] as const;
+type SortKey = (typeof SORT_KEYS)[number];
+
+/**
+ * Closed dispatch from sort key to its ORDER BY fragment. score-desc uses
+ * NULLS LAST so suggestions whose match_score has not yet been computed
+ * sort to the bottom rather than to the top under DESC, and falls back to
+ * created_at DESC, id DESC for stable tie-breaking. created-desc is the
+ * default to preserve behavior for existing callers that pass no ?sort.
+ *
+ * Adding a sort key requires updating SORT_KEYS and this map together; both
+ * values are compile-time constants — no user input ever reaches the SQL
+ * identifier.
+ */
+const SORT_DISPATCH: Record<SortKey, string> = {
+  "created-desc": "ORDER BY created_at DESC, id DESC",
+  "score-desc":   "ORDER BY match_score DESC NULLS LAST, created_at DESC, id DESC"
+};
 
 const SUGGESTION_SELECT = `
   id,
@@ -155,6 +176,49 @@ function parseLimit(value: unknown): number | null {
   return Math.min(parsed, MAX_LIMIT);
 }
 
+/**
+ * Parse a `?offset=` query string. Returns:
+ *   - DEFAULT_OFFSET when absent or empty.
+ *   - DEFAULT_OFFSET when a valid integer < 0 (clamped to 0; negative offsets
+ *     are nonsensical, treat them as "from the start" rather than 400).
+ *   - clamped value (≤ MAX_OFFSET) when a valid non-negative integer.
+ *   - null when the input is non-integer (fractional or non-numeric); the
+ *     route handler converts null to a 400 invalid_offset response. Postgres
+ *     rejects fractional OFFSET, so we must reject before the SQL.
+ *
+ * MAX_OFFSET caps deep-pagination cost. The queue UI's pagination is bounded
+ * by reasonable interactive use; offsets beyond 100k indicate either a bug
+ * or scraping, and the matcher itself is not expected to produce that many
+ * pending suggestions per org.
+ */
+function parseOffset(value: unknown): number | null {
+  if (value === undefined || value === null) return DEFAULT_OFFSET;
+  const raw = String(value).trim();
+  if (raw === "") return DEFAULT_OFFSET;
+  if (!INTEGER_RE.test(raw)) return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return null;
+  if (parsed < 0) return DEFAULT_OFFSET;
+  return Math.min(parsed, MAX_OFFSET);
+}
+
+/**
+ * Parse a `?sort=` query string. Returns:
+ *   - "created-desc" when absent, empty, or explicitly "created-desc".
+ *   - "score-desc" when explicitly "score-desc".
+ *   - null when the value is anything else; the route handler converts null
+ *     to a 400 invalid_sort response. Default-on-absent preserves existing-
+ *     caller behavior (no implicit ordering change for callers that don't
+ *     pass ?sort).
+ */
+function parseSort(value: unknown): SortKey | null {
+  if (value === undefined || value === null) return "created-desc";
+  const raw = String(value).trim();
+  if (raw === "") return "created-desc";
+  if ((SORT_KEYS as readonly string[]).includes(raw)) return raw as SortKey;
+  return null;
+}
+
 function getOrgId(req: Request): string | null {
   const ctx = (req as unknown as {
     organizationContext?: { organizationId?: string };
@@ -189,6 +253,24 @@ export async function listSignalMatchSuggestions(req: Request, res: Response): P
     res.status(400).json({
       error: "invalid_limit",
       detail: "limit must be a positive integer"
+    });
+    return;
+  }
+
+  const offset = parseOffset(req.query.offset);
+  if (offset === null) {
+    res.status(400).json({
+      error: "invalid_offset",
+      detail: "offset must be a non-negative integer"
+    });
+    return;
+  }
+
+  const sort = parseSort(req.query.sort);
+  if (sort === null) {
+    res.status(400).json({
+      error: "invalid_sort",
+      detail: `sort must be one of: ${SORT_KEYS.join(", ")}`
     });
     return;
   }
@@ -251,14 +333,19 @@ export async function listSignalMatchSuggestions(req: Request, res: Response): P
     params.push(targetTypeFilter);
     sql += ` AND target_type = $${params.length}`;
   }
+  sql += ` ${SORT_DISPATCH[sort]}`;
   params.push(limit);
-  sql += ` ORDER BY created_at DESC, id DESC LIMIT $${params.length}`;
+  sql += ` LIMIT $${params.length}`;
+  params.push(offset);
+  sql += ` OFFSET $${params.length}`;
 
   try {
     const result = await pg.query(sql, params);
     res.status(200).json({
       count: result.rows.length,
       limit,
+      offset,
+      sort,
       organizationId,
       status,
       suggestions: result.rows
@@ -918,6 +1005,84 @@ export async function recomputeSignalMatchSuggestionScore(
 }
 
 /* =========================================================
+   GET /api/signal-match-suggestions/counts
+   Pending-only counts for the requesting organization, broken down by
+   target_type plus a total.
+
+   The response also includes lifetime_total — a count of suggestions in
+   ANY state (pending, accepted, dismissed) — so the queue UI can tell
+   "filtered list is empty for this org because nothing matches the
+   current filters" apart from "this org has never had a suggestion at
+   all" (the first-time empty state).
+
+   Pending-only is the default for the per-target_type breakdown because
+   that is the only state the queue UI displays. If a future caller wants
+   accepted/dismissed counts, add a ?status= param then; do not pre-build.
+
+   Tenant rules: organization_id sourced from req.organizationContext, and
+   the query is scoped to it on every aggregate. No cross-org leakage.
+   ========================================================= */
+
+export async function getSignalMatchSuggestionCounts(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+
+  try {
+    // Single round-trip with FILTER clauses. Pending-state predicate is
+    // (accepted_at IS NULL AND dismissed_at IS NULL); lifetime_total has
+    // no state predicate. All counts scoped to organization_id.
+    const result = await pg.query<{
+      total: string;
+      vendor: string;
+      ai_system: string;
+      control: string;
+      obligation: string;
+      lifetime_total: string;
+    }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE accepted_at IS NULL AND dismissed_at IS NULL)                               AS total,
+         COUNT(*) FILTER (WHERE accepted_at IS NULL AND dismissed_at IS NULL AND target_type = 'vendor')    AS vendor,
+         COUNT(*) FILTER (WHERE accepted_at IS NULL AND dismissed_at IS NULL AND target_type = 'ai_system') AS ai_system,
+         COUNT(*) FILTER (WHERE accepted_at IS NULL AND dismissed_at IS NULL AND target_type = 'control')   AS control,
+         COUNT(*) FILTER (WHERE accepted_at IS NULL AND dismissed_at IS NULL AND target_type = 'obligation') AS obligation,
+         COUNT(*)                                                                                          AS lifetime_total
+         FROM signal_match_suggestions
+        WHERE organization_id = $1`,
+      [organizationId]
+    );
+
+    // pg returns COUNT(*) as a string ('bigint' is too large for a JS Number
+    // safe-integer in the general case). The counts here are bounded by the
+    // matcher's per-org throughput, so Number() is safe — but coerce
+    // explicitly so callers get a Number, not a string.
+    const row = result.rows[0]!;
+    res.status(200).json({
+      organizationId,
+      total: Number(row.total),
+      by_target_type: {
+        vendor:     Number(row.vendor),
+        ai_system:  Number(row.ai_system),
+        control:    Number(row.control),
+        obligation: Number(row.obligation)
+      },
+      lifetime_total: Number(row.lifetime_total)
+    });
+  } catch (err) {
+    logger.error(
+      { event: "signal_match_suggestions_counts_failed", err },
+      "GET /api/signal-match-suggestions/counts failed"
+    );
+    res.status(500).json({ error: "signal_match_suggestions_counts_failed" });
+  }
+}
+
+/* =========================================================
    Router wiring — handlers above are exported by name for direct
    invocation in targeted behavioral tests.
    ========================================================= */
@@ -928,6 +1093,17 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("standard"),
   listSignalMatchSuggestions
+);
+
+// /counts is a static path, not a :id pattern; no GET /:id route exists in
+// this file so collision risk is nil. Registered before the POST /:id routes
+// for grep-by-method readability.
+router.get(
+  "/signal-match-suggestions/counts",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  getSignalMatchSuggestionCounts
 );
 
 router.post(
