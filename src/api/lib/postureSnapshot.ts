@@ -20,6 +20,7 @@ import {
   buildWorkflowSignalBreakdown,
   buildScoringRationaleExtension,
 } from "./workflowScoringIntegration.js";
+import { vendorCriticalityToSignals } from "./inventoryToSignals.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -99,6 +100,7 @@ export async function computeAndSavePostureSnapshot(
     treatedRiskResult,
     actionCountResult,
     prevDomainResult,
+    vendorInventoryResult,
   ] = await Promise.all([
     pg.query<DbFindingForPosture>(
       `SELECT id, title, domain, severity FROM findings
@@ -152,6 +154,17 @@ export async function computeAndSavePostureSnapshot(
        JOIN prev ON prev.id = ds.posture_snapshot_id`,
       [organizationId]
     ),
+    // Active vendors with non-null criticality. Used to synthesize
+    // Vendor Risk domain signals so inventory state influences
+    // posture even when no vendor findings or risks are open. See
+    // src/api/lib/inventoryToSignals.ts for rationale.
+    pg.query<{ id: string; criticality: string }>(
+      `SELECT id, criticality FROM vendors
+       WHERE organization_id = $1
+         AND status = 'active'
+         AND criticality IS NOT NULL`,
+      [organizationId]
+    ),
   ]);
 
   // ── 3. Assemble signals ─────────────────────────────────────────────────
@@ -162,7 +175,20 @@ export async function computeAndSavePostureSnapshot(
     severity: r.risk_rating,
   }));
 
-  const openFindings = [...findingsResult.rows, ...riskSignals];
+  // Synthetic Vendor Risk signals from active inventory. Same
+  // DbFindingForPosture shape as real findings — the engine sees one
+  // merged array and treats them identically. The synthesis function
+  // skips null/unknown criticality defensively (the SQL filter
+  // already excludes nulls, but double-skipping is cheap insurance).
+  const vendorInventorySignals = vendorCriticalityToSignals(
+    vendorInventoryResult.rows
+  );
+
+  const openFindings = [
+    ...findingsResult.rows,
+    ...riskSignals,
+    ...vendorInventorySignals,
+  ];
   const riskSignalCount = riskSignals.length;
 
   const actionRow = actionCountResult.rows[0];

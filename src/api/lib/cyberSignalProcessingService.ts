@@ -49,6 +49,7 @@ import {
   buildWorkflowSignalBreakdown,
   buildScoringRationaleExtension
 } from "./workflowScoringIntegration.js";
+import { vendorCriticalityToSignals } from "./inventoryToSignals.js";
 import {
   computeRiskScore,
   DEFAULT_WEIGHTS,
@@ -736,9 +737,18 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
     };
   }
 
-  // Parallel fetch: findings, risks, signal breakdown, active treatment count.
-  const [findingsResult, risksResult, findingBreakdownResult, treatedRiskResult] =
-    await Promise.all([
+  // Parallel fetch: findings, risks, signal breakdown, active treatment
+  // count, active-vendor inventory. Inventory feeds the synthetic
+  // Vendor Risk signals — same pattern as postureSnapshot.ts. Both
+  // pipelines must stay in sync; otherwise the worker and the
+  // signal-processing path produce different scores for the same org.
+  const [
+    findingsResult,
+    risksResult,
+    findingBreakdownResult,
+    treatedRiskResult,
+    vendorInventoryResult,
+  ] = await Promise.all([
       pg.query<DbFindingForPosture>(
         `
         SELECT id, title, domain, severity
@@ -779,7 +789,16 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
           AND r.status = 'open'
         `,
         [orgId]
-      )
+      ),
+      pg.query<{ id: string; criticality: string }>(
+        `
+        SELECT id, criticality FROM vendors
+        WHERE organization_id = $1
+          AND status = 'active'
+          AND criticality IS NOT NULL
+        `,
+        [orgId]
+      ),
     ]);
 
   const riskSignals: DbFindingForPosture[] = risksResult.rows.map((r) => ({
@@ -789,7 +808,15 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
     severity: r.risk_rating
   }));
 
-  const openFindings = [...findingsResult.rows, ...riskSignals];
+  const vendorInventorySignals = vendorCriticalityToSignals(
+    vendorInventoryResult.rows
+  );
+
+  const openFindings = [
+    ...findingsResult.rows,
+    ...riskSignals,
+    ...vendorInventorySignals,
+  ];
   const riskSignalCount = riskSignals.length;
 
   // Count open and overdue actions.
