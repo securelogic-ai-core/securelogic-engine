@@ -79,6 +79,91 @@ The §6 recommendations stand. The priority order shifts the same way regardless
 
 ---
 
+## Staging environment (2026-05-05, second pass)
+
+`.env.local` was repointed by the operator to the staging DB (`securelogic_staging`, host `dpg-d7n0pohj2pic738iidbg-a`, distinct from prod's host). Verification confirmed 5 organizations present; first org name "Staging Inc". Re-ran §2 queries against staging. All queries again read-only `SELECT` only; no writes.
+
+### §2 query results — staging
+
+| Query | Result (staging) |
+|---|---|
+| (a) Total signals last 7 days | **6,548** |
+| (b) Signals with finding | **0** |
+| (b) Signals without finding | **6,548 (100%)** |
+| (c) Domain distribution among findings | n/a — no findings exist |
+| (d) Multi-entity matches | 0 (vacuously) |
+| (e) Source adapters: 21 distinct (top 5) | cisa_kev: 3174 / mitre_attack: 1849 / nvd: 1211 / mitre_atlas: 170 / cisa_alerts: 28 — **all 0% match rate** |
+
+### Critical observation: the matcher has been firing — and matching nothing
+
+Staging shows **4,859 org-scoped signals** out of 6,548 total (the rest are 1,689 global). Unlike prod (where 100% of signals were global, indicating the API ingest path had never fired in prod), staging shows clear evidence that `POST /api/cyber-signals/*` and therefore `cyberSignalProcessingService.processSignal()` **has fired thousands of times** in recent history.
+
+But zero findings have been produced.
+
+### Why zero findings: empty platform-entity tables
+
+| Entity | Count in staging |
+|---|---|
+| `organizations` | **5** (4× "Staging Inc", 1× "Staging2 Inc") |
+| `vendors` | **0** |
+| `ai_systems` | **0** |
+| `controls` | **0** |
+| `obligations` | **0** |
+| `findings` (any source_type) | **0** |
+| `cyber_signals` (total) | 6,548 |
+| `cyber_signals` (org-scoped) | 4,859 |
+| `cyber_signals` (global) | 1,689 |
+
+The matcher has fired ~4,859 times against an empty `vendors` table and found zero matches **by construction**. The `ILIKE` query returns zero rows because no vendor rows exist. This is the **empirically observed match rate of the matcher running against staging today: 0.0%** across all 21 adapter sources.
+
+### What the staging data confirms vs leaves unanswered
+
+**Confirmed empirically** (could not be confirmed from prod, where the API ingest path had never fired):
+1. The matcher's API path **is** invoked at significant volume — 4,859 calls in recent ingest history.
+2. The matcher's behavior with an empty platform-entity table is correct: zero matches, zero findings, no errors. (No 500s, no orphaned rows.)
+3. The §2(d) multi-entity-match invariant holds (zero rows).
+
+**Still unanswered** (the §3 algorithmic-accuracy question):
+- The matcher's accuracy when seeded data exists. Cannot be assessed from staging in its current state for the same reason it couldn't be assessed from prod: no findings exist to spot-check. The blocker has shifted from "matcher hasn't run" (prod) to "matcher has run thousands of times and matched nothing because nothing's there to match" (staging). To answer §3, we need a DB where the matcher has fired against a realistic platform-entity inventory and produced findings.
+
+### Operator data-hygiene observations (flagging, not acting)
+
+Two anomalies surfaced during the verification query that are worth visibility before any further seed-script work:
+
+1. **`Staging Inc` exists 4 times.** Four organizations named exactly `Staging Inc` (different IDs, all created 2026-04-27, all `status='active'`). Likely an artifact of repeated signup-flow tests on staging — but worth confirming this is intentional. If a seed script targets `WHERE name = 'Staging Inc'`, four rows match and the script needs to disambiguate or pick the most recent.
+2. **The earlier `staging-seed-data` package spec referenced `WHERE name = 'Staging LLC'`** — that exact name does not exist on staging. The naming convention appears to be `Staging Inc` / `Staging2 Inc`, not `Staging LLC` / `Staging2 LLC`. The seed spec needs updating before it can run, OR the operator can confirm which of the four `Staging Inc` rows is the canonical seed target.
+
+Not acting on either — both are operator decisions about staging data hygiene, not matcher-audit findings.
+
+### Updated implication for §6 recommendations
+
+Unchanged. The architectural finding (worker pipeline does not invoke `processSignal()`) stands and is now joined by an empirical second finding: **even when the API ingest path fires, the matcher returns zero matches today because the platform-entity tables are empty.** The customer-facing claim "we surface relevant signals" is, as best as can be determined from the data available, not delivered today by either path:
+- **Worker path:** doesn't invoke the matcher at all (architectural finding, code-level).
+- **API path:** invokes the matcher but it matches nothing because there's no platform inventory to match against (empirical finding, data-level).
+
+The next investigative step requires either:
+- Seeding the staging org(s) with realistic vendor/AI-system data so the matcher has targets, then re-running §3 against the resulting findings, or
+- Querying the demo environment (the third of the three known DBs) where `seed-demo.ts` is expected to have seeded the `Meridian Financial Services` org with 12 vendors. The matcher's behavior there would be the most direct read on §3.
+
+### Queries run against staging (all read-only)
+
+| Statement | Mutation? |
+|---|---|
+| `SELECT current_database(), (SELECT COUNT(*) FROM organizations), (SELECT name FROM organizations LIMIT 1)` | read |
+| `SELECT id, name, status, created_at::date FROM organizations ORDER BY created_at` | read |
+| `SELECT COUNT(*) FROM cyber_signals WHERE ingestion_timestamp >= NOW() - INTERVAL '7 days'` | read |
+| `SELECT COUNT(*) FILTER (...) FROM cyber_signals ...` | read |
+| `SELECT f.domain, COUNT(*) FROM findings f JOIN cyber_signals ...` | read |
+| `SELECT cs.id, COUNT(DISTINCT f.id) ... HAVING > 1` | read |
+| `SELECT source, COUNT(*), match_pct FROM cyber_signals GROUP BY source` | read |
+| `SELECT (SELECT COUNT(*) FROM vendors) ... ` | read |
+| `SELECT COUNT(*) FILTER (WHERE org IS NULL) FROM cyber_signals` | read |
+| `SELECT source_type, COUNT(*) FROM findings GROUP BY source_type` | read |
+
+Zero `INSERT`/`UPDATE`/`DELETE`/DDL. Staging is byte-identical to its state before the queries ran.
+
+---
+
 ## 1. What the matcher actually does
 
 ### 1.1 Algorithm
