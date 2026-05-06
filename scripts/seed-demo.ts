@@ -492,30 +492,169 @@ async function main() {
   // ── 9. Risks (10) ────────────────────────────────────────────────────────────
   step("Step 9 — Risks (10)");
 
+  // Phase 4 of risk-register-inherent-residual-rating: seed all 9 rating
+  // fields explicitly. Legacy = residual on every row (mirror of the
+  // create form's Path (i) wire pattern); for the NULL-inherent row,
+  // legacy still mirrors residual because legacy is NOT NULL in the
+  // schema. Distribution per the demo narrative:
+  //
+  //   7 risks (R1–R7)  inherent > residual — "Meridian's controls working"
+  //                                          R7 is the active-treatment
+  //                                          variant with both at High.
+  //   1 risk  (R8)     inherent > residual, terminal status mitigated.
+  //   1 risk  (R9)     inherent = residual — known gap, formally accepted.
+  //   1 risk  (R10)    NULL inherent — backfilled-style closed risk.
+  //
+  // Owners are realistic financial-services-team-style names; due dates
+  // span past, near-future, and null. Domains hit Access Management,
+  // Vendor Risk, Vulnerability, Regulatory, Data Protection, and
+  // AI Governance for table visual variety.
   type RiskDef = {
-    title: string; domain: string; likelihood: string;
-    impact: string; risk_rating: string; treatment: string; description: string;
+    title: string;
+    description: string;
+    domain: string;
+    status: string;
+    owner: string | null;
+    due_date: string | null;
+    treatment: string;
+    legacy_likelihood: string;
+    legacy_impact: string;
+    legacy_risk_rating: string;
+    inherent_likelihood: string | null;
+    inherent_impact: string | null;
+    inherent_rating: string | null;
+    residual_likelihood: string | null;
+    residual_impact: string | null;
+    residual_rating: string | null;
   };
   const RISKS: RiskDef[] = [
-    { title: "Third-party cloud failure causing trading outage",          domain: "Vendor Risk",    likelihood: "possible",  impact: "Critical", risk_rating: "Critical", treatment: "mitigate", description: "AWS us-east-1 region failure causing inability to execute trades or report positions to regulators."     },
-    { title: "Privileged account compromise via credential theft",        domain: "Access Control", likelihood: "likely",    impact: "Critical", risk_rating: "Critical", treatment: "mitigate", description: "Theft of admin credentials enabling unauthorized access to core banking and trading systems."             },
-    { title: "Okta SDK vulnerability exploitation before patch",          domain: "Vendor Risk",    likelihood: "possible",  impact: "Critical", risk_rating: "High",     treatment: "mitigate", description: "Active exploitation of confirmed session token vulnerability before vendor patch is available."           },
-    { title: "Critical CVE exploited in unpatched production system",     domain: "Vulnerability",  likelihood: "likely",    impact: "High",     risk_rating: "High",     treatment: "mitigate", description: "Threat actor exploiting CVSS 9.8 CVE in production environment prior to patch application."             },
-    { title: "GDPR enforcement action due to data residency failure",     domain: "Regulatory",     likelihood: "possible",  impact: "High",     risk_rating: "High",     treatment: "mitigate", description: "EU DPA investigation into Salesforce PII data residency non-compliance resulting in fine or restriction." },
-    { title: "AI risk model producing biased credit assessments",         domain: "AI Governance",  likelihood: "possible",  impact: "High",     risk_rating: "Moderate", treatment: "mitigate", description: "Internal ML risk model producing systematically biased outputs for certain customer segments."            },
-    { title: "SEC 8-K material incident not disclosed within 4 days",     domain: "Regulatory",     likelihood: "unlikely",  impact: "High",     risk_rating: "Moderate", treatment: "mitigate", description: "Material cybersecurity incident escalation failure causing SEC disclosure deadline to be missed."         },
-    { title: "Data exfiltration via misconfigured vendor API integration",domain: "Vendor Risk",    likelihood: "unlikely",  impact: "Critical", risk_rating: "Moderate", treatment: "accept",   description: "Unauthorised data extraction through misconfigured Salesforce API integration."                         },
-    { title: "Ransomware propagation exploiting unpatched vulnerability", domain: "Vulnerability",  likelihood: "unlikely",  impact: "Critical", risk_rating: "High",     treatment: "mitigate", description: "Ransomware deployment exploiting unpatched vulnerability in internal network segment."                   },
-    { title: "Insider threat: unauthorised regulated data export",        domain: "Access Control", likelihood: "rare",      impact: "High",     risk_rating: "Low",      treatment: "mitigate", description: "Malicious or negligent insider exporting regulated financial data to unauthorised destination."           },
+    {
+      title: "Privileged Access Sprawl Across Trading Systems",
+      description: "Standing privileged access on core banking and trading systems exceeds least-privilege policy; ageing service accounts retain admin rights.",
+      domain: "Access Management", status: "open",
+      owner: "Privileged Access Team", due_date: "2026-08-31",
+      treatment: "mitigate",
+      legacy_likelihood: "likely",       legacy_impact: "High",     legacy_risk_rating: "High",
+      inherent_likelihood: "very_likely", inherent_impact: "Critical", inherent_rating: "Critical",
+      residual_likelihood: "likely",      residual_impact: "High",     residual_rating: "High"
+    },
+    {
+      title: "Cloud IAM Wildcard Permissions",
+      description: "23 IAM roles in the primary cloud account carry wildcard S3/EC2 permissions exceeding documented business need.",
+      domain: "Vendor Risk", status: "open",
+      owner: "Cloud Platform Lead", due_date: "2026-07-15",
+      treatment: "mitigate",
+      legacy_likelihood: "possible", legacy_impact: "High",     legacy_risk_rating: "High",
+      inherent_likelihood: "likely",   inherent_impact: "Critical", inherent_rating: "Critical",
+      residual_likelihood: "possible", residual_impact: "High",     residual_rating: "High"
+    },
+    {
+      title: "Bloomberg Terminal Access Recertification Lapse",
+      description: "Annual Bloomberg Terminal access review is overdue; standing user access is not periodically validated against current business need.",
+      domain: "Access Management", status: "open",
+      owner: "Sarah Liu, CISO", due_date: "2026-06-30",
+      treatment: "mitigate",
+      legacy_likelihood: "unlikely", legacy_impact: "Low",      legacy_risk_rating: "Low",
+      inherent_likelihood: "possible", inherent_impact: "Moderate", inherent_rating: "Moderate",
+      residual_likelihood: "unlikely", residual_impact: "Low",      residual_rating: "Low"
+    },
+    {
+      title: "Internal Settlement API Using Legacy TLS 1.0",
+      description: "Internal settlement API still negotiates TLS 1.0; vulnerable to POODLE/BEAST. Migration to TLS 1.3 in flight.",
+      domain: "Data Protection", status: "open",
+      owner: "Engineering Director", due_date: "2026-09-30",
+      treatment: "mitigate",
+      legacy_likelihood: "unlikely", legacy_impact: "Moderate", legacy_risk_rating: "Moderate",
+      inherent_likelihood: "possible", inherent_impact: "High",     inherent_rating: "High",
+      residual_likelihood: "unlikely", residual_impact: "Moderate", residual_rating: "Moderate"
+    },
+    {
+      title: "Salesforce EU PII Data Residency Non-Compliance",
+      description: "EU customer PII stored in US Salesforce instance without adequate data residency controls; potential GDPR Article 44 exposure.",
+      domain: "Regulatory", status: "open",
+      owner: "Salesforce Admin Lead", due_date: "2026-12-31",
+      treatment: "mitigate",
+      legacy_likelihood: "possible", legacy_impact: "Moderate", legacy_risk_rating: "Moderate",
+      inherent_likelihood: "likely",   inherent_impact: "High",     inherent_rating: "High",
+      residual_likelihood: "possible", residual_impact: "Moderate", residual_rating: "Moderate"
+    },
+    {
+      title: "Critical OS Patch SLA Breach on Production Hosts",
+      description: "OS patch cycle averaging 38 days vs. 30-day SLA across 12 production hosts. Patch automation in flight.",
+      domain: "Vulnerability", status: "open",
+      owner: "Vulnerability Management Lead", due_date: "2026-06-15",
+      treatment: "mitigate",
+      legacy_likelihood: "likely",     legacy_impact: "Moderate", legacy_risk_rating: "Moderate",
+      inherent_likelihood: "very_likely", inherent_impact: "High",   inherent_rating: "High",
+      residual_likelihood: "likely",     residual_impact: "Moderate", residual_rating: "Moderate"
+    },
+    {
+      // R7: active risk under treatment — inherent and residual both High
+      // because mitigation is in flight but not yet effective.
+      title: "Internal Credit Scoring Model Demonstrates Output Bias",
+      description: "Internal ML credit-scoring model shows statistically significant disparity in approval rates across protected segments. Bias audit and human-review overlay underway.",
+      domain: "AI Governance", status: "open",
+      owner: "Chief Risk Officer", due_date: "2026-10-31",
+      treatment: "mitigate",
+      legacy_likelihood: "likely", legacy_impact: "High", legacy_risk_rating: "High",
+      inherent_likelihood: "likely", inherent_impact: "High", inherent_rating: "High",
+      residual_likelihood: "likely", residual_impact: "High", residual_rating: "High"
+    },
+    {
+      // R8: terminal mitigated — controls drove residual from
+      // very_likely/Critical to rare/Low (controls highly effective).
+      title: "Acquired Subsidiary's Identity Stack Migration",
+      description: "Identity stack of recently-acquired subsidiary fully migrated into corporate Okta tenant; legacy IDP retired and access reconciled.",
+      domain: "Access Management", status: "mitigated",
+      owner: "M&A Integration", due_date: "2026-04-30",
+      treatment: "mitigate",
+      legacy_likelihood: "rare",         legacy_impact: "Low",      legacy_risk_rating: "Low",
+      inherent_likelihood: "very_likely", inherent_impact: "Critical", inherent_rating: "Critical",
+      residual_likelihood: "rare",        residual_impact: "Low",     residual_rating: "Low"
+    },
+    {
+      // R9: known gap, formally accepted — inherent = residual.
+      title: "SEC 8-K Material Incident Disclosure Process Undefined",
+      description: "No documented escalation procedure for determining material cybersecurity incidents under the SEC cybersecurity disclosure rule. Tracking under regulatory roadmap; formally accepted pending Q3 governance project.",
+      domain: "Regulatory", status: "accepted",
+      owner: "General Counsel", due_date: null,
+      treatment: "accept",
+      legacy_likelihood: "possible", legacy_impact: "High", legacy_risk_rating: "High",
+      inherent_likelihood: "possible", inherent_impact: "High", inherent_rating: "High",
+      residual_likelihood: "possible", residual_impact: "High", residual_rating: "High"
+    },
+    {
+      // R10: backfilled-style — NULL inherent (we never recorded the
+      // pre-controls assessment). Legacy NOT NULL → mirrors residual.
+      title: "Closed: Legacy On-Prem Email Decommission",
+      description: "Decommissioning of the legacy on-prem email system completed; all mailboxes migrated to cloud and the on-prem MX records removed.",
+      domain: "Vulnerability", status: "closed",
+      owner: null, due_date: null,
+      treatment: "mitigate",
+      legacy_likelihood: "rare", legacy_impact: "Low", legacy_risk_rating: "Low",
+      inherent_likelihood: null, inherent_impact: null, inherent_rating: null,
+      residual_likelihood: "rare", residual_impact: "Low", residual_rating: "Low"
+    },
   ];
 
   const riskIds: string[] = [];
   for (const r of RISKS) {
     const res = await pool.query<{ id: string }>(
       `INSERT INTO risks
-         (organization_id, title, description, domain, likelihood, impact, risk_rating, status, treatment)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'open',$8) RETURNING id`,
-      [orgId, r.title, r.description, r.domain, r.likelihood, r.impact, r.risk_rating, r.treatment]
+         (organization_id, title, description, domain, status, owner, due_date,
+          likelihood, impact, risk_rating,
+          inherent_likelihood, inherent_impact, inherent_rating,
+          residual_likelihood, residual_impact, residual_rating,
+          treatment)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       RETURNING id`,
+      [
+        orgId, r.title, r.description, r.domain, r.status, r.owner, r.due_date,
+        r.legacy_likelihood, r.legacy_impact, r.legacy_risk_rating,
+        r.inherent_likelihood, r.inherent_impact, r.inherent_rating,
+        r.residual_likelihood, r.residual_impact, r.residual_rating,
+        r.treatment,
+      ]
     );
     riskIds.push(res.rows[0]!.id);
   }

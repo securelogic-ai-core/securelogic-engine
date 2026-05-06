@@ -10,18 +10,43 @@ import { importRisks, type RiskImportRow, type RiskImportResult } from "./action
 // Constants
 // ─────────────────────────────────────────────────────────────
 
+// FIELDS = canonical target columns the user maps source headers to.
+// Order matches the downloadable template's column order so the mapping
+// step reads top-to-bottom in the same order users see in their CSV.
+//
+// Phase 4 strict mode: legacy {likelihood, impact, risk_rating} are
+// removed entirely. The 6 inherent_* + residual_* fields are required.
 const FIELDS: Array<{ key: keyof RiskImportRow; label: string; required?: boolean }> = [
-  { key: "title",       label: "Risk Title",              required: true },
-  { key: "domain",      label: "Domain",                  required: true },
-  { key: "likelihood",  label: "Likelihood",              required: true },
-  { key: "impact",      label: "Impact",                  required: true },
-  { key: "risk_rating", label: "Risk Rating",             required: true },
-  { key: "description", label: "Description" },
-  { key: "status",      label: "Status" },
-  { key: "treatment",   label: "Treatment" },
-  { key: "owner",       label: "Owner" },
-  { key: "due_date",    label: "Due Date (YYYY-MM-DD)" },
+  { key: "title",               label: "Risk Title",              required: true },
+  { key: "description",         label: "Description" },
+  { key: "domain",              label: "Domain",                  required: true },
+  { key: "status",              label: "Status" },
+  { key: "inherent_likelihood", label: "Inherent Likelihood",     required: true },
+  { key: "inherent_impact",     label: "Inherent Impact",         required: true },
+  { key: "inherent_rating",     label: "Inherent Rating",         required: true },
+  { key: "residual_likelihood", label: "Residual Likelihood",     required: true },
+  { key: "residual_impact",     label: "Residual Impact",         required: true },
+  { key: "residual_rating",     label: "Residual Rating",         required: true },
+  { key: "treatment",           label: "Treatment" },
+  { key: "owner",               label: "Owner" },
+  { key: "due_date",            label: "Due Date (YYYY-MM-DD)" },
 ];
+
+// Required rating fields surfaced separately for the upload-step
+// hard-block: missing any of these in the CSV header row aborts before
+// mapping with a "template is out of date" error.
+const REQUIRED_RATING_FIELDS: Array<keyof RiskImportRow> = [
+  "inherent_likelihood", "inherent_impact", "inherent_rating",
+  "residual_likelihood", "residual_impact", "residual_rating",
+];
+const REQUIRED_RATING_LABELS: Record<string, string> = {
+  inherent_likelihood: "Inherent Likelihood",
+  inherent_impact:     "Inherent Impact",
+  inherent_rating:     "Inherent Rating",
+  residual_likelihood: "Residual Likelihood",
+  residual_impact:     "Residual Impact",
+  residual_rating:     "Residual Rating",
+};
 
 const VALID_LIKELIHOODS = new Set(["very_likely", "likely", "possible", "unlikely", "rare"]);
 const VALID_IMPACTS     = new Set(["Critical", "High", "Moderate", "Low"]);
@@ -34,25 +59,40 @@ const RATING_COLORS: Record<string, string> = {
 };
 
 const TEMPLATE_FILENAME = "risks-import-template.csv";
-const TEMPLATE_HEADERS  = "title,domain,likelihood,impact,risk_rating,description,status,treatment,owner,due_date";
-const TEMPLATE_ROW1     = '"Third-Party Data Breach via Vendor","Vendor Risk","likely","High","High","Critical vendor with access to PII","open","Enhanced due diligence and contractual controls","CISO","2026-09-30"';
-const TEMPLATE_ROW2     = '"AI Model Bias in Hiring Tool","AI Governance","possible","Moderate","Moderate","Automated screening tool may produce biased outcomes","open","Bias audit and human review overlay","Chief People Officer","2026-12-31"';
+const TEMPLATE_HEADERS  = "title,description,domain,status,inherent_likelihood,inherent_impact,inherent_rating,residual_likelihood,residual_impact,residual_rating,treatment,owner,due_date";
+const TEMPLATE_ROW1     = '"Privileged Access Sprawl","Standing privileged access exceeds policy; ageing service accounts retain admin rights.","Access Management","open","very_likely","Critical","Critical","likely","High","High","Implement privileged session monitoring","Alice Chen","2026-06-15"';
+const TEMPLATE_ROW2     = '"Vendor Without SOC 2","Tier-1 SaaS vendor with access to confidential data has not produced a current SOC 2 report.","Vendor Risk","open","likely","High","High","possible","Moderate","Moderate","Procure cyber insurance + require SOC 2 by Q3","Marcus Reed","2026-09-30"';
 
 // ─────────────────────────────────────────────────────────────
 // Auto-mapping heuristics
 // ─────────────────────────────────────────────────────────────
 
+// Headers that look like the dropped 3-field legacy rating columns.
+// We refuse to auto-map these to anything — strict mode rejects the
+// whole upload anyway when required new fields are missing, but the
+// deny-list also prevents accidental matches on edge cases like the
+// `alias.includes(h)` direction below.
+const LEGACY_DENY_HEADERS = new Set([
+  "likelihood", "probability", "chance", "frequency",
+  "impact", "severity", "consequence", "effect",
+  "risk_rating", "risk rating", "rating", "overall rating",
+  "risk score", "risk level",
+]);
+
 const AUTO_MAP_RULES: Record<keyof RiskImportRow, string[]> = {
-  title:       ["title", "risk", "name", "risk title", "risk name"],
-  domain:      ["domain", "category", "area", "type", "risk domain", "risk area"],
-  likelihood:  ["likelihood", "probability", "chance", "frequency"],
-  impact:      ["impact", "severity", "consequence", "effect"],
-  risk_rating: ["risk rating", "rating", "overall rating", "risk score", "risk level", "net risk"],
-  description: ["description", "desc", "details", "notes", "risk description"],
-  status:      ["status", "state", "risk status"],
-  treatment:   ["treatment", "mitigation", "response", "control", "treatment plan"],
-  owner:       ["owner", "responsible", "assigned to", "risk owner", "manager"],
-  due_date:    ["due date", "target date", "deadline", "review date"],
+  title:               ["title", "risk", "name", "risk title", "risk name"],
+  description:         ["description", "desc", "details", "notes", "risk description"],
+  domain:              ["domain", "category", "area", "type", "risk domain", "risk area"],
+  status:              ["status", "state", "risk status"],
+  inherent_likelihood: ["inherent likelihood", "inherent_likelihood", "pre-control likelihood", "pre control likelihood", "precontrol likelihood", "gross likelihood", "raw likelihood"],
+  inherent_impact:     ["inherent impact", "inherent_impact", "pre-control impact", "pre control impact", "precontrol impact", "gross impact", "raw impact"],
+  inherent_rating:     ["inherent rating", "inherent_rating", "inherent risk rating", "pre-control rating", "pre control rating", "precontrol rating", "gross rating", "gross risk rating", "gross risk"],
+  residual_likelihood: ["residual likelihood", "residual_likelihood", "post-control likelihood", "post control likelihood", "postcontrol likelihood", "net likelihood"],
+  residual_impact:     ["residual impact", "residual_impact", "post-control impact", "post control impact", "postcontrol impact", "net impact"],
+  residual_rating:     ["residual rating", "residual_rating", "residual risk rating", "post-control rating", "post control rating", "postcontrol rating", "net rating", "net risk rating", "net risk"],
+  treatment:           ["treatment", "mitigation", "response", "control", "treatment plan"],
+  owner:               ["owner", "responsible", "assigned to", "risk owner", "manager"],
+  due_date:            ["due date", "target date", "deadline", "review date"],
 };
 
 // Scan the first up to 5 rows of raw sheet data to find the real header row.
@@ -71,9 +111,18 @@ function autoDetectMapping(headers: string[]): Record<string, string> {
   const lowerHeaders = headers.map((h) => h.toLowerCase().trim());
   for (const [field, aliases] of Object.entries(AUTO_MAP_RULES)) {
     for (const alias of aliases) {
-      const idx = lowerHeaders.findIndex(
-        (h) => h === alias || h.includes(alias) || alias.includes(h)
-      );
+      const idx = lowerHeaders.findIndex((h) => {
+        // Strict mode: never auto-map bare legacy rating columns to a
+        // canonical field. They surface in the source-header dropdown
+        // unmapped; the upload-step hard-block rejects the file anyway
+        // when required new fields are absent.
+        if (LEGACY_DENY_HEADERS.has(h)) return false;
+        // Tightened from the prior loose `alias.includes(h)` form:
+        // that direction made short headers like "likelihood" match
+        // longer aliases like "inherent likelihood". We accept exact
+        // match or "header contains alias" only.
+        return h === alias || h.includes(alias);
+      });
       if (idx !== -1 && !Object.values(map).includes(headers[idx])) {
         map[field] = headers[idx];
         break;
@@ -81,6 +130,14 @@ function autoDetectMapping(headers: string[]): Record<string, string> {
     }
   }
   return map;
+}
+
+// Returns the list of required rating fields whose canonical target
+// could not be auto-mapped from the supplied headers. Used at upload
+// time to hard-block legacy 3-field CSVs with a clear error.
+function findMissingRequiredRatings(headers: string[]): string[] {
+  const map = autoDetectMapping(headers);
+  return REQUIRED_RATING_FIELDS.filter((f) => !map[f]);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -94,6 +151,10 @@ function normalizeTitleCase(raw: string | undefined): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+function normalizeLikelihood(raw: string | undefined): string {
+  return raw?.toLowerCase().trim().replace(/\s+/g, "_") ?? "";
+}
+
 function normalizeRow(raw: Record<string, string>, columnMap: Record<string, string>): RiskImportRow {
   function get(field: keyof RiskImportRow): string | undefined {
     const col = columnMap[field];
@@ -102,20 +163,20 @@ function normalizeRow(raw: Record<string, string>, columnMap: Record<string, str
     return val.length > 0 ? val : undefined;
   }
 
-  const rawLikelihood = get("likelihood");
-  const likelihood = rawLikelihood?.toLowerCase().trim().replace(/\s+/g, "_") ?? "";
-
   return {
-    title:       get("title") ?? "",
-    domain:      get("domain") ?? "",
-    likelihood,
-    impact:      normalizeTitleCase(get("impact")),
-    risk_rating: normalizeTitleCase(get("risk_rating")),
-    description: get("description"),
-    status:      get("status")?.toLowerCase().trim(),
-    treatment:   get("treatment"),
-    owner:       get("owner"),
-    due_date:    get("due_date"),
+    title:               get("title") ?? "",
+    domain:              get("domain") ?? "",
+    inherent_likelihood: normalizeLikelihood(get("inherent_likelihood")),
+    inherent_impact:     normalizeTitleCase(get("inherent_impact")),
+    inherent_rating:     normalizeTitleCase(get("inherent_rating")),
+    residual_likelihood: normalizeLikelihood(get("residual_likelihood")),
+    residual_impact:     normalizeTitleCase(get("residual_impact")),
+    residual_rating:     normalizeTitleCase(get("residual_rating")),
+    description:         get("description"),
+    status:              get("status")?.toLowerCase().trim(),
+    treatment:           get("treatment"),
+    owner:               get("owner"),
+    due_date:            get("due_date"),
   };
 }
 
@@ -129,15 +190,26 @@ function validateRow(row: RiskImportRow): { status: RowValidation; warnings: str
   const warnings: string[] = [];
   if (!row.title.trim()) return { status: "invalid", warnings: ["Title is required"] };
   if (!row.domain.trim()) return { status: "invalid", warnings: ["Domain is required"] };
-  if (!row.likelihood || !VALID_LIKELIHOODS.has(row.likelihood)) {
-    return { status: "invalid", warnings: ["Likelihood is required and must be: very_likely, likely, possible, unlikely, rare"] };
+
+  if (!row.inherent_likelihood || !VALID_LIKELIHOODS.has(row.inherent_likelihood)) {
+    return { status: "invalid", warnings: ["Inherent likelihood is required and must be: very_likely, likely, possible, unlikely, rare"] };
   }
-  if (!row.impact || !VALID_IMPACTS.has(row.impact)) {
-    return { status: "invalid", warnings: ["Impact is required and must be: Critical, High, Moderate, Low"] };
+  if (!row.inherent_impact || !VALID_IMPACTS.has(row.inherent_impact)) {
+    return { status: "invalid", warnings: ["Inherent impact is required and must be: Critical, High, Moderate, Low"] };
   }
-  if (!row.risk_rating || !VALID_RATINGS.has(row.risk_rating)) {
-    return { status: "invalid", warnings: ["Risk rating is required and must be: Critical, High, Moderate, Low"] };
+  if (!row.inherent_rating || !VALID_RATINGS.has(row.inherent_rating)) {
+    return { status: "invalid", warnings: ["Inherent rating is required and must be: Critical, High, Moderate, Low"] };
   }
+  if (!row.residual_likelihood || !VALID_LIKELIHOODS.has(row.residual_likelihood)) {
+    return { status: "invalid", warnings: ["Residual likelihood is required and must be: very_likely, likely, possible, unlikely, rare"] };
+  }
+  if (!row.residual_impact || !VALID_IMPACTS.has(row.residual_impact)) {
+    return { status: "invalid", warnings: ["Residual impact is required and must be: Critical, High, Moderate, Low"] };
+  }
+  if (!row.residual_rating || !VALID_RATINGS.has(row.residual_rating)) {
+    return { status: "invalid", warnings: ["Residual rating is required and must be: Critical, High, Moderate, Low"] };
+  }
+
   if (row.status && !VALID_STATUSES.has(row.status)) {
     warnings.push(`Status "${row.status}" is not valid — will default to "open"`);
   }
@@ -149,16 +221,19 @@ function validateRow(row: RiskImportRow): { status: RowValidation; warnings: str
 
 function cleanRow(row: RiskImportRow): RiskImportRow {
   return {
-    title:       row.title.trim(),
-    domain:      row.domain.trim(),
-    likelihood:  row.likelihood,
-    impact:      row.impact,
-    risk_rating: row.risk_rating,
-    description: row.description || undefined,
-    status:      row.status && VALID_STATUSES.has(row.status) ? row.status : "open",
-    treatment:   row.treatment || undefined,
-    owner:       row.owner || undefined,
-    due_date:    row.due_date && ISO_DATE_RE.test(row.due_date) ? row.due_date : undefined,
+    title:               row.title.trim(),
+    domain:              row.domain.trim(),
+    inherent_likelihood: row.inherent_likelihood,
+    inherent_impact:     row.inherent_impact,
+    inherent_rating:     row.inherent_rating,
+    residual_likelihood: row.residual_likelihood,
+    residual_impact:     row.residual_impact,
+    residual_rating:     row.residual_rating,
+    description:         row.description || undefined,
+    status:              row.status && VALID_STATUSES.has(row.status) ? row.status : "open",
+    treatment:           row.treatment || undefined,
+    owner:               row.owner || undefined,
+    due_date:            row.due_date && ISO_DATE_RE.test(row.due_date) ? row.due_date : undefined,
   };
 }
 
@@ -232,6 +307,19 @@ export function RisksImportClient() {
   const [isDragOver, setIsDragOver]   = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Phase 4 strict-mode guard: refuse the upload if any of the 6 new
+  // required rating fields can't be auto-mapped from the headers. This
+  // catches old 3-field templates with a clear error before mapping.
+  const enforceStrictModeOrSetError = useCallback((headers: string[]): boolean => {
+    const missing = findMissingRequiredRatings(headers);
+    if (missing.length === 0) return true;
+    const labels = missing.map((m) => REQUIRED_RATING_LABELS[m] ?? m).join(", ");
+    setError(
+      `Your CSV is missing required fields: ${labels}. The risk register format changed — please download the latest template using the button above and re-upload.`
+    );
+    return false;
+  }, []);
+
   const handleParsed = useCallback((result: Papa.ParseResult<Record<string, string>>) => {
     if (result.errors.length > 0 && result.data.length === 0) {
       setError("Failed to parse file. Please check the format and try again.");
@@ -242,12 +330,13 @@ export function RisksImportClient() {
     if (headers.length === 0) { setError("No columns detected. Check your file has a header row."); return; }
     const rows = result.data.filter((r) => Object.values(r).some((v) => v?.trim()));
     if (rows.length === 0) { setError("No data rows found in the file."); return; }
+    if (!enforceStrictModeOrSetError(headers)) return;
     setRawHeaders(headers);
     setRawRows(rows);
     setColumnMap(autoDetectMapping(headers));
     setError(null);
     setStep("mapping");
-  }, []);
+  }, [enforceStrictModeOrSetError]);
 
   const parseFile = useCallback(async (file: File) => {
     setError(null);
@@ -257,6 +346,7 @@ export function RisksImportClient() {
       const result = await parseExcelFile(fd);
       if (result.error) { setError(result.error); return; }
       if (result.headers.length === 0) { setError("No columns detected."); return; }
+      if (!enforceStrictModeOrSetError(result.headers)) return;
       setRawHeaders(result.headers);
       setRawRows(result.rows);
       setColumnMap(autoDetectMapping(result.headers));
@@ -334,7 +424,7 @@ export function RisksImportClient() {
       </Link>
       <h1 className="text-2xl font-bold mb-2" style={{ color: "#f1f5f9" }}>Import Risks</h1>
       <p className="text-sm mb-8" style={{ color: "#94a3b8" }}>
-        Upload a CSV or Excel file to bulk-create risks. Required fields: title, domain, likelihood, impact, risk_rating. Likelihood values: very_likely, likely, possible, unlikely, rare.
+        Upload a CSV or Excel file to bulk-create risks. Required fields: title, domain, inherent_likelihood, inherent_impact, inherent_rating, residual_likelihood, residual_impact, residual_rating.
       </p>
       <ProgressBar step={step} />
 
@@ -414,7 +504,7 @@ function UploadStep({
       <div>
         <label className="block text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: "#94a3b8" }}>Paste CSV text</label>
         <textarea value={pasteText} onChange={(e) => setPasteText(e.target.value)} rows={8}
-          placeholder={"title,domain,likelihood,impact,risk_rating\nVendor Data Breach,Vendor Risk,likely,High,High"}
+          placeholder={"title,domain,inherent_likelihood,inherent_impact,inherent_rating,residual_likelihood,residual_impact,residual_rating\nVendor Data Breach,Vendor Risk,likely,High,High,possible,Moderate,Moderate"}
           className="w-full rounded-lg px-3 py-2 text-sm border outline-none transition-colors resize-none"
           style={{ ...inputStyle, fontFamily: "monospace" }} />
         <button onClick={parsePaste} className="mt-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors hover:opacity-90" style={{ background: "#00c4b4", color: "#0a0f1a" }}>
@@ -430,8 +520,9 @@ function UploadStep({
         <button onClick={downloadTemplate} className="text-xs font-medium transition-colors hover:opacity-80" style={{ color: "#00c4b4" }}>
           ↓ Download CSV template
         </button>
-        <p className="text-xs mt-1" style={{ color: "#475569" }}>Likelihood values (required): very_likely, likely, possible, unlikely, rare</p>
-        <p className="text-xs mt-0.5" style={{ color: "#475569" }}>Impact / Risk Rating values (required): Critical, High, Moderate, Low</p>
+        <p className="text-xs mt-1" style={{ color: "#475569" }}>Required: title, domain, inherent_likelihood, inherent_impact, inherent_rating, residual_likelihood, residual_impact, residual_rating</p>
+        <p className="text-xs mt-0.5" style={{ color: "#475569" }}>Likelihood values: very_likely, likely, possible, unlikely, rare</p>
+        <p className="text-xs mt-0.5" style={{ color: "#475569" }}>Impact / Rating values: Critical, High, Moderate, Low</p>
         <p className="text-xs mt-0.5" style={{ color: "#475569" }}>Status values: open, accepted, mitigated, closed, transferred</p>
       </div>
     </div>
@@ -541,8 +632,8 @@ function PreviewStep({ previewRows, importing, error, onBack, onImport }: {
                 <th className="text-left px-4 py-3 font-semibold" style={{ color: "#475569" }}></th>
                 <th className="text-left px-4 py-3 font-semibold" style={{ color: "#475569" }}>Title</th>
                 <th className="text-left px-4 py-3 font-semibold" style={{ color: "#475569" }}>Domain</th>
-                <th className="text-left px-4 py-3 font-semibold" style={{ color: "#475569" }}>Risk Rating</th>
-                <th className="text-left px-4 py-3 font-semibold" style={{ color: "#475569" }}>Likelihood</th>
+                <th className="text-left px-4 py-3 font-semibold" style={{ color: "#475569" }}>Inherent Rating</th>
+                <th className="text-left px-4 py-3 font-semibold" style={{ color: "#475569" }}>Residual Rating</th>
               </tr>
             </thead>
             <tbody>
@@ -557,8 +648,8 @@ function PreviewStep({ previewRows, importing, error, onBack, onImport }: {
                     </td>
                     <td className="px-4 py-3 font-medium" style={{ color: status === "invalid" ? "#64748b" : "#f1f5f9" }}>{row.title || <em style={{ color: "#475569" }}>empty</em>}</td>
                     <td className="px-4 py-3" style={{ color: "#cbd5e1" }}>{row.domain || "—"}</td>
-                    <td className="px-4 py-3" style={{ color: RATING_COLORS[row.risk_rating] ?? "#94a3b8" }}>{row.risk_rating || "—"}</td>
-                    <td className="px-4 py-3" style={{ color: "#cbd5e1" }}>{row.likelihood || "—"}</td>
+                    <td className="px-4 py-3" style={{ color: RATING_COLORS[row.inherent_rating] ?? "#94a3b8" }}>{row.inherent_rating || "—"}</td>
+                    <td className="px-4 py-3" style={{ color: RATING_COLORS[row.residual_rating] ?? "#94a3b8" }}>{row.residual_rating || "—"}</td>
                   </tr>
                 );
               })}
