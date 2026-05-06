@@ -16,12 +16,24 @@ import {
 const VALID_UUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 
 function minimalCreate() {
+  // Includes the 6 inherent/residual fields added in package
+  // risk-register-inherent-residual-rating (Phase 1). Legacy
+  // likelihood/impact/risk_rating are still required by the create
+  // validator alongside the new fields, per the Phase-1 spec —
+  // they're written to the legacy columns by the POST handler so
+  // existing webhook payload contracts stay intact.
   return {
     title: "Unpatched server vulnerability",
     domain: "Vulnerability",
     likelihood: "likely",
     impact: "High",
-    risk_rating: "High"
+    risk_rating: "High",
+    inherent_likelihood: "likely",
+    inherent_impact: "High",
+    inherent_rating: "High",
+    residual_likelihood: "likely",
+    residual_impact: "High",
+    residual_rating: "High"
   };
 }
 
@@ -420,5 +432,220 @@ describe("validateRiskListQuery — query params", () => {
   it("uses DEFAULT_LIMIT=25 for invalid limit", () => {
     const r = validateRiskListQuery({ limit: "abc" });
     if ("input" in r) expect(r.input.limit).toBe(25);
+  });
+});
+
+// ====================================================================
+// Inherent / Residual rating fields — Phase 1 of
+// risk-register-inherent-residual-rating package
+// ====================================================================
+
+describe("validateRiskCreate — inherent fields required", () => {
+  it("rejects missing inherent_likelihood", () => {
+    const b = validCreate(); delete (b as Record<string, unknown>)["inherent_likelihood"];
+    const r = validateRiskCreate(b);
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("inherent_likelihood_required");
+  });
+
+  it("rejects missing inherent_impact", () => {
+    const b = validCreate(); delete (b as Record<string, unknown>)["inherent_impact"];
+    const r = validateRiskCreate(b);
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("inherent_impact_required");
+  });
+
+  it("rejects missing inherent_rating", () => {
+    const b = validCreate(); delete (b as Record<string, unknown>)["inherent_rating"];
+    const r = validateRiskCreate(b);
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("inherent_rating_required");
+  });
+
+  it("rejects invalid inherent_likelihood enum value", () => {
+    const r = validateRiskCreate(validCreate({ inherent_likelihood: "certain" }));
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("invalid_inherent_likelihood");
+  });
+
+  it("rejects invalid inherent_impact enum value", () => {
+    const r = validateRiskCreate(validCreate({ inherent_impact: "Severe" }));
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("invalid_inherent_impact");
+  });
+
+  it("rejects invalid inherent_rating enum value", () => {
+    const r = validateRiskCreate(validCreate({ inherent_rating: "Extreme" }));
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("invalid_inherent_rating");
+  });
+
+  it("accepts inherent values different from residual values", () => {
+    // Inherent is pre-controls (worse); residual is post-controls
+    // (better). The validator must permit any combination.
+    const r = validateRiskCreate(validCreate({
+      inherent_likelihood: "very_likely",
+      inherent_impact: "Critical",
+      inherent_rating: "Critical",
+      residual_likelihood: "unlikely",
+      residual_impact: "Low",
+      residual_rating: "Low",
+    }));
+    expect("input" in r).toBe(true);
+    if ("input" in r) {
+      expect(r.input.inherent_rating).toBe("Critical");
+      expect(r.input.residual_rating).toBe("Low");
+    }
+  });
+});
+
+describe("validateRiskCreate — residual fields required", () => {
+  it("rejects missing residual_likelihood", () => {
+    const b = validCreate(); delete (b as Record<string, unknown>)["residual_likelihood"];
+    const r = validateRiskCreate(b);
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("residual_likelihood_required");
+  });
+
+  it("rejects missing residual_impact", () => {
+    const b = validCreate(); delete (b as Record<string, unknown>)["residual_impact"];
+    const r = validateRiskCreate(b);
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("residual_impact_required");
+  });
+
+  it("rejects missing residual_rating", () => {
+    const b = validCreate(); delete (b as Record<string, unknown>)["residual_rating"];
+    const r = validateRiskCreate(b);
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("residual_rating_required");
+  });
+
+  it("rejects invalid residual_likelihood enum value", () => {
+    const r = validateRiskCreate(validCreate({ residual_likelihood: "frequent" }));
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("invalid_residual_likelihood");
+  });
+
+  it("rejects invalid residual_impact enum value", () => {
+    const r = validateRiskCreate(validCreate({ residual_impact: "minor" }));
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("invalid_residual_impact");
+  });
+
+  it("rejects invalid residual_rating enum value", () => {
+    const r = validateRiskCreate(validCreate({ residual_rating: "negligible" }));
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("invalid_residual_rating");
+  });
+});
+
+describe("validateRiskCreate — full body returns all 6 new fields", () => {
+  it("happy path passes through inherent + residual values verbatim", () => {
+    const r = validateRiskCreate(validCreate());
+    expect("input" in r).toBe(true);
+    if ("input" in r) {
+      expect(r.input.inherent_likelihood).toBe("likely");
+      expect(r.input.inherent_impact).toBe("High");
+      expect(r.input.inherent_rating).toBe("High");
+      expect(r.input.residual_likelihood).toBe("likely");
+      expect(r.input.residual_impact).toBe("High");
+      expect(r.input.residual_rating).toBe("High");
+    }
+  });
+});
+
+describe("validateRiskUpdate — inherent fields optional", () => {
+  it("accepts partial update with only inherent_rating", () => {
+    const r = validateRiskUpdate({ inherent_rating: "Low" });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.inherent_rating).toBe("Low");
+  });
+
+  it("accepts inherent trio update", () => {
+    const r = validateRiskUpdate({
+      inherent_likelihood: "rare",
+      inherent_impact: "Low",
+      inherent_rating: "Low",
+    });
+    expect("input" in r).toBe(true);
+    if ("input" in r) {
+      expect(r.input.inherent_likelihood).toBe("rare");
+      expect(r.input.inherent_impact).toBe("Low");
+      expect(r.input.inherent_rating).toBe("Low");
+    }
+  });
+
+  it("rejects invalid inherent_likelihood on update", () => {
+    const r = validateRiskUpdate({ inherent_likelihood: "always" });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("invalid_inherent_likelihood");
+  });
+
+  it("rejects invalid inherent_rating on update", () => {
+    const r = validateRiskUpdate({ inherent_rating: "Severe" });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("invalid_inherent_rating");
+  });
+
+  it("rejects empty-string inherent_rating on update", () => {
+    const r = validateRiskUpdate({ inherent_rating: "" });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("inherent_rating_must_be_non_empty_string");
+  });
+});
+
+describe("validateRiskUpdate — residual fields optional", () => {
+  it("accepts partial update with only residual_rating", () => {
+    const r = validateRiskUpdate({ residual_rating: "Moderate" });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.residual_rating).toBe("Moderate");
+  });
+
+  it("accepts residual trio update", () => {
+    const r = validateRiskUpdate({
+      residual_likelihood: "unlikely",
+      residual_impact: "Moderate",
+      residual_rating: "Moderate",
+    });
+    expect("input" in r).toBe(true);
+    if ("input" in r) {
+      expect(r.input.residual_likelihood).toBe("unlikely");
+      expect(r.input.residual_impact).toBe("Moderate");
+      expect(r.input.residual_rating).toBe("Moderate");
+    }
+  });
+
+  it("rejects invalid residual_impact on update", () => {
+    const r = validateRiskUpdate({ residual_impact: "tiny" });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("invalid_residual_impact");
+  });
+
+  it("rejects invalid residual_rating on update", () => {
+    const r = validateRiskUpdate({ residual_rating: "Extreme" });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("invalid_residual_rating");
+  });
+});
+
+describe("validateRiskUpdate — KNOWN_FIELDS includes new fields", () => {
+  it("accepts update with only inherent fields", () => {
+    const r = validateRiskUpdate({
+      inherent_likelihood: "likely",
+      inherent_impact: "High",
+      inherent_rating: "High",
+    });
+    // No legacy fields supplied. Should not return no_fields_to_update.
+    expect("input" in r).toBe(true);
+  });
+
+  it("accepts update with only residual fields", () => {
+    const r = validateRiskUpdate({
+      residual_likelihood: "likely",
+      residual_impact: "High",
+      residual_rating: "High",
+    });
+    expect("input" in r).toBe(true);
   });
 });

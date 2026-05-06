@@ -49,6 +49,24 @@ export const VALID_RISK_RATINGS = new Set([
   "Low"
 ]);
 
+// Aliases for the new inherent / residual fields. Same value sets as
+// the legacy fields above; named separately so per-field validation
+// errors and downstream readers reference the correct dimension.
+//
+// Inherent  = pre-controls / worst-case assessment.
+// Residual  = post-controls / current-state assessment.
+//
+// The legacy `likelihood` / `impact` / `risk_rating` fields above stay
+// in place; the API writes legacy = residual on every write so the
+// risk_rating field on webhook payloads stays in sync. See the package
+// migration `20260506_risk_inherent_residual.sql`.
+export const VALID_INHERENT_LIKELIHOODS = VALID_LIKELIHOODS;
+export const VALID_INHERENT_IMPACTS     = VALID_IMPACTS;
+export const VALID_INHERENT_RATINGS     = VALID_RISK_RATINGS;
+export const VALID_RESIDUAL_LIKELIHOODS = VALID_LIKELIHOODS;
+export const VALID_RESIDUAL_IMPACTS     = VALID_IMPACTS;
+export const VALID_RESIDUAL_RATINGS     = VALID_RISK_RATINGS;
+
 export const VALID_STATUSES = new Set([
   "open",
   "accepted",
@@ -91,9 +109,21 @@ export type RiskCreateInput = {
   title: string;
   description: string | null;
   domain: string;
+  // Legacy single-rating dimension. Required at create — kept for
+  // backwards compatibility with the webhook payload contract. The
+  // Phase 2 POST handler writes legacy = residual on insert; for now
+  // the API caller still sends the legacy values explicitly.
   likelihood: string;
   impact: string;
   risk_rating: string;
+  // Inherent (pre-controls) — required at create per Decision §6.
+  inherent_likelihood: string;
+  inherent_impact: string;
+  inherent_rating: string;
+  // Residual (post-controls) — required at create per Decision §6.
+  residual_likelihood: string;
+  residual_impact: string;
+  residual_rating: string;
   status: string;
   treatment: string | null;
   owner: string | null;
@@ -160,6 +190,74 @@ export function validateRiskCreate(body: unknown): RiskCreateResult {
     };
   }
   const risk_rating = b["risk_rating"] as string;
+
+  // ─── Inherent (pre-controls) — required enum trio per Decision §6
+  if (!isNonEmptyString(b["inherent_likelihood"])) {
+    return { error: "inherent_likelihood_required" };
+  }
+  if (!VALID_INHERENT_LIKELIHOODS.has(b["inherent_likelihood"] as string)) {
+    return {
+      error: "invalid_inherent_likelihood",
+      detail: "Must be one of: very_likely, likely, possible, unlikely, rare"
+    };
+  }
+  const inherent_likelihood = b["inherent_likelihood"] as string;
+
+  if (!isNonEmptyString(b["inherent_impact"])) {
+    return { error: "inherent_impact_required" };
+  }
+  if (!VALID_INHERENT_IMPACTS.has(b["inherent_impact"] as string)) {
+    return {
+      error: "invalid_inherent_impact",
+      detail: "Must be one of: Critical, High, Moderate, Low"
+    };
+  }
+  const inherent_impact = b["inherent_impact"] as string;
+
+  if (!isNonEmptyString(b["inherent_rating"])) {
+    return { error: "inherent_rating_required" };
+  }
+  if (!VALID_INHERENT_RATINGS.has(b["inherent_rating"] as string)) {
+    return {
+      error: "invalid_inherent_rating",
+      detail: "Must be one of: Critical, High, Moderate, Low"
+    };
+  }
+  const inherent_rating = b["inherent_rating"] as string;
+
+  // ─── Residual (post-controls) — required enum trio per Decision §6
+  if (!isNonEmptyString(b["residual_likelihood"])) {
+    return { error: "residual_likelihood_required" };
+  }
+  if (!VALID_RESIDUAL_LIKELIHOODS.has(b["residual_likelihood"] as string)) {
+    return {
+      error: "invalid_residual_likelihood",
+      detail: "Must be one of: very_likely, likely, possible, unlikely, rare"
+    };
+  }
+  const residual_likelihood = b["residual_likelihood"] as string;
+
+  if (!isNonEmptyString(b["residual_impact"])) {
+    return { error: "residual_impact_required" };
+  }
+  if (!VALID_RESIDUAL_IMPACTS.has(b["residual_impact"] as string)) {
+    return {
+      error: "invalid_residual_impact",
+      detail: "Must be one of: Critical, High, Moderate, Low"
+    };
+  }
+  const residual_impact = b["residual_impact"] as string;
+
+  if (!isNonEmptyString(b["residual_rating"])) {
+    return { error: "residual_rating_required" };
+  }
+  if (!VALID_RESIDUAL_RATINGS.has(b["residual_rating"] as string)) {
+    return {
+      error: "invalid_residual_rating",
+      detail: "Must be one of: Critical, High, Moderate, Low"
+    };
+  }
+  const residual_rating = b["residual_rating"] as string;
 
   // status — optional enum, defaults to 'open'
   let status = "open";
@@ -262,6 +360,12 @@ export function validateRiskCreate(body: unknown): RiskCreateResult {
       likelihood,
       impact,
       risk_rating,
+      inherent_likelihood,
+      inherent_impact,
+      inherent_rating,
+      residual_likelihood,
+      residual_impact,
+      residual_rating,
       status,
       treatment,
       owner,
@@ -280,9 +384,19 @@ export type RiskUpdateInput = {
   title: string | undefined;
   description: string | null | undefined;
   domain: string | undefined;
+  // Legacy single-rating dimension. Still PATCH-able so older callers
+  // keep working until they migrate to inherent/residual.
   likelihood: string | undefined;
   impact: string | undefined;
   risk_rating: string | undefined;
+  // Inherent (pre-controls) — optional at update.
+  inherent_likelihood: string | undefined;
+  inherent_impact: string | undefined;
+  inherent_rating: string | undefined;
+  // Residual (post-controls) — optional at update.
+  residual_likelihood: string | undefined;
+  residual_impact: string | undefined;
+  residual_rating: string | undefined;
   status: string | undefined;
   treatment: string | null | undefined;
   owner: string | null | undefined;
@@ -305,7 +419,9 @@ export function validateRiskUpdate(body: unknown): RiskUpdateResult {
   const KNOWN_FIELDS = new Set([
     "title", "description", "domain", "likelihood", "impact",
     "risk_rating", "status", "treatment", "owner", "due_date",
-    "source_type", "source_id"
+    "source_type", "source_id",
+    "inherent_likelihood", "inherent_impact", "inherent_rating",
+    "residual_likelihood", "residual_impact", "residual_rating"
   ]);
 
   const hasField = [...KNOWN_FIELDS].some(f => f in b);
@@ -369,6 +485,92 @@ export function validateRiskUpdate(body: unknown): RiskUpdateResult {
       };
     }
     risk_rating = b["risk_rating"] as string;
+  }
+
+  // ─── Inherent (pre-controls) — optional trio at update
+  let inherent_likelihood: string | undefined;
+  if ("inherent_likelihood" in b) {
+    if (!isNonEmptyString(b["inherent_likelihood"])) {
+      return { error: "inherent_likelihood_must_be_non_empty_string" };
+    }
+    if (!VALID_INHERENT_LIKELIHOODS.has(b["inherent_likelihood"] as string)) {
+      return {
+        error: "invalid_inherent_likelihood",
+        detail: "Must be one of: very_likely, likely, possible, unlikely, rare"
+      };
+    }
+    inherent_likelihood = b["inherent_likelihood"] as string;
+  }
+
+  let inherent_impact: string | undefined;
+  if ("inherent_impact" in b) {
+    if (!isNonEmptyString(b["inherent_impact"])) {
+      return { error: "inherent_impact_must_be_non_empty_string" };
+    }
+    if (!VALID_INHERENT_IMPACTS.has(b["inherent_impact"] as string)) {
+      return {
+        error: "invalid_inherent_impact",
+        detail: "Must be one of: Critical, High, Moderate, Low"
+      };
+    }
+    inherent_impact = b["inherent_impact"] as string;
+  }
+
+  let inherent_rating: string | undefined;
+  if ("inherent_rating" in b) {
+    if (!isNonEmptyString(b["inherent_rating"])) {
+      return { error: "inherent_rating_must_be_non_empty_string" };
+    }
+    if (!VALID_INHERENT_RATINGS.has(b["inherent_rating"] as string)) {
+      return {
+        error: "invalid_inherent_rating",
+        detail: "Must be one of: Critical, High, Moderate, Low"
+      };
+    }
+    inherent_rating = b["inherent_rating"] as string;
+  }
+
+  // ─── Residual (post-controls) — optional trio at update
+  let residual_likelihood: string | undefined;
+  if ("residual_likelihood" in b) {
+    if (!isNonEmptyString(b["residual_likelihood"])) {
+      return { error: "residual_likelihood_must_be_non_empty_string" };
+    }
+    if (!VALID_RESIDUAL_LIKELIHOODS.has(b["residual_likelihood"] as string)) {
+      return {
+        error: "invalid_residual_likelihood",
+        detail: "Must be one of: very_likely, likely, possible, unlikely, rare"
+      };
+    }
+    residual_likelihood = b["residual_likelihood"] as string;
+  }
+
+  let residual_impact: string | undefined;
+  if ("residual_impact" in b) {
+    if (!isNonEmptyString(b["residual_impact"])) {
+      return { error: "residual_impact_must_be_non_empty_string" };
+    }
+    if (!VALID_RESIDUAL_IMPACTS.has(b["residual_impact"] as string)) {
+      return {
+        error: "invalid_residual_impact",
+        detail: "Must be one of: Critical, High, Moderate, Low"
+      };
+    }
+    residual_impact = b["residual_impact"] as string;
+  }
+
+  let residual_rating: string | undefined;
+  if ("residual_rating" in b) {
+    if (!isNonEmptyString(b["residual_rating"])) {
+      return { error: "residual_rating_must_be_non_empty_string" };
+    }
+    if (!VALID_RESIDUAL_RATINGS.has(b["residual_rating"] as string)) {
+      return {
+        error: "invalid_residual_rating",
+        detail: "Must be one of: Critical, High, Moderate, Low"
+      };
+    }
+    residual_rating = b["residual_rating"] as string;
   }
 
   let status: string | undefined;
@@ -477,6 +679,12 @@ export function validateRiskUpdate(body: unknown): RiskUpdateResult {
       likelihood,
       impact,
       risk_rating,
+      inherent_likelihood,
+      inherent_impact,
+      inherent_rating,
+      residual_likelihood,
+      residual_impact,
+      residual_rating,
       status,
       treatment,
       owner,

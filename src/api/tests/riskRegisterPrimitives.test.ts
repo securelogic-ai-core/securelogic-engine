@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import {
   validateRiskCreate,
   validateRiskUpdate,
@@ -105,12 +107,20 @@ describe("validateRiskCreate — body shape", () => {
 
 describe("validateRiskCreate — POST happy path", () => {
   function base(): Record<string, unknown> {
+    // 6 inherent/residual fields required by package
+    // risk-register-inherent-residual-rating (Phase 1).
     return {
       title: "Unpatched dependency in payment service",
       domain: "Vulnerability",
       likelihood: "likely",
       impact: "High",
-      risk_rating: "High"
+      risk_rating: "High",
+      inherent_likelihood: "likely",
+      inherent_impact: "High",
+      inherent_rating: "High",
+      residual_likelihood: "likely",
+      residual_impact: "High",
+      residual_rating: "High"
     };
   }
 
@@ -211,7 +221,13 @@ describe("validateRiskCreate — POST rejects missing/invalid fields", () => {
       domain: "General",
       likelihood: "possible",
       impact: "Moderate",
-      risk_rating: "Moderate"
+      risk_rating: "Moderate",
+      inherent_likelihood: "possible",
+      inherent_impact: "Moderate",
+      inherent_rating: "Moderate",
+      residual_likelihood: "possible",
+      residual_impact: "Moderate",
+      residual_rating: "Moderate"
     };
   }
 
@@ -644,6 +660,12 @@ describe("finding 3 — source_id is unverified provenance metadata (documented,
       likelihood: "possible",
       impact: "Low",
       risk_rating: "Low",
+      inherent_likelihood: "possible",
+      inherent_impact: "Low",
+      inherent_rating: "Low",
+      residual_likelihood: "possible",
+      residual_impact: "Low",
+      residual_rating: "Low",
       source_type: "finding",
       source_id: "ffffffff-ffff-ffff-ffff-ffffffffffff"
     });
@@ -662,7 +684,13 @@ describe("finding 4 — domain is non-exhaustive; validation does not gate on en
       domain: "",
       likelihood: "possible",
       impact: "Low",
-      risk_rating: "Low"
+      risk_rating: "Low",
+      inherent_likelihood: "possible",
+      inherent_impact: "Low",
+      inherent_rating: "Low",
+      residual_likelihood: "possible",
+      residual_impact: "Low",
+      residual_rating: "Low"
     });
     expect("error" in r).toBe(true);
     if ("error" in r) expect(r.error).toBe("domain_required");
@@ -674,7 +702,13 @@ describe("finding 4 — domain is non-exhaustive; validation does not gate on en
       domain: "Vendor Risk",
       likelihood: "possible",
       impact: "Low",
-      risk_rating: "Low"
+      risk_rating: "Low",
+      inherent_likelihood: "possible",
+      inherent_impact: "Low",
+      inherent_rating: "Low",
+      residual_likelihood: "possible",
+      residual_impact: "Low",
+      residual_rating: "Low"
     });
     expect("input" in r).toBe(true);
     if ("input" in r) expect(r.input.domain).toBe("Vendor Risk");
@@ -688,7 +722,13 @@ describe("finding 4 — domain is non-exhaustive; validation does not gate on en
       domain: "Physical Security",
       likelihood: "possible",
       impact: "Low",
-      risk_rating: "Low"
+      risk_rating: "Low",
+      inherent_likelihood: "possible",
+      inherent_impact: "Low",
+      inherent_rating: "Low",
+      residual_likelihood: "possible",
+      residual_impact: "Low",
+      residual_rating: "Low"
     });
     expect("input" in r).toBe(true);
     if ("input" in r) expect(r.input.domain).toBe("Physical Security");
@@ -704,5 +744,144 @@ describe("finding 4 — domain is non-exhaustive; validation does not gate on en
     const r = validateRiskUpdate({ domain: "Supply Chain" });
     expect("input" in r).toBe(true);
     if ("input" in r) expect(r.input.domain).toBe("Supply Chain");
+  });
+});
+
+// ====================================================================
+// Migration content guards — risk-register-inherent-residual-rating
+// (Phase 1). These read the migration SQL as text and assert structural
+// invariants. They don't run the migration; that's an integration
+// concern.
+// ====================================================================
+
+const INHERENT_RESIDUAL_MIGRATION_FILE = resolve(
+  __dirname,
+  "../../../db/migrations/20260506_risk_inherent_residual.sql"
+);
+const INHERENT_RESIDUAL_MIGRATION = readFileSync(
+  INHERENT_RESIDUAL_MIGRATION_FILE,
+  "utf8"
+);
+
+describe("inherent/residual migration — column additions", () => {
+  it("adds inherent_likelihood column", () => {
+    expect(INHERENT_RESIDUAL_MIGRATION).toMatch(
+      /ADD COLUMN IF NOT EXISTS inherent_likelihood TEXT/
+    );
+  });
+
+  it("adds inherent_impact column", () => {
+    expect(INHERENT_RESIDUAL_MIGRATION).toMatch(
+      /ADD COLUMN IF NOT EXISTS inherent_impact\s+TEXT/
+    );
+  });
+
+  it("adds inherent_rating column", () => {
+    expect(INHERENT_RESIDUAL_MIGRATION).toMatch(
+      /ADD COLUMN IF NOT EXISTS inherent_rating\s+TEXT/
+    );
+  });
+
+  it("adds residual_likelihood column", () => {
+    expect(INHERENT_RESIDUAL_MIGRATION).toMatch(
+      /ADD COLUMN IF NOT EXISTS residual_likelihood TEXT/
+    );
+  });
+
+  it("adds residual_impact column", () => {
+    expect(INHERENT_RESIDUAL_MIGRATION).toMatch(
+      /ADD COLUMN IF NOT EXISTS residual_impact\s+TEXT/
+    );
+  });
+
+  it("adds residual_rating column", () => {
+    expect(INHERENT_RESIDUAL_MIGRATION).toMatch(
+      /ADD COLUMN IF NOT EXISTS residual_rating\s+TEXT/
+    );
+  });
+});
+
+describe("inherent/residual migration — CHECK constraints", () => {
+  it("inherent_likelihood CHECK enumerates the five canonical values", () => {
+    expect(INHERENT_RESIDUAL_MIGRATION).toMatch(
+      /risk_inherent_likelihood_check[\s\S]*very_likely[\s\S]*likely[\s\S]*possible[\s\S]*unlikely[\s\S]*rare/
+    );
+  });
+
+  it("inherent_impact CHECK enumerates the four severity values", () => {
+    expect(INHERENT_RESIDUAL_MIGRATION).toMatch(
+      /risk_inherent_impact_check[\s\S]*Critical[\s\S]*High[\s\S]*Moderate[\s\S]*Low/
+    );
+  });
+
+  it("inherent_rating CHECK enumerates the four severity values", () => {
+    expect(INHERENT_RESIDUAL_MIGRATION).toMatch(
+      /risk_inherent_rating_check[\s\S]*Critical[\s\S]*High[\s\S]*Moderate[\s\S]*Low/
+    );
+  });
+
+  it("residual_likelihood CHECK enumerates the five canonical values", () => {
+    expect(INHERENT_RESIDUAL_MIGRATION).toMatch(
+      /risk_residual_likelihood_check[\s\S]*very_likely[\s\S]*likely[\s\S]*possible[\s\S]*unlikely[\s\S]*rare/
+    );
+  });
+
+  it("residual_impact CHECK enumerates the four severity values", () => {
+    expect(INHERENT_RESIDUAL_MIGRATION).toMatch(
+      /risk_residual_impact_check[\s\S]*Critical[\s\S]*High[\s\S]*Moderate[\s\S]*Low/
+    );
+  });
+
+  it("residual_rating CHECK enumerates the four severity values", () => {
+    expect(INHERENT_RESIDUAL_MIGRATION).toMatch(
+      /risk_residual_rating_check[\s\S]*Critical[\s\S]*High[\s\S]*Moderate[\s\S]*Low/
+    );
+  });
+
+  it("CHECK constraints permit NULL (additive migration on existing rows)", () => {
+    // Each CHECK is shaped `column IS NULL OR column IN (...)` so
+    // the existing risks that were never assessed for inherent
+    // remain valid until reassessed.
+    for (const constraint of [
+      "risk_inherent_likelihood_check",
+      "risk_inherent_impact_check",
+      "risk_inherent_rating_check",
+      "risk_residual_likelihood_check",
+      "risk_residual_impact_check",
+      "risk_residual_rating_check",
+    ]) {
+      const re = new RegExp(`${constraint}[\\s\\S]*?IS NULL OR`);
+      expect(INHERENT_RESIDUAL_MIGRATION).toMatch(re);
+    }
+  });
+});
+
+describe("inherent/residual migration — backfill", () => {
+  it("backfills residual_* from legacy columns where residual_rating IS NULL", () => {
+    expect(INHERENT_RESIDUAL_MIGRATION).toMatch(
+      /UPDATE risks SET[\s\S]*residual_likelihood = likelihood[\s\S]*residual_impact\s+= impact[\s\S]*residual_rating\s+= risk_rating[\s\S]*WHERE residual_rating IS NULL/
+    );
+  });
+
+  it("does NOT backfill inherent_* columns", () => {
+    // Decision §3: existing data interpreted as RESIDUAL only.
+    // Inherent stays NULL for existing rows.
+    expect(INHERENT_RESIDUAL_MIGRATION).not.toMatch(
+      /UPDATE risks SET[\s\S]*inherent_likelihood\s*=/
+    );
+  });
+
+  it("does NOT drop the legacy likelihood/impact/risk_rating columns", () => {
+    // Webhook compatibility per Decision §5: legacy columns stay,
+    // written to by the API alongside residual on every write.
+    expect(INHERENT_RESIDUAL_MIGRATION).not.toMatch(/DROP COLUMN/);
+  });
+});
+
+describe("inherent/residual migration — indexes", () => {
+  it("creates a partial index on residual_rating WHERE NOT NULL", () => {
+    expect(INHERENT_RESIDUAL_MIGRATION).toMatch(
+      /CREATE INDEX IF NOT EXISTS idx_risks_org_residual_rating[\s\S]*WHERE residual_rating IS NOT NULL/
+    );
   });
 });
