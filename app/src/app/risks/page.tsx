@@ -100,6 +100,12 @@ export default async function RisksPage({
 
   const activeStatus = sp.status ?? "";
   const activeDomain = sp.domain ?? "";
+  // URL param remains `risk_rating` — the backend's GET /api/risks
+  // filter is still keyed on the legacy column (which mirrors
+  // residual after Phase 1 backfill). When the legacy column is
+  // eventually dropped in a future package, this URL param renames
+  // to `residual_rating` and the backend filter migrates with it.
+  // For now, filtering on legacy = filtering on residual.
   const activeRating = sp.risk_rating ?? "";
 
   // Fetch four endpoints in parallel:
@@ -143,7 +149,13 @@ export default async function RisksPage({
       id: r.id,
       title: r.title,
       domain: r.domain,
-      risk_rating: r.risk_rating,
+      // Table displays residual rating per Decision §5 of package
+      // risk-register-inherent-residual-rating. Risks created before
+      // Phase 1 backfill have residual = legacy via the migration's
+      // UPDATE; risks created post-Phase-2 have residual_rating
+      // populated explicitly by the create form. NULL residual means
+      // an unusual write path — display as "—" (RiskRow handles it).
+      residual_rating: r.residual_rating,
       status: r.status,
       owner: r.owner,
       due_date: r.due_date,
@@ -155,7 +167,11 @@ export default async function RisksPage({
 
   const totalRisks     = summary?.total ?? 0;
   const openRisks      = summary?.by_status["open"] ?? 0;
-  const criticalRisks  = summary?.by_risk_rating["Critical"] ?? 0;
+  // Critical count reads by_residual_rating per Decision §5. The
+  // legacy by_risk_rating key on the response is also populated
+  // (legacy = residual after Phase 1 backfill) but reading the
+  // explicit residual key avoids the hidden coupling.
+  const criticalRisks  = summary?.by_residual_rating?.["Critical"] ?? 0;
   const mitigatedRisks = summary?.by_status["mitigated"] ?? 0;
 
   const currentSp: Params = {

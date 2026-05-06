@@ -728,14 +728,23 @@ export function RisksBreakdown({
 }: {
   risks_summary: DashboardSummary["risks_summary"];
 }) {
-  const rs = risks_summary ?? { open: 0, by_risk_rating: { Critical: 0, High: 0, Moderate: 0, Low: 0 } };
+  // Read residual aggregate per Decision §5 of package
+  // risk-register-inherent-residual-rating. Falls back to legacy
+  // by_risk_rating only if the new key is missing on the response —
+  // keeps the tile working during deploys where backend ships
+  // before frontend.
+  const rs = risks_summary ?? {
+    open: 0,
+    by_risk_rating: { Critical: 0, High: 0, Moderate: 0, Low: 0 }
+  };
+  const ratings = rs.by_residual_rating ?? rs.by_risk_rating;
   const total = rs.open;
 
   const bars = [
-    { label: "Critical", count: rs.by_risk_rating.Critical, color: "#ef4444" },
-    { label: "High",     count: rs.by_risk_rating.High,     color: "#f97316" },
-    { label: "Moderate", count: rs.by_risk_rating.Moderate, color: "#f59e0b" },
-    { label: "Low",      count: rs.by_risk_rating.Low,      color: "#22c55e" },
+    { label: "Critical", count: ratings.Critical, color: "#ef4444" },
+    { label: "High",     count: ratings.High,     color: "#f97316" },
+    { label: "Moderate", count: ratings.Moderate, color: "#f59e0b" },
+    { label: "Low",      count: ratings.Low,      color: "#22c55e" },
   ];
 
   return (
@@ -825,7 +834,11 @@ export function RiskHeatmap({
 }: {
   risks_summary: DashboardSummary["risks_summary"];
 }) {
-  const cells = risks_summary?.by_likelihood_impact ?? [];
+  // Heatmap consumes residual likelihood × impact per Decision §5
+  // of package risk-register-inherent-residual-rating. Falls back
+  // to legacy `by_likelihood_impact` only if the new key is missing
+  // on the response (defensive against deploy ordering).
+  const cells = risks_summary?.by_residual_likelihood_impact ?? risks_summary?.by_likelihood_impact ?? [];
 
   const cellMap = new Map<string, number>();
   for (const c of cells) {
