@@ -1,35 +1,15 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getMe, getRisksIntelligence, getRisksSummary, getRiskScale, type RiskIntelligence, type RiskScaleLevel } from "@/lib/api";
-
-const FALLBACK_RATING_STYLES: Record<string, React.CSSProperties> = {
-  Critical: { background: "rgba(239,68,68,0.15)",   color: "#fca5a5" },
-  High:     { background: "rgba(249,115,22,0.15)",  color: "#fdba74" },
-  Moderate: { background: "rgba(245,158,11,0.15)",  color: "#fcd34d" },
-  Low:      { background: "rgba(34,197,94,0.15)",   color: "#86efac" },
-};
-
-function ratingStyleFromScale(
-  ratingValue: string | null,
-  scaleLevels: RiskScaleLevel[]
-): React.CSSProperties {
-  if (!ratingValue) return { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
-  const v = ratingValue.toLowerCase();
-  const level = scaleLevels.find((l) => l.value.toLowerCase() === v);
-  if (level) {
-    return { background: `${level.color}26`, color: level.color };
-  }
-  return FALLBACK_RATING_STYLES[ratingValue] ?? { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
-}
-
-const STATUS_STYLES: Record<string, React.CSSProperties> = {
-  open:        { background: "rgba(239,68,68,0.12)",  color: "#fca5a5" },
-  accepted:    { background: "rgba(245,158,11,0.12)", color: "#fcd34d" },
-  mitigated:   { background: "rgba(34,197,94,0.12)",  color: "#86efac" },
-  closed:      { background: "rgba(148,163,184,0.12)", color: "#94a3b8" },
-  transferred: { background: "rgba(148,163,184,0.12)", color: "#94a3b8" },
-};
+import {
+  getMe,
+  getRisks,
+  getRisksIntelligence,
+  getRisksSummary,
+  getRiskScale,
+} from "@/lib/api";
+import { RiskTable } from "@/components/risks/RiskTable";
+import type { EnrichedRiskRow } from "@/components/risks/RiskRow";
 
 const STAT_CARD_STYLE: React.CSSProperties = {
   background: "var(--color-brand-surface, #111827)",
@@ -37,6 +17,35 @@ const STAT_CARD_STYLE: React.CSSProperties = {
   borderRadius: "12px",
   padding: "16px 20px",
 };
+
+// Mirror src/api/lib/riskValidation.ts:VALID_DOMAINS exactly. If the
+// engine's enum gains a value, add it here too — the comment + a code
+// review note is the sync contract. The drift cost is small (one
+// missing filter pill until update).
+const RISK_DOMAINS: ReadonlyArray<string> = [
+  "Access Management",
+  "Vendor Risk",
+  "AI Governance",
+  "Regulatory",
+  "Vulnerability",
+  "Resilience",
+  "General",
+];
+
+const STATUS_FILTERS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "open",        label: "Open" },
+  { value: "accepted",    label: "Accepted" },
+  { value: "mitigated",   label: "Mitigated" },
+  { value: "closed",      label: "Closed" },
+  { value: "transferred", label: "Transferred" },
+];
+
+const RATING_FILTERS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "Critical", label: "Critical" },
+  { value: "High",     label: "High" },
+  { value: "Moderate", label: "Moderate" },
+  { value: "Low",      label: "Low" },
+];
 
 type Params = Record<string, string | undefined>;
 
@@ -74,68 +83,6 @@ function FilterPill({
   );
 }
 
-function RiskCard({ risk, scaleLevels }: { risk: RiskIntelligence; scaleLevels: RiskScaleLevel[] }) {
-  const ratingStyle = ratingStyleFromScale(risk.risk_rating ?? null, scaleLevels);
-  const statusStyle = STATUS_STYLES[risk.status] ?? { background: "rgba(148,163,184,0.12)", color: "#94a3b8" };
-  const statusLabel = (risk.status ?? "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-
-  const intelligenceColor = risk.linked_findings > 0
-    ? { color: "#fcd34d" }
-    : { color: "#00c4b4" };
-
-  return (
-    <div
-      className="rounded-xl border p-5"
-      style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}
-    >
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          {risk.risk_rating && (
-            <span
-              className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold"
-              style={ratingStyle}
-            >
-              {scaleLevels.find((l) => l.value.toLowerCase() === risk.risk_rating?.toLowerCase())?.label ?? risk.risk_rating}
-            </span>
-          )}
-          <span
-            className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
-            style={statusStyle}
-          >
-            {statusLabel}
-          </span>
-          {risk.domain && (
-            <span
-              className="inline-flex items-center px-2 py-0.5 rounded text-xs"
-              style={{ background: "rgba(148,163,184,0.1)", color: "#64748b" }}
-            >
-              {risk.domain}
-            </span>
-          )}
-        </div>
-      </div>
-
-      <p className="text-sm font-semibold mb-2" style={{ color: "#f1f5f9" }}>
-        {risk.title}
-      </p>
-
-      <p className="text-xs" style={intelligenceColor}>
-        {risk.active_treatments} active treatment{risk.active_treatments !== 1 ? "s" : ""}
-        {" • "}
-        {risk.total_treatments} total
-        {" • "}
-        {risk.linked_findings} linked finding{risk.linked_findings !== 1 ? "s" : ""}
-      </p>
-
-      {risk.owner && (
-        <p className="text-xs mt-2" style={{ color: "#64748b" }}>
-          Owner: {risk.owner}
-        </p>
-      )}
-    </div>
-  );
-}
-
 export default async function RisksPage({
   searchParams,
 }: {
@@ -153,8 +100,27 @@ export default async function RisksPage({
 
   const activeStatus = sp.status ?? "";
   const activeDomain = sp.domain ?? "";
+  const activeRating = sp.risk_rating ?? "";
 
-  const [intelligenceData, summary, scale] = await Promise.all([
+  // Fetch four endpoints in parallel:
+  //   1. /api/risks      — full row data (incl. due_date, updated_at) for ALL statuses
+  //   2. /api/risks/intelligence — treatment/finding counts (open + non-terminal only)
+  //   3. /api/risks/summary      — aggregate count tiles
+  //   4. /api/risk-scale         — display preset for rating relabeling
+  //
+  // Filters from the URL apply to /api/risks (server-side filter on
+  // status/domain/risk_rating); intelligence stays unfiltered and is
+  // merged in client-side. This keeps the merge math simple — we never
+  // need to ask "is this id in the intelligence list under a different
+  // filter?". Closed/transferred risks land in the basic list with
+  // counts defaulted to 0 (intelligence excludes them at the SQL layer).
+  const basicParams: { status?: string; domain?: string; risk_rating?: string; limit: number } = { limit: 200 };
+  if (activeStatus)  basicParams.status      = activeStatus;
+  if (activeDomain)  basicParams.domain      = activeDomain;
+  if (activeRating)  basicParams.risk_rating = activeRating;
+
+  const [basicData, intelligenceData, summary, scale] = await Promise.all([
+    getRisks(token, basicParams),
     getRisksIntelligence(token),
     getRisksSummary(token),
     getRiskScale(token),
@@ -162,14 +128,30 @@ export default async function RisksPage({
 
   const scaleLevels = scale?.levels ?? [];
 
-  // Filter in-memory (intelligence endpoint excludes closed/transferred)
-  let risks = intelligenceData?.risks ?? [];
-  if (activeStatus) {
-    risks = risks.filter((r) => r.status === activeStatus);
+  // Build enriched-row list by merging.
+  const intelByRiskId = new Map<string, { active_treatments: number; linked_findings: number }>();
+  for (const r of intelligenceData?.risks ?? []) {
+    intelByRiskId.set(r.id, {
+      active_treatments: r.active_treatments,
+      linked_findings:   r.linked_findings,
+    });
   }
-  if (activeDomain) {
-    risks = risks.filter((r) => r.domain === activeDomain);
-  }
+
+  const rows: EnrichedRiskRow[] = (basicData?.risks ?? []).map((r) => {
+    const counts = intelByRiskId.get(r.id);
+    return {
+      id: r.id,
+      title: r.title,
+      domain: r.domain,
+      risk_rating: r.risk_rating,
+      status: r.status,
+      owner: r.owner,
+      due_date: r.due_date,
+      updated_at: r.updated_at,
+      active_treatments: counts?.active_treatments ?? 0,
+      linked_findings:   counts?.linked_findings   ?? 0,
+    };
+  });
 
   const totalRisks     = summary?.total ?? 0;
   const openRisks      = summary?.by_status["open"] ?? 0;
@@ -177,14 +159,15 @@ export default async function RisksPage({
   const mitigatedRisks = summary?.by_status["mitigated"] ?? 0;
 
   const currentSp: Params = {
-    ...(sp.status ? { status: sp.status } : {}),
-    ...(sp.domain ? { domain: sp.domain } : {}),
+    ...(sp.status      ? { status:      sp.status }      : {}),
+    ...(sp.domain      ? { domain:      sp.domain }      : {}),
+    ...(sp.risk_rating ? { risk_rating: sp.risk_rating } : {}),
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-6 py-12">
+    <div className="max-w-6xl mx-auto px-6 py-12">
       {/* Header */}
-      <div className="mb-8 flex items-start justify-between gap-4">
+      <div className="mb-8 flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold mb-1" style={{ color: "#f1f5f9" }}>
             Risk Register
@@ -193,24 +176,44 @@ export default async function RisksPage({
             Strategic risks and treatment status
           </p>
         </div>
-        <Link
-          href="/risks/import"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "6px",
-            padding: "8px 14px",
-            borderRadius: "8px",
-            fontSize: "13px",
-            fontWeight: 500,
-            border: "1px solid #1e293b",
-            color: "#94a3b8",
-            textDecoration: "none",
-            flexShrink: 0,
-          }}
-        >
-          ↑ Import CSV
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/risks/import"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 14px",
+              borderRadius: "8px",
+              fontSize: "13px",
+              fontWeight: 500,
+              border: "1px solid #1e293b",
+              color: "#94a3b8",
+              textDecoration: "none",
+              flexShrink: 0,
+            }}
+          >
+            ↑ Import CSV
+          </Link>
+          <Link
+            href="/risks/new"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 14px",
+              borderRadius: "8px",
+              fontSize: "13px",
+              fontWeight: 600,
+              background: "#00c4b4",
+              color: "#0a0f1a",
+              textDecoration: "none",
+              flexShrink: 0,
+            }}
+          >
+            + Add Risk
+          </Link>
+        </div>
       </div>
 
       {/* Summary stat cards */}
@@ -247,41 +250,50 @@ export default async function RisksPage({
           <span className="text-xs font-semibold uppercase tracking-wide mr-1" style={{ color: "#64748b" }}>
             Status
           </span>
-          <FilterPill label="All"       href={filterHref(currentSp, "status", null)}       active={!activeStatus} />
-          <FilterPill label="Open"      href={filterHref(currentSp, "status", "open")}      active={activeStatus === "open"} />
-          <FilterPill label="Accepted"  href={filterHref(currentSp, "status", "accepted")}  active={activeStatus === "accepted"} />
-          <FilterPill label="Mitigated" href={filterHref(currentSp, "status", "mitigated")} active={activeStatus === "mitigated"} />
+          <FilterPill label="All" href={filterHref(currentSp, "status", null)} active={!activeStatus} />
+          {STATUS_FILTERS.map(({ value, label }) => (
+            <FilterPill
+              key={value}
+              label={label}
+              href={filterHref(currentSp, "status", value)}
+              active={activeStatus === value}
+            />
+          ))}
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs font-semibold uppercase tracking-wide mr-1" style={{ color: "#64748b" }}>
             Domain
           </span>
-          <FilterPill label="All"          href={filterHref(currentSp, "domain", null)}           active={!activeDomain} />
-          <FilterPill label="Vendor Risk"  href={filterHref(currentSp, "domain", "Vendor Risk")}  active={activeDomain === "Vendor Risk"} />
-          <FilterPill label="AI Governance"href={filterHref(currentSp, "domain", "AI Governance")} active={activeDomain === "AI Governance"} />
-          <FilterPill label="Compliance"   href={filterHref(currentSp, "domain", "Compliance")}   active={activeDomain === "Compliance"} />
-          <FilterPill label="General"      href={filterHref(currentSp, "domain", "General")}      active={activeDomain === "General"} />
+          <FilterPill label="All" href={filterHref(currentSp, "domain", null)} active={!activeDomain} />
+          {RISK_DOMAINS.map((d) => (
+            <FilterPill
+              key={d}
+              label={d}
+              href={filterHref(currentSp, "domain", d)}
+              active={activeDomain === d}
+            />
+          ))}
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-semibold uppercase tracking-wide mr-1" style={{ color: "#64748b" }}>
+            Rating
+          </span>
+          <FilterPill label="All" href={filterHref(currentSp, "risk_rating", null)} active={!activeRating} />
+          {RATING_FILTERS.map(({ value, label }) => (
+            <FilterPill
+              key={value}
+              label={label}
+              href={filterHref(currentSp, "risk_rating", value)}
+              active={activeRating === value}
+            />
+          ))}
         </div>
       </div>
 
-      {/* Risk cards */}
-      {risks.length === 0 ? (
-        <div
-          className="rounded-xl border p-10 text-center"
-          style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}
-        >
-          <p className="text-sm" style={{ color: "#94a3b8" }}>
-            No risks match your current filters.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {risks.map((r) => (
-            <RiskCard key={r.id} risk={r} scaleLevels={scaleLevels} />
-          ))}
-        </div>
-      )}
+      {/* Risk table */}
+      <RiskTable risks={rows} scaleLevels={scaleLevels} />
     </div>
   );
 }
