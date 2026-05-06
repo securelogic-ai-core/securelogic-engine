@@ -758,12 +758,15 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
         `,
         [orgId]
       ),
-      pg.query<{ id: string; title: string; domain: string; risk_rating: string }>(
+      // Engine consumes RESIDUAL per Decision §4. Mirrors the same
+      // change in postureSnapshot.ts; both pipelines must stay in sync.
+      pg.query<{ id: string; title: string; domain: string; residual_rating: string }>(
         `
-        SELECT id, title, domain, risk_rating
+        SELECT id, title, domain, residual_rating
         FROM risks
         WHERE organization_id = $1
           AND status = 'open'
+          AND residual_rating IS NOT NULL
         `,
         [orgId]
       ),
@@ -805,7 +808,7 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
     id: r.id,
     title: r.title,
     domain: r.domain,
-    severity: r.risk_rating
+    severity: r.residual_rating
   }));
 
   const vendorInventorySignals = vendorCriticalityToSignals(

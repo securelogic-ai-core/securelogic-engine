@@ -207,20 +207,43 @@ describe("buildRiskSummary — by_risk_rating", () => {
 // ====================================================================
 
 describe("buildRiskSummary — open_critical_count", () => {
-  it("equals the Critical rating count", () => {
+  // open_critical_count reads RESIDUAL count per Decision §3 — NOT
+  // legacy `by_risk_rating`. These tests assert the residual
+  // semantic explicitly so a future package that decouples legacy
+  // from residual cannot silently regress this number.
+  it("equals the Critical residual_rating count", () => {
     const { open_critical_count } = buildRiskSummary(
       [],
-      [{ risk_rating: "Critical", count: "5" }],
-      []
+      [],
+      [],
+      [],
+      [{ residual_rating: "Critical", count: "5" }]
     );
     expect(open_critical_count).toBe(5);
   });
 
-  it("is 0 when no Critical risks exist", () => {
+  it("is 0 when no Critical residual risks exist", () => {
     const { open_critical_count } = buildRiskSummary(
       [],
-      [{ risk_rating: "High", count: "3" }],
-      []
+      [],
+      [],
+      [],
+      [{ residual_rating: "High", count: "3" }]
+    );
+    expect(open_critical_count).toBe(0);
+  });
+
+  it("ignores legacy by_risk_rating Critical count when residual is empty (no hidden coupling)", () => {
+    // If a future package decouples legacy from residual, legacy
+    // could carry a Critical count while residual carries none —
+    // and open_critical_count must reflect residual, not legacy.
+    // This test asserts the read site is residual-only.
+    const { open_critical_count } = buildRiskSummary(
+      [],
+      [{ risk_rating: "Critical", count: "99" }], // legacy says 99
+      [],
+      [],
+      [] // residual is empty
     );
     expect(open_critical_count).toBe(0);
   });
@@ -264,5 +287,93 @@ describe("buildRiskSummary — by_domain", () => {
       ]
     );
     expect(Object.keys(by_domain)).toHaveLength(3);
+  });
+});
+
+// ====================================================================
+// Phase 2 of risk-register-inherent-residual-rating —
+// inherent + residual aggregate shape on /api/risks/summary
+// ====================================================================
+
+describe("buildRiskSummary — by_inherent_rating", () => {
+  it("returns the standard four-key shape with all zeros when no rows passed", () => {
+    const { by_inherent_rating } = buildRiskSummary([], [], []);
+    expect(by_inherent_rating).toEqual({
+      Critical: 0, High: 0, Moderate: 0, Low: 0
+    });
+  });
+
+  it("populates from byInherentRatingRows", () => {
+    const { by_inherent_rating } = buildRiskSummary(
+      [],
+      [],
+      [],
+      [
+        { inherent_rating: "Critical", count: "5" },
+        { inherent_rating: "High",     count: "3" },
+        { inherent_rating: "Moderate", count: "1" },
+      ],
+      []
+    );
+    expect(by_inherent_rating).toEqual({
+      Critical: 5, High: 3, Moderate: 1, Low: 0
+    });
+  });
+
+  it("ignores unknown rating keys defensively", () => {
+    const { by_inherent_rating } = buildRiskSummary(
+      [], [], [],
+      [{ inherent_rating: "Severe", count: "99" }],
+      []
+    );
+    expect(by_inherent_rating.Critical).toBe(0);
+  });
+});
+
+describe("buildRiskSummary — by_residual_rating", () => {
+  it("returns the standard four-key shape with all zeros when no rows passed", () => {
+    const { by_residual_rating } = buildRiskSummary([], [], []);
+    expect(by_residual_rating).toEqual({
+      Critical: 0, High: 0, Moderate: 0, Low: 0
+    });
+  });
+
+  it("populates from byResidualRatingRows", () => {
+    const { by_residual_rating } = buildRiskSummary(
+      [], [], [], [],
+      [
+        { residual_rating: "Critical", count: "2" },
+        { residual_rating: "Low",      count: "7" },
+      ]
+    );
+    expect(by_residual_rating).toEqual({
+      Critical: 2, High: 0, Moderate: 0, Low: 7
+    });
+  });
+
+  it("ignores unknown rating keys defensively", () => {
+    const { by_residual_rating } = buildRiskSummary(
+      [], [], [], [],
+      [{ residual_rating: "Negligible", count: "99" }]
+    );
+    expect(by_residual_rating.Low).toBe(0);
+  });
+});
+
+describe("buildRiskSummary — backwards-compat: by_risk_rating preserved", () => {
+  it("by_risk_rating mirrors byRatingRows input independently of inherent/residual", () => {
+    // Phase-1 backfill made legacy column = residual on every write,
+    // so byRatingRows and byResidualRatingRows are typically the same
+    // numbers in practice. The buildRiskSummary helper, however,
+    // accepts them as independent inputs — letting callers pass
+    // either or both without coupling.
+    const { by_risk_rating, by_residual_rating } = buildRiskSummary(
+      [],
+      [{ risk_rating: "High", count: "4" }],
+      [], [],
+      [{ residual_rating: "High", count: "4" }]
+    );
+    expect(by_risk_rating).toEqual({ Critical: 0, High: 4, Moderate: 0, Low: 0 });
+    expect(by_residual_rating).toEqual({ Critical: 0, High: 4, Moderate: 0, Low: 0 });
   });
 });

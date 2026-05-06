@@ -107,9 +107,18 @@ export async function computeAndSavePostureSnapshot(
        WHERE organization_id = $1 AND status = 'open'`,
       [organizationId]
     ),
-    pg.query<{ id: string; title: string; domain: string; risk_rating: string }>(
-      `SELECT id, title, domain, risk_rating FROM risks
-       WHERE organization_id = $1 AND status = 'open'`,
+    // Engine consumes RESIDUAL rating per Decision §4 — the
+    // post-controls assessment of current-state risk. Risks without a
+    // residual_rating are excluded (the IS NOT NULL filter implements
+    // the spec's fallback rule: skip, do NOT fall back to inherent).
+    // After Phase 1 backfill, every existing row has residual = legacy,
+    // so scoring stays unchanged for orgs that had data before this
+    // package shipped.
+    pg.query<{ id: string; title: string; domain: string; residual_rating: string }>(
+      `SELECT id, title, domain, residual_rating FROM risks
+       WHERE organization_id = $1
+         AND status = 'open'
+         AND residual_rating IS NOT NULL`,
       [organizationId]
     ),
     pg.query<{ source_type: string; count: string }>(
@@ -172,7 +181,7 @@ export async function computeAndSavePostureSnapshot(
     id: r.id,
     title: r.title,
     domain: r.domain,
-    severity: r.risk_rating,
+    severity: r.residual_rating,
   }));
 
   // Synthetic Vendor Risk signals from active inventory. Same
