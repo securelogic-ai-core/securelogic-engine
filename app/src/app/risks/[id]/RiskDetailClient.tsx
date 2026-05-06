@@ -22,6 +22,7 @@
 
 import Link from "next/link";
 import type { Risk, RiskScaleLevel, RiskTreatment, Finding } from "@/lib/api";
+import { RiskHistorySection } from "@/components/risks/RiskHistorySection";
 
 const FALLBACK_RATING_STYLES: Record<string, React.CSSProperties> = {
   Critical: { background: "rgba(239,68,68,0.15)",   color: "#fca5a5" },
@@ -351,6 +352,9 @@ export function RiskDetailClient({
           </div>
         )}
       </div>
+
+      {/* History (RR-3) */}
+      <RiskHistorySection riskId={risk.id} />
 
       {/* Linked Findings */}
       <div className="mb-6 p-5" style={CARD_STYLE}>

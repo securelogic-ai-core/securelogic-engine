@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { AuditLogEvent } from "@/lib/api";
-import { formatEventLabel, eventBadgeStyle } from "./auditLogUtils";
+import { formatEventLabel, eventBadgeStyle } from "@/lib/auditLogUtils";
 
 // ─── Timestamp ────────────────────────────────────────────────────────────────
 
