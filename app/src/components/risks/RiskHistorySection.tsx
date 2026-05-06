@@ -58,8 +58,8 @@ function formatAbsolute(iso: string): string {
 }
 
 function actorLabel(event: AuditLogEvent): string {
-  if (event.actor_email) return event.actor_email;
   if (event.actor_name)  return event.actor_name;
+  if (event.actor_email) return event.actor_email;
   // No user attribution: distinguish API-key callers from system events
   // by the presence of an ip_address (system/scheduler events are
   // written with ipAddress: null per writeAuditEvent convention).
