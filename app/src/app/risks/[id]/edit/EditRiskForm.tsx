@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import type { Risk, RiskScaleLevel } from "@/lib/api";
+import { UserPicker } from "@/components/users/UserPicker";
 import { editRiskAction, type EditRiskInput } from "./actions";
 
 const DOMAINS: ReadonlyArray<string> = [
@@ -71,9 +72,11 @@ const labelStyle: React.CSSProperties = {
 export function EditRiskForm({
   risk,
   scaleLevels,
+  organizationId,
 }: {
   risk: Risk;
   scaleLevels: RiskScaleLevel[];
+  organizationId: string;
 }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -98,7 +101,12 @@ export function EditRiskForm({
   const [residualRating,     setResidualRating]     = useState<string>(risk.residual_rating     ?? "");
   const [status, setStatus] = useState<string>(risk.status);
   const [treatment, setTreatment] = useState(risk.treatment ?? "");
-  const [owner, setOwner] = useState(risk.owner ?? "");
+  // Owner is selected via UserPicker. Initial state derives from
+  // risk.owner_user_id (the FK) and risk.owner (the denormalized name).
+  // Backfilled rows have owner_user_id = null and a free-text owner;
+  // the picker shows "Unassigned" until the user explicitly picks.
+  const [ownerUserId, setOwnerUserId] = useState<string | null>(risk.owner_user_id ?? null);
+  const [ownerName, setOwnerName] = useState<string | null>(risk.owner ?? null);
   const [dueDate, setDueDate] = useState(risk.due_date ?? "");
   const [sourceType, setSourceType] = useState(risk.source_type ?? "");
   const [sourceId, setSourceId] = useState(risk.source_id ?? "");
@@ -114,7 +122,10 @@ export function EditRiskForm({
     if (t.length > 255) { setError("Title must be 255 characters or fewer."); return; }
     if (description.length > 2000) { setError("Description must be 2000 characters or fewer."); return; }
     if (treatment.length > 2000) { setError("Treatment must be 2000 characters or fewer."); return; }
-    if (owner.length > 100) { setError("Owner must be 100 characters or fewer."); return; }
+    if (ownerName !== null && ownerName.length > 100) {
+      setError("Owner must be 100 characters or fewer.");
+      return;
+    }
 
     // Build a diff: only fields whose current value differs from the
     // loaded risk are sent. Empty strings become null where the type
@@ -156,9 +167,14 @@ export function EditRiskForm({
       const next = treatment.trim() || null;
       if (next !== (risk.treatment ?? null)) diff.treatment = next;
     }
+    // Owner FK + denormalized text. Send both when either has changed.
+    // The backend will refuse a non-null FK that isn't in the same org;
+    // the form trusts the picker to only surface in-org users.
     {
-      const next = owner.trim() || null;
-      if (next !== (risk.owner ?? null)) diff.owner = next;
+      const fkChanged = ownerUserId !== (risk.owner_user_id ?? null);
+      const nameChanged = (ownerName ?? null) !== (risk.owner ?? null);
+      if (fkChanged) diff.owner_user_id = ownerUserId;
+      if (nameChanged) diff.owner = ownerName;
     }
     {
       const next = dueDate || null;
@@ -357,14 +373,15 @@ export function EditRiskForm({
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
-          <label htmlFor="owner" style={labelStyle}>Owner</label>
-          <input
-            id="owner"
-            type="text"
-            value={owner}
-            onChange={(e) => setOwner(e.target.value)}
-            maxLength={100}
-            style={inputStyle}
+          <label style={labelStyle}>Owner</label>
+          <UserPicker
+            organizationId={organizationId}
+            value={ownerUserId}
+            onChange={(userId, userName) => {
+              setOwnerUserId(userId);
+              setOwnerName(userName);
+            }}
+            ariaLabel="Risk owner"
           />
         </div>
         <div>

@@ -44,7 +44,11 @@ export default async function EditRiskPage({
         </p>
       </div>
 
-      <EditRiskForm risk={risk} scaleLevels={scale?.levels ?? []} />
+      <EditRiskForm
+        risk={risk}
+        scaleLevels={scale?.levels ?? []}
+        organizationId={me?.organizationId ?? ""}
+      />
     </div>
   );
 }

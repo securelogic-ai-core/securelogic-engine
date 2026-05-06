@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { UserPicker } from "@/components/users/UserPicker";
 import { createTreatmentAction } from "./actions";
 
 const TREATMENT_TYPES: ReadonlyArray<{ value: string; label: string }> = [
@@ -30,12 +31,19 @@ const labelStyle: React.CSSProperties = {
   marginBottom: 4,
 };
 
-export function CreateTreatmentForm({ riskId }: { riskId: string }) {
+export function CreateTreatmentForm({
+  riskId,
+  organizationId,
+}: {
+  riskId: string;
+  organizationId: string;
+}) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
   const [treatmentType, setTreatmentType] = useState("");
-  const [owner, setOwner] = useState("");
+  const [ownerUserId, setOwnerUserId] = useState<string | null>(null);
+  const [ownerName, setOwnerName] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState("");
   const [summary, setSummary] = useState("");
   const [notes, setNotes] = useState("");
@@ -44,14 +52,18 @@ export function CreateTreatmentForm({ riskId }: { riskId: string }) {
     e.preventDefault();
     setError(null);
 
-    if (owner.length > 100) { setError("Owner must be 100 characters or fewer."); return; }
+    if (ownerName !== null && ownerName.length > 100) {
+      setError("Owner must be 100 characters or fewer.");
+      return;
+    }
     if (summary.length > 2000) { setError("Summary must be 2000 characters or fewer."); return; }
     if (notes.length > 2000) { setError("Notes must be 2000 characters or fewer."); return; }
 
     startTransition(async () => {
       const result = await createTreatmentAction(riskId, {
         treatment_type: treatmentType || null,
-        owner: owner.trim() || null,
+        owner: ownerName,
+        owner_user_id: ownerUserId,
         due_date: dueDate || null,
         summary: summary.trim() || null,
         notes: notes.trim() || null,
@@ -87,15 +99,15 @@ export function CreateTreatmentForm({ riskId }: { riskId: string }) {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
-          <label htmlFor="owner" style={labelStyle}>Owner</label>
-          <input
-            id="owner"
-            type="text"
-            value={owner}
-            onChange={(e) => setOwner(e.target.value)}
-            maxLength={100}
-            placeholder="e.g. Security Team"
-            style={inputStyle}
+          <label style={labelStyle}>Owner</label>
+          <UserPicker
+            organizationId={organizationId}
+            value={ownerUserId}
+            onChange={(userId, userName) => {
+              setOwnerUserId(userId);
+              setOwnerName(userName);
+            }}
+            ariaLabel="Treatment owner"
           />
         </div>
         <div>

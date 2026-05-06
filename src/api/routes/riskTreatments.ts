@@ -41,6 +41,7 @@ import {
   TERMINAL_STATUSES,
   isValidTransition
 } from "../lib/riskTreatmentValidation.js";
+import { resolveOwnerUserSameOrg } from "../lib/ownerUserResolver.js";
 
 const router = Router();
 
@@ -78,6 +79,7 @@ const TREATMENT_SELECT = `
   status,
   treatment_type,
   owner,
+  owner_user_id,
   due_date,
   summary,
   notes,
@@ -136,6 +138,29 @@ router.post(
         return;
       }
 
+      // Resolve owner_user_id (same-org check) and denormalize the
+      // user's name into the legacy `owner` TEXT column when the caller
+      // did not supply an explicit owner string.
+      let ownerText: string | null = input.owner;
+      if (input.owner_user_id !== null) {
+        const resolved = await resolveOwnerUserSameOrg(
+          client,
+          input.owner_user_id,
+          organizationId
+        );
+        if ("error" in resolved) {
+          await client.query("ROLLBACK");
+          res.status(400).json({
+            error: "invalid_owner_user_id",
+            detail: "User is not a member of this organization."
+          });
+          return;
+        }
+        if (ownerText === null) {
+          ownerText = resolved.name;
+        }
+      }
+
       const treatmentResult = await client.query(
         `
         INSERT INTO risk_treatments (
@@ -144,13 +169,14 @@ router.post(
           status,
           treatment_type,
           owner,
+          owner_user_id,
           due_date,
           summary,
           notes,
           performed_at,
           reviewer_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING ${TREATMENT_SELECT}
         `,
         [
@@ -158,7 +184,8 @@ router.post(
           input.risk_id,
           input.status,
           input.treatment_type ?? null,
-          input.owner ?? null,
+          ownerText,
+          input.owner_user_id ?? null,
           input.due_date ?? null,
           input.summary ?? null,
           input.notes ?? null,
@@ -462,9 +489,38 @@ router.patch(
         updateParams.push(input.treatment_type);
         setClauses.push(`treatment_type = $${updateParams.length}`);
       }
-      if (input.owner !== null) {
-        updateParams.push(input.owner);
+
+      // Owner handling: when owner_user_id is set to a real user and
+      // the caller did NOT supply an explicit `owner`, denormalize the
+      // resolved user's name into the text column. When owner_user_id
+      // is cleared (null) the text column is left alone unless owner
+      // is explicitly supplied.
+      let ownerToWrite: string | null = input.owner;
+      if (input.owner_user_id !== undefined && input.owner_user_id !== null) {
+        const resolved = await resolveOwnerUserSameOrg(
+          client,
+          input.owner_user_id,
+          organizationId
+        );
+        if ("error" in resolved) {
+          await client.query("ROLLBACK");
+          res.status(400).json({
+            error: "invalid_owner_user_id",
+            detail: "User is not a member of this organization."
+          });
+          return;
+        }
+        if (ownerToWrite === null) {
+          ownerToWrite = resolved.name;
+        }
+      }
+      if (ownerToWrite !== null) {
+        updateParams.push(ownerToWrite);
         setClauses.push(`owner = $${updateParams.length}`);
+      }
+      if (input.owner_user_id !== undefined) {
+        updateParams.push(input.owner_user_id);
+        setClauses.push(`owner_user_id = $${updateParams.length}`);
       }
       if (input.due_date !== null) {
         updateParams.push(input.due_date);

@@ -127,6 +127,7 @@ export type RiskCreateInput = {
   status: string;
   treatment: string | null;
   owner: string | null;
+  owner_user_id: string | null;
   due_date: string | null;
   source_type: string | null;
   source_id: string | null;
@@ -310,6 +311,18 @@ export function validateRiskCreate(body: unknown): RiskCreateResult {
         : null;
   }
 
+  // owner_user_id — optional UUID or null. Same-org membership is
+  // verified in the route handler (validators are pure / I/O-free).
+  let owner_user_id: string | null = null;
+  if ("owner_user_id" in b) {
+    if (b["owner_user_id"] !== null) {
+      if (!isUuid(b["owner_user_id"])) {
+        return { error: "owner_user_id_must_be_uuid_or_null" };
+      }
+      owner_user_id = b["owner_user_id"] as string;
+    }
+  }
+
   // due_date — optional ISO date string (YYYY-MM-DD) or null
   let due_date: string | null = null;
   if ("due_date" in b) {
@@ -369,6 +382,7 @@ export function validateRiskCreate(body: unknown): RiskCreateResult {
       status,
       treatment,
       owner,
+      owner_user_id,
       due_date,
       source_type,
       source_id
@@ -400,6 +414,7 @@ export type RiskUpdateInput = {
   status: string | undefined;
   treatment: string | null | undefined;
   owner: string | null | undefined;
+  owner_user_id: string | null | undefined;
   due_date: string | null | undefined;
   source_type: string | null | undefined;
   source_id: string | null | undefined;
@@ -418,8 +433,8 @@ export function validateRiskUpdate(body: unknown): RiskUpdateResult {
 
   const KNOWN_FIELDS = new Set([
     "title", "description", "domain", "likelihood", "impact",
-    "risk_rating", "status", "treatment", "owner", "due_date",
-    "source_type", "source_id",
+    "risk_rating", "status", "treatment", "owner", "owner_user_id",
+    "due_date", "source_type", "source_id",
     "inherent_likelihood", "inherent_impact", "inherent_rating",
     "residual_likelihood", "residual_impact", "residual_rating"
   ]);
@@ -620,6 +635,19 @@ export function validateRiskUpdate(body: unknown): RiskUpdateResult {
         : null;
   }
 
+  // owner_user_id — optional UUID or null on PATCH. Same-org check
+  // happens in the route handler.
+  let owner_user_id: string | null | undefined;
+  if ("owner_user_id" in b) {
+    if (b["owner_user_id"] === null) {
+      owner_user_id = null;
+    } else if (isUuid(b["owner_user_id"])) {
+      owner_user_id = b["owner_user_id"] as string;
+    } else {
+      return { error: "owner_user_id_must_be_uuid_or_null" };
+    }
+  }
+
   let due_date: string | null | undefined;
   if ("due_date" in b) {
     if (b["due_date"] !== null) {
@@ -688,6 +716,7 @@ export function validateRiskUpdate(body: unknown): RiskUpdateResult {
       status,
       treatment,
       owner,
+      owner_user_id,
       due_date,
       source_type,
       source_id

@@ -599,3 +599,73 @@ describe("isValidTransition", () => {
     expect(isValidTransition("in_progress", "unknown_status")).toBe(false);
   });
 });
+
+// ====================================================================
+// owner_user_id — validators accept UUID, null, and reject garbage
+// (RR-2: treatment owner as FK to users.id; distinct from reviewer)
+// ====================================================================
+
+describe("validateRiskTreatmentCreate — owner_user_id", () => {
+  it("accepts a valid UUID", () => {
+    const r = validateRiskTreatmentCreate(
+      validCreate({ owner_user_id: VALID_UUID })
+    );
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.owner_user_id).toBe(VALID_UUID);
+  });
+
+  it("accepts null", () => {
+    const r = validateRiskTreatmentCreate(validCreate({ owner_user_id: null }));
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.owner_user_id).toBe(null);
+  });
+
+  it("defaults to null when absent", () => {
+    const r = validateRiskTreatmentCreate(validCreate());
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.owner_user_id).toBe(null);
+  });
+
+  it("rejects a non-UUID string", () => {
+    const r = validateRiskTreatmentCreate(
+      validCreate({ owner_user_id: "not-a-uuid" })
+    );
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("owner_user_id_must_be_uuid_or_null");
+  });
+});
+
+describe("validateRiskTreatmentStatusTransition — owner_user_id", () => {
+  it("accepts a valid UUID alongside required status", () => {
+    const r = validateRiskTreatmentStatusTransition({
+      status: "in_progress",
+      owner_user_id: VALID_UUID,
+    });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.owner_user_id).toBe(VALID_UUID);
+  });
+
+  it("accepts null (clear FK)", () => {
+    const r = validateRiskTreatmentStatusTransition({
+      status: "in_progress",
+      owner_user_id: null,
+    });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.owner_user_id).toBe(null);
+  });
+
+  it("treats absent owner_user_id as undefined (no update)", () => {
+    const r = validateRiskTreatmentStatusTransition({ status: "in_progress" });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.owner_user_id).toBeUndefined();
+  });
+
+  it("rejects a non-UUID string", () => {
+    const r = validateRiskTreatmentStatusTransition({
+      status: "in_progress",
+      owner_user_id: "garbage",
+    });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("owner_user_id_must_be_uuid_or_null");
+  });
+});

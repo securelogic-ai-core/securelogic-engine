@@ -11,6 +11,7 @@ export type CreateTreatmentResult = { ok: false; error: string };
 export type CreateTreatmentInput = {
   treatment_type: string | null;
   owner: string | null;
+  owner_user_id: string | null;
   due_date: string | null;
   summary: string | null;
   notes: string | null;
@@ -42,6 +43,7 @@ export async function createTreatmentAction(
     status: "not_started",
     treatment_type: input.treatment_type,
     owner: input.owner,
+    owner_user_id: input.owner_user_id,
     due_date: input.due_date,
     summary: input.summary,
     notes: input.notes,

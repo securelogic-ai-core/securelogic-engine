@@ -41,7 +41,7 @@ export default async function NewTreatmentPage({
         </p>
       </div>
 
-      <CreateTreatmentForm riskId={id} />
+      <CreateTreatmentForm riskId={id} organizationId={me?.organizationId ?? ""} />
     </div>
   );
 }

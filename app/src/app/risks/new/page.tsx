@@ -33,7 +33,10 @@ export default async function NewRiskPage() {
         </p>
       </div>
 
-      <CreateRiskClient scaleLevels={scale?.levels ?? []} />
+      <CreateRiskClient
+        scaleLevels={scale?.levels ?? []}
+        organizationId={me?.organizationId ?? ""}
+      />
     </div>
   );
 }

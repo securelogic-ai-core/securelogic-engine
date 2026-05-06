@@ -30,6 +30,7 @@ export type EditRiskInput = Partial<{
   status: string;
   treatment: string | null;
   owner: string | null;
+  owner_user_id: string | null;
   due_date: string | null;
   source_type: string | null;
   source_id: string | null;

@@ -649,3 +649,60 @@ describe("validateRiskUpdate — KNOWN_FIELDS includes new fields", () => {
     expect("input" in r).toBe(true);
   });
 });
+
+// ====================================================================
+// owner_user_id — validators accept UUID, null, and reject garbage
+// (RR-2: risk owner as FK to users.id)
+// ====================================================================
+
+describe("validateRiskCreate — owner_user_id", () => {
+  it("accepts a valid UUID", () => {
+    const r = validateRiskCreate(validCreate({ owner_user_id: VALID_UUID }));
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.owner_user_id).toBe(VALID_UUID);
+  });
+
+  it("accepts null", () => {
+    const r = validateRiskCreate(validCreate({ owner_user_id: null }));
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.owner_user_id).toBe(null);
+  });
+
+  it("defaults to null when absent", () => {
+    const r = validateRiskCreate(validCreate());
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.owner_user_id).toBe(null);
+  });
+
+  it("rejects a non-UUID string", () => {
+    const r = validateRiskCreate(validCreate({ owner_user_id: "not-a-uuid" }));
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("owner_user_id_must_be_uuid_or_null");
+  });
+});
+
+describe("validateRiskUpdate — owner_user_id", () => {
+  it("accepts a valid UUID", () => {
+    const r = validateRiskUpdate({ owner_user_id: VALID_UUID });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.owner_user_id).toBe(VALID_UUID);
+  });
+
+  it("accepts null (clear FK)", () => {
+    const r = validateRiskUpdate({ owner_user_id: null });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.owner_user_id).toBe(null);
+  });
+
+  it("treats absent owner_user_id as undefined (no update)", () => {
+    const r = validateRiskUpdate({ title: "renamed" });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.owner_user_id).toBeUndefined();
+  });
+
+  it("rejects a non-UUID string", () => {
+    const r = validateRiskUpdate({ owner_user_id: "garbage" });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("owner_user_id_must_be_uuid_or_null");
+  });
+});
