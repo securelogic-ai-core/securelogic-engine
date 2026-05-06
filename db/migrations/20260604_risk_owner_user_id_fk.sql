@@ -1,4 +1,4 @@
--- 20260506_risk_owner_user_id_fk.sql
+-- 20260604_risk_owner_user_id_fk.sql
 --
 -- Adds owner_user_id UUID FK → users(id) to risks and risk_treatments.
 --
@@ -22,9 +22,9 @@
 -- ── risks ────────────────────────────────────────────────────────────────────
 
 ALTER TABLE risks
-  ADD COLUMN owner_user_id UUID NULL REFERENCES users(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS owner_user_id UUID NULL REFERENCES users(id) ON DELETE SET NULL;
 
-CREATE INDEX idx_risks_owner_user_id
+CREATE INDEX IF NOT EXISTS idx_risks_owner_user_id
   ON risks(owner_user_id)
   WHERE owner_user_id IS NOT NULL;
 
@@ -36,9 +36,9 @@ COMMENT ON COLUMN risks.owner_user_id IS
 -- ── risk_treatments ──────────────────────────────────────────────────────────
 
 ALTER TABLE risk_treatments
-  ADD COLUMN owner_user_id UUID NULL REFERENCES users(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS owner_user_id UUID NULL REFERENCES users(id) ON DELETE SET NULL;
 
-CREATE INDEX idx_risk_treatments_owner_user_id
+CREATE INDEX IF NOT EXISTS idx_risk_treatments_owner_user_id
   ON risk_treatments(owner_user_id)
   WHERE owner_user_id IS NOT NULL;
 
