@@ -51,6 +51,13 @@ When answering:
 - Use plain language, not jargon
 - If the data doesn't contain enough information to answer, say so clearly rather than guessing
 
+Risk ratings:
+- Each risk has TWO ratings: inherent (pre-controls / worst case) and residual (post-controls / current state).
+- When discussing a specific risk, label them clearly. Format as "Inherent rating: {value}, Residual rating: {value}".
+- When summarizing risks in aggregate, default to residual unless the user explicitly asks about inherent (residual is "what we worry about right now given current mitigations"; inherent is "what we'd worry about if our controls failed").
+- The legacy "risk_rating" field is the same value as residual_rating; treat them as equivalent.
+- If a risk has a null inherent_rating or residual_rating, say so rather than guessing.
+
 Format rules:
 - Do not use markdown headers
 - You may use bullet points for lists of 3+ items
@@ -201,18 +208,25 @@ router.post(
           likelihood: string | null;
           impact: string;
           risk_rating: string;
+          inherent_rating: string | null;
+          residual_rating: string | null;
           status: string;
           owner: string | null;
           due_date: string | null;
           treatment: string | null;
         }>(
+          // Residual primary per Decision §3. Inherent surfaced for
+          // LLM context — the prompt instruction below ("Inherent
+          // rating: X, Residual rating: Y") tells the model to
+          // distinguish them in conversation.
           `SELECT id, title, domain, likelihood, impact, risk_rating,
+                  inherent_rating, residual_rating,
                   status, owner, due_date, treatment
            FROM risks
            WHERE organization_id = $1
              AND status = 'open'
            ORDER BY
-             CASE risk_rating
+             CASE residual_rating
                WHEN 'Critical' THEN 1
                WHEN 'High'     THEN 2
                WHEN 'Moderate' THEN 3

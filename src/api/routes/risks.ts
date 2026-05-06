@@ -45,12 +45,16 @@ const router = Router();
 export function buildRiskSummary(
   byStatusRows: ReadonlyArray<{ status: string; count: string }>,
   byRatingRows: ReadonlyArray<{ risk_rating: string; count: string }>,
-  byDomainRows: ReadonlyArray<{ domain: string; count: string }>
+  byDomainRows: ReadonlyArray<{ domain: string; count: string }>,
+  byInherentRatingRows: ReadonlyArray<{ inherent_rating: string; count: string }> = [],
+  byResidualRatingRows: ReadonlyArray<{ residual_rating: string; count: string }> = []
 ): {
   total: number;
   open_critical_count: number;
   by_status: Record<string, number>;
   by_risk_rating: Record<string, number>;
+  by_inherent_rating: Record<string, number>;
+  by_residual_rating: Record<string, number>;
   by_domain: Record<string, number>;
 } {
   const by_status: Record<string, number> = {
@@ -66,6 +70,11 @@ export function buildRiskSummary(
     }
   }
 
+  // Legacy `by_risk_rating` kept for backwards compatibility — it
+  // mirrors `by_residual_rating` after Phase 1 backfill (legacy =
+  // residual on every write). Existing consumers (dashboard tile,
+  // /risks page summary cards) continue to read the legacy key
+  // until they migrate.
   const by_risk_rating: Record<string, number> = {
     Critical: 0,
     High: 0,
@@ -78,15 +87,60 @@ export function buildRiskSummary(
     }
   }
 
+  const by_inherent_rating: Record<string, number> = {
+    Critical: 0,
+    High: 0,
+    Moderate: 0,
+    Low: 0
+  };
+  for (const row of byInherentRatingRows) {
+    if (row.inherent_rating in by_inherent_rating) {
+      by_inherent_rating[row.inherent_rating] = parseInt(row.count, 10);
+    }
+  }
+
+  const by_residual_rating: Record<string, number> = {
+    Critical: 0,
+    High: 0,
+    Moderate: 0,
+    Low: 0
+  };
+  for (const row of byResidualRatingRows) {
+    if (row.residual_rating in by_residual_rating) {
+      by_residual_rating[row.residual_rating] = parseInt(row.count, 10);
+    }
+  }
+
   const by_domain: Record<string, number> = {};
   for (const row of byDomainRows) {
     by_domain[row.domain] = parseInt(row.count, 10);
   }
 
   const total = Object.values(by_status).reduce((s, n) => s + n, 0);
-  const open_critical_count = by_risk_rating["Critical"] ?? 0;
+  // open_critical_count reads RESIDUAL per Decision §3 — the
+  // post-controls "what's actually critical right now" count is what
+  // dashboard callouts display.
+  //
+  // Reading by_risk_rating would also work TODAY because Phase 1
+  // backfill made legacy = residual on every existing row and the
+  // POST/PATCH handlers preserve that invariant on every write. But
+  // coupling open_critical_count to the legacy column creates a
+  // hidden dependency: if a future package decouples legacy from
+  // residual (e.g., a breaking-change major version that drops the
+  // legacy column, or a new write path that fails to sync them),
+  // this number silently becomes wrong. Read residual directly so
+  // the semantic is explicit at the read site.
+  const open_critical_count = by_residual_rating["Critical"] ?? 0;
 
-  return { total, open_critical_count, by_status, by_risk_rating, by_domain };
+  return {
+    total,
+    open_critical_count,
+    by_status,
+    by_risk_rating,
+    by_inherent_rating,
+    by_residual_rating,
+    by_domain
+  };
 }
 
 const UUID_RE =
@@ -105,6 +159,12 @@ const RISK_SELECT = `
   likelihood,
   impact,
   risk_rating,
+  inherent_likelihood,
+  inherent_impact,
+  inherent_rating,
+  residual_likelihood,
+  residual_impact,
+  residual_rating,
   status,
   treatment,
   owner,
@@ -151,6 +211,17 @@ router.post(
     const { input } = validated;
 
     try {
+      // Legacy `likelihood / impact / risk_rating` columns are written
+      // alongside the new fields. Per Decision §5 (webhook backwards
+      // compatibility), legacy = residual on every write so existing
+      // webhook consumers continue to receive a meaningful risk_rating
+      // value derived from the post-controls assessment.
+      //
+      // The validator requires all 9 rating fields explicitly (Phase 1).
+      // The legacy values come from input.likelihood/impact/risk_rating,
+      // not from input.residual_* — keeping them independent allows a
+      // caller to send legacy = inherent if they have a reason to,
+      // though the documented intent is legacy = residual.
       const result = await pg.query(
         `
         INSERT INTO risks (
@@ -161,6 +232,12 @@ router.post(
           likelihood,
           impact,
           risk_rating,
+          inherent_likelihood,
+          inherent_impact,
+          inherent_rating,
+          residual_likelihood,
+          residual_impact,
+          residual_rating,
           status,
           treatment,
           owner,
@@ -168,7 +245,10 @@ router.post(
           source_type,
           source_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+          $11, $12, $13, $14, $15, $16, $17, $18, $19
+        )
         RETURNING ${RISK_SELECT}
         `,
         [
@@ -179,6 +259,12 @@ router.post(
           input.likelihood,
           input.impact,
           input.risk_rating,
+          input.inherent_likelihood,
+          input.inherent_impact,
+          input.inherent_rating,
+          input.residual_likelihood,
+          input.residual_impact,
+          input.residual_rating,
           input.status,
           input.treatment ?? null,
           input.owner ?? null,
@@ -196,11 +282,16 @@ router.post(
           organizationId,
           riskId: risk.id,
           domain: input.domain,
-          riskRating: input.risk_rating
+          riskRating: input.risk_rating,
+          inherentRating: input.inherent_rating,
+          residualRating: input.residual_rating
         },
         "Risk record created"
       );
 
+      // Audit payload includes before/after for both ratings. On
+      // create, "before" is null (the row didn't exist); "after" is
+      // the input values. Item 2 from Decision §11 scope expansion.
       writeAuditEvent({
         organizationId,
         actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
@@ -211,18 +302,26 @@ router.post(
         payload: {
           domain: input.domain,
           risk_rating: input.risk_rating,
+          inherent_rating: { before: null, after: input.inherent_rating },
+          residual_rating: { before: null, after: input.residual_rating },
           status: input.status
         },
         ipAddress: req.ip ?? null
       });
 
+      // Webhook payload retains `risk_rating` for backwards compat
+      // (Decision §5). Adds inherent_rating and residual_rating as
+      // first-class fields. risk_rating === residual_rating by
+      // contract; consumers reading the legacy field continue to work.
       dispatchWebhookEvent({
         event_type: "risk.created",
         organization_id: organizationId,
         data: {
           id: risk.id,
           title: risk.title,
-          risk_rating: risk.risk_rating,
+          risk_rating: risk.residual_rating,
+          inherent_rating: risk.inherent_rating,
+          residual_rating: risk.residual_rating,
           domain: risk.domain,
         },
       }).catch(() => {});
@@ -353,42 +452,69 @@ router.get(
     }
 
     try {
-      const [byStatusResult, byRatingResult, byDomainResult] =
-        await Promise.all([
-          pg.query<{ status: string; count: string }>(
-            `
-            SELECT status, COUNT(*)::text AS count
-            FROM risks
-            WHERE organization_id = $1
-            GROUP BY status
-            `,
-            [organizationId]
-          ),
-          pg.query<{ risk_rating: string; count: string }>(
-            `
-            SELECT risk_rating, COUNT(*)::text AS count
-            FROM risks
-            WHERE organization_id = $1
-            GROUP BY risk_rating
-            `,
-            [organizationId]
-          ),
-          pg.query<{ domain: string; count: string }>(
-            `
-            SELECT domain, COUNT(*)::text AS count
-            FROM risks
-            WHERE organization_id = $1
-            GROUP BY domain
-            ORDER BY count DESC, domain ASC
-            `,
-            [organizationId]
-          )
-        ]);
+      const [
+        byStatusResult,
+        byRatingResult,
+        byDomainResult,
+        byInherentRatingResult,
+        byResidualRatingResult,
+      ] = await Promise.all([
+        pg.query<{ status: string; count: string }>(
+          `
+          SELECT status, COUNT(*)::text AS count
+          FROM risks
+          WHERE organization_id = $1
+          GROUP BY status
+          `,
+          [organizationId]
+        ),
+        pg.query<{ risk_rating: string; count: string }>(
+          `
+          SELECT risk_rating, COUNT(*)::text AS count
+          FROM risks
+          WHERE organization_id = $1
+          GROUP BY risk_rating
+          `,
+          [organizationId]
+        ),
+        pg.query<{ domain: string; count: string }>(
+          `
+          SELECT domain, COUNT(*)::text AS count
+          FROM risks
+          WHERE organization_id = $1
+          GROUP BY domain
+          ORDER BY count DESC, domain ASC
+          `,
+          [organizationId]
+        ),
+        pg.query<{ inherent_rating: string; count: string }>(
+          `
+          SELECT inherent_rating, COUNT(*)::text AS count
+          FROM risks
+          WHERE organization_id = $1
+            AND inherent_rating IS NOT NULL
+          GROUP BY inherent_rating
+          `,
+          [organizationId]
+        ),
+        pg.query<{ residual_rating: string; count: string }>(
+          `
+          SELECT residual_rating, COUNT(*)::text AS count
+          FROM risks
+          WHERE organization_id = $1
+            AND residual_rating IS NOT NULL
+          GROUP BY residual_rating
+          `,
+          [organizationId]
+        ),
+      ]);
 
       const summary = buildRiskSummary(
         byStatusResult.rows,
         byRatingResult.rows,
-        byDomainResult.rows
+        byDomainResult.rows,
+        byInherentRatingResult.rows,
+        byResidualRatingResult.rows
       );
 
       res.status(200).json(summary);
@@ -414,6 +540,8 @@ type RiskIntelligenceRow = {
   title: string;
   domain: string;
   risk_rating: string;
+  inherent_rating: string | null;
+  residual_rating: string | null;
   status: string;
   likelihood: string | null;
   owner: string | null;
@@ -426,12 +554,19 @@ type RiskIntelligenceRow = {
  * Map enriched risk rows into the intelligence list shape.
  * Parses string counts from DB aggregates to numbers.
  * Exported for unit testing without a live database.
+ *
+ * `risk_rating` stays in the response shape for backwards
+ * compatibility (legacy column = residual after Phase 1 backfill).
+ * `inherent_rating` and `residual_rating` are surfaced explicitly so
+ * the frontend can show both on the detail page in Phase 3.
  */
 export function buildRiskIntelligenceList(rows: ReadonlyArray<RiskIntelligenceRow>): Array<{
   id: string;
   title: string;
   domain: string;
   risk_rating: string;
+  inherent_rating: string | null;
+  residual_rating: string | null;
   status: string;
   likelihood: string | null;
   owner: string | null;
@@ -444,6 +579,8 @@ export function buildRiskIntelligenceList(rows: ReadonlyArray<RiskIntelligenceRo
     title: r.title,
     domain: r.domain,
     risk_rating: r.risk_rating,
+    inherent_rating: r.inherent_rating ?? null,
+    residual_rating: r.residual_rating ?? null,
     status: r.status,
     likelihood: r.likelihood ?? null,
     owner: r.owner ?? null,
@@ -468,6 +605,9 @@ router.get(
     }
 
     try {
+      // ORDER BY residual_rating per Decision §4 — the post-controls
+      // assessment is what stakeholders sort by when triaging open risks.
+      // Critical residual surfaces at the top; ties broken by created_at.
       const result = await pg.query<RiskIntelligenceRow>(
         `
         SELECT
@@ -475,6 +615,8 @@ router.get(
           r.title,
           r.domain,
           r.risk_rating,
+          r.inherent_rating,
+          r.residual_rating,
           r.status,
           r.likelihood,
           r.owner,
@@ -494,10 +636,10 @@ router.get(
          AND f.status = 'open'
         WHERE r.organization_id = $1
           AND r.status NOT IN ('closed', 'transferred')
-        GROUP BY r.id, r.title, r.domain, r.risk_rating, r.status,
-                 r.likelihood, r.owner
+        GROUP BY r.id, r.title, r.domain, r.risk_rating, r.inherent_rating,
+                 r.residual_rating, r.status, r.likelihood, r.owner
         ORDER BY
-          CASE r.risk_rating
+          CASE r.residual_rating
             WHEN 'Critical' THEN 1
             WHEN 'High'     THEN 2
             WHEN 'Moderate' THEN 3
@@ -510,7 +652,9 @@ router.get(
       );
 
       const risks = buildRiskIntelligenceList(result.rows);
-      const openCriticalCount = risks.filter((r) => r.risk_rating === "Critical").length;
+      // Critical count uses residual per Decision §4 — the
+      // post-controls "what's actually critical right now" count.
+      const openCriticalCount = risks.filter((r) => r.residual_rating === "Critical").length;
 
       res.status(200).json({
         count: risks.length,
@@ -625,9 +769,16 @@ router.patch(
     try {
       await client.query("BEGIN");
 
-      // Verify the risk exists and belongs to this org.
-      const existingResult = await client.query(
-        `SELECT id FROM risks WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+      // Verify the risk exists, lock it, and capture the BEFORE values
+      // for the inherent/residual ratings so the audit payload can
+      // record the transition (item 2 from Decision §11 scope).
+      const existingResult = await client.query<{
+        id: string;
+        inherent_rating: string | null;
+        residual_rating: string | null;
+      }>(
+        `SELECT id, inherent_rating, residual_rating
+         FROM risks WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
         [riskId, organizationId]
       );
 
@@ -636,6 +787,7 @@ router.patch(
         res.status(404).json({ error: "risk_not_found" });
         return;
       }
+      const before = existingResult.rows[0]!;
 
       // Build dynamic SET clause.
       const setClauses: string[] = ["updated_at = NOW()"];
@@ -652,6 +804,31 @@ router.patch(
       if (input.likelihood !== undefined) addField("likelihood", input.likelihood);
       if (input.impact !== undefined) addField("impact", input.impact);
       if (input.risk_rating !== undefined) addField("risk_rating", input.risk_rating);
+      if (input.inherent_likelihood !== undefined) addField("inherent_likelihood", input.inherent_likelihood);
+      if (input.inherent_impact     !== undefined) addField("inherent_impact",     input.inherent_impact);
+      if (input.inherent_rating     !== undefined) addField("inherent_rating",     input.inherent_rating);
+      if (input.residual_likelihood !== undefined) addField("residual_likelihood", input.residual_likelihood);
+      if (input.residual_impact     !== undefined) addField("residual_impact",     input.residual_impact);
+      if (input.residual_rating     !== undefined) addField("residual_rating",     input.residual_rating);
+
+      // Legacy column sync — Decision §5. When the caller PATCHes any
+      // residual_* field (and didn't ALSO supply the matching legacy
+      // field explicitly), mirror residual into the legacy column so
+      // the webhook payload's `risk_rating` stays in sync.
+      //
+      // If the caller patches ONLY inherent_*, legacy columns are NOT
+      // touched — inherent changes don't affect the post-controls
+      // assessment that webhook consumers rely on.
+      if (input.residual_likelihood !== undefined && input.likelihood === undefined) {
+        addField("likelihood", input.residual_likelihood);
+      }
+      if (input.residual_impact !== undefined && input.impact === undefined) {
+        addField("impact", input.residual_impact);
+      }
+      if (input.residual_rating !== undefined && input.risk_rating === undefined) {
+        addField("risk_rating", input.residual_rating);
+      }
+
       if (input.status !== undefined) addField("status", input.status);
       if (input.treatment !== undefined) addField("treatment", input.treatment);
       if (input.owner !== undefined) addField("owner", input.owner);
@@ -682,11 +859,15 @@ router.patch(
         {
           event: "risk_updated",
           organizationId,
-          riskId: risk.id
+          riskId: risk.id,
+          fields: Object.keys(input)
         },
         "Risk record updated"
       );
 
+      // Audit payload includes before/after for inherent_rating and
+      // residual_rating SPECIFICALLY (Decision §11 item 2). Other
+      // fields just appear in the `fields` list of changed names.
       writeAuditEvent({
         organizationId,
         actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
@@ -694,9 +875,36 @@ router.patch(
         eventType: "risk.updated",
         resourceType: "risk",
         resourceId: risk.id as string,
-        payload: { fields: Object.keys(input) },
+        payload: {
+          fields: Object.keys(input),
+          inherent_rating:
+            input.inherent_rating !== undefined
+              ? { before: before.inherent_rating, after: risk.inherent_rating }
+              : undefined,
+          residual_rating:
+            input.residual_rating !== undefined
+              ? { before: before.residual_rating, after: risk.residual_rating }
+              : undefined
+        },
         ipAddress: req.ip ?? null
       });
+
+      // Webhook on PATCH — closes the gap flagged in earlier
+      // investigation (item 1 from Decision §11 scope). Same payload
+      // shape as POST /api/risks; consumers receive risk_rating
+      // mirroring residual_rating per Decision §5.
+      dispatchWebhookEvent({
+        event_type: "risk.updated",
+        organization_id: organizationId,
+        data: {
+          id: risk.id,
+          title: risk.title,
+          risk_rating: risk.residual_rating,
+          inherent_rating: risk.inherent_rating,
+          residual_rating: risk.residual_rating,
+          domain: risk.domain,
+        },
+      }).catch(() => {});
 
       res.status(200).json({ risk });
     } catch (err) {

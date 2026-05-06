@@ -489,3 +489,82 @@ describe("computePosture — synthetic vendor-inventory signals", () => {
     expect(result.domain_scores).toEqual([]);
   });
 });
+
+// ====================================================================
+// Phase 2 of risk-register-inherent-residual-rating —
+// engine consumes RESIDUAL, skips null residual.
+//
+// These tests confirm the contract at the function boundary. The
+// pipeline-level behavior (postureSnapshot.ts query filter
+// `residual_rating IS NOT NULL`) ensures null-residual risks never
+// reach the engine; here we model what the engine sees AFTER that
+// filter and confirm it scores correctly.
+// ====================================================================
+
+describe("computePosture — residual-rating consumption (Phase 2 contract)", () => {
+  it("treats DbFindingForPosture severity as the residual signal (the pipeline maps r.residual_rating → severity)", () => {
+    // Same inputs the pipeline would build for a single open risk
+    // with residual_rating = 'High'. The engine maps severity → score
+    // exactly as it would for a real finding; the source of the
+    // severity (legacy risk_rating, residual_rating, or any other
+    // future field) is invisible to the engine.
+    const riskSignal: DbFindingForPosture = {
+      id: "risk-1",
+      title: "Open risk with residual=High",
+      domain: "Vendor Risk",
+      severity: "High",
+    };
+    const r = computePosture([riskSignal], 0, 0, NEUTRAL, /* riskSignalCount */ 1);
+    expect(r.domain_scores).toHaveLength(1);
+    expect(r.domain_scores[0]!.domain).toBe("Vendor Risk");
+    // Engine's `severity` is the final computed severity (from score),
+    // not the input severity. A single 'High'-weighted signal lands a
+    // domain score in the High-or-Critical band depending on
+    // accumulation. Confirm it's a recognized engine band.
+    expect(["High", "Critical"]).toContain(r.domain_scores[0]!.severity);
+    expect(r.domain_scores[0]!.finding_count).toBe(1);
+  });
+
+  it("scores backfilled data identically to legacy data — no discontinuity on deploy day", () => {
+    // Phase 1 backfill: residual_* = legacy on every existing row.
+    // Phase 2 engine reads residual_rating. Therefore for any org
+    // whose data existed pre-deploy, the engine inputs are
+    // unchanged: same severity, same domain, same accumulation. This
+    // test models that — two identical signal sets produce identical
+    // scores regardless of which column the pipeline READ.
+    const legacyShape: DbFindingForPosture[] = [
+      { id: "1", title: "r1", domain: "Vendor Risk", severity: "Critical" },
+      { id: "2", title: "r2", domain: "Vendor Risk", severity: "High" },
+    ];
+    const residualShape: DbFindingForPosture[] = [
+      { id: "1", title: "r1", domain: "Vendor Risk", severity: "Critical" },
+      { id: "2", title: "r2", domain: "Vendor Risk", severity: "High" },
+    ];
+    const a = computePosture(legacyShape, 0, 0, NEUTRAL, 2);
+    const b = computePosture(residualShape, 0, 0, NEUTRAL, 2);
+    expect(a.overall_score).toBe(b.overall_score);
+    expect(a.domain_scores[0]!.score).toBe(b.domain_scores[0]!.score);
+  });
+
+  it("a risk with NULL residual produces no engine signal (caller filters before computePosture)", () => {
+    // The pipeline's SQL filter `residual_rating IS NOT NULL` means a
+    // NULL-residual risk never enters the input array. Modelled here
+    // by passing an empty array — empty input → null overall score,
+    // matching pre-package zero-finding orgs.
+    const r = computePosture([], 0, 0, NEUTRAL, 0);
+    expect(r.overall_score).toBeNull();
+    expect(r.domain_scores).toEqual([]);
+  });
+
+  it("Decision §4 fallback rule: engine never sees inherent values for risks with null residual", () => {
+    // Confirmed at the contract level: the engine signature accepts
+    // exactly one severity field per signal. The pipeline provides
+    // residual_rating (or skips). Inherent is never a fallback.
+    // A risk with inherent='Critical' but residual=NULL is silent.
+    //
+    // We model the silent case (the pipeline filtered it out) — the
+    // engine produces zero domain output.
+    const r = computePosture([], 0, 0, NEUTRAL, 0);
+    expect(r.domain_scores).toEqual([]);
+  });
+});

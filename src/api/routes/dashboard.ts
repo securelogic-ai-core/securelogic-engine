@@ -328,23 +328,24 @@ router.get(
       );
 
       // -------------------------------------------------------
-      // 5a. Open risk counts by rating
+      // 5a. Open risk counts by RESIDUAL rating (Decision §4)
       // -------------------------------------------------------
       const riskCountResult = await pg.query<{
-        risk_rating: string;
+        residual_rating: string;
         count: string;
       }>(
         `
-        SELECT risk_rating, COUNT(*)::text AS count
+        SELECT residual_rating, COUNT(*)::text AS count
         FROM risks
         WHERE organization_id = $1
           AND status NOT IN ('closed', 'transferred')
-        GROUP BY risk_rating
+          AND residual_rating IS NOT NULL
+        GROUP BY residual_rating
         `,
         [organizationId]
       );
 
-      const openRisksByRating: Record<string, number> = {
+      const openRisksByResidualRating: Record<string, number> = {
         Critical: 0,
         High: 0,
         Moderate: 0,
@@ -352,10 +353,41 @@ router.get(
       };
       let totalOpenRisks = 0;
       for (const row of riskCountResult.rows) {
-        if (row.risk_rating in openRisksByRating) {
+        if (row.residual_rating in openRisksByResidualRating) {
           const n = parseInt(row.count, 10);
-          openRisksByRating[row.risk_rating] = n;
+          openRisksByResidualRating[row.residual_rating] = n;
           totalOpenRisks += n;
+        }
+      }
+
+      // 5a-bis. Open risk counts by INHERENT rating — emitted on the
+      // response for future use (Decision §11 expansion). Dashboard
+      // tiles in Phase 3 may show both side-by-side; for now this is
+      // collected but not consumed by any current tile.
+      const inherentRatingResult = await pg.query<{
+        inherent_rating: string;
+        count: string;
+      }>(
+        `
+        SELECT inherent_rating, COUNT(*)::text AS count
+        FROM risks
+        WHERE organization_id = $1
+          AND status NOT IN ('closed', 'transferred')
+          AND inherent_rating IS NOT NULL
+        GROUP BY inherent_rating
+        `,
+        [organizationId]
+      );
+
+      const openRisksByInherentRating: Record<string, number> = {
+        Critical: 0,
+        High: 0,
+        Moderate: 0,
+        Low: 0
+      };
+      for (const row of inherentRatingResult.rows) {
+        if (row.inherent_rating in openRisksByInherentRating) {
+          openRisksByInherentRating[row.inherent_rating] = parseInt(row.count, 10);
         }
       }
 
@@ -385,26 +417,63 @@ router.get(
       }
 
       // -------------------------------------------------------
-      // 5c. Open risk counts by likelihood × impact (heatmap)
+      // 5c. Open risk counts by RESIDUAL likelihood × impact (heatmap)
       // -------------------------------------------------------
-      const riskHeatmapResult = await pg.query<{
+      // Heatmap consumes residual per Decision §3. The legacy query
+      // grouped by `likelihood`/`impact` (= residual after Phase 1
+      // backfill, since legacy mirrors residual on every write); the
+      // new query groups by the explicit residual columns so the
+      // semantic is unambiguous to readers.
+      const residualHeatmapResult = await pg.query<{
         likelihood: string;
         impact: string;
         count: string;
       }>(
         `
-        SELECT likelihood, impact, COUNT(*)::text AS count
+        SELECT residual_likelihood AS likelihood,
+               residual_impact     AS impact,
+               COUNT(*)::text      AS count
         FROM risks
         WHERE organization_id = $1
           AND status NOT IN ('closed', 'transferred')
-          AND likelihood IS NOT NULL
-          AND impact IS NOT NULL
-        GROUP BY likelihood, impact
+          AND residual_likelihood IS NOT NULL
+          AND residual_impact IS NOT NULL
+        GROUP BY residual_likelihood, residual_impact
         `,
         [organizationId]
       );
 
-      const byLikelihoodImpact = riskHeatmapResult.rows.map((row) => ({
+      const byResidualLikelihoodImpact = residualHeatmapResult.rows.map((row) => ({
+        likelihood: row.likelihood,
+        impact:     row.impact,
+        count:      parseInt(row.count, 10),
+      }));
+
+      // 5d. Inherent likelihood × impact heatmap — collected for
+      // future-use surfaces (Decision §11 item: "Add
+      // by_inherent_likelihood_impact for future use; dashboard
+      // ignores it for now"). Currently only emitted on the response
+      // shape; not consumed by any tile in Phase 2.
+      const inherentHeatmapResult = await pg.query<{
+        likelihood: string;
+        impact: string;
+        count: string;
+      }>(
+        `
+        SELECT inherent_likelihood AS likelihood,
+               inherent_impact     AS impact,
+               COUNT(*)::text      AS count
+        FROM risks
+        WHERE organization_id = $1
+          AND status NOT IN ('closed', 'transferred')
+          AND inherent_likelihood IS NOT NULL
+          AND inherent_impact IS NOT NULL
+        GROUP BY inherent_likelihood, inherent_impact
+        `,
+        [organizationId]
+      );
+
+      const byInherentLikelihoodImpact = inherentHeatmapResult.rows.map((row) => ({
         likelihood: row.likelihood,
         impact:     row.impact,
         count:      parseInt(row.count, 10),
@@ -550,9 +619,18 @@ router.get(
         },
         risks_summary: {
           open: totalOpenRisks,
-          by_risk_rating: openRisksByRating,
+          // by_risk_rating retained as an alias for by_residual_rating
+          // for backwards compatibility — frontend dashboard tiles
+          // (RisksBreakdown, RiskHeatmap) read these keys; Phase 3
+          // switches them to by_residual_rating /
+          // by_residual_likelihood_impact.
+          by_risk_rating: openRisksByResidualRating,
+          by_residual_rating: openRisksByResidualRating,
+          by_inherent_rating: openRisksByInherentRating,
           by_domain: openRisksByDomain,
-          by_likelihood_impact: byLikelihoodImpact,
+          by_likelihood_impact: byResidualLikelihoodImpact,
+          by_residual_likelihood_impact: byResidualLikelihoodImpact,
+          by_inherent_likelihood_impact: byInherentLikelihoodImpact,
         },
         dependency_summary: {
           open: totalOpenDeps,

@@ -67,7 +67,8 @@ type ExecReportData = {
   org_name:           string;
   posture:            PostureRow | null;
   open_actions_count: number;
-  risks_by_rating:    Array<{ rating: string; count: number }>;
+  risks_by_rating:           Array<{ rating: string; count: number }>;
+  risks_by_inherent_rating:  Array<{ rating: string; count: number }>;
   frameworks:         Array<{
     name:      string;
     version:   string;
@@ -120,6 +121,7 @@ async function assembleExecReport(organizationId: string): Promise<ExecReportDat
     orgResult,
     postureResult,
     riskResult,
+    inherentRiskResult,
     frameworkResult,
     findingsSevResult,
     recentFindingsResult,
@@ -142,14 +144,32 @@ async function assembleExecReport(organizationId: string): Promise<ExecReportDat
       [organizationId]
     ),
 
-    // 3. Open risks by rating
-    pg.query<{ risk_rating: string; count: string }>(
-      `SELECT risk_rating, COUNT(*)::text AS count
+    // 3. Open risks by RESIDUAL rating per Decision §3 — the executive
+    // report shows the post-controls assessment as primary. Inherent
+    // is collected separately (next pg.query) for context.
+    pg.query<{ residual_rating: string; count: string }>(
+      `SELECT residual_rating, COUNT(*)::text AS count
        FROM risks
        WHERE organization_id = $1
          AND status NOT IN ('closed', 'transferred')
-       GROUP BY risk_rating
-       ORDER BY CASE risk_rating
+         AND residual_rating IS NOT NULL
+       GROUP BY residual_rating
+       ORDER BY CASE residual_rating
+         WHEN 'Critical' THEN 1 WHEN 'High' THEN 2
+         WHEN 'Moderate' THEN 3 WHEN 'Low'  THEN 4
+         ELSE 5 END`,
+      [organizationId]
+    ),
+
+    // 3b. Open risks by INHERENT rating — context only.
+    pg.query<{ inherent_rating: string; count: string }>(
+      `SELECT inherent_rating, COUNT(*)::text AS count
+       FROM risks
+       WHERE organization_id = $1
+         AND status NOT IN ('closed', 'transferred')
+         AND inherent_rating IS NOT NULL
+       GROUP BY inherent_rating
+       ORDER BY CASE inherent_rating
          WHEN 'Critical' THEN 1 WHEN 'High' THEN 2
          WHEN 'Moderate' THEN 3 WHEN 'Low'  THEN 4
          ELSE 5 END`,
@@ -248,7 +268,10 @@ async function assembleExecReport(organizationId: string): Promise<ExecReportDat
     org_name:           orgResult.rows[0]?.name ?? "Unknown Organization",
     posture:            postureResult.rows[0] ?? null,
     open_actions_count: parseInt(actionsResult.rows[0]?.count ?? "0", 10),
-    risks_by_rating:    riskResult.rows.map((r) => ({ rating: r.risk_rating, count: parseInt(r.count, 10) })),
+    // Primary: residual rating per Decision §3. The PDF section
+    // labelled "Risks by Rating" shows the post-controls assessment.
+    risks_by_rating:    riskResult.rows.map((r) => ({ rating: r.residual_rating, count: parseInt(r.count, 10) })),
+    risks_by_inherent_rating: inherentRiskResult.rows.map((r) => ({ rating: r.inherent_rating, count: parseInt(r.count, 10) })),
     frameworks:         frameworkResult.rows.map((r) => ({
       name:      r.name,
       version:   r.version,

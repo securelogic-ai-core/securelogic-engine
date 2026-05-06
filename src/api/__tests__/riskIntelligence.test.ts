@@ -212,16 +212,21 @@ describe("buildRiskIntelligenceList — output shape", () => {
     linked_findings: "2"
   };
 
-  it("output object has exactly 10 keys", () => {
+  it("output object has exactly 12 keys (added inherent_rating + residual_rating)", () => {
+    // Phase 2 of risk-register-inherent-residual-rating added the two
+    // new rating fields to the intelligence response shape so the
+    // frontend detail page can show both without a second fetch.
     const keys = Object.keys(buildRiskIntelligenceList([row])[0]!);
     expect(keys.sort()).toEqual(
       [
         "active_treatments",
         "domain",
         "id",
+        "inherent_rating",
         "likelihood",
         "linked_findings",
         "owner",
+        "residual_rating",
         "risk_rating",
         "status",
         "title",

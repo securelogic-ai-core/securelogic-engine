@@ -152,6 +152,8 @@ export type TopRiskRow = {
   title: string;
   domain: string;
   risk_rating: string;
+  inherent_rating: string | null;
+  residual_rating: string | null;
   status: string;
   likelihood: string | null;
   owner: string | null;
@@ -227,6 +229,8 @@ export function buildLeadershipSummary(
     title: string;
     domain: string;
     risk_rating: string;
+    inherent_rating: string | null;
+    residual_rating: string | null;
     status: string;
     likelihood: string | null;
     owner: string | null;
@@ -285,12 +289,16 @@ export function buildLeadershipSummary(
     trend_direction: "improving" | "degrading" | "stable" | "insufficient_data" | "no_prior_baseline";
   };
 } {
-  // top_risks — pass through (already ordered by DB query)
+  // top_risks — pass through (already ordered by DB query: residual
+  // descending then created_at). risk_rating retained for backwards
+  // compatibility (= residual after Phase 1 backfill).
   const topRisks = topRiskRows.map((r) => ({
     id: r.id,
     title: r.title,
     domain: r.domain,
     risk_rating: r.risk_rating,
+    inherent_rating: r.inherent_rating ?? null,
+    residual_rating: r.residual_rating ?? null,
     status: r.status,
     likelihood: r.likelihood ?? null,
     owner: r.owner ?? null,
@@ -439,7 +447,10 @@ router.post(
         snapshotsResult
       ] = await Promise.all([
 
-        // 1. Top 5 open risks by severity then recency
+        // 1. Top 5 open risks by RESIDUAL severity then recency.
+        // Residual is the post-controls assessment; matches the
+        // executive intuition of "what should we be most worried about
+        // RIGHT NOW given current mitigations." Decision §3 + §4.
         pg.query<TopRiskRow>(
           `
           SELECT
@@ -447,6 +458,8 @@ router.post(
             title,
             domain,
             risk_rating,
+            inherent_rating,
+            residual_rating,
             status,
             likelihood,
             owner,
@@ -455,7 +468,7 @@ router.post(
           WHERE organization_id = $1
             AND status = 'open'
           ORDER BY
-            CASE risk_rating
+            CASE residual_rating
               WHEN 'Critical' THEN 1
               WHEN 'High'     THEN 2
               WHEN 'Moderate' THEN 3
