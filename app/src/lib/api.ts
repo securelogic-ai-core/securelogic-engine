@@ -552,6 +552,13 @@ export type Risk = {
   status: string;
   treatment: string | null;
   owner: string | null;
+  /**
+   * FK → users.id for the risk owner. Nullable for legacy rows and
+   * the "Unassigned" state. The `owner` text column is the
+   * denormalized fallback (kept in sync on write) used for display
+   * when the FK is null or the user has been deleted.
+   */
+  owner_user_id: string | null;
   due_date: string | null;
   source_type: string | null;
   source_id: string | null;
@@ -1860,6 +1867,13 @@ export type RiskTreatment = {
   status: string;
   treatment_type: string | null;
   owner: string | null;
+  /**
+   * FK → users.id for the treatment owner (the person executing the
+   * treatment). Distinct from reviewer_id (the approver). The `owner`
+   * text column is the denormalized fallback for display when the FK
+   * user has been deleted.
+   */
+  owner_user_id: string | null;
   due_date: string | null;
   summary: string | null;
   notes: string | null;
@@ -1937,9 +1951,16 @@ export async function patchRisk(
     likelihood: string;
     impact: string;
     risk_rating: string;
+    inherent_likelihood: string;
+    inherent_impact: string;
+    inherent_rating: string;
+    residual_likelihood: string;
+    residual_impact: string;
+    residual_rating: string;
     status: string;
     treatment: string | null;
     owner: string | null;
+    owner_user_id: string | null;
     due_date: string | null;
     source_type: string | null;
     source_id: string | null;
@@ -1972,6 +1993,7 @@ export async function createRiskTreatment(
     status?: string;
     treatment_type?: string | null;
     owner?: string | null;
+    owner_user_id?: string | null;
     due_date?: string | null;
     summary?: string | null;
     notes?: string | null;
@@ -2006,6 +2028,7 @@ export async function patchRiskTreatment(
     status: string;
     treatment_type?: string | null;
     owner?: string | null;
+    owner_user_id?: string | null;
     due_date?: string | null;
     summary?: string | null;
     notes?: string | null;

@@ -30,6 +30,7 @@ import {
 } from "../lib/riskValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
+import { resolveOwnerUserSameOrg } from "../lib/ownerUserResolver.js";
 
 const router = Router();
 
@@ -168,6 +169,7 @@ const RISK_SELECT = `
   status,
   treatment,
   owner,
+  owner_user_id,
   due_date,
   source_type,
   source_id,
@@ -211,6 +213,32 @@ router.post(
     const { input } = validated;
 
     try {
+      // If owner_user_id is supplied, verify it belongs to this org and
+      // capture the user's name so we can denormalize it into the legacy
+      // `owner` TEXT column. This keeps display safe if the user is
+      // later deleted (FK clears, text column still renders).
+      let ownerText: string | null = input.owner;
+      if (input.owner_user_id !== null) {
+        const resolved = await resolveOwnerUserSameOrg(
+          pg,
+          input.owner_user_id,
+          organizationId
+        );
+        if ("error" in resolved) {
+          res.status(400).json({
+            error: "invalid_owner_user_id",
+            detail: "User is not a member of this organization."
+          });
+          return;
+        }
+        // Caller may have supplied an explicit `owner` text alongside
+        // owner_user_id. If they did, respect it; otherwise denormalize
+        // from the resolved user's name.
+        if (ownerText === null) {
+          ownerText = resolved.name;
+        }
+      }
+
       // Legacy `likelihood / impact / risk_rating` columns are written
       // alongside the new fields. Per Decision §5 (webhook backwards
       // compatibility), legacy = residual on every write so existing
@@ -241,13 +269,14 @@ router.post(
           status,
           treatment,
           owner,
+          owner_user_id,
           due_date,
           source_type,
           source_id
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-          $11, $12, $13, $14, $15, $16, $17, $18, $19
+          $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
         )
         RETURNING ${RISK_SELECT}
         `,
@@ -267,7 +296,8 @@ router.post(
           input.residual_rating,
           input.status,
           input.treatment ?? null,
-          input.owner ?? null,
+          ownerText,
+          input.owner_user_id ?? null,
           input.due_date ?? null,
           input.source_type ?? null,
           input.source_id ?? null
@@ -831,7 +861,35 @@ router.patch(
 
       if (input.status !== undefined) addField("status", input.status);
       if (input.treatment !== undefined) addField("treatment", input.treatment);
-      if (input.owner !== undefined) addField("owner", input.owner);
+
+      // Owner handling: PATCH may update owner (text), owner_user_id
+      // (FK), or both. When owner_user_id is set to a real user and the
+      // caller did NOT also supply an explicit `owner`, denormalize the
+      // resolved user's name into the text column for fallback safety.
+      // When owner_user_id is set to null, leave the text column alone
+      // unless the caller also supplied owner explicitly.
+      let ownerToWrite: string | null | undefined = input.owner;
+      if (input.owner_user_id !== undefined && input.owner_user_id !== null) {
+        const resolved = await resolveOwnerUserSameOrg(
+          client,
+          input.owner_user_id,
+          organizationId
+        );
+        if ("error" in resolved) {
+          await client.query("ROLLBACK");
+          res.status(400).json({
+            error: "invalid_owner_user_id",
+            detail: "User is not a member of this organization."
+          });
+          return;
+        }
+        if (ownerToWrite === undefined) {
+          ownerToWrite = resolved.name;
+        }
+      }
+      if (ownerToWrite !== undefined) addField("owner", ownerToWrite);
+      if (input.owner_user_id !== undefined) addField("owner_user_id", input.owner_user_id);
+
       if (input.due_date !== undefined) addField("due_date", input.due_date);
       if (input.source_type !== undefined) addField("source_type", input.source_type);
       if (input.source_id !== undefined) addField("source_id", input.source_id);

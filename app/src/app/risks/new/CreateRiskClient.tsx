@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import type { RiskScaleLevel } from "@/lib/api";
+import { UserPicker } from "@/components/users/UserPicker";
 import { createRiskAction } from "./actions";
 
 const DOMAINS: ReadonlyArray<string> = [
@@ -53,7 +54,13 @@ const labelStyle: React.CSSProperties = {
   marginBottom: 4,
 };
 
-export function CreateRiskClient({ scaleLevels }: { scaleLevels: RiskScaleLevel[] }) {
+export function CreateRiskClient({
+  scaleLevels,
+  organizationId,
+}: {
+  scaleLevels: RiskScaleLevel[];
+  organizationId: string;
+}) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -73,7 +80,14 @@ export function CreateRiskClient({ scaleLevels }: { scaleLevels: RiskScaleLevel[
   const [residualImpact,     setResidualImpact]     = useState<string>("");
   const [residualRating,     setResidualRating]     = useState<string>("");
   const [treatment, setTreatment] = useState("");
-  const [owner, setOwner] = useState("");
+  // Owner is selected via UserPicker. We track both the FK and the
+  // resolved user name so we can submit both columns: owner_user_id
+  // (canonical FK) and owner (denormalized text for display
+  // fallback). When the picker degrades to free-text fallback,
+  // ownerUserId stays null and ownerName becomes whatever the user
+  // typed; we send only the text column in that case.
+  const [ownerUserId, setOwnerUserId] = useState<string | null>(null);
+  const [ownerName, setOwnerName] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState("");
 
   function handleSubmit(e: React.FormEvent) {
@@ -91,7 +105,10 @@ export function CreateRiskClient({ scaleLevels }: { scaleLevels: RiskScaleLevel[
     if (!residualImpact)     { setError("Residual impact is required."); return; }
     if (!residualRating)     { setError("Residual rating is required."); return; }
     if (treatment.length > 2000) { setError("Treatment must be 2000 characters or fewer."); return; }
-    if (owner.length > 100) { setError("Owner must be 100 characters or fewer."); return; }
+    if (ownerName !== null && ownerName.length > 100) {
+      setError("Owner must be 100 characters or fewer.");
+      return;
+    }
 
     const input = {
       title: title.trim(),
@@ -104,7 +121,8 @@ export function CreateRiskClient({ scaleLevels }: { scaleLevels: RiskScaleLevel[
       residual_impact:     residualImpact,
       residual_rating:     residualRating,
       treatment: treatment.trim() || null,
-      owner: owner.trim() || null,
+      owner: ownerName,
+      owner_user_id: ownerUserId,
       due_date: dueDate || null,
     };
 
@@ -294,15 +312,15 @@ export function CreateRiskClient({ scaleLevels }: { scaleLevels: RiskScaleLevel[
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
-          <label htmlFor="owner" style={labelStyle}>Owner</label>
-          <input
-            id="owner"
-            type="text"
-            value={owner}
-            onChange={(e) => setOwner(e.target.value)}
-            maxLength={100}
-            placeholder="e.g. Security Team"
-            style={inputStyle}
+          <label style={labelStyle}>Owner</label>
+          <UserPicker
+            organizationId={organizationId}
+            value={ownerUserId}
+            onChange={(userId, userName) => {
+              setOwnerUserId(userId);
+              setOwnerName(userName);
+            }}
+            ariaLabel="Risk owner"
           />
         </div>
         <div>

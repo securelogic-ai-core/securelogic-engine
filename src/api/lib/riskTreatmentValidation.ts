@@ -61,6 +61,7 @@ export type RiskTreatmentCreateInput = {
   status: string;
   treatment_type: string | null;
   owner: string | null;
+  owner_user_id: string | null;
   due_date: string | null;
   summary: string | null;
   notes: string | null;
@@ -133,6 +134,18 @@ export function validateRiskTreatmentCreate(
       typeof b["owner"] === "string" && b["owner"].trim().length > 0
         ? sanitizeString(b["owner"].trim(), MAX_OWNER)
         : null;
+  }
+
+  // owner_user_id — optional UUID or null. Same-org membership is
+  // verified in the route handler.
+  let owner_user_id: string | null = null;
+  if ("owner_user_id" in b) {
+    if (b["owner_user_id"] !== null) {
+      if (!isUuid(b["owner_user_id"])) {
+        return { error: "owner_user_id_must_be_uuid_or_null" };
+      }
+      owner_user_id = b["owner_user_id"] as string;
+    }
   }
 
   // due_date — optional ISO date string (YYYY-MM-DD) or null
@@ -210,6 +223,7 @@ export function validateRiskTreatmentCreate(
       status,
       treatment_type,
       owner,
+      owner_user_id,
       due_date,
       summary,
       notes,
@@ -227,6 +241,7 @@ export type RiskTreatmentStatusTransitionInput = {
   status: string;
   treatment_type: string | null | undefined;
   owner: string | null;
+  owner_user_id: string | null | undefined;
   due_date: string | null;
   summary: string | null;
   notes: string | null;
@@ -289,6 +304,19 @@ export function validateRiskTreatmentStatusTransition(
       typeof b["owner"] === "string" && b["owner"].trim().length > 0
         ? sanitizeString(b["owner"].trim(), MAX_OWNER)
         : null;
+  }
+
+  // owner_user_id — optional UUID or null on PATCH. Same-org check
+  // happens in the route handler.
+  let owner_user_id: string | null | undefined;
+  if ("owner_user_id" in b) {
+    if (b["owner_user_id"] === null) {
+      owner_user_id = null;
+    } else if (isUuid(b["owner_user_id"])) {
+      owner_user_id = b["owner_user_id"] as string;
+    } else {
+      return { error: "owner_user_id_must_be_uuid_or_null" };
+    }
   }
 
   // due_date — optional ISO date string (YYYY-MM-DD) or null
@@ -365,6 +393,7 @@ export function validateRiskTreatmentStatusTransition(
       status,
       treatment_type,
       owner,
+      owner_user_id,
       due_date,
       summary,
       notes,

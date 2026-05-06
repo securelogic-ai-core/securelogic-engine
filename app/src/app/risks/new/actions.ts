@@ -37,6 +37,13 @@ export type CreateRiskInput = {
   residual_rating: string;
   treatment: string | null;
   owner: string | null;
+  /**
+   * FK to users.id picked via UserPicker. When set, the backend
+   * verifies same-org membership and the `owner` text column is
+   * denormalized from the user's name on insert (fallback for
+   * display when the FK user is later deleted). null = unassigned.
+   */
+  owner_user_id: string | null;
   due_date: string | null;
 };
 
@@ -69,6 +76,7 @@ export async function createRiskAction(
     residual_rating:     input.residual_rating,
     treatment:           input.treatment,
     owner:               input.owner,
+    owner_user_id:       input.owner_user_id,
     due_date:            input.due_date,
   };
 
