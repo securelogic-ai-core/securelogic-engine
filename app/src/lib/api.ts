@@ -1784,16 +1784,72 @@ export async function getActions(
 
 export async function getRisks(
   apiKey: string,
-  params?: { status?: string; domain?: string; limit?: number }
+  params?: { status?: string; domain?: string; risk_rating?: string; limit?: number }
 ): Promise<RisksResponse | null> {
   try {
     const qs = new URLSearchParams();
-    if (params?.status) qs.set("status", params.status);
-    if (params?.domain) qs.set("domain", params.domain);
+    if (params?.status)      qs.set("status",      params.status);
+    if (params?.domain)      qs.set("domain",      params.domain);
+    if (params?.risk_rating) qs.set("risk_rating", params.risk_rating);
     qs.set("limit", String(params?.limit ?? 50));
     const res = await engineFetch(`/api/risks?${qs.toString()}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<RisksResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export type RiskTreatment = {
+  id: string;
+  organization_id: string;
+  risk_id: string;
+  status: string;
+  treatment_type: string | null;
+  owner: string | null;
+  due_date: string | null;
+  summary: string | null;
+  notes: string | null;
+  performed_at: string | null;
+  reviewer_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RiskTreatmentsResponse = {
+  count: number;
+  limit: number;
+  organizationId: string;
+  nextCursor: { created_at: string; id: string } | null;
+  treatments: RiskTreatment[];
+};
+
+export async function getRiskById(
+  apiKey: string,
+  id: string
+): Promise<Risk | null> {
+  try {
+    const res = await engineFetch(`/api/risks/${id}`, apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { risk: Risk };
+    return body.risk ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getRiskTreatments(
+  apiKey: string,
+  params?: { risk_id?: string; status?: string; limit?: number }
+): Promise<RiskTreatmentsResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (params?.risk_id) qs.set("risk_id", params.risk_id);
+    if (params?.status)  qs.set("status",  params.status);
+    qs.set("limit", String(params?.limit ?? 50));
+    const res = await engineFetch(`/api/risk-treatments?${qs.toString()}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<RiskTreatmentsResponse>;
   } catch {
     return null;
   }
