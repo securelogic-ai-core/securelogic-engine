@@ -209,6 +209,27 @@ router.post(
         "Risk treatment created"
       );
 
+      // RR-3 fix 1.1 — without this event the treatment would appear
+      // out of nowhere on the per-risk history timeline. Mirror the
+      // call shape used by risks.ts for risk.created.
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        actorUserId:   req.userId ?? null,
+        eventType:     "risk_treatment.created",
+        resourceType:  "risk_treatment",
+        resourceId:    treatment.id as string,
+        payload: {
+          risk_id:        input.risk_id,
+          treatment_type: input.treatment_type ?? null,
+          status:         input.status,
+          owner:          ownerText,
+          owner_user_id:  input.owner_user_id ?? null,
+          due_date:       input.due_date ?? null
+        },
+        ipAddress: req.ip ?? null
+      });
+
       res.status(201).json({ treatment });
     } catch (err) {
       try {
@@ -444,10 +465,14 @@ router.patch(
     try {
       await client.query("BEGIN");
 
-      // Lock the treatment row and verify org ownership.
+      // Lock the treatment row and verify org ownership. Selecting
+      // TREATMENT_SELECT (rather than just id/risk_id/status) gives the
+      // audit payload the BEFORE values needed to emit a per-field diff
+      // when the same PATCH changes both status and metadata fields
+      // (RR-3 fix 1.3).
       const treatmentResult = await client.query(
         `
-        SELECT id, risk_id, status
+        SELECT ${TREATMENT_SELECT}
         FROM risk_treatments
         WHERE id = $1
           AND organization_id = $2
@@ -560,10 +585,25 @@ router.patch(
 
       const treatment = updatedResult.rows[0];
 
-      let riskUpdated = false;
+      let riskUpdated         = false;
+      let riskStatusBefore: string | null = null;
+      let riskStatusAfter:  string | null = null;
 
       // Atomically update parent risk status when transitioning to terminal.
       if (TERMINAL_STATUSES.has(input.status)) {
+        // Capture the parent risk's status BEFORE the update so the
+        // RR-3 fix 1.4 audit event can record the {before, after}
+        // transition. SELECT FOR UPDATE locks the parent row inside
+        // the same transaction that just locked the treatment, which
+        // also closes the small race window where two terminal
+        // transitions on sibling treatments could clobber each other.
+        const beforeRiskResult = await client.query<{ status: string }>(
+          `SELECT status FROM risks
+           WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+          [existing.risk_id, organizationId]
+        );
+        riskStatusBefore = beforeRiskResult.rows[0]?.status ?? null;
+
         // Map treatment terminal status to risk status (1-to-1 match).
         await client.query(
           `
@@ -574,7 +614,8 @@ router.patch(
           `,
           [input.status, existing.risk_id, organizationId]
         );
-        riskUpdated = true;
+        riskUpdated     = true;
+        riskStatusAfter = input.status;
       }
 
       await client.query("COMMIT");
@@ -591,16 +632,70 @@ router.patch(
         "Risk treatment status updated"
       );
 
+      // RR-3 fix 1.3 — capture metadata changes that landed alongside
+      // the status transition. Compare the BEFORE row (locked + read
+      // above) against the AFTER row (RETURNING from the UPDATE). Only
+      // include fields that actually changed; the `from`/`to` keys
+      // already cover status separately.
+      const METADATA_FIELDS = [
+        "treatment_type",
+        "owner",
+        "owner_user_id",
+        "due_date",
+        "summary",
+        "notes",
+        "performed_at",
+        "reviewer_id"
+      ] as const;
+      const metadata_diffs: Record<string, { before: unknown; after: unknown }> = {};
+      for (const f of METADATA_FIELDS) {
+        const beforeVal = (existing as Record<string, unknown>)[f] ?? null;
+        const afterVal  = (treatment as Record<string, unknown>)[f] ?? null;
+        if (JSON.stringify(beforeVal) !== JSON.stringify(afterVal)) {
+          metadata_diffs[f] = { before: beforeVal, after: afterVal };
+        }
+      }
+      const hasMetadataDiffs = Object.keys(metadata_diffs).length > 0;
+
       writeAuditEvent({
         organizationId,
         actorApiKeyId: (req as any).apiKey?.id ?? null,
-        actorUserId: req.userId ?? null,
-        eventType: "workflow.status_transition",
-        resourceType: "risk_treatment",
-        resourceId: treatmentId,
-        payload: { from: existing.status, to: input.status, riskUpdated },
+        actorUserId:   req.userId ?? null,
+        eventType:     "workflow.status_transition",
+        resourceType:  "risk_treatment",
+        resourceId:    treatmentId,
+        payload: {
+          from:        existing.status,
+          to:          input.status,
+          riskUpdated,
+          ...(hasMetadataDiffs ? { metadata_diffs } : {})
+        },
         ipAddress: req.ip ?? null
       });
+
+      // RR-3 fix 1.4 — when a treatment hits terminal status the parent
+      // risk row's status flips inside the same transaction, but until
+      // now no audit event was written for the risk itself. Result: the
+      // risk's own history (filtered by resource_id=:risk_id) was missing
+      // its most important transition. Emit a dedicated event so the
+      // per-risk timeline shows when the risk entered terminal state and
+      // which treatment caused it.
+      if (riskUpdated && riskStatusBefore !== null) {
+        writeAuditEvent({
+          organizationId,
+          actorApiKeyId: (req as any).apiKey?.id ?? null,
+          actorUserId:   req.userId ?? null,
+          eventType:     "risk.terminal_status",
+          resourceType:  "risk",
+          resourceId:    existing.risk_id as string,
+          payload: {
+            triggered_by_treatment_id: treatmentId,
+            treatment_terminal_status: input.status,
+            risk_status: { before: riskStatusBefore, after: riskStatusAfter }
+          },
+          ipAddress: req.ip ?? null
+        });
+      }
 
       res.status(200).json({ treatment });
     } catch (err) {

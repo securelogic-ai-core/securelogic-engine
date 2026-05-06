@@ -177,6 +177,31 @@ const RISK_SELECT = `
   updated_at
 `;
 
+// Mutable columns the PATCH handler may change. Used by the audit-log
+// payload to build a per-field { before, after } diff (RR-3 fix 1.2).
+// Keep in sync with the addField() calls in the PATCH handler.
+const DIFFABLE_FIELDS = [
+  "title",
+  "description",
+  "domain",
+  "likelihood",
+  "impact",
+  "risk_rating",
+  "inherent_likelihood",
+  "inherent_impact",
+  "inherent_rating",
+  "residual_likelihood",
+  "residual_impact",
+  "residual_rating",
+  "status",
+  "treatment",
+  "owner",
+  "owner_user_id",
+  "due_date",
+  "source_type",
+  "source_id"
+] as const;
+
 /* =========================================================
    POST /api/risks
    Create a risk record.
@@ -759,6 +784,148 @@ router.get(
 );
 
 /* =========================================================
+   GET /api/risks/:id/history
+   Per-risk audit trail (RR-3). Returns security_audit_log
+   events scoped to this risk plus its treatments, ordered
+   newest first. Mirrors the field shape of GET /api/audit-log
+   so the frontend can reuse the existing event renderer.
+
+   Auth: same chain as the rest of the risk register
+   (standard entitlement, no admin gate) — anyone who can
+   read the risk can read its history.
+   ========================================================= */
+
+const HISTORY_DEFAULT_LIMIT = 20;
+const HISTORY_MAX_LIMIT     = 100;
+
+function parseHistoryLimit(v: unknown): number {
+  const n = Number(String(v ?? "").trim());
+  if (!Number.isFinite(n) || n <= 0) return HISTORY_DEFAULT_LIMIT;
+  return Math.min(Math.floor(n), HISTORY_MAX_LIMIT);
+}
+
+function parseHistoryOffset(v: unknown): number {
+  const n = Number(String(v ?? "").trim());
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.floor(n);
+}
+
+router.get(
+  "/risks/:id/history",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const riskId = String(req.params.id ?? "").trim();
+    if (!riskId) {
+      res.status(400).json({ error: "risk_id_required" });
+      return;
+    }
+    if (!isUuid(riskId)) {
+      res.status(400).json({ error: "risk_id_must_be_uuid" });
+      return;
+    }
+
+    const limit  = parseHistoryLimit(req.query.limit);
+    const offset = parseHistoryOffset(req.query.offset);
+
+    try {
+      // Verify the risk exists in this org. Mirror the same check used
+      // by GET /api/risks/:id so cross-org probes return 404, not an
+      // empty events list (which would also leak existence by absence
+      // of a 404).
+      const ownership = await pg.query(
+        `SELECT 1 FROM risks WHERE id = $1 AND organization_id = $2`,
+        [riskId, organizationId]
+      );
+      if ((ownership.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "risk_not_found" });
+        return;
+      }
+
+      // Two-resource scope: events on the risk itself, plus events on
+      // any of its treatments. The treatment subquery is org-scoped so
+      // a stale resource_id from a different org cannot bleed in.
+      // ORDER BY (created_at DESC, id DESC) matches GET /api/audit-log.
+      const eventsPromise = pg.query(
+        `
+        SELECT
+          sal.id,
+          sal.event_type,
+          sal.actor_user_id,
+          u.email        AS actor_email,
+          u.name         AS actor_name,
+          sal.resource_type,
+          sal.resource_id,
+          sal.ip_address,
+          sal.payload    AS metadata,
+          sal.created_at
+        FROM security_audit_log sal
+        LEFT JOIN users u ON u.id = sal.actor_user_id
+        WHERE sal.organization_id = $1
+          AND (
+            (sal.resource_type = 'risk' AND sal.resource_id = $2::uuid)
+            OR
+            (sal.resource_type = 'risk_treatment' AND sal.resource_id IN (
+              SELECT id FROM risk_treatments
+              WHERE risk_id = $2::uuid AND organization_id = $1
+            ))
+          )
+        ORDER BY sal.created_at DESC, sal.id DESC
+        LIMIT $3 OFFSET $4
+        `,
+        [organizationId, riskId, limit, offset]
+      );
+
+      const countPromise = pg.query<{ total: string }>(
+        `
+        SELECT COUNT(*)::text AS total
+        FROM security_audit_log sal
+        WHERE sal.organization_id = $1
+          AND (
+            (sal.resource_type = 'risk' AND sal.resource_id = $2::uuid)
+            OR
+            (sal.resource_type = 'risk_treatment' AND sal.resource_id IN (
+              SELECT id FROM risk_treatments
+              WHERE risk_id = $2::uuid AND organization_id = $1
+            ))
+          )
+        `,
+        [organizationId, riskId]
+      );
+
+      const [eventsResult, countResult] = await Promise.all([
+        eventsPromise,
+        countPromise
+      ]);
+
+      const total_count = parseInt(countResult.rows[0]?.total ?? "0", 10);
+
+      res.status(200).json({
+        events:      eventsResult.rows,
+        total_count,
+        limit,
+        offset
+      });
+    } catch (err) {
+      logger.error(
+        { event: "risk_history_failed", err, riskId },
+        "GET /api/risks/:id/history failed"
+      );
+      res.status(500).json({ error: "risk_history_failed" });
+    }
+  }
+);
+
+/* =========================================================
    PATCH /api/risks/:id
    Partial update of a risk record.
    ========================================================= */
@@ -799,15 +966,16 @@ router.patch(
     try {
       await client.query("BEGIN");
 
-      // Verify the risk exists, lock it, and capture the BEFORE values
-      // for the inherent/residual ratings so the audit payload can
-      // record the transition (item 2 from Decision §11 scope).
-      const existingResult = await client.query<{
+      // Lock the row and capture BEFORE values for every column the
+      // PATCH may change. Selecting RISK_SELECT lets the audit payload
+      // emit a per-field { before, after } diff for any mutable column
+      // (RR-3 fix 1.2) — not just inherent/residual rating as before.
+      const existingResult = await client.query<Record<string, unknown> & {
         id: string;
         inherent_rating: string | null;
         residual_rating: string | null;
       }>(
-        `SELECT id, inherent_rating, residual_rating
+        `SELECT ${RISK_SELECT}
          FROM risks WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
         [riskId, organizationId]
       );
@@ -923,9 +1091,21 @@ router.patch(
         "Risk record updated"
       );
 
-      // Audit payload includes before/after for inherent_rating and
-      // residual_rating SPECIFICALLY (Decision §11 item 2). Other
-      // fields just appear in the `fields` list of changed names.
+      // Audit payload (RR-3 fix 1.2): emit a per-field { before, after }
+      // diff for every mutable column the PATCH actually changed. The
+      // legacy `fields` array (just changed key names) and the explicit
+      // `inherent_rating` / `residual_rating` keys are preserved so any
+      // existing consumer of the payload shape keeps working.
+      const diffs: Record<string, { before: unknown; after: unknown }> = {};
+      for (const f of DIFFABLE_FIELDS) {
+        if ((input as Record<string, unknown>)[f] !== undefined) {
+          diffs[f] = {
+            before: (before as Record<string, unknown>)[f] ?? null,
+            after: (risk as Record<string, unknown>)[f] ?? null
+          };
+        }
+      }
+
       writeAuditEvent({
         organizationId,
         actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
@@ -935,6 +1115,7 @@ router.patch(
         resourceId: risk.id as string,
         payload: {
           fields: Object.keys(input),
+          diffs,
           inherent_rating:
             input.inherent_rating !== undefined
               ? { before: before.inherent_rating, after: risk.inherent_rating }
