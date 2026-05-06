@@ -8,7 +8,7 @@
  * agreement (the cards-to-table migration was scoped narrowly).
  *
  * Data shape: each row carries fields from the basic /api/risks endpoint
- * (title, domain, risk_rating, status, owner, due_date, updated_at)
+ * (title, domain, residual_rating, status, owner, due_date, updated_at)
  * MERGED with /api/risks/intelligence counts (active_treatments,
  * linked_findings). The merge happens server-side in
  * app/src/app/risks/page.tsx; this component just renders. For closed/
@@ -18,8 +18,12 @@
  *
  * Sort is purely client-side. The dataset (open + closed/transferred)
  * is bounded for typical orgs (<200 risks); the page warns in a comment
- * when this assumption breaks. Default sort is risk_rating descending
- * (Critical→Low) with updated_at descending as tie-break.
+ * when this assumption breaks. Default sort is residual_rating
+ * descending (Critical→Low) with updated_at descending as tie-break.
+ *
+ * The Rating column displays RESIDUAL per Decision §5 of package
+ * risk-register-inherent-residual-rating. Inherent rating is shown
+ * on the detail page only.
  */
 
 import { useMemo, useState } from "react";
@@ -30,7 +34,7 @@ import { RiskRow, type EnrichedRiskRow } from "./RiskRow";
 const SORTABLE_COLUMNS = [
   "title",
   "domain",
-  "risk_rating",
+  "residual_rating",
   "status",
   "owner",
   "due_date",
@@ -69,9 +73,12 @@ function sortRows(
   return [...rows].sort((a, b) => {
     let cmp = 0;
     switch (key) {
-      case "risk_rating": {
-        const ao = RATING_ORDER[a.risk_rating ?? ""] ?? 99;
-        const bo = RATING_ORDER[b.risk_rating ?? ""] ?? 99;
+      case "residual_rating": {
+        // Risks with NULL residual_rating sort to the bottom in BOTH
+        // ascending and descending order (the engine skips them
+        // anyway; surfacing them at the top would be misleading).
+        const ao = RATING_ORDER[a.residual_rating ?? ""] ?? 99;
+        const bo = RATING_ORDER[b.residual_rating ?? ""] ?? 99;
         cmp = ao - bo;
         break;
       }
@@ -108,7 +115,7 @@ function sortRows(
 const HEADERS: ReadonlyArray<{ key: SortKey; label: string }> = [
   { key: "title",             label: "Title" },
   { key: "domain",            label: "Domain" },
-  { key: "risk_rating",       label: "Rating" },
+  { key: "residual_rating",   label: "Rating" },
   { key: "status",            label: "Status" },
   { key: "owner",             label: "Owner" },
   { key: "due_date",          label: "Due Date" },
@@ -124,11 +131,11 @@ export function RiskTable({
   risks: EnrichedRiskRow[];
   scaleLevels: RiskScaleLevel[];
 }) {
-  const [sortKey, setSortKey] = useState<SortKey>("risk_rating");
+  const [sortKey, setSortKey] = useState<SortKey>("residual_rating");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
-  // Default sort: risk_rating ascending in the canonical order = Critical
-  // first (RATING_ORDER 0), Low last. Tie-breaker is updated_at desc
-  // baked into sortRows.
+  // Default sort: residual_rating ascending in the canonical order =
+  // Critical first (RATING_ORDER 0), Low last, NULL residual at the
+  // bottom. Tie-breaker is updated_at desc baked into sortRows.
 
   const sorted = useMemo(
     () => sortRows(risks, sortKey, sortDir),

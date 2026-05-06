@@ -60,9 +60,18 @@ export function CreateRiskClient({ scaleLevels }: { scaleLevels: RiskScaleLevel[
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [domain, setDomain] = useState<string>("");
-  const [likelihood, setLikelihood] = useState<string>("");
-  const [impact, setImpact] = useState<string>("");
-  const [riskRating, setRiskRating] = useState<string>("");
+  // 6 rating inputs per Decision §6 of package
+  // risk-register-inherent-residual-rating. The legacy
+  // likelihood/impact/risk_rating fields are not on the form;
+  // actions.ts mirrors residual into legacy on the wire so the
+  // backend's POST validator (which still requires all 9 fields)
+  // accepts the body.
+  const [inherentLikelihood, setInherentLikelihood] = useState<string>("");
+  const [inherentImpact,     setInherentImpact]     = useState<string>("");
+  const [inherentRating,     setInherentRating]     = useState<string>("");
+  const [residualLikelihood, setResidualLikelihood] = useState<string>("");
+  const [residualImpact,     setResidualImpact]     = useState<string>("");
+  const [residualRating,     setResidualRating]     = useState<string>("");
   const [treatment, setTreatment] = useState("");
   const [owner, setOwner] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -75,9 +84,12 @@ export function CreateRiskClient({ scaleLevels }: { scaleLevels: RiskScaleLevel[
     if (title.length > 255) { setError("Title must be 255 characters or fewer."); return; }
     if (description.length > 2000) { setError("Description must be 2000 characters or fewer."); return; }
     if (!domain) { setError("Domain is required."); return; }
-    if (!likelihood) { setError("Likelihood is required."); return; }
-    if (!impact) { setError("Impact is required."); return; }
-    if (!riskRating) { setError("Risk rating is required."); return; }
+    if (!inherentLikelihood) { setError("Inherent likelihood is required."); return; }
+    if (!inherentImpact)     { setError("Inherent impact is required."); return; }
+    if (!inherentRating)     { setError("Inherent rating is required."); return; }
+    if (!residualLikelihood) { setError("Residual likelihood is required."); return; }
+    if (!residualImpact)     { setError("Residual impact is required."); return; }
+    if (!residualRating)     { setError("Residual rating is required."); return; }
     if (treatment.length > 2000) { setError("Treatment must be 2000 characters or fewer."); return; }
     if (owner.length > 100) { setError("Owner must be 100 characters or fewer."); return; }
 
@@ -85,9 +97,12 @@ export function CreateRiskClient({ scaleLevels }: { scaleLevels: RiskScaleLevel[
       title: title.trim(),
       description: description.trim() || null,
       domain,
-      likelihood,
-      impact,
-      risk_rating: riskRating,
+      inherent_likelihood: inherentLikelihood,
+      inherent_impact:     inherentImpact,
+      inherent_rating:     inherentRating,
+      residual_likelihood: residualLikelihood,
+      residual_impact:     residualImpact,
+      residual_rating:     residualRating,
       treatment: treatment.trim() || null,
       owner: owner.trim() || null,
       due_date: dueDate || null,
@@ -132,70 +147,136 @@ export function CreateRiskClient({ scaleLevels }: { scaleLevels: RiskScaleLevel[
         />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label htmlFor="domain" style={labelStyle}>Domain *</label>
-          <select
-            id="domain"
-            value={domain}
-            onChange={(e) => setDomain(e.target.value)}
-            required
-            style={inputStyle}
-          >
-            <option value="">Select…</option>
-            {DOMAINS.map((d) => (
-              <option key={d} value={d}>{d}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="likelihood" style={labelStyle}>Likelihood *</label>
-          <select
-            id="likelihood"
-            value={likelihood}
-            onChange={(e) => setLikelihood(e.target.value)}
-            required
-            style={inputStyle}
-          >
-            <option value="">Select…</option>
-            {LIKELIHOODS.map(({ value, label }) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
-        </div>
+      <div>
+        <label htmlFor="domain" style={labelStyle}>Domain *</label>
+        <select
+          id="domain"
+          value={domain}
+          onChange={(e) => setDomain(e.target.value)}
+          required
+          style={inputStyle}
+        >
+          <option value="">Select…</option>
+          {DOMAINS.map((d) => (
+            <option key={d} value={d}>{d}</option>
+          ))}
+        </select>
       </div>
 
+      {/*
+        Inherent / Residual rating sections — Decision §6 of package
+        risk-register-inherent-residual-rating. Six required inputs;
+        the legacy 3 are mirrored into the wire body by actions.ts
+        (residual → legacy) so the backend POST validator accepts.
+      */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label htmlFor="impact" style={labelStyle}>Impact *</label>
-          <select
-            id="impact"
-            value={impact}
-            onChange={(e) => setImpact(e.target.value)}
-            required
-            style={inputStyle}
-          >
-            <option value="">Select…</option>
-            {SEVERITY_VALUES.map((v) => (
-              <option key={v} value={v}>{severityLabel(v, scaleLevels)}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="risk_rating" style={labelStyle}>Risk Rating *</label>
-          <select
-            id="risk_rating"
-            value={riskRating}
-            onChange={(e) => setRiskRating(e.target.value)}
-            required
-            style={inputStyle}
-          >
-            <option value="">Select…</option>
-            {SEVERITY_VALUES.map((v) => (
-              <option key={v} value={v}>{severityLabel(v, scaleLevels)}</option>
-            ))}
-          </select>
-        </div>
+        <fieldset
+          className="rounded-lg p-4 space-y-3"
+          style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}
+        >
+          <legend className="text-xs font-semibold" style={{ color: "#94a3b8", padding: "0 6px" }}>
+            Inherent (pre-controls) *
+          </legend>
+          <div>
+            <label htmlFor="inherent_likelihood" style={labelStyle}>Likelihood</label>
+            <select
+              id="inherent_likelihood"
+              value={inherentLikelihood}
+              onChange={(e) => setInherentLikelihood(e.target.value)}
+              required
+              style={inputStyle}
+            >
+              <option value="">Select…</option>
+              {LIKELIHOODS.map(({ value, label }) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="inherent_impact" style={labelStyle}>Impact</label>
+            <select
+              id="inherent_impact"
+              value={inherentImpact}
+              onChange={(e) => setInherentImpact(e.target.value)}
+              required
+              style={inputStyle}
+            >
+              <option value="">Select…</option>
+              {SEVERITY_VALUES.map((v) => (
+                <option key={v} value={v}>{severityLabel(v, scaleLevels)}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="inherent_rating" style={labelStyle}>Rating</label>
+            <select
+              id="inherent_rating"
+              value={inherentRating}
+              onChange={(e) => setInherentRating(e.target.value)}
+              required
+              style={inputStyle}
+            >
+              <option value="">Select…</option>
+              {SEVERITY_VALUES.map((v) => (
+                <option key={v} value={v}>{severityLabel(v, scaleLevels)}</option>
+              ))}
+            </select>
+          </div>
+        </fieldset>
+
+        <fieldset
+          className="rounded-lg p-4 space-y-3"
+          style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}
+        >
+          <legend className="text-xs font-semibold" style={{ color: "#94a3b8", padding: "0 6px" }}>
+            Residual (post-controls) *
+          </legend>
+          <div>
+            <label htmlFor="residual_likelihood" style={labelStyle}>Likelihood</label>
+            <select
+              id="residual_likelihood"
+              value={residualLikelihood}
+              onChange={(e) => setResidualLikelihood(e.target.value)}
+              required
+              style={inputStyle}
+            >
+              <option value="">Select…</option>
+              {LIKELIHOODS.map(({ value, label }) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="residual_impact" style={labelStyle}>Impact</label>
+            <select
+              id="residual_impact"
+              value={residualImpact}
+              onChange={(e) => setResidualImpact(e.target.value)}
+              required
+              style={inputStyle}
+            >
+              <option value="">Select…</option>
+              {SEVERITY_VALUES.map((v) => (
+                <option key={v} value={v}>{severityLabel(v, scaleLevels)}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="residual_rating" style={labelStyle}>Rating</label>
+            <select
+              id="residual_rating"
+              value={residualRating}
+              onChange={(e) => setResidualRating(e.target.value)}
+              required
+              style={inputStyle}
+            >
+              <option value="">Select…</option>
+              {SEVERITY_VALUES.map((v) => (
+                <option key={v} value={v}>{severityLabel(v, scaleLevels)}</option>
+              ))}
+            </select>
+          </div>
+        </fieldset>
       </div>
 
       <div>

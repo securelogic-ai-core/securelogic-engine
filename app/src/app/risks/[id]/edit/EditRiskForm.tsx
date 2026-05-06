@@ -81,9 +81,21 @@ export function EditRiskForm({
   const [title, setTitle] = useState(risk.title);
   const [description, setDescription] = useState(risk.description ?? "");
   const [domain, setDomain] = useState<string>(risk.domain ?? "");
-  const [likelihood, setLikelihood] = useState<string>(risk.likelihood ?? "");
-  const [impact, setImpact] = useState<string>(risk.impact ?? "");
-  const [riskRating, setRiskRating] = useState<string>(risk.risk_rating ?? "");
+  // Six rating inputs split into Inherent / Residual sections per
+  // Decision §6 of package risk-register-inherent-residual-rating.
+  // The legacy likelihood/impact/risk_rating fields are no longer on
+  // the form — Phase 2's PATCH handler mirrors residual into legacy
+  // automatically when the user PATCHes residual_* without supplying
+  // legacy. This preserves webhook contract without UI complexity.
+  // Backfilled rows have NULL inherent_*; pre-populating with empty
+  // string forces the user to make an explicit reassessment choice
+  // (rather than defaulting inherent = residual silently).
+  const [inherentLikelihood, setInherentLikelihood] = useState<string>(risk.inherent_likelihood ?? "");
+  const [inherentImpact,     setInherentImpact]     = useState<string>(risk.inherent_impact     ?? "");
+  const [inherentRating,     setInherentRating]     = useState<string>(risk.inherent_rating     ?? "");
+  const [residualLikelihood, setResidualLikelihood] = useState<string>(risk.residual_likelihood ?? "");
+  const [residualImpact,     setResidualImpact]     = useState<string>(risk.residual_impact     ?? "");
+  const [residualRating,     setResidualRating]     = useState<string>(risk.residual_rating     ?? "");
   const [status, setStatus] = useState<string>(risk.status);
   const [treatment, setTreatment] = useState(risk.treatment ?? "");
   const [owner, setOwner] = useState(risk.owner ?? "");
@@ -116,9 +128,29 @@ export function EditRiskForm({
       if (next !== (risk.description ?? null)) diff.description = next;
     }
     if (domain && domain !== (risk.domain ?? "")) diff.domain = domain;
-    if (likelihood && likelihood !== (risk.likelihood ?? "")) diff.likelihood = likelihood;
-    if (impact && impact !== (risk.impact ?? "")) diff.impact = impact;
-    if (riskRating && riskRating !== (risk.risk_rating ?? "")) diff.risk_rating = riskRating;
+
+    // Rating dimension diffs — six fields, two trios. Empty string =
+    // unset; we don't send empty strings (the validator would reject
+    // them). The PATCH endpoint allows partial updates of any subset.
+    if (inherentLikelihood && inherentLikelihood !== (risk.inherent_likelihood ?? "")) {
+      diff.inherent_likelihood = inherentLikelihood;
+    }
+    if (inherentImpact && inherentImpact !== (risk.inherent_impact ?? "")) {
+      diff.inherent_impact = inherentImpact;
+    }
+    if (inherentRating && inherentRating !== (risk.inherent_rating ?? "")) {
+      diff.inherent_rating = inherentRating;
+    }
+    if (residualLikelihood && residualLikelihood !== (risk.residual_likelihood ?? "")) {
+      diff.residual_likelihood = residualLikelihood;
+    }
+    if (residualImpact && residualImpact !== (risk.residual_impact ?? "")) {
+      diff.residual_impact = residualImpact;
+    }
+    if (residualRating && residualRating !== (risk.residual_rating ?? "")) {
+      diff.residual_rating = residualRating;
+    }
+
     if (status !== risk.status) diff.status = status;
     {
       const next = treatment.trim() || null;
@@ -179,46 +211,127 @@ export function EditRiskForm({
         />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label htmlFor="domain" style={labelStyle}>Domain</label>
-          <select id="domain" value={domain} onChange={(e) => setDomain(e.target.value)} style={inputStyle}>
-            <option value="">Select…</option>
-            {DOMAINS.map((d) => (
-              <option key={d} value={d}>{d}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="likelihood" style={labelStyle}>Likelihood</label>
-          <select id="likelihood" value={likelihood} onChange={(e) => setLikelihood(e.target.value)} style={inputStyle}>
-            <option value="">Select…</option>
-            {LIKELIHOODS.map(({ value, label }) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
-        </div>
+      <div>
+        <label htmlFor="domain" style={labelStyle}>Domain</label>
+        <select id="domain" value={domain} onChange={(e) => setDomain(e.target.value)} style={inputStyle}>
+          <option value="">Select…</option>
+          {DOMAINS.map((d) => (
+            <option key={d} value={d}>{d}</option>
+          ))}
+        </select>
       </div>
 
+      {/*
+        Inherent / Residual rating sections — Decision §6 of package
+        risk-register-inherent-residual-rating. Two side-by-side
+        cards on desktop, stacked on mobile. Inherent = pre-controls
+        (worst case); Residual = post-controls (current state).
+        Pre-populated from the loaded risk; backfilled rows have
+        NULL inherent and so the inherent inputs start empty until
+        the user reassesses.
+      */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label htmlFor="impact" style={labelStyle}>Impact</label>
-          <select id="impact" value={impact} onChange={(e) => setImpact(e.target.value)} style={inputStyle}>
-            <option value="">Select…</option>
-            {SEVERITY_VALUES.map((v) => (
-              <option key={v} value={v}>{severityLabel(v, scaleLevels)}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="risk_rating" style={labelStyle}>Risk Rating</label>
-          <select id="risk_rating" value={riskRating} onChange={(e) => setRiskRating(e.target.value)} style={inputStyle}>
-            <option value="">Select…</option>
-            {SEVERITY_VALUES.map((v) => (
-              <option key={v} value={v}>{severityLabel(v, scaleLevels)}</option>
-            ))}
-          </select>
-        </div>
+        <fieldset
+          className="rounded-lg p-4 space-y-3"
+          style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}
+        >
+          <legend className="text-xs font-semibold" style={{ color: "#94a3b8", padding: "0 6px" }}>
+            Inherent (pre-controls)
+          </legend>
+          <div>
+            <label htmlFor="inherent_likelihood" style={labelStyle}>Likelihood</label>
+            <select
+              id="inherent_likelihood"
+              value={inherentLikelihood}
+              onChange={(e) => setInherentLikelihood(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">Select…</option>
+              {LIKELIHOODS.map(({ value, label }) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="inherent_impact" style={labelStyle}>Impact</label>
+            <select
+              id="inherent_impact"
+              value={inherentImpact}
+              onChange={(e) => setInherentImpact(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">Select…</option>
+              {SEVERITY_VALUES.map((v) => (
+                <option key={v} value={v}>{severityLabel(v, scaleLevels)}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="inherent_rating" style={labelStyle}>Rating</label>
+            <select
+              id="inherent_rating"
+              value={inherentRating}
+              onChange={(e) => setInherentRating(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">Select…</option>
+              {SEVERITY_VALUES.map((v) => (
+                <option key={v} value={v}>{severityLabel(v, scaleLevels)}</option>
+              ))}
+            </select>
+          </div>
+        </fieldset>
+
+        <fieldset
+          className="rounded-lg p-4 space-y-3"
+          style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}
+        >
+          <legend className="text-xs font-semibold" style={{ color: "#94a3b8", padding: "0 6px" }}>
+            Residual (post-controls)
+          </legend>
+          <div>
+            <label htmlFor="residual_likelihood" style={labelStyle}>Likelihood</label>
+            <select
+              id="residual_likelihood"
+              value={residualLikelihood}
+              onChange={(e) => setResidualLikelihood(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">Select…</option>
+              {LIKELIHOODS.map(({ value, label }) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="residual_impact" style={labelStyle}>Impact</label>
+            <select
+              id="residual_impact"
+              value={residualImpact}
+              onChange={(e) => setResidualImpact(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">Select…</option>
+              {SEVERITY_VALUES.map((v) => (
+                <option key={v} value={v}>{severityLabel(v, scaleLevels)}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="residual_rating" style={labelStyle}>Rating</label>
+            <select
+              id="residual_rating"
+              value={residualRating}
+              onChange={(e) => setResidualRating(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">Select…</option>
+              {SEVERITY_VALUES.map((v) => (
+                <option key={v} value={v}>{severityLabel(v, scaleLevels)}</option>
+              ))}
+            </select>
+          </div>
+        </fieldset>
       </div>
 
       <div>

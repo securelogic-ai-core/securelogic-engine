@@ -4,8 +4,13 @@
  * RiskRow — single row in the Risk Register table.
  *
  * Shape: EnrichedRiskRow combines the basic risks fields (title,
- * domain, risk_rating, status, owner, due_date, updated_at) with
+ * domain, residual_rating, status, owner, due_date, updated_at) with
  * intelligence-endpoint counts (active_treatments, linked_findings).
+ *
+ * The "Rating" column displays residual_rating per Decision §5
+ * (table shows residual only; detail page shows both inherent and
+ * residual). Sort and filter use residual_rating exclusively. Risks
+ * with NULL residual_rating render as "—" and sort to the bottom.
  *
  * Visual treatment of pills mirrors the previous RiskCard exactly:
  * rating uses useRiskScale (relabeled per org's preset), status uses
@@ -24,7 +29,7 @@ export type EnrichedRiskRow = {
   id: string;
   title: string;
   domain: string | null;
-  risk_rating: string | null;
+  residual_rating: string | null;
   status: string;
   owner: string | null;
   due_date: string | null;
@@ -108,7 +113,7 @@ export function RiskRow({
   risk: EnrichedRiskRow;
   scaleLevels: RiskScaleLevel[];
 }) {
-  const ratingStyle = ratingStyleFromScale(risk.risk_rating, scaleLevels);
+  const ratingStyle = ratingStyleFromScale(risk.residual_rating, scaleLevels);
   const statusStyle = STATUS_STYLES[risk.status] ?? { background: "rgba(148,163,184,0.12)", color: "#94a3b8" };
 
   // Treatment + finding count-cell drill targets. Filtering /risks-treatments
@@ -145,7 +150,7 @@ export function RiskRow({
       </td>
       <td className="px-5 py-3">
         <span className={`${PILL} font-semibold`} style={ratingStyle}>
-          {ratingLabel(risk.risk_rating, scaleLevels)}
+          {ratingLabel(risk.residual_rating, scaleLevels)}
         </span>
       </td>
       <td className="px-5 py-3">

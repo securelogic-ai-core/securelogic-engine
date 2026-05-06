@@ -297,7 +297,23 @@ export type DashboardSummary = {
   };
   risks_summary?: {
     open: number;
+    // Legacy keys — populated from residual after Phase 1 backfill.
+    // Retained so older dashboard code paths continue to work; new
+    // tiles read by_residual_rating / by_residual_likelihood_impact
+    // explicitly.
     by_risk_rating: {
+      Critical: number;
+      High: number;
+      Moderate: number;
+      Low: number;
+    };
+    by_residual_rating?: {
+      Critical: number;
+      High: number;
+      Moderate: number;
+      Low: number;
+    };
+    by_inherent_rating?: {
       Critical: number;
       High: number;
       Moderate: number;
@@ -305,6 +321,16 @@ export type DashboardSummary = {
     };
     by_domain?: Record<string, number>;
     by_likelihood_impact?: Array<{
+      likelihood: string;
+      impact: string;
+      count: number;
+    }>;
+    by_residual_likelihood_impact?: Array<{
+      likelihood: string;
+      impact: string;
+      count: number;
+    }>;
+    by_inherent_likelihood_impact?: Array<{
       likelihood: string;
       impact: string;
       count: number;
@@ -499,9 +525,30 @@ export type Risk = {
   title: string;
   description: string | null;
   domain: string | null;
+  // ── Legacy single-rating dimension (deprecated; kept for
+  // backwards compatibility with the webhook contract). After Phase
+  // 1 backfill, legacy mirrors residual on every write — the
+  // POST/PATCH handlers maintain that invariant. New UI surfaces
+  // (table, detail page, edit form, create form) should read
+  // inherent_/residual_ explicitly rather than these legacy fields.
   likelihood: string | null;
   impact: string | null;
   risk_rating: string | null;
+  // ── Inherent (pre-controls) — package
+  // risk-register-inherent-residual-rating Phase 1+. Nullable
+  // because Phase 1 backfill left existing rows with NULL inherent
+  // values; users populate them as they reassess.
+  inherent_likelihood: string | null;
+  inherent_impact: string | null;
+  inherent_rating: string | null;
+  // ── Residual (post-controls) — Phase 1 backfilled from legacy
+  // for every existing row; new rows write residual_* explicitly
+  // and Phase 2 POST/PATCH handlers mirror residual into legacy.
+  // Still string|null on the type so consumers handle the rare
+  // case of a manually-INSERTed row that bypasses the validator.
+  residual_likelihood: string | null;
+  residual_impact: string | null;
+  residual_rating: string | null;
   status: string;
   treatment: string | null;
   owner: string | null;
@@ -516,7 +563,11 @@ export type RiskIntelligence = {
   id: string;
   title: string;
   domain: string | null;
+  // Legacy field retained for backwards compat (= residual after
+  // Phase 1 backfill).
   risk_rating: string | null;
+  inherent_rating: string | null;
+  residual_rating: string | null;
   status: string;
   likelihood: string | null;
   owner: string | null;
@@ -544,6 +595,8 @@ export type RisksSummary = {
   open_critical_count: number;
   by_status: Record<string, number>;
   by_risk_rating: Record<string, number>;
+  by_inherent_rating: Record<string, number>;
+  by_residual_rating: Record<string, number>;
   by_domain: Record<string, number>;
 };
 

@@ -12,9 +12,21 @@ export type EditRiskInput = Partial<{
   title: string;
   description: string | null;
   domain: string;
-  likelihood: string;
-  impact: string;
-  risk_rating: string;
+  // Inherent (pre-controls) — package
+  // risk-register-inherent-residual-rating Phase 3. The edit form
+  // exposes these explicitly; the legacy fields below are no longer
+  // user-editable on the form.
+  inherent_likelihood: string;
+  inherent_impact: string;
+  inherent_rating: string;
+  // Residual (post-controls) — explicitly editable on the form.
+  // Phase 2's PATCH handler mirrors residual into the legacy
+  // likelihood/impact/risk_rating columns automatically when
+  // residual changes (and the legacy field wasn't supplied),
+  // preserving webhook payload backwards compatibility.
+  residual_likelihood: string;
+  residual_impact: string;
+  residual_rating: string;
   status: string;
   treatment: string | null;
   owner: string | null;

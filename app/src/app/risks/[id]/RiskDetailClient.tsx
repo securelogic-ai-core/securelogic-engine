@@ -101,20 +101,50 @@ export function RiskDetailClient({
   findings: Finding[];
   scaleLevels: RiskScaleLevel[];
 }) {
-  const ratingStyle = ratingStyleFromScale(risk.risk_rating, scaleLevels);
+  // Header pill displays residual_rating per Decision §5 — the
+  // post-controls "current state" rating is the headline number.
+  const ratingStyle = ratingStyleFromScale(risk.residual_rating, scaleLevels);
   const statusStyle = STATUS_STYLES[risk.status] ?? { background: "rgba(148,163,184,0.12)", color: "#94a3b8" };
 
+  // The metadata grid carries the workflow / ownership fields.
+  // Likelihood / Impact / Rating are split into Inherent + Residual
+  // pairs in their own grid block below — see "Risk Rating" section.
   const metadata: Array<{ label: string; value: string }> = [
     { label: "Owner",       value: risk.owner ?? "—" },
     { label: "Domain",      value: risk.domain ?? "—" },
-    { label: "Likelihood",  value: risk.likelihood ? titleCase(risk.likelihood) : "—" },
-    { label: "Impact",      value: risk.impact ? ratingLabel(risk.impact, scaleLevels) : "—" },
-    { label: "Risk Rating", value: ratingLabel(risk.risk_rating, scaleLevels) },
     { label: "Status",      value: titleCase(risk.status) },
     { label: "Due Date",    value: fmtDate(risk.due_date) },
     { label: "Created",     value: fmtDate(risk.created_at) },
     { label: "Last Updated", value: fmtDate(risk.updated_at) },
   ];
+
+  // Rating dimension cells — six values laid out as three rows ×
+  // two columns (Inherent | Residual). Helpers below relabel via
+  // useRiskScale; nullable fields render "—".
+  const inherentLikelihood = risk.inherent_likelihood
+    ? titleCase(risk.inherent_likelihood)
+    : "—";
+  const residualLikelihood = risk.residual_likelihood
+    ? titleCase(risk.residual_likelihood)
+    : "—";
+  const inherentImpact = risk.inherent_impact
+    ? ratingLabel(risk.inherent_impact, scaleLevels)
+    : "—";
+  const residualImpact = risk.residual_impact
+    ? ratingLabel(risk.residual_impact, scaleLevels)
+    : "—";
+  const inherentRatingDisplay = risk.inherent_rating
+    ? ratingLabel(risk.inherent_rating, scaleLevels)
+    : "—";
+  const residualRatingDisplay = risk.residual_rating
+    ? ratingLabel(risk.residual_rating, scaleLevels)
+    : "—";
+  const inherentRatingStyle = risk.inherent_rating
+    ? ratingStyleFromScale(risk.inherent_rating, scaleLevels)
+    : { background: "rgba(148,163,184,0.1)", color: "#64748b" };
+  const residualRatingStyle = risk.residual_rating
+    ? ratingStyleFromScale(risk.residual_rating, scaleLevels)
+    : { background: "rgba(148,163,184,0.1)", color: "#64748b" };
 
   return (
     <>
@@ -123,7 +153,7 @@ export function RiskDetailClient({
         <div>
           <div className="flex items-center gap-2 flex-wrap mb-2">
             <span className={`${PILL} font-semibold`} style={ratingStyle}>
-              {ratingLabel(risk.risk_rating, scaleLevels)}
+              {residualRatingDisplay}
             </span>
             <span className={`${PILL} font-medium`} style={statusStyle}>
               {titleCase(risk.status)}
@@ -174,6 +204,70 @@ export function RiskDetailClient({
               <p className="text-sm mt-0.5" style={{ color: "#cbd5e1" }}>{value}</p>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/*
+        Rating block — three rows × two columns (Inherent | Residual).
+        Per Decision §5 of package risk-register-inherent-residual-rating,
+        the detail page shows BOTH ratings explicitly; the table and
+        dashboard tiles surface residual only. Rating pills relabel
+        through useRiskScale via ratingLabel/ratingStyleFromScale —
+        the same color and label that appears elsewhere in the app.
+        Existing rows backfilled in Phase 1 have residual = legacy
+        and inherent = NULL; the NULL inherent cell renders "—" until
+        the user reassesses through the edit form.
+      */}
+      <div className="mb-6 p-5" style={CARD_STYLE}>
+        <div className="flex items-baseline justify-between mb-3 gap-3 flex-wrap">
+          <p style={SECTION_LABEL}>Risk Rating</p>
+          <span className="text-xs" style={{ color: "#475569" }}>
+            Inherent (pre-controls) vs Residual (post-controls)
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+          <div>
+            <p className="text-xs" style={{ color: "#64748b" }}>Inherent Likelihood</p>
+            <p className="text-sm mt-0.5" style={{ color: "#cbd5e1" }}>{inherentLikelihood}</p>
+          </div>
+          <div>
+            <p className="text-xs" style={{ color: "#64748b" }}>Residual Likelihood</p>
+            <p className="text-sm mt-0.5" style={{ color: "#cbd5e1" }}>{residualLikelihood}</p>
+          </div>
+
+          <div>
+            <p className="text-xs" style={{ color: "#64748b" }}>Inherent Impact</p>
+            <p className="text-sm mt-0.5" style={{ color: "#cbd5e1" }}>{inherentImpact}</p>
+          </div>
+          <div>
+            <p className="text-xs" style={{ color: "#64748b" }}>Residual Impact</p>
+            <p className="text-sm mt-0.5" style={{ color: "#cbd5e1" }}>{residualImpact}</p>
+          </div>
+
+          <div>
+            <p className="text-xs" style={{ color: "#64748b" }}>Inherent Rating</p>
+            <p className="mt-0.5">
+              {risk.inherent_rating ? (
+                <span className={`${PILL} font-semibold`} style={inherentRatingStyle}>
+                  {inherentRatingDisplay}
+                </span>
+              ) : (
+                <span className="text-sm" style={{ color: "#475569" }}>—</span>
+              )}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs" style={{ color: "#64748b" }}>Residual Rating</p>
+            <p className="mt-0.5">
+              {risk.residual_rating ? (
+                <span className={`${PILL} font-semibold`} style={residualRatingStyle}>
+                  {residualRatingDisplay}
+                </span>
+              ) : (
+                <span className="text-sm" style={{ color: "#475569" }}>—</span>
+              )}
+            </p>
+          </div>
         </div>
       </div>
 
