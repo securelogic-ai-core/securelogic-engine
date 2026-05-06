@@ -1855,6 +1855,126 @@ export async function getRiskTreatments(
   }
 }
 
+export async function getRiskTreatmentById(
+  apiKey: string,
+  id: string
+): Promise<RiskTreatment | null> {
+  try {
+    const res = await engineFetch(`/api/risk-treatments/${id}`, apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { treatment: RiskTreatment };
+    return body.treatment ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * patchRisk — wraps PATCH /api/risks/:id. The server validates partial
+ * updates and rejects {} with `no_fields_to_update`. Caller should pass
+ * only fields that actually changed.
+ */
+export async function patchRisk(
+  apiKey: string,
+  id: string,
+  body: Partial<{
+    title: string;
+    description: string | null;
+    domain: string;
+    likelihood: string;
+    impact: string;
+    risk_rating: string;
+    status: string;
+    treatment: string | null;
+    owner: string | null;
+    due_date: string | null;
+    source_type: string | null;
+    source_id: string | null;
+  }>
+): Promise<{ risk: Risk } | { error: string }> {
+  try {
+    const res = await engineFetch(`/api/risks/${id}`, apiKey, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
+      return { error: data.detail ?? data.error ?? `patch_failed_${res.status}` };
+    }
+    return res.json() as Promise<{ risk: Risk }>;
+  } catch {
+    return { error: "network_error" };
+  }
+}
+
+/**
+ * createRiskTreatment — wraps POST /api/risk-treatments. Caller fixes
+ * status to 'not_started' for v1; the backend allows other values but
+ * the UI never sends them (decision D from package 2 investigation).
+ */
+export async function createRiskTreatment(
+  apiKey: string,
+  body: {
+    risk_id: string;
+    status?: string;
+    treatment_type?: string | null;
+    owner?: string | null;
+    due_date?: string | null;
+    summary?: string | null;
+    notes?: string | null;
+    performed_at?: string | null;
+    reviewer_id?: string | null;
+  }
+): Promise<{ treatment: RiskTreatment } | { error: string }> {
+  try {
+    const res = await engineFetch(`/api/risk-treatments`, apiKey, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
+      return { error: data.detail ?? data.error ?? `create_failed_${res.status}` };
+    }
+    return res.json() as Promise<{ treatment: RiskTreatment }>;
+  } catch {
+    return { error: "network_error" };
+  }
+}
+
+/**
+ * patchRiskTreatment — wraps PATCH /api/risk-treatments/:id. The server
+ * requires `status` and rejects self-loops via the transition graph.
+ * Terminal-state PATCHes atomically update the parent risk's status.
+ */
+export async function patchRiskTreatment(
+  apiKey: string,
+  id: string,
+  body: {
+    status: string;
+    treatment_type?: string | null;
+    owner?: string | null;
+    due_date?: string | null;
+    summary?: string | null;
+    notes?: string | null;
+    performed_at?: string | null;
+    reviewer_id?: string | null;
+  }
+): Promise<{ treatment: RiskTreatment } | { error: string }> {
+  try {
+    const res = await engineFetch(`/api/risk-treatments/${id}`, apiKey, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
+      return { error: data.detail ?? data.error ?? `patch_failed_${res.status}` };
+    }
+    return res.json() as Promise<{ treatment: RiskTreatment }>;
+  } catch {
+    return { error: "network_error" };
+  }
+}
+
 export async function getRisksIntelligence(
   apiKey: string
 ): Promise<RisksIntelligenceResponse | null> {

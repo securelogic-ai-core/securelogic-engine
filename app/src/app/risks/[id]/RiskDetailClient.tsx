@@ -4,19 +4,20 @@
  * RiskDetailClient — read-only detail view for a single risk.
  *
  * Sections (in order):
- *   1. Header — title + rating + status badges. Edit pencil HIDDEN per
- *      spec (edit page is a future package).
+ *   1. Header — title + rating + status badges + Edit link.
  *   2. Description block (if present).
  *   3. Metadata grid — Owner, Domain, Likelihood, Impact, Risk Rating,
  *      Status, Due Date, Created, Last Updated.
  *   4. Treatment Approach prose (risks.treatment free-form).
- *   5. Active Treatments — list of risk_treatments rows, read-only.
+ *   5. Active Treatments — list of risk_treatments rows. Each row is a
+ *      Link to /risks/[id]/treatments/[tid] for state management. New
+ *      treatments via "+ Add Treatment" button at section header.
  *   6. Linked Findings — open findings with source_type='risk' and
  *      source_id=this risk's id. Title + severity per row.
  *
- * Treatment management UI (creating/editing/approving treatments) and
- * the edit risk form are explicitly out of scope for this package and
- * tracked as future work.
+ * Edit, treatment create, and treatment-transition UIs landed in
+ * package risk-register-edit-and-treatments. Evidence attachment is
+ * a separate sub-package.
  */
 
 import Link from "next/link";
@@ -140,6 +141,17 @@ export function RiskDetailClient({
             {risk.title}
           </h1>
         </div>
+        <Link
+          href={`/risks/${risk.id}/edit`}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold flex-shrink-0"
+          style={{
+            border: "1px solid #1e293b",
+            color: "#cbd5e1",
+            textDecoration: "none",
+          }}
+        >
+          Edit
+        </Link>
       </div>
 
       {/* Description */}
@@ -181,25 +193,35 @@ export function RiskDetailClient({
 
       {/* Active Treatments — risk_treatments rows */}
       <div id="treatments" className="mb-6 p-5" style={CARD_STYLE}>
-        <div className="flex items-baseline justify-between mb-3">
-          <p style={SECTION_LABEL}>Active Treatments</p>
-          <span className="text-xs" style={{ color: "#64748b" }}>
-            {treatments.length} {treatments.length === 1 ? "treatment" : "treatments"}
-          </span>
+        <div className="flex items-baseline justify-between mb-3 gap-3 flex-wrap">
+          <div className="flex items-baseline gap-3">
+            <p style={SECTION_LABEL}>Active Treatments</p>
+            <span className="text-xs" style={{ color: "#64748b" }}>
+              {treatments.length} {treatments.length === 1 ? "treatment" : "treatments"}
+            </span>
+          </div>
+          <Link
+            href={`/risks/${risk.id}/treatments/new`}
+            className="inline-flex items-center gap-1 text-xs font-semibold"
+            style={{ color: "#00c4b4", textDecoration: "none" }}
+          >
+            + Add Treatment
+          </Link>
         </div>
         {treatments.length === 0 ? (
           <p className="text-sm" style={{ color: "#475569" }}>
             No treatment workflow records have been created for this risk yet.
           </p>
         ) : (
-          <ul className="space-y-2 list-none p-0 m-0">
+          <div className="space-y-2">
             {treatments.map((t) => {
               const tStyle = TREATMENT_STATUS_STYLES[t.status] ?? { background: "rgba(148,163,184,0.12)", color: "#94a3b8" };
               return (
-                <li
+                <Link
                   key={t.id}
-                  className="rounded-lg p-3"
-                  style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}
+                  href={`/risks/${risk.id}/treatments/${t.id}`}
+                  className="block rounded-lg p-3 hover:bg-white/[0.04] transition-colors"
+                  style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", textDecoration: "none" }}
                 >
                   <div className="flex items-center gap-2 flex-wrap mb-1">
                     <span className={`${PILL} font-medium`} style={tStyle}>
@@ -229,10 +251,10 @@ export function RiskDetailClient({
                       {t.summary}
                     </p>
                   )}
-                </li>
+                </Link>
               );
             })}
-          </ul>
+          </div>
         )}
       </div>
 
