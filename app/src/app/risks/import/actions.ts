@@ -4,12 +4,25 @@ import { getSession } from "@/lib/session";
 
 const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
 
+/**
+ * Bulk import row shape — package risk-register-inherent-residual-rating
+ * Phase 4. Strict mode: all 6 rating fields (3 inherent + 3 residual) are
+ * required. The legacy 3-field form is rejected at the upload step.
+ *
+ * Mirrors the create form's contract (app/src/app/risks/new/actions.ts):
+ * legacy likelihood/impact/risk_rating are populated from residual_* on
+ * the wire (Path (i)), satisfying the Phase 2 POST validator's 9-field
+ * requirement without backend changes.
+ */
 export type RiskImportRow = {
   title: string;
   domain: string;
-  likelihood: string;
-  impact: string;
-  risk_rating: string;
+  inherent_likelihood: string;
+  inherent_impact: string;
+  inherent_rating: string;
+  residual_likelihood: string;
+  residual_impact: string;
+  residual_rating: string;
   description?: string;
   status?: string;
   treatment?: string;
@@ -57,12 +70,22 @@ export async function importRisks(rows: RiskImportRow[]): Promise<RiskImportResu
   const results: RiskImportResult["results"] = [];
 
   for (const row of rows) {
+    // Mirror residual into legacy at the wire (Path (i) — same pattern
+    // as createRiskAction). The Phase 2 POST validator requires all 9
+    // rating fields; CSV exposes only the 6 user-facing ones, so legacy
+    // is auto-populated from residual_*.
     const body: Record<string, string> = {
-      title:       row.title,
-      domain:      row.domain,
-      likelihood:  row.likelihood,
-      impact:      row.impact,
-      risk_rating: row.risk_rating,
+      title:               row.title,
+      domain:              row.domain,
+      likelihood:          row.residual_likelihood,
+      impact:              row.residual_impact,
+      risk_rating:         row.residual_rating,
+      inherent_likelihood: row.inherent_likelihood,
+      inherent_impact:     row.inherent_impact,
+      inherent_rating:     row.inherent_rating,
+      residual_likelihood: row.residual_likelihood,
+      residual_impact:     row.residual_impact,
+      residual_rating:     row.residual_rating,
     };
     if (row.description) body.description = row.description;
     if (row.status)      body.status      = row.status;
