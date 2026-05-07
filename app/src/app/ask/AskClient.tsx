@@ -5,6 +5,47 @@ import { askAction } from "./actions";
 import type { AskResponse } from "@/lib/api";
 
 // ─────────────────────────────────────────────────────────────
+// Error message tables
+//
+// The engine surfaces structured error codes (rate_limit_exceeded,
+// ask_unavailable, ask_failed, etc.); we map them to human-friendly
+// strings here. Unmapped codes fall back to a generic message but the
+// raw code + message are also console.error'd so support can recover
+// the actual failure without asking the user to repro.
+// ─────────────────────────────────────────────────────────────
+
+type StructuredError = {
+  status: number;
+  code?: string;
+  message?: string;
+};
+
+const ASK_ERROR_MESSAGES: Record<string, string> = {
+  ask_unavailable:    "Ask is temporarily unavailable. Please try again in a moment.",
+  ask_failed:         "Something went wrong processing your question. Please try again.",
+  unauthorized:       "Your session has expired. Please sign in again.",
+  rate_limit_exceeded:"Too many questions. Please wait a moment and try again.",
+  rate_limited:       "Too many questions. Please wait a moment and try again.",
+  network_error:      "Couldn't reach the server. Check your connection and try again.",
+  question_required:  "Please enter a question before submitting.",
+  question_too_long:  "Your question is too long. Please shorten it to 500 characters or fewer.",
+  parse_error:        "The server returned an unexpected response. Please try again.",
+};
+
+const TRANSCRIBE_ERROR_MESSAGES: Record<string, string> = {
+  transcription_unavailable: "Voice transcription is not configured on this server. Please type your question instead.",
+  transcription_failed:      "Couldn't transcribe your audio. Please try again or type your question.",
+  no_audio:                  "No audio was captured. Please try recording again.",
+  unsupported_audio_type:    "This audio format isn't supported. Please try a different browser.",
+  unauthorized:              "Your session has expired. Please sign in again.",
+  rate_limit_exceeded:       "Too many transcription attempts. Please wait a moment and try again.",
+  network_error:             "Couldn't reach the server. Check your connection and try again.",
+};
+
+const ASK_FALLBACK = "Unable to process your question. Please try again.";
+const TRANSCRIBE_FALLBACK = "Could not transcribe audio. Please try again.";
+
+// ─────────────────────────────────────────────────────────────
 // Example chips
 // ─────────────────────────────────────────────────────────────
 
@@ -75,13 +116,13 @@ function MicIcon() {
 export function AskClient() {
   const [query, setQuery]           = useState("");
   const [answer, setAnswer]         = useState<AskResponse | null>(null);
-  const [error, setError]           = useState<string | null>(null);
+  const [error, setError]           = useState<StructuredError | null>(null);
   const [isPending, startTransition] = useTransition();
   const textareaRef                 = useRef<HTMLTextAreaElement | null>(null);
 
   const [isRecording, setIsRecording]     = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [recordingError, setRecordingError] = useState<StructuredError | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef   = useRef<Blob[]>([]);
 
@@ -101,10 +142,19 @@ export function AskClient() {
       setAnswer(null);
       startTransition(async () => {
         const result = await askAction(q);
-        if ("error" in result) {
-          setError(result.error);
+        if (result.ok) {
+          setAnswer(result.data);
         } else {
-          setAnswer(result);
+          // Surface the raw failure to the browser console so support can
+          // pull it without asking the user to repro. The user-facing
+          // message is mapped from the code in the JSX render below.
+          // eslint-disable-next-line no-console
+          console.error("Ask request failed:", {
+            status: result.status,
+            code:   result.code,
+            message:result.message,
+          });
+          setError({ status: result.status, code: result.code, message: result.message });
         }
       });
     },
@@ -167,13 +217,44 @@ export function AskClient() {
           const ext = recordedMime.includes("webm") ? "webm" : recordedMime.includes("ogg") ? "ogg" : "mp4";
           const fd = new FormData();
           fd.append("audio", audioBlob, `recording.${ext}`);
-          const transcribeRes = await fetch("/api/transcribe", { method: "POST", body: fd });
-          const result = transcribeRes.ok ? await transcribeRes.json() as { text: string } : null;
-          if (result?.text) {
+          let transcribeRes: Response;
+          try {
+            transcribeRes = await fetch("/api/transcribe", { method: "POST", body: fd });
+          } catch (fetchErr) {
+            // eslint-disable-next-line no-console
+            console.error("Transcribe request failed (network):", fetchErr);
+            setRecordingError({ status: 0, code: "network_error" });
+            return;
+          }
+
+          if (!transcribeRes.ok) {
+            let body: { error?: string; message?: string } = {};
+            try {
+              body = (await transcribeRes.json()) as { error?: string; message?: string };
+            } catch {
+              // proxy returned non-JSON; surface the status with no code
+            }
+            // eslint-disable-next-line no-console
+            console.error("Transcribe request failed:", {
+              status: transcribeRes.status,
+              code:   body.error,
+              message:body.message,
+            });
+            setRecordingError({
+              status: transcribeRes.status,
+              code:   body.error,
+              message:body.message,
+            });
+            return;
+          }
+
+          const result = (await transcribeRes.json()) as { text: string };
+          if (result.text) {
             setQuery(result.text);
             submitQuery(result.text);
           } else {
-            setRecordingError("Could not transcribe audio. Please try again.");
+            // 200 but empty text — shouldn't happen but guard anyway.
+            setRecordingError({ status: 200, code: "transcription_failed" });
           }
         } finally {
           setIsTranscribing(false);
@@ -185,13 +266,17 @@ export function AskClient() {
     } catch (err) {
       const name = (err as { name?: string }).name ?? "";
       if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-        setRecordingError(
-          "Microphone access denied. Please allow microphone access and try again."
-        );
+        setRecordingError({
+          status: 0,
+          code: "microphone_denied",
+          message: "Microphone access denied. Please allow microphone access and try again.",
+        });
       } else {
-        setRecordingError(
-          "Voice input is not supported on this browser. Please type your question instead."
-        );
+        setRecordingError({
+          status: 0,
+          code: "voice_unsupported",
+          message: "Voice input is not supported on this browser. Please type your question instead.",
+        });
       }
     }
   }, [isRecording, submitQuery]);
@@ -384,7 +469,11 @@ export function AskClient() {
         </div>
       </div>
 
-      {/* ── Recording error ── */}
+      {/* ── Recording error ──
+           Render priority: code → mapped string; otherwise the server's
+           `message` if present (also covers local-only codes like
+           microphone_denied that carry their own user-facing text);
+           otherwise generic fallback. */}
       {recordingError && !isRecording && !isTranscribing && (
         <div
           style={{
@@ -396,7 +485,9 @@ export function AskClient() {
           }}
         >
           <p style={{ margin: 0, fontSize: "13px", color: "#fca5a5" }}>
-            {recordingError}
+            {(recordingError.code && TRANSCRIBE_ERROR_MESSAGES[recordingError.code]) ??
+              recordingError.message ??
+              TRANSCRIBE_FALLBACK}
           </p>
         </div>
       )}
@@ -428,7 +519,10 @@ export function AskClient() {
         </div>
       )}
 
-      {/* ── Error state ── */}
+      {/* ── Error state ──
+           Render priority: code → mapped string; otherwise the server's
+           `message` if present; otherwise generic fallback. The raw
+           code/status was already console.error'd at the submit site. */}
       {error && !isPending && (
         <div
           style={{
@@ -440,7 +534,9 @@ export function AskClient() {
           }}
         >
           <p style={{ margin: 0, fontSize: "14px", color: "#fca5a5" }}>
-            Unable to process your question. Please try again.
+            {(error.code && ASK_ERROR_MESSAGES[error.code]) ??
+              error.message ??
+              ASK_FALLBACK}
           </p>
         </div>
       )}
