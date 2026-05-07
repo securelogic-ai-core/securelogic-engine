@@ -1,9 +1,0 @@
-export interface PublicSignal {
-  id: string;
-  headline: string;
-  summary: string;
-  riskBand: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-  score: number;
-  publishedAt: string;
-  source: string;
-}
