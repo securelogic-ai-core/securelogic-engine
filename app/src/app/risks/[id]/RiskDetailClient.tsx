@@ -23,6 +23,7 @@
 import Link from "next/link";
 import type { Risk, RiskScaleLevel, RiskTreatment, Finding } from "@/lib/api";
 import { RiskHistorySection } from "@/components/risks/RiskHistorySection";
+import { LinkedControlsSection } from "@/components/risks/LinkedControlsSection";
 
 const FALLBACK_RATING_STYLES: Record<string, React.CSSProperties> = {
   Critical: { background: "rgba(239,68,68,0.15)",   color: "#fca5a5" },
@@ -352,6 +353,9 @@ export function RiskDetailClient({
           </div>
         )}
       </div>
+
+      {/* Mitigating Controls (RR-4) */}
+      <LinkedControlsSection riskId={risk.id} />
 
       {/* History (RR-3) */}
       <RiskHistorySection riskId={risk.id} />

@@ -36,6 +36,10 @@ export function formatEventLabel(eventType: string): string {
     "risk.terminal_status":        "Risk closed",
     "risk_treatment.created":      "Treatment added",
     "workflow.status_transition":  "Treatment status changed",
+
+    // Risk-control linkage events (RR-4)
+    "risk_control_link.created":   "Control linked",
+    "risk_control_link.deleted":   "Control unlinked",
   };
   if (labels[eventType]) return labels[eventType];
   return eventType
@@ -57,11 +61,13 @@ export function eventBadgeStyle(eventType: string): React.CSSProperties {
   switch (eventType) {
     case "risk.created":
     case "risk_treatment.created":
+    case "risk_control_link.created":
       return STYLE_GREEN;
     case "risk.updated":
     case "workflow.status_transition":
       return STYLE_BLUE;
     case "risk.terminal_status":
+    case "risk_control_link.deleted":
       return STYLE_GRAY;
   }
 
