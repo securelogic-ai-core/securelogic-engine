@@ -3357,19 +3357,50 @@ export type AskResponse = {
   question: string;
 };
 
+// Discriminated-union result so the caller can distinguish success from
+// each failure mode (auth, rate-limit, model failure, network) and render
+// a useful message instead of a generic one. The server's JSON error body
+// uses `error` for the code and `message` for the human string; we map
+// those onto our `code`/`message` fields here.
+export type AskResult =
+  | { ok: true; data: AskResponse }
+  | { ok: false; status: number; code?: string; message?: string };
+
 export async function askQuestion(
   token: string,
   question: string
-): Promise<AskResponse | null> {
+): Promise<AskResult> {
+  let res: Response;
   try {
-    const res = await engineFetch("/api/ask", token, {
+    res = await engineFetch("/api/ask", token, {
       method: "POST",
       body: JSON.stringify({ question }),
     });
-    if (!res.ok) return null;
-    return res.json() as Promise<AskResponse>;
   } catch {
-    return null;
+    return { ok: false, status: 0, code: "network_error" };
+  }
+
+  if (!res.ok) {
+    let body: { error?: string; message?: string } = {};
+    try {
+      body = (await res.json()) as { error?: string; message?: string };
+    } catch {
+      // non-JSON body (proxy 502, plain-text 504, etc.) — fall through
+      // with empty body; the caller still has res.status.
+    }
+    return {
+      ok: false,
+      status: res.status,
+      code: body.error,
+      message: body.message,
+    };
+  }
+
+  try {
+    const data = (await res.json()) as AskResponse;
+    return { ok: true, data };
+  } catch {
+    return { ok: false, status: res.status, code: "parse_error" };
   }
 }
 

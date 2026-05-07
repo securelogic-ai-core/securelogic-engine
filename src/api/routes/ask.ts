@@ -27,6 +27,19 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 const router = Router();
 
 // ---------------------------------------------------------------------------
+// Claude model
+//
+// Single source of truth for the model the Ask handler calls. Keep in sync
+// with the codebase's other Sonnet-tier callers (briefSynthesizer.ts:38 and
+// intelligenceBriefGenerator.ts:756) so a model bump only requires one edit
+// per file. Was previously hardcoded as "claude-sonnet-4-20250514" in two
+// places — that ID is retired and Anthropic returns model_not_found, which
+// surfaced as 502 ask_failed in production.
+// ---------------------------------------------------------------------------
+
+const ASK_MODEL = "claude-sonnet-4-6";
+
+// ---------------------------------------------------------------------------
 // Claude client
 // ---------------------------------------------------------------------------
 
@@ -417,11 +430,11 @@ router.post(
       let answer: string;
       try {
         logger.info(
-          { event: "llm_call_start", purpose: "ask_query", model: "claude-sonnet-4-20250514", organizationId },
+          { event: "llm_call_start", purpose: "ask_query", model: ASK_MODEL, organizationId },
           "LLM call: ask query"
         );
         const response = await client.messages.create({
-          model: "claude-sonnet-4-20250514",
+          model: ASK_MODEL,
           max_tokens: 1024,
           system: SYSTEM_PROMPT,
           messages: [{ role: "user", content: userMessage }],
