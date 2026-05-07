@@ -98,11 +98,14 @@ type SortKey = (typeof SORT_KEYS)[number];
  * identifier.
  */
 const SORT_DISPATCH: Record<SortKey, string> = {
-  "created-desc": "ORDER BY created_at DESC, id DESC",
-  "score-desc":   "ORDER BY match_score DESC NULLS LAST, created_at DESC, id DESC"
+  "created-desc": "ORDER BY s.created_at DESC, s.id DESC",
+  "score-desc":   "ORDER BY s.match_score DESC NULLS LAST, s.created_at DESC, s.id DESC"
 };
 
-const SUGGESTION_SELECT = `
+// Bare column list — used inside RETURNING and inside SELECTs whose result
+// rows do not need target_name (internal transaction reads). Stays unqualified
+// because RETURNING cannot reference joined tables.
+const SUGGESTION_BASE_COLS = `
   id,
   organization_id,
   signal_id,
@@ -117,6 +120,40 @@ const SUGGESTION_SELECT = `
   dismissed_at,
   dismissed_by_user_id,
   dismissal_reason
+`;
+
+// Enriched SELECT — same column order as SUGGESTION_BASE_COLS, qualified with
+// the suggestion alias `s`, plus the target_name resolved by COALESCE across
+// the four target tables. The base alias must be `s` for SUGGESTION_ENRICH_JOIN
+// to bind. Used wherever the row will be returned to the caller (list endpoint
+// and the CTE-wrapped result of every UPDATE...RETURNING).
+const SUGGESTION_ENRICHED_SELECT = `
+  s.id,
+  s.organization_id,
+  s.signal_id,
+  s.target_type,
+  s.target_id,
+  s.match_reason,
+  s.match_score,
+  s.created_at,
+  s.accepted_at,
+  s.accepted_by_user_id,
+  s.accepted_link_id,
+  s.dismissed_at,
+  s.dismissed_by_user_id,
+  s.dismissal_reason,
+  COALESCE(v.name, ai.name, c.name, o.title) AS target_name
+`;
+
+// Reusable LEFT JOIN block paired with SUGGESTION_ENRICHED_SELECT. Each join
+// is guarded by target_type so at most one resolves per row; obligations use
+// `title` instead of `name`, handled by the COALESCE in the SELECT. Joins
+// are PRIMARY KEY lookups → 4× index hits per row, fine for paginated lists.
+const SUGGESTION_ENRICH_JOIN = `
+  LEFT JOIN vendors     v  ON s.target_type = 'vendor'     AND v.id  = s.target_id
+  LEFT JOIN ai_systems  ai ON s.target_type = 'ai_system'  AND ai.id = s.target_id
+  LEFT JOIN controls    c  ON s.target_type = 'control'    AND c.id  = s.target_id
+  LEFT JOIN obligations o  ON s.target_type = 'obligation' AND o.id  = s.target_id
 `;
 
 /**
@@ -318,20 +355,24 @@ export async function listSignalMatchSuggestions(req: Request, res: Response): P
         ? "accepted_at IS NOT NULL"
         : "dismissed_at IS NOT NULL";
 
+  // accepted_at and dismissed_at are unique to signal_match_suggestions among
+  // the joined tables (verified via information_schema), so the stateClause's
+  // bare references resolve unambiguously without an `s.` prefix.
   const params: unknown[] = [organizationId];
   let sql = `
-    SELECT ${SUGGESTION_SELECT}
-      FROM signal_match_suggestions
-     WHERE organization_id = $1
+    SELECT ${SUGGESTION_ENRICHED_SELECT}
+      FROM signal_match_suggestions s
+      ${SUGGESTION_ENRICH_JOIN}
+     WHERE s.organization_id = $1
        AND ${stateClause}
   `;
   if (signalIdFilter !== null) {
     params.push(signalIdFilter);
-    sql += ` AND signal_id = $${params.length}`;
+    sql += ` AND s.signal_id = $${params.length}`;
   }
   if (targetTypeFilter !== null) {
     params.push(targetTypeFilter);
-    sql += ` AND target_type = $${params.length}`;
+    sql += ` AND s.target_type = $${params.length}`;
   }
   sql += ` ${SORT_DISPATCH[sort]}`;
   params.push(limit);
@@ -401,9 +442,11 @@ export async function acceptSignalMatchSuggestion(req: Request, res: Response): 
     await client.query("BEGIN");
 
     // 1. Lock the suggestion row. SELECT FOR UPDATE serializes concurrent
-    //    accept/dismiss attempts on the same suggestion.
+    //    accept/dismiss attempts on the same suggestion. This row is read
+    //    inside the transaction only — it is never returned to the client —
+    //    so it stays as the bare base columns (no JOINs needed).
     const suggestionResult = await client.query(
-      `SELECT ${SUGGESTION_SELECT}
+      `SELECT ${SUGGESTION_BASE_COLS}
          FROM signal_match_suggestions
         WHERE id = $1 AND organization_id = $2
         FOR UPDATE`,
@@ -533,16 +576,24 @@ export async function acceptSignalMatchSuggestion(req: Request, res: Response): 
 
     // 6. Mark the suggestion accepted. Re-asserts pending state in WHERE for
     //    belt-and-suspenders concurrency safety on top of FOR UPDATE.
+    //    CTE wrapper: RETURNING can only see signal_match_suggestions columns,
+    //    so the four target-table joins live in the outer SELECT to attach
+    //    target_name. Same shape as the list endpoint.
     const updateResult = await client.query(
-      `UPDATE signal_match_suggestions
-          SET accepted_at = NOW(),
-              accepted_by_user_id = $1,
-              accepted_link_id = $2
-        WHERE id = $3
-          AND organization_id = $4
-          AND accepted_at IS NULL
-          AND dismissed_at IS NULL
-        RETURNING ${SUGGESTION_SELECT}`,
+      `WITH updated AS (
+         UPDATE signal_match_suggestions
+            SET accepted_at = NOW(),
+                accepted_by_user_id = $1,
+                accepted_link_id = $2
+          WHERE id = $3
+            AND organization_id = $4
+            AND accepted_at IS NULL
+            AND dismissed_at IS NULL
+          RETURNING ${SUGGESTION_BASE_COLS}
+       )
+       SELECT ${SUGGESTION_ENRICHED_SELECT}
+         FROM updated s
+         ${SUGGESTION_ENRICH_JOIN}`,
       [req.userId ?? null, linkRow.id, suggestionId, organizationId]
     );
     if ((updateResult.rowCount ?? 0) === 0) {
@@ -666,16 +717,23 @@ export async function dismissSignalMatchSuggestion(req: Request, res: Response):
     // makes the operation idempotent against terminal rows: rowCount=0 either
     // means cross-org/non-existent OR already terminal. Discriminate with a
     // follow-up SELECT for a precise 404/409 error.
+    // CTE wrapper attaches target_name from the four target tables; same
+    // shape as the list endpoint and the accept handler.
     const updateResult = await pg.query(
-      `UPDATE signal_match_suggestions
-          SET dismissed_at = NOW(),
-              dismissed_by_user_id = $1,
-              dismissal_reason = $2
-        WHERE id = $3
-          AND organization_id = $4
-          AND accepted_at IS NULL
-          AND dismissed_at IS NULL
-        RETURNING ${SUGGESTION_SELECT}`,
+      `WITH updated AS (
+         UPDATE signal_match_suggestions
+            SET dismissed_at = NOW(),
+                dismissed_by_user_id = $1,
+                dismissal_reason = $2
+          WHERE id = $3
+            AND organization_id = $4
+            AND accepted_at IS NULL
+            AND dismissed_at IS NULL
+          RETURNING ${SUGGESTION_BASE_COLS}
+       )
+       SELECT ${SUGGESTION_ENRICHED_SELECT}
+         FROM updated s
+         ${SUGGESTION_ENRICH_JOIN}`,
       [req.userId ?? null, dismissal_reason, suggestionId, organizationId]
     );
 
@@ -787,8 +845,10 @@ export async function recomputeSignalMatchSuggestionScore(
   try {
     // 1. Read the suggestion, scoped to org. Discriminate cross-org vs
     //    terminal-state with a follow-up SELECT, same pattern as dismiss.
+    //    Internal read — only target_type/target_id/state are consumed below;
+    //    the row sent to the client comes from the UPDATE...RETURNING below.
     const suggestionRow = await pg.query(
-      `SELECT ${SUGGESTION_SELECT}
+      `SELECT ${SUGGESTION_BASE_COLS}
          FROM signal_match_suggestions
         WHERE id = $1 AND organization_id = $2
         LIMIT 1`,
@@ -923,14 +983,20 @@ export async function recomputeSignalMatchSuggestionScore(
     // 6. Persist match_score. Re-asserts pending state in WHERE so a
     //    concurrent accept/dismiss between read and write returns 409,
     //    not a silent score update on a terminal row.
+    //    CTE wrapper attaches target_name; same shape as list/accept/dismiss.
     const updateResult = await pg.query(
-      `UPDATE signal_match_suggestions
-          SET match_score = $1
-        WHERE id = $2
-          AND organization_id = $3
-          AND accepted_at IS NULL
-          AND dismissed_at IS NULL
-        RETURNING ${SUGGESTION_SELECT}`,
+      `WITH updated AS (
+         UPDATE signal_match_suggestions
+            SET match_score = $1
+          WHERE id = $2
+            AND organization_id = $3
+            AND accepted_at IS NULL
+            AND dismissed_at IS NULL
+          RETURNING ${SUGGESTION_BASE_COLS}
+       )
+       SELECT ${SUGGESTION_ENRICHED_SELECT}
+         FROM updated s
+         ${SUGGESTION_ENRICH_JOIN}`,
       [result.score, suggestionId, organizationId]
     );
     if ((updateResult.rowCount ?? 0) === 0) {

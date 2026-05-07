@@ -1091,7 +1091,7 @@ describe("signalMatchSuggestions — list handler", () => {
     );
 
     const sql = mockPgQuery.mock.calls[0][0] as string;
-    expect(sql).toMatch(/ORDER BY created_at DESC, id DESC/);
+    expect(sql).toMatch(/ORDER BY s\.created_at DESC, s\.id DESC/);
     expect(sql).not.toMatch(/match_score DESC/);
   });
 
@@ -1109,7 +1109,7 @@ describe("signalMatchSuggestions — list handler", () => {
     );
 
     const sql = mockPgQuery.mock.calls[0][0] as string;
-    expect(sql).toMatch(/ORDER BY created_at DESC, id DESC/);
+    expect(sql).toMatch(/ORDER BY s\.created_at DESC, s\.id DESC/);
   });
 
   it("?sort=score-desc emits ORDER BY match_score DESC NULLS LAST with stable tie-break on created_at, id", async () => {
@@ -1126,7 +1126,7 @@ describe("signalMatchSuggestions — list handler", () => {
     );
 
     const sql = mockPgQuery.mock.calls[0][0] as string;
-    expect(sql).toMatch(/ORDER BY match_score DESC NULLS LAST, created_at DESC, id DESC/);
+    expect(sql).toMatch(/ORDER BY s\.match_score DESC NULLS LAST, s\.created_at DESC, s\.id DESC/);
   });
 
   it("?sort=score-desc echoes back in the response body", async () => {
@@ -1256,6 +1256,86 @@ describe("signalMatchSuggestions — list handler", () => {
       expect.objectContaining({ error: "invalid_offset" })
     );
     expect(mockPgQuery).not.toHaveBeenCalled();
+  });
+
+  // ------------------------------------------------------------------
+  // target_name enrichment — the API resolves target_id to the entity's
+  // human-readable name via four LEFT JOINs (vendors, ai_systems,
+  // controls, obligations) with a COALESCE alias. The frontend renders
+  // target_name when present and falls back to target_id UUID otherwise.
+  //
+  // These tests assert two things:
+  //   1. The SQL contains the JOIN block and the COALESCE alias — so a
+  //      future refactor that drops them would fail loudly here.
+  //   2. The resolved target_name surfaces in the response when pg
+  //      returns one, and is null for an orphan row (target_id pointing
+  //      at a deleted vendor).
+  // ------------------------------------------------------------------
+
+  it("list SQL JOINs the four target tables and aliases COALESCE as target_name", async () => {
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const req = {
+      query: {},
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    const sql = mockPgQuery.mock.calls[0][0] as string;
+    expect(sql).toMatch(/LEFT JOIN vendors\s+v\s+ON s\.target_type = 'vendor'/);
+    expect(sql).toMatch(/LEFT JOIN ai_systems\s+ai\s+ON s\.target_type = 'ai_system'/);
+    expect(sql).toMatch(/LEFT JOIN controls\s+c\s+ON s\.target_type = 'control'/);
+    expect(sql).toMatch(/LEFT JOIN obligations\s+o\s+ON s\.target_type = 'obligation'/);
+    expect(sql).toMatch(/COALESCE\(v\.name, ai\.name, c\.name, o\.title\) AS target_name/);
+  });
+
+  it("returns target_name in the suggestion row when the JOIN resolves a vendor name", async () => {
+    const enrichedRow = { ...pendingSuggestionRow("vendor"), target_name: "Apache" };
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 1, rows: [enrichedRow] });
+
+    const req = {
+      query: {},
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const body = res.json.mock.calls[0][0] as { suggestions: Array<Record<string, unknown>> };
+    expect(body.suggestions[0]?.target_name).toBe("Apache");
+    expect(body.suggestions[0]?.target_id).toBe(VALID_TARGET_UUID);
+  });
+
+  it("returns target_name = null for an orphan row whose target_id has no matching entity", async () => {
+    // All four LEFT JOINs return null when target_id points at a row that
+    // was deleted (or never existed) — the COALESCE then resolves to null.
+    // Frontend's `?? target_id` fallback at SuggestionList.tsx:363 handles
+    // this gracefully; we just need the field to be null, not undefined.
+    const orphanRow = { ...pendingSuggestionRow("vendor"), target_name: null };
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 1, rows: [orphanRow] });
+
+    const req = {
+      query: {},
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+    const res = makeRes();
+
+    await listSignalMatchSuggestions(
+      req,
+      res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const body = res.json.mock.calls[0][0] as { suggestions: Array<Record<string, unknown>> };
+    expect(body.suggestions[0]?.target_name).toBeNull();
   });
 });
 
