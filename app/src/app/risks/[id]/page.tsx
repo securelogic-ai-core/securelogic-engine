@@ -7,6 +7,7 @@ import {
   getRiskTreatments,
   getRiskScale,
   getFindings,
+  getRiskSettingsServer,
 } from "@/lib/api";
 import { RiskDetailClient } from "./RiskDetailClient";
 
@@ -31,14 +32,30 @@ export default async function RiskDetailPage({
   //   3. scale levels — display-preset relabeling
   //   4. linked open findings — title + severity per finding (intelligence
   //      endpoint only gives counts; this fetch fills in detail)
-  const [risk, treatmentsData, scale, findingsData] = await Promise.all([
+  // Fifth fetch — org cadence policy (RR-5). Drives the
+  // "(org default)" subtitle on the Review Cadence card. The endpoint
+  // always returns four rating keys (defaults if no row); a null
+  // response here is rare (network) and the card falls back to the
+  // documented defaults via residual_rating lookup.
+  const [risk, treatmentsData, scale, findingsData, riskSettings] = await Promise.all([
     getRiskById(token, id),
     getRiskTreatments(token, { risk_id: id, limit: 50 }),
     getRiskScale(token),
     getFindings(token, { source_type: "risk", source_id: id, status: "open", limit: 50 }),
+    getRiskSettingsServer(token),
   ]);
 
   if (!risk) notFound();
+
+  // Documented defaults — kept in sync with src/api/lib/riskCadence.ts
+  // DEFAULT_CADENCE_BY_RATING. Used as the fallback when the engine's
+  // settings endpoint returns null (degraded path), so the cadence card
+  // can still render an "(org default)" subtitle.
+  const DEFAULT_CADENCE_BY_RATING: Record<string, number> = {
+    Critical: 30, High: 60, Moderate: 90, Low: 180,
+  };
+  const effectiveCadenceByRating =
+    riskSettings?.cadence_by_rating ?? DEFAULT_CADENCE_BY_RATING;
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-12">
@@ -53,6 +70,7 @@ export default async function RiskDetailPage({
         treatments={treatmentsData?.treatments ?? []}
         findings={findingsData?.findings ?? []}
         scaleLevels={scale?.levels ?? []}
+        effectiveCadenceByRating={effectiveCadenceByRating}
       />
     </div>
   );

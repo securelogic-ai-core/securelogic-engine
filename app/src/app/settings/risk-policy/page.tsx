@@ -1,21 +1,32 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getRiskScale, getRiskScalePresets } from "@/lib/api";
-import { RiskScaleClient } from "./RiskScaleClient";
+import { getRiskSettingsServer } from "@/lib/api";
+import { RiskPolicyClient } from "./RiskPolicyClient";
 
-export default async function RiskScaleSettingsPage() {
+/**
+ * RR-5 — Org-level risk-policy settings page.
+ *
+ * Currently exposes one section: Review Cadence Policy. Future RR-N
+ * sections (acceptance workflow, escalation, KRIs) will land here as
+ * additional rows on the same page rather than as new tabs.
+ */
+export default async function RiskPolicySettingsPage() {
   const session = await getSession();
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const entitlement = session.entitlementLevel ?? "starter";
-  const isPremium = ["premium", "platform", "team"].includes(entitlement);
+  const settings = await getRiskSettingsServer(token);
 
-  const [scale, presets] = await Promise.all([
-    getRiskScale(token),
-    getRiskScalePresets(token),
-  ]);
+  // Documented defaults — kept in sync with src/api/lib/riskCadence.ts
+  // DEFAULT_CADENCE_BY_RATING. Used as the initial form state when
+  // the engine is unreachable; the engine's GET endpoint always
+  // returns four keys so this fallback is rare in practice.
+  const DEFAULT_CADENCE_BY_RATING: Record<string, number> = {
+    Critical: 30, High: 60, Moderate: 90, Low: 180,
+  };
+  const initialCadence = settings?.cadence_by_rating ?? DEFAULT_CADENCE_BY_RATING;
+  const isDefault = settings?.is_default ?? true;
 
   return (
     <div style={{ maxWidth: "720px", margin: "0 auto", padding: "48px 24px" }}>
@@ -35,29 +46,16 @@ export default async function RiskScaleSettingsPage() {
         ← Settings
       </Link>
 
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "8px" }}>
-        <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#f1f5f9", margin: 0 }}>
-          Risk Rating Scale
-        </h1>
-        {isPremium && (
-          <span style={{
-            background: "rgba(0,196,180,0.12)",
-            color: "#00c4b4",
-            fontSize: "12px",
-            fontWeight: 600,
-            padding: "4px 10px",
-            borderRadius: "20px",
-          }}>
-            Premium Plan
-          </span>
-        )}
-      </div>
+      <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#f1f5f9", margin: "0 0 8px" }}>
+        Risk Policy
+      </h1>
       <p style={{ margin: "0 0 32px", fontSize: "14px", color: "#64748b" }}>
-        Choose how risk levels are labeled and colored across the platform.
-        Labels apply to findings, risks, vendor assessments, and AI-generated context.
+        Org-level defaults for how risks are reviewed over time. Per-risk overrides
+        on the risk detail page take precedence.
       </p>
 
-      {/* Tab strip */}
+      {/* Tab strip — replicated from /settings/risk-scale so the two
+          risk-related setting pages share one navigation surface. */}
       <div style={{
         display: "flex",
         gap: "4px",
@@ -71,7 +69,7 @@ export default async function RiskScaleSettingsPage() {
           { label: "Risk Rating Scale", href: "/settings/risk-scale" },
           { label: "Risk Policy",       href: "/settings/risk-policy" },
         ].map(({ label, href }) => {
-          const active = label === "Risk Rating Scale";
+          const active = label === "Risk Policy";
           return (
             <Link
               key={label}
@@ -93,10 +91,9 @@ export default async function RiskScaleSettingsPage() {
         })}
       </div>
 
-      <RiskScaleClient
-        initialScale={scale}
-        initialPresets={presets ?? []}
-        isPremium={isPremium}
+      <RiskPolicyClient
+        initialCadence={initialCadence}
+        isDefault={isDefault}
       />
     </div>
   );

@@ -25,6 +25,8 @@ import type { Risk, RiskScaleLevel, RiskTreatment, Finding } from "@/lib/api";
 import { RiskHistorySection } from "@/components/risks/RiskHistorySection";
 import { LinkedControlsSection } from "@/components/risks/LinkedControlsSection";
 import { LinkedObligationsSection } from "@/components/risks/LinkedObligationsSection";
+import { ReviewCadenceCard } from "./ReviewCadenceCard";
+import { MarkReviewedButton } from "./MarkReviewedButton";
 
 const FALLBACK_RATING_STYLES: Record<string, React.CSSProperties> = {
   Critical: { background: "rgba(239,68,68,0.15)",   color: "#fca5a5" },
@@ -98,11 +100,13 @@ export function RiskDetailClient({
   treatments,
   findings,
   scaleLevels,
+  effectiveCadenceByRating,
 }: {
   risk: Risk;
   treatments: RiskTreatment[];
   findings: Finding[];
   scaleLevels: RiskScaleLevel[];
+  effectiveCadenceByRating: Record<string, number>;
 }) {
   // Header pill displays residual_rating per Decision §5 — the
   // post-controls "current state" rating is the headline number.
@@ -174,17 +178,20 @@ export function RiskDetailClient({
             {risk.title}
           </h1>
         </div>
-        <Link
-          href={`/risks/${risk.id}/edit`}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold flex-shrink-0"
-          style={{
-            border: "1px solid #1e293b",
-            color: "#cbd5e1",
-            textDecoration: "none",
-          }}
-        >
-          Edit
-        </Link>
+        <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+          <MarkReviewedButton riskId={risk.id} />
+          <Link
+            href={`/risks/${risk.id}/edit`}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
+            style={{
+              border: "1px solid #1e293b",
+              color: "#cbd5e1",
+              textDecoration: "none",
+            }}
+          >
+            Edit
+          </Link>
+        </div>
       </div>
 
       {/* Description */}
@@ -360,6 +367,14 @@ export function RiskDetailClient({
 
       {/* Affected Obligations (RR-6) */}
       <LinkedObligationsSection riskId={risk.id} />
+
+      {/* Review Cadence (RR-5) */}
+      <div className="mb-6">
+        <ReviewCadenceCard
+          risk={risk}
+          effectiveCadenceByRating={effectiveCadenceByRating}
+        />
+      </div>
 
       {/* History (RR-3) */}
       <RiskHistorySection riskId={risk.id} />

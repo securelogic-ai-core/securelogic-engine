@@ -31,6 +31,7 @@ import {
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { resolveOwnerUserSameOrg } from "../lib/ownerUserResolver.js";
+import { resolveCadenceDays } from "../lib/riskCadence.js";
 
 const router = Router();
 
@@ -173,6 +174,13 @@ const RISK_SELECT = `
   due_date,
   source_type,
   source_id,
+  last_reviewed_at,
+  next_review_due,
+  review_cadence_days,
+  (
+    next_review_due IS NOT NULL
+    AND next_review_due < CURRENT_DATE
+  ) AS is_overdue,
   created_at,
   updated_at
 `;
@@ -180,6 +188,12 @@ const RISK_SELECT = `
 // Mutable columns the PATCH handler may change. Used by the audit-log
 // payload to build a per-field { before, after } diff (RR-3 fix 1.2).
 // Keep in sync with the addField() calls in the PATCH handler.
+//
+// NOTE: last_reviewed_at and next_review_due are NOT in this list —
+// they are written exclusively by POST /api/risks/:id/review (RR-5),
+// which emits a dedicated `risk.reviewed` audit event. Allowing them
+// in PATCH would split the review-history surface across two event
+// types; keeping them out of PATCH keeps the RR-3 history clean.
 const DIFFABLE_FIELDS = [
   "title",
   "description",
@@ -199,7 +213,9 @@ const DIFFABLE_FIELDS = [
   "owner_user_id",
   "due_date",
   "source_type",
-  "source_id"
+  "source_id",
+  // RR-5: per-risk override of the org cadence policy
+  "review_cadence_days"
 ] as const;
 
 /* =========================================================
@@ -440,6 +456,23 @@ router.get(
         conditions.push(`risk_rating = $${params.length}`);
       }
 
+      // RR-5: review_status filter — three buckets relative to today.
+      //   overdue:    next_review_due < CURRENT_DATE
+      //   due_soon:   CURRENT_DATE <= next_review_due < CURRENT_DATE + 14 days
+      //   up_to_date: next_review_due IS NULL OR next_review_due >= CURRENT_DATE + 14 days
+      // No params pushed — the dates are evaluated server-side.
+      if (input.review_status === "overdue") {
+        conditions.push(`(next_review_due IS NOT NULL AND next_review_due < CURRENT_DATE)`);
+      } else if (input.review_status === "due_soon") {
+        conditions.push(
+          `(next_review_due IS NOT NULL AND next_review_due >= CURRENT_DATE AND next_review_due < (CURRENT_DATE + INTERVAL '14 days'))`
+        );
+      } else if (input.review_status === "up_to_date") {
+        conditions.push(
+          `(next_review_due IS NULL OR next_review_due >= (CURRENT_DATE + INTERVAL '14 days'))`
+        );
+      }
+
       if (input.before_created_at !== null && input.before_id !== null) {
         params.push(input.before_created_at, input.before_id);
         const ci = params.length - 1;
@@ -513,6 +546,7 @@ router.get(
         byDomainResult,
         byInherentRatingResult,
         byResidualRatingResult,
+        overdueReviewResult,
       ] = await Promise.all([
         pg.query<{ status: string; count: string }>(
           `
@@ -562,6 +596,20 @@ router.get(
           `,
           [organizationId]
         ),
+        // RR-5: count of risks whose review is overdue right now. Single
+        // scalar — feeds the "Overdue Reviews" stat tile on the risk list
+        // page. Same predicate as the review_status='overdue' list filter
+        // and the is_overdue computed column in RISK_SELECT.
+        pg.query<{ count: string }>(
+          `
+          SELECT COUNT(*)::text AS count
+          FROM risks
+          WHERE organization_id = $1
+            AND next_review_due IS NOT NULL
+            AND next_review_due < CURRENT_DATE
+          `,
+          [organizationId]
+        ),
       ]);
 
       const summary = buildRiskSummary(
@@ -572,7 +620,12 @@ router.get(
         byResidualRatingResult.rows
       );
 
-      res.status(200).json(summary);
+      const overdue_review_count = parseInt(
+        overdueReviewResult.rows[0]?.count ?? "0",
+        10
+      );
+
+      res.status(200).json({ ...summary, overdue_review_count });
     } catch (err) {
       logger.error(
         { event: "risk_summary_failed", err },
@@ -950,6 +1003,216 @@ router.get(
 );
 
 /* =========================================================
+   POST /api/risks/:id/review
+   RR-5 — Mark a risk as reviewed.
+
+   Computes next_review_due from the effective cadence:
+     1. risks.review_cadence_days (per-risk override)
+     2. risk_settings.cadence_by_rating[risk.residual_rating] (org policy)
+     3. DEFAULT_CADENCE_BY_RATING[risk.residual_rating]      (defaults)
+     4. FALLBACK_DAYS                                        (broad sweep)
+   See src/api/lib/riskCadence.ts → resolveCadenceDays().
+
+   Body (all optional):
+     reviewed_at?: ISO date — defaults to today (CURRENT_DATE)
+     note?:        string<=500 — recorded in the audit payload only
+
+   Audit event: risk.reviewed with payload
+     { reviewed_at, next_review_due, cadence_days_used, source: 'manual', note? }
+   The `source` field is currently always 'manual' (this endpoint is the
+   only writer). Reserved enum value 'cadence_update' is for a future
+   path that recomputes next_review_due when cadence_days changes.
+   ========================================================= */
+
+const ISO_DATE_RE_REVIEW = /^\d{4}-\d{2}-\d{2}$/;
+
+router.post(
+  "/risks/:id/review",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const riskId = String(req.params.id ?? "").trim();
+    if (!isUuid(riskId)) {
+      res.status(400).json({ error: "risk_id_must_be_uuid" });
+      return;
+    }
+
+    // Inline body validation — single endpoint, two optional fields.
+    const body =
+      req.body !== null && typeof req.body === "object" && !Array.isArray(req.body)
+        ? (req.body as Record<string, unknown>)
+        : {};
+
+    let reviewedAtParam: string | null = null;
+    if ("reviewed_at" in body && body.reviewed_at !== null && body.reviewed_at !== undefined) {
+      if (typeof body.reviewed_at !== "string" || !ISO_DATE_RE_REVIEW.test(body.reviewed_at)) {
+        res.status(400).json({ error: "reviewed_at_must_be_iso_date" });
+        return;
+      }
+      reviewedAtParam = body.reviewed_at;
+    }
+
+    let note: string | null = null;
+    if ("note" in body && body.note !== null && body.note !== undefined) {
+      if (typeof body.note !== "string") {
+        res.status(400).json({ error: "note_must_be_string" });
+        return;
+      }
+      const raw = body.note.trim();
+      if (raw.length > 500) {
+        res.status(400).json({
+          error: "note_too_long",
+          detail: "note must be 500 characters or fewer"
+        });
+        return;
+      }
+      note = raw.length === 0 ? null : raw;
+    }
+
+    const client = await pg.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Lock the risk row + read what we need to compute the cadence:
+      // residual_rating drives the policy lookup; review_cadence_days
+      // is the per-risk override.
+      const riskResult = await client.query<{
+        id: string;
+        residual_rating: string | null;
+        review_cadence_days: number | null;
+      }>(
+        `SELECT id, residual_rating, review_cadence_days
+           FROM risks
+          WHERE id = $1 AND organization_id = $2
+          FOR UPDATE`,
+        [riskId, organizationId]
+      );
+
+      if ((riskResult.rowCount ?? 0) === 0) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ error: "risk_not_found" });
+        return;
+      }
+
+      const riskRow = riskResult.rows[0]!;
+
+      // Fetch the org policy. Missing row → null → resolveCadenceDays
+      // falls through to documented defaults.
+      const policyResult = await client.query<{
+        cadence_by_rating: Record<string, unknown> | null;
+      }>(
+        `SELECT cadence_by_rating
+           FROM risk_settings
+          WHERE organization_id = $1
+          LIMIT 1`,
+        [organizationId]
+      );
+      const policyRaw = policyResult.rows[0]?.cadence_by_rating ?? null;
+      // Coerce to Record<string, number> for resolveCadenceDays —
+      // values that aren't positive ints are filtered out. Same
+      // discipline as buildEffectiveCadenceByRating in riskSettings.ts.
+      let policy: Record<string, number> | null = null;
+      if (policyRaw && typeof policyRaw === "object") {
+        policy = {};
+        for (const [k, v] of Object.entries(policyRaw)) {
+          if (typeof v === "number" && Number.isInteger(v) && v > 0) {
+            policy[k] = v;
+          }
+        }
+      }
+
+      const cadenceDaysUsed = resolveCadenceDays(
+        riskRow.review_cadence_days,
+        policy,
+        riskRow.residual_rating
+      );
+
+      // Write last_reviewed_at and recompute next_review_due. When
+      // reviewed_at is null we let Postgres fill in CURRENT_DATE; this
+      // also makes the date-arithmetic time-zone-safe (server's TZ).
+      const updateResult = await client.query<{
+        last_reviewed_at: string;
+        next_review_due: string;
+      }>(
+        `UPDATE risks
+           SET last_reviewed_at = COALESCE($3::date, CURRENT_DATE),
+               next_review_due  = COALESCE($3::date, CURRENT_DATE) + ($4 * INTERVAL '1 day'),
+               updated_at       = NOW()
+         WHERE id = $1 AND organization_id = $2
+         RETURNING last_reviewed_at, next_review_due`,
+        [riskId, organizationId, reviewedAtParam, cadenceDaysUsed]
+      );
+
+      const updated = updateResult.rows[0]!;
+
+      await client.query("COMMIT");
+
+      logger.info(
+        {
+          event: "risk_reviewed",
+          organizationId,
+          riskId,
+          cadenceDaysUsed,
+          residualRating: riskRow.residual_rating
+        },
+        "Risk reviewed"
+      );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        actorUserId:   req.userId ?? null,
+        eventType:     "risk.reviewed",
+        resourceType:  "risk",
+        resourceId:    riskId,
+        payload: {
+          reviewed_at:        updated.last_reviewed_at,
+          next_review_due:    updated.next_review_due,
+          cadence_days_used:  cadenceDaysUsed,
+          source:             "manual",
+          ...(note ? { note } : {})
+        },
+        ipAddress: req.ip ?? null
+      });
+
+      // Return the full refreshed row so the client doesn't need a
+      // second GET to refresh the cadence section.
+      const fullResult = await pg.query(
+        `SELECT ${RISK_SELECT} FROM risks WHERE id = $1 AND organization_id = $2`,
+        [riskId, organizationId]
+      );
+
+      res.status(200).json({
+        risk: fullResult.rows[0],
+        cadence_days_used: cadenceDaysUsed
+      });
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // ignore rollback failure
+      }
+      logger.error(
+        { event: "risk_review_failed", err, riskId },
+        "POST /api/risks/:id/review failed"
+      );
+      res.status(500).json({ error: "risk_review_failed" });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+/* =========================================================
    PATCH /api/risks/:id
    Partial update of a risk record.
    ========================================================= */
@@ -1085,6 +1348,13 @@ router.patch(
       if (input.due_date !== undefined) addField("due_date", input.due_date);
       if (input.source_type !== undefined) addField("source_type", input.source_type);
       if (input.source_id !== undefined) addField("source_id", input.source_id);
+
+      // RR-5: per-risk cadence override. Setting it here does NOT
+      // recompute next_review_due — that happens on the next
+      // POST /api/risks/:id/review call. Caller can also clear with null.
+      if (input.review_cadence_days !== undefined) {
+        addField("review_cadence_days", input.review_cadence_days);
+      }
 
       updateParams.push(riskId, organizationId);
       const idParam = updateParams.length - 1;

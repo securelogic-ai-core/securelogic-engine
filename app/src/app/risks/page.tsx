@@ -47,6 +47,14 @@ const RATING_FILTERS: ReadonlyArray<{ value: string; label: string }> = [
   { value: "Low",      label: "Low" },
 ];
 
+// RR-5 — review_status filter values match the engine's
+// validateRiskListQuery enum: overdue, due_soon, up_to_date.
+const REVIEW_STATUS_FILTERS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "up_to_date", label: "Up to date" },
+  { value: "due_soon",   label: "Due soon" },
+  { value: "overdue",    label: "Overdue" },
+];
+
 type Params = Record<string, string | undefined>;
 
 function filterHref(current: Params, key: string, value: string | null): string {
@@ -107,6 +115,7 @@ export default async function RisksPage({
   // to `residual_rating` and the backend filter migrates with it.
   // For now, filtering on legacy = filtering on residual.
   const activeRating = sp.risk_rating ?? "";
+  const activeReviewStatus = sp.review_status ?? "";
 
   // Fetch four endpoints in parallel:
   //   1. /api/risks      — full row data (incl. due_date, updated_at) for ALL statuses
@@ -120,10 +129,21 @@ export default async function RisksPage({
   // need to ask "is this id in the intelligence list under a different
   // filter?". Closed/transferred risks land in the basic list with
   // counts defaulted to 0 (intelligence excludes them at the SQL layer).
-  const basicParams: { status?: string; domain?: string; risk_rating?: string; limit: number } = { limit: 200 };
-  if (activeStatus)  basicParams.status      = activeStatus;
-  if (activeDomain)  basicParams.domain      = activeDomain;
-  if (activeRating)  basicParams.risk_rating = activeRating;
+  const basicParams: {
+    status?: string;
+    domain?: string;
+    risk_rating?: string;
+    review_status?: "overdue" | "due_soon" | "up_to_date";
+    limit: number;
+  } = { limit: 200 };
+  if (activeStatus)        basicParams.status        = activeStatus;
+  if (activeDomain)        basicParams.domain        = activeDomain;
+  if (activeRating)        basicParams.risk_rating   = activeRating;
+  if (activeReviewStatus === "overdue" ||
+      activeReviewStatus === "due_soon" ||
+      activeReviewStatus === "up_to_date") {
+    basicParams.review_status = activeReviewStatus;
+  }
 
   const [basicData, intelligenceData, summary, scale] = await Promise.all([
     getRisks(token, basicParams),
@@ -162,6 +182,8 @@ export default async function RisksPage({
       updated_at: r.updated_at,
       active_treatments: counts?.active_treatments ?? 0,
       linked_findings:   counts?.linked_findings   ?? 0,
+      is_overdue:      r.is_overdue,
+      next_review_due: r.next_review_due,
     };
   });
 
@@ -172,12 +194,13 @@ export default async function RisksPage({
   // (legacy = residual after Phase 1 backfill) but reading the
   // explicit residual key avoids the hidden coupling.
   const criticalRisks  = summary?.by_residual_rating?.["Critical"] ?? 0;
-  const mitigatedRisks = summary?.by_status["mitigated"] ?? 0;
+  const overdueReviews = summary?.overdue_review_count ?? 0;
 
   const currentSp: Params = {
-    ...(sp.status      ? { status:      sp.status }      : {}),
-    ...(sp.domain      ? { domain:      sp.domain }      : {}),
-    ...(sp.risk_rating ? { risk_rating: sp.risk_rating } : {}),
+    ...(sp.status        ? { status:        sp.status }        : {}),
+    ...(sp.domain        ? { domain:        sp.domain }        : {}),
+    ...(sp.risk_rating   ? { risk_rating:   sp.risk_rating }   : {}),
+    ...(sp.review_status ? { review_status: sp.review_status } : {}),
   };
 
   return (
@@ -252,12 +275,22 @@ export default async function RisksPage({
           </p>
           <p className="text-3xl font-bold" style={{ color: "#fca5a5" }}>{criticalRisks}</p>
         </div>
-        <div style={STAT_CARD_STYLE}>
+        {/*
+          RR-5 — Overdue Reviews tile. Click navigates to the overdue
+          review_status filter; the same predicate also drives the
+          inline OverdueBadge on each row's title cell. The tile is
+          rendered as a Link wrapping the card body so the entire
+          tile surface is clickable.
+        */}
+        <Link
+          href="/risks?review_status=overdue"
+          style={{ ...STAT_CARD_STYLE, textDecoration: "none", display: "block" }}
+        >
           <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            Mitigated
+            Overdue Reviews
           </p>
-          <p className="text-3xl font-bold" style={{ color: "#86efac" }}>{mitigatedRisks}</p>
-        </div>
+          <p className="text-3xl font-bold" style={{ color: "#fca5a5" }}>{overdueReviews}</p>
+        </Link>
       </div>
 
       {/* Filter bar */}
@@ -303,6 +336,21 @@ export default async function RisksPage({
               label={label}
               href={filterHref(currentSp, "risk_rating", value)}
               active={activeRating === value}
+            />
+          ))}
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-semibold uppercase tracking-wide mr-1" style={{ color: "#64748b" }}>
+            Review status
+          </span>
+          <FilterPill label="All" href={filterHref(currentSp, "review_status", null)} active={!activeReviewStatus} />
+          {REVIEW_STATUS_FILTERS.map(({ value, label }) => (
+            <FilterPill
+              key={value}
+              label={label}
+              href={filterHref(currentSp, "review_status", value)}
+              active={activeReviewStatus === value}
             />
           ))}
         </div>
