@@ -94,6 +94,33 @@ describe("GET /api/risks/:id/history — source guards", () => {
     }
   });
 
+  // RR-6 — fourth OR branch for risk_obligation_link
+  it("includes the risk_obligation_link branch (RR-6)", () => {
+    expect(ROUTE_SOURCE).toMatch(
+      /sal\.resource_type\s*=\s*'risk_obligation_link'\s+AND\s+sal\.resource_id\s+IN/
+    );
+  });
+
+  it("obligation-link subquery is org-scoped to the parent risk", () => {
+    const subqueryMatch = ROUTE_SOURCE.match(
+      /SELECT id FROM risk_obligation_links\s+WHERE risk_id\s*=\s*\$2::uuid\s+AND organization_id\s*=\s*\$1/
+    );
+    expect(subqueryMatch).not.toBeNull();
+  });
+
+  it("obligation-link subquery does NOT filter on deleted_at", () => {
+    // Same rationale as the control-link branch — keep .deleted events
+    // visible after soft delete.
+    const subqueries = ROUTE_SOURCE.match(
+      /SELECT id FROM risk_obligation_links\s+WHERE risk_id\s*=\s*\$2::uuid\s+AND organization_id\s*=\s*\$1[^)]*/g
+    );
+    expect(subqueries).not.toBeNull();
+    expect(subqueries!.length).toBe(2); // events query + count query
+    for (const sub of subqueries!) {
+      expect(sub).not.toMatch(/deleted_at/);
+    }
+  });
+
   it("LEFT JOINs users for actor display fields", () => {
     expect(ROUTE_SOURCE).toMatch(/LEFT JOIN users u ON u\.id\s*=\s*sal\.actor_user_id/);
     expect(ROUTE_SOURCE).toMatch(/u\.email\s+AS actor_email/);

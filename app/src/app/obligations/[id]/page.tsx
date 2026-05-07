@@ -23,6 +23,7 @@ import {
   type ObligationMappedRequirement,
 } from "./FrameworkMappingsCard";
 import { EvidenceSection } from "./EvidenceSection";
+import { RisksLinkedCard } from "@/components/obligations/RisksLinkedCard";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -516,6 +517,7 @@ export default async function ObligationDetailPage({
             frameworks={frameworks.map((f) => ({ id: f.id, name: f.name }))}
             allRequirementsByFramework={allRequirementsByFramework}
           />
+          <RisksLinkedCard obligationId={obligation.id} />
           <ActionsCard obligationId={obligation.id} />
         </div>
       </div>
