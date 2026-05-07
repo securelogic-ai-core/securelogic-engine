@@ -4,6 +4,7 @@ updates:
   # Engine root — npm
   - package-ecosystem: "npm"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -18,6 +19,7 @@ updates:
   # Next.js app — npm
   - package-ecosystem: "npm"
     directory: "/app"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -32,6 +34,7 @@ updates:
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/.github/workflows"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
