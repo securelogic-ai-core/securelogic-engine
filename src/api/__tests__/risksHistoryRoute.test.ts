@@ -65,6 +65,35 @@ describe("GET /api/risks/:id/history — source guards", () => {
     expect(subqueryMatch).not.toBeNull();
   });
 
+  // RR-4 — link-event branch in the OR clause
+  it("includes the risk_control_link branch (RR-4)", () => {
+    expect(ROUTE_SOURCE).toMatch(
+      /sal\.resource_type\s*=\s*'risk_control_link'\s+AND\s+sal\.resource_id\s+IN/
+    );
+  });
+
+  it("link subquery is org-scoped to the parent risk", () => {
+    // Same shape as the treatment subquery — risk_id + organization_id.
+    const subqueryMatch = ROUTE_SOURCE.match(
+      /SELECT id FROM risk_control_links\s+WHERE risk_id\s*=\s*\$2::uuid\s+AND organization_id\s*=\s*\$1/
+    );
+    expect(subqueryMatch).not.toBeNull();
+  });
+
+  it("link subquery does NOT filter on deleted_at (delete events stay visible)", () => {
+    // Critical: filtering on deleted_at IS NULL would hide .deleted events
+    // the moment they fire, defeating the audit trail. Match the link
+    // subquery and assert deleted_at does not appear inside it.
+    const linkSubqueries = ROUTE_SOURCE.match(
+      /SELECT id FROM risk_control_links\s+WHERE risk_id\s*=\s*\$2::uuid\s+AND organization_id\s*=\s*\$1[^)]*/g
+    );
+    expect(linkSubqueries).not.toBeNull();
+    expect(linkSubqueries!.length).toBe(2); // events query + count query
+    for (const sub of linkSubqueries!) {
+      expect(sub).not.toMatch(/deleted_at/);
+    }
+  });
+
   it("LEFT JOINs users for actor display fields", () => {
     expect(ROUTE_SOURCE).toMatch(/LEFT JOIN users u ON u\.id\s*=\s*sal\.actor_user_id/);
     expect(ROUTE_SOURCE).toMatch(/u\.email\s+AS actor_email/);

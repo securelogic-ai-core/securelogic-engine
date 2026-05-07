@@ -22,6 +22,7 @@ import { CadenceSection } from "./CadenceSection";
 import { FrameworkMappingsCard, type MappedRequirementDisplay } from "./FrameworkMappingsCard";
 import { EvidenceSection } from "./EvidenceSection";
 import { LinkedPoliciesCard } from "./LinkedPoliciesCard";
+import { RisksMitigatedCard } from "@/components/controls/RisksMitigatedCard";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -530,6 +531,7 @@ export default async function ControlDetailPage({
             frameworks={frameworks.map((f) => ({ id: f.id, name: f.name }))}
             allRequirementsByFramework={allRequirementsByFramework}
           />
+          <RisksMitigatedCard controlId={control.id} />
           <ActionsCard controlId={control.id} />
         </div>
       </div>

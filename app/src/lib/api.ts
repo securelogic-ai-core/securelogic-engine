@@ -2681,6 +2681,50 @@ export type RiskHistoryResponse = {
   offset:      number;
 };
 
+// Risk-control linkage (RR-4) — forward direction (controls mitigating a risk)
+export type RiskControlLink = {
+  link_id:                string;
+  note:                   string | null;
+  link_created_at:        string;
+  created_by_user_id:     string | null;
+  created_by_email:       string | null;
+  created_by_name:        string | null;
+  control_id:             string;
+  control_name:           string;
+  control_status:         string | null;
+  control_domain:         string | null;
+  control_family:         string | null;
+  control_maturity_level: string | null;
+};
+
+export type RiskControlLinksResponse = {
+  count:          number;
+  limit:          number;
+  organizationId: string;
+  riskId:         string;
+  links:          RiskControlLink[];
+};
+
+// Inverse direction (risks mitigated by a control)
+export type ControlRiskLink = {
+  link_id:              string;
+  note:                 string | null;
+  link_created_at:      string;
+  risk_id:              string;
+  risk_title:           string;
+  risk_status:          string;
+  risk_residual_rating: string | null;
+  risk_domain:          string | null;
+};
+
+export type ControlRiskLinksResponse = {
+  count:          number;
+  limit:          number;
+  organizationId: string;
+  controlId:      string;
+  links:          ControlRiskLink[];
+};
+
 export async function getRiskHistory(
   riskId: string,
   params: { limit?: number; offset?: number } = {}
@@ -2695,6 +2739,119 @@ export async function getRiskHistory(
     const res = await fetch(path, { cache: "no-store" });
     if (!res.ok) return null;
     return res.json() as Promise<RiskHistoryResponse>;
+  } catch {
+    return null;
+  }
+}
+
+// =========================================================
+// Risk-control linkage helpers (RR-4) — browser-side, all go
+// through the Next.js proxy at /api/risks/[id]/controls etc.
+// =========================================================
+
+export async function getControlsForRisk(
+  riskId: string
+): Promise<RiskControlLinksResponse | null> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/controls`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<RiskControlLinksResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getRisksForControl(
+  controlId: string
+): Promise<ControlRiskLinksResponse | null> {
+  try {
+    const res = await fetch(
+      `/api/controls/${encodeURIComponent(controlId)}/risks`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<ControlRiskLinksResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function linkRiskToControl(
+  riskId: string,
+  controlId: string,
+  note: string | null
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/controls`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ control_id: controlId, note }),
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return { ok: false, error: body?.error ?? `http_${res.status}` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "network_error" };
+  }
+}
+
+export async function unlinkRiskFromControl(
+  riskId: string,
+  controlId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/controls/${encodeURIComponent(controlId)}`,
+      { method: "DELETE", cache: "no-store" }
+    );
+    if (res.status === 204 || res.ok) return { ok: true };
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    return { ok: false, error: body?.error ?? `http_${res.status}` };
+  } catch {
+    return { ok: false, error: "network_error" };
+  }
+}
+
+// Browser-side controls list, used by the ControlPicker (RR-4) via the
+// /api/controls Next.js proxy. The server-side getControls() above uses
+// engineFetch with a Bearer token; this variant goes through the proxy
+// so the JWT stays in the session cookie.
+export type ControlPickerOption = {
+  id:                     string;
+  name:                   string;
+  control_family:         string | null;
+  domain:                 string | null;
+  maturity_level:         string | null;
+  implementation_status:  string | null;
+};
+
+export async function getControlsViaProxy(
+  limit: number = 200
+): Promise<ControlPickerOption[] | null> {
+  try {
+    const res = await fetch(`/api/controls?limit=${limit}`, { cache: "no-store" });
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      controls?: Array<Record<string, unknown>>;
+    };
+    const raw = Array.isArray(body.controls) ? body.controls : [];
+    return raw.map((c) => ({
+      id:                    String(c.id ?? ""),
+      name:                  String(c.name ?? ""),
+      control_family:        (c.control_family as string | null) ?? null,
+      domain:                (c.domain as string | null) ?? null,
+      maturity_level:        (c.maturity_level as string | null) ?? null,
+      implementation_status: (c.implementation_status as string | null) ?? null,
+    }));
   } catch {
     return null;
   }
