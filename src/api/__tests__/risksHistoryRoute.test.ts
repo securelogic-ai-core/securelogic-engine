@@ -162,6 +162,58 @@ describe("GET /api/risks/:id/history — source guards", () => {
   });
 });
 
+// =====================================================================
+// RR-5 — risk.reviewed events surface in per-risk history
+// =====================================================================
+//
+// The history endpoint matches on resource_type='risk' AND resource_id =
+// riskId. The POST /api/risks/:id/review handler writes audit events
+// with exactly that resource_type/resource_id pair, so they're picked
+// up by the existing branch — no route code change needed for RR-5.
+// This test asserts the visibility invariant by checking:
+//
+//   1. The history WHERE clause for resource_type='risk' is generic on
+//      event_type — it does NOT filter by event_type, so any
+//      risk.* event lands in the history.
+//   2. The review handler writes resource_type='risk' (not, e.g., a
+//      separate 'risk_review' resource_type) so the existing history
+//      query catches it.
+//
+// If either invariant changes (e.g., review writes resource_type=
+// 'risk_review' to disambiguate), the history endpoint would need a
+// fifth OR branch — these tests pin the contract.
+
+describe("GET /api/risks/:id/history — RR-5 risk.reviewed visibility", () => {
+  it("history WHERE clause matches all event_type values for resource_type='risk'", () => {
+    // Anchor on the resource_type='risk' branch and verify it does
+    // NOT include an event_type filter — the branch must be generic.
+    const m = ROUTE_SOURCE.match(
+      /sal\.resource_type\s*=\s*'risk'\s+AND\s+sal\.resource_id\s*=\s*\$2::uuid[^\)]*/g
+    );
+    expect(m).not.toBeNull();
+    expect(m!.length).toBe(2); // events query + count query
+    for (const branch of m!) {
+      expect(branch).not.toMatch(/event_type/);
+    }
+  });
+
+  it("review handler writes resource_type='risk' (not a separate review-specific resource type)", () => {
+    // The history endpoint's existing 'risk' branch only catches review
+    // events if the writer uses resource_type='risk'. Pin that contract.
+    const m = ROUTE_SOURCE.match(
+      /eventType:\s*["']risk\.reviewed["'][\s\S]{0,400}?resourceType:\s*["']risk["']/
+    );
+    expect(m).not.toBeNull();
+  });
+
+  it("review handler writes resourceId = riskId (so history query joins on riskId)", () => {
+    const m = ROUTE_SOURCE.match(
+      /eventType:\s*["']risk\.reviewed["'][\s\S]{0,400}?resourceId:\s*riskId/
+    );
+    expect(m).not.toBeNull();
+  });
+});
+
 describe("PATCH /api/risks/:id — RR-3 fix 1.2 audit payload diffs", () => {
   it("locks the row using RISK_SELECT to capture all before-values", () => {
     // The PATCH handler used to SELECT only id/inherent_rating/residual_rating.
@@ -182,7 +234,10 @@ describe("PATCH /api/risks/:id — RR-3 fix 1.2 audit payload diffs", () => {
       "inherent_likelihood", "inherent_impact", "inherent_rating",
       "residual_likelihood", "residual_impact", "residual_rating",
       "status", "treatment", "owner", "owner_user_id",
-      "due_date", "source_type", "source_id"
+      "due_date", "source_type", "source_id",
+      // RR-5 — per-risk cadence override is PATCH-able and must
+      // appear in the diff payload for audit visibility.
+      "review_cadence_days"
     ]) {
       expect(body).toContain(`"${f}"`);
     }

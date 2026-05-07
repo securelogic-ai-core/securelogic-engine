@@ -36,6 +36,11 @@ export type EnrichedRiskRow = {
   updated_at: string | null;
   active_treatments: number;
   linked_findings: number;
+  // RR-5: review-cadence surfacing in the title cell. Both come from
+  // the engine's RISK_SELECT — `is_overdue` is a computed boolean,
+  // `next_review_due` is the underlying date used to derive "due soon".
+  is_overdue: boolean;
+  next_review_due: string | null;
 };
 
 const FALLBACK_RATING_STYLES: Record<string, React.CSSProperties> = {
@@ -106,6 +111,39 @@ function fmtRelative(dateStr: string | null): string {
 
 const PILL = "inline-flex items-center px-2 py-0.5 rounded text-xs";
 
+const DUE_SOON_DAYS = 14;
+
+function daysUntil(dateStr: string): number {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const due = new Date(dateStr);
+  return Math.ceil((due.getTime() - now.getTime()) / 86400000);
+}
+
+function OverdueBadge() {
+  return (
+    <span style={{
+      display: "inline-block", background: "rgba(239,68,68,0.15)", color: "#fca5a5",
+      fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 20,
+      marginLeft: 6, verticalAlign: "middle",
+    }}>
+      Overdue
+    </span>
+  );
+}
+
+function DueSoonBadge() {
+  return (
+    <span style={{
+      display: "inline-block", background: "rgba(245,158,11,0.15)", color: "#fcd34d",
+      fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 20,
+      marginLeft: 6, verticalAlign: "middle",
+    }}>
+      Due soon
+    </span>
+  );
+}
+
 export function RiskRow({
   risk,
   scaleLevels,
@@ -122,6 +160,14 @@ export function RiskRow({
   const treatmentsHref = `/risks/${risk.id}#treatments`;
   const findingsHref = `/findings?source_type=risk&source_id=${risk.id}`;
 
+  // RR-5 — inline review badges in the title cell. Overdue takes
+  // precedence over due-soon (server flag drives overdue; local date
+  // arithmetic drives the 14-day due-soon window). The badges are
+  // rendered next to the title rather than in a new column to avoid
+  // widening the table.
+  const days = risk.next_review_due ? daysUntil(risk.next_review_due) : null;
+  const dueSoon = !risk.is_overdue && days !== null && days >= 0 && days <= DUE_SOON_DAYS;
+
   return (
     <tr
       className="hover:bg-white/[0.02] transition-colors"
@@ -135,6 +181,8 @@ export function RiskRow({
         >
           {risk.title}
         </Link>
+        {risk.is_overdue && <OverdueBadge />}
+        {dueSoon && <DueSoonBadge />}
       </td>
       <td className="px-5 py-3">
         {risk.domain ? (

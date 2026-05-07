@@ -418,6 +418,9 @@ export type RiskUpdateInput = {
   due_date: string | null | undefined;
   source_type: string | null | undefined;
   source_id: string | null | undefined;
+  // RR-5: per-risk override of the org cadence policy. NULL clears the
+  // override and falls back to the org policy / documented defaults.
+  review_cadence_days: number | null | undefined;
 };
 
 export type RiskUpdateResult =
@@ -436,7 +439,9 @@ export function validateRiskUpdate(body: unknown): RiskUpdateResult {
     "risk_rating", "status", "treatment", "owner", "owner_user_id",
     "due_date", "source_type", "source_id",
     "inherent_likelihood", "inherent_impact", "inherent_rating",
-    "residual_likelihood", "residual_impact", "residual_rating"
+    "residual_likelihood", "residual_impact", "residual_rating",
+    // RR-5
+    "review_cadence_days"
   ]);
 
   const hasField = [...KNOWN_FIELDS].some(f => f in b);
@@ -667,6 +672,28 @@ export function validateRiskUpdate(body: unknown): RiskUpdateResult {
   }
 
   // source_type and source_id — must be cleared or set together
+  // RR-5: review_cadence_days override. Either a positive integer or null
+  // (clears the override). Absent = unchanged.
+  let review_cadence_days: number | null | undefined;
+  if ("review_cadence_days" in b) {
+    const raw = b["review_cadence_days"];
+    if (raw === null) {
+      review_cadence_days = null;
+    } else if (
+      typeof raw !== "number" ||
+      !Number.isFinite(raw) ||
+      !Number.isInteger(raw) ||
+      raw <= 0
+    ) {
+      return {
+        error: "review_cadence_days_must_be_positive_integer_or_null",
+        detail: "review_cadence_days must be a positive integer or null."
+      };
+    } else {
+      review_cadence_days = raw;
+    }
+  }
+
   let source_type: string | null | undefined;
   let source_id: string | null | undefined;
 
@@ -719,7 +746,8 @@ export function validateRiskUpdate(body: unknown): RiskUpdateResult {
       owner_user_id,
       due_date,
       source_type,
-      source_id
+      source_id,
+      review_cadence_days
     }
   };
 }
@@ -732,10 +760,14 @@ export type RiskListQueryInput = {
   status: string | null;
   domain: string | null;
   risk_rating: string | null;
+  // RR-5: filter on review-cadence position relative to today.
+  review_status: "overdue" | "due_soon" | "up_to_date" | null;
   limit: number;
   before_created_at: string | null;
   before_id: string | null;
 };
+
+const VALID_REVIEW_STATUSES = new Set(["overdue", "due_soon", "up_to_date"]);
 
 export type RiskListQueryResult =
   | { input: RiskListQueryInput }
@@ -784,6 +816,18 @@ export function validateRiskListQuery(query: unknown): RiskListQueryResult {
     risk_rating = q["risk_rating"] as string;
   }
 
+  let review_status: "overdue" | "due_soon" | "up_to_date" | null = null;
+  if ("review_status" in q && isNonEmptyString(q["review_status"])) {
+    const v = (q["review_status"] as string).trim();
+    if (!VALID_REVIEW_STATUSES.has(v)) {
+      return {
+        error: "invalid_review_status_filter",
+        detail: "Must be one of: overdue, due_soon, up_to_date"
+      };
+    }
+    review_status = v as "overdue" | "due_soon" | "up_to_date";
+  }
+
   const hasBefore = isNonEmptyString(q["before_created_at"]);
   const hasBeforeId = isNonEmptyString(q["before_id"]);
   if (hasBefore !== hasBeforeId) {
@@ -804,6 +848,6 @@ export function validateRiskListQuery(query: unknown): RiskListQueryResult {
   const limit = parseLimit(q["limit"]);
 
   return {
-    input: { status, domain, risk_rating, limit, before_created_at, before_id }
+    input: { status, domain, risk_rating, review_status, limit, before_created_at, before_id }
   };
 }

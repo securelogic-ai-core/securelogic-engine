@@ -562,6 +562,14 @@ export type Risk = {
   due_date: string | null;
   source_type: string | null;
   source_id: string | null;
+  // RR-5: review-cadence fields. last_reviewed_at and next_review_due
+  // are written exclusively by POST /api/risks/:id/review.
+  // review_cadence_days is the per-risk override; null = use org policy.
+  // is_overdue is computed at read time in the engine's RISK_SELECT.
+  last_reviewed_at: string | null;
+  next_review_due: string | null;
+  review_cadence_days: number | null;
+  is_overdue: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -605,6 +613,8 @@ export type RisksSummary = {
   by_inherent_rating: Record<string, number>;
   by_residual_rating: Record<string, number>;
   by_domain: Record<string, number>;
+  // RR-5: count of risks where next_review_due < CURRENT_DATE.
+  overdue_review_count: number;
 };
 
 export type ComplianceContext = {
@@ -1844,13 +1854,20 @@ export async function getActions(
 
 export async function getRisks(
   apiKey: string,
-  params?: { status?: string; domain?: string; risk_rating?: string; limit?: number }
+  params?: {
+    status?:        string;
+    domain?:        string;
+    risk_rating?:   string;
+    review_status?: "overdue" | "due_soon" | "up_to_date";
+    limit?:         number;
+  }
 ): Promise<RisksResponse | null> {
   try {
     const qs = new URLSearchParams();
-    if (params?.status)      qs.set("status",      params.status);
-    if (params?.domain)      qs.set("domain",      params.domain);
-    if (params?.risk_rating) qs.set("risk_rating", params.risk_rating);
+    if (params?.status)         qs.set("status",        params.status);
+    if (params?.domain)         qs.set("domain",        params.domain);
+    if (params?.risk_rating)    qs.set("risk_rating",   params.risk_rating);
+    if (params?.review_status)  qs.set("review_status", params.review_status);
     qs.set("limit", String(params?.limit ?? 50));
     const res = await engineFetch(`/api/risks?${qs.toString()}`, apiKey);
     if (!res.ok) return null;
@@ -1964,6 +1981,9 @@ export async function patchRisk(
     due_date: string | null;
     source_type: string | null;
     source_id: string | null;
+    // RR-5: per-risk review-cadence override. Positive integer = override;
+    // null = clear and fall back to org policy / documented defaults.
+    review_cadence_days: number | null;
   }>
 ): Promise<{ risk: Risk } | { error: string }> {
   try {
@@ -3013,6 +3033,93 @@ export async function getObligationsViaProxy(
     }));
   } catch {
     return null;
+  }
+}
+
+// =========================================================
+// Risk review cadence (RR-5) — browser-side
+// =========================================================
+
+export type RiskSettings = {
+  is_default:           boolean;
+  organization_id:      string;
+  cadence_by_rating:    Record<string, number>;
+  created_at:           string | null;
+  updated_at:           string | null;
+  updated_by_user_id:   string | null;
+};
+
+export async function getRiskSettings(): Promise<RiskSettings | null> {
+  try {
+    const res = await fetch("/api/orgs/me/risk-settings", { cache: "no-store" });
+    if (!res.ok) return null;
+    return res.json() as Promise<RiskSettings>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Server-side variant of getRiskSettings — calls the engine directly via
+ * engineFetch with the session token. Used by RSC pages that need the
+ * effective cadence policy on first render (e.g., the risk detail page
+ * surfacing the "(org default)" subtitle on the ReviewCadenceCard).
+ */
+export async function getRiskSettingsServer(
+  token: string
+): Promise<RiskSettings | null> {
+  try {
+    const res = await engineFetch("/api/orgs/me/risk-settings", token);
+    if (!res.ok) return null;
+    return res.json() as Promise<RiskSettings>;
+  } catch {
+    return null;
+  }
+}
+
+export async function putRiskSettings(
+  cadence_by_rating: Record<string, number>
+): Promise<{ ok: true; settings: RiskSettings } | { ok: false; error: string }> {
+  try {
+    const res = await fetch("/api/orgs/me/risk-settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cadence_by_rating }),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return { ok: false, error: body?.error ?? `http_${res.status}` };
+    }
+    const settings = (await res.json()) as RiskSettings;
+    return { ok: true, settings };
+  } catch {
+    return { ok: false, error: "network_error" };
+  }
+}
+
+export async function markRiskReviewed(
+  riskId: string,
+  body: { reviewed_at?: string; note?: string } = {}
+): Promise<{ ok: true; risk: Risk; cadence_days_used: number } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/review`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+      return { ok: false, error: errBody?.error ?? `http_${res.status}` };
+    }
+    const okBody = (await res.json()) as { risk: Risk; cadence_days_used: number };
+    return { ok: true, risk: okBody.risk, cadence_days_used: okBody.cadence_days_used };
+  } catch {
+    return { ok: false, error: "network_error" };
   }
 }
 

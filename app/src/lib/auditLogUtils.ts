@@ -34,6 +34,7 @@ export function formatEventLabel(eventType: string): string {
     "risk.created":                "Risk created",
     "risk.updated":                "Risk updated",
     "risk.terminal_status":        "Risk closed",
+    "risk.reviewed":               "Risk reviewed",
     "risk_treatment.created":      "Treatment added",
     "workflow.status_transition":  "Treatment status changed",
 
@@ -44,6 +45,9 @@ export function formatEventLabel(eventType: string): string {
     // Risk-obligation linkage events (RR-6)
     "risk_obligation_link.created": "Obligation linked",
     "risk_obligation_link.deleted": "Obligation unlinked",
+
+    // Risk policy / settings events (RR-5)
+    "risk_settings.updated":       "Risk policy updated",
   };
   if (labels[eventType]) return labels[eventType];
   return eventType
@@ -64,11 +68,13 @@ export function eventBadgeStyle(eventType: string): React.CSSProperties {
   // terminal color convention rather than the per-domain default.
   switch (eventType) {
     case "risk.created":
+    case "risk.reviewed":
     case "risk_treatment.created":
     case "risk_control_link.created":
     case "risk_obligation_link.created":
       return STYLE_GREEN;
     case "risk.updated":
+    case "risk_settings.updated":
     case "workflow.status_transition":
       return STYLE_BLUE;
     case "risk.terminal_status":
