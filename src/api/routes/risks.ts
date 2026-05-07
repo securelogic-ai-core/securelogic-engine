@@ -851,13 +851,13 @@ router.get(
         return;
       }
 
-      // Three-resource scope: events on the risk itself, plus events on
-      // any of its treatments, plus events on any of its risk-control
-      // links (RR-4). The link subquery does NOT filter on deleted_at
-      // — without that, .deleted events become invisible the moment
-      // the link is soft-deleted, defeating the audit trail. The
-      // treatment + link subqueries are org-scoped so a stale
-      // resource_id from a different org cannot bleed in.
+      // Four-resource scope: events on the risk itself, plus events on
+      // any of its treatments, risk-control links (RR-4), and risk-
+      // obligation links (RR-6). Link subqueries do NOT filter on
+      // deleted_at — without that, .deleted events become invisible the
+      // moment the link is soft-deleted, defeating the audit trail. The
+      // treatment + link subqueries are org-scoped so a stale resource_id
+      // from a different org cannot bleed in.
       // ORDER BY (created_at DESC, id DESC) matches GET /api/audit-log.
       const eventsPromise = pg.query(
         `
@@ -887,6 +887,11 @@ router.get(
               SELECT id FROM risk_control_links
               WHERE risk_id = $2::uuid AND organization_id = $1
             ))
+            OR
+            (sal.resource_type = 'risk_obligation_link' AND sal.resource_id IN (
+              SELECT id FROM risk_obligation_links
+              WHERE risk_id = $2::uuid AND organization_id = $1
+            ))
           )
         ORDER BY sal.created_at DESC, sal.id DESC
         LIMIT $3 OFFSET $4
@@ -909,6 +914,11 @@ router.get(
             OR
             (sal.resource_type = 'risk_control_link' AND sal.resource_id IN (
               SELECT id FROM risk_control_links
+              WHERE risk_id = $2::uuid AND organization_id = $1
+            ))
+            OR
+            (sal.resource_type = 'risk_obligation_link' AND sal.resource_id IN (
+              SELECT id FROM risk_obligation_links
               WHERE risk_id = $2::uuid AND organization_id = $1
             ))
           )

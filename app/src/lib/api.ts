@@ -2725,6 +2725,52 @@ export type ControlRiskLinksResponse = {
   links:          ControlRiskLink[];
 };
 
+// Risk-obligation linkage (RR-6) — forward direction
+// (obligations affected by a risk).
+export type RiskObligationLink = {
+  link_id:                       string;
+  note:                          string | null;
+  link_created_at:               string;
+  created_by_user_id:            string | null;
+  created_by_email:              string | null;
+  created_by_name:               string | null;
+  obligation_id:                 string;
+  obligation_title:              string;
+  obligation_source_regulation:  string | null;
+  obligation_jurisdiction:       string | null;
+  obligation_domain:             string | null;
+  obligation_status:             string;
+  obligation_priority:           string | null;
+};
+
+export type RiskObligationLinksResponse = {
+  count:          number;
+  limit:          number;
+  organizationId: string;
+  riskId:         string;
+  links:          RiskObligationLink[];
+};
+
+// Inverse direction (risks affecting an obligation)
+export type ObligationRiskLink = {
+  link_id:              string;
+  note:                 string | null;
+  link_created_at:      string;
+  risk_id:              string;
+  risk_title:           string;
+  risk_status:          string;
+  risk_residual_rating: string | null;
+  risk_domain:          string | null;
+};
+
+export type ObligationRiskLinksResponse = {
+  count:          number;
+  limit:          number;
+  organizationId: string;
+  obligationId:   string;
+  links:          ObligationRiskLink[];
+};
+
 export async function getRiskHistory(
   riskId: string,
   params: { limit?: number; offset?: number } = {}
@@ -2851,6 +2897,119 @@ export async function getControlsViaProxy(
       domain:                (c.domain as string | null) ?? null,
       maturity_level:        (c.maturity_level as string | null) ?? null,
       implementation_status: (c.implementation_status as string | null) ?? null,
+    }));
+  } catch {
+    return null;
+  }
+}
+
+// =========================================================
+// Risk-obligation linkage helpers (RR-6) — browser-side, all
+// go through the Next.js proxy at /api/risks/[id]/obligations etc.
+// =========================================================
+
+export async function getObligationsForRisk(
+  riskId: string
+): Promise<RiskObligationLinksResponse | null> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/obligations`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<RiskObligationLinksResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getRisksForObligation(
+  obligationId: string
+): Promise<ObligationRiskLinksResponse | null> {
+  try {
+    const res = await fetch(
+      `/api/obligations/${encodeURIComponent(obligationId)}/risks`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<ObligationRiskLinksResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function linkRiskToObligation(
+  riskId: string,
+  obligationId: string,
+  note: string | null
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/obligations`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ obligation_id: obligationId, note }),
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return { ok: false, error: body?.error ?? `http_${res.status}` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "network_error" };
+  }
+}
+
+export async function unlinkRiskFromObligation(
+  riskId: string,
+  obligationId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/obligations/${encodeURIComponent(obligationId)}`,
+      { method: "DELETE", cache: "no-store" }
+    );
+    if (res.status === 204 || res.ok) return { ok: true };
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    return { ok: false, error: body?.error ?? `http_${res.status}` };
+  } catch {
+    return { ok: false, error: "network_error" };
+  }
+}
+
+// Browser-side obligations list, used by the ObligationPicker (RR-6) via the
+// /api/obligations Next.js proxy. The server-side getObligations() above uses
+// engineFetch with a Bearer token; this variant goes through the proxy so
+// the JWT stays in the session cookie.
+export type ObligationPickerOption = {
+  id:                string;
+  title:             string;
+  source_regulation: string | null;
+  jurisdiction:      string | null;
+  domain:            string | null;
+  status:            string;
+};
+
+export async function getObligationsViaProxy(
+  limit: number = 200
+): Promise<ObligationPickerOption[] | null> {
+  try {
+    const res = await fetch(`/api/obligations?limit=${limit}`, { cache: "no-store" });
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      obligations?: Array<Record<string, unknown>>;
+    };
+    const raw = Array.isArray(body.obligations) ? body.obligations : [];
+    return raw.map((o) => ({
+      id:                String(o.id ?? ""),
+      title:             String(o.title ?? ""),
+      source_regulation: (o.source_regulation as string | null) ?? null,
+      jurisdiction:      (o.jurisdiction as string | null) ?? null,
+      domain:            (o.domain as string | null) ?? null,
+      status:            String(o.status ?? "active"),
     }));
   } catch {
     return null;
