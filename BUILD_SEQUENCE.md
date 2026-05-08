@@ -52,7 +52,10 @@ Billing note:
 - Platform Annual is not a product tier; it is the annual billing option for Platform Professional
 
 ## Active package
-`vendor-assurance-intelligence-phase-0-blob-storage` — Cloudflare R2 blob primitive, staging-only. Delivers `src/api/lib/blobStorage.ts`, `src/api/lib/blobStorageConfig.ts`, `scripts/blob-storage-smoke.ts`, prefix-guard tests, and the `TENANT_ISOLATION_STANDARD.md §5` amendment. No customer-data writers in this package; production engine stays unconfigured for R2. Phase 1 (`vendor-assurance-intelligence-phase-1`) is the first consumer and the next package after this one ships and is acknowledged.
+`vendor-assurance-intelligence-phase-1` — staging-only vendor-assurance intelligence. Delivers the four-table schema (`vendor_assurance_documents`, `vendor_assurance_extractions`, `vendor_assurance_extraction_spans`, `vendor_assurance_review_decisions`), the seven-route surface, the in-process extraction runner, the closed material-field set, append-only review decisions, the projection-at-read-time vendor detail card, and the queue/review UI. Routes are gated behind `SECURELOGIC_VENDOR_ASSURANCE_ENABLED`, set on the staging engine block only. Production stays untouched. Acceptance gate: ≥30 real SOC reports across ≥3 distinct auditors finalized end-to-end on staging, captured in `docs/investigation/2026-05_vendor_assurance_phase1_validation.md`.
+
+## Completed (since last update)
+- `vendor-assurance-intelligence-phase-0-blob-storage` — Cloudflare R2 blob primitive shipped to staging. Phase 1 is the first consumer.
 
 ## Current build priorities
 Priority order is fixed unless explicitly changed in this document.

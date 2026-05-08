@@ -62,6 +62,7 @@ import dependenciesRouter from "./dependencies.js";
 import dependencyAssessmentsRouter from "./dependencyAssessments.js";
 import vendorReviewsRouter from "./vendorReviews.js";
 import vendorAssessmentAnalysisRouter from "./vendorAssessmentAnalysis.js";
+import vendorAssuranceDocumentsRouter from "./vendorAssuranceDocuments.js";
 import vendorSignalContextRouter from "./vendorSignalContext.js";
 import controlComplianceContextRouter from "./controlComplianceContext.js";
 import obligationComplianceContextRouter from "./obligationComplianceContext.js";
@@ -396,6 +397,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", vendorAssessmentsRouter);
   router.use("/api", vendorReviewsRouter);
   router.use("/api", vendorAssessmentAnalysisRouter);
+  router.use("/api", vendorAssuranceDocumentsRouter);
   router.use("/api", vendorSignalContextRouter);
   router.use("/api", controlComplianceContextRouter);
   router.use("/api", obligationComplianceContextRouter);

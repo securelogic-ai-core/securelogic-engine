@@ -261,6 +261,12 @@ services:
       - key: R2_ENDPOINT
         sync: false
 
+      # Vendor-Assurance Intelligence (Phase 1) — STAGING ONLY.
+      # Routes 404 unless this is set to 'true'. Production engine block does
+      # not receive this var; production enablement is a future package decision.
+      - key: SECURELOGIC_VENDOR_ASSURANCE_ENABLED
+        value: "true"
+
   # =========================================================
   # INTELLIGENCE WORKER (background)
   # Long-running process — runs the signal pipeline every hour.
