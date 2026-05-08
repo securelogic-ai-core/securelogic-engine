@@ -72,6 +72,7 @@ They must not be re-declared differently in each module.
 | Vendor Review | vendor_reviews | POST /api/vendor-reviews, GET /api/vendor-reviews, GET /api/vendor-reviews/:id, PATCH /api/vendor-reviews/:id | Complete — package vendor-review-workflow |
 | AI Governance Assessment | ai_governance_assessments | POST /api/ai-governance-assessments, GET /api/ai-governance-assessments, GET /api/ai-governance-assessments/:id, PATCH /api/ai-governance-assessments/:id | Complete — package ai-governance-review-workflow |
 | Dependency Assessment | dependency_assessments | POST /api/dependency-assessments, GET /api/dependency-assessments, GET /api/dependency-assessments/:id, PATCH /api/dependency-assessments/:id | Complete — package dependency-review-workflow |
+| Vendor Assurance Document | vendor_assurance_documents | POST /api/vendor-assurance/documents, GET /api/vendor-assurance/documents, GET /api/vendor-assurance/documents/:id, GET /api/vendor-assurance/documents/:id/extraction, GET /api/vendor-assurance/documents/:id/pdf, POST /api/vendor-assurance/extractions/:id/review-decisions, POST /api/vendor-assurance/documents/:id/finalize | Phase 1 — package vendor-assurance-intelligence-phase-1. Staging-only behind SECURELOGIC_VENDOR_ASSURANCE_ENABLED. PDF stored in Cloudflare R2 via the Phase 0 blob primitive at org/{organizationId}/vendor-assurance/{documentId}/original.pdf. Extraction is one-per-document (no re-extraction). Review decisions are APPEND-ONLY — no UNIQUE on (extraction_id, field_name); current decision per field = latest by (decided_at DESC, id DESC). Finalize requires every material field to have a current decision. Reviewed values display on the vendor detail card via projection-at-read-time; no stored snapshot table. No writes to findings, vendor_assessments, vendor_reviews, risks, signal_*_links, or vendors.current_risk_score. |
 
 ---
 
@@ -242,6 +243,10 @@ Organization
   │     │     └── Findings (source_type='vendor_review', source_id=vendor_assessments.id)
   │     ├── Vendor Reviews (vendor_id FK → vendor_reviews, mutable workflow)
   │     │     └── Findings (source_type='vendor_cycle_review', source_id=vendor_reviews.id)
+  │     ├── Vendor Assurance Documents (organization_id FK, vendor_id FK → vendors; SOC PDF stored in R2)
+  │     │     └── Vendor Assurance Extraction (one per document)
+  │     │           ├── Vendor Assurance Extraction Spans (per-field source-text spans)
+  │     │           └── Vendor Assurance Review Decisions (APPEND-ONLY; current decision per field = latest by decided_at)
   │     └── Signal Vendor Links (organization_id FK, signal_id FK → cyber_signals, vendor_id FK → vendors)
   ├── AI Systems (organization_id FK; template_source TEXT NULL — wired but unused in v1 templates; the customer's AI features are entered manually after template load.)
   │     ├── Governance Reviews (ai_system_id FK → governance_reviews, point-in-time)

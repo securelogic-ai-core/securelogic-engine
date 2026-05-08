@@ -3735,3 +3735,207 @@ export async function getIndustryTemplate(token: string, industryId: IndustryTem
   } catch { return null; }
 }
 
+
+// =========================================================
+// VENDOR ASSURANCE INTELLIGENCE (Phase 1)
+// =========================================================
+
+export type VendorAssuranceProcessingStatus =
+  | "pending"
+  | "extracting"
+  | "extracted"
+  | "extraction_failed"
+  | "finalized";
+
+export type VendorAssuranceDocument = {
+  id: string;
+  organization_id: string;
+  vendor_id: string;
+  uploaded_by_user_id: string | null;
+  original_filename: string;
+  byte_size: number;
+  sha256: string;
+  storage_key: string;
+  mime_type: string;
+  document_type_hint: "soc1" | "soc2_type1" | "soc2_type2" | null;
+  processing_status: VendorAssuranceProcessingStatus;
+  processing_error_code: string | null;
+  processing_error_detail: string | null;
+  finalized_at: string | null;
+  finalized_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type VendorAssuranceExtractedField = {
+  value: unknown;
+  confidence: number;
+  status: "extracted";
+};
+
+export type VendorAssuranceExtraction = {
+  id: string;
+  organization_id: string;
+  document_id: string;
+  model_id: string;
+  prompt_version: string;
+  raw_response_excerpt: string | null;
+  fields: Record<string, VendorAssuranceExtractedField>;
+  created_at: string;
+};
+
+export type VendorAssuranceExtractionSpan = {
+  id: string;
+  organization_id: string;
+  extraction_id: string;
+  field_name: string;
+  page_number: number | null;
+  char_start: number;
+  char_end: number;
+  quote: string;
+  created_at: string;
+};
+
+export type VendorAssuranceCurrentDecision = {
+  decision: "accept" | "edit" | "reject";
+  reviewed_value: unknown;
+  reviewer_note: string | null;
+  decided_by_user_id: string | null;
+  decided_at: string;
+};
+
+export type VendorAssuranceExtractionResponse = {
+  extraction: VendorAssuranceExtraction | null;
+  spans: VendorAssuranceExtractionSpan[];
+  current_decisions: Record<string, VendorAssuranceCurrentDecision>;
+  material_field_names?: readonly string[];
+};
+
+export type VendorAssuranceReviewDecisionInput = {
+  field_name: string;
+  decision: "accept" | "edit" | "reject";
+  reviewed_value?: unknown;
+  reviewer_note?: string | null;
+};
+
+export async function listVendorAssuranceDocuments(
+  token: string,
+  opts?: { vendorId?: string; status?: VendorAssuranceProcessingStatus; limit?: number }
+): Promise<{ documents: VendorAssuranceDocument[] } | null> {
+  const params = new URLSearchParams();
+  if (opts?.vendorId) params.set("vendor_id", opts.vendorId);
+  if (opts?.status) params.set("status", opts.status);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  try {
+    const res = await engineFetch(`/api/vendor-assurance/documents${qs ? `?${qs}` : ""}`, token);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ documents: VendorAssuranceDocument[] }>;
+  } catch { return null; }
+}
+
+export async function getVendorAssuranceDocument(
+  token: string,
+  documentId: string
+): Promise<VendorAssuranceDocument | null> {
+  try {
+    const res = await engineFetch(`/api/vendor-assurance/documents/${encodeURIComponent(documentId)}`, token);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { document: VendorAssuranceDocument };
+    return body.document ?? null;
+  } catch { return null; }
+}
+
+export async function getVendorAssuranceExtraction(
+  token: string,
+  documentId: string
+): Promise<VendorAssuranceExtractionResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-assurance/documents/${encodeURIComponent(documentId)}/extraction`,
+      token
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<VendorAssuranceExtractionResponse>;
+  } catch { return null; }
+}
+
+/** Returns the absolute engine URL for the redirecting PDF endpoint. */
+export function getVendorAssuranceDocumentPdfUrl(documentId: string): string {
+  return `${ENGINE_URL}/api/vendor-assurance/documents/${encodeURIComponent(documentId)}/pdf`;
+}
+
+export async function recordVendorAssuranceReviewDecisions(
+  token: string,
+  extractionId: string,
+  decisions: VendorAssuranceReviewDecisionInput[]
+): Promise<{ inserted_ids: string[]; current_decisions: Record<string, VendorAssuranceCurrentDecision> } | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-assurance/extractions/${encodeURIComponent(extractionId)}/review-decisions`,
+      token,
+      { method: "POST", body: JSON.stringify({ decisions }) }
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<{
+      inserted_ids: string[];
+      current_decisions: Record<string, VendorAssuranceCurrentDecision>;
+    }>;
+  } catch { return null; }
+}
+
+export async function finalizeVendorAssuranceDocument(
+  token: string,
+  documentId: string
+): Promise<{ document: VendorAssuranceDocument } | { error: string; missing_field_names?: string[] }> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-assurance/documents/${encodeURIComponent(documentId)}/finalize`,
+      token,
+      { method: "POST", body: JSON.stringify({}) }
+    );
+    const body = (await res.json()) as Record<string, unknown>;
+    if (!res.ok) {
+      return {
+        error: String(body["error"] ?? "finalize_failed"),
+        ...(Array.isArray(body["missing_field_names"])
+          ? { missing_field_names: body["missing_field_names"] as string[] }
+          : {})
+      };
+    }
+    return body as { document: VendorAssuranceDocument };
+  } catch {
+    return { error: "finalize_failed" };
+  }
+}
+
+/**
+ * Multipart upload helper. Accepts a FormData body, posts directly to the
+ * engine via Bearer auth, and returns the document row on success.
+ *
+ * Server-side use only — never expose the engine token to the browser.
+ */
+export async function uploadVendorAssuranceDocument(
+  token: string,
+  formData: FormData
+): Promise<{ document: VendorAssuranceDocument } | { error: string }> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    try {
+      const res = await fetch(`${ENGINE_URL}/api/vendor-assurance/documents`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+        signal: controller.signal
+      });
+      const body = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) return { error: String(body["error"] ?? "upload_failed") };
+      return body as { document: VendorAssuranceDocument };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  } catch {
+    return { error: "upload_failed" };
+  }
+}

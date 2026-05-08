@@ -6,10 +6,14 @@ import {
   getVendorAssessmentsForVendor,
   getVendorReviews,
   getVendorFindings,
+  listVendorAssuranceDocuments,
+  getVendorAssuranceExtraction,
   type Vendor,
   type VendorAssessment,
   type VendorReview,
   type VendorFinding,
+  type VendorAssuranceDocument,
+  type VendorAssuranceExtractionResponse,
 } from "@/lib/api";
 import { CompleteReviewSection } from "./CompleteReviewSection";
 import { RecalculateScoreButton } from "./RecalculateScoreButton";
@@ -645,6 +649,20 @@ export default async function VendorDetailPage({
 
   if (!vendor) redirect("/vendors");
 
+  // Vendor-Assurance read: latest finalized document + its extraction +
+  // current decision per field projected at read time. No stored snapshot.
+  const assuranceDocsData = await listVendorAssuranceDocuments(token, {
+    vendorId: vendor.id,
+    status: "finalized",
+    limit: 1,
+  });
+  const latestFinalizedAssuranceDoc: VendorAssuranceDocument | null =
+    assuranceDocsData?.documents?.[0] ?? null;
+  const latestAssuranceExtraction: VendorAssuranceExtractionResponse | null =
+    latestFinalizedAssuranceDoc
+      ? await getVendorAssuranceExtraction(token, latestFinalizedAssuranceDoc.id)
+      : null;
+
   const assessments = assessmentsData?.assessments ?? [];
   const reviews = reviewsData?.reviews ?? [];
   const vendorFindings = vendorFindingsData?.findings ?? [];
@@ -728,8 +746,129 @@ export default async function VendorDetailPage({
             lastActivityDate={lastActivityDate}
           />
           <ActionsCard vendorId={vendor.id} vendorName={vendor.name} vendorStatus={vendor.status} />
+          <VendorAssuranceCard
+            vendorId={vendor.id}
+            document={latestFinalizedAssuranceDoc}
+            extraction={latestAssuranceExtraction}
+          />
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Vendor Assurance card (Phase 1)
+// Reads at request time from the latest finalized document's extraction +
+// current decision per field. No stored snapshot. No write to vendor fields.
+// ─────────────────────────────────────────────────────────────
+
+const ASSURANCE_DISPLAY_FIELDS = [
+  "report_type",
+  "auditor_name",
+  "auditor_opinion",
+  "report_period_end",
+  // report_freshness_days is computed at read time below
+] as const;
+
+function VendorAssuranceCard({
+  vendorId,
+  document,
+  extraction,
+}: {
+  vendorId: string;
+  document: VendorAssuranceDocument | null;
+  extraction: VendorAssuranceExtractionResponse | null;
+}) {
+  const cardStyle: React.CSSProperties = {
+    padding: 16,
+    borderRadius: 8,
+    border: "1px solid #1e2d45",
+    background: "#0f172a",
+    color: "#e5e7eb",
+  };
+
+  if (!document || !extraction || !extraction.extraction) {
+    return (
+      <div style={cardStyle}>
+        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "#94a3b8" }}>
+          Vendor Assurance
+        </h3>
+        <p style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
+          No assurance documents reviewed yet.
+        </p>
+        <Link
+          href="/vendor-assurance/queue"
+          style={{ fontSize: 12, color: "#00c4b4", marginTop: 8, display: "inline-block" }}
+        >
+          Upload SOC report →
+        </Link>
+      </div>
+    );
+  }
+
+  // Project current decision per field for the displayed material fields.
+  const display: Array<{ name: string; rendered: string }> = [];
+  for (const fieldName of ASSURANCE_DISPLAY_FIELDS) {
+    const decision = extraction.current_decisions[fieldName];
+    const field = extraction.extraction.fields[fieldName];
+    let rendered: string;
+    if (decision?.decision === "reject") {
+      rendered = "(rejected)";
+    } else if (decision?.decision === "edit") {
+      const v = decision.reviewed_value;
+      rendered = typeof v === "string" ? v : JSON.stringify(v);
+    } else if (field) {
+      const v = field.value;
+      rendered = v == null ? "—" : typeof v === "string" ? v : JSON.stringify(v);
+    } else {
+      rendered = "—";
+    }
+    display.push({ name: fieldName, rendered });
+  }
+
+  // report_freshness_days: derived at read time from period_end + issued_date
+  // (or fall back to today when issued_date is missing).
+  const periodEndField = extraction.extraction.fields["report_period_end"];
+  const issuedDateField = extraction.extraction.fields["report_issued_date"];
+  let freshness: string = "—";
+  const periodEndStr = typeof periodEndField?.value === "string" ? periodEndField.value : null;
+  const issuedDateStr = typeof issuedDateField?.value === "string" ? issuedDateField.value : null;
+  if (periodEndStr) {
+    const periodEnd = Date.parse(periodEndStr);
+    const reference = issuedDateStr ? Date.parse(issuedDateStr) : Date.now();
+    if (!Number.isNaN(periodEnd) && !Number.isNaN(reference) && reference >= periodEnd) {
+      const days = Math.floor((reference - periodEnd) / (24 * 3600 * 1000));
+      freshness = `${days} day${days === 1 ? "" : "s"}`;
+    }
+  }
+
+  return (
+    <div style={cardStyle}>
+      <h3 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "#94a3b8" }}>
+        Vendor Assurance — extracted (reviewed)
+      </h3>
+      <dl style={{ marginTop: 12, fontSize: 12 }}>
+        {display.map((d) => (
+          <div key={d.name} style={{ marginBottom: 8 }}>
+            <dt style={{ color: "#64748b" }}>{d.name}</dt>
+            <dd style={{ margin: 0, color: "#e5e7eb", wordBreak: "break-word" }}>{d.rendered}</dd>
+          </div>
+        ))}
+        <div style={{ marginBottom: 8 }}>
+          <dt style={{ color: "#64748b" }}>report_freshness_days</dt>
+          <dd style={{ margin: 0, color: "#e5e7eb" }}>{freshness}</dd>
+        </div>
+      </dl>
+      <Link
+        href={`/vendor-assurance/${document.id}`}
+        style={{ fontSize: 12, color: "#00c4b4", marginTop: 8, display: "inline-block" }}
+      >
+        View finalized review →
+      </Link>
+      <p style={{ marginTop: 8, fontSize: 11, color: "#475569" }}>
+        Vendor: {vendorId.slice(0, 8)}…
+      </p>
     </div>
   );
 }
