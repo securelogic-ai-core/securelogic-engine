@@ -126,21 +126,21 @@ Postgres Row-Level Security on customer-data tables, gated by a `app.current_org
 ## §5. File / object storage
 
 ### Current state
-The platform has no persistent customer file storage.
-- Multer uploads use `multer.memoryStorage()` only (e.g. `vendorAssessmentAnalysis.ts`, `transcribe.ts`). Files are parsed in-memory and discarded.
-- Generated artifacts (CSV, PDF, audit packages) stream to the response and are never persisted server-side.
-- `evidence` is metadata only — no binary attachments are stored.
+The platform has a Cloudflare R2 blob layer wired in **staging only**. Production engine remains intentionally unconfigured for R2 in the Phase 0 package; the first production-bound consumer is a future package decision, not this standard's call.
 
-### Rules while there is no blob layer
-- File uploads MUST stay in `memoryStorage()`. Do not introduce disk-backed multer storage without amending this standard.
-- Per-request memory limits MUST be enforced on every upload route to prevent a single tenant from exhausting worker memory.
-- Generated artifacts that read multiple rows MUST filter every query by `organization_id`. Verify this on every export route.
+- The blob primitive lives at `src/api/lib/blobStorage.ts` (R2 client wrapper) and `src/api/lib/blobStorageConfig.ts` (env loader). A one-shot validation script lives at `scripts/blob-storage-smoke.ts`.
+- Multer uploads still use `multer.memoryStorage()` for any route that does not need durable persistence (e.g. `transcribe.ts`). Routes that DO persist customer files MUST stream from the in-memory buffer to the blob layer via the wrapper — never write to local disk.
+- Generated artifacts (CSV, PDF, audit packages) continue to stream to the response without server-side persistence unless the package explicitly persists via the blob layer.
+- `evidence` remains metadata only.
 
-### Rules when a blob layer is introduced (future)
-- Every object key MUST be prefixed with `org/{organizationId}/...`.
-- Read access MUST require an org-context match between the requesting principal and the key prefix.
-- Pre-signed URLs MUST scope to a single `organizationId` and MUST NOT be reusable across orgs.
-- The blob layer choice and migration MUST be a discrete package; do not ship blob storage as a side effect of a feature.
+### Rules for the blob layer
+- Every object key MUST be prefixed with `org/{organizationId}/...`. The wrapper enforces this at every public method BEFORE any I/O. Do not bypass the wrapper.
+- Pre-signed read URLs MUST scope to a single `organizationId` (encoded in the key) and MUST NOT be reusable across orgs.
+- Pre-signed URL TTL MUST be ≤ 120 seconds. The wrapper clamps this; do not work around it.
+- Per-request memory limits MUST be enforced on every upload route before bytes reach the wrapper.
+- Generated artifacts that read multiple rows MUST filter every query by `organization_id`.
+- Each new blob-using consumer MUST be a discrete package. Do not ship blob storage as a side effect of an unrelated feature.
+- Production enablement of the blob layer MUST be its own package decision; until then, production engine R2 env vars stay unset.
 
 ---
 
