@@ -280,6 +280,7 @@ app.use((req, res, next) => {
     req.originalUrl.startsWith("/webhooks/lemon") ||
     req.originalUrl.startsWith("/webhooks/email/resend") ||
     req.originalUrl.startsWith("/api/vendor-assessments/analyze-document") ||
+    /^\/api\/vendor-assurance\/documents(\?|$)/.test(req.originalUrl) ||
     /^\/api\/sso\/[^/]+\/acs/.test(req.originalUrl)
   ) {
     next();
