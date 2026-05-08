@@ -239,6 +239,28 @@ services:
       - key: ANTHROPIC_API_KEY
         sync: false
 
+      # Cloudflare R2 — STAGING ONLY. Vendor-assurance-intelligence Phase 0
+      # ships the blob primitive against R2; production engine is intentionally
+      # left unconfigured in this package. Populate R2_* in the staging
+      # dashboard before running scripts/blob-storage-smoke.ts.
+      # Per TENANT_ISOLATION_STANDARD.md §5: every object key MUST be prefixed
+      # with org/{organizationId}/; pre-signed URLs are single-org and clamped
+      # to <=120s TTL by src/api/lib/blobStorage.ts.
+      - key: R2_ACCOUNT_ID
+        sync: false
+
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+
+      - key: R2_BUCKET
+        sync: false
+
+      - key: R2_ENDPOINT
+        sync: false
+
   # =========================================================
   # INTELLIGENCE WORKER (background)
   # Long-running process — runs the signal pipeline every hour.

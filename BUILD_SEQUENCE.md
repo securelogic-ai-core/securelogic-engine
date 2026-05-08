@@ -51,6 +51,9 @@ The commercial model that all future product and packaging work must respect is:
 Billing note:
 - Platform Annual is not a product tier; it is the annual billing option for Platform Professional
 
+## Active package
+`vendor-assurance-intelligence-phase-0-blob-storage` — Cloudflare R2 blob primitive, staging-only. Delivers `src/api/lib/blobStorage.ts`, `src/api/lib/blobStorageConfig.ts`, `scripts/blob-storage-smoke.ts`, prefix-guard tests, and the `TENANT_ISOLATION_STANDARD.md §5` amendment. No customer-data writers in this package; production engine stays unconfigured for R2. Phase 1 (`vendor-assurance-intelligence-phase-1`) is the first consumer and the next package after this one ships and is acknowledged.
+
 ## Current build priorities
 Priority order is fixed unless explicitly changed in this document.
 
