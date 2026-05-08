@@ -18,6 +18,7 @@ import {
 import { CompleteReviewSection } from "./CompleteReviewSection";
 import { RecalculateScoreButton } from "./RecalculateScoreButton";
 import { ArchiveVendorButton } from "./ArchiveVendorButton";
+import { VendorAssuranceUploadForm } from "./VendorAssuranceUploadForm";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -795,13 +796,15 @@ function VendorAssuranceCard({
           Vendor Assurance
         </h3>
         <p style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
-          No assurance documents reviewed yet.
+          No assurance documents reviewed yet. Upload a SOC report to begin
+          extraction and review.
         </p>
+        <VendorAssuranceUploadForm vendorId={vendorId} />
         <Link
           href="/vendor-assurance/queue"
-          style={{ fontSize: 12, color: "#00c4b4", marginTop: 8, display: "inline-block" }}
+          style={{ fontSize: 11, color: "#94a3b8", marginTop: 10, display: "inline-block" }}
         >
-          Upload SOC report →
+          View review queue →
         </Link>
       </div>
     );
