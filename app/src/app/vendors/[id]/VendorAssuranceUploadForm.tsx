@@ -14,10 +14,31 @@ const ENGINE_ERROR_LABELS: Record<string, string> = {
   blob_put_failed:            "Storage upload failed. Try again in a moment.",
   upload_failed:              "Upload failed. Please try again.",
   unauthenticated:            "Session expired. Please sign in and retry.",
+  // The vendor-assurance feature flag middleware returns {error:"not_found"}
+  // when SECURELOGIC_VENDOR_ASSURANCE_ENABLED is not "true". Treat that case
+  // distinctly so it isn't confused with a generic upload failure.
+  not_found:                  "Vendor-assurance is not available on this environment yet.",
 };
 
 function humanizeError(code: string): string {
   return ENGINE_ERROR_LABELS[code] ?? `Upload failed (${code}).`;
+}
+
+function composeError(code: string, detail: string | null, status: number): string {
+  const base = humanizeError(code);
+  const trimmedDetail = detail && detail.trim().length > 0 ? detail.trim() : null;
+  // Surface the engine's `detail` field when it adds information not already
+  // implied by the code (e.g. invalid_document_type_hint enumerates the
+  // allowed values). Suppress when the code label already covers it.
+  if (trimmedDetail && !base.toLowerCase().includes(trimmedDetail.toLowerCase())) {
+    return `${base} (${trimmedDetail})`;
+  }
+  // For codes we don't have a friendly label for, append the HTTP status so
+  // operators can distinguish auth vs route vs feature-flag failures.
+  if (!ENGINE_ERROR_LABELS[code]) {
+    return `${base} [HTTP ${status}]`;
+  }
+  return base;
 }
 
 export function VendorAssuranceUploadForm({ vendorId }: { vendorId: string }) {
@@ -48,8 +69,13 @@ export function VendorAssuranceUploadForm({ vendorId }: { vendorId: string }) {
           setError("Upload succeeded but the review page could not be located.");
           return;
         }
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setError(humanizeError(body.error ?? `http_${res.status}`));
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          detail?: string;
+        };
+        const code = body.error ?? `http_${res.status}`;
+        const detail = typeof body.detail === "string" ? body.detail : null;
+        setError(composeError(code, detail, res.status));
       } catch {
         setError("Network error — please try again.");
       }
