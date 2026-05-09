@@ -122,6 +122,11 @@ export function getBlobStorageClient(): { client: S3Client; config: BlobStorageC
   if (state.state === "malformed") throw new BlobStorageMalformedConfigError(state.reason);
 
   cachedConfig = state.config;
+  // requestChecksumCalculation / responseChecksumValidation pinned to
+  // WHEN_REQUIRED: @aws-sdk/client-s3 >=3.730 defaults to WHEN_SUPPORTED, which
+  // adds x-amz-sdk-checksum-algorithm + x-amz-checksum-* headers to every PUT.
+  // Cloudflare R2 rejects those with a bare 401 Unauthorized. WHEN_REQUIRED
+  // restores pre-3.730 behavior so SigV4 against R2 succeeds.
   cachedClient = new S3Client({
     region: "auto",
     endpoint: state.config.endpoint,
@@ -129,7 +134,9 @@ export function getBlobStorageClient(): { client: S3Client; config: BlobStorageC
       accessKeyId: state.config.accessKeyId,
       secretAccessKey: state.config.secretAccessKey
     },
-    forcePathStyle: true
+    forcePathStyle: true,
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED"
   });
 
   return { client: cachedClient, config: cachedConfig };
