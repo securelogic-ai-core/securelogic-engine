@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const sendSpy = vi.fn();
 const getSignedUrlSpy = vi.fn();
+const s3ClientCtorArgs: Array<unknown> = [];
 
 vi.mock("@aws-sdk/client-s3", async () => {
   // PutObjectCommand / GetObjectCommand / DeleteObjectCommand only need to be
@@ -35,6 +36,9 @@ vi.mock("@aws-sdk/client-s3", async () => {
   }
   class S3Client {
     send = sendSpy;
+    constructor(input: unknown) {
+      s3ClientCtorArgs.push(input);
+    }
   }
   return { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand };
 });
@@ -86,6 +90,7 @@ beforeEach(() => {
   sendSpy.mockResolvedValue({});
   getSignedUrlSpy.mockReset();
   getSignedUrlSpy.mockResolvedValue("https://signed.example/url");
+  s3ClientCtorArgs.length = 0;
   _resetBlobStorageClientForTests();
   setR2Env();
 });
@@ -362,5 +367,19 @@ describe("getBlobStorageClient", () => {
     const { client, config } = getBlobStorageClient();
     expect(client).toBeDefined();
     expect(config.bucket).toBe("test-bucket");
+  });
+
+  it("constructs the S3Client with R2-compatible checksum options", () => {
+    // Pins the SDK >=3.730 checksum-default override that keeps R2 from
+    // returning bare 401 Unauthorized on PUT. See blobStorageConfig.ts comment.
+    setR2Env();
+    _resetBlobStorageClientForTests();
+    s3ClientCtorArgs.length = 0;
+    getBlobStorageClient();
+    expect(s3ClientCtorArgs).toHaveLength(1);
+    const ctorInput = s3ClientCtorArgs[0] as Record<string, unknown>;
+    expect(ctorInput.requestChecksumCalculation).toBe("WHEN_REQUIRED");
+    expect(ctorInput.responseChecksumValidation).toBe("WHEN_REQUIRED");
+    expect(ctorInput.forcePathStyle).toBe(true);
   });
 });
