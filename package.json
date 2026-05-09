@@ -29,7 +29,8 @@
     "build:contracts": "cd packages/contracts && npm run build"
   },
   "overrides": {
-    "uuid": "^14.0.0"
+    "uuid": "^14.0.0",
+    "fast-uri": ">=3.1.2"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.85.0",
