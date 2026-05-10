@@ -23,7 +23,12 @@ export type PdfExtractionResult =
 export async function extractPdfText(bytes: Uint8Array | Buffer): Promise<PdfExtractionResult> {
   let result: { text: string; numpages?: number };
   try {
-    const parser = new PDFParse(bytes);
+    // pdf-parse v2 explicitly throws on `instanceof Buffer`; pass a plain
+    // Uint8Array view over the same memory.
+    const pdfData: Uint8Array = Buffer.isBuffer(bytes)
+      ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+      : bytes;
+    const parser = new PDFParse(pdfData);
     const parsed = await parser.getText();
     result = parsed as { text: string; numpages?: number };
   } catch (err) {
