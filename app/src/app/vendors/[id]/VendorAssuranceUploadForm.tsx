@@ -59,22 +59,24 @@ export function VendorAssuranceUploadForm({ vendorId }: { vendorId: string }) {
           method: "POST",
           body: fd,
         });
-        // On success the proxy emits a 303 to /vendor-assurance/{id}; fetch
-        // follows it, so we detect the success by `res.redirected` and parse
-        // the document id off the final URL to drive client navigation.
-        if (res.redirected) {
-          const m = res.url.match(/\/vendor-assurance\/([0-9a-f-]{36})/i);
-          if (m) {
-            router.push(`/vendor-assurance/${m[1]}`);
-            return;
-          }
-          setError("Upload succeeded but the review page could not be located.");
-          return;
-        }
+        // Proxy returns JSON for both success and failure. Previous contract
+        // was a 303 redirect into the SSR review page; that intermittently
+        // threw `TypeError: Load failed` on iOS Safari (the upload itself
+        // succeeded — the failure was in the post-redirect SSR fetch chain).
+        // Now we navigate client-side via router.push.
         const body = (await res.json().catch(() => ({}))) as {
+          document?: { id?: string };
           error?: string;
           detail?: string;
         };
+        if (
+          res.ok &&
+          typeof body.document?.id === "string" &&
+          /^[0-9a-f-]{36}$/i.test(body.document.id)
+        ) {
+          router.push(`/vendor-assurance/${body.document.id}`);
+          return;
+        }
         const code = body.error ?? `http_${res.status}`;
         const detail = typeof body.detail === "string" ? body.detail : null;
         setError(composeError(code, detail, res.status));
