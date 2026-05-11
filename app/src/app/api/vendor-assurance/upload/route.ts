@@ -22,7 +22,28 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
 
-  const formData = await req.formData();
+  // Parse the multipart body in its own try/catch. `req.formData()` can
+  // throw on a malformed boundary, an oversized body, or a partial read
+  // (edge terminating the upload mid-stream on a slow client). Previously
+  // this threw OUTSIDE the try block below, the handler crashed uncaught,
+  // and the platform returned a generic 5xx (or no response at all) — which
+  // is what surfaced in the browser as "Network error — please try again."
+  let formData: FormData;
+  try {
+    formData = await req.formData();
+  } catch (err) {
+    const detail = ((err as Error)?.message ?? "form data parse failed").slice(0, 500);
+    // eslint-disable-next-line no-console
+    console.error("[vendor-assurance/upload] formData parse failed:", {
+      name:    (err as Error)?.name,
+      message: (err as Error)?.message,
+      error:   err,
+    });
+    return NextResponse.json(
+      { error: "form_data_invalid", detail },
+      { status: 400 }
+    );
+  }
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 60_000);

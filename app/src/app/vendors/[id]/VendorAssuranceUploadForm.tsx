@@ -13,6 +13,8 @@ const ENGINE_ERROR_LABELS: Record<string, string> = {
   original_filename_required: "File name could not be read — re-select the PDF.",
   blob_put_failed:            "Storage upload failed. Try again in a moment.",
   upload_failed:              "Upload failed. Please try again.",
+  // Proxy-level failures (see app/src/app/api/vendor-assurance/upload/route.ts):
+  form_data_invalid:          "Upload was rejected before reaching the engine (multipart body could not be read).",
   unauthenticated:            "Session expired. Please sign in and retry.",
   // The vendor-assurance feature flag middleware returns {error:"not_found"}
   // when SECURELOGIC_VENDOR_ASSURANCE_ENABLED is not "true". Treat that case
@@ -76,8 +78,34 @@ export function VendorAssuranceUploadForm({ vendorId }: { vendorId: string }) {
         const code = body.error ?? `http_${res.status}`;
         const detail = typeof body.detail === "string" ? body.detail : null;
         setError(composeError(code, detail, res.status));
-      } catch {
-        setError("Network error — please try again.");
+      } catch (err) {
+        // Diagnostic-first: prior code dropped `err` entirely, so a staging
+        // failure surfaced only as "Network error — please try again." with
+        // no way to tell AbortError from TypeError/Failed-to-fetch from a
+        // mid-flight reset. Mirrors the Ask fix (adced86c).
+        const e = err as { name?: string; message?: string; cause?: unknown } | null | undefined;
+        // eslint-disable-next-line no-console
+        console.error("Vendor assurance upload failed:", {
+          name:    e?.name,
+          message: e?.message,
+          cause:   e?.cause,
+          error:   err,
+        });
+
+        // Surface a class hint for recognizable failure modes so a
+        // screenshot is enough to distinguish them.
+        let hint = "";
+        if (e?.name === "AbortError") {
+          hint = " (request aborted)";
+        } else if (
+          e?.name === "TypeError" &&
+          /failed to fetch/i.test(e?.message ?? "")
+        ) {
+          hint = " (could not reach server)";
+        } else if (e?.name) {
+          hint = ` (${e.name})`;
+        }
+        setError(`Network error${hint} — please try again.`);
       }
     });
   }
