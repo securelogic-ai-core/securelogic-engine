@@ -9,6 +9,12 @@ const nextConfig = {
   // by the repo-level package-lock.json sitting above app/.
   outputFileTracingRoot: path.join(__dirname, ".."),
 
+  async rewrites() {
+    return [
+      { source: "/version", destination: "/api/version" },
+    ];
+  },
+
   async headers() {
     const csp = [
       "default-src 'self'",
