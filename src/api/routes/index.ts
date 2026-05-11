@@ -178,7 +178,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
     res.status(200).json({
       commit: process.env.RENDER_GIT_COMMIT ?? "unknown",
       service: "securelogic-engine",
-      timestamp: new Date().toISOString()
+      branch: process.env.RENDER_GIT_BRANCH ?? "unknown",
+      deployedAt: new Date().toISOString()
     });
   });
 
