@@ -3745,7 +3745,10 @@ export type VendorAssuranceProcessingStatus =
   | "extracting"
   | "extracted"
   | "extraction_failed"
-  | "finalized";
+  | "finalized"                 // legacy terminal state — no new code path writes this
+  | "approved"
+  | "manual_review_requested"
+  | "rejected";
 
 export type VendorAssuranceDocument = {
   id: string;
@@ -3763,6 +3766,8 @@ export type VendorAssuranceDocument = {
   processing_error_detail: string | null;
   finalized_at: string | null;
   finalized_by_user_id: string | null;
+  approved_at: string | null;
+  approved_by_user_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -3804,10 +3809,21 @@ export type VendorAssuranceCurrentDecision = {
   decided_at: string;
 };
 
+/** Current override per material field (latest by overridden_at). */
+export type VendorAssuranceFieldOverride = {
+  field_name: string;
+  original_value: unknown;
+  override_value: unknown;
+  reason: string;
+  overridden_by_user_id: string | null;
+  overridden_at: string;
+};
+
 export type VendorAssuranceExtractionResponse = {
   extraction: VendorAssuranceExtraction | null;
   spans: VendorAssuranceExtractionSpan[];
   current_decisions: Record<string, VendorAssuranceCurrentDecision>;
+  field_overrides: VendorAssuranceFieldOverride[];
   material_field_names?: readonly string[];
 };
 
@@ -3860,9 +3876,17 @@ export async function getVendorAssuranceExtraction(
   } catch { return null; }
 }
 
-/** Returns the absolute engine URL for the redirecting PDF endpoint. */
+/**
+ * Same-origin path of the app's PDF stream-through proxy
+ * (app/src/app/api/vendor-assurance/[documentId]/pdf/route.ts). The proxy
+ * authenticates from the session cookie, calls the engine /pdf endpoint with
+ * the Bearer token server-side, follows the engine's 302 to the pre-signed R2
+ * URL server-side, and streams the bytes back to the browser — so the browser
+ * never sees the engine URL or the pre-signed URL, and CSP connect-src never
+ * needs to allow the R2 host.
+ */
 export function getVendorAssuranceDocumentPdfUrl(documentId: string): string {
-  return `${ENGINE_URL}/api/vendor-assurance/documents/${encodeURIComponent(documentId)}/pdf`;
+  return `/api/vendor-assurance/${encodeURIComponent(documentId)}/pdf`;
 }
 
 export async function recordVendorAssuranceReviewDecisions(
@@ -3906,6 +3930,93 @@ export async function finalizeVendorAssuranceDocument(
     return body as { document: VendorAssuranceDocument };
   } catch {
     return { error: "finalize_failed" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Document-presentation package: field overrides + document-level transitions
+// ---------------------------------------------------------------------------
+
+export type VendorAssuranceActionResult<T> = T | { error: string };
+
+/** POST .../field-overrides — record one reviewer override with a required reason. */
+export async function overrideVendorAssuranceField(
+  token: string,
+  documentId: string,
+  fieldName: string,
+  overrideValue: unknown,
+  reason: string
+): Promise<VendorAssuranceActionResult<{ override: VendorAssuranceFieldOverride }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-assurance/documents/${encodeURIComponent(documentId)}/field-overrides`,
+      token,
+      { method: "POST", body: JSON.stringify({ field_name: fieldName, override_value: overrideValue, reason }) }
+    );
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { error: String(body["error"] ?? "field_override_failed") };
+    return body as { override: VendorAssuranceFieldOverride };
+  } catch {
+    return { error: "field_override_failed" };
+  }
+}
+
+/** POST .../approve — extracted → approved (the conceptual replacement for finalize). */
+export async function approveVendorAssuranceDocument(
+  token: string,
+  documentId: string
+): Promise<VendorAssuranceActionResult<{ document: VendorAssuranceDocument }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-assurance/documents/${encodeURIComponent(documentId)}/approve`,
+      token,
+      { method: "POST", body: JSON.stringify({}) }
+    );
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { error: String(body["error"] ?? "approve_failed") };
+    return body as { document: VendorAssuranceDocument };
+  } catch {
+    return { error: "approve_failed" };
+  }
+}
+
+/** POST .../request-manual-review — extracted → manual_review_requested (not terminal). */
+export async function requestVendorAssuranceManualReview(
+  token: string,
+  documentId: string,
+  comment?: string
+): Promise<VendorAssuranceActionResult<{ document: VendorAssuranceDocument }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-assurance/documents/${encodeURIComponent(documentId)}/request-manual-review`,
+      token,
+      { method: "POST", body: JSON.stringify(comment && comment.trim().length > 0 ? { comment: comment.trim() } : {}) }
+    );
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { error: String(body["error"] ?? "request_manual_review_failed") };
+    return body as { document: VendorAssuranceDocument };
+  } catch {
+    return { error: "request_manual_review_failed" };
+  }
+}
+
+/** POST .../reject — extracted → rejected (terminal). */
+export async function rejectVendorAssuranceDocument(
+  token: string,
+  documentId: string,
+  reason: string
+): Promise<VendorAssuranceActionResult<{ document: VendorAssuranceDocument }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-assurance/documents/${encodeURIComponent(documentId)}/reject`,
+      token,
+      { method: "POST", body: JSON.stringify({ reason }) }
+    );
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { error: String(body["error"] ?? "reject_failed") };
+    return body as { document: VendorAssuranceDocument };
+  } catch {
+    return { error: "reject_failed" };
   }
 }
 

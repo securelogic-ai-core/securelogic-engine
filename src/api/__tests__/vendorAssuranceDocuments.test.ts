@@ -64,7 +64,11 @@ import {
   getVendorAssuranceExtraction,
   getVendorAssurancePdfRedirect,
   recordVendorAssuranceReviewDecisions,
-  finalizeVendorAssuranceDocument
+  finalizeVendorAssuranceDocument,
+  recordVendorAssuranceFieldOverride,
+  approveVendorAssuranceDocument,
+  requestVendorAssuranceManualReview,
+  rejectVendorAssuranceDocument
 } from "../routes/vendorAssuranceDocuments.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 
@@ -304,18 +308,23 @@ describe("getVendorAssuranceExtraction", () => {
     expect(status).toHaveBeenCalledWith(404);
   });
 
-  it("returns null extraction when none exists yet", async () => {
+  it("returns null extraction (with empty overrides) when none exists yet", async () => {
     pgQuerySpy
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // doc check
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // extraction lookup
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // extraction lookup
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // field overrides
     const req = buildReq({ params: { id: DOC_ID } });
     const { res, status, json } = buildRes();
     await getVendorAssuranceExtraction(req as never, res as never);
     expect(status).toHaveBeenCalledWith(200);
-    expect(json).toHaveBeenCalledWith({ extraction: null, spans: [], current_decisions: {} });
+    const body = json.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(body["extraction"]).toBeNull();
+    expect(body["spans"]).toEqual([]);
+    expect(body["current_decisions"]).toEqual({});
+    expect(body["field_overrides"]).toEqual([]);
   });
 
-  it("uses the DISTINCT ON read projection for current_decisions", async () => {
+  it("uses the DISTINCT ON read projections for current_decisions and field_overrides", async () => {
     pgQuerySpy
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // doc check
       .mockResolvedValueOnce({
@@ -323,6 +332,13 @@ describe("getVendorAssuranceExtraction", () => {
         rows: [{ id: EXTRACTION_ID, organization_id: ORG_A, document_id: DOC_ID,
                  model_id: "m", prompt_version: "v", raw_response_excerpt: null,
                  fields: {}, created_at: "x" }]
+      })
+      .mockResolvedValueOnce({ // field overrides
+        rowCount: 1,
+        rows: [{
+          field_name: "auditor_name", original_value: "Old LLP", override_value: "New LLP",
+          reason: "Corrected per cover page", overridden_by_user_id: USER_ID, overridden_at: "2026-05-12T00:00:00Z"
+        }]
       })
       .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // spans
       .mockResolvedValueOnce({
@@ -337,14 +353,20 @@ describe("getVendorAssuranceExtraction", () => {
     const { res, json } = buildRes();
     await getVendorAssuranceExtraction(req as never, res as never);
 
-    const projectionCall = pgQuerySpy.mock.calls[3]?.[0] as string;
+    const overridesCall = pgQuerySpy.mock.calls[2]?.[0] as string;
+    expect(overridesCall).toMatch(/FROM vendor_assurance_field_overrides/);
+    expect(overridesCall).toMatch(/DISTINCT ON \(field_name\)/);
+    expect(overridesCall).toMatch(/ORDER BY field_name, overridden_at DESC, id DESC/);
+
+    const projectionCall = pgQuerySpy.mock.calls[4]?.[0] as string;
     expect(projectionCall).toMatch(/DISTINCT ON \(field_name\)/);
     expect(projectionCall).toMatch(/ORDER BY field_name, decided_at DESC, id DESC/);
 
     const body = json.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(body["current_decisions"]).toMatchObject({
-      vendor_name: { decision: "accept" }
-    });
+    expect(body["current_decisions"]).toMatchObject({ vendor_name: { decision: "accept" } });
+    expect(body["field_overrides"]).toEqual([
+      expect.objectContaining({ field_name: "auditor_name", override_value: "New LLP" })
+    ]);
   });
 });
 
@@ -539,5 +561,393 @@ describe("finalizeVendorAssuranceDocument", () => {
     await finalizeVendorAssuranceDocument(req as never, res as never);
     expect(status).toHaveBeenCalledWith(409);
     expect(json).toHaveBeenCalledWith({ error: "vendor_assurance_document_already_finalized" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// document-presentation package: field overrides
+// ---------------------------------------------------------------------------
+
+describe("recordVendorAssuranceFieldOverride", () => {
+  it("403 without org context", async () => {
+    const req = buildReq({ organizationContext: undefined, params: { id: DOC_ID } });
+    const { res, status } = buildRes();
+    await recordVendorAssuranceFieldOverride(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(403);
+  });
+
+  it("400 on unknown field_name (validator) — no DB access", async () => {
+    const req = buildReq({
+      params: { id: DOC_ID },
+      body: { field_name: "not_a_field", override_value: "x", reason: "r" }
+    });
+    const { res, status, json } = buildRes();
+    await recordVendorAssuranceFieldOverride(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "unknown_field_name" });
+    expect(pgQuerySpy).not.toHaveBeenCalled();
+  });
+
+  it("400 when reason is blank", async () => {
+    const req = buildReq({
+      params: { id: DOC_ID },
+      body: { field_name: "vendor_name", override_value: "Acme", reason: "   " }
+    });
+    const { res, status, json } = buildRes();
+    await recordVendorAssuranceFieldOverride(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "reason_required" });
+  });
+
+  it("400 when reason is null", async () => {
+    const req = buildReq({
+      params: { id: DOC_ID },
+      body: { field_name: "vendor_name", override_value: "Acme", reason: null }
+    });
+    const { res, status, json } = buildRes();
+    await recordVendorAssuranceFieldOverride(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "reason_required" });
+  });
+
+  it("400 when override_value key is absent", async () => {
+    const req = buildReq({
+      params: { id: DOC_ID },
+      body: { field_name: "vendor_name", reason: "r" }
+    });
+    const { res, status, json } = buildRes();
+    await recordVendorAssuranceFieldOverride(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "override_value_required" });
+  });
+
+  it("404 when document is cross-org; never inserts", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // doc lookup
+    const req = buildReq({
+      params: { id: DOC_ID },
+      organizationContext: { organizationId: ORG_B },
+      body: { field_name: "vendor_name", override_value: "Acme", reason: "r" }
+    });
+    const { res, status, json } = buildRes();
+    await recordVendorAssuranceFieldOverride(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(404);
+    expect(json).toHaveBeenCalledWith({ error: "vendor_assurance_document_not_found" });
+    // only the doc lookup ran; no extraction read, no INSERT
+    expect(pgQuerySpy).toHaveBeenCalledTimes(1);
+    const auditCalls = (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(auditCalls.some((c) => c[0]?.eventType === "vendor_assurance.field.overridden")).toBe(false);
+  });
+
+  it("409 when document is rejected", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "rejected" }] });
+    const req = buildReq({
+      params: { id: DOC_ID },
+      body: { field_name: "vendor_name", override_value: "Acme", reason: "r" }
+    });
+    const { res, status, json } = buildRes();
+    await recordVendorAssuranceFieldOverride(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "vendor_assurance_document_not_overridable", status: "rejected" });
+  });
+
+  it("409 when document is approved (locked — version of record)", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "approved" }] });
+    const req = buildReq({
+      params: { id: DOC_ID },
+      body: { field_name: "vendor_name", override_value: "Acme", reason: "r" }
+    });
+    const { res, status, json } = buildRes();
+    await recordVendorAssuranceFieldOverride(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "vendor_assurance_document_not_overridable", status: "approved" });
+    expect(pgQuerySpy).toHaveBeenCalledTimes(1); // refused before any prior-override / extraction read
+  });
+
+  it("409 when document is finalized (legacy state)", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "finalized" }] });
+    const req = buildReq({
+      params: { id: DOC_ID },
+      body: { field_name: "vendor_name", override_value: "Acme", reason: "r" }
+    });
+    const { res, status } = buildRes();
+    await recordVendorAssuranceFieldOverride(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(409);
+  });
+
+  it("allows overrides while in manual_review_requested state", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "manual_review_requested" }] }) // doc
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // no prior override
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ fields: { vendor_name: { value: "Old", confidence: 0.9, status: "extracted" } } }] }) // extraction
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "ov-mr", overridden_at: "2026-05-12T00:00:00Z" }] }); // INSERT
+    const req = buildReq({
+      params: { id: DOC_ID },
+      body: { field_name: "vendor_name", override_value: "New", reason: "human reviewer correction" }
+    });
+    const { res, status } = buildRes();
+    await recordVendorAssuranceFieldOverride(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(201);
+  });
+
+  it("409 when no extraction exists and there is no prior override", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "extracted" }] }) // doc
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // no prior override
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // extraction missing
+    const req = buildReq({
+      params: { id: DOC_ID },
+      body: { field_name: "vendor_name", override_value: "Acme", reason: "r" }
+    });
+    const { res, status, json } = buildRes();
+    await recordVendorAssuranceFieldOverride(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "vendor_assurance_extraction_missing" });
+  });
+
+  it("happy path: captures original_value from the extraction (no prior override), INSERTs (no UPSERT), audits, returns 201", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "extracted" }] }) // doc
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // no prior override
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ fields: { vendor_name: { value: "Old Corp", confidence: 0.9, status: "extracted" } } }]
+      }) // extraction
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "ov-1", overridden_at: "2026-05-12T00:00:00Z" }] }); // INSERT
+
+    const req = buildReq({
+      params: { id: DOC_ID },
+      body: { field_name: "vendor_name", override_value: "New Corp Inc", reason: "Legal name on cover page" }
+    });
+    const { res, status, json } = buildRes();
+    await recordVendorAssuranceFieldOverride(req as never, res as never);
+
+    expect(status).toHaveBeenCalledWith(201);
+
+    const insertCall = pgQuerySpy.mock.calls[3];
+    const insertSql = insertCall?.[0] as string;
+    const insertParams = insertCall?.[1] as unknown[];
+    expect(insertSql).toMatch(/INSERT INTO vendor_assurance_field_overrides/);
+    expect(insertSql).not.toMatch(/ON CONFLICT/i);
+    expect(insertParams[0]).toBe(ORG_A);
+    expect(insertParams[1]).toBe(DOC_ID);
+    expect(insertParams[2]).toBe("vendor_name");
+    expect(insertParams[3]).toBe(JSON.stringify("Old Corp"));     // original_value, captured from the extraction
+    expect(insertParams[4]).toBe(JSON.stringify("New Corp Inc")); // override_value
+    expect(insertParams[5]).toBe("Legal name on cover page");     // reason
+
+    const auditCalls = (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const overrideAudit = auditCalls.find((c) => c[0]?.eventType === "vendor_assurance.field.overridden");
+    expect(overrideAudit).toBeDefined();
+    expect(overrideAudit?.[0]?.resourceId).toBe(DOC_ID);
+    expect(overrideAudit?.[0]?.payload).toMatchObject({
+      field_name: "vendor_name",
+      original_value: "Old Corp",
+      override_value: "New Corp Inc",
+      reason: "Legal name on cover page"
+    });
+
+    const body = json.mock.calls[0]?.[0] as { override: Record<string, unknown> };
+    expect(body.override).toMatchObject({ id: "ov-1", field_name: "vendor_name", original_value: "Old Corp" });
+  });
+
+  it("captures original_value from the prior override on a second override of the same field", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "extracted" }] }) // doc
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ override_value: "First Override Value" }] }) // PRIOR override exists
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "ov-2", overridden_at: "2026-05-12T01:00:00Z" }] }); // INSERT
+
+    const req = buildReq({
+      params: { id: DOC_ID },
+      body: { field_name: "vendor_name", override_value: "Second Override Value", reason: "second correction" }
+    });
+    const { res, status } = buildRes();
+    await recordVendorAssuranceFieldOverride(req as never, res as never);
+
+    expect(status).toHaveBeenCalledWith(201);
+    // The extraction is NOT read when a prior override exists: doc + prior-override + INSERT only.
+    expect(pgQuerySpy).toHaveBeenCalledTimes(3);
+
+    const insertParams = pgQuerySpy.mock.calls[2]?.[1] as unknown[];
+    expect(insertParams[3]).toBe(JSON.stringify("First Override Value"));  // original_value = prior override value, NOT the extraction value
+    expect(insertParams[4]).toBe(JSON.stringify("Second Override Value")); // override_value = the new value
+
+    const auditCalls = (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const overrideAudit = auditCalls.find((c) => c[0]?.eventType === "vendor_assurance.field.overridden");
+    expect(overrideAudit?.[0]?.payload).toMatchObject({
+      field_name: "vendor_name",
+      original_value: "First Override Value",
+      override_value: "Second Override Value"
+    });
+  });
+
+  it("happy path: original_value is null when the field was not extracted and there is no prior override", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "extracted" }] }) // doc
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // no prior override
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ fields: {} }] }) // extraction, no such field
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "ov-3", overridden_at: "2026-05-12T00:00:00Z" }] }); // INSERT
+    const req = buildReq({
+      params: { id: DOC_ID },
+      body: { field_name: "auditor_name", override_value: "Some LLP", reason: "Model missed it" }
+    });
+    const { res, status } = buildRes();
+    await recordVendorAssuranceFieldOverride(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(201);
+    const insertParams = pgQuerySpy.mock.calls[3]?.[1] as unknown[];
+    expect(insertParams[3]).toBeNull(); // original_value bound as SQL NULL
+  });
+});
+
+// ---------------------------------------------------------------------------
+// document-presentation package: document-level transitions
+// ---------------------------------------------------------------------------
+
+describe("approveVendorAssuranceDocument", () => {
+  it("404 cross-org", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const req = buildReq({ params: { id: DOC_ID } });
+    const { res, status } = buildRes();
+    await approveVendorAssuranceDocument(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(404);
+  });
+
+  it("400 on non-UUID document id", async () => {
+    const req = buildReq({ params: { id: "nope" } });
+    const { res, status } = buildRes();
+    await approveVendorAssuranceDocument(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(400);
+  });
+
+  it("409 when document is not in 'extracted' state", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "pending" }] });
+    const req = buildReq({ params: { id: DOC_ID } });
+    const { res, status, json } = buildRes();
+    await approveVendorAssuranceDocument(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "vendor_assurance_document_not_extracted", status: "pending" });
+  });
+
+  it("409 on lost race (UPDATE matches 0 rows)", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "extracted" }] })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const req = buildReq({ params: { id: DOC_ID } });
+    const { res, status } = buildRes();
+    await approveVendorAssuranceDocument(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(409);
+  });
+
+  it("200 happy path: sets approved + approved_at, audits vendor_assurance.document.approved", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "extracted" }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "approved" }] }); // UPDATE
+    const req = buildReq({ params: { id: DOC_ID } });
+    const { res, status, json } = buildRes();
+    await approveVendorAssuranceDocument(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(200);
+    const updateSql = pgQuerySpy.mock.calls[1]?.[0] as string;
+    expect(updateSql).toMatch(/processing_status = \$3/);
+    expect(updateSql).toMatch(/approved_at = NOW\(\)/);
+    expect(updateSql).toMatch(/AND processing_status = 'extracted'/);
+    expect((pgQuerySpy.mock.calls[1]?.[1] as unknown[])[2]).toBe("approved");
+    const auditCalls = (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(auditCalls.some((c) => c[0]?.eventType === "vendor_assurance.document.approved")).toBe(true);
+    const body = json.mock.calls[0]?.[0] as { document: { processing_status: string } };
+    expect(body.document.processing_status).toBe("approved");
+  });
+});
+
+describe("requestVendorAssuranceManualReview", () => {
+  it("400 when comment is not a string", async () => {
+    const req = buildReq({ params: { id: DOC_ID }, body: { comment: 123 } });
+    const { res, status, json } = buildRes();
+    await requestVendorAssuranceManualReview(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "comment_must_be_string" });
+    expect(pgQuerySpy).not.toHaveBeenCalled();
+  });
+
+  it("404 cross-org", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const req = buildReq({ params: { id: DOC_ID }, body: {} });
+    const { res, status } = buildRes();
+    await requestVendorAssuranceManualReview(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(404);
+  });
+
+  it("409 when not in 'extracted' state", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "approved" }] });
+    const req = buildReq({ params: { id: DOC_ID }, body: {} });
+    const { res, status } = buildRes();
+    await requestVendorAssuranceManualReview(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(409);
+  });
+
+  it("200 happy path: sets manual_review_requested, does NOT touch approved_at, audits with comment", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "extracted" }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "manual_review_requested" }] });
+    const req = buildReq({ params: { id: DOC_ID }, body: { comment: "Needs a human pass on the exceptions table" } });
+    const { res, status } = buildRes();
+    await requestVendorAssuranceManualReview(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(200);
+    const updateSql = pgQuerySpy.mock.calls[1]?.[0] as string;
+    // The non-approve transitions must not write approved_at in the SET clause
+    // (approved_at still appears in the RETURNING DOC_SELECT column list).
+    expect(updateSql).not.toMatch(/approved_at = NOW\(\)/);
+    expect((pgQuerySpy.mock.calls[1]?.[1] as unknown[])[2]).toBe("manual_review_requested");
+    const auditCalls = (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const ev = auditCalls.find((c) => c[0]?.eventType === "vendor_assurance.document.manual_review_requested");
+    expect(ev).toBeDefined();
+    expect(ev?.[0]?.payload).toMatchObject({ comment: "Needs a human pass on the exceptions table" });
+  });
+});
+
+describe("rejectVendorAssuranceDocument", () => {
+  it("400 when reason is empty", async () => {
+    const req = buildReq({ params: { id: DOC_ID }, body: { reason: "" } });
+    const { res, status, json } = buildRes();
+    await rejectVendorAssuranceDocument(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "reason_required" });
+    expect(pgQuerySpy).not.toHaveBeenCalled();
+  });
+
+  it("400 when reason is missing", async () => {
+    const req = buildReq({ params: { id: DOC_ID }, body: {} });
+    const { res, status } = buildRes();
+    await rejectVendorAssuranceDocument(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(400);
+  });
+
+  it("404 cross-org", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const req = buildReq({ params: { id: DOC_ID }, body: { reason: "low quality" } });
+    const { res, status } = buildRes();
+    await rejectVendorAssuranceDocument(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(404);
+  });
+
+  it("409 when not in 'extracted' state", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "rejected" }] });
+    const req = buildReq({ params: { id: DOC_ID }, body: { reason: "low quality" } });
+    const { res, status } = buildRes();
+    await rejectVendorAssuranceDocument(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(409);
+  });
+
+  it("200 happy path: sets rejected, audits with reason", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "extracted" }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "rejected" }] });
+    const req = buildReq({ params: { id: DOC_ID }, body: { reason: "extraction quality too low to rely on" } });
+    const { res, status } = buildRes();
+    await rejectVendorAssuranceDocument(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(200);
+    expect((pgQuerySpy.mock.calls[1]?.[1] as unknown[])[2]).toBe("rejected");
+    const auditCalls = (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const ev = auditCalls.find((c) => c[0]?.eventType === "vendor_assurance.document.rejected");
+    expect(ev).toBeDefined();
+    expect(ev?.[0]?.payload).toMatchObject({ reason: "extraction quality too low to rely on" });
   });
 });

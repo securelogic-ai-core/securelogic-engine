@@ -25,6 +25,8 @@ const VALID_DECISIONS = ["accept", "edit", "reject"] as const;
 export const MAX_BYTE_SIZE = 25 * 1024 * 1024; // 25 MB
 export const MAX_FILENAME = 255;
 export const MAX_REVIEWER_NOTE = 2000;
+export const MAX_OVERRIDE_REASON = 1000;
+export const MAX_MANUAL_REVIEW_COMMENT = 1000;
 
 export type UploadMetadata = {
   vendor_id: string;
@@ -42,6 +44,21 @@ export type ReviewDecisionInput = {
 
 export type ReviewDecisionsInput = {
   decisions: ReviewDecisionInput[];
+};
+
+export type FieldOverrideInput = {
+  field_name: string;
+  /** Any JSON value the reviewer wants to substitute for the extracted value. */
+  override_value: unknown;
+  reason: string;
+};
+
+export type RejectInput = {
+  reason: string;
+};
+
+export type ManualReviewInput = {
+  comment: string | null;
 };
 
 export type ValidationOk<T> = { input: T };
@@ -190,4 +207,94 @@ export function computeFinalizePrecondition(
   }
   if (missing.length === 0) return { ok: true };
   return { ok: false, missing_field_names: missing };
+}
+
+// ---------------------------------------------------------------------------
+// Document-presentation package: field-override + reject + manual-review bodies
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate the body of POST .../field-overrides:
+ *   { field_name: <material field>, override_value: <any JSON value>, reason: <non-empty string> }
+ *
+ * `override_value` may be any JSON value INCLUDING null (a reviewer may
+ * legitimately override an extracted value to "none"); it must, however, be
+ * present as a key — `undefined` is rejected. `reason` is required and must be
+ * a non-empty string after trimming; it is sanitized + clamped to
+ * MAX_OVERRIDE_REASON.
+ */
+export function validateFieldOverrideBody(
+  body: unknown
+): ValidationOk<FieldOverrideInput> | ValidationErr {
+  if (!isPlainObject(body)) {
+    return { error: "request_body_must_be_object" };
+  }
+
+  const fieldName = body["field_name"];
+  if (typeof fieldName !== "string" || !isMaterialFieldName(fieldName)) {
+    return {
+      error: "unknown_field_name",
+      detail: `field_name must be one of: ${MATERIAL_FIELD_NAMES.join(", ")}`
+    };
+  }
+
+  if (!("override_value" in body) || body["override_value"] === undefined) {
+    return { error: "override_value_required" };
+  }
+  const overrideValue = body["override_value"];
+
+  const reasonRaw = body["reason"];
+  if (typeof reasonRaw !== "string" || reasonRaw.trim().length === 0) {
+    return { error: "reason_required" };
+  }
+  const reason = sanitizeString(reasonRaw.trim(), MAX_OVERRIDE_REASON);
+  if (reason.length === 0) {
+    return { error: "reason_required" };
+  }
+
+  return { input: { field_name: fieldName, override_value: overrideValue, reason } };
+}
+
+/**
+ * Validate the body of POST .../reject:  { reason: <non-empty string> }.
+ */
+export function validateRejectBody(
+  body: unknown
+): ValidationOk<RejectInput> | ValidationErr {
+  if (!isPlainObject(body)) {
+    return { error: "request_body_must_be_object" };
+  }
+  const reasonRaw = body["reason"];
+  if (typeof reasonRaw !== "string" || reasonRaw.trim().length === 0) {
+    return { error: "reason_required" };
+  }
+  const reason = sanitizeString(reasonRaw.trim(), MAX_OVERRIDE_REASON);
+  if (reason.length === 0) {
+    return { error: "reason_required" };
+  }
+  return { input: { reason } };
+}
+
+/**
+ * Validate the body of POST .../request-manual-review:
+ *   { comment?: <string> }   — optional; sanitized + clamped; absent/blank → null.
+ */
+export function validateManualReviewBody(
+  body: unknown
+): ValidationOk<ManualReviewInput> | ValidationErr {
+  if (body === undefined || body === null) {
+    return { input: { comment: null } };
+  }
+  if (!isPlainObject(body)) {
+    return { error: "request_body_must_be_object" };
+  }
+  const commentRaw = body["comment"];
+  if (commentRaw === undefined || commentRaw === null) {
+    return { input: { comment: null } };
+  }
+  if (typeof commentRaw !== "string") {
+    return { error: "comment_must_be_string" };
+  }
+  const cleaned = sanitizeString(commentRaw.trim(), MAX_MANUAL_REVIEW_COMMENT);
+  return { input: { comment: cleaned.length === 0 ? null : cleaned } };
 }

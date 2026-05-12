@@ -2,9 +2,13 @@ import { describe, it, expect } from "vitest";
 import {
   validateUploadMetadata,
   validateReviewDecisions,
+  validateFieldOverrideBody,
+  validateRejectBody,
+  validateManualReviewBody,
   computeFinalizePrecondition,
   isUuid,
-  MAX_BYTE_SIZE
+  MAX_BYTE_SIZE,
+  MAX_OVERRIDE_REASON
 } from "../lib/vendorAssuranceValidation.js";
 import { MATERIAL_FIELD_NAMES } from "../lib/socExtractionPrompt.js";
 
@@ -178,6 +182,114 @@ describe("validateReviewDecisions", () => {
     if ("input" in r) {
       expect(r.input.decisions[0]?.reviewed_value).toBeNull();
     }
+  });
+});
+
+describe("validateFieldOverrideBody", () => {
+  it("accepts a material field + value + reason", () => {
+    const r = validateFieldOverrideBody({
+      field_name: "vendor_name",
+      override_value: "Acme Inc",
+      reason: "Legal name on cover page"
+    });
+    expect("input" in r).toBe(true);
+    if ("input" in r) {
+      expect(r.input.field_name).toBe("vendor_name");
+      expect(r.input.override_value).toBe("Acme Inc");
+      expect(r.input.reason).toBe("Legal name on cover page");
+    }
+  });
+
+  it("accepts a null override_value (override to 'none')", () => {
+    const r = validateFieldOverrideBody({
+      field_name: "subservice_method",
+      override_value: null,
+      reason: "Not applicable for this report"
+    });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.override_value).toBeNull();
+  });
+
+  it("accepts an array override_value", () => {
+    const r = validateFieldOverrideBody({
+      field_name: "trust_services_criteria",
+      override_value: ["Security", "Availability"],
+      reason: "TSC list corrected"
+    });
+    expect("input" in r).toBe(true);
+  });
+
+  it("rejects unknown field_name", () => {
+    const r = validateFieldOverrideBody({ field_name: "not_a_field", override_value: "x", reason: "r" });
+    expect(r).toHaveProperty("error", "unknown_field_name");
+  });
+
+  it("rejects absent override_value key", () => {
+    const r = validateFieldOverrideBody({ field_name: "vendor_name", reason: "r" });
+    expect(r).toHaveProperty("error", "override_value_required");
+  });
+
+  it("rejects missing / blank / null / non-string reason", () => {
+    expect(validateFieldOverrideBody({ field_name: "vendor_name", override_value: "x" })).toHaveProperty("error", "reason_required");
+    expect(validateFieldOverrideBody({ field_name: "vendor_name", override_value: "x", reason: "   " })).toHaveProperty("error", "reason_required");
+    expect(validateFieldOverrideBody({ field_name: "vendor_name", override_value: "x", reason: null })).toHaveProperty("error", "reason_required");
+    expect(validateFieldOverrideBody({ field_name: "vendor_name", override_value: "x", reason: 42 })).toHaveProperty("error", "reason_required");
+  });
+
+  it("clamps reason to MAX_OVERRIDE_REASON", () => {
+    const r = validateFieldOverrideBody({
+      field_name: "vendor_name",
+      override_value: "x",
+      reason: "a".repeat(MAX_OVERRIDE_REASON + 500)
+    });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.reason.length).toBeLessThanOrEqual(MAX_OVERRIDE_REASON);
+  });
+
+  it("rejects non-object body", () => {
+    expect(validateFieldOverrideBody("nope")).toHaveProperty("error", "request_body_must_be_object");
+  });
+});
+
+describe("validateRejectBody", () => {
+  it("accepts a non-empty reason", () => {
+    const r = validateRejectBody({ reason: "Extraction quality too low" });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.reason).toBe("Extraction quality too low");
+  });
+  it("rejects missing / blank reason", () => {
+    expect(validateRejectBody({})).toHaveProperty("error", "reason_required");
+    expect(validateRejectBody({ reason: "" })).toHaveProperty("error", "reason_required");
+    expect(validateRejectBody({ reason: "   " })).toHaveProperty("error", "reason_required");
+  });
+  it("rejects non-object body", () => {
+    expect(validateRejectBody(null)).toHaveProperty("error", "request_body_must_be_object");
+  });
+});
+
+describe("validateManualReviewBody", () => {
+  it("accepts a missing body (comment null)", () => {
+    const r = validateManualReviewBody(undefined);
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.comment).toBeNull();
+  });
+  it("accepts an empty object (comment null)", () => {
+    const r = validateManualReviewBody({});
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.comment).toBeNull();
+  });
+  it("accepts a comment string", () => {
+    const r = validateManualReviewBody({ comment: "Needs a human pass" });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.comment).toBe("Needs a human pass");
+  });
+  it("normalizes a blank comment to null", () => {
+    const r = validateManualReviewBody({ comment: "   " });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.comment).toBeNull();
+  });
+  it("rejects a non-string comment", () => {
+    expect(validateManualReviewBody({ comment: 7 })).toHaveProperty("error", "comment_must_be_string");
   });
 });
 

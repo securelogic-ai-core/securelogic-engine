@@ -11,16 +11,22 @@ const STATUSES: readonly VendorAssuranceProcessingStatus[] = [
   "pending",
   "extracting",
   "extracted",
+  "manual_review_requested",
+  "approved",
+  "rejected",
   "extraction_failed",
   "finalized",
 ];
 
 const STATUS_LABEL: Record<VendorAssuranceProcessingStatus, string> = {
-  pending:           "Pending",
-  extracting:        "Extracting",
-  extracted:         "Extracted",
-  extraction_failed: "Extraction failed",
-  finalized:         "Finalized",
+  pending:                 "Pending",
+  extracting:              "Extracting",
+  extracted:               "Extracted",
+  manual_review_requested: "Manual review requested",
+  approved:                "Approved",
+  rejected:                "Rejected",
+  extraction_failed:       "Extraction failed",
+  finalized:               "Finalized (legacy)",
 };
 
 function isStatus(v: string | undefined): v is VendorAssuranceProcessingStatus {
@@ -65,8 +71,9 @@ export default async function VendorAssuranceQueuePage({
       <header style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 28, fontWeight: 600, margin: 0 }}>Vendor Assurance — Review Queue</h1>
         <p style={{ color: "#9ca3af", marginTop: 8 }}>
-          SOC reports uploaded for vendor-assurance extraction. Reviewer accepts, edits, or rejects each
-          extracted material field, then finalizes the document. Reviewed values appear on the vendor detail.
+          SOC reports uploaded for vendor-assurance extraction. Open a document to review the cover sheet,
+          complementary user entity controls, and exceptions against the source PDF, correct any extracted
+          field inline, then approve, request manual review, or reject the extraction.
         </p>
       </header>
 

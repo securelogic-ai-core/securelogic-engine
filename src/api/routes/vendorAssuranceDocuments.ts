@@ -14,7 +14,11 @@
  *   GET    /api/vendor-assurance/documents/:id/extraction
  *   GET    /api/vendor-assurance/documents/:id/pdf
  *   POST   /api/vendor-assurance/extractions/:id/review-decisions
- *   POST   /api/vendor-assurance/documents/:id/finalize
+ *   POST   /api/vendor-assurance/documents/:id/finalize          (legacy)
+ *   POST   /api/vendor-assurance/documents/:id/field-overrides
+ *   POST   /api/vendor-assurance/documents/:id/approve
+ *   POST   /api/vendor-assurance/documents/:id/request-manual-review
+ *   POST   /api/vendor-assurance/documents/:id/reject
  *
  * Append-only review decisions: each POST review-decisions INSERTs new rows.
  * Current decision per field is computed at read time via DISTINCT ON, never
@@ -37,6 +41,9 @@ import { vendorAssuranceFeatureFlag } from "../lib/vendorAssuranceFeatureFlag.js
 import {
   validateUploadMetadata,
   validateReviewDecisions,
+  validateFieldOverrideBody,
+  validateRejectBody,
+  validateManualReviewBody,
   computeFinalizePrecondition,
   isUuid,
   MAX_BYTE_SIZE
@@ -58,7 +65,10 @@ const VALID_STATUSES = new Set([
   "extracting",
   "extracted",
   "extraction_failed",
-  "finalized"
+  "finalized",
+  "approved",
+  "manual_review_requested",
+  "rejected"
 ]);
 
 const upload = multer({
@@ -89,6 +99,8 @@ const DOC_SELECT = `
   processing_error_detail,
   finalized_at,
   finalized_by_user_id,
+  approved_at,
+  approved_by_user_id,
   created_at,
   updated_at
 `;
@@ -365,8 +377,35 @@ export async function getVendorAssuranceExtraction(req: Request, res: Response):
       WHERE document_id = $1 AND organization_id = $2`,
     [documentId, organizationId]
   );
+  // Current override per material field (latest by overridden_at). Document-
+  // scoped — independent of whether an extraction exists, though the override
+  // route refuses to record one without an extraction.
+  const overridesResult = await pg.query<{
+    field_name: string;
+    original_value: unknown;
+    override_value: unknown;
+    reason: string;
+    overridden_by_user_id: string | null;
+    overridden_at: string;
+  }>(
+    `SELECT DISTINCT ON (field_name)
+            field_name, original_value, override_value, reason,
+            overridden_by_user_id, overridden_at
+       FROM vendor_assurance_field_overrides
+      WHERE document_id = $1 AND organization_id = $2
+      ORDER BY field_name, overridden_at DESC, id DESC`,
+    [documentId, organizationId]
+  );
+  const fieldOverrides = overridesResult.rows;
+
   if ((extractionResult.rowCount ?? 0) === 0) {
-    res.status(200).json({ extraction: null, spans: [], current_decisions: {} });
+    res.status(200).json({
+      extraction: null,
+      spans: [],
+      current_decisions: {},
+      field_overrides: fieldOverrides,
+      material_field_names: MATERIAL_FIELD_NAMES
+    });
     return;
   }
   const extraction = extractionResult.rows[0]!;
@@ -419,6 +458,7 @@ export async function getVendorAssuranceExtraction(req: Request, res: Response):
     extraction,
     spans: spansResult.rows,
     current_decisions: currentDecisions,
+    field_overrides: fieldOverrides,
     material_field_names: MATERIAL_FIELD_NAMES
   });
 }
@@ -706,6 +746,278 @@ export async function finalizeVendorAssuranceDocument(req: Request, res: Respons
 }
 
 /* =========================================================
+   Shared helper for the document-presentation document-level actions:
+   approve / request-manual-review / reject. All three require the document
+   to be in 'extracted' state, mutate it to a target status (and conditionally
+   set approved_at / approved_by_user_id), and audit. The UPDATE re-asserts
+   processing_status = 'extracted' so a lost race returns 409 rather than a
+   double transition.
+   ========================================================= */
+async function transitionExtractedDocument(
+  req: Request,
+  res: Response,
+  opts: {
+    targetStatus: "approved" | "manual_review_requested" | "rejected";
+    setApproved: boolean;
+    eventType: string;
+    auditPayload: Record<string, unknown>;
+  }
+): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const documentId = String(req.params["id"] ?? "").trim();
+  if (!isUuid(documentId)) {
+    res.status(400).json({ error: "document_id_must_be_uuid" });
+    return;
+  }
+
+  const docResult = await pg.query<{ id: string; processing_status: string }>(
+    `SELECT id, processing_status FROM vendor_assurance_documents
+      WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+    [documentId, organizationId]
+  );
+  if ((docResult.rowCount ?? 0) === 0) {
+    res.status(404).json({ error: "vendor_assurance_document_not_found" });
+    return;
+  }
+  const doc = docResult.rows[0]!;
+  if (doc.processing_status !== "extracted") {
+    res.status(409).json({
+      error: "vendor_assurance_document_not_extracted",
+      status: doc.processing_status
+    });
+    return;
+  }
+
+  const update = opts.setApproved
+    ? await pg.query(
+        `UPDATE vendor_assurance_documents
+            SET processing_status = $3,
+                approved_at = NOW(),
+                approved_by_user_id = $4,
+                updated_at = NOW()
+          WHERE id = $1 AND organization_id = $2
+            AND processing_status = 'extracted'
+          RETURNING ${DOC_SELECT}`,
+        [documentId, organizationId, opts.targetStatus, req.userId ?? null]
+      )
+    : await pg.query(
+        `UPDATE vendor_assurance_documents
+            SET processing_status = $3,
+                updated_at = NOW()
+          WHERE id = $1 AND organization_id = $2
+            AND processing_status = 'extracted'
+          RETURNING ${DOC_SELECT}`,
+        [documentId, organizationId, opts.targetStatus]
+      );
+  if ((update.rowCount ?? 0) === 0) {
+    // Lost a race — another request already moved it out of 'extracted'.
+    res.status(409).json({ error: "vendor_assurance_document_not_extracted" });
+    return;
+  }
+
+  writeAuditEvent({
+    organizationId,
+    actorApiKeyId: getApiKeyId(req),
+    actorUserId: req.userId ?? null,
+    eventType: opts.eventType,
+    resourceType: "vendor_assurance_document",
+    resourceId: documentId,
+    payload: opts.auditPayload,
+    ipAddress: req.ip ?? null
+  });
+
+  res.status(200).json({ document: update.rows[0] });
+}
+
+/* =========================================================
+   POST /api/vendor-assurance/documents/:id/field-overrides
+   Append-only INSERT of one reviewer override of an extracted material field,
+   with a REQUIRED reason. original_value is captured at write time from
+   whatever was currently displayed for the field — the latest prior override
+   if one exists, else the original extraction value — so a chain of overrides
+   keeps a faithful "what the reviewer saw before each change" trail.
+   Refused on approved / rejected / finalized documents (locked states).
+   ========================================================= */
+export async function recordVendorAssuranceFieldOverride(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const documentId = String(req.params["id"] ?? "").trim();
+  if (!isUuid(documentId)) {
+    res.status(400).json({ error: "document_id_must_be_uuid" });
+    return;
+  }
+
+  const validated = validateFieldOverrideBody(req.body);
+  if ("error" in validated) {
+    res.status(400).json(validated);
+    return;
+  }
+  const { field_name, override_value, reason } = validated.input;
+
+  const docResult = await pg.query<{ id: string; processing_status: string }>(
+    `SELECT id, processing_status FROM vendor_assurance_documents
+      WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+    [documentId, organizationId]
+  );
+  if ((docResult.rowCount ?? 0) === 0) {
+    res.status(404).json({ error: "vendor_assurance_document_not_found" });
+    return;
+  }
+  const status = docResult.rows[0]!.processing_status;
+  // Locked states: 'rejected' (terminal), 'approved' (terminal-success / the
+  // version of record — correcting it requires a future explicit re-open
+  // action, out of scope here), and the legacy 'finalized'.
+  // 'manual_review_requested' stays editable — that is the state where a human
+  // reviewer corrects fields.
+  if (status === "rejected" || status === "approved" || status === "finalized") {
+    res.status(409).json({ error: "vendor_assurance_document_not_overridable", status });
+    return;
+  }
+
+  // Capture the value the reviewer is overriding, i.e. whatever is currently
+  // displayed for this field: the latest prior override if one exists, else the
+  // original extraction value. An override requires an extraction to exist; the
+  // field itself may legitimately carry a null value (model missed it) — that
+  // is still overridable. A prior override implies the extraction exists.
+  const priorOverride = await pg.query<{ override_value: unknown }>(
+    `SELECT override_value FROM vendor_assurance_field_overrides
+      WHERE document_id = $1 AND organization_id = $2 AND field_name = $3
+      ORDER BY overridden_at DESC, id DESC
+      LIMIT 1`,
+    [documentId, organizationId, field_name]
+  );
+
+  let originalValue: unknown;
+  if ((priorOverride.rowCount ?? 0) > 0) {
+    originalValue = priorOverride.rows[0]!.override_value;
+  } else {
+    const extractionResult = await pg.query<{ fields: Record<string, { value?: unknown }> | null }>(
+      `SELECT fields FROM vendor_assurance_extractions
+        WHERE document_id = $1 AND organization_id = $2 LIMIT 1`,
+      [documentId, organizationId]
+    );
+    if ((extractionResult.rowCount ?? 0) === 0) {
+      res.status(409).json({ error: "vendor_assurance_extraction_missing" });
+      return;
+    }
+    const fields = extractionResult.rows[0]!.fields ?? {};
+    originalValue = fields[field_name]?.value ?? null;
+  }
+
+  let inserted: { id: string; overridden_at: string };
+  try {
+    const ins = await pg.query<{ id: string; overridden_at: string }>(
+      `INSERT INTO vendor_assurance_field_overrides
+         (organization_id, document_id, field_name, original_value, override_value, reason, overridden_by_user_id)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7)
+       RETURNING id, overridden_at`,
+      [
+        organizationId,
+        documentId,
+        field_name,
+        originalValue === null || originalValue === undefined ? null : JSON.stringify(originalValue),
+        override_value === null || override_value === undefined ? null : JSON.stringify(override_value),
+        reason,
+        req.userId ?? null
+      ]
+    );
+    inserted = ins.rows[0]!;
+  } catch (err) {
+    logger.error(
+      { event: "vendor_assurance_field_override_insert_failed", organizationId, documentId, field_name, err },
+      "Vendor-assurance field override insert failed"
+    );
+    res.status(500).json({ error: "field_override_insert_failed" });
+    return;
+  }
+
+  writeAuditEvent({
+    organizationId,
+    actorApiKeyId: getApiKeyId(req),
+    actorUserId: req.userId ?? null,
+    eventType: "vendor_assurance.field.overridden",
+    resourceType: "vendor_assurance_document",
+    resourceId: documentId,
+    payload: {
+      field_name,
+      original_value: originalValue,
+      override_value,
+      reason
+    },
+    ipAddress: req.ip ?? null
+  });
+
+  res.status(201).json({
+    override: {
+      id: inserted.id,
+      document_id: documentId,
+      field_name,
+      original_value: originalValue,
+      override_value,
+      reason,
+      overridden_by_user_id: req.userId ?? null,
+      overridden_at: inserted.overridden_at
+    }
+  });
+}
+
+/* =========================================================
+   POST /api/vendor-assurance/documents/:id/approve
+   extracted → approved. Conceptual replacement for the legacy finalize flow.
+   ========================================================= */
+export async function approveVendorAssuranceDocument(req: Request, res: Response): Promise<void> {
+  await transitionExtractedDocument(req, res, {
+    targetStatus: "approved",
+    setApproved: true,
+    eventType: "vendor_assurance.document.approved",
+    auditPayload: {}
+  });
+}
+
+/* =========================================================
+   POST /api/vendor-assurance/documents/:id/request-manual-review { comment? }
+   extracted → manual_review_requested. NOT terminal.
+   ========================================================= */
+export async function requestVendorAssuranceManualReview(req: Request, res: Response): Promise<void> {
+  const validated = validateManualReviewBody(req.body);
+  if ("error" in validated) {
+    res.status(400).json(validated);
+    return;
+  }
+  await transitionExtractedDocument(req, res, {
+    targetStatus: "manual_review_requested",
+    setApproved: false,
+    eventType: "vendor_assurance.document.manual_review_requested",
+    auditPayload: { comment: validated.input.comment }
+  });
+}
+
+/* =========================================================
+   POST /api/vendor-assurance/documents/:id/reject { reason }
+   extracted → rejected. Terminal.
+   ========================================================= */
+export async function rejectVendorAssuranceDocument(req: Request, res: Response): Promise<void> {
+  const validated = validateRejectBody(req.body);
+  if ("error" in validated) {
+    res.status(400).json(validated);
+    return;
+  }
+  await transitionExtractedDocument(req, res, {
+    targetStatus: "rejected",
+    setApproved: false,
+    eventType: "vendor_assurance.document.rejected",
+    auditPayload: { reason: validated.input.reason }
+  });
+}
+
+/* =========================================================
    Multer error handler — translate file-size and unsupported-type errors
    into the canonical 413 / 400 responses for the upload route.
    ========================================================= */
@@ -797,6 +1109,42 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("standard"),
   finalizeVendorAssuranceDocument
+);
+
+router.post(
+  "/vendor-assurance/documents/:id/field-overrides",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  recordVendorAssuranceFieldOverride
+);
+
+router.post(
+  "/vendor-assurance/documents/:id/approve",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  approveVendorAssuranceDocument
+);
+
+router.post(
+  "/vendor-assurance/documents/:id/request-manual-review",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  requestVendorAssuranceManualReview
+);
+
+router.post(
+  "/vendor-assurance/documents/:id/reject",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  rejectVendorAssuranceDocument
 );
 
 export default router;
