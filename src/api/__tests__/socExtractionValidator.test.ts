@@ -222,4 +222,25 @@ describe("validateSocExtraction — material-conclusion span enforcement", () =>
       expect(r.detail).toBe("auditor_opinion");
     }
   });
+
+  it("accepts a span-requiring field that has value null and zero spans (nothing to span)", () => {
+    const targetField = FIELD_NAMES_REQUIRING_SPANS[0]!;
+    const fields = buildAllFields();
+    fields[targetField] = fieldStub(null, 0);
+    const spans = buildMinimalSpans().filter((s) => s["field_name"] !== targetField);
+    const r = validateSocExtraction({ fields, source_spans: spans });
+    expect(r.ok).toBe(true);
+  });
+
+  it("still rejects a span-requiring field with a non-null value and zero spans", () => {
+    const targetField = FIELD_NAMES_REQUIRING_SPANS[0]!;
+    const fields = buildAllFields(); // targetField has a valid non-null value
+    const spans = buildMinimalSpans().filter((s) => s["field_name"] !== targetField);
+    const r = validateSocExtraction({ fields, source_spans: spans });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toBe("material_field_missing_span");
+      expect(r.detail).toBe(targetField);
+    }
+  });
 });

@@ -22,6 +22,13 @@
  * (material_field_missing_span). A single sloppy span must not sink the whole
  * extraction. Malformed spans (non-object, unknown field_name, bad offsets,
  * bad page_number) are still hard-rejected.
+ *
+ * Leniency on null values: a field marked requiresSourceSpan is exempt from the
+ * material_field_missing_span check when its extracted value is null. The
+ * invariant is "spanned ⇒ there is a value to span" — a field legitimately
+ * absent from the source document (value null, confidence 0) cannot carry a
+ * quote, so demanding one is incoherent. Fields with a non-null value still
+ * require ≥ 1 span as before.
  */
 
 import {
@@ -177,9 +184,12 @@ export function validateSocExtraction(raw: unknown): ValidationResult {
     });
   }
 
-  // Material-conclusion fields must each have ≥ 1 span.
+  // Material-conclusion fields must each have ≥ 1 span — unless the field's
+  // extracted value is null, in which case there is nothing to span and the
+  // requirement is waived (see header docstring: "spanned ⇒ value to span").
   const spannedFields = new Set(spans.map((s) => s.field_name));
   for (const required of FIELD_NAMES_REQUIRING_SPANS) {
+    if (fields[required]?.value === null) continue;
     if (!spannedFields.has(required)) {
       return { ok: false, error: "material_field_missing_span", detail: required };
     }
