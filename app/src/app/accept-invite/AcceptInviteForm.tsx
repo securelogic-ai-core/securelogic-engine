@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import PasswordInput from "@/components/PasswordInput";
 
 interface Props {
   token: string;
@@ -236,9 +237,8 @@ export default function AcceptInviteForm({ token, email, orgName, inviterName, r
               <label htmlFor="password" style={labelStyle}>
                 Password
               </label>
-              <input
+              <PasswordInput
                 id="password"
-                type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="12+ characters"
@@ -261,9 +261,8 @@ export default function AcceptInviteForm({ token, email, orgName, inviterName, r
               <label htmlFor="confirmPassword" style={labelStyle}>
                 Confirm Password
               </label>
-              <input
+              <PasswordInput
                 id="confirmPassword"
-                type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Re-enter password"

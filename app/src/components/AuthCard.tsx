@@ -1,11 +1,26 @@
 "use client";
 
+import PasswordInput from "./PasswordInput";
+
 /**
  * AuthCard — dark navy card wrapper shared across all auth pages.
  * Logo + tagline at top, card in center, max-width 420px.
  */
 
 const LOGO_URL = "https://api.securelogicai.com/assets/logo.png";
+
+/** Shared inline style for AuthInput's underlying <input> (and its PasswordInput variant). */
+const authInputStyle = {
+  width: "100%",
+  boxSizing: "border-box" as const,
+  backgroundColor: "#060d18",
+  border: "1px solid #1e2d45",
+  borderRadius: "8px",
+  padding: "12px 14px",
+  fontSize: "15px",
+  color: "#f1f5f9",
+  outline: "none",
+};
 
 const styles = {
   page: {
@@ -131,35 +146,46 @@ export function AuthInput({
       >
         {label}
       </label>
-      <input
-        id={id}
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        autoComplete={autoComplete}
-        required={required}
-        style={{
-          width: "100%",
-          boxSizing: "border-box",
-          backgroundColor: "#060d18",
-          border: "1px solid #1e2d45",
-          borderRadius: "8px",
-          padding: "12px 14px",
-          fontSize: "15px",
-          color: "#f1f5f9",
-          outline: "none",
-        }}
-        onFocus={(e) => {
-          e.currentTarget.style.borderColor = "#00c4b4";
-          e.currentTarget.style.boxShadow = "0 0 0 2px rgba(0,196,180,0.15)";
-        }}
-        onBlur={(e) => {
-          e.currentTarget.style.borderColor = "#1e2d45";
-          e.currentTarget.style.boxShadow = "none";
-          onBlur?.();
-        }}
-      />
+      {type === "password" ? (
+        <PasswordInput
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          required={required}
+          style={authInputStyle}
+          onFocus={(e) => {
+            e.currentTarget.style.borderColor = "#00c4b4";
+            e.currentTarget.style.boxShadow = "0 0 0 2px rgba(0,196,180,0.15)";
+          }}
+          onBlur={(e) => {
+            e.currentTarget.style.borderColor = "#1e2d45";
+            e.currentTarget.style.boxShadow = "none";
+            onBlur?.();
+          }}
+        />
+      ) : (
+        <input
+          id={id}
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          required={required}
+          style={authInputStyle}
+          onFocus={(e) => {
+            e.currentTarget.style.borderColor = "#00c4b4";
+            e.currentTarget.style.boxShadow = "0 0 0 2px rgba(0,196,180,0.15)";
+          }}
+          onBlur={(e) => {
+            e.currentTarget.style.borderColor = "#1e2d45";
+            e.currentTarget.style.boxShadow = "none";
+            onBlur?.();
+          }}
+        />
+      )}
     </div>
   );
 }

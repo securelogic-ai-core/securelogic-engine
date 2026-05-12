@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import PasswordInput from "@/components/PasswordInput";
 
 type Step = "idle" | "qr" | "confirm" | "backup" | "disabling";
 
@@ -263,8 +264,7 @@ export default function MfaSection({ totpEnabled: initialEnabled }: MfaSectionPr
           <p className="text-sm text-slate-700 font-medium">Confirm to disable two-factor authentication</p>
           <div>
             <label className="text-xs text-slate-500 mb-1 block">Current password</label>
-            <input
-              type="password"
+            <PasswordInput
               value={disablePass}
               onChange={(e) => { setDisablePass(e.target.value); setError(null); }}
               placeholder="Your password"
