@@ -31,7 +31,9 @@ Architecture: **engine routes do persistence + audit; app server actions are thi
 
 `controls` lives on the Cover Sheet as the "what was tested" summary rather than getting its own section. Labels mirror `MATERIAL_FIELDS[].label` in `src/api/lib/socExtractionPrompt.ts` (kept in sync by hand — the engine and app are separate packages; the UI falls back to the raw field name if a label drifts).
 
-Per the constraint *do not modify the SOC extraction prompt or validator*, the Exceptions section renders only the schema's actual per-exception fields — `control_id`, `description`, `auditor_assessment` — and joins `management_responses` to exceptions by `exception_ref`. **CUECs** render as a list of strings; if a source span happens to be tagged `field_name: "cuecs"` it is shown inline as supporting evidence beneath the list, but no per-item span structure is implied.
+Per the constraint *do not modify the SOC extraction prompt or validator*, the Exceptions section renders only the schema's actual per-exception fields — `control_id`, `description`, `auditor_assessment` — and joins `management_responses` to exceptions by `exception_ref`.
+
+**CUECs:** as of the `vendor-assurance-cuec-matcher` package (Package 2), the Complementary User Entity Controls section is no longer a flat string list — it renders one card per CUEC with its mapping status against the customer's controls inventory (suggested matches with Accept/Dismiss, accepted controls as chips, or "no applicable control"), plus a Re-match button. The raw `cuecs` array is still shown beneath an "Underlying extracted CUEC list" divider via the `FieldRow` primitive, which carries the whole-array override affordance (overriding the list triggers a CUEC re-extract + re-match). See `docs/vendor-assurance-cuec-matching-design.md`. Overriding the `cuecs` field is locked on `approved`/`rejected`/`finalized` like every field override; CUEC *mapping*, by contrast, stays editable post-approve (it is its own workflow).
 
 ---
 
@@ -127,7 +129,7 @@ The existing `vendor_assurance_documents_finalized_consistency` CHECK hard-codes
 
 - **PDF span highlighting** — overlaying the extraction's source spans on the rendered PDF. Out of scope here; depends on same-origin PDF bytes (now in place). → Package 1.5.
 - **`severity` and `remediation_plan` on exceptions** — these fields do not exist in the SOC extraction schema. Adding them requires a future extraction-schema package: bump `PROMPT_VERSION` (prompt v3), extend `MATERIAL_FIELDS`, update `socExtractionValidator.ts`. Explicitly forbidden in this package ("do not modify the SOC extraction prompt or validator").
-- **CUEC matcher / suggestion queue** — mapping CUECs to the customer's own controls. → Package 2.
+- ~~**CUEC matcher / suggestion queue** — mapping CUECs to the customer's own controls. → Package 2.~~ **Delivered** in the `vendor-assurance-cuec-matcher` package — see `docs/vendor-assurance-cuec-matching-design.md`.
 - **Excel / PDF export** of the reviewed document. → Package 3.
 - **Legacy review-flow removal** — the `vendor_assurance_review_decisions` table, the `POST .../review-decisions` and `POST .../finalize` routes/handlers, and the `'finalized'` CHECK value all become dead once nothing reads them. Left in place here; removed in a dedicated cleanup package.
 - **`approved_by_user_id` nullability** — implemented nullable + `ON DELETE SET NULL` rather than the spec's NOT NULL, to match the existing `uploaded_by_user_id` / `finalized_by_user_id` / `decided_by_user_id` convention and to allow API-key-only callers. If a hard "approver must be a known user" rule is wanted, that is a follow-up (it would also need the route to reject when `req.userId` is absent).

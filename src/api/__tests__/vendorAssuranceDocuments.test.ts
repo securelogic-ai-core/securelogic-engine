@@ -22,10 +22,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MATERIAL_FIELD_NAMES } from "../lib/socExtractionPrompt.js";
 
-const { pgQuerySpy, pgConnectClientQuerySpy, pgConnectClientReleaseSpy } = vi.hoisted(() => ({
+const {
+  pgQuerySpy,
+  pgConnectClientQuerySpy,
+  pgConnectClientReleaseSpy,
+  refreshCuecMappingsForDocumentSpy
+} = vi.hoisted(() => ({
   pgQuerySpy: vi.fn(),
   pgConnectClientQuerySpy: vi.fn(),
-  pgConnectClientReleaseSpy: vi.fn()
+  pgConnectClientReleaseSpy: vi.fn(),
+  refreshCuecMappingsForDocumentSpy: vi.fn()
 }));
 
 vi.mock("../infra/postgres.js", () => ({
@@ -40,6 +46,12 @@ vi.mock("../infra/postgres.js", () => ({
 
 vi.mock("../lib/auditLog.js", () => ({
   writeAuditEvent: vi.fn()
+}));
+
+vi.mock("../lib/vendorAssuranceCuecMatcher.js", () => ({
+  refreshCuecMappingsForDocument: refreshCuecMappingsForDocumentSpy,
+  MATCH_SCORE_MIN_THRESHOLD: 60,
+  MATCH_SCORE_HIGH_CONFIDENCE: 85
 }));
 
 const putVendorAssurancePdfSpy = vi.fn();
@@ -68,7 +80,12 @@ import {
   recordVendorAssuranceFieldOverride,
   approveVendorAssuranceDocument,
   requestVendorAssuranceManualReview,
-  rejectVendorAssuranceDocument
+  rejectVendorAssuranceDocument,
+  getVendorAssuranceCuecs,
+  rematchVendorAssuranceCuecs,
+  createVendorAssuranceCuecMapping,
+  updateVendorAssuranceCuecMapping,
+  updateVendorAssuranceCuecReviewStatus
 } from "../routes/vendorAssuranceDocuments.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 
@@ -112,8 +129,37 @@ beforeEach(() => {
   putVendorAssurancePdfSpy.mockReset();
   getVendorAssurancePdfSignedUrlSpy.mockReset();
   scheduleExtractionSpy.mockReset();
+  refreshCuecMappingsForDocumentSpy.mockReset();
+  refreshCuecMappingsForDocumentSpy.mockResolvedValue({
+    matched: true, cuecCount: 2, controlCount: 5, suggestionsConsidered: 2, suggestionsWritten: 2
+  });
   (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mockReset();
 });
+
+// Helper: cuec/mapping row shapes used by the CUEC route tests.
+function cuecRow(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    id: "cuec-0", ordinal: 0, cuec_text: "Restrict physical access",
+    review_status: "pending", review_status_reason: null,
+    review_status_updated_by_user_id: null, review_status_updated_at: null,
+    created_at: "2026-05-12T00:00:00Z", updated_at: "2026-05-12T00:00:00Z",
+    ...overrides
+  };
+}
+function mappingRow(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    id: "map-1", cuec_id: "cuec-0", control_id: "ctl-a",
+    mapping_status: "suggested", mapping_score: 82, mapping_source: "auto",
+    reason: null, created_by_user_id: null, updated_by_user_id: null,
+    created_at: "2026-05-12T00:00:00Z", updated_at: "2026-05-12T00:00:00Z",
+    control_name: "Physical Access Control", control_description: "Badges + visitor logs", control_status: "active",
+    ...overrides
+  };
+}
+
+const CUEC_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const MAPPING_ID = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+const CONTROL_ID = "99999999-9999-4999-8999-999999999999";
 
 // ---------------------------------------------------------------------------
 // upload
@@ -949,5 +995,362 @@ describe("rejectVendorAssuranceDocument", () => {
     const ev = auditCalls.find((c) => c[0]?.eventType === "vendor_assurance.document.rejected");
     expect(ev).toBeDefined();
     expect(ev?.[0]?.payload).toMatchObject({ reason: "extraction quality too low to rely on" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CUEC matcher package: GET .../cuecs
+// ---------------------------------------------------------------------------
+
+describe("getVendorAssuranceCuecs", () => {
+  it("403 without org context", async () => {
+    const req = buildReq({ organizationContext: undefined, params: { id: DOC_ID } });
+    const { res, status } = buildRes();
+    await getVendorAssuranceCuecs(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(403);
+  });
+
+  it("400 on non-UUID document id", async () => {
+    const req = buildReq({ params: { id: "nope" } });
+    const { res, status } = buildRes();
+    await getVendorAssuranceCuecs(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(400);
+  });
+
+  it("404 when document is cross-org", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // doc check
+    const req = buildReq({ params: { id: DOC_ID }, organizationContext: { organizationId: ORG_B } });
+    const { res, status, json } = buildRes();
+    await getVendorAssuranceCuecs(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(404);
+    expect(json).toHaveBeenCalledWith({ error: "vendor_assurance_document_not_found" });
+  });
+
+  it("200 returns cuecs with mappings joined to control name + the score-band constants", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // doc check
+      .mockResolvedValueOnce({ rows: [cuecRow()] }) // cuecs
+      .mockResolvedValueOnce({ rows: [mappingRow()] }); // mappings
+    const req = buildReq({ params: { id: DOC_ID } });
+    const { res, status, json } = buildRes();
+    await getVendorAssuranceCuecs(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(200);
+    const body = json.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(body["document_id"]).toBe(DOC_ID);
+    expect(body["match_score_min_threshold"]).toBe(60);
+    expect(body["match_score_high_confidence"]).toBe(85);
+    const cuecs = body["cuecs"] as Array<Record<string, unknown>>;
+    expect(cuecs).toHaveLength(1);
+    const mappings = cuecs[0]?.["mappings"] as Array<Record<string, unknown>>;
+    expect(mappings).toHaveLength(1);
+    expect(mappings[0]?.["control_name"]).toBe("Physical Access Control");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CUEC matcher package: POST .../rematch-cuecs
+// ---------------------------------------------------------------------------
+
+describe("rematchVendorAssuranceCuecs", () => {
+  it("404 cross-org", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const req = buildReq({ params: { id: DOC_ID } });
+    const { res, status } = buildRes();
+    await rematchVendorAssuranceCuecs(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(404);
+    expect(refreshCuecMappingsForDocumentSpy).not.toHaveBeenCalled();
+  });
+
+  it("200 happy path: re-runs the matcher WITHOUT resync when cuec rows already exist, audits, returns the new cuecs", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // doc check
+      .mockResolvedValueOnce({ rows: [{ n: "3" }] }) // cuec row count
+      .mockResolvedValueOnce({ rows: [cuecRow()] }) // load cuecs
+      .mockResolvedValueOnce({ rows: [mappingRow({ mapping_status: "suggested" })] }); // load mappings
+    const req = buildReq({ params: { id: DOC_ID } });
+    const { res, status, json } = buildRes();
+    await rematchVendorAssuranceCuecs(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(200);
+    expect(refreshCuecMappingsForDocumentSpy).toHaveBeenCalledWith(DOC_ID, ORG_A, { resyncRows: false });
+    const auditCalls = (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(auditCalls.some((c) => c[0]?.eventType === "vendor_assurance.cuecs.rematched")).toBe(true);
+    const body = json.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(body["result"]).toMatchObject({ matched: true });
+    expect((body["cuecs"] as unknown[]).length).toBe(1);
+  });
+
+  it("200 bootstrap: re-syncs cuec rows from the extraction when none exist yet", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // doc check
+      .mockResolvedValueOnce({ rows: [{ n: "0" }] }) // cuec row count = 0
+      .mockResolvedValueOnce({ rows: [] }) // load cuecs (after refresh — mocked, returns []) 
+      ; // (no mappings query because no cuec rows in the loadCuecsWithMappings result)
+    const req = buildReq({ params: { id: DOC_ID } });
+    const { res, status } = buildRes();
+    await rematchVendorAssuranceCuecs(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(200);
+    expect(refreshCuecMappingsForDocumentSpy).toHaveBeenCalledWith(DOC_ID, ORG_A, { resyncRows: true });
+  });
+
+  it("500 when the matcher throws", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // doc check
+      .mockResolvedValueOnce({ rows: [{ n: "0" }] }); // cuec row count
+    refreshCuecMappingsForDocumentSpy.mockRejectedValueOnce(new Error("boom"));
+    const req = buildReq({ params: { id: DOC_ID } });
+    const { res, status, json } = buildRes();
+    await rematchVendorAssuranceCuecs(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(500);
+    expect(json).toHaveBeenCalledWith({ error: "cuec_rematch_failed" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CUEC matcher package: POST /cuecs/:id/mappings (manual create)
+// ---------------------------------------------------------------------------
+
+describe("createVendorAssuranceCuecMapping", () => {
+  it("400 on bad body (no control_id)", async () => {
+    const req = buildReq({ params: { cuecId: CUEC_ID }, body: {} });
+    const { res, status, json } = buildRes();
+    await createVendorAssuranceCuecMapping(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "control_id_must_be_uuid" });
+    expect(pgQuerySpy).not.toHaveBeenCalled();
+  });
+
+  it("404 when the cuec is cross-org", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // cuec check
+    const req = buildReq({ params: { cuecId: CUEC_ID }, body: { control_id: CONTROL_ID } });
+    const { res, status, json } = buildRes();
+    await createVendorAssuranceCuecMapping(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(404);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "vendor_assurance_cuec_not_found" });
+  });
+
+  it("404 when the control does not belong to the org", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ document_id: DOC_ID }] }) // cuec check
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // control check
+    const req = buildReq({ params: { cuecId: CUEC_ID }, body: { control_id: CONTROL_ID } });
+    const { res, status, json } = buildRes();
+    await createVendorAssuranceCuecMapping(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(404);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "control_not_found" });
+  });
+
+  it("201 creates a manual accepted mapping, audits vendor_assurance.cuec_mapping.created", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ document_id: DOC_ID }] }) // cuec check
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // control check
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "map-new" }] }) // INSERT ... ON CONFLICT
+      .mockResolvedValueOnce({ rows: [mappingRow({ id: "map-new", mapping_status: "accepted", mapping_source: "manual", mapping_score: null })] }); // fetch joined
+    const req = buildReq({ params: { cuecId: CUEC_ID }, body: { control_id: CONTROL_ID, reason: "we operate this directly" } });
+    const { res, status, json } = buildRes();
+    await createVendorAssuranceCuecMapping(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(201);
+    const insertSql = pgQuerySpy.mock.calls[2]?.[0] as string;
+    expect(insertSql).toMatch(/INSERT INTO vendor_assurance_cuec_control_mappings/);
+    expect(insertSql).toMatch(/'accepted', NULL, 'manual'/);
+    expect(insertSql).toMatch(/ON CONFLICT \(cuec_id, control_id\) DO UPDATE/);
+    const auditCalls = (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(auditCalls.some((c) => c[0]?.eventType === "vendor_assurance.cuec_mapping.created")).toBe(true);
+    const body = json.mock.calls[0]?.[0] as { mapping: Record<string, unknown> };
+    expect(body.mapping.mapping_status).toBe("accepted");
+  });
+
+  it("409 when the (cuec, control) pair was previously dismissed (ON CONFLICT update matched 0 rows)", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ document_id: DOC_ID }] }) // cuec check
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // control check
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // INSERT ... ON CONFLICT DO UPDATE WHERE != dismissed → 0 rows
+    const req = buildReq({ params: { cuecId: CUEC_ID }, body: { control_id: CONTROL_ID } });
+    const { res, status, json } = buildRes();
+    await createVendorAssuranceCuecMapping(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "vendor_assurance_cuec_mapping_dismissed" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CUEC matcher package: PATCH /cuec-mappings/:id (accept / dismiss)
+// ---------------------------------------------------------------------------
+
+describe("updateVendorAssuranceCuecMapping", () => {
+  it("400 on a non-target mapping_status (e.g. 'suggested')", async () => {
+    const req = buildReq({ params: { mappingId: MAPPING_ID }, body: { mapping_status: "suggested" } });
+    const { res, status, json } = buildRes();
+    await updateVendorAssuranceCuecMapping(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "invalid_mapping_status" });
+  });
+
+  it("400 when dismissing without a reason", async () => {
+    const req = buildReq({ params: { mappingId: MAPPING_ID }, body: { mapping_status: "dismissed" } });
+    const { res, status, json } = buildRes();
+    await updateVendorAssuranceCuecMapping(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "reason_required_for_dismissed" });
+  });
+
+  it("404 when the mapping is cross-org", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // cur lookup
+    const req = buildReq({ params: { mappingId: MAPPING_ID }, body: { mapping_status: "accepted" } });
+    const { res, status } = buildRes();
+    await updateVendorAssuranceCuecMapping(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(404);
+  });
+
+  it("200 idempotent self-transition (accepted → accepted) makes no UPDATE, no audit", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ cuec_id: "cuec-0", control_id: "ctl-a", mapping_status: "accepted", document_id: DOC_ID }] }) // cur
+      .mockResolvedValueOnce({ rows: [mappingRow({ mapping_status: "accepted" })] }); // fetch joined
+    const req = buildReq({ params: { mappingId: MAPPING_ID }, body: { mapping_status: "accepted" } });
+    const { res, status } = buildRes();
+    await updateVendorAssuranceCuecMapping(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(200);
+    // only cur + fetch — no UPDATE in between
+    expect(pgQuerySpy).toHaveBeenCalledTimes(2);
+    const auditCalls = (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(auditCalls.some((c) => c[0]?.eventType === "vendor_assurance.cuec_mapping.updated")).toBe(false);
+  });
+
+  it("409 on an illegal transition (dismissed → accepted)", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 1, rows: [{ cuec_id: "cuec-0", control_id: "ctl-a", mapping_status: "dismissed", document_id: DOC_ID }] }); // cur
+    const req = buildReq({ params: { mappingId: MAPPING_ID }, body: { mapping_status: "accepted" } });
+    const { res, status, json } = buildRes();
+    await updateVendorAssuranceCuecMapping(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "invalid_cuec_mapping_transition", from: "dismissed", to: "accepted" });
+  });
+
+  it("200 accept a suggested mapping, audits with from/to", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ cuec_id: "cuec-0", control_id: "ctl-a", mapping_status: "suggested", document_id: DOC_ID }] }) // cur
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "map-1" }] }) // UPDATE
+      .mockResolvedValueOnce({ rows: [mappingRow({ mapping_status: "accepted" })] }); // fetch joined
+    const req = buildReq({ params: { mappingId: MAPPING_ID }, body: { mapping_status: "accepted" } });
+    const { res, status } = buildRes();
+    await updateVendorAssuranceCuecMapping(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(200);
+    const updParams = pgQuerySpy.mock.calls[1]?.[1] as unknown[];
+    expect(updParams[2]).toBe("accepted"); // new status
+    expect(updParams[3]).toBeNull(); // reason cleared on accept
+    expect(updParams[5]).toBe("suggested"); // observed status re-asserted
+    const auditCalls = (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const ev = auditCalls.find((c) => c[0]?.eventType === "vendor_assurance.cuec_mapping.updated");
+    expect(ev?.[0]?.payload).toMatchObject({ from: "suggested", to: "accepted" });
+  });
+
+  it("200 dismiss an accepted mapping with a reason; reason persisted", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ cuec_id: "cuec-0", control_id: "ctl-a", mapping_status: "accepted", document_id: DOC_ID }] }) // cur
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "map-1" }] }) // UPDATE
+      .mockResolvedValueOnce({ rows: [mappingRow({ mapping_status: "dismissed", reason: "control doesn't actually cover this" })] }); // fetch joined
+    const req = buildReq({ params: { mappingId: MAPPING_ID }, body: { mapping_status: "dismissed", reason: "control doesn't actually cover this" } });
+    const { res, status } = buildRes();
+    await updateVendorAssuranceCuecMapping(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(200);
+    const updParams = pgQuerySpy.mock.calls[1]?.[1] as unknown[];
+    expect(updParams[2]).toBe("dismissed");
+    expect(updParams[3]).toBe("control doesn't actually cover this");
+  });
+
+  it("409 on a lost race (UPDATE matched 0 rows)", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ cuec_id: "cuec-0", control_id: "ctl-a", mapping_status: "suggested", document_id: DOC_ID }] }) // cur
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // UPDATE — status changed under us
+    const req = buildReq({ params: { mappingId: MAPPING_ID }, body: { mapping_status: "accepted" } });
+    const { res, status } = buildRes();
+    await updateVendorAssuranceCuecMapping(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(409);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CUEC matcher package: POST /cuecs/:id/review-status
+// ---------------------------------------------------------------------------
+
+describe("updateVendorAssuranceCuecReviewStatus", () => {
+  it("400 on a bad review_status", async () => {
+    const req = buildReq({ params: { cuecId: CUEC_ID }, body: { review_status: "bogus" } });
+    const { res, status, json } = buildRes();
+    await updateVendorAssuranceCuecReviewStatus(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json.mock.calls[0]?.[0]).toMatchObject({ error: "invalid_review_status" });
+  });
+
+  it("404 when the cuec is cross-org", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // cur lookup
+    const req = buildReq({ params: { cuecId: CUEC_ID }, body: { review_status: "reviewed_no_match" } });
+    const { res, status } = buildRes();
+    await updateVendorAssuranceCuecReviewStatus(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(404);
+  });
+
+  it("200 set reviewed_no_match (with reason); audits vendor_assurance.cuec.review_status_updated", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ document_id: DOC_ID }] }) // cur
+      .mockResolvedValueOnce({ rowCount: 1, rows: [cuecRow({ review_status: "reviewed_no_match", review_status_reason: "we outsource this", review_status_updated_by_user_id: USER_ID, review_status_updated_at: "2026-05-12T01:00:00Z" })] }); // UPDATE
+    const req = buildReq({ params: { cuecId: CUEC_ID }, body: { review_status: "reviewed_no_match", reason: "we outsource this" } });
+    const { res, status, json } = buildRes();
+    await updateVendorAssuranceCuecReviewStatus(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(200);
+    const updSql = pgQuerySpy.mock.calls[1]?.[0] as string;
+    expect(updSql).toMatch(/review_status = 'reviewed_no_match'/);
+    expect(pgQuerySpy.mock.calls[1]?.[1]).toEqual([CUEC_ID, ORG_A, "we outsource this", USER_ID]);
+    const auditCalls = (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const ev = auditCalls.find((c) => c[0]?.eventType === "vendor_assurance.cuec.review_status_updated");
+    expect(ev?.[0]?.payload).toMatchObject({ review_status: "reviewed_no_match" });
+    const body = json.mock.calls[0]?.[0] as { cuec: Record<string, unknown> };
+    expect(body.cuec.review_status).toBe("reviewed_no_match");
+  });
+
+  it("200 clear back to pending (drops reason/by/at; params are [cuecId, org] only)", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ document_id: DOC_ID }] }) // cur
+      .mockResolvedValueOnce({ rowCount: 1, rows: [cuecRow({ review_status: "pending" })] }); // UPDATE
+    const req = buildReq({ params: { cuecId: CUEC_ID }, body: { review_status: "pending", reason: "ignored" } });
+    const { res, status } = buildRes();
+    await updateVendorAssuranceCuecReviewStatus(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(200);
+    const updSql = pgQuerySpy.mock.calls[1]?.[0] as string;
+    expect(updSql).toMatch(/review_status = 'pending'/);
+    expect(pgQuerySpy.mock.calls[1]?.[1]).toEqual([CUEC_ID, ORG_A]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CUEC matcher package: cuecs field-override re-trigger
+// ---------------------------------------------------------------------------
+
+describe("recordVendorAssuranceFieldOverride — cuecs re-match trigger", () => {
+  it("schedules a CUEC re-match (resyncRows: true) when field_name === 'cuecs'", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "extracted" }] }) // doc
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // no prior override
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ fields: { cuecs: { value: ["a", "b"] } } }] }) // extraction
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "ov-1", overridden_at: "2026-05-12T00:00:00Z" }] }); // INSERT
+    const req = buildReq({ params: { id: DOC_ID }, body: { field_name: "cuecs", override_value: ["x", "y"], reason: "corrected CUEC list" } });
+    const { res, status } = buildRes();
+    await recordVendorAssuranceFieldOverride(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(201);
+    // let the setImmediate fire
+    await new Promise<void>((r) => setImmediate(r));
+    expect(refreshCuecMappingsForDocumentSpy).toHaveBeenCalledWith(DOC_ID, ORG_A, { resyncRows: true });
+  });
+
+  it("does NOT schedule a CUEC re-match for a non-cuecs field override", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "extracted" }] }) // doc
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // no prior override
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ fields: { vendor_name: { value: "Old" } } }] }) // extraction
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "ov-2", overridden_at: "2026-05-12T00:00:00Z" }] }); // INSERT
+    const req = buildReq({ params: { id: DOC_ID }, body: { field_name: "vendor_name", override_value: "New", reason: "fix" } });
+    const { res, status } = buildRes();
+    await recordVendorAssuranceFieldOverride(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(201);
+    await new Promise<void>((r) => setImmediate(r));
+    expect(refreshCuecMappingsForDocumentSpy).not.toHaveBeenCalled();
   });
 });

@@ -298,3 +298,69 @@ export function validateManualReviewBody(
   const cleaned = sanitizeString(commentRaw.trim(), MAX_MANUAL_REVIEW_COMMENT);
   return { input: { comment: cleaned.length === 0 ? null : cleaned } };
 }
+
+// ---------------------------------------------------------------------------
+// CUEC-matcher package: mapping create/update + cuec review-status bodies
+// ---------------------------------------------------------------------------
+
+const CUEC_MAPPING_TARGET_STATUSES = ["accepted", "dismissed"] as const;
+const CUEC_REVIEW_STATUSES = ["pending", "reviewed_no_match"] as const;
+
+export type CreateCuecMappingInput = { control_id: string; reason: string | null };
+export type UpdateCuecMappingInput = { mapping_status: "accepted" | "dismissed"; reason: string | null };
+export type UpdateCuecReviewStatusInput = { review_status: "pending" | "reviewed_no_match"; reason: string | null };
+
+function optionalReason(body: Record<string, unknown>): string | null | ValidationErr {
+  const raw = body["reason"];
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "string") return { error: "reason_must_be_string" };
+  const cleaned = sanitizeString(raw.trim(), MAX_OVERRIDE_REASON);
+  return cleaned.length === 0 ? null : cleaned;
+}
+
+/** POST /api/vendor-assurance/cuecs/:id/mappings — user creates a manual mapping. */
+export function validateCreateCuecMappingBody(
+  body: unknown
+): ValidationOk<CreateCuecMappingInput> | ValidationErr {
+  if (!isPlainObject(body)) return { error: "request_body_must_be_object" };
+  const controlId = body["control_id"];
+  if (typeof controlId !== "string" || !UUID_RE.test(controlId.trim())) {
+    return { error: "control_id_must_be_uuid" };
+  }
+  const reason = optionalReason(body);
+  if (reason !== null && typeof reason === "object") return reason;
+  return { input: { control_id: controlId.trim(), reason } };
+}
+
+/** PATCH /api/vendor-assurance/cuec-mappings/:id — accept a suggestion or dismiss a mapping. */
+export function validateUpdateCuecMappingBody(
+  body: unknown
+): ValidationOk<UpdateCuecMappingInput> | ValidationErr {
+  if (!isPlainObject(body)) return { error: "request_body_must_be_object" };
+  const ms = body["mapping_status"];
+  if (typeof ms !== "string" || !(CUEC_MAPPING_TARGET_STATUSES as readonly string[]).includes(ms)) {
+    return { error: "invalid_mapping_status", detail: `must be one of: ${CUEC_MAPPING_TARGET_STATUSES.join(", ")}` };
+  }
+  const reason = optionalReason(body);
+  if (reason !== null && typeof reason === "object") return reason;
+  if (ms === "dismissed" && (reason === null || reason.length === 0)) {
+    return { error: "reason_required_for_dismissed" };
+  }
+  return { input: { mapping_status: ms as "accepted" | "dismissed", reason } };
+}
+
+/** POST /api/vendor-assurance/cuecs/:id/review-status — set/clear the "no applicable control" marker. */
+export function validateUpdateCuecReviewStatusBody(
+  body: unknown
+): ValidationOk<UpdateCuecReviewStatusInput> | ValidationErr {
+  if (!isPlainObject(body)) return { error: "request_body_must_be_object" };
+  const rs = body["review_status"];
+  if (typeof rs !== "string" || !(CUEC_REVIEW_STATUSES as readonly string[]).includes(rs)) {
+    return { error: "invalid_review_status", detail: `must be one of: ${CUEC_REVIEW_STATUSES.join(", ")}` };
+  }
+  let reason = optionalReason(body);
+  if (reason !== null && typeof reason === "object") return reason;
+  // reason is only meaningful for 'reviewed_no_match'; clearing back to 'pending' drops it.
+  if (rs === "pending") reason = null;
+  return { input: { review_status: rs as "pending" | "reviewed_no_match", reason } };
+}

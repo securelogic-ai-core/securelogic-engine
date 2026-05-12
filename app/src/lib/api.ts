@@ -4020,6 +4020,195 @@ export async function rejectVendorAssuranceDocument(
   }
 }
 
+// ---------------------------------------------------------------------------
+// CUEC matcher package: cuecs + N:M control mappings + control search
+// ---------------------------------------------------------------------------
+
+export type CuecReviewStatus = "pending" | "reviewed_no_match";
+export type CuecMappingStatus = "suggested" | "accepted" | "dismissed";
+export type CuecMappingSource = "auto" | "manual";
+
+export type VendorAssuranceCuecMapping = {
+  id: string;
+  cuec_id: string;
+  control_id: string;
+  mapping_status: CuecMappingStatus;
+  mapping_score: number | null;
+  mapping_source: CuecMappingSource;
+  reason: string | null;
+  created_by_user_id: string | null;
+  updated_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+  control_name: string;
+  control_description: string | null;
+  control_status: string;
+};
+
+export type VendorAssuranceCuec = {
+  id: string;
+  ordinal: number;
+  cuec_text: string;
+  review_status: CuecReviewStatus;
+  review_status_reason: string | null;
+  review_status_updated_by_user_id: string | null;
+  review_status_updated_at: string | null;
+  created_at: string;
+  updated_at: string;
+  mappings: VendorAssuranceCuecMapping[];
+};
+
+export type VendorAssuranceCuecMatchSummary = {
+  matched: boolean;
+  reason?: string;
+  cuecCount: number;
+  controlCount: number;
+  suggestionsConsidered: number;
+  suggestionsWritten: number;
+};
+
+export type VendorAssuranceCuecsResponse = {
+  document_id: string;
+  cuecs: VendorAssuranceCuec[];
+  match_score_min_threshold: number;
+  match_score_high_confidence: number;
+  /** Present only on the re-match response. */
+  result?: VendorAssuranceCuecMatchSummary;
+};
+
+export type ControlSummary = {
+  id: string;
+  name: string;
+  description: string | null;
+  status: string;
+  domain?: string | null;
+  control_family?: string | null;
+};
+
+/** GET .../cuecs — the document's CUEC rows with their control mappings joined to control names. */
+export async function getCuecsForDocument(
+  token: string,
+  documentId: string
+): Promise<VendorAssuranceCuecsResponse | null> {
+  try {
+    const res = await engineFetch(`/api/vendor-assurance/documents/${encodeURIComponent(documentId)}/cuecs`, token);
+    if (!res.ok) return null;
+    return res.json() as Promise<VendorAssuranceCuecsResponse>;
+  } catch { return null; }
+}
+
+/**
+ * POST .../rematch-cuecs — re-run the LLM matcher for this document against the
+ * current controls inventory. Uses a longer timeout than engineFetch because
+ * the matcher makes an LLM call.
+ */
+export async function rematchCuecs(
+  token: string,
+  documentId: string
+): Promise<VendorAssuranceActionResult<VendorAssuranceCuecsResponse>> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 90_000);
+  try {
+    const res = await fetch(
+      `${ENGINE_URL}/api/vendor-assurance/documents/${encodeURIComponent(documentId)}/rematch-cuecs`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({}),
+        cache: "no-store",
+        signal: controller.signal,
+      }
+    );
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { error: String(body["error"] ?? "cuec_rematch_failed") };
+    return body as VendorAssuranceCuecsResponse;
+  } catch {
+    return { error: "cuec_rematch_failed" };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/** POST /cuecs/:id/mappings — user creates a manual accepted mapping to a control. */
+export async function createCuecMapping(
+  token: string,
+  cuecId: string,
+  controlId: string,
+  reason?: string
+): Promise<VendorAssuranceActionResult<{ mapping: VendorAssuranceCuecMapping }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-assurance/cuecs/${encodeURIComponent(cuecId)}/mappings`,
+      token,
+      { method: "POST", body: JSON.stringify(reason && reason.trim().length > 0 ? { control_id: controlId, reason: reason.trim() } : { control_id: controlId }) }
+    );
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { error: String(body["error"] ?? "cuec_mapping_create_failed") };
+    return body as { mapping: VendorAssuranceCuecMapping };
+  } catch {
+    return { error: "cuec_mapping_create_failed" };
+  }
+}
+
+/** PATCH /cuec-mappings/:id — accept a suggested mapping, or dismiss any non-accepted mapping. */
+export async function updateCuecMapping(
+  token: string,
+  mappingId: string,
+  mappingStatus: "accepted" | "dismissed",
+  reason?: string
+): Promise<VendorAssuranceActionResult<{ mapping: VendorAssuranceCuecMapping }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-assurance/cuec-mappings/${encodeURIComponent(mappingId)}`,
+      token,
+      { method: "PATCH", body: JSON.stringify(reason && reason.trim().length > 0 ? { mapping_status: mappingStatus, reason: reason.trim() } : { mapping_status: mappingStatus }) }
+    );
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { error: String(body["error"] ?? "cuec_mapping_update_failed") };
+    return body as { mapping: VendorAssuranceCuecMapping };
+  } catch {
+    return { error: "cuec_mapping_update_failed" };
+  }
+}
+
+/** POST /cuecs/:id/review-status — set/clear the "no applicable control in inventory" marker. */
+export async function updateCuecReviewStatus(
+  token: string,
+  cuecId: string,
+  reviewStatus: CuecReviewStatus,
+  reason?: string
+): Promise<VendorAssuranceActionResult<{ cuec: VendorAssuranceCuec }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-assurance/cuecs/${encodeURIComponent(cuecId)}/review-status`,
+      token,
+      { method: "POST", body: JSON.stringify(reviewStatus === "reviewed_no_match" && reason && reason.trim().length > 0 ? { review_status: reviewStatus, reason: reason.trim() } : { review_status: reviewStatus }) }
+    );
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { error: String(body["error"] ?? "cuec_review_status_update_failed") };
+    return body as { cuec: VendorAssuranceCuec };
+  } catch {
+    return { error: "cuec_review_status_update_failed" };
+  }
+}
+
+/** GET /api/controls?q= — type-ahead search of the org's controls inventory (for the ControlPicker). */
+export async function searchControls(
+  token: string,
+  q: string,
+  limit = 20
+): Promise<ControlSummary[]> {
+  const query = q.trim();
+  if (query.length === 0) return [];
+  try {
+    const params = new URLSearchParams({ q: query, limit: String(limit) });
+    const res = await engineFetch(`/api/controls?${params.toString()}`, token);
+    if (!res.ok) return [];
+    const body = (await res.json()) as { controls?: ControlSummary[] };
+    return Array.isArray(body.controls) ? body.controls : [];
+  } catch { return []; }
+}
+
 /**
  * Multipart upload helper. Accepts a FormData body, posts directly to the
  * engine via Bearer auth, and returns the document row on success.

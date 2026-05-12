@@ -5,6 +5,9 @@ import {
   validateFieldOverrideBody,
   validateRejectBody,
   validateManualReviewBody,
+  validateCreateCuecMappingBody,
+  validateUpdateCuecMappingBody,
+  validateUpdateCuecReviewStatusBody,
   computeFinalizePrecondition,
   isUuid,
   MAX_BYTE_SIZE,
@@ -13,6 +16,7 @@ import {
 import { MATERIAL_FIELD_NAMES } from "../lib/socExtractionPrompt.js";
 
 const VENDOR_UUID = "11111111-1111-4111-8111-111111111111";
+const CONTROL_UUID = "33333333-3333-4333-8333-333333333333";
 
 describe("isUuid", () => {
   it("accepts canonical UUID", () => {
@@ -290,6 +294,82 @@ describe("validateManualReviewBody", () => {
   });
   it("rejects a non-string comment", () => {
     expect(validateManualReviewBody({ comment: 7 })).toHaveProperty("error", "comment_must_be_string");
+  });
+});
+
+describe("validateCreateCuecMappingBody", () => {
+  it("accepts a control_id (+ optional reason)", () => {
+    const r = validateCreateCuecMappingBody({ control_id: CONTROL_UUID, reason: "manual mapping" });
+    expect("input" in r).toBe(true);
+    if ("input" in r) {
+      expect(r.input.control_id).toBe(CONTROL_UUID);
+      expect(r.input.reason).toBe("manual mapping");
+    }
+  });
+  it("accepts a missing reason (null)", () => {
+    const r = validateCreateCuecMappingBody({ control_id: CONTROL_UUID });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.reason).toBeNull();
+  });
+  it("rejects missing / non-uuid control_id", () => {
+    expect(validateCreateCuecMappingBody({})).toHaveProperty("error", "control_id_must_be_uuid");
+    expect(validateCreateCuecMappingBody({ control_id: "nope" })).toHaveProperty("error", "control_id_must_be_uuid");
+  });
+  it("rejects non-string reason", () => {
+    expect(validateCreateCuecMappingBody({ control_id: CONTROL_UUID, reason: 7 })).toHaveProperty("error", "reason_must_be_string");
+  });
+  it("rejects non-object body", () => {
+    expect(validateCreateCuecMappingBody(null)).toHaveProperty("error", "request_body_must_be_object");
+  });
+});
+
+describe("validateUpdateCuecMappingBody", () => {
+  it("accepts mapping_status 'accepted' without a reason", () => {
+    const r = validateUpdateCuecMappingBody({ mapping_status: "accepted" });
+    expect("input" in r).toBe(true);
+    if ("input" in r) { expect(r.input.mapping_status).toBe("accepted"); expect(r.input.reason).toBeNull(); }
+  });
+  it("accepts mapping_status 'dismissed' with a reason", () => {
+    const r = validateUpdateCuecMappingBody({ mapping_status: "dismissed", reason: "control does not actually cover this CUEC" });
+    expect("input" in r).toBe(true);
+    if ("input" in r) { expect(r.input.mapping_status).toBe("dismissed"); expect(r.input.reason).toBe("control does not actually cover this CUEC"); }
+  });
+  it("rejects 'dismissed' without a reason / with a blank reason", () => {
+    expect(validateUpdateCuecMappingBody({ mapping_status: "dismissed" })).toHaveProperty("error", "reason_required_for_dismissed");
+    expect(validateUpdateCuecMappingBody({ mapping_status: "dismissed", reason: "   " })).toHaveProperty("error", "reason_required_for_dismissed");
+  });
+  it("rejects an unknown mapping_status (e.g. 'suggested', 'no_match')", () => {
+    expect(validateUpdateCuecMappingBody({ mapping_status: "suggested" })).toHaveProperty("error", "invalid_mapping_status");
+    expect(validateUpdateCuecMappingBody({ mapping_status: "no_match" })).toHaveProperty("error", "invalid_mapping_status");
+  });
+  it("clamps reason to MAX_OVERRIDE_REASON", () => {
+    const r = validateUpdateCuecMappingBody({ mapping_status: "dismissed", reason: "z".repeat(MAX_OVERRIDE_REASON + 300) });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect((r.input.reason ?? "").length).toBeLessThanOrEqual(MAX_OVERRIDE_REASON);
+  });
+});
+
+describe("validateUpdateCuecReviewStatusBody", () => {
+  it("accepts 'reviewed_no_match' with an optional reason", () => {
+    const r = validateUpdateCuecReviewStatusBody({ review_status: "reviewed_no_match", reason: "we outsource this entirely" });
+    expect("input" in r).toBe(true);
+    if ("input" in r) { expect(r.input.review_status).toBe("reviewed_no_match"); expect(r.input.reason).toBe("we outsource this entirely"); }
+  });
+  it("accepts 'reviewed_no_match' without a reason", () => {
+    const r = validateUpdateCuecReviewStatusBody({ review_status: "reviewed_no_match" });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.reason).toBeNull();
+  });
+  it("drops the reason when clearing back to 'pending'", () => {
+    const r = validateUpdateCuecReviewStatusBody({ review_status: "pending", reason: "ignored" });
+    expect("input" in r).toBe(true);
+    if ("input" in r) { expect(r.input.review_status).toBe("pending"); expect(r.input.reason).toBeNull(); }
+  });
+  it("rejects an unknown review_status", () => {
+    expect(validateUpdateCuecReviewStatusBody({ review_status: "bogus" })).toHaveProperty("error", "invalid_review_status");
+  });
+  it("rejects non-object body", () => {
+    expect(validateUpdateCuecReviewStatusBody(7)).toHaveProperty("error", "request_body_must_be_object");
   });
 });
 

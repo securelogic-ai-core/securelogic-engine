@@ -25,6 +25,7 @@ import { writeAuditEvent } from "./auditLog.js";
 import { getVendorAssurancePdfStream } from "./vendorAssuranceStorage.js";
 import { extractPdfText } from "./vendorAssurancePdfExtractor.js";
 import { runSocExtraction, RAW_EXCERPT_BYTES, type SocExtractionResult } from "./claudeSocExtractor.js";
+import { refreshCuecMappingsForDocument } from "./vendorAssuranceCuecMatcher.js";
 
 async function streamToBuffer(body: unknown): Promise<Buffer> {
   if (body == null) throw new Error("empty body");
@@ -256,6 +257,24 @@ export async function runExtraction(args: {
       },
       "Vendor-assurance extraction completed"
     );
+
+    // 5. Promote the extracted CUEC list into vendor_assurance_cuecs rows and
+    //    LLM-match them against the org's controls inventory. Strictly
+    //    non-fatal — the extraction is already committed; a matcher failure
+    //    leaves the cuec rows written (or not) and no suggestions, and the
+    //    Re-match button is the recovery path.
+    try {
+      const cuecResult = await refreshCuecMappingsForDocument(documentId, organizationId, { resyncRows: true });
+      logger.info(
+        { event: "vendor_assurance_cuec_match_after_extraction", organizationId, documentId, ...cuecResult },
+        "Vendor-assurance CUEC matching after extraction complete"
+      );
+    } catch (cuecErr) {
+      logger.error(
+        { event: "vendor_assurance_cuec_match_after_extraction_failed", organizationId, documentId, err: (cuecErr as Error)?.message ?? "unknown" },
+        "Vendor-assurance CUEC matching after extraction failed (non-fatal)"
+      );
+    }
   } catch (err) {
     // Last-resort catch — the runner must never throw. Record the failure on
     // the document row so the UI shows a typed error.

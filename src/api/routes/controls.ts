@@ -228,6 +228,36 @@ router.get(
 
     try {
       const limit = parseLimit(req.query.limit);
+
+      // Type-ahead search mode: ?q=<text> filters by name/description ILIKE and
+      // orders alphabetically by name (no cursor). Used by the vendor-assurance
+      // CUEC ControlPicker. When absent, the original cursor-paginated list
+      // behaviour is unchanged.
+      const q = isNonEmptyString(req.query.q) ? String(req.query.q).trim() : null;
+      if (q !== null) {
+        const like = `%${q.replace(/[%_\\]/g, (m) => `\\${m}`)}%`;
+        const searchResult = await pg.query(
+          `
+          SELECT ${CONTROL_SELECT}
+          FROM controls
+          WHERE organization_id = $1
+            AND (name ILIKE $2 OR COALESCE(description, '') ILIKE $2)
+          ORDER BY name ASC, id ASC
+          LIMIT $3
+          `,
+          [organizationId, like, limit]
+        );
+        res.status(200).json({
+          count: searchResult.rows.length,
+          limit,
+          organizationId,
+          query: q,
+          nextCursor: null,
+          controls: searchResult.rows
+        });
+        return;
+      }
+
       const beforeCreatedAt = isNonEmptyString(req.query.before_created_at)
         ? req.query.before_created_at
         : null;

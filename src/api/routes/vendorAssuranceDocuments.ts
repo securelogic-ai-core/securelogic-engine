@@ -44,6 +44,9 @@ import {
   validateFieldOverrideBody,
   validateRejectBody,
   validateManualReviewBody,
+  validateCreateCuecMappingBody,
+  validateUpdateCuecMappingBody,
+  validateUpdateCuecReviewStatusBody,
   computeFinalizePrecondition,
   isUuid,
   MAX_BYTE_SIZE
@@ -54,6 +57,11 @@ import {
 } from "../lib/vendorAssuranceStorage.js";
 import { scheduleExtraction } from "../lib/vendorAssuranceExtractionRunner.js";
 import { MATERIAL_FIELD_NAMES } from "../lib/socExtractionPrompt.js";
+import {
+  refreshCuecMappingsForDocument,
+  MATCH_SCORE_MIN_THRESHOLD,
+  MATCH_SCORE_HIGH_CONFIDENCE
+} from "../lib/vendorAssuranceCuecMatcher.js";
 
 const router = Router();
 
@@ -954,6 +962,22 @@ export async function recordVendorAssuranceFieldOverride(req: Request, res: Resp
     ipAddress: req.ip ?? null
   });
 
+  // If the CUEC list itself was just overridden, the vendor_assurance_cuecs
+  // rows and their mappings are now stale. Rebuild + re-match in the background
+  // (setImmediate keeps the response fast; failure is non-fatal — the Re-match
+  // button is the recovery path). The override route itself is not otherwise
+  // changed by this package.
+  if (field_name === "cuecs") {
+    setImmediate(() => {
+      void refreshCuecMappingsForDocument(documentId, organizationId, { resyncRows: true }).catch((err) => {
+        logger.error(
+          { event: "vendor_assurance_cuec_rematch_after_override_failed", organizationId, documentId, err: (err as Error)?.message ?? "unknown" },
+          "CUEC re-match after cuecs override failed (non-fatal)"
+        );
+      });
+    });
+  }
+
   res.status(201).json({
     override: {
       id: inserted.id,
@@ -1015,6 +1039,367 @@ export async function rejectVendorAssuranceDocument(req: Request, res: Response)
     eventType: "vendor_assurance.document.rejected",
     auditPayload: { reason: validated.input.reason }
   });
+}
+
+/* =========================================================
+   CUEC matcher package: cuec rows + N:M control mappings
+   ========================================================= */
+
+/** Load a document's CUEC rows with their control mappings (control name/desc/status joined). */
+async function loadCuecsWithMappings(
+  documentId: string,
+  organizationId: string
+): Promise<Array<Record<string, unknown>>> {
+  const cuecRes = await pg.query<{
+    id: string;
+    ordinal: number;
+    cuec_text: string;
+    review_status: string;
+    review_status_reason: string | null;
+    review_status_updated_by_user_id: string | null;
+    review_status_updated_at: string | null;
+    created_at: string;
+    updated_at: string;
+  }>(
+    `SELECT id, ordinal, cuec_text, review_status, review_status_reason,
+            review_status_updated_by_user_id, review_status_updated_at, created_at, updated_at
+       FROM vendor_assurance_cuecs
+      WHERE document_id = $1 AND organization_id = $2
+      ORDER BY ordinal ASC`,
+    [documentId, organizationId]
+  );
+  if (cuecRes.rows.length === 0) return [];
+
+  const cuecIds = cuecRes.rows.map((c) => c.id);
+  const mapRes = await pg.query<{
+    id: string;
+    cuec_id: string;
+    control_id: string;
+    mapping_status: string;
+    mapping_score: number | null;
+    mapping_source: string;
+    reason: string | null;
+    created_by_user_id: string | null;
+    updated_by_user_id: string | null;
+    created_at: string;
+    updated_at: string;
+    control_name: string;
+    control_description: string | null;
+    control_status: string;
+  }>(
+    `SELECT m.id, m.cuec_id, m.control_id, m.mapping_status, m.mapping_score, m.mapping_source,
+            m.reason, m.created_by_user_id, m.updated_by_user_id, m.created_at, m.updated_at,
+            c.name AS control_name, c.description AS control_description, c.status AS control_status
+       FROM vendor_assurance_cuec_control_mappings m
+       JOIN controls c ON c.id = m.control_id AND c.organization_id = m.organization_id
+      WHERE m.organization_id = $1 AND m.cuec_id = ANY($2::uuid[])
+      ORDER BY m.cuec_id,
+               CASE m.mapping_status WHEN 'accepted' THEN 0 WHEN 'suggested' THEN 1 ELSE 2 END,
+               m.mapping_score DESC NULLS LAST, m.created_at ASC`,
+    [organizationId, cuecIds]
+  );
+  const byCuec = new Map<string, Array<Record<string, unknown>>>();
+  for (const m of mapRes.rows) {
+    let list = byCuec.get(m.cuec_id);
+    if (!list) { list = []; byCuec.set(m.cuec_id, list); }
+    list.push(m);
+  }
+  return cuecRes.rows.map((c) => ({ ...c, mappings: byCuec.get(c.id) ?? [] }));
+}
+
+/* GET /api/vendor-assurance/documents/:id/cuecs */
+export async function getVendorAssuranceCuecs(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+  const documentId = String(req.params["id"] ?? "").trim();
+  if (!isUuid(documentId)) { res.status(400).json({ error: "document_id_must_be_uuid" }); return; }
+
+  const docCheck = await pg.query(
+    `SELECT 1 FROM vendor_assurance_documents WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+    [documentId, organizationId]
+  );
+  if ((docCheck.rowCount ?? 0) === 0) {
+    res.status(404).json({ error: "vendor_assurance_document_not_found" });
+    return;
+  }
+
+  const cuecs = await loadCuecsWithMappings(documentId, organizationId);
+  res.status(200).json({
+    document_id: documentId,
+    cuecs,
+    match_score_min_threshold: MATCH_SCORE_MIN_THRESHOLD,
+    match_score_high_confidence: MATCH_SCORE_HIGH_CONFIDENCE
+  });
+}
+
+/* POST /api/vendor-assurance/documents/:id/rematch-cuecs */
+export async function rematchVendorAssuranceCuecs(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+  const documentId = String(req.params["id"] ?? "").trim();
+  if (!isUuid(documentId)) { res.status(400).json({ error: "document_id_must_be_uuid" }); return; }
+
+  const docCheck = await pg.query(
+    `SELECT 1 FROM vendor_assurance_documents WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+    [documentId, organizationId]
+  );
+  if ((docCheck.rowCount ?? 0) === 0) {
+    res.status(404).json({ error: "vendor_assurance_document_not_found" });
+    return;
+  }
+
+  // If cuec rows were never written (extraction-time matcher failed entirely),
+  // bootstrap them from the extraction first — that path can't destroy any
+  // mappings because there aren't any yet. When rows already exist, do NOT
+  // resync (a resync DELETE-then-INSERTs the cuec rows and would cascade away
+  // the user's accepted/dismissed mappings); just re-run the matcher, which
+  // preserves user actions and only replaces 'suggested' rows.
+  const cuecCountRes = await pg.query<{ n: string }>(
+    `SELECT COUNT(*)::text AS n FROM vendor_assurance_cuecs WHERE document_id = $1 AND organization_id = $2`,
+    [documentId, organizationId]
+  );
+  const hasCuecRows = Number(cuecCountRes.rows[0]?.n ?? "0") > 0;
+
+  let result;
+  try {
+    result = await refreshCuecMappingsForDocument(documentId, organizationId, { resyncRows: !hasCuecRows });
+  } catch (err) {
+    logger.error(
+      { event: "vendor_assurance_cuec_rematch_failed", organizationId, documentId, err: (err as Error)?.message ?? "unknown" },
+      "CUEC re-match failed"
+    );
+    res.status(500).json({ error: "cuec_rematch_failed" });
+    return;
+  }
+
+  writeAuditEvent({
+    organizationId,
+    actorApiKeyId: getApiKeyId(req),
+    actorUserId: req.userId ?? null,
+    eventType: "vendor_assurance.cuecs.rematched",
+    resourceType: "vendor_assurance_document",
+    resourceId: documentId,
+    payload: { ...result },
+    ipAddress: req.ip ?? null
+  });
+
+  const cuecs = await loadCuecsWithMappings(documentId, organizationId);
+  res.status(200).json({
+    document_id: documentId,
+    cuecs,
+    result,
+    match_score_min_threshold: MATCH_SCORE_MIN_THRESHOLD,
+    match_score_high_confidence: MATCH_SCORE_HIGH_CONFIDENCE
+  });
+}
+
+/* Shared: fetch one mapping joined to its control, scoped to org. */
+async function fetchCuecMappingJoined(mappingId: string, organizationId: string): Promise<Record<string, unknown> | null> {
+  const r = await pg.query<Record<string, unknown>>(
+    `SELECT m.id, m.cuec_id, m.control_id, m.mapping_status, m.mapping_score, m.mapping_source,
+            m.reason, m.created_by_user_id, m.updated_by_user_id, m.created_at, m.updated_at,
+            c.name AS control_name, c.description AS control_description, c.status AS control_status
+       FROM vendor_assurance_cuec_control_mappings m
+       JOIN controls c ON c.id = m.control_id AND c.organization_id = m.organization_id
+      WHERE m.id = $1 AND m.organization_id = $2
+      LIMIT 1`,
+    [mappingId, organizationId]
+  );
+  return r.rows[0] ?? null;
+}
+
+/* POST /api/vendor-assurance/cuecs/:cuecId/mappings — user creates a manual accepted mapping. */
+export async function createVendorAssuranceCuecMapping(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+  const cuecId = String(req.params["cuecId"] ?? "").trim();
+  if (!isUuid(cuecId)) { res.status(400).json({ error: "cuec_id_must_be_uuid" }); return; }
+
+  const validated = validateCreateCuecMappingBody(req.body);
+  if ("error" in validated) { res.status(400).json(validated); return; }
+  const { control_id, reason } = validated.input;
+
+  // cuec must belong to org
+  const cuecCheck = await pg.query<{ document_id: string }>(
+    `SELECT document_id FROM vendor_assurance_cuecs WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+    [cuecId, organizationId]
+  );
+  if ((cuecCheck.rowCount ?? 0) === 0) { res.status(404).json({ error: "vendor_assurance_cuec_not_found" }); return; }
+  const documentId = cuecCheck.rows[0]!.document_id;
+
+  // control must belong to org
+  const ctlCheck = await pg.query(
+    `SELECT 1 FROM controls WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+    [control_id, organizationId]
+  );
+  if ((ctlCheck.rowCount ?? 0) === 0) { res.status(404).json({ error: "control_not_found" }); return; }
+
+  // Insert as a manual accepted mapping. If a row already exists for this
+  // (cuec, control) pair: a 'suggested' or already-'accepted' row is flipped /
+  // left at 'accepted' (treating "add this control" as "accept it"); a
+  // 'dismissed' row is left untouched and the request is refused (re-suggesting
+  // a dismissed pair is an explicit future action, out of scope).
+  const ins = await pg.query<{ id: string }>(
+    `INSERT INTO vendor_assurance_cuec_control_mappings
+       (organization_id, cuec_id, control_id, mapping_status, mapping_score, mapping_source, reason, created_by_user_id, updated_by_user_id)
+     VALUES ($1, $2, $3, 'accepted', NULL, 'manual', $4, $5, $5)
+     ON CONFLICT (cuec_id, control_id) DO UPDATE
+       SET mapping_status = 'accepted', updated_by_user_id = EXCLUDED.updated_by_user_id, updated_at = NOW()
+       WHERE vendor_assurance_cuec_control_mappings.mapping_status <> 'dismissed'
+     RETURNING id`,
+    [organizationId, cuecId, control_id, reason, req.userId ?? null]
+  );
+  if ((ins.rowCount ?? 0) === 0) {
+    res.status(409).json({ error: "vendor_assurance_cuec_mapping_dismissed" });
+    return;
+  }
+  const mappingId = ins.rows[0]!.id;
+
+  writeAuditEvent({
+    organizationId,
+    actorApiKeyId: getApiKeyId(req),
+    actorUserId: req.userId ?? null,
+    eventType: "vendor_assurance.cuec_mapping.created",
+    resourceType: "vendor_assurance_cuec",
+    resourceId: cuecId,
+    payload: { document_id: documentId, control_id, mapping_status: "accepted", mapping_source: "manual" },
+    ipAddress: req.ip ?? null
+  });
+
+  const mapping = await fetchCuecMappingJoined(mappingId, organizationId);
+  res.status(201).json({ mapping });
+}
+
+/* PATCH /api/vendor-assurance/cuec-mappings/:mappingId — accept a suggestion / dismiss a mapping. */
+export async function updateVendorAssuranceCuecMapping(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+  const mappingId = String(req.params["mappingId"] ?? "").trim();
+  if (!isUuid(mappingId)) { res.status(400).json({ error: "mapping_id_must_be_uuid" }); return; }
+
+  const validated = validateUpdateCuecMappingBody(req.body);
+  if ("error" in validated) { res.status(400).json(validated); return; }
+  const target = validated.input.mapping_status;
+  const reason = validated.input.reason;
+
+  // mapping must belong to org (verified via JOIN to vendor_assurance_cuecs)
+  const cur = await pg.query<{ cuec_id: string; control_id: string; mapping_status: string; document_id: string }>(
+    `SELECT m.cuec_id, m.control_id, m.mapping_status, c.document_id
+       FROM vendor_assurance_cuec_control_mappings m
+       JOIN vendor_assurance_cuecs c ON c.id = m.cuec_id AND c.organization_id = m.organization_id
+      WHERE m.id = $1 AND m.organization_id = $2
+      LIMIT 1`,
+    [mappingId, organizationId]
+  );
+  if ((cur.rowCount ?? 0) === 0) { res.status(404).json({ error: "vendor_assurance_cuec_mapping_not_found" }); return; }
+  const { cuec_id, control_id, mapping_status: from, document_id } = cur.rows[0]!;
+
+  // Idempotent self-transition.
+  if (from === target) {
+    const mapping = await fetchCuecMappingJoined(mappingId, organizationId);
+    res.status(200).json({ mapping });
+    return;
+  }
+  // Legal transitions: suggested→accepted, suggested→dismissed, accepted→dismissed.
+  const legal =
+    (from === "suggested" && (target === "accepted" || target === "dismissed")) ||
+    (from === "accepted" && target === "dismissed");
+  if (!legal) {
+    res.status(409).json({ error: "invalid_cuec_mapping_transition", from, to: target });
+    return;
+  }
+
+  const upd = await pg.query<{ id: string }>(
+    `UPDATE vendor_assurance_cuec_control_mappings
+        SET mapping_status = $3,
+            reason = $4,
+            updated_by_user_id = $5,
+            updated_at = NOW()
+      WHERE id = $1 AND organization_id = $2 AND mapping_status = $6
+      RETURNING id`,
+    [mappingId, organizationId, target, target === "dismissed" ? reason : null, req.userId ?? null, from]
+  );
+  if ((upd.rowCount ?? 0) === 0) {
+    // Lost a race — status changed under us.
+    res.status(409).json({ error: "invalid_cuec_mapping_transition", from, to: target });
+    return;
+  }
+
+  writeAuditEvent({
+    organizationId,
+    actorApiKeyId: getApiKeyId(req),
+    actorUserId: req.userId ?? null,
+    eventType: "vendor_assurance.cuec_mapping.updated",
+    resourceType: "vendor_assurance_cuec",
+    resourceId: cuec_id,
+    payload: { document_id, control_id, from, to: target, ...(target === "dismissed" && reason ? { reason } : {}) },
+    ipAddress: req.ip ?? null
+  });
+
+  const mapping = await fetchCuecMappingJoined(mappingId, organizationId);
+  res.status(200).json({ mapping });
+}
+
+/* POST /api/vendor-assurance/cuecs/:cuecId/review-status — set/clear "no applicable control". */
+export async function updateVendorAssuranceCuecReviewStatus(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+  const cuecId = String(req.params["cuecId"] ?? "").trim();
+  if (!isUuid(cuecId)) { res.status(400).json({ error: "cuec_id_must_be_uuid" }); return; }
+
+  const validated = validateUpdateCuecReviewStatusBody(req.body);
+  if ("error" in validated) { res.status(400).json(validated); return; }
+  const { review_status, reason } = validated.input;
+
+  const cur = await pg.query<{ document_id: string }>(
+    `SELECT document_id FROM vendor_assurance_cuecs WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+    [cuecId, organizationId]
+  );
+  if ((cur.rowCount ?? 0) === 0) { res.status(404).json({ error: "vendor_assurance_cuec_not_found" }); return; }
+  const documentId = cur.rows[0]!.document_id;
+
+  const upd = await pg.query<{
+    id: string; ordinal: number; cuec_text: string; review_status: string;
+    review_status_reason: string | null; review_status_updated_by_user_id: string | null;
+    review_status_updated_at: string | null; created_at: string; updated_at: string;
+  }>(
+    review_status === "reviewed_no_match"
+      ? `UPDATE vendor_assurance_cuecs
+            SET review_status = 'reviewed_no_match',
+                review_status_reason = $3,
+                review_status_updated_by_user_id = $4,
+                review_status_updated_at = NOW(),
+                updated_at = NOW()
+          WHERE id = $1 AND organization_id = $2
+          RETURNING id, ordinal, cuec_text, review_status, review_status_reason,
+                    review_status_updated_by_user_id, review_status_updated_at, created_at, updated_at`
+      : `UPDATE vendor_assurance_cuecs
+            SET review_status = 'pending',
+                review_status_reason = NULL,
+                review_status_updated_by_user_id = NULL,
+                review_status_updated_at = NULL,
+                updated_at = NOW()
+          WHERE id = $1 AND organization_id = $2
+          RETURNING id, ordinal, cuec_text, review_status, review_status_reason,
+                    review_status_updated_by_user_id, review_status_updated_at, created_at, updated_at`,
+    review_status === "reviewed_no_match"
+      ? [cuecId, organizationId, reason, req.userId ?? null]
+      : [cuecId, organizationId]
+  );
+  if ((upd.rowCount ?? 0) === 0) { res.status(404).json({ error: "vendor_assurance_cuec_not_found" }); return; }
+
+  writeAuditEvent({
+    organizationId,
+    actorApiKeyId: getApiKeyId(req),
+    actorUserId: req.userId ?? null,
+    eventType: "vendor_assurance.cuec.review_status_updated",
+    resourceType: "vendor_assurance_cuec",
+    resourceId: cuecId,
+    payload: { document_id: documentId, review_status, ...(review_status === "reviewed_no_match" && reason ? { reason } : {}) },
+    ipAddress: req.ip ?? null
+  });
+
+  res.status(200).json({ cuec: upd.rows[0] });
 }
 
 /* =========================================================
@@ -1145,6 +1530,53 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("standard"),
   rejectVendorAssuranceDocument
+);
+
+// ---- CUEC matcher package routes ----
+
+router.get(
+  "/vendor-assurance/documents/:id/cuecs",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  getVendorAssuranceCuecs
+);
+
+router.post(
+  "/vendor-assurance/documents/:id/rematch-cuecs",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  rematchVendorAssuranceCuecs
+);
+
+router.post(
+  "/vendor-assurance/cuecs/:cuecId/mappings",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  createVendorAssuranceCuecMapping
+);
+
+router.post(
+  "/vendor-assurance/cuecs/:cuecId/review-status",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  updateVendorAssuranceCuecReviewStatus
+);
+
+router.patch(
+  "/vendor-assurance/cuec-mappings/:mappingId",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  updateVendorAssuranceCuecMapping
 );
 
 export default router;

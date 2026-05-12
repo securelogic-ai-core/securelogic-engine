@@ -4,11 +4,13 @@ import { getSession } from "@/lib/session";
 import {
   getVendorAssuranceDocument,
   getVendorAssuranceExtraction,
+  getCuecsForDocument,
   getVendorAssuranceDocumentPdfUrl,
   type VendorAssuranceDocument,
   type VendorAssuranceExtractionResponse,
   type VendorAssuranceExtractionSpan,
   type VendorAssuranceFieldOverride,
+  type VendorAssuranceCuecsResponse,
 } from "@/lib/api";
 import { groupExtractedFields } from "@/lib/vendorAssurance/fieldGroups";
 import PdfPreviewLoader from "@/components/vendorAssurance/PdfPreviewLoader";
@@ -56,12 +58,14 @@ export default async function VendorAssuranceDocumentPage({
 
   const { documentId } = await params;
 
-  const [document, extractionResp]: [
+  const [document, extractionResp, cuecsData]: [
     VendorAssuranceDocument | null,
-    VendorAssuranceExtractionResponse | null
+    VendorAssuranceExtractionResponse | null,
+    VendorAssuranceCuecsResponse | null
   ] = await Promise.all([
     getVendorAssuranceDocument(token, documentId),
     getVendorAssuranceExtraction(token, documentId),
+    getCuecsForDocument(token, documentId),
   ]);
 
   if (!document) {
@@ -166,10 +170,11 @@ export default async function VendorAssuranceDocumentPage({
             />
             <CuecSection
               documentId={documentId}
-              cuecs={grouped.cuecs}
-              override={overridesByField["cuecs"] ?? null}
-              spans={spansByField["cuecs"] ?? []}
-              canEdit={canEdit}
+              cuecsData={cuecsData}
+              cuecsField={grouped.cuecs}
+              cuecsOverride={overridesByField["cuecs"] ?? null}
+              cuecsSpans={spansByField["cuecs"] ?? []}
+              canEditOverride={canEdit}
               hasExtraction={hasExtraction}
             />
             <ExceptionSection
