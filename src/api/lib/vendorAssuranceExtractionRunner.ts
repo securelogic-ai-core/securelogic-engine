@@ -24,7 +24,7 @@ import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "./auditLog.js";
 import { getVendorAssurancePdfStream } from "./vendorAssuranceStorage.js";
 import { extractPdfText } from "./vendorAssurancePdfExtractor.js";
-import { runSocExtraction, type SocExtractionResult } from "./claudeSocExtractor.js";
+import { runSocExtraction, RAW_EXCERPT_BYTES, type SocExtractionResult } from "./claudeSocExtractor.js";
 
 async function streamToBuffer(body: unknown): Promise<Buffer> {
   if (body == null) throw new Error("empty body");
@@ -50,23 +50,38 @@ async function markFailed(
   documentId: string,
   organizationId: string,
   errorCode: string,
-  errorDetail: string
+  errorDetail: string,
+  rawResponseExcerpt?: string | null
 ): Promise<void> {
+  // rawResponseExcerpt is only supplied on the llm_invalid_json paths (a model
+  // response was received but did not parse / did not validate). It is already
+  // bounded by the extractor; re-truncate to the same RAW_EXCERPT_BYTES budget
+  // the success path uses on vendor_assurance_extractions, defensively. NULL on
+  // every other failure path (pdf_unparseable, llm_failed, unhandled).
+  const rawExcerpt =
+    typeof rawResponseExcerpt === "string" && rawResponseExcerpt.length > 0
+      ? rawResponseExcerpt.slice(0, RAW_EXCERPT_BYTES)
+      : null;
   await pg.query(
     `UPDATE vendor_assurance_documents
         SET processing_status = 'extraction_failed',
             processing_error_code = $3,
             processing_error_detail = $4,
+            raw_response_excerpt = $5,
             updated_at = NOW()
       WHERE id = $1 AND organization_id = $2`,
-    [documentId, organizationId, errorCode, errorDetail.slice(0, 4000)]
+    [documentId, organizationId, errorCode, errorDetail.slice(0, 4000), rawExcerpt]
   );
   writeAuditEvent({
     organizationId,
     eventType: "vendor_assurance.extraction.failed",
     resourceType: "vendor_assurance_document",
     resourceId: documentId,
-    payload: { error_code: errorCode, error_detail: errorDetail.slice(0, 500) }
+    payload: {
+      error_code: errorCode,
+      error_detail: errorDetail.slice(0, 500),
+      raw_response_excerpt_present: rawExcerpt !== null
+    }
   });
 }
 
@@ -199,7 +214,13 @@ export async function runExtraction(args: {
       documentTypeHint
     });
     if (!extracted.ok) {
-      await markFailed(documentId, organizationId, extracted.errorCode, extracted.detail);
+      await markFailed(
+        documentId,
+        organizationId,
+        extracted.errorCode,
+        extracted.detail,
+        extracted.rawExcerpt
+      );
       return;
     }
 

@@ -10,7 +10,10 @@
  * Returns a discriminated result so the runner can record the precise
  * extraction_failed:* error code:
  *   - { ok: true, fields, spans, rawExcerpt }
- *   - { ok: false, errorCode: 'llm_unavailable' | 'llm_invalid_json' | 'llm_failed', detail }
+ *   - { ok: false, errorCode, detail, rawExcerpt? } — rawExcerpt is present on
+ *     the two llm_invalid_json paths (JSON.parse error and validator rejection)
+ *     so the failure is diagnosable without re-running the LLM call. It is
+ *     absent for llm_unavailable and llm_failed, where no response was received.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -18,7 +21,7 @@ import { logger } from "../infra/logger.js";
 import { buildSocExtractionPrompt, MODEL_ID, PROMPT_VERSION } from "./socExtractionPrompt.js";
 import { validateSocExtraction, type ValidatedExtraction } from "./socExtractionValidator.js";
 
-const RAW_EXCERPT_BYTES = 8 * 1024;
+export const RAW_EXCERPT_BYTES = 8 * 1024;
 
 export type SocExtractionResult =
   | {
@@ -33,6 +36,12 @@ export type SocExtractionResult =
       ok: false;
       errorCode: "llm_unavailable" | "llm_invalid_json" | "llm_failed";
       detail: string;
+      /**
+       * The raw model response, truncated to RAW_EXCERPT_BYTES. Present only on
+       * the two llm_invalid_json paths (a response was received but did not
+       * parse / did not validate). Absent for llm_unavailable and llm_failed.
+       */
+      rawExcerpt?: string;
     };
 
 function getClient(): Anthropic | null {
@@ -102,13 +111,14 @@ export async function runSocExtraction(args: {
   }
 
   const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
+  const rawExcerpt = raw.slice(0, RAW_EXCERPT_BYTES);
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(cleaned);
   } catch (err) {
     const detail = (err as Error)?.message ?? "JSON.parse failed";
-    return { ok: false, errorCode: "llm_invalid_json", detail };
+    return { ok: false, errorCode: "llm_invalid_json", detail, rawExcerpt };
   }
 
   const validation = validateSocExtraction(parsed);
@@ -116,7 +126,8 @@ export async function runSocExtraction(args: {
     return {
       ok: false,
       errorCode: "llm_invalid_json",
-      detail: validation.detail ? `${validation.error}: ${validation.detail}` : validation.error
+      detail: validation.detail ? `${validation.error}: ${validation.detail}` : validation.error,
+      rawExcerpt
     };
   }
 
@@ -124,7 +135,7 @@ export async function runSocExtraction(args: {
     ok: true,
     fields: validation.extraction.fields,
     spans: validation.extraction.spans,
-    rawExcerpt: raw.slice(0, RAW_EXCERPT_BYTES),
+    rawExcerpt,
     modelId: MODEL_ID,
     promptVersion: PROMPT_VERSION
   };

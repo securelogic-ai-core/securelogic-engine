@@ -16,7 +16,7 @@
  * Naming uses "extracted" only — never "verified" or "validated".
  */
 
-export const PROMPT_VERSION = "soc-extraction-v1";
+export const PROMPT_VERSION = "soc-extraction-v2";
 export const MODEL_ID = "claude-sonnet-4-6";
 
 /** Field shape: scalar value vs array-of-strings vs array-of-objects. */
@@ -125,6 +125,8 @@ For "management_responses" array elements, each object SHOULD include:
 
 Also return a "source_spans" array on the top-level object. Each span:
   { "field_name": string, "page_number": int|null, "char_start": int, "char_end": int, "quote": string (≤ 800 chars) }
+
+For each source_spans entry, the "quote" field MUST be a non-empty verbatim excerpt from the document text above, copied character-for-character including punctuation and capitalization. If you cannot find a verbatim quote for a given field, omit that span entry entirely rather than emitting an empty quote string. Empty or placeholder quotes cause the extraction to be discarded.
 
 Every field listed above as "REQUIRES at least one source_spans entry" MUST have at least one matching span.
 

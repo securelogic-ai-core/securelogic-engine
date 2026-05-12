@@ -12,10 +12,16 @@
  *   - status is exactly "extracted"
  *   - value shape matches MaterialFieldSpec.shape (scalar / array_of_strings /
  *     array_of_objects)
- *   - source_spans have valid char_start/char_end (start>=0, end>=start) and
- *     non-empty quotes
+ *   - source_spans have valid char_start/char_end (start>=0, end>=start)
  *   - field_names referenced by spans appear in MATERIAL_FIELDS
  *   - every FIELD_NAMES_REQUIRING_SPANS field has ≥ 1 corresponding span
+ *
+ * Leniency on empty quotes: source_spans entries whose `quote` is empty or
+ * whitespace-only are silently dropped before validation; a field is only
+ * rejected if dropping leaves it with zero spans AND it is marked material
+ * (material_field_missing_span). A single sloppy span must not sink the whole
+ * extraction. Malformed spans (non-object, unknown field_name, bad offsets,
+ * bad page_number) are still hard-rejected.
  */
 
 import {
@@ -118,10 +124,20 @@ export function validateSocExtraction(raw: unknown): ValidationResult {
     fields[spec.name] = { value, confidence: conf, status: "extracted" };
   }
 
+  // Drop spans whose quote is empty or whitespace-only before validating — a
+  // single sloppy span must not sink the whole extraction. If this leaves a
+  // span-requiring field with zero spans, that is caught below as
+  // material_field_missing_span. Non-object span entries are kept here so the
+  // strict check below still hard-rejects them.
+  const quoteIsEmpty = (q: unknown): boolean => typeof q !== "string" || q.trim().length === 0;
+  const spansForValidation = spansRaw.filter(
+    (s) => !(isPlainObject(s) && quoteIsEmpty(s["quote"]))
+  );
+
   // Validate spans.
   const spans: ValidatedSpan[] = [];
-  for (let i = 0; i < spansRaw.length; i++) {
-    const s = spansRaw[i];
+  for (let i = 0; i < spansForValidation.length; i++) {
+    const s = spansForValidation[i];
     if (!isPlainObject(s)) {
       return { ok: false, error: "span_not_object", detail: `index ${i}` };
     }
@@ -146,10 +162,11 @@ export function validateSocExtraction(raw: unknown): ValidationResult {
     if (typeof charEnd !== "number" || !Number.isInteger(charEnd) || charEnd < charStart) {
       return { ok: false, error: "span_char_end_invalid", detail: `index ${i}` };
     }
+    // quote is a non-empty string here — empty/whitespace/non-string quotes were
+    // filtered out above. The typeof guard narrows for TS and is defensive
+    // against a future refactor of the pre-filter.
     const quote = s["quote"];
-    if (typeof quote !== "string" || quote.trim().length === 0) {
-      return { ok: false, error: "span_quote_empty", detail: `index ${i}` };
-    }
+    if (typeof quote !== "string") continue;
     const quoteTrunc = quote.length > MAX_QUOTE_CHARS ? quote.slice(0, MAX_QUOTE_CHARS) : quote;
     spans.push({
       field_name: fieldName,

@@ -145,12 +145,46 @@ describe("validateSocExtraction — span validation", () => {
     if (!r.ok) expect(r.error).toBe("span_field_name_unknown");
   });
 
-  it("rejects span with empty quote", () => {
+  it("drops an empty/whitespace-quote span; a span-requiring field left with no spans fails material_field_missing_span", () => {
     const spans = buildMinimalSpans();
-    spans[0]!["quote"] = "   ";
+    spans[0]!["quote"] = "   "; // blank out the only span for FIELD_NAMES_REQUIRING_SPANS[0]
     const r = validateSocExtraction({ fields: buildAllFields(), source_spans: spans });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toBe("span_quote_empty");
+    if (!r.ok) {
+      expect(r.error).toBe("material_field_missing_span");
+      expect(r.detail).toBe(FIELD_NAMES_REQUIRING_SPANS[0]);
+    }
+  });
+
+  it("drops an empty-quote span but keeps the field's other valid spans", () => {
+    const spans = buildMinimalSpans();
+    // Give the first span-requiring field a second, valid span, then blank the first.
+    spans.push({
+      field_name: FIELD_NAMES_REQUIRING_SPANS[0],
+      page_number: 2,
+      char_start: 5,
+      char_end: 25,
+      quote: "a verbatim excerpt"
+    });
+    spans[0]!["quote"] = "";
+    const r = validateSocExtraction({ fields: buildAllFields(), source_spans: spans });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const remaining = r.extraction.spans.filter((s) => s.field_name === FIELD_NAMES_REQUIRING_SPANS[0]);
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0]!.quote).toBe("a verbatim excerpt");
+    }
+  });
+
+  it("drops an empty-quote span on a non-material field without error", () => {
+    const spans = buildMinimalSpans();
+    // vendor_name is a valid field name that does NOT require a span.
+    spans.push({ field_name: "vendor_name", page_number: null, char_start: 0, char_end: 0, quote: "  " });
+    const r = validateSocExtraction({ fields: buildAllFields(), source_spans: spans });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.extraction.spans.some((s) => s.field_name === "vendor_name")).toBe(false);
+    }
   });
 
   it("rejects span with non-positive page_number", () => {
