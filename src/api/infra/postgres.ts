@@ -8,5 +8,5 @@ if (!databaseUrl) {
 
 export const pg = new Pool({
   connectionString: databaseUrl,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: true }
 });
