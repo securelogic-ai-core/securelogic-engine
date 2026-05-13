@@ -36,10 +36,14 @@ import { rejectInvalidJson } from "./middleware/rejectInvalidJson.js";
 import { requestId } from "./middleware/requestId.js";
 import { requestAudit } from "./middleware/requestAudit.js";
 
-import { verifyLemonWebhook } from "./middleware/verifyLemonWebhook.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
-import { lemonWebhook } from "./webhooks/lemonWebhook.js";
+// Lemon Squeezy is dormant: route /webhooks/lemon is unmounted (returns 404).
+// Re-enable by re-adding these imports and the app.post block in the WEBHOOKS
+// section. See memory: project_lemon_webhook_body_buffer_bug.md — also fix the
+// req.body Buffer-vs-parsed-object bug before reactivating.
+// import { verifyLemonWebhook } from "./middleware/verifyLemonWebhook.js";
+// import { lemonWebhook } from "./webhooks/lemonWebhook.js";
 import { stripeWebhook } from "./webhooks/stripeWebhook.js";
 import { buildRoutes } from "./routes/index.js";
 import { startScheduler } from "./lib/schedulerRunner.js";
@@ -348,19 +352,15 @@ app.use((_req, res, next) => {
    WEBHOOKS (RAW BODY FIRST)
    ========================================================= */
 
-app.post(
-  "/webhooks/lemon",
-  bodyParser.raw({
-    type: "application/json",
-    limit: "256kb"
-  }),
-  (req, _res, next) => {
-    req.rawBody = req.body;
-    next();
-  },
-  verifyLemonWebhook,
-  lemonWebhook
-);
+// /webhooks/lemon is intentionally unmounted — Lemon Squeezy is dormant and
+// the handler had a pre-existing req.body-as-Buffer bug that silently 200ed
+// every event as `ignored`. Reactivation checklist:
+//   1. Fix the body-parse bug (see project_lemon_webhook_body_buffer_bug.md).
+//   2. Re-add the imports at the top of this file.
+//   3. Restore the app.post("/webhooks/lemon", ...) block here with
+//      bodyParser.raw + rawBody setter + verifyLemonWebhook + lemonWebhook.
+//   4. Re-verify the strict Content-Type allowlist exception above still
+//      matches (it is preserved so re-enablement is a single-file change).
 
 // Stripe webhook rate limiter — 200 req/min per IP.
 // High enough for legitimate Stripe burst delivery (retries, backfill) but
