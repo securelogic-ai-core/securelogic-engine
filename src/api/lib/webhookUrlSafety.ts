@@ -95,31 +95,54 @@ export async function assertSafeWebhookUrl(urlString: string): Promise<SafeWebho
     throw new UnsafeWebhookUrlError("blocked_hostname", bareHost);
   }
 
-  let ip: string;
-  let family: 4 | 6;
+  let candidates: Array<{ address: string; family: 4 | 6 }>;
 
   if (ipaddr.isValid(bareHost)) {
     const parsed = ipaddr.parse(bareHost);
-    ip = parsed.toNormalizedString();
-    family = parsed.kind() === "ipv4" ? 4 : 6;
+    candidates = [
+      {
+        address: parsed.toNormalizedString(),
+        family: parsed.kind() === "ipv4" ? 4 : 6,
+      },
+    ];
   } else {
     try {
-      const resolved = await dnsLookup(bareHost, { family: 0, verbatim: true });
-      ip = resolved.address;
-      family = resolved.family as 4 | 6;
+      // {all: true} returns every A and AAAA record. We MUST validate all of
+      // them — a dual-stack host with one address in a blocked range is a
+      // bypass surface if we only check the first one (undici might still
+      // connect to the other family). Reject the URL if any address is
+      // blocked. Pin to the first unblocked address (prefer IPv4 by listing
+      // first in the filter; doesn't really matter since all survivors are
+      // validated, but IPv4 is more common for webhook destinations).
+      const resolved = await dnsLookup(bareHost, { all: true, verbatim: true });
+      candidates = resolved.map((r) => ({
+        address: r.address,
+        family: r.family as 4 | 6,
+      }));
     } catch {
+      throw new UnsafeWebhookUrlError("dns_resolution_failed", bareHost);
+    }
+    if (candidates.length === 0) {
       throw new UnsafeWebhookUrlError("dns_resolution_failed", bareHost);
     }
   }
 
-  const verdict = classifyIp(ip);
-  if (verdict.blocked) {
-    throw new UnsafeWebhookUrlError("blocked_ip_range", verdict.range);
+  // Validate EVERY candidate. Any single blocked address rejects the URL —
+  // we cannot trust that undici/the kernel will pick the safe family at
+  // connect time, and the pinning defense only pins to ONE IP.
+  for (const candidate of candidates) {
+    const verdict = classifyIp(candidate.address);
+    if (verdict.blocked) {
+      throw new UnsafeWebhookUrlError("blocked_ip_range", verdict.range);
+    }
   }
+
+  const chosen =
+    candidates.find((c) => c.family === 4) ?? candidates[0]!;
 
   const port = url.port ? parseInt(url.port, 10) : 443;
 
-  return { ip, family, hostname: bareHost, port };
+  return { ip: chosen.address, family: chosen.family, hostname: bareHost, port };
 }
 
 /**
