@@ -13,6 +13,8 @@
  *   GET    /api/vendor-assurance/documents/:id
  *   GET    /api/vendor-assurance/documents/:id/extraction
  *   GET    /api/vendor-assurance/documents/:id/pdf
+ *   POST   /api/vendor-assurance/documents/:id/export.xlsx
+ *   POST   /api/vendor-assurance/documents/:id/export.pdf
  *   POST   /api/vendor-assurance/extractions/:id/review-decisions
  *   POST   /api/vendor-assurance/documents/:id/finalize          (legacy)
  *   POST   /api/vendor-assurance/documents/:id/field-overrides
@@ -62,6 +64,9 @@ import {
   MATCH_SCORE_MIN_THRESHOLD,
   MATCH_SCORE_HIGH_CONFIDENCE
 } from "../lib/vendorAssuranceCuecMatcher.js";
+import { loadCuecsWithMappings, buildExportBundle } from "../lib/vendorAssuranceExportData.js";
+import { buildVendorAssuranceWorkbookBuffer, workbookDownloadFilename } from "../lib/vendorAssuranceExcelExporter.js";
+import { buildVendorAssurancePdf, pdfDownloadFilename } from "../lib/vendorAssurancePdfExporter.js";
 
 const router = Router();
 
@@ -1045,67 +1050,7 @@ export async function rejectVendorAssuranceDocument(req: Request, res: Response)
    CUEC matcher package: cuec rows + N:M control mappings
    ========================================================= */
 
-/** Load a document's CUEC rows with their control mappings (control name/desc/status joined). */
-async function loadCuecsWithMappings(
-  documentId: string,
-  organizationId: string
-): Promise<Array<Record<string, unknown>>> {
-  const cuecRes = await pg.query<{
-    id: string;
-    ordinal: number;
-    cuec_text: string;
-    review_status: string;
-    review_status_reason: string | null;
-    review_status_updated_by_user_id: string | null;
-    review_status_updated_at: string | null;
-    created_at: string;
-    updated_at: string;
-  }>(
-    `SELECT id, ordinal, cuec_text, review_status, review_status_reason,
-            review_status_updated_by_user_id, review_status_updated_at, created_at, updated_at
-       FROM vendor_assurance_cuecs
-      WHERE document_id = $1 AND organization_id = $2
-      ORDER BY ordinal ASC`,
-    [documentId, organizationId]
-  );
-  if (cuecRes.rows.length === 0) return [];
-
-  const cuecIds = cuecRes.rows.map((c) => c.id);
-  const mapRes = await pg.query<{
-    id: string;
-    cuec_id: string;
-    control_id: string;
-    mapping_status: string;
-    mapping_score: number | null;
-    mapping_source: string;
-    reason: string | null;
-    created_by_user_id: string | null;
-    updated_by_user_id: string | null;
-    created_at: string;
-    updated_at: string;
-    control_name: string;
-    control_description: string | null;
-    control_status: string;
-  }>(
-    `SELECT m.id, m.cuec_id, m.control_id, m.mapping_status, m.mapping_score, m.mapping_source,
-            m.reason, m.created_by_user_id, m.updated_by_user_id, m.created_at, m.updated_at,
-            c.name AS control_name, c.description AS control_description, c.status AS control_status
-       FROM vendor_assurance_cuec_control_mappings m
-       JOIN controls c ON c.id = m.control_id AND c.organization_id = m.organization_id
-      WHERE m.organization_id = $1 AND m.cuec_id = ANY($2::uuid[])
-      ORDER BY m.cuec_id,
-               CASE m.mapping_status WHEN 'accepted' THEN 0 WHEN 'suggested' THEN 1 ELSE 2 END,
-               m.mapping_score DESC NULLS LAST, m.created_at ASC`,
-    [organizationId, cuecIds]
-  );
-  const byCuec = new Map<string, Array<Record<string, unknown>>>();
-  for (const m of mapRes.rows) {
-    let list = byCuec.get(m.cuec_id);
-    if (!list) { list = []; byCuec.set(m.cuec_id, list); }
-    list.push(m);
-  }
-  return cuecRes.rows.map((c) => ({ ...c, mappings: byCuec.get(c.id) ?? [] }));
-}
+// loadCuecsWithMappings moved to ../lib/vendorAssuranceExportData.ts (shared with the export builders).
 
 /* GET /api/vendor-assurance/documents/:id/cuecs */
 export async function getVendorAssuranceCuecs(req: Request, res: Response): Promise<void> {
@@ -1403,6 +1348,113 @@ export async function updateVendorAssuranceCuecReviewStatus(req: Request, res: R
 }
 
 /* =========================================================
+   Export — reviewed-document download as .xlsx / .pdf.
+   Allowed on any state where there is content to export
+   (extracted, manual_review_requested, approved, rejected, finalized);
+   refused with 409 on the in-flight / failed states. Each successful export
+   fires a vendor_assurance.document.exported audit event with { format }.
+   ========================================================= */
+const EXPORT_BLOCKED_STATUSES = new Set(["pending", "extracting", "extraction_failed"]);
+
+async function exportVendorAssuranceDocumentInternal(
+  req: Request,
+  res: Response,
+  format: "xlsx" | "pdf"
+): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const documentId = String(req.params["id"] ?? "").trim();
+  if (!isUuid(documentId)) {
+    res.status(400).json({ error: "document_id_must_be_uuid" });
+    return;
+  }
+
+  // Existence (org-scoped → 404 cross-org) + exportability gate.
+  const gate = await pg.query<{ processing_status: string }>(
+    `SELECT processing_status FROM vendor_assurance_documents
+      WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+    [documentId, organizationId]
+  );
+  if ((gate.rowCount ?? 0) === 0) {
+    res.status(404).json({ error: "vendor_assurance_document_not_found" });
+    return;
+  }
+  const status = gate.rows[0]!.processing_status;
+  if (EXPORT_BLOCKED_STATUSES.has(status)) {
+    res.status(409).json({ error: "vendor_assurance_document_not_exportable", status });
+    return;
+  }
+
+  let bundle;
+  try {
+    bundle = await buildExportBundle(documentId, organizationId, { exportedByUserId: req.userId ?? null });
+  } catch (err) {
+    logger.error(
+      { event: "vendor_assurance_export_bundle_failed", organizationId, documentId, format, err },
+      "Vendor-assurance export bundle build failed"
+    );
+    res.status(500).json({ error: "export_failed" });
+    return;
+  }
+  if (!bundle) {
+    // Raced with a delete between the gate query and the bundle load.
+    res.status(404).json({ error: "vendor_assurance_document_not_found" });
+    return;
+  }
+
+  let bytes: Buffer;
+  let contentType: string;
+  let filename: string;
+  try {
+    if (format === "xlsx") {
+      bytes = await buildVendorAssuranceWorkbookBuffer(bundle);
+      contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      filename = workbookDownloadFilename(bundle);
+    } else {
+      bytes = await buildVendorAssurancePdf(bundle);
+      contentType = "application/pdf";
+      filename = pdfDownloadFilename(bundle);
+    }
+  } catch (err) {
+    logger.error(
+      { event: "vendor_assurance_export_render_failed", organizationId, documentId, format, err },
+      "Vendor-assurance export render failed"
+    );
+    if (!res.headersSent) res.status(500).json({ error: "export_failed" });
+    return;
+  }
+
+  writeAuditEvent({
+    organizationId,
+    actorApiKeyId: getApiKeyId(req),
+    actorUserId: req.userId ?? null,
+    eventType: "vendor_assurance.document.exported",
+    resourceType: "vendor_assurance_document",
+    resourceId: documentId,
+    payload: { format },
+    ipAddress: req.ip ?? null
+  });
+
+  res.setHeader("Content-Type", contentType);
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Cache-Control", "private, no-store, max-age=0");
+  res.status(200).send(bytes);
+}
+
+/** POST /api/vendor-assurance/documents/:id/export.xlsx */
+export async function exportVendorAssuranceDocumentXlsx(req: Request, res: Response): Promise<void> {
+  await exportVendorAssuranceDocumentInternal(req, res, "xlsx");
+}
+
+/** POST /api/vendor-assurance/documents/:id/export.pdf */
+export async function exportVendorAssuranceDocumentPdf(req: Request, res: Response): Promise<void> {
+  await exportVendorAssuranceDocumentInternal(req, res, "pdf");
+}
+
+/* =========================================================
    Multer error handler — translate file-size and unsupported-type errors
    into the canonical 413 / 400 responses for the upload route.
    ========================================================= */
@@ -1476,6 +1528,24 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("standard"),
   getVendorAssurancePdfRedirect
+);
+
+router.post(
+  "/vendor-assurance/documents/:id/export.xlsx",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  exportVendorAssuranceDocumentXlsx
+);
+
+router.post(
+  "/vendor-assurance/documents/:id/export.pdf",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("standard"),
+  exportVendorAssuranceDocumentPdf
 );
 
 router.post(
