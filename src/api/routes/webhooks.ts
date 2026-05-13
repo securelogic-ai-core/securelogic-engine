@@ -25,6 +25,10 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireNotViewer } from "../middleware/requireRole.js";
 import { generateWebhookSecret, maskSecret, buildWebhookHeaders } from "../lib/webhookSigning.js";
 import { deliverWebhook } from "../lib/webhookDispatcher.js";
+import {
+  assertSafeWebhookUrl,
+  UnsafeWebhookUrlError,
+} from "../lib/webhookUrlSafety.js";
 
 const router = Router();
 
@@ -46,13 +50,39 @@ function isUuid(v: unknown): v is string {
   return typeof v === "string" && UUID_RE.test(v.trim());
 }
 
-function isHttpsUrl(v: unknown): v is string {
-  if (typeof v !== "string") return false;
-  try {
-    const u = new URL(v);
-    return u.protocol === "https:";
-  } catch {
-    return false;
+/**
+ * Maps an UnsafeWebhookUrlError to a customer-facing 400 body. The reason
+ * field is machine-readable; the message is the prose the webhook-config UI
+ * should surface.
+ */
+function urlSafetyErrorResponse(err: UnsafeWebhookUrlError): {
+  error: string;
+  reason: string;
+  detail?: string;
+  message: string;
+} {
+  const withDetail = (message: string) =>
+    err.detail !== undefined
+      ? { error: "url_unsafe", reason: err.reason, detail: err.detail, message }
+      : { error: "url_unsafe", reason: err.reason, message };
+
+  switch (err.reason) {
+    case "invalid_url":
+      return withDetail("URL is not a valid URL.");
+    case "not_https":
+      return withDetail("URL must use https://. Plain http and other schemes are not accepted.");
+    case "blocked_hostname":
+      return withDetail(
+        "Hostname is blocked (loopback, cloud metadata service, or similar). Only public-internet HTTPS endpoints are accepted."
+      );
+    case "blocked_ip_range":
+      return withDetail(
+        "URL resolved to a private/loopback IP, only public-internet HTTPS endpoints are accepted."
+      );
+    case "dns_resolution_failed":
+      return withDetail(
+        "Could not resolve hostname. Confirm the URL is reachable from the public internet."
+      );
   }
 }
 
@@ -124,9 +154,18 @@ router.post(
 
       const { url, description, event_types } = req.body ?? {};
 
-      if (!isHttpsUrl(url)) {
-        res.status(400).json({ error: "url_must_be_https" });
+      if (typeof url !== "string") {
+        res.status(400).json({ error: "url_required" });
         return;
+      }
+      try {
+        await assertSafeWebhookUrl(url);
+      } catch (err) {
+        if (err instanceof UnsafeWebhookUrlError) {
+          res.status(400).json(urlSafetyErrorResponse(err));
+          return;
+        }
+        throw err;
       }
 
       const rawDescription = description != null ? String(description).trim() : null;
@@ -266,9 +305,18 @@ router.patch(
       const values: unknown[] = [];
 
       if ("url" in body) {
-        if (!isHttpsUrl(body.url)) {
-          res.status(400).json({ error: "url_must_be_https" });
+        if (typeof body.url !== "string") {
+          res.status(400).json({ error: "url_required" });
           return;
+        }
+        try {
+          await assertSafeWebhookUrl(body.url);
+        } catch (err) {
+          if (err instanceof UnsafeWebhookUrlError) {
+            res.status(400).json(urlSafetyErrorResponse(err));
+            return;
+          }
+          throw err;
         }
         values.push(body.url);
         updates.push(`url = $${values.length}`);

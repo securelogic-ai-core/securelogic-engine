@@ -23,6 +23,10 @@
 
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import {
+  assertSafeWebhookUrl,
+  UnsafeWebhookUrlError,
+} from "../lib/webhookUrlSafety.js";
 
 const isProd = process.env.NODE_ENV === "production";
 
@@ -68,6 +72,72 @@ async function probeDatabase(): Promise<void> {
   }
 }
 
+/**
+ * SSRF dry-run audit (A10-G1): the new SSRF guard is enforced at write/PATCH
+ * time, but pre-existing webhook_endpoints rows were written before the
+ * validator existed. Run the validator against every active row at boot and
+ * warn-log any that would now be rejected. No auto-disable — operator
+ * reviews logs and contacts affected customers manually.
+ *
+ * Failures during the audit (DB errors, DNS storms) are logged and swallowed —
+ * the audit must never block startup.
+ */
+async function auditExistingWebhookUrls(): Promise<void> {
+  try {
+    const result = await pg.query<{ id: string; organization_id: string; url: string }>(
+      `SELECT id, organization_id, url
+         FROM webhook_endpoints
+        WHERE status = 'active'`
+    );
+
+    if (result.rows.length === 0) {
+      logger.info(
+        { event: "startup_webhook_url_audit_empty" },
+        "No active webhook endpoints to audit"
+      );
+      return;
+    }
+
+    let unsafeCount = 0;
+
+    await Promise.allSettled(
+      result.rows.map(async (row) => {
+        try {
+          await assertSafeWebhookUrl(row.url);
+        } catch (err) {
+          if (err instanceof UnsafeWebhookUrlError) {
+            unsafeCount += 1;
+            logger.warn(
+              {
+                event: "startup_webhook_url_audit_unsafe",
+                endpoint_id: row.id,
+                organization_id: row.organization_id,
+                reason: err.reason,
+                detail: err.detail,
+              },
+              "Existing webhook endpoint would now fail SSRF validation — contact customer (no auto-disable)"
+            );
+          }
+        }
+      })
+    );
+
+    logger.info(
+      {
+        event: "startup_webhook_url_audit_complete",
+        total: result.rows.length,
+        unsafe: unsafeCount,
+      },
+      "Webhook URL safety audit complete"
+    );
+  } catch (err) {
+    logger.error(
+      { event: "startup_webhook_url_audit_failed", err },
+      "Webhook URL audit failed (non-fatal) — startup continues"
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -100,6 +170,9 @@ export async function startupCheck(): Promise<void> {
 
   // Probe actual database connectivity — required to accept any traffic.
   await probeDatabase();
+
+  // SSRF audit of existing webhook URLs (A10-G1). Non-fatal — just logs.
+  await auditExistingWebhookUrls();
 
   if (isProd) {
     logger.info(

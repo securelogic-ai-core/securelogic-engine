@@ -1,7 +1,13 @@
 import crypto from "crypto";
+import { fetch as undiciFetch } from "undici";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { buildWebhookHeaders } from "./webhookSigning.js";
+import {
+  assertSafeWebhookUrl,
+  buildPinnedAgent,
+  UnsafeWebhookUrlError,
+} from "./webhookUrlSafety.js";
 
 export interface WebhookEvent {
   event_type: string;
@@ -62,21 +68,57 @@ export async function deliverWebhook(
   const deliveryId = deliveryResult.rows[0]?.id;
   if (!deliveryId) return { deliveryId: "", status: "failed", responseStatus: null };
 
+  // SSRF defense (A10-G1): re-validate the URL at delivery time, which
+  // re-resolves DNS. The returned IP is then pinned via the undici Agent's
+  // connect.lookup hook, so the TCP connection goes to the IP we approved —
+  // closing the DNS rebinding window between validation and connect().
+  let safeTarget;
+  try {
+    safeTarget = await assertSafeWebhookUrl(endpoint.url);
+  } catch (err) {
+    if (err instanceof UnsafeWebhookUrlError) {
+      const message = `unsafe_url:${err.reason}${err.detail ? `:${err.detail}` : ""}`;
+      logger.warn(
+        {
+          event: "webhook_delivery_blocked_unsafe_url",
+          endpoint_id: endpoint.id,
+          reason: err.reason,
+          detail: err.detail,
+        },
+        "webhookDispatcher: refused to dispatch — URL failed safety check"
+      );
+      await scheduleRetry(deliveryId, endpoint.id, null, null, message);
+      return { deliveryId, status: "failed", responseStatus: null };
+    }
+    throw err;
+  }
+
+  const agent = buildPinnedAgent(safeTarget.ip, safeTarget.family);
+
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
 
-    const response = await fetch(endpoint.url, {
+    const response = await undiciFetch(endpoint.url, {
       method: "POST",
       headers,
       body: payload,
       signal: controller.signal,
+      redirect: "manual",
+      dispatcher: agent,
     });
     clearTimeout(timeout);
 
-    const responseBody = await response.text().catch(() => "");
+    // 3xx with redirect:"manual" is terminal — treat as a delivery failure
+    // so customers can't chain through a public redirector to reach a
+    // blocked target. Do not read or persist the redirect body.
+    if (response.status >= 300 && response.status < 400) {
+      await scheduleRetry(deliveryId, endpoint.id, response.status, null, "redirect_blocked");
+      return { deliveryId, status: "retrying", responseStatus: response.status };
+    }
 
     if (response.ok) {
+      const responseBody = await response.text().catch(() => "");
       await pg.query(
         `UPDATE webhook_deliveries
          SET status = 'delivered',
@@ -95,11 +137,14 @@ export async function deliverWebhook(
       );
       return { deliveryId, status: "delivered", responseStatus: response.status };
     } else {
+      // Non-2xx (A10-G1 Layer C): do NOT persist response_body. The body was
+      // previously stored and surfaced via GET /api/webhooks/:id/deliveries,
+      // which turned every SSRF probe into a side-channel oracle.
       await scheduleRetry(
         deliveryId,
         endpoint.id,
         response.status,
-        responseBody.slice(0, 500),
+        null,
         `HTTP ${response.status}`
       );
       return { deliveryId, status: "retrying", responseStatus: response.status };
@@ -108,6 +153,8 @@ export async function deliverWebhook(
     const message = err instanceof Error ? err.message : "unknown error";
     await scheduleRetry(deliveryId, endpoint.id, null, null, message);
     return { deliveryId, status: "failed", responseStatus: null };
+  } finally {
+    await agent.close().catch(() => undefined);
   }
 }
 
