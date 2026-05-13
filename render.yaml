@@ -3,7 +3,7 @@ services:
     name: securelogic-engine
     env: node
     plan: starter
-    buildCommand: npm install --include=dev && npm run build
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm run migrate && npm start
     autoDeploy: true
     healthCheckPath: /health
@@ -141,7 +141,7 @@ services:
     env: node
     plan: starter
     branch: develop
-    buildCommand: npm install --include=dev && npm run build
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm run migrate && node dist/api/server.js
     autoDeploy: true
     healthCheckPath: /health
@@ -280,7 +280,7 @@ services:
     name: securelogic-intelligence-worker
     env: node
     plan: starter
-    buildCommand: npm install --include=dev && tsc -p services/intelligence-worker/tsconfig.json
+    buildCommand: npm ci --include=dev && tsc -p services/intelligence-worker/tsconfig.json
     startCommand: node dist-intelligence-worker/services/intelligence-worker/src/scheduler.js
     autoDeploy: true
     envVars:
@@ -348,7 +348,7 @@ services:
     env: node
     plan: starter
     branch: develop
-    buildCommand: npm install --include=dev && tsc -p services/intelligence-worker/tsconfig.json
+    buildCommand: npm ci --include=dev && tsc -p services/intelligence-worker/tsconfig.json
     startCommand: node dist-intelligence-worker/services/intelligence-worker/src/scheduler.js
     autoDeploy: true
     envVars:
@@ -412,7 +412,7 @@ services:
     name: securelogic-posture-worker
     env: node
     plan: starter
-    buildCommand: npm install --include=dev && tsc -p services/posture-worker/tsconfig.json
+    buildCommand: npm ci --include=dev && tsc -p services/posture-worker/tsconfig.json
     startCommand: node dist-posture-worker/services/posture-worker/src/index.js
     autoDeploy: true
     envVars:
@@ -439,7 +439,7 @@ services:
     name: securelogic-app
     env: node
     plan: starter
-    buildCommand: cd app && npm install --include=dev && rm -rf .next && npm run build
+    buildCommand: cd app && npm ci --include=dev && rm -rf .next && npm run build
     startCommand: cd app && npx next start -p $PORT
     autoDeploy: true
     envVars:
@@ -479,7 +479,7 @@ services:
     name: securelogic-website
     env: node
     plan: starter
-    buildCommand: cd website && npm install --include=dev && npm run build
+    buildCommand: cd website && npm ci --include=dev && npm run build
     startCommand: cd website && npx serve@latest out -l $PORT
     autoDeploy: true
     envVars:
