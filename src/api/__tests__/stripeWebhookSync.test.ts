@@ -72,6 +72,40 @@ describe("stripeWebhook.ts: org resolution", () => {
   });
 });
 
+describe("stripeWebhook.ts: idempotency gate (C3)", () => {
+  it("calls claimWebhookEvent before any downstream side-effect call", () => {
+    // The gate must sit before downstream entitlement writes so a duplicate
+    // event_id short-circuits without re-running side effects. UPDATE strings
+    // inside helper-function bodies appear earlier in source than the main
+    // handler, so the right anchors are the CALL sites of those helpers.
+    const claimCallIdx = SOURCE.indexOf('claimWebhookEvent("stripe"');
+    const redisCallIdx = SOURCE.indexOf("await setEntitlementInRedis(apiKeyId");
+    const syncCallIdx = SOURCE.indexOf("await syncOrgEntitlement(");
+    const paymentFailedCallIdx = SOURCE.indexOf("await handlePaymentFailed(");
+    expect(claimCallIdx).toBeGreaterThan(-1);
+    expect(redisCallIdx).toBeGreaterThan(-1);
+    expect(syncCallIdx).toBeGreaterThan(-1);
+    expect(paymentFailedCallIdx).toBeGreaterThan(-1);
+    expect(claimCallIdx).toBeLessThan(redisCallIdx);
+    expect(claimCallIdx).toBeLessThan(syncCallIdx);
+    expect(claimCallIdx).toBeLessThan(paymentFailedCallIdx);
+  });
+
+  it("short-circuits the duplicate path with idempotent_replay:true (200)", () => {
+    expect(SOURCE).toMatch(/idempotent_replay:\s*true/);
+    expect(SOURCE).toMatch(/stripe_webhook_idempotent_replay/);
+  });
+
+  it("fails CLOSED on claim INSERT failure (500, not silent retry)", () => {
+    // Fail-open here would silently re-process during a Postgres-unhealthy
+    // window. Fail-closed lets Stripe's retry mechanism handle the gap.
+    expect(SOURCE).toMatch(/stripe_webhook_idempotency_claim_failed/);
+    expect(SOURCE).toMatch(
+      /res\.status\(500\)\.json\(\{\s*error:\s*"idempotency_check_failed"\s*\}\)/
+    );
+  });
+});
+
 describe("stripeWebhook.ts: stale-revoke guard", () => {
   it("only fires on customer.subscription.deleted events", () => {
     // The guard's outer condition must be the .deleted event type, not

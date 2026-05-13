@@ -9,6 +9,10 @@ import {
   setEntitlementInRedis,
   type EntitlementRecord
 } from "../infra/entitlementStore.js";
+import {
+  claimWebhookEvent,
+  deriveLemonEventId
+} from "./webhookIdempotency.js";
 
 /**
  * Maps the Redis/Lemon tier vocabulary to the DB entitlement_level vocabulary.
@@ -242,8 +246,60 @@ export async function lemonWebhook(req: Request, res: Response): Promise<void> {
     }
 
     const payload = req.body as any;
+    const rawBody = (req as any).rawBody;
 
     const eventName = extractEventName(payload);
+
+    // Idempotency gate (C3). Lemon doesn't reliably publish a stable per-event
+    // id, so deriveLemonEventId prefers meta.event_id and falls back to
+    // sha256(rawBody)[:32]. The (provider, event_id) PK on
+    // webhook_events_processed is the dedup anchor; event_name is metadata.
+    //
+    // Fail-CLOSED on claim INSERT failure: return 500 so Lemon retries —
+    // silently re-processing during a Postgres-unhealthy window is worse than
+    // letting the provider's retry mechanism handle it.
+    if (!Buffer.isBuffer(rawBody)) {
+      logger.error(
+        { event: "lemon_webhook_no_raw_body" },
+        "lemonWebhook: rawBody missing — middleware misconfigured, failing closed"
+      );
+      res.status(500).json({ error: "raw_body_missing" });
+      return;
+    }
+
+    const { eventId, source: eventIdSource } = deriveLemonEventId(
+      payload,
+      rawBody
+    );
+
+    try {
+      const { firstSeen } = await claimWebhookEvent("lemon", eventId, eventName);
+      if (!firstSeen) {
+        logger.info(
+          {
+            event: "lemon_webhook_idempotent_replay",
+            eventName,
+            eventIdSource
+          },
+          "lemonWebhook: duplicate event — short-circuiting before downstream writes"
+        );
+        res.status(200).json({ received: true, idempotent_replay: true });
+        return;
+      }
+    } catch (err) {
+      logger.error(
+        {
+          event: "lemon_webhook_idempotency_claim_failed",
+          eventName,
+          eventIdSource,
+          err
+        },
+        "lemonWebhook: idempotency claim INSERT failed — failing closed, Lemon will retry"
+      );
+      res.status(500).json({ error: "idempotency_check_failed" });
+      return;
+    }
+
     const apiKeyCandidate = extractApiKeyFromPayload(payload);
 
     const entitlement = classifyEntitlementFromEvent(eventName);

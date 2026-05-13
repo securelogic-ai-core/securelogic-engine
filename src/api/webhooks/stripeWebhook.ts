@@ -8,6 +8,7 @@ import {
   setEntitlementInRedis,
   type EntitlementRecord
 } from "../infra/entitlementStore.js";
+import { claimWebhookEvent } from "./webhookIdempotency.js";
 
 /* =========================================================
    CONSTANTS
@@ -709,6 +710,40 @@ export async function stripeWebhook(
       { event: "stripe_webhook_received", stripeEventType: eventType },
       "stripe webhook received"
     );
+
+    // Idempotency gate (C3). Placed immediately after constructEvent so that
+    // payment_failed writes, entitlement writes, and outbound Stripe cancel
+    // calls in cancelPriorBriefSubscriptions all sit behind it. Fail-closed
+    // on claim INSERT failure: return 500 so Stripe retries — silently
+    // re-processing during a Postgres-unhealthy window is worse than letting
+    // the provider's retry mechanism handle it.
+    try {
+      const { firstSeen } = await claimWebhookEvent("stripe", event.id, eventType);
+      if (!firstSeen) {
+        logger.info(
+          {
+            event: "stripe_webhook_idempotent_replay",
+            stripeEventType: eventType,
+            stripeEventId: event.id
+          },
+          "stripeWebhook: duplicate event_id — short-circuiting before downstream writes"
+        );
+        respond({ received: true, idempotent_replay: true });
+        return;
+      }
+    } catch (err) {
+      logger.error(
+        {
+          event: "stripe_webhook_idempotency_claim_failed",
+          stripeEventType: eventType,
+          stripeEventId: event.id,
+          err
+        },
+        "stripeWebhook: idempotency claim INSERT failed — failing closed, Stripe will retry"
+      );
+      res.status(500).json({ error: "idempotency_check_failed" });
+      return;
+    }
 
     // Handle payment failure first — separate action from grant/revoke flow
     if (PAYMENT_FAILED_EVENTS.has(eventType)) {
