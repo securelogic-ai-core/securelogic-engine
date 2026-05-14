@@ -35,6 +35,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { logger } from "../infra/logger.js";
+import type { BriefSynthesis } from "./briefSynthesizer.js";
 
 function getClient(): Anthropic | null {
   const key = process.env.ANTHROPIC_API_KEY?.trim();
@@ -147,7 +148,7 @@ export type BriefContentJson = {
    * enrichment. Optional/nullable so existing briefs without synthesis still
    * conform to this type when read back from the DB.
    */
-  synthesis?: import("./briefSynthesizer.js").BriefSynthesis | null;
+  synthesis?: BriefSynthesis | null;
 };
 
 // ---------------------------------------------------------------------------

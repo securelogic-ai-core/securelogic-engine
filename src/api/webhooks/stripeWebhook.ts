@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import Stripe from "stripe";
+import type Stripe from "stripe";
 
 import { getStripe } from "../infra/stripeClient.js";
 import { logger } from "../infra/logger.js";

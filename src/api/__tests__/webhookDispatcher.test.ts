@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as webhookUrlSafetyModule from "../lib/webhookUrlSafety.js";
 
 const {
   pgQueryMock,
@@ -27,9 +28,9 @@ vi.mock("undici", () => ({
 }));
 
 vi.mock("../lib/webhookUrlSafety.js", async () => {
-  const actual = await vi.importActual<typeof import("../lib/webhookUrlSafety.js")>(
-    "../lib/webhookUrlSafety.js"
-  );
+  const actual = await vi.importActual<
+    typeof webhookUrlSafetyModule
+  >("../lib/webhookUrlSafety.js");
   return {
     ...actual,
     assertSafeWebhookUrl: assertSafeWebhookUrlMock,

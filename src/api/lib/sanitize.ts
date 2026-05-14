@@ -25,7 +25,6 @@
  */
 export function sanitizeString(value: string, maxLength: number): string {
   // Strip null bytes — PostgreSQL rejects strings with \x00 in TEXT columns.
-  // eslint-disable-next-line no-control-regex
   const stripped = value.replace(/\x00/g, "");
   // Truncate at the application layer before reaching the DB.
   return stripped.length > maxLength ? stripped.slice(0, maxLength) : stripped;

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import crypto from "node:crypto";
+import type { Request, Response } from "express";
 
 // vi.mock factories are hoisted above top-level consts, so the mock fns must
 // also be hoisted via vi.hoisted to avoid "Cannot access X before initialization".
@@ -73,7 +74,7 @@ function buildReq(
     get: (name: string) => headers[name.toLowerCase()],
     body,
     rawBody,
-  } as unknown as import("express").Request;
+  } as unknown as Request;
 }
 
 function buildRes() {
@@ -81,7 +82,7 @@ function buildRes() {
     { status: vi.fn(), json: vi.fn() };
   res.status.mockReturnValue(res);
   res.json.mockReturnValue(res);
-  return res as unknown as import("express").Response & {
+  return res as unknown as Response & {
     status: ReturnType<typeof vi.fn>;
     json: ReturnType<typeof vi.fn>;
   };

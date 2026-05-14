@@ -5,6 +5,7 @@ import {
   getIssueArtifact
 } from "../infra/issueStore.js";
 import { isSignedIssue } from "../contracts/signedIssue.schema.js";
+import type { SignedIssue } from "../contracts/signedIssue.schema.js";
 import { verifyIssueSignature } from "../infra/verifyIssueSignature.js";
 
 const router = Router();
@@ -17,7 +18,7 @@ const router = Router();
 function parseArtifact(
   raw: string,
   issueNumber: number | null
-): import("../contracts/signedIssue.schema.js").SignedIssue | null {
+): SignedIssue | null {
   let parsed: unknown;
 
   try {
