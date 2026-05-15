@@ -36,7 +36,6 @@ import { requestId } from "./middleware/requestId.js";
 import { requestAudit } from "./middleware/requestAudit.js";
 
 import { errorHandler } from "./middleware/errorHandler.js";
-import type { AdminUser } from "./auth/adminStore.js";
 
 // Lemon Squeezy is dormant: route /webhooks/lemon is unmounted (returns 404).
 // Re-enable by re-adding these imports and the app.post block in the WEBHOOKS
@@ -56,7 +55,6 @@ declare global {
   namespace Express {
     interface Request {
       rawBody?: string | Buffer;
-      adminUser?: AdminUser;
     }
   }
 }
