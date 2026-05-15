@@ -38,7 +38,7 @@ router.post("/admin/login", async (req, res) => {
 
   res.cookie("sl_admin_session", sessionId, {
     httpOnly: true,
-    secure: false, // change to true in prod
+    secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
     maxAge: SESSION_TTL_MS
   });
