@@ -247,7 +247,10 @@ function validateStripeEnv(): void {
   const key = process.env.STRIPE_SECRET_KEY?.trim();
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
 
-  // Stripe is optional — warn if partially configured
+  // Stripe vars are required in production — presence enforced by
+  // REQUIRED_ENV_PROD (process exits at boot if any are missing). The
+  // partial-config warnings below catch dev/staging misconfigurations
+  // where vars can be independently set or unset.
   const hasKey = Boolean(key);
   const hasWebhookSecret = Boolean(webhookSecret);
 
