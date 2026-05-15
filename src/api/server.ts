@@ -2,7 +2,6 @@ import "dotenv/config";
 
 import path from "path";
 import { fileURLToPath } from "url";
-import session from "express-session";
 
 import cookieParser from "cookie-parser";
 
@@ -408,32 +407,6 @@ app.use(express.urlencoded({ extended: false, limit: "256kb" }));
    ========================================================= */
 
 app.use(cookieParser());
-
-/* =========================================================
-   SESSION (CRITICAL FOR ADMIN AUTH)
-   ========================================================= */
-
-const sessionSecret = process.env.SESSION_SECRET ?? (isDev ? "dev-secret" : (() => { throw new Error("SESSION_SECRET must be set in production"); })());
-
-app.use(
-  session({
-    name: "securelogic.sid",
-    secret: sessionSecret,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-
-      // 🔥 REQUIRED for github.dev (cross-site iframe/domain)
-      sameSite: "none",
-
-      // 🔥 REQUIRED when sameSite = none
-      secure: true,
-
-      maxAge: 1000 * 60 * 60 * 4 // 4 hours
-    }
-  })
-);
 
 /* =========================================================
    DEV DASHBOARD (local operator UI — dev only)
