@@ -256,7 +256,9 @@ Already documented in `TENANT_ISOLATION_STANDARD.md` R11. One tenant could exhau
 
 `/.env` contains `SECURELOGIC_ADMIN_KEY=sl_admin_<redacted>`. This is a dev-only key, not the production secret, but committed dev keys often get pasted into stack overflow questions, screen-shared, or referenced in error reports. Operationally weak.
 
-**Remediation:** Move dev defaults to `.env.example` (already exists). Rotate dev key. Add `.env` to `.gitignore` (verify status — `git status` does not flag it as untracked, suggesting it's already tracked; needs explicit `git rm --cached`). Effort: 1 hour.
+Git-history evidence (added 2026-05-17): the related 2026-05-14 internal review initially dated this value's first commit to 2026-04-01; full-history analysis put first appearance at 2025-12-05 — roughly four months longer exposure. The value was purged from history in the 2026-05-17 `filter-repo` rewrite, the key has been rotated, and the literal string was redacted from this document in `d82d2298`. (Pre-rewrite commit SHAs are intentionally omitted — they no longer resolve in mainline and would be dead references; they survive only in the `e5f0c508` backup.)
+
+**Remediation — largely resolved (2026-05-17):** Dev key rotated; `.env` purged from git history and no longer tracked at HEAD (`git ls-files .env` returns nothing); `.gitignore` entry present. Residual: keep dev defaults in `.env.example` (exists) and guard against future `git add -f .env`. Effort: closed — monitor only.
 
 #### A05-G4 — Orphan `requireAdminToken.ts` and `routes/adminAuth.ts` retain insecure patterns (Low)
 
