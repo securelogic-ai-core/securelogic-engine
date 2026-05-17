@@ -254,7 +254,7 @@ Already documented in `TENANT_ISOLATION_STANDARD.md` R11. One tenant could exhau
 
 #### A05-G3 — `.env` file is committed with a dev admin key visible (Medium)
 
-`/.env` contains `SECURELOGIC_ADMIN_KEY=sl_admin_60a1304f...`. This is a dev-only key, not the production secret, but committed dev keys often get pasted into stack overflow questions, screen-shared, or referenced in error reports. Operationally weak.
+`/.env` contains `SECURELOGIC_ADMIN_KEY=sl_admin_<redacted>`. This is a dev-only key, not the production secret, but committed dev keys often get pasted into stack overflow questions, screen-shared, or referenced in error reports. Operationally weak.
 
 **Remediation:** Move dev defaults to `.env.example` (already exists). Rotate dev key. Add `.env` to `.gitignore` (verify status — `git status` does not flag it as untracked, suggesting it's already tracked; needs explicit `git rm --cached`). Effort: 1 hour.
 
