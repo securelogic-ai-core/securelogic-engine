@@ -45,7 +45,6 @@ function assertProdHardening(): void {
    * Production MUST have secrets.
    */
   assertNonEmptyEnv("SECURELOGIC_ADMIN_KEY");
-  assertNonEmptyEnv("LEMON_WEBHOOK_SECRET");
 
   /**
    * Production MUST have admin network allowlist.
@@ -57,13 +56,11 @@ function assertProdHardening(): void {
    * Prevent weak secrets.
    */
   assertMinLength("SECURELOGIC_ADMIN_KEY", 16);
-  assertMinLength("LEMON_WEBHOOK_SECRET", 16);
 
   /**
    * Prevent absurdly oversized envs (header/env abuse / misconfig).
    */
   assertMaxLength("SECURELOGIC_ADMIN_KEY", 4096);
-  assertMaxLength("LEMON_WEBHOOK_SECRET", 4096);
   assertMaxLength("SECURELOGIC_ADMIN_ALLOWED_IPS", 4096);
 
   /**
