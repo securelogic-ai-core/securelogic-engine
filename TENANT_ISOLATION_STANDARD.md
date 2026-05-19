@@ -171,15 +171,15 @@ The platform has a Cloudflare R2 blob layer wired in **staging only**. Productio
 Staff (SecureLogic AI employees) access customer data only via the `/admin/*` surface.
 
 ### Required controls (in series)
-1. `SECURELOGIC_ADMIN_KEY` — rotatable, min 16 chars, set in environment, never in code.
+1. `SECURELOGIC_ADMIN_KEY` — rotatable, min 16 chars, set in environment, never in code. Authenticates every `/admin/*` request via the `X-Admin-Key` header (timing-safe compare in `requireAdminKey.ts`).
 2. IP allowlist — `SECURELOGIC_ADMIN_ALLOWED_IPS` (CIDR, comma-separated). `0.0.0.0/0` is forbidden.
-3. Admin session — cookie-based, distinct from customer JWTs.
+3. Per-request middleware chain — `[adminLockout, requireAdminKey, adminRateLimit, adminAudit]`. Brute-force gate (Redis-backed lockout), header-based auth, rate limit, audit-log. **No session cookie and no per-admin-user identity** — `SECURELOGIC_ADMIN_KEY` is a service-level secret, not a per-staff credential.
 
 ### Rules
 - Every admin route that reads customer data MUST audit-log the staff actor identity AND the affected `organizationId`.
 - Every admin route that mutates customer data MUST audit-log the staff actor, the affected `organizationId`, the resource type and id, AND a reason payload supplied by the operator.
 - Admin routes MUST NOT bypass the org-scoping rules in §4. A staff actor performing a customer-impersonation read MUST still go through org-scoped queries; the difference is the actor identity, not the data shape.
-- Admin sessions MUST be short-lived. Long-running admin tokens are forbidden.
+- `SECURELOGIC_ADMIN_KEY` MUST be rotated regularly. The engine does not maintain per-admin-user sessions or long-lived bearer tokens.
 
 ---
 
@@ -250,7 +250,7 @@ Every PR that touches customer data MUST satisfy these checks before merge.
 - Logs `organizationId` alongside the model identifier.
 
 ### E. New admin route
-- Goes through the admin chain (`requireAdminKey + requireAdminNetwork + requireAdminSession`).
+- Mounts under `/admin` in `routes/index.ts`, which applies the admin chain (`adminLockout + requireAdminKey + adminRateLimit + adminAudit`). No per-route auth boilerplate needed.
 - Audit-logs the staff actor and the affected `organizationId`.
 - For mutations, requires a reason payload.
 
