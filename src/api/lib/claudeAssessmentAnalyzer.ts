@@ -125,6 +125,74 @@ const DocumentAnalysisResultSchema = z.object({
     .transform((v) => v ?? [])
 });
 
+// A08-G4: same reject-on-failure posture for the pre-assessment context
+// helpers. The decision-bearing severity field is validated against the
+// closed SUGGESTED_SEVERITY enum (a prompt-injected severity must not reach
+// the assessor). matchedSignals[].severity is intentionally a length-capped
+// string, not an enum: the source type (MatchedSignal.severity) is `string`
+// and that field is contextual display, not a decision input — enum-forcing
+// it would false-reject benignly-cased Claude output. Cosmetic fields default
+// leniently so a well-typed-but-incomplete response is not discarded.
+
+const MatchedSignalSchema = z.object({
+  title: z.string().max(300).optional().transform((v) => v ?? ""),
+  relevance: z.string().max(1000).optional().transform((v) => v ?? ""),
+  severity: z.string().max(50).optional().transform((v) => v ?? ""),
+  suggestedFindingTitle: z
+    .string()
+    .max(300)
+    .optional()
+    .transform((v) => v ?? ""),
+  suggestedFindingDescription: z
+    .string()
+    .max(4000)
+    .optional()
+    .transform((v) => v ?? "")
+});
+
+const VendorSignalContextSchema = z.object({
+  matchedSignals: z
+    .array(MatchedSignalSchema)
+    .max(100)
+    .optional()
+    .transform((v) => v ?? []),
+  overallRiskSummary: z
+    .string()
+    .max(4000)
+    .optional()
+    .transform((v) =>
+      v && v.trim().length > 0
+        ? v
+        : "No current threat signals matched this vendor."
+    ),
+  suggestedAssessmentSeverity: SUGGESTED_SEVERITY.nullable()
+    .optional()
+    .transform((v) => v ?? null)
+});
+
+// Shared by analyzeComplianceContext and analyzeAiGovernanceContext — both
+// return the ComplianceContext shape (the AI-governance path reuses the type).
+const ComplianceContextSchema = z.object({
+  suggestedSeverity: SUGGESTED_SEVERITY.nullable()
+    .optional()
+    .transform((v) => v ?? null),
+  suggestedSummary: z
+    .string()
+    .max(4000)
+    .optional()
+    .transform((v) => v ?? ""),
+  riskIndicators: z
+    .array(z.string().max(1000))
+    .max(50)
+    .optional()
+    .transform((v) => v ?? []),
+  assessmentGuidance: z
+    .string()
+    .max(4000)
+    .optional()
+    .transform((v) => v ?? "")
+});
+
 // ---------------------------------------------------------------------------
 // analyzeVendorSignalContext  (Haiku — cost at scale)
 // ---------------------------------------------------------------------------
@@ -212,12 +280,37 @@ If no signals match, return matchedSignals as an empty array, overallRiskSummary
       .trim();
 
     const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    const parsed = JSON.parse(cleaned) as Partial<VendorSignalContext>;
 
+    let parsedUnknown: unknown;
+    try {
+      parsedUnknown = JSON.parse(cleaned);
+    } catch {
+      logger.warn(
+        { event: "vendor_signal_context_invalid_json", vendorName, organizationId },
+        "Vendor signal context: response did not JSON-parse — rejecting (A08-G4)"
+      );
+      return null;
+    }
+
+    const validated = VendorSignalContextSchema.safeParse(parsedUnknown);
+    if (!validated.success) {
+      logger.warn(
+        {
+          event: "vendor_signal_context_invalid_shape",
+          vendorName,
+          organizationId,
+          issues: validated.error.issues.slice(0, 10)
+        },
+        "Vendor signal context: response failed schema validation — rejecting (A08-G4)"
+      );
+      return null;
+    }
+
+    const v = validated.data;
     return {
-      matchedSignals: Array.isArray(parsed.matchedSignals) ? parsed.matchedSignals : [],
-      overallRiskSummary: parsed.overallRiskSummary ?? "No current threat signals matched this vendor.",
-      suggestedAssessmentSeverity: parsed.suggestedAssessmentSeverity ?? null
+      matchedSignals: v.matchedSignals,
+      overallRiskSummary: v.overallRiskSummary,
+      suggestedAssessmentSeverity: v.suggestedAssessmentSeverity
     };
   } catch (err) {
     logger.warn(
@@ -299,13 +392,38 @@ If no meaningful context can be derived, set suggestedSeverity to null and provi
       .trim();
 
     const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    const parsed = JSON.parse(cleaned) as Partial<ComplianceContext>;
 
+    let parsedUnknown: unknown;
+    try {
+      parsedUnknown = JSON.parse(cleaned);
+    } catch {
+      logger.warn(
+        { event: "compliance_context_invalid_json", itemType, itemName },
+        "Compliance context: response did not JSON-parse — rejecting (A08-G4)"
+      );
+      return null;
+    }
+
+    const validated = ComplianceContextSchema.safeParse(parsedUnknown);
+    if (!validated.success) {
+      logger.warn(
+        {
+          event: "compliance_context_invalid_shape",
+          itemType,
+          itemName,
+          issues: validated.error.issues.slice(0, 10)
+        },
+        "Compliance context: response failed schema validation — rejecting (A08-G4)"
+      );
+      return null;
+    }
+
+    const c = validated.data;
     return {
-      suggestedSeverity: parsed.suggestedSeverity ?? null,
-      suggestedSummary: parsed.suggestedSummary ?? "",
-      riskIndicators: Array.isArray(parsed.riskIndicators) ? parsed.riskIndicators : [],
-      assessmentGuidance: parsed.assessmentGuidance ?? ""
+      suggestedSeverity: c.suggestedSeverity,
+      suggestedSummary: c.suggestedSummary,
+      riskIndicators: c.riskIndicators,
+      assessmentGuidance: c.assessmentGuidance
     };
   } catch (err) {
     logger.warn({ event: "compliance_context_failed", itemType, itemName, err }, "Compliance context analysis failed");
@@ -377,13 +495,37 @@ If no meaningful context can be derived, set suggestedSeverity to null and provi
       .trim();
 
     const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    const parsed = JSON.parse(cleaned) as Partial<ComplianceContext>;
 
+    let parsedUnknown: unknown;
+    try {
+      parsedUnknown = JSON.parse(cleaned);
+    } catch {
+      logger.warn(
+        { event: "ai_governance_context_invalid_json", systemName },
+        "AI governance context: response did not JSON-parse — rejecting (A08-G4)"
+      );
+      return null;
+    }
+
+    const validated = ComplianceContextSchema.safeParse(parsedUnknown);
+    if (!validated.success) {
+      logger.warn(
+        {
+          event: "ai_governance_context_invalid_shape",
+          systemName,
+          issues: validated.error.issues.slice(0, 10)
+        },
+        "AI governance context: response failed schema validation — rejecting (A08-G4)"
+      );
+      return null;
+    }
+
+    const c = validated.data;
     return {
-      suggestedSeverity: parsed.suggestedSeverity ?? null,
-      suggestedSummary: parsed.suggestedSummary ?? "",
-      riskIndicators: Array.isArray(parsed.riskIndicators) ? parsed.riskIndicators : [],
-      assessmentGuidance: parsed.assessmentGuidance ?? ""
+      suggestedSeverity: c.suggestedSeverity,
+      suggestedSummary: c.suggestedSummary,
+      riskIndicators: c.riskIndicators,
+      assessmentGuidance: c.assessmentGuidance
     };
   } catch (err) {
     logger.warn({ event: "ai_governance_context_failed", systemName, err }, "AI governance context analysis failed");
