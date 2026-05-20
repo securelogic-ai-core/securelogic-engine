@@ -131,11 +131,13 @@ This is also a SOC 2 / PCI-DSS / HIPAA finding — verified certificate chain is
 
 #### A02-G2 — JWT secret length range too permissive (Low)
 
-> **Status — 🟥 Open.** `JWT_SECRET` floor still 16 chars in `validateEnv.ts`; no change. (Same item as E4-G3.)
+> **Status — ✅ Closed (verified 2026-05-20).** New `validateJwtSecret()` in `validateEnv.ts` enforces `.length` ∈ [32, 512]; engine refuses to start otherwise. Operator-verified prod + staging engine `JWT_SECRET` length = 64 (hex 32 bytes), `MFA_SECRET_KEY` set on both — no rotation required. (Same item as E4-G3.)
+>
+> Evidence-line correction (2026-05-20): the previous "floor still 16 chars" claim was incorrect — pre-fix `validateEnv.ts` had **no** min-length check for `JWT_SECRET` at all (only `mustBePresentInProd` + `assertMaxLength(512)`), so the effective floor was 1 char. The 16-char number originated from an earlier draft that was not in the shipped code. The new validator is the first enforced floor.
 
-`validateEnv.ts` permits `JWT_SECRET` of 16–512 chars. HS256 ideally wants ≥32 bytes of entropy. A 16-char ASCII secret has ~96 bits — below the 128-bit floor for HMAC-SHA256.
+`validateEnv.ts` permitted `JWT_SECRET` of 1–512 chars. HS256 ideally wants ≥32 bytes of entropy. A short ASCII secret has well under the 128-bit floor for HMAC-SHA256.
 
-**Remediation:** Raise the floor to 32 bytes (64 hex chars or ≥43 base64 chars). Document in runbook.
+**Remediation (shipped):** `validateJwtSecret()` modeled on `validateSchedulerSecret`; min 32 / max 512 (char count, matching sibling validators — assumes hex/base64 provisioning, not UTF-8 passphrases). `assertMaxLength("JWT_SECRET", 512)` removed to avoid double-checking.
 
 #### A02-G3 — Argon2 cost factors are library defaults (Info)
 
@@ -649,7 +651,7 @@ The 2026-05-14 credential rotation window mentioned in deferred-followups is a o
 
 #### E4-G3 — `JWT_SECRET` minimum length too low (Low, also A02-G2)
 
-> **Status — 🟥 Open.** Same item as A02-G2 — `JWT_SECRET` floor unchanged.
+> **Status — ✅ Closed (verified 2026-05-20).** Same closure as A02-G2 — `validateJwtSecret()` shipped; engine enforces `.length ∈ [32, 512]` at boot.
 
 See A02-G2.
 

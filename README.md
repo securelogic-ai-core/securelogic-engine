@@ -63,7 +63,7 @@ cd app && npm run dev    # Next.js app on :3000
 See `.env.example` for the full list with descriptions. Required for the engine:
 
 - `DATABASE_URL` — PostgreSQL connection string
-- `JWT_SECRET` — HS256 signing secret (min 32 chars)
+- `JWT_SECRET` — HS256 signing secret (32–512 chars, enforced at boot; provision via `openssl rand -hex 32`)
 - `SESSION_SECRET` — iron-session cookie encryption key (min 32 chars)
 - `ANTHROPIC_API_KEY` — Claude API key for AI enrichment
 - `REDIS_URL` — Redis connection string
