@@ -555,7 +555,7 @@ Default `fetch` follows up to 20 redirects. Combined with A10-G1, this multiplie
 
 #### A10-G3 — Admin Ops Dashboard fetch path validation unclear (Low)
 
-> **Status — 🟥 Open.** Follow-up read to confirm the fetch path is not customer-controllable has not been done.
+> **Status — ✅ Closed (verified 2026-05-20).** Re-read confirms the file contains no server-side fetch; the only `fetch(` call is inside an inline `<script>` and targets hardcoded same-origin `/admin/…` paths. CSP `connect-src 'self'` is set on the response. Not an SSRF surface.
 
 `adminOpsDashboard.ts` fetches an internal health path. Path is server-constructed; not obviously customer-controllable. Worth a follow-up read to confirm.
 
