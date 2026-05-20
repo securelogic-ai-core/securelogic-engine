@@ -208,10 +208,22 @@ describe("uploadVendorAssuranceDocument", () => {
     expect(json).toHaveBeenCalledWith({ error: "no_file_uploaded" });
   });
 
+  it("400 when uploaded file is not a real PDF (magic-byte mismatch)", async () => {
+    const req = buildReq({
+      body: { vendor_id: VENDOR_ID },
+      file: { buffer: Buffer.from("PK\x03\x04"), originalname: "fake.pdf", size: 4, mimetype: "application/pdf" }
+    });
+    const { res, status, json } = buildRes();
+    await uploadVendorAssuranceDocument(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json).toHaveBeenCalledWith({ error: "invalid_pdf_content" });
+    expect(putVendorAssurancePdfSpy).not.toHaveBeenCalled();
+  });
+
   it("400 when vendor_id is missing", async () => {
     const req = buildReq({
       body: {},
-      file: { buffer: Buffer.from("pdf"), originalname: "r.pdf", size: 3, mimetype: "application/pdf" }
+      file: { buffer: Buffer.from("%PDF"), originalname: "r.pdf", size: 4, mimetype: "application/pdf" }
     });
     const { res, status } = buildRes();
     await uploadVendorAssuranceDocument(req as never, res as never);
@@ -222,7 +234,7 @@ describe("uploadVendorAssuranceDocument", () => {
     pgQuerySpy.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // vendor pre-flight
     const req = buildReq({
       body: { vendor_id: VENDOR_ID },
-      file: { buffer: Buffer.from("pdf"), originalname: "r.pdf", size: 3, mimetype: "application/pdf" }
+      file: { buffer: Buffer.from("%PDF"), originalname: "r.pdf", size: 4, mimetype: "application/pdf" }
     });
     const { res, status, json } = buildRes();
     await uploadVendorAssuranceDocument(req as never, res as never);
@@ -245,7 +257,7 @@ describe("uploadVendorAssuranceDocument", () => {
 
     const req = buildReq({
       body: { vendor_id: VENDOR_ID, document_type_hint: "soc2_type2" },
-      file: { buffer: Buffer.from("pdf"), originalname: "report.pdf", size: 3, mimetype: "application/pdf" }
+      file: { buffer: Buffer.from("%PDF"), originalname: "report.pdf", size: 4, mimetype: "application/pdf" }
     });
     const { res, status, json } = buildRes();
     await uploadVendorAssuranceDocument(req as never, res as never);
@@ -275,7 +287,7 @@ describe("uploadVendorAssuranceDocument", () => {
 
     const req = buildReq({
       body: { vendor_id: VENDOR_ID },
-      file: { buffer: Buffer.from("pdf"), originalname: "r.pdf", size: 3, mimetype: "application/pdf" }
+      file: { buffer: Buffer.from("%PDF"), originalname: "r.pdf", size: 4, mimetype: "application/pdf" }
     });
     const { res, status, json } = buildRes();
     await uploadVendorAssuranceDocument(req as never, res as never);
