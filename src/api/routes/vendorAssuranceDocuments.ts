@@ -96,6 +96,11 @@ const upload = multer({
   }
 });
 
+// "%PDF" — the first 4 bytes of every valid PDF, regardless of version.
+// Magic-byte check runs in the handler because multer's fileFilter only
+// receives metadata, not the buffer.
+const PDF_MAGIC = Buffer.from([0x25, 0x50, 0x44, 0x46]);
+
 const DOC_SELECT = `
   id,
   organization_id,
@@ -150,6 +155,10 @@ export async function uploadVendorAssuranceDocument(req: Request, res: Response)
   }
   if (!req.file) {
     res.status(400).json({ error: "no_file_uploaded" });
+    return;
+  }
+  if (req.file.buffer.length < 4 || !req.file.buffer.subarray(0, 4).equals(PDF_MAGIC)) {
+    res.status(400).json({ error: "invalid_pdf_content" });
     return;
   }
 

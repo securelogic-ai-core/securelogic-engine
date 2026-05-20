@@ -301,7 +301,9 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
       return;
     }
 
-    const passwordHash         = await argon2.hash(String(passwordRaw));
+    const passwordHash         = await argon2.hash(String(passwordRaw), {
+      type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 4
+    });
     const verificationToken    = generateToken();
     const verificationExpires  = new Date(Date.now() + VERIFICATION_TTL_MS);
     const slugSuffix           = crypto.randomBytes(3).toString("hex");
@@ -756,8 +758,8 @@ router.post("/auth/forgot-password", forgotPasswordLimiter, async (req, res) => 
 
     const email = String(emailRaw).trim().toLowerCase();
 
-    const result = await pg.query<{ id: string; name: string; email_verified: boolean }>(
-      `SELECT id, name, email_verified FROM users WHERE email = $1 LIMIT 1`,
+    const result = await pg.query<{ id: string; organization_id: string; name: string; email_verified: boolean }>(
+      `SELECT id, organization_id, name, email_verified FROM users WHERE email = $1 LIMIT 1`,
       [email]
     );
 
@@ -786,6 +788,15 @@ router.post("/auth/forgot-password", forgotPasswordLimiter, async (req, res) => 
       });
 
     logger.info({ event: "password_reset_requested", userId: user.id }, "Password reset requested");
+
+    writeAuditEvent({
+      organizationId: user.organization_id,
+      actorUserId: user.id,
+      eventType: "auth.password_reset_requested",
+      resourceType: "user",
+      resourceId: user.id,
+      ipAddress: req.ip ?? null
+    });
 
     respond();
   } catch (err) {
@@ -846,7 +857,9 @@ router.post("/auth/reset-password", verifyLimiter, async (req, res) => {
       return;
     }
 
-    const newHash = await argon2.hash(String(passwordRaw));
+    const newHash = await argon2.hash(String(passwordRaw), {
+      type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 4
+    });
 
     await pg.query(
       `UPDATE users
@@ -931,7 +944,9 @@ router.post("/auth/change-password", requireAuth, async (req, res) => {
       return;
     }
 
-    const newHash = await argon2.hash(newRaw);
+    const newHash = await argon2.hash(newRaw, {
+      type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 4
+    });
 
     await pg.query(
       `UPDATE users

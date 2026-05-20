@@ -139,7 +139,7 @@ This is also a SOC 2 / PCI-DSS / HIPAA finding — verified certificate chain is
 
 #### A02-G3 — Argon2 cost factors are library defaults (Info)
 
-> **Status — 🟥 Open.** Argon2 cost factors still library-default (unpinned in code). No change.
+> **Status — ✅ Closed (verified 2026-05-20).** Explicit `{ type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 4 }` pinned at all 4 hash sites (`customerAuth.ts:304/860/947`, `teamInvites.ts:703`). Hardens against silent default drift on future SDK bumps; existing hashes continue to verify (PHC string encodes params).
 
 `customerAuth.ts:304` uses `argon2.hash(password)` with no explicit cost. Argon2 v0.44's defaults are secure today (m=65536, t=3) but are not pinned in code. A future library version could change defaults silently.
 
@@ -266,7 +266,7 @@ No code path alerts on repeated failed logins per IP, on cross-org access attemp
 
 #### A05-G1 — Multer upload accepts MIME-type self-declaration, not magic-byte validation (Medium)
 
-> **Status — 🟥 Open.** Multer still trusts client-supplied MIME; no magic-byte check added.
+> **Status — ✅ Closed (verified 2026-05-20).** Magic-byte check (`%PDF` / `0x25 0x50 0x44 0x46`) added in `uploadVendorAssuranceDocument` between the no_file_uploaded guard and sha256 hashing; non-matching uploads return 400 `invalid_pdf_content`. Multer's mimetype filter retained as defense-in-depth.
 
 `vendorAssuranceDocuments.ts:87-97` validates `req.file.mimetype` (client-supplied) and not the actual content header bytes. A `*.pdf` with `Content-Type: application/pdf` but `.zip` magic bytes passes. Combined with downstream `pdf-parse`, this generally fails harmlessly, but it's a defense-in-depth gap.
 
@@ -473,7 +473,7 @@ Discussed under A05-G5. Re-stated here because A08 is the canonical category. Pr
 
 #### A09-G1 — `auth.password_reset_requested` is logger.info-only, not audited (Medium)
 
-> **Status — 🟥 Open.** Still `logger.info`-only; no `writeAuditEvent` row for password-reset requests.
+> **Status — ✅ Closed (verified 2026-05-20).** `writeAuditEvent({ eventType: "auth.password_reset_requested", ... })` added at `customerAuth.ts:789` alongside the existing logger.info. Forgot-password SELECT widened to fetch `organization_id` so the row is org-scoped (matches the completion event's shape). Enumeration prevention preserved — audit row only fires after the email-exists + email-verified guards.
 
 `customerAuth.ts:788` writes the password-reset request as a log line, not a `writeAuditEvent` row. This means a privileged operator querying `security_audit_log` for "who tried to reset this user's password?" gets no answer. Combined with A08-G1, it also means the event is recoverable only from rotating log files.
 
