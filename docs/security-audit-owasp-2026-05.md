@@ -239,7 +239,9 @@ Documented in deferred-followups memory as a pre-existing issue: `apiRateLimiter
 
 #### A04-G4 — No alerting on auth anomalies (Medium)
 
-> **Status — 🟥 Open.** No auth-anomaly alerting wired. (Same item as A09-G2.)
+> **Status — 🟡 Implemented, pending webhook verification.** Tier 1 + Tier 2 auth-anomaly detection shipped (package `auth-anomaly-alerting`, `src/api/lib/authAnomaly.ts`). Tier 1: a distinct `auth.account_locked` audit event + operator alert fired synchronously at account-lockout time. Tier 2: a 5-minute cron in the engine `node-cron` host scans `security_audit_log` over a 15-minute window for credential stuffing (one IP → ≥10 distinct accounts in `auth.login_failed`) and API-key probing (one IP → ≥20 `auth.invalid_api_key`), emits a `security.auth_anomaly_detected` audit event, and alerts via `sendSecurityAlert` → `ALERT_WEBHOOK_URL`; dedup via the `auth_anomaly_alerts` ledger (one alert per IP per 6h). **Not yet Closed:** alert delivery depends on `ALERT_WEBHOOK_URL` being set in prod — until that is verified, detections are recorded in the audit log but no operator notification is delivered. (Same item as A09-G2.)
+>
+> **Residuals — explicitly NOT covered by this package:** MFA brute-force is not detected — MFA verification failures emit no audit event at all (`mfa.ts`), so there is nothing for the scanner to read; closing that requires adding `auth.mfa_failed` events first. Also not covered: impossible-travel / geo anomaly (needs IP geolocation), operator-email recipients, per-org alert preferences, and rate-limit-block events (still unaudited).
 
 No code path alerts on repeated failed logins per IP, on cross-org access attempts (currently silent 404s), or on admin-key failure spikes. The platform has rate limiting and lockout, but no real-time signal to operators that an attack is in progress. (Out of context: an auditor will ask "how would you know?")
 
@@ -481,7 +483,7 @@ Discussed under A05-G5. Re-stated here because A08 is the canonical category. Pr
 
 #### A09-G2 — No real-time alerting on auth anomalies (Medium, also A04-G4)
 
-> **Status — 🟥 Open.** No real-time auth-anomaly alerting. (Same item as A04-G4.)
+> **Status — 🟡 Implemented, pending webhook verification.** Covered by the `auth-anomaly-alerting` package — see A04-G4 for full detail and residuals. The slow-credential-stuffing case described below is the Tier 2 detector's primary target: per-IP distinct-account aggregation of `auth.login_failed` over a 15-minute window catches an attacker spread thin across many accounts that never trips per-account lockout. Closure pending `ALERT_WEBHOOK_URL` verification in prod. (Same item as A04-G4.)
 
 Rate limiting and lockout prevent brute force but no signal reaches operators. An attacker performing slow credential stuffing across many accounts (one attempt per account per hour) would not trip lockout and would not page anyone.
 
