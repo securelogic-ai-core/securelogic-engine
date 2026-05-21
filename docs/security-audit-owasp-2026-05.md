@@ -274,7 +274,7 @@ No code path alerts on repeated failed logins per IP, on cross-org access attemp
 
 #### A05-G2 — No per-org upload quota (R11, Medium)
 
-> **Status — 🟥 Open.** No per-org upload byte quota (R11) implemented.
+> **Status — ✅ Closed.** Per-org cumulative R2 storage quota now enforced at upload time in `uploadVendorAssuranceDocument` (`vendorAssuranceDocuments.ts`). Before the document row is inserted, a `SUM(byte_size)` over the org's rows whose bytes actually reached R2 (`storage_key LIKE 'org/%'`) is compared against `MAX_ORG_STORAGE_BYTES` (2 GiB, flat across tiers). An over-quota upload returns `409 org_storage_quota_exceeded` and emits a `vendor_assurance.document.upload_quota_rejected` audit event. Implemented as a flat Postgres-backed cap rather than the originally-proposed Redis per-day window — `vendor_assurance_documents.byte_size` already exists per row, so no new store was required.
 
 Already documented in `TENANT_ISOLATION_STANDARD.md` R11. One tenant could exhaust worker memory by submitting many large uploads in parallel.
 

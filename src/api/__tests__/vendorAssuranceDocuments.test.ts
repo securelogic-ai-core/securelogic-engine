@@ -89,6 +89,7 @@ vi.mock("../lib/vendorAssurancePdfExporter.js", () => ({
   pdfDownloadFilename: () => "acme-cloud-2025-09-30-soc-review.pdf"
 }));
 
+import { MAX_ORG_STORAGE_BYTES } from "../lib/vendorAssuranceValidation.js";
 import {
   uploadVendorAssuranceDocument,
   listVendorAssuranceDocuments,
@@ -234,6 +235,7 @@ describe("uploadVendorAssuranceDocument", () => {
   it("happy path returns 202, writes blob with org-prefixed key, audits, and schedules extraction", async () => {
     pgQuerySpy
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // vendor pre-flight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ total_bytes: "0", document_count: "0" }] }) // A05-G2 quota SUM
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, created_at: "2026-05-08T00:00:00Z" }] }) // INSERT
       .mockResolvedValueOnce({ rowCount: 1, rows: [{}] }) // UPDATE storage_key
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "pending" }] }); // SELECT for response
@@ -269,6 +271,7 @@ describe("uploadVendorAssuranceDocument", () => {
   it("500 when blob put fails; document marked extraction_failed", async () => {
     pgQuerySpy
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // vendor pre-flight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ total_bytes: "0", document_count: "0" }] }) // A05-G2 quota SUM
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, created_at: "x" }] }) // INSERT
       .mockResolvedValueOnce({ rowCount: 1, rows: [{}] }); // UPDATE failed-status
     putVendorAssurancePdfSpy.mockRejectedValueOnce(new Error("R2 unreachable"));
@@ -282,6 +285,129 @@ describe("uploadVendorAssuranceDocument", () => {
     expect(status).toHaveBeenCalledWith(500);
     expect(json).toHaveBeenCalledWith({ error: "blob_put_failed" });
     expect(scheduleExtractionSpy).not.toHaveBeenCalled();
+  });
+
+  // --- A05-G2: per-org cumulative storage quota -----------------------------
+  // The file in every quota test is 4 bytes (Buffer.from("%PDF")).
+
+  it("A05-G2: 202 accepts when the upload exactly fills the org storage quota (just under)", async () => {
+    // existing usage = limit - 4; + a 4-byte file == limit exactly → not > limit → accept.
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // vendor pre-flight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ total_bytes: String(MAX_ORG_STORAGE_BYTES - 4), document_count: "118" }] }) // quota SUM
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, created_at: "x" }] }) // INSERT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] }) // UPDATE storage_key
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "pending" }] }); // SELECT
+    putVendorAssurancePdfSpy.mockResolvedValueOnce({
+      key: `org/${ORG_A}/vendor-assurance/${DOC_ID}/original.pdf`,
+      byteSize: 4
+    });
+
+    const req = buildReq({
+      body: { vendor_id: VENDOR_ID },
+      file: { buffer: Buffer.from("%PDF"), originalname: "r.pdf", size: 4, mimetype: "application/pdf" }
+    });
+    const { res, status } = buildRes();
+    await uploadVendorAssuranceDocument(req as never, res as never);
+
+    expect(status).toHaveBeenCalledWith(202);
+    expect(putVendorAssurancePdfSpy).toHaveBeenCalled();
+    const auditCalls = (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(auditCalls.some((c) => c[0]?.eventType === "vendor_assurance.document.upload_quota_rejected")).toBe(false);
+  });
+
+  it("A05-G2: 409 org_storage_quota_exceeded when the upload would cross the quota (just over)", async () => {
+    // existing usage = limit - 3; + a 4-byte file == limit + 1 → > limit → reject.
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // vendor pre-flight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ total_bytes: String(MAX_ORG_STORAGE_BYTES - 3), document_count: "118" }] }); // quota SUM
+
+    const req = buildReq({
+      body: { vendor_id: VENDOR_ID },
+      file: { buffer: Buffer.from("%PDF"), originalname: "r.pdf", size: 4, mimetype: "application/pdf" }
+    });
+    const { res, status, json } = buildRes();
+    await uploadVendorAssuranceDocument(req as never, res as never);
+
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json).toHaveBeenCalledWith({
+      error: "org_storage_quota_exceeded",
+      used_bytes: MAX_ORG_STORAGE_BYTES - 3,
+      limit_bytes: MAX_ORG_STORAGE_BYTES,
+      document_count: 118
+    });
+    // No row created, no blob put, no extraction scheduled.
+    expect(pgQuerySpy).toHaveBeenCalledTimes(2); // vendor pre-flight + quota SUM only
+    expect(putVendorAssurancePdfSpy).not.toHaveBeenCalled();
+    expect(scheduleExtractionSpy).not.toHaveBeenCalled();
+  });
+
+  it("A05-G2: quota SUM filters on storage_key LIKE 'org/%' — R2-put-failed rows (storage_key='pending') are excluded", async () => {
+    // The SUM itself runs in Postgres; with mocked pg the correctness guarantee
+    // is the WHERE clause. A row keeps the literal 'pending' placeholder as its
+    // storage_key iff the R2 put never succeeded, so LIKE 'org/%' excludes
+    // exactly those rows (bytes never landed in R2).
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // vendor pre-flight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ total_bytes: String(MAX_ORG_STORAGE_BYTES), document_count: "1" }] }); // quota SUM
+    const req = buildReq({
+      body: { vendor_id: VENDOR_ID },
+      file: { buffer: Buffer.from("%PDF"), originalname: "r.pdf", size: 4, mimetype: "application/pdf" }
+    });
+    const { res } = buildRes();
+    await uploadVendorAssuranceDocument(req as never, res as never);
+
+    const quotaSql = pgQuerySpy.mock.calls[1]?.[0] as string;
+    expect(quotaSql).toMatch(/FROM vendor_assurance_documents/);
+    expect(quotaSql).toMatch(/organization_id = \$1/);
+    expect(quotaSql).toMatch(/storage_key LIKE 'org\/%'/);
+  });
+
+  it("A05-G2: quota SUM does NOT filter on processing_status — runner-failed extraction_failed rows (real org/ key) are included", async () => {
+    // 'extraction_failed' is written both by the R2-put-failure path (no bytes
+    // in R2) and by the extraction runner (bytes ARE in R2). The quota query
+    // must therefore NOT discriminate on processing_status — only on
+    // storage_key — so runner-stage failures still count against the quota.
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // vendor pre-flight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ total_bytes: String(MAX_ORG_STORAGE_BYTES), document_count: "1" }] }); // quota SUM
+    const req = buildReq({
+      body: { vendor_id: VENDOR_ID },
+      file: { buffer: Buffer.from("%PDF"), originalname: "r.pdf", size: 4, mimetype: "application/pdf" }
+    });
+    const { res } = buildRes();
+    await uploadVendorAssuranceDocument(req as never, res as never);
+
+    const quotaSql = pgQuerySpy.mock.calls[1]?.[0] as string;
+    expect(quotaSql).toMatch(/SUM\(byte_size\)/);
+    expect(quotaSql).not.toMatch(/processing_status/);
+  });
+
+  it("A05-G2: a quota rejection emits the vendor_assurance.document.upload_quota_rejected audit event", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // vendor pre-flight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ total_bytes: String(MAX_ORG_STORAGE_BYTES), document_count: "120" }] }); // quota SUM
+    const req = buildReq({
+      body: { vendor_id: VENDOR_ID },
+      file: { buffer: Buffer.from("%PDF"), originalname: "r.pdf", size: 4, mimetype: "application/pdf" }
+    });
+    const { res, status } = buildRes();
+    await uploadVendorAssuranceDocument(req as never, res as never);
+
+    expect(status).toHaveBeenCalledWith(409);
+    const auditCalls = (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const ev = auditCalls.find((c) => c[0]?.eventType === "vendor_assurance.document.upload_quota_rejected");
+    expect(ev).toBeDefined();
+    expect(ev?.[0]).toMatchObject({
+      organizationId: ORG_A,
+      resourceType: "vendor_assurance_document",
+      resourceId: null,
+      payload: {
+        used_bytes: MAX_ORG_STORAGE_BYTES,
+        limit_bytes: MAX_ORG_STORAGE_BYTES,
+        document_count: 120
+      }
+    });
   });
 });
 

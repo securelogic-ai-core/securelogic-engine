@@ -51,7 +51,8 @@ import {
   validateUpdateCuecReviewStatusBody,
   computeFinalizePrecondition,
   isUuid,
-  MAX_BYTE_SIZE
+  MAX_BYTE_SIZE,
+  MAX_ORG_STORAGE_BYTES
 } from "../lib/vendorAssuranceValidation.js";
 import {
   putVendorAssurancePdf,
@@ -167,6 +168,50 @@ export async function uploadVendorAssuranceDocument(req: Request, res: Response)
   );
   if ((vendorCheck.rowCount ?? 0) === 0) {
     res.status(404).json({ error: "vendor_not_found" });
+    return;
+  }
+
+  // A05-G2: per-org cumulative R2 storage quota. SUM only the rows whose bytes
+  // actually landed in R2. storage_key is the discriminator, NOT
+  // processing_status: a row keeps the literal placeholder 'pending' as its
+  // storage_key iff the R2 put never succeeded (the catch path below returns
+  // before the storage_key UPDATE), so 'org/%' keys are exactly the rows with
+  // bytes in R2. This correctly splits 'extraction_failed': a runner-stage
+  // failure has a real 'org/...' key and counts; an R2-put failure keeps
+  // 'pending' and does not. The SUM-then-INSERT is deliberately non-atomic —
+  // concurrent uploads can overshoot by up to one max-size file each; that is
+  // acceptable for a soft storage cap.
+  const usage = await pg.query<{ total_bytes: string; document_count: string }>(
+    `SELECT COALESCE(SUM(byte_size), 0)::text AS total_bytes,
+            COUNT(*)::text                    AS document_count
+       FROM vendor_assurance_documents
+      WHERE organization_id = $1
+        AND storage_key LIKE 'org/%'`,
+    [organizationId]
+  );
+  const usedBytes = Number(usage.rows[0]?.total_bytes ?? "0");
+  const documentCount = Number(usage.rows[0]?.document_count ?? "0");
+  if (usedBytes + req.file.size > MAX_ORG_STORAGE_BYTES) {
+    writeAuditEvent({
+      organizationId,
+      actorApiKeyId: getApiKeyId(req),
+      actorUserId: req.userId ?? null,
+      eventType: "vendor_assurance.document.upload_quota_rejected",
+      resourceType: "vendor_assurance_document",
+      resourceId: null,
+      payload: {
+        used_bytes: usedBytes,
+        limit_bytes: MAX_ORG_STORAGE_BYTES,
+        document_count: documentCount
+      },
+      ipAddress: req.ip ?? null
+    });
+    res.status(409).json({
+      error: "org_storage_quota_exceeded",
+      used_bytes: usedBytes,
+      limit_bytes: MAX_ORG_STORAGE_BYTES,
+      document_count: documentCount
+    });
     return;
   }
 

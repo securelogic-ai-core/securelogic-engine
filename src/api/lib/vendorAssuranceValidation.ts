@@ -23,6 +23,15 @@ const VALID_DOCUMENT_TYPE_HINTS = ["soc1", "soc2_type1", "soc2_type2"] as const;
 const VALID_DECISIONS = ["accept", "edit", "reject"] as const;
 
 export const MAX_BYTE_SIZE = 25 * 1024 * 1024; // 25 MB
+
+// A05-G2: per-org cumulative R2 storage quota. Bounds total uploaded-PDF
+// bytes per organization (the per-file MAX_BYTE_SIZE alone leaves cumulative
+// storage unbounded). Flat across tiers for v1 — every org reaching the
+// upload route is already on a paid entitlement (requireEntitlement
+// "standard"). 2 GiB ≈ 80 worst-case 25 MiB files, or hundreds of typical
+// SOC PDFs; not reachable by legitimate use.
+export const MAX_ORG_STORAGE_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB
+
 export const MAX_FILENAME = 255;
 export const MAX_REVIEWER_NOTE = 2000;
 export const MAX_OVERRIDE_REASON = 1000;
