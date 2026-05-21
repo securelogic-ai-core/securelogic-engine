@@ -83,6 +83,8 @@ The guard at `__tests__/tenantScopingGuard.test.ts` is structural: it asserts th
 
 **Remediation:** Either (a) Postgres RLS (R8, see A04-G1), or (b) a SQL-AST lint rule that parses query strings and flags customer-data tables without `organization_id` in the predicate. Sequencing: RLS is the durable answer; lint is the cheap stopgap.
 
+> **Follow-up (tracked, separate PR) — `findings.due_date` schema bug.** The E1-G1 cross-org isolation harness built to remediate this finding surfaced a separate, non-isolation bug while seeding test data: `POST /api/findings` returns HTTP 500 on a clean migration build. `findings.ts` and `findingValidation.ts` fully wire a `due_date` field (validated, inserted, returned), but **no migration adds the `findings.due_date` column** — root cause is a missing migration. The `findings` route is therefore deferred from harness coverage (harness covers 12 of 13 v1 routes; `findings` is in `DEFERRED_ROUTES`). Fix (Option A, to land as its own PR after the E1-G1 harness): add migration `ALTER TABLE findings ADD COLUMN IF NOT EXISTS due_date DATE` (idempotent — safe whether or not prod already has the column) and add `due_date` to the `GET /api/findings/:id` select for read/write consistency. Full root-cause analysis and options: `docs/investigation/e1-g1-harness-first-run-2026-05-21.md`. Open question for the fix's urgency: whether prod's `findings` table already has `due_date` (drift only) or not (latent prod 500) — resolved by `\d findings` on prod/staging.
+
 #### A01-G2 — Orphan dead code with broken access patterns (Low)
 
 > **Status — ✅ Closed.** PR #68 (`c58b67be`) deleted orphan `requireAdminToken.ts`; `routes/adminAuth.ts` was removed in the earlier dead-code cleanup. Both absent from `main` — grep-verified.
