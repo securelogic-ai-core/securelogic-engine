@@ -7,6 +7,8 @@
 
 ---
 
+> **Status overlay — added 2026-05-19 (post-audit).** Each finding below now carries a one-line status header: **✅ Closed** · **🟥 Open** · **⏸️ Deferred** (accepted or scheduled, intentionally not actioned) · **🟡 Partial**. Statuses are reconstructed from verifiable evidence only — git history, merged PRs, the migration tree, and this document's own resolution text — not from recall. The original audit body is unchanged; only status headers were inserted. The Executive summary tables and the Prioritized remediation list were intentionally **not** rescored: they reflect audit-time (2026-05-13) state, and the per-finding headers are the current source of truth where they differ.
+
 ## Executive summary
 
 ### Overall posture: **STRONG with targeted gaps**
@@ -75,11 +77,15 @@ A "Critical" or "High" finding does not mean the platform is breached — it mea
 
 #### A01-G1 — Tenant scoping guard test has narrow coverage (Medium)
 
+> **Status — 🟥 Open.** Postgres RLS (A04-G1) not started; no SQL-AST lint rule added. Structural guard test unchanged from audit time.
+
 The guard at `__tests__/tenantScopingGuard.test.ts` is structural: it asserts that customer-data route files import `requireApiKey` + `attachOrganizationContext` and contain the literal string `organization_id`. It does **not** parse SQL or verify that the predicate is on every customer-data WHERE clause. The allowlist is a curated subset, not all 74 org-scoped routes. A developer could pass the guard while writing a SQL statement that omits the predicate on a join. This is documented in TENANT_ISOLATION_STANDARD.md R1 as "High — discipline-only enforcement, no central RLS/helper/lint rule."
 
 **Remediation:** Either (a) Postgres RLS (R8, see A04-G1), or (b) a SQL-AST lint rule that parses query strings and flags customer-data tables without `organization_id` in the predicate. Sequencing: RLS is the durable answer; lint is the cheap stopgap.
 
 #### A01-G2 — Orphan dead code with broken access patterns (Low)
+
+> **Status — ✅ Closed.** PR #68 (`c58b67be`) deleted orphan `requireAdminToken.ts`; `routes/adminAuth.ts` was removed in the earlier dead-code cleanup. Both absent from `main` — grep-verified.
 
 `src/api/middleware/requireAdminToken.ts:18` uses non-timing-safe `!==` for admin token comparison. `src/api/routes/adminAuth.ts:39-44` writes a cookie with `secure: false` and inline comment "change to true in prod". **Neither is imported or mounted anywhere** — verified by grep. The live admin path uses the correct chain. These are latent hazards: if a future developer wires them up, the bugs activate.
 
@@ -108,6 +114,8 @@ The guard at `__tests__/tenantScopingGuard.test.ts` is structural: it asserts th
 
 #### A02-G1 — Postgres TLS verification disabled (CRITICAL)
 
+> **Status — ⏸️ Deferred.** Render publishes no Postgres CA bundle and exposes no client-side path to `verify-full`; `rejectUnauthorized:true` attempt (T1.1) was reverted 2026-05-13. Accepted risk pending a Render-side change. Tracked in `project_postgres_tls_verify_deferred`.
+
 `src/api/infra/postgres.ts:11`:
 ```typescript
 ssl: { rejectUnauthorized: false }
@@ -123,11 +131,17 @@ This is also a SOC 2 / PCI-DSS / HIPAA finding — verified certificate chain is
 
 #### A02-G2 — JWT secret length range too permissive (Low)
 
-`validateEnv.ts` permits `JWT_SECRET` of 16–512 chars. HS256 ideally wants ≥32 bytes of entropy. A 16-char ASCII secret has ~96 bits — below the 128-bit floor for HMAC-SHA256.
+> **Status — ✅ Closed (verified 2026-05-20).** New `validateJwtSecret()` in `validateEnv.ts` enforces `.length` ∈ [32, 512]; engine refuses to start otherwise. Operator-verified prod + staging engine `JWT_SECRET` length = 64 (hex 32 bytes), `MFA_SECRET_KEY` set on both — no rotation required. (Same item as E4-G3.)
+>
+> Evidence-line correction (2026-05-20): the previous "floor still 16 chars" claim was incorrect — pre-fix `validateEnv.ts` had **no** min-length check for `JWT_SECRET` at all (only `mustBePresentInProd` + `assertMaxLength(512)`), so the effective floor was 1 char. The 16-char number originated from an earlier draft that was not in the shipped code. The new validator is the first enforced floor.
 
-**Remediation:** Raise the floor to 32 bytes (64 hex chars or ≥43 base64 chars). Document in runbook.
+`validateEnv.ts` permitted `JWT_SECRET` of 1–512 chars. HS256 ideally wants ≥32 bytes of entropy. A short ASCII secret has well under the 128-bit floor for HMAC-SHA256.
+
+**Remediation (shipped):** `validateJwtSecret()` modeled on `validateSchedulerSecret`; min 32 / max 512 (char count, matching sibling validators — assumes hex/base64 provisioning, not UTF-8 passphrases). `assertMaxLength("JWT_SECRET", 512)` removed to avoid double-checking.
 
 #### A02-G3 — Argon2 cost factors are library defaults (Info)
+
+> **Status — ✅ Closed (verified 2026-05-20).** Explicit `{ type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 4 }` pinned at all 4 hash sites (`customerAuth.ts:304/860/947`, `teamInvites.ts:703`). Hardens against silent default drift on future SDK bumps; existing hashes continue to verify (PHC string encodes params).
 
 `customerAuth.ts:304` uses `argon2.hash(password)` with no explicit cost. Argon2 v0.44's defaults are secure today (m=65536, t=3) but are not pinned in code. A future library version could change defaults silently.
 
@@ -155,6 +169,8 @@ This is also a SOC 2 / PCI-DSS / HIPAA finding — verified certificate chain is
 
 #### A03-G1 — Prompt injection on vendor-assurance PDF → Claude path (High)
 
+> **Status — ✅ Closed.** PR #69 (`684c07b6`): zod validation now enforces the response schema on the `analyzeAssessmentDocument` LLM path; rejects on schema failure. Verified live in prod — zero `document_analysis_invalid_json`/`invalid_shape` events since the 2026-05-19 12:45 rollover. The sibling LLM-parse site (`intelligenceBriefGenerator`) is **not** covered — see A08-G4 (🟡 Partial).
+
 `src/api/lib/claudeAssessmentAnalyzer.ts:339-436` and the SOC extractor concatenate up to 30,000 chars of customer-supplied PDF text into a Claude prompt. The PDF is uncontrolled — a malicious vendor could embed:
 
 ```
@@ -175,6 +191,8 @@ The response JSON parser at lines 418-428 validates field **types** (string, arr
 3. Log the prompt-hash + response-hash to the audit log so a reviewer can later trace which exact LLM output influenced a published finding.
 
 #### A03-G2 — Admin dashboard HTML page uses `innerHTML` for clearing (Medium → effectively Low)
+
+> **Status — ✅ Closed.** `routes/adminLoginPage.ts` was deleted in the dead-code cleanup (`a66a7062`). The `innerHTML` surface no longer exists.
 
 `src/api/routes/adminLoginPage.ts:169` uses `innerHTML = ""` to clear a list. Subsequent rendering uses `textContent` (safe), but the file is the kind of dead-code-adjacent surface that grows unsafe patterns over time. Admin data sources are internal-only, so risk is low today.
 
@@ -199,11 +217,15 @@ The response JSON parser at lines 418-428 validates field **types** (string, arr
 
 #### A04-G1 — Tenant isolation depends on per-route discipline; no Postgres RLS (High)
 
+> **Status — 🟥 Open.** Postgres RLS rollout not started. Tenant isolation remains per-route discipline + the structural guard test.
+
 This is documented honestly in `TENANT_ISOLATION_STANDARD.md §11` as R1 (High) and R8 (High, deferred). A single missed `WHERE organization_id = $X` in any of ~100 customer-data routes results in cross-tenant data leak. There is no construct that catches this at compile time, query time, or test time except for the structural guard test (see A01-G1).
 
 **Remediation:** Roll out Postgres RLS on customer-data tables with a request-scoped `app.current_org_id` session variable set by middleware. This is the only constructive defense. The standard already calls this out as "the next-step recommendation" (§4). Sizing: one focused package, 2-4 weeks; touches schema, middleware, and integration tests.
 
 #### A04-G2 — Rate limiter uses in-memory store on multi-replica deployments (Medium)
+
+> **Status — ⏸️ Deferred.** Still in-memory store. `rate-limit-redis` migration scheduled post-rewrite-window; tracked in deferred-followups.
 
 Documented in deferred-followups memory as a pre-existing issue: `apiRateLimiter.ts` uses the express-rate-limit in-memory store. With N Render replicas, the effective per-IP limit is N × max. Auth endpoints (login, forgot-password) ride on this — brute-force throughput scales with replica count.
 
@@ -211,11 +233,15 @@ Documented in deferred-followups memory as a pre-existing issue: `apiRateLimiter
 
 #### A04-G3 — No formal threat model document (Medium)
 
+> **Status — 🟥 Open.** No `docs/THREAT_MODEL.md` authored.
+
 `docs/` does not contain a threat model. `TENANT_ISOLATION_STANDARD.md` is excellent for tenant questions but doesn't cover Anthropic data flow, billing-webhook trust boundaries, R2 abuse scenarios, or the customer-portal trust boundary.
 
 **Remediation:** Author `docs/THREAT_MODEL.md` (STRIDE per surface, or a lighter format). Effort: 1-2 days for a v1.
 
 #### A04-G4 — No alerting on auth anomalies (Medium)
+
+> **Status — 🟥 Open.** No auth-anomaly alerting wired. (Same item as A09-G2.)
 
 No code path alerts on repeated failed logins per IP, on cross-org access attempts (currently silent 404s), or on admin-key failure spikes. The platform has rate limiting and lockout, but no real-time signal to operators that an attack is in progress. (Out of context: an auditor will ask "how would you know?")
 
@@ -242,11 +268,15 @@ No code path alerts on repeated failed logins per IP, on cross-org access attemp
 
 #### A05-G1 — Multer upload accepts MIME-type self-declaration, not magic-byte validation (Medium)
 
+> **Status — ✅ Closed (verified 2026-05-20).** Magic-byte check (`%PDF` / `0x25 0x50 0x44 0x46`) added in `uploadVendorAssuranceDocument` between the no_file_uploaded guard and sha256 hashing; non-matching uploads return 400 `invalid_pdf_content`. Multer's mimetype filter retained as defense-in-depth.
+
 `vendorAssuranceDocuments.ts:87-97` validates `req.file.mimetype` (client-supplied) and not the actual content header bytes. A `*.pdf` with `Content-Type: application/pdf` but `.zip` magic bytes passes. Combined with downstream `pdf-parse`, this generally fails harmlessly, but it's a defense-in-depth gap.
 
 **Remediation:** Read first 4 bytes, match against `%PDF`. Reject otherwise. Effort: 30 minutes.
 
 #### A05-G2 — No per-org upload quota (R11, Medium)
+
+> **Status — ✅ Closed.** Per-org cumulative R2 storage quota now enforced at upload time in `uploadVendorAssuranceDocument` (`vendorAssuranceDocuments.ts`). Before the document row is inserted, a `SUM(byte_size)` over the org's rows whose bytes actually reached R2 (`storage_key LIKE 'org/%'`) is compared against `MAX_ORG_STORAGE_BYTES` (2 GiB, flat across tiers). An over-quota upload returns `409 org_storage_quota_exceeded` and emits a `vendor_assurance.document.upload_quota_rejected` audit event. Implemented as a flat Postgres-backed cap rather than the originally-proposed Redis per-day window — `vendor_assurance_documents.byte_size` already exists per row, so no new store was required.
 
 Already documented in `TENANT_ISOLATION_STANDARD.md` R11. One tenant could exhaust worker memory by submitting many large uploads in parallel.
 
@@ -254,11 +284,17 @@ Already documented in `TENANT_ISOLATION_STANDARD.md` R11. One tenant could exhau
 
 #### A05-G3 — `.env` file is committed with a dev admin key visible (Medium)
 
-`/.env` contains `SECURELOGIC_ADMIN_KEY=sl_admin_60a1304f...`. This is a dev-only key, not the production secret, but committed dev keys often get pasted into stack overflow questions, screen-shared, or referenced in error reports. Operationally weak.
+> **Status — ✅ Closed (monitor-only).** Dev admin key rotated; `.env` purged from git history in the 2026-05-17 filter-repo and untracked at HEAD; key string redacted from this doc (`d82d2298`), evidence corrected (`c34c2be2`). Residual is hygiene monitoring only — see resolution text below. (Same item as E4-G1.)
 
-**Remediation:** Move dev defaults to `.env.example` (already exists). Rotate dev key. Add `.env` to `.gitignore` (verify status — `git status` does not flag it as untracked, suggesting it's already tracked; needs explicit `git rm --cached`). Effort: 1 hour.
+`/.env` contains `SECURELOGIC_ADMIN_KEY=sl_admin_<redacted>`. This is a dev-only key, not the production secret, but committed dev keys often get pasted into stack overflow questions, screen-shared, or referenced in error reports. Operationally weak.
+
+Git-history evidence (added 2026-05-17): the related 2026-05-14 internal review initially dated this value's first commit to 2026-04-01; full-history analysis put first appearance at 2025-12-05 — roughly four months longer exposure. The value was purged from history in the 2026-05-17 `filter-repo` rewrite, the key has been rotated, and the literal string was redacted from this document in `d82d2298`. (Pre-rewrite commit SHAs are intentionally omitted — they no longer resolve in mainline and would be dead references; they survive only in the `e5f0c508` backup.)
+
+**Remediation — largely resolved (2026-05-17):** Dev key rotated; `.env` purged from git history and no longer tracked at HEAD (`git ls-files .env` returns nothing); `.gitignore` entry present. Residual: keep dev defaults in `.env.example` (exists) and guard against future `git add -f .env`. Effort: closed — monitor only.
 
 #### A05-G4 — Orphan `requireAdminToken.ts` and `routes/adminAuth.ts` retain insecure patterns (Low)
+
+> **Status — ✅ Closed.** Both files deleted: `routes/adminAuth.ts` in the earlier dead-code cleanup, `requireAdminToken.ts` in PR #68 (`c58b67be`). Neither exists on `main`. (Same closure as A01-G2.)
 
 Both files (see A01-G2) embed insecure code but are unmounted. Hazard is "someone wires them up later."
 
@@ -266,11 +302,15 @@ Both files (see A01-G2) embed insecure code but are unmounted. Hazard is "someon
 
 #### A05-G5 — Production builds use `npm install`, not `npm ci` (Medium — also flagged under A08)
 
+> **Status — ✅ Closed.** All `render.yaml` build commands now use `npm ci --include=dev` (verified lines 6, 140, 276, 344, 408, 435, 475). Lockfile-strict. (Same closure as A08-G3.)
+
 `render.yaml` build commands (lines 6, 144, 283, 351, 415, 442, 482) all use `npm install --include=dev`. This is not lockfile-strict — transitive dependency drift between deploys is possible.
 
 **Remediation:** Change to `npm ci`. Effort: 1 line per service, 30 minutes total + redeploy validation.
 
 #### A05-G6 — Admin cookie comment "change to true in prod" was never resolved (Low, dead-code)
+
+> **Status — ✅ Closed.** The dead-code file holding the `secure:false` cookie (`routes/adminAuth.ts`) was deleted in the dead-code cleanup. Bug code no longer exists; live admin cookie was already correct.
 
 Re-flagged from A01-G2: `routes/adminAuth.ts:41` `secure: false`. Live admin cookie is correct (`server.ts:430` `secure: true`); the bug is in unmounted code.
 
@@ -293,11 +333,15 @@ Re-flagged from A01-G2: `routes/adminAuth.ts:41` `secure: false`. Live admin coo
 
 #### A06-G1 — `@anthropic-ai/sdk` 0.85.0 is vulnerable (Medium → High for sensitive deployments)
 
+> **Status — ✅ Closed.** `@anthropic-ai/sdk` pinned at `^0.95.2` in `package.json` (≥ 0.91.1 fix). CVE GHSA-p7fg-763f-g4gf no longer applicable.
+
 **CVE:** GHSA-p7fg-763f-g4gf — Insecure Default File Permissions in Local Filesystem Memory Tool. Affected range >=0.79.0 <0.91.1; fix in ≥0.91.1 (current latest ≥0.95.2). The platform does **not** appear to use the local-filesystem memory feature, so practical exposure is limited — but staying on a known-CVE dep is a SOC 2 finding even when not exploitable. This is the moderate alert on the prod banner (1 moderate, per `project_deferred_followups.md`).
 
 **Remediation:** Bump to ≥0.91.1 (or current). Held in PR #11 per deferred-followups; unblocking condition was "staging produces real LLM output," which has been met as of 2026-05-11.
 
 #### A06-G2 — CI is disabled — no automated audit, type-check, or lint gating (Medium)
+
+> **Status — ✅ Closed.** Real CI restored (`eb285bce`): 5-job gate (typecheck / lint / test / audit / build) runs on PRs to `develop` and `main`, with branch protection enforced.
 
 `.github/workflows/ci.yml` is the literal "Disabled CI" workflow (`workflow_dispatch` only, single `echo` step). `intelligence-worker.yml` and `delivery-worker.yml` are the only workflows that run `npm ci`; nothing runs `npm audit`, `tsc --noEmit`, or eslint on PRs.
 
@@ -307,11 +351,15 @@ This is documented in `project_deferred_followups.md` as "PR-time CI gate disabl
 
 #### A06-G3 — GitHub Actions pinned to mutable tags, not SHAs (Medium)
 
+> **Status — ✅ Closed.** CI actions SHA-pinned (`actions/checkout@de0fac2e # v6.0.2`, `actions/setup-node@48b55a01 # v6.4.0`), `c3eaab84`. Dependabot keeps them current.
+
 `intelligence-worker.yml:14,17` and `delivery-worker.yml:14,17` use `actions/checkout@v6` and `actions/setup-node@v6`. Tag pinning is mutable — a compromise of the action repo could update `v6` to malicious code that runs in CI with secrets access.
 
 **Remediation:** Pin to commit SHAs (e.g. `actions/checkout@b4ffde65f46...`). Dependabot for `github-actions` ecosystem is configured and will keep them current. Effort: 30 minutes.
 
 #### A06-G4 — AWS SDK v3 deprecation runway (Info)
+
+> **Status — ⏸️ Deferred.** Info — repo already uses `@aws-sdk/client-s3` v3; v2 retirement Jan 2027. No action required (accepted).
 
 `aws-sdk` (v2) is deprecated for new use; full retirement Jan 2027. Repo uses `@aws-sdk/client-s3` for R2 (v3), which is fine. No action required.
 
@@ -337,17 +385,23 @@ This is documented in `project_deferred_followups.md` as "PR-time CI gate disabl
 
 #### A07-G1 — No breached-password check (Low → Medium for security-conscious customers)
 
+> **Status — 🟥 Open.** No HaveIBeenPwned breached-password check integrated.
+
 `Password123` passes the policy (`customerAuth.ts:93-99`). A SOC 2 / NIST 800-63B Rev.3-aligned implementation checks against HaveIBeenPwned k-anonymity API on signup and password change.
 
 **Remediation:** Integrate `pwnedpasswords.com/range/{first-5-hash-chars}` lookup. Effort: 4-6 hours including caching to avoid rate limits.
 
 #### A07-G2 — No JWT refresh token rotation (Low)
 
+> **Status — ⏸️ Deferred.** Acceptable for B2B portal per audit; no refresh-rotation planned unless a customer security review demands it (accepted).
+
 7-day static JWT, regenerated only by full login. This is acceptable for a B2B portal — but if a token is stolen, the attacker has up to 7 days of access (unless password is changed). A refresh-token model with 15-min access tokens limits the window.
 
 **Remediation:** Optional. For most B2B SaaS this is fine; consider only if a customer security review demands it.
 
 #### A07-G3 — Argon verify timing is observable network-side (Info)
+
+> **Status — ⏸️ Deferred.** Info — constant-time dummy hash already prevents enumeration; request jitter not planned (accepted).
 
 Constant-time dummy hash is in place for user-not-found, so the application logic is correct. But an attacker who can measure response latency can still observe argon2's intentionally-expensive verify (~100ms). The user-doesn't-exist path takes the same 100ms because of the dummy hash, so this is **not** an enumeration leak — but if a remediation goal is "user existence is unobservable even via timing," request-level jitter would be needed. Probably not worth the effort.
 
@@ -371,6 +425,8 @@ Constant-time dummy hash is in place for user-not-found, so the application logi
 
 #### A08-G1 — `security_audit_log` table is append-only by convention only (CRITICAL)
 
+> **Status — ✅ Closed.** Migration `20260614_security_audit_log_immutable.sql` adds a `BEFORE UPDATE OR DELETE` trigger that `RAISE EXCEPTION`s. Operator-verified applied on **both prod and staging** Postgres 2026-05-19: migration row present and a manual UPDATE attempt raises the exception in each environment.
+
 `db/migrations/20260505_security_audit_log.sql:23-42` defines a normal table. There's no trigger forbidding UPDATE/DELETE, no RLS policy, no separate write-only role. The application code at `src/api/lib/auditLog.ts:54-91` only INSERTs, but anyone with the Postgres password (which includes the engine itself, plus any operator using `psql` for support) can UPDATE `payload` or DELETE rows. There is no audit-of-the-audit.
 
 This is a SOC 2 CC7.2 / NIST AU-9 deficiency: "audit records must be protected from unauthorized modification."
@@ -382,15 +438,21 @@ This is a SOC 2 CC7.2 / NIST AU-9 deficiency: "audit records must be protected f
 
 #### A08-G2 — No webhook event idempotency for Stripe + LemonSqueezy (CRITICAL — financial)
 
+> **Status — ✅ Closed.** Migration `20260615_webhook_events_processed.sql` + fail-closed idempotency claim (`78f509cc`) for Stripe and Lemon (`INSERT … ON CONFLICT DO NOTHING` gate; 500 on claim-INSERT failure, never silent re-process).
+
 `stripeWebhook.ts` and `lemonWebhook.ts` do **not** dedupe by provider event ID. A re-delivered event (Stripe retries on 5xx, sometimes on network blips) will run handler logic again. For `subscription.created` this could grant a tier twice; for `invoice.paid` it could double-issue entitlements. Resend's email webhook correctly dedupes via `ON CONFLICT (provider_event_id)` (`emailProviderWebhook.ts:67-104`).
 
 **Remediation:** Create `webhook_events_processed (provider TEXT, event_id TEXT, processed_at TIMESTAMPTZ, PRIMARY KEY (provider, event_id))`. At handler entry: `INSERT ... ON CONFLICT DO NOTHING RETURNING id`; if no row returned, the event was already processed — exit 200. Effort: 1 day including end-to-end tests.
 
 #### A08-G3 — Production builds use `npm install` (High, also A05-G5)
 
+> **Status — ✅ Closed.** Same closure as A05-G5 — all `render.yaml` build commands now `npm ci --include=dev`.
+
 Discussed under A05-G5. Re-stated here because A08 is the canonical category. Production deployments are not lockfile-strict; transitive dependency drift between deploys is a supply-chain risk surface.
 
 #### A08-G4 — LLM response JSON parsing without schema validation (Medium, also A03-G1)
+
+> **Status — 🟡 Partial.** `claudeAssessmentAnalyzer.ts:418` site closed via PR #69 (`684c07b6`) zod gate (see A03-G1). `intelligenceBriefGenerator.ts:953` still does `JSON.parse` + cast with no runtime schema validation — **open**.
 
 `intelligenceBriefGenerator.ts:953` and `claudeAssessmentAnalyzer.ts:418` do `JSON.parse` on Claude responses and cast to expected shape without runtime validation against a zod/ajv schema. A malformed response can produce field-type mismatches at runtime; a prompt-injected response can produce structurally-valid but semantically-wrong data (see A03-G1).
 
@@ -413,11 +475,15 @@ Discussed under A05-G5. Re-stated here because A08 is the canonical category. Pr
 
 #### A09-G1 — `auth.password_reset_requested` is logger.info-only, not audited (Medium)
 
+> **Status — ✅ Closed (verified 2026-05-20).** `writeAuditEvent({ eventType: "auth.password_reset_requested", ... })` added at `customerAuth.ts:789` alongside the existing logger.info. Forgot-password SELECT widened to fetch `organization_id` so the row is org-scoped (matches the completion event's shape). Enumeration prevention preserved — audit row only fires after the email-exists + email-verified guards.
+
 `customerAuth.ts:788` writes the password-reset request as a log line, not a `writeAuditEvent` row. This means a privileged operator querying `security_audit_log` for "who tried to reset this user's password?" gets no answer. Combined with A08-G1, it also means the event is recoverable only from rotating log files.
 
 **Remediation:** Add `await writeAuditEvent({ eventType: "auth.password_reset_requested", ... })`. Effort: 15 minutes.
 
 #### A09-G2 — No real-time alerting on auth anomalies (Medium, also A04-G4)
+
+> **Status — 🟥 Open.** No real-time auth-anomaly alerting. (Same item as A04-G4.)
 
 Rate limiting and lockout prevent brute force but no signal reaches operators. An attacker performing slow credential stuffing across many accounts (one attempt per account per hour) would not trip lockout and would not page anyone.
 
@@ -425,11 +491,15 @@ Rate limiting and lockout prevent brute force but no signal reaches operators. A
 
 #### A09-G3 — No documented audit log retention (Low)
 
+> **Status — 🟥 Open.** No documented audit-log retention policy.
+
 No DELETE/PURGE job for `security_audit_log`. Render Postgres provider backups exist but app-level retention is not stated. For SOC 2 audit, retention needs to be a documented policy.
 
 **Remediation:** Document retention policy (e.g. "7 years for auth, 1 year for data-export"). Effort: 1 hour write + agreement with whomever owns compliance.
 
 #### A09-G4 — LLM call inputs/outputs not audited (Low)
+
+> **Status — 🟥 Open.** LLM call hash/token logging not added. (Same item as E5-G1.)
 
 Anthropic calls log `event=llm_call_start, organizationId, model` (`intelligenceBriefGenerator.ts:598`) but not token counts, response hash, or which `assessment_finding_id` the response produced. Forensic question "did this customer's PDF text leak into another customer's brief?" cannot be answered from current logs.
 
@@ -454,6 +524,8 @@ Anthropic calls log `event=llm_call_start, organizationId, model` (`intelligence
 
 #### A10-G1 — Customer-configurable webhook destinations have no SSRF allowlist (High)
 
+> **Status — ✅ Closed.** SSRF allowlist + DNS-rebinding defense implemented (`e9e343a2`) with dual-stack fix (`20c98ee9`); private / metadata / link-local ranges blocked at create and delivery. See `undici-bump-recheck` for the upcoming-undici-major caveat.
+
 `src/api/lib/webhookDispatcher.ts:69`:
 ```typescript
 const response = await fetch(endpoint.url, { method: "POST", headers, body: payload, ... });
@@ -477,11 +549,15 @@ Effort: 1 day including tests for IPv4-mapped IPv6 (e.g. `::ffff:169.254.169.254
 
 #### A10-G2 — Webhook dispatcher does not bound redirect count (Medium)
 
+> **Status — ✅ Closed.** `webhookDispatcher.ts:107` sets `redirect: "manual"`; a 3xx is treated as a terminal delivery failure.
+
 Default `fetch` follows up to 20 redirects. Combined with A10-G1, this multiplies the attack surface — a customer can chain through a public redirector to reach blocked targets.
 
 **Remediation:** `redirect: "manual"`. Treat 3xx as terminal. Effort: 5 minutes.
 
 #### A10-G3 — Admin Ops Dashboard fetch path validation unclear (Low)
+
+> **Status — ✅ Closed (verified 2026-05-20).** Re-read confirms the file contains no server-side fetch; the only `fetch(` call is inside an inline `<script>` and targets hardcoded same-origin `/admin/…` paths. CSP `connect-src 'self'` is set on the response. Not an SSRF surface.
 
 `adminOpsDashboard.ts` fetches an internal health path. Path is server-constructed; not obviously customer-controllable. Worth a follow-up read to confirm.
 
@@ -498,6 +574,8 @@ Default `fetch` follows up to 20 redirects. Combined with A10-G1, this multiplie
 ### Gaps
 
 #### E1-G1 — Cross-org tests cover only a subset of customer-data routes (Medium)
+
+> **Status — 🟥 Open.** Programmatic cross-org test generation not implemented.
 
 ≈10 of ≈74 org-scoped routes have explicit cross-org 404 tests. The tenant scoping guard test (A01) covers the structural import + literal-string check across more routes, but doesn't simulate cross-org HTTP requests.
 
@@ -517,9 +595,13 @@ Default `fetch` follows up to 20 redirects. Combined with A10-G1, this multiplie
 
 #### E2-G1 — Database TLS certificate verification disabled (CRITICAL, also A02-G1)
 
+> **Status — ⏸️ Deferred.** Same item as A02-G1 — Postgres TLS verify accepted as deferred pending a Render-side change.
+
 Most important crypto finding in this audit. See A02-G1.
 
 #### E2-G2 — Field encryption falls back to plaintext if key missing (Low in production due to startup check; Info)
+
+> **Status — ⏸️ Deferred.** Info — prod-safe via the `validateEnv` startup check; dev-only plaintext fallback is by design (accepted, no action).
 
 `fieldEncryption.ts:79-84` logs a warning and stores plaintext if `FIELD_ENCRYPTION_KEY` is unset. `validateEnv.ts:316-340` requires it in production, so the fallback only fires in dev. Sound design, worth noting for code-reviewer awareness.
 
@@ -534,6 +616,8 @@ Most important crypto finding in this audit. See A02-G1.
 ### Gaps
 
 #### E3-G1 — No documented DR plan, RTO/RPO, or tested restore procedure (Medium)
+
+> **Status — 🟥 Open.** No `docs/DR_PLAN.md` authored.
 
 `docs/` has no backup/DR document. For a customer auditor this is a checkbox: "show me your DR plan and the last restore test." Without it, the answer is "Render does it." That answer is operationally adequate but compliance-inadequate.
 
@@ -553,15 +637,21 @@ Most important crypto finding in this audit. See A02-G1.
 
 #### E4-G1 — `.env` is tracked and contains a real dev admin key (Medium, also A05-G3)
 
+> **Status — ✅ Closed (monitor-only).** Same closure as A05-G3 — `.env` purged from history, untracked at HEAD, dev admin key rotated.
+
 See A05-G3.
 
 #### E4-G2 — No documented secret rotation policy (Medium)
+
+> **Status — 🟥 Open.** No `docs/SECRET_ROTATION_POLICY.md`. Rotations to date have been one-off / incident-driven.
 
 The 2026-05-14 credential rotation window mentioned in deferred-followups is a one-off, not a recurring policy. SOC 2 expects rotation cadence (e.g. annual for app secrets, quarterly for human admin keys, on-incident for any).
 
 **Remediation:** Author `docs/SECRET_ROTATION_POLICY.md`. Effort: 2 hours.
 
 #### E4-G3 — `JWT_SECRET` minimum length too low (Low, also A02-G2)
+
+> **Status — ✅ Closed (verified 2026-05-20).** Same closure as A02-G2 — `validateJwtSecret()` shipped; engine enforces `.length ∈ [32, 512]` at boot.
 
 See A02-G2.
 
@@ -587,15 +677,21 @@ See A02-G2.
 
 #### E5-G1 — Anthropic call audit minimal (Low, also A09-G4)
 
+> **Status — 🟥 Open.** Same item as A09-G4 — LLM call hash/token audit not added.
+
 LLM call audit logs `organizationId, model, event` but not token count or response hash. See A09-G4.
 
 #### E5-G2 — No documented data residency posture (Medium)
+
+> **Status — 🟥 Open.** No documented data-residency stance; `render.yaml` region unset, R2 `auto`.
 
 `render.yaml` does not specify a region. R2 region is `"auto"`. Anthropic is US-default. For EU-customer GDPR compliance ("data must not leave the EEA"), there is no enforcement and no documented stance.
 
 **Remediation:** Decide and document. If EU residency is a target, this is a multi-package effort (Render EU region, Anthropic EU endpoint, R2 EU jurisdiction). If not, document the non-EU stance for the sales conversation.
 
 #### E5-G3 — Customer-controlled webhook destinations are subprocessor-equivalent (Info)
+
+> **Status — ⏸️ Deferred.** Info — documentation note for the audit conversation; no code action (accepted).
 
 When a customer configures a webhook endpoint, SecureLogic is sending org-scoped event data to a destination the customer chose. The customer is the data controller; the destination is their problem. But internal documentation should note this for the audit conversation, since "the platform calls out to customer-supplied URLs" is a question that always comes up.
 

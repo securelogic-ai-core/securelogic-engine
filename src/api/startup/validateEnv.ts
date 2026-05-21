@@ -232,7 +232,10 @@ function validateStripeEnv(): void {
   const key = process.env.STRIPE_SECRET_KEY?.trim();
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
 
-  // Stripe is optional — warn if partially configured
+  // Stripe vars are required in production — presence enforced by
+  // REQUIRED_ENV_PROD (process exits at boot if any are missing). The
+  // partial-config warnings below catch dev/staging misconfigurations
+  // where vars can be independently set or unset.
   const hasKey = Boolean(key);
   const hasWebhookSecret = Boolean(webhookSecret);
 
@@ -293,6 +296,29 @@ function validateSchedulerSecret(): void {
 
   if (raw.length > 512) {
     throw new Error("SCHEDULER_SECRET must be <= 512 characters");
+  }
+}
+
+// HS256 needs >=128 bits of key entropy; 32 ASCII chars (hex/base64) clears that.
+// Char-length matches the validateSchedulerSecret convention; assumes operators
+// provision via `openssl rand -hex 32` (64 chars) or equivalent, not UTF-8 passphrases.
+function validateJwtSecret(): void {
+  const isProd = process.env.NODE_ENV === "production";
+  const raw = process.env.JWT_SECRET?.trim();
+
+  if (!raw) {
+    if (isProd) {
+      throw new Error("JWT_SECRET is required in production (min 32 chars)");
+    }
+    return;
+  }
+
+  if (raw.length < 32) {
+    throw new Error("JWT_SECRET must be at least 32 characters");
+  }
+
+  if (raw.length > 512) {
+    throw new Error("JWT_SECRET must be <= 512 characters");
   }
 }
 
@@ -388,7 +414,6 @@ export function validateEnv(): void {
     assertMaxLength("BRIEF_ORG_ID", 64);
     assertMaxLength("BRIEF_FROM_EMAIL", 320);
     assertMaxLength("BRIEF_UNSUBSCRIBE_BASE_URL", 2048);
-    assertMaxLength("JWT_SECRET", 512);
 
     validateRedisUrl();
     validateAdminKey();
@@ -399,6 +424,7 @@ export function validateEnv(): void {
     validateStripeEnv();
     validateAnthropicApiKey();
     validateSchedulerSecret();
+    validateJwtSecret();
     validateFieldEncryptionKey();
     validateDevEntitlementsJson();
   } catch (err) {

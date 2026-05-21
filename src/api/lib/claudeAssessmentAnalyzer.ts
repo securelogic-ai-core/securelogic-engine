@@ -14,6 +14,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
 import { logger } from "../infra/logger.js";
 
 function getClient(): Anthropic | null {
@@ -57,6 +58,72 @@ export type DocumentAnalysisResult = {
   keyStrengths: string[];
   keyGaps: string[];
 };
+
+// ---------------------------------------------------------------------------
+// Runtime validation (A03-G1 / A08-G4)
+//
+// analyzeAssessmentDocument concatenates customer-uploaded document text into
+// a Claude prompt. A prompt-injected or malformed response must NOT flow into
+// the assessment record. Severity-bearing fields are validated against a
+// closed enum; on ANY schema failure the caller rejects (returns null) rather
+// than emitting a degraded record. Non-security cosmetic fields default
+// leniently so a benignly-incomplete-but-well-typed response is not discarded.
+// ---------------------------------------------------------------------------
+
+const FINDING_SEVERITY = z.enum([
+  "Critical",
+  "High",
+  "Moderate",
+  "Low",
+  "Informational"
+]);
+
+const SUGGESTED_SEVERITY = z.enum(["Critical", "High", "Moderate", "Low"]);
+
+const DocumentFindingSchema = z.object({
+  title: z.string().min(1).max(300),
+  description: z.string().min(1).max(4000),
+  severity: FINDING_SEVERITY,
+  recommendation: z.string().max(4000).optional().transform((v) => v ?? ""),
+  evidenceQuote: z
+    .string()
+    .max(2000)
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null)
+});
+
+const DocumentAnalysisResultSchema = z.object({
+  documentType: z
+    .string()
+    .max(200)
+    .optional()
+    .transform((v) => (v && v.trim().length > 0 ? v : "Unknown")),
+  vendorName: z.string().max(300).nullable().optional(),
+  findings: z.array(DocumentFindingSchema).max(200),
+  overallRiskSummary: z
+    .string()
+    .max(4000)
+    .optional()
+    .transform((v) =>
+      v && v.trim().length > 0
+        ? v
+        : "Document analysis did not produce a risk summary."
+    ),
+  suggestedAssessmentSeverity: SUGGESTED_SEVERITY.nullable()
+    .optional()
+    .transform((v) => v ?? null),
+  keyStrengths: z
+    .array(z.string().max(1000))
+    .max(100)
+    .optional()
+    .transform((v) => v ?? []),
+  keyGaps: z
+    .array(z.string().max(1000))
+    .max(100)
+    .optional()
+    .transform((v) => v ?? [])
+});
 
 // ---------------------------------------------------------------------------
 // analyzeVendorSignalContext  (Haiku — cost at scale)
@@ -415,16 +482,41 @@ If the document contains no security findings, return an empty findings array wi
       .trim();
 
     const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    const parsed = JSON.parse(cleaned) as Partial<DocumentAnalysisResult>;
 
+    let parsedUnknown: unknown;
+    try {
+      parsedUnknown = JSON.parse(cleaned);
+    } catch {
+      logger.warn(
+        { event: "document_analysis_invalid_json", vendorName, organizationId },
+        "Assessment document analysis: response did not JSON-parse — rejecting (A03-G1)"
+      );
+      return null;
+    }
+
+    const validated = DocumentAnalysisResultSchema.safeParse(parsedUnknown);
+    if (!validated.success) {
+      logger.warn(
+        {
+          event: "document_analysis_invalid_shape",
+          vendorName,
+          organizationId,
+          issues: validated.error.issues.slice(0, 10)
+        },
+        "Assessment document analysis: response failed schema validation — rejecting (A03-G1)"
+      );
+      return null;
+    }
+
+    const d = validated.data;
     return {
-      documentType: parsed.documentType ?? "Unknown",
-      vendorName: parsed.vendorName ?? vendorName,
-      findings: Array.isArray(parsed.findings) ? parsed.findings : [],
-      overallRiskSummary: parsed.overallRiskSummary ?? "Document analysis did not produce a risk summary.",
-      suggestedAssessmentSeverity: parsed.suggestedAssessmentSeverity ?? null,
-      keyStrengths: Array.isArray(parsed.keyStrengths) ? parsed.keyStrengths : [],
-      keyGaps: Array.isArray(parsed.keyGaps) ? parsed.keyGaps : []
+      documentType: d.documentType,
+      vendorName: d.vendorName ?? vendorName,
+      findings: d.findings,
+      overallRiskSummary: d.overallRiskSummary,
+      suggestedAssessmentSeverity: d.suggestedAssessmentSeverity,
+      keyStrengths: d.keyStrengths,
+      keyGaps: d.keyGaps
     };
   } catch (err) {
     logger.warn(

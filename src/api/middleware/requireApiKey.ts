@@ -67,7 +67,10 @@ export async function requireApiKey(
       }
 
       // Reject tokens issued before the user's most recent password change.
-      // Fail open on DB error — transient failure must not lock out all users.
+      // Fail CLOSED on DB error: leaked pre-rotation tokens must not replay
+      // during a Postgres degradation window. The api_keys lookup below has
+      // no fallback either, so failing JWT-bridge auth here doesn't widen
+      // the outage envelope.
       try {
         const pwResult = await pg.query<{ password_changed_at: Date | null }>(
           `SELECT password_changed_at FROM users WHERE id = $1 LIMIT 1`,
@@ -78,8 +81,23 @@ export async function requireApiKey(
           res.status(401).json({ error: "session_invalidated", detail: "Password was changed. Please sign in again." });
           return;
         }
-      } catch {
-        // fail open
+      } catch (err) {
+        logger.error(
+          { event: "jwt_bridge_pw_check_db_error", err, userId: payload.sub },
+          "JWT-bridge password-change check failed; failing closed"
+        );
+        writeAuditEvent({
+          actorUserId: payload.sub,
+          eventType: "auth.jwt_bridge_db_failure",
+          resourceType: "user",
+          payload: { route: req.originalUrl, method: req.method },
+          ipAddress: req.ip ?? null
+        });
+        res.status(503).json({
+          error: "auth_unavailable",
+          detail: "Authentication service temporarily unavailable. Please retry."
+        });
+        return;
       }
 
       // Viewer accounts may not perform mutations.

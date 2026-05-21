@@ -176,8 +176,8 @@ Staff (SecureLogic AI employees) access customer data only via the `/admin/*` su
 3. Per-request middleware chain — `[adminLockout, requireAdminKey, adminRateLimit, adminAudit]`. Brute-force gate (Redis-backed lockout), header-based auth, rate limit, audit-log. **No session cookie and no per-admin-user identity** — `SECURELOGIC_ADMIN_KEY` is a service-level secret, not a per-staff credential.
 
 ### Rules
-- Every admin route that reads customer data MUST audit-log the staff actor identity AND the affected `organizationId`.
-- Every admin route that mutates customer data MUST audit-log the staff actor, the affected `organizationId`, the resource type and id, AND a reason payload supplied by the operator.
+- Every admin route that reads customer data MUST audit-log the request `ipAddress` AND the affected `organizationId`.
+- Every admin route that mutates customer data MUST audit-log the request `ipAddress`, the affected `organizationId`, the resource type and id, AND a reason payload supplied by the operator.
 - Admin routes MUST NOT bypass the org-scoping rules in §4. A staff actor performing a customer-impersonation read MUST still go through org-scoped queries; the difference is the actor identity, not the data shape.
 - `SECURELOGIC_ADMIN_KEY` MUST be rotated regularly. The engine does not maintain per-admin-user sessions or long-lived bearer tokens.
 
