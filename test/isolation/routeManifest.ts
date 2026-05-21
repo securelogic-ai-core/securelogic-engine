@@ -189,7 +189,27 @@ export const V1_ROUTES: RouteEntry[] = [
       { method: "PATCH", path: "/api/policies/:id", body: { description: PROBE_NOTE } },
     ],
   },
-  // findings — see DEFERRED_ROUTES below (deferred pending a schema bug).
+  {
+    name: "findings",
+    tenancy: "org-scoped",
+    createPath: "/api/findings",
+    createStatus: 201,
+    dependsOn: [],
+    buildCreateBody: () => ({
+      title: `Harness Finding ${Date.now()}`,
+      // description is a required, non-empty field on POST /api/findings.
+      description: "Harness cross-org isolation probe finding.",
+      severity: "Moderate",
+      source_type: "manual",
+    }),
+    extractId: topLevelId,
+    idEndpoints: [
+      { method: "GET", path: "/api/findings/:id" },
+      // findings PATCH updatable fields are status/priority/owner_user_id/
+      // due_date; `status` is validated against VALID_PATCH_STATUSES.
+      { method: "PATCH", path: "/api/findings/:id", body: { status: "in_progress" } },
+    ],
+  },
 
   // ---- dependent resources (need a same-org parent) ----------------------
   {
@@ -292,14 +312,6 @@ export const V1_ROUTES: RouteEntry[] = [
  * deferral is explicit rather than a silent gap.
  */
 export const DEFERRED_ROUTES: { name: string; reason: string }[] = [
-  {
-    name: "findings",
-    reason:
-      "Deferred pending the findings.due_date schema bug — POST /api/findings " +
-      "500s on a clean migration build (missing ALTER TABLE findings ADD " +
-      "COLUMN due_date). To be re-added once the Option-A migration lands; " +
-      "see docs/investigation/e1-g1-harness-first-run-2026-05-21.md.",
-  },
   {
     name: "assessments",
     reason:
