@@ -35,9 +35,13 @@ import { logger } from "../infra/logger.js";
 import { runScheduler } from "./briefScheduler.js";
 import { runDailyDigest } from "./digestScheduler.js";
 import { runWeeklySummary } from "./summaryScheduler.js";
+import { runAuthAnomalyScan } from "./authAnomaly.js";
 
 /** True while a scheduler run is actively in progress. Prevents overlapping runs. */
 let isRunning = false;
+
+/** True while an auth-anomaly scan is in progress. Prevents overlapping runs. */
+let isScanningAuthAnomalies = false;
 
 /**
  * Register the daily cron job.
@@ -129,5 +133,44 @@ export function startScheduler(): void {
   logger.info(
     { event: "scheduler_registered", schedule: "0 9 * * 1 (UTC)", description: "Weekly summary Monday 9:00 AM UTC" },
     "Weekly summary scheduler registered"
+  );
+
+  // Auth-anomaly scan — every 5 minutes (A04-G4/A09-G2). Scans
+  // security_audit_log for credential-stuffing / API-key-probing patterns.
+  schedule(
+    "*/5 * * * *",
+    async () => {
+      if (isScanningAuthAnomalies) {
+        logger.warn(
+          { event: "auth_anomaly_scan_overlap_skipped" },
+          "Auth-anomaly scan: previous run still in progress — skipping this trigger"
+        );
+        return;
+      }
+
+      isScanningAuthAnomalies = true;
+      const startedAt = Date.now();
+
+      try {
+        const summary = await runAuthAnomalyScan();
+        logger.info(
+          { event: "auth_anomaly_scan_complete", durationMs: Date.now() - startedAt, ...summary },
+          "Auth-anomaly scan completed"
+        );
+      } catch (err) {
+        logger.error(
+          { event: "auth_anomaly_scan_error", durationMs: Date.now() - startedAt, err },
+          "Auth-anomaly scan threw an unexpected error"
+        );
+      } finally {
+        isScanningAuthAnomalies = false;
+      }
+    },
+    { timezone: "UTC" }
+  );
+
+  logger.info(
+    { event: "scheduler_registered", schedule: "*/5 * * * * (UTC)", description: "Auth-anomaly scan every 5 min" },
+    "Auth-anomaly scanner registered"
   );
 }

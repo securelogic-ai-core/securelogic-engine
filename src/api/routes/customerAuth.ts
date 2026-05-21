@@ -26,6 +26,7 @@ import rateLimit from "express-rate-limit";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { recordAccountLockout } from "../lib/authAnomaly.js";
 import { signJwt, signMfaChallenge } from "../lib/jwt.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { checkPasswordReuse, recordPasswordHash } from "../lib/passwordHistory.js";
@@ -613,6 +614,17 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
         ).catch(() => {});
         if (shouldLock) {
           sendLockoutEmail(user.email, lockoutUntil!).catch(() => {});
+          // A04-G4/A09-G2 Tier 1: distinct `auth.account_locked` audit event
+          // + operator alert at lock time. Fire-and-forget — webhook delivery
+          // must never block or break the login response.
+          void recordAccountLockout({
+            userId: user.id,
+            organizationId: user.organization_id,
+            ip: req.ip ?? null,
+            failedAttempts: newCount,
+            lockedUntil: lockoutUntil!,
+            maskedEmail: email.slice(0, 4) + "***"
+          }).catch(() => {});
         }
       }
 
