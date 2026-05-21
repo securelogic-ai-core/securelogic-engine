@@ -2,7 +2,27 @@ import { Resend } from "resend";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 
-const resend = new Resend(process.env.RESEND_API_KEY ?? "");
+let _resend: Resend | null = null;
+
+/**
+ * Returns the Resend SDK instance.
+ * Fails at call time if RESEND_API_KEY is not set — never crashes on
+ * import. Mirrors infra/stripeClient.ts's getStripe(); keeping client
+ * construction lazy is what lets createApp() be built in any environment.
+ */
+function getResend(): Resend {
+  if (_resend) return _resend;
+
+  const key = process.env.RESEND_API_KEY?.trim();
+
+  if (!key) {
+    throw new Error("RESEND_API_KEY is not configured");
+  }
+
+  _resend = new Resend(key);
+
+  return _resend;
+}
 
 function getFromAddress(): string {
   return process.env.NEWSLETTER_FROM_EMAIL?.trim() ?? "SecureLogic AI <noreply@securelogicai.com>";
@@ -96,7 +116,7 @@ export async function sendCriticalFindingAlert(payload: CriticalFindingAlertPayl
 </html>`;
 
   try {
-    await resend.emails.send({
+    await getResend().emails.send({
       from: getFromAddress(),
       to: email,
       subject: `[${severity}] New finding: ${findingTitle}`,
@@ -191,7 +211,7 @@ export async function sendDailyDigest(payload: DailyDigestPayload): Promise<void
 </html>`;
 
   try {
-    await resend.emails.send({
+    await getResend().emails.send({
       from: getFromAddress(),
       to: email,
       subject: `SecureLogic AI — Daily Digest (${newFindings.length} new finding${newFindings.length !== 1 ? "s" : ""})`,
@@ -286,7 +306,7 @@ export async function sendWeeklySummary(payload: WeeklySummaryPayload): Promise<
 </html>`;
 
   try {
-    await resend.emails.send({
+    await getResend().emails.send({
       from: getFromAddress(),
       to: email,
       subject: `SecureLogic AI — Weekly Posture Summary`,
