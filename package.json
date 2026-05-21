@@ -64,7 +64,7 @@
     "redis": "^5.10.0",
     "resend": "^6.12.2",
     "rss-parser": "^3.13.0",
-    "samlify": "^2.12.0",
+    "samlify": "^2.13.1",
     "securelogic-contracts": "^0.1.2",
     "stripe": "^22.0.0",
     "svix": "^1.89.0",
