@@ -41,7 +41,7 @@ export async function sendFailureAlert(
  * (the synchronous auth path) or log (the Tier 2 cron).
  */
 export async function sendSecurityAlert(args: {
-  kind: "account_locked" | "credential_stuffing" | "api_key_probing"
+  kind: "account_locked" | "credential_stuffing" | "api_key_probing" | "provider_quota_exhausted"
   summary: string
   detail?: Record<string, unknown>
 }): Promise<void> {

@@ -20,6 +20,7 @@ import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { instrumentAnthropicClient } from "../infra/providerQuotaAlert.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
@@ -46,7 +47,7 @@ const ASK_MODEL = "claude-sonnet-4-6";
 function getClient(): Anthropic | null {
   const key = process.env.ANTHROPIC_API_KEY?.trim();
   if (!key) return null;
-  return new Anthropic({ apiKey: key });
+  return instrumentAnthropicClient(new Anthropic({ apiKey: key }));
 }
 
 // ---------------------------------------------------------------------------

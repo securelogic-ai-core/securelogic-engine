@@ -43,6 +43,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { instrumentAnthropicClient } from "../infra/providerQuotaAlert.js";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 
@@ -206,7 +207,7 @@ export function validateCuecMatcherResponse(
 function getClient(): Anthropic | null {
   const key = process.env["ANTHROPIC_API_KEY"]?.trim();
   if (!key) return null;
-  return new Anthropic({ apiKey: key });
+  return instrumentAnthropicClient(new Anthropic({ apiKey: key }));
 }
 
 async function defaultCuecMatcherLlmCall(prompt: string): Promise<CuecMatcherLlmResult> {
