@@ -579,13 +579,23 @@ Default `fetch` follows up to 20 redirects. Combined with A10-G1, this multiplie
 
 ### Gaps
 
-#### E1-G1 — Cross-org tests cover only a subset of customer-data routes (Medium)
+#### E1-G1 — Cross-org HTTP harness covers v1 primitives; collection, link, export, and DELETE routes still uncovered (Medium)
 
-> **Status — 🟥 Open.** Programmatic cross-org test generation not implemented.
+> **Status — 🟡 Partial (2026-05-21).** A real cross-org HTTP harness now exists and is CI-gated; the v1 customer-data `/:id` route set is fully covered (closed under A01-G1). The remaining route classes named below are not yet harness-covered.
 
-≈10 of ≈74 org-scoped routes have explicit cross-org 404 tests. The tenant scoping guard test (A01) covers the structural import + literal-string check across more routes, but doesn't simulate cross-org HTTP requests.
+**What landed (the closed subset — see A01-G1, ✅ Closed).** The E1-G1 / A01-G1 cross-org isolation harness (`test/isolation/`, PRs #81 + #83) drives the real `createApp()` over a throwaway two-org Postgres and probes **13 v1 customer-data `/:id` routes** — every org-scoped GET/PATCH single-resource primitive — cross-org in both directions, each with a same-org positive control: **50 cross-org probes, all asserting HTTP 404**, wired as a permanent `cross-org-isolation` CI job gating every PR/push. This **supersedes** the audit-time statement that the tenant test "doesn't simulate cross-org HTTP requests" — for the v1 set it now does, against the live app over real HTTP.
 
-**Remediation:** Generate cross-org tests programmatically from the allowlist of customer-data routes — for each, POST with org A's API key against an org B resource and assert 404. Effort: 2 days, including a generator pattern.
+**What remains open (this finding).** The harness manifest (`test/isolation/routeManifest.ts` → `V1_ROUTES`) is deliberately bounded to single-resource `/api/<resource>/:id` GET/PATCH primitives. Still **not** harness-covered:
+
+- **Collection / list endpoints** (`GET /api/<resource>`) — need a different assertion than a 404: org B's list must not *contain* org A's rows. Outside the `/:id` path-param IDOR shape entirely.
+- **Link / nested routes** (`signalObligationLinks`, `signalVendorLinks`, `signalControlLinks`, `signalAiSystemLinks`, `aiSystemVendorDependencies`, `riskControlLinks`, `riskObligationLinks`, `signalMatchSuggestions`) — carry older inline cross-org tests per `TENANT_ROUTE_CLASSIFICATION.md`, but are not in the harness or its CI gate.
+- **Export endpoints** (vendor-assurance `.pdf` / `.xlsx`) — not probed cross-org.
+- **DELETE routes** (`controls`, `ai-systems`) — gated behind `requireAuth` (JWT); the API-key harness cannot mint a JWT session. Needs a separate JWT-auth harness — phase 2.
+- **Three deferred create-path resources** recorded explicitly in `DEFERRED_ROUTES`: `assessments` (no POST create endpoint — instances come from other workflows; needs a direct-SQL seed path), `dependency-assessments` (needs a 3-deep prerequisite chain — ai-system + vendor + dependency link — before one can exist), `vendor-assurance-documents` (feature-flag-gated and requires a magic-byte-checked multipart PDF upload).
+
+**Remediation.** Extend the existing harness manifest to the collection, link, and export route classes; stand up a JWT-auth harness to cover DELETE; wire fixture/seed paths for the three deferred create-path resources. Effort: ~2 days for the remaining customer-data classes, plus a separate JWT-harness package for DELETE.
+
+**Method note — generator pattern consciously declined.** The original audit remediation proposed generating these tests *programmatically* from the route allowlist with a "generator pattern." This was **deliberately not done**; the harness uses a hand-curated `routeManifest.ts` instead. A naive generator breaks on two route realities the manifest handles per-route, both documented in its source comments: (1) PATCH routes validate the request body *before* the org-scoped row lookup, so a generic probe body 400s at validation and silently never reaches the cross-org 404 path — masking the isolation check; (2) several routes return multi-key envelopes (e.g. `{ assessment, finding }`) where a linked sibling object can be mistaken for the probed resource. The curated manifest encodes a validator-accepted body and the resource envelope key per route; that correctness is judged worth the manual authoring cost. Extending coverage means adding manifest entries, not building a generator.
 
 ---
 
