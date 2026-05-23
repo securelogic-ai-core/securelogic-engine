@@ -48,10 +48,10 @@ The gaps are not "the basics are wrong"; they are well-known defense-in-depth an
 | A05 | Security Misconfiguration | **Mostly strong** | 0 | 0 | 4 | 2 |
 | A06 | Vulnerable Components | **Adequate** | 0 | 1 | 3 | 1 |
 | A07 | Authentication Failures | **Strong** | 0 | 0 | 1 | 2 |
-| A08 | Data Integrity | **Two critical gaps** | 2 | 1 | 1 | 0 |
+| A08 | Data Integrity | **Two critical gaps** | 2 | 1 | 2 | 0 |
 | A09 | Logging / Monitoring | **Good** | 0 | 0 | 2 | 2 |
 | A10 | SSRF | **One high** | 0 | 1 | 1 | 1 |
-| **Total** | | | **3** | **7** | **17** | **12** |
+| **Total** | | | **3** | **7** | **18** | **12** |
 
 A "Critical" or "High" finding does not mean the platform is breached — it means an attacker with the right pre-conditions could reach exploitation. Most criticals here are operational misconfigurations (TLS verify off, missing idempotency) rather than logic flaws.
 
@@ -461,6 +461,22 @@ Discussed under A05-G5. Re-stated here because A08 is the canonical category. Pr
 > **Status — 🟡 Partial.** `claudeAssessmentAnalyzer.ts:418` site closed via PR #69 (`684c07b6`) zod gate (see A03-G1). `intelligenceBriefGenerator.ts:953` still does `JSON.parse` + cast with no runtime schema validation — **open**.
 
 `intelligenceBriefGenerator.ts:953` and `claudeAssessmentAnalyzer.ts:418` do `JSON.parse` on Claude responses and cast to expected shape without runtime validation against a zod/ajv schema. A malformed response can produce field-type mismatches at runtime; a prompt-injected response can produce structurally-valid but semantically-wrong data (see A03-G1).
+
+#### A08-G5 — CI gate runs on every PR but is not enforced as a merge requirement on `main` (Medium)
+
+> **Status — 🟥 Open.** Verified 2026-05-23 via GitHub UI → Settings → Rules → Rulesets: the ruleset targeting `main` is `enforcement: disabled`, with no required status checks, `required_approving_review_count: 0`, and only `deletion` + `non_fast_forward` + a permissive `pull_request` rule (squash listed in `allowed_merge_methods`). This is verified at the **repo** level. Whether an **org-level** ruleset overrides this for `main` was not verified at audit time (operator to glance-confirm at Org → Rules → Rulesets); the finding text below assumes there is none.
+
+`.github/workflows/ci.yml` (shipped in commit `eb285bce`, 2026-05-14) runs 6 jobs on every PR and push to `develop`/`main`: `typecheck`, `lint`, `test`, `audit` (`--audit-level=high`), `build`, and `cross-org-isolation` (added 2026-05-22 with PR #81). All 6 run reliably. **None of them is a required status check** on the `main` ruleset, because the ruleset is disabled and its required-checks list is empty. The gate exists; it is not enforced.
+
+This is a coverage-vs-enforcement gap in the same shape as the A01-G1 ↔ A04-G1 split this audit already uses. **A01-G1 closed the test-coverage gap** for v1 cross-org isolation, and the `cross-org-isolation` CI job is the mechanism that holds that coverage forward on every PR. Because the `main` ruleset is disabled, a PR with a **red** `cross-org-isolation` run is not blocked from merging — the gate is procedural, not enforced. Coverage and enforcement are independent layers: closing A01-G1 (coverage) does not imply the gate is enforced, exactly as closing A01-G1 does not close A04-G1 (DB-layer enforcement). A08-G5 is the missing CI-enforcement layer in the same vertical.
+
+`main` auto-deploys to Render production (`render.yaml`; engine `startCommand` auto-runs `npm run migrate` on every commit). The path from "merged to `main`" to "running in prod" is automatic. An unenforced gate on `main` is therefore materially different from an unenforced gate on a long-lived dev branch — a single merge slip lands directly in production.
+
+Severity **Medium**, not High: the discipline layer is currently holding (CI status is checked manually before each merge to `main`), and the team is small enough that drift is visible. The risk is latent, not active. But the moment discipline slips — a hurried merge, a contributor unfamiliar with the convention, a re-targeted Dependabot PR landing on `main` — the lack of enforcement becomes the failure mode.
+
+**Remediation:** Enable enforcement on the existing `main` ruleset (`enforcement: disabled` → `active`). Set required status checks to all 6 CI jobs by their exact reported names: `typecheck`, `lint`, `test`, `audit`, `build`, `cross-org-isolation`. Keep `non_fast_forward` and `deletion` rules active. Optional and consistent with the rest of this audit's posture: require a pull request before merging with `required_approving_review_count: 1` if a second reviewer is reachable; otherwise leave at 0 and rely on the required-checks gate.
+
+**Tradeoff to surface before enabling:** enforcing required checks/reviews would also constrain the operator's `gh pr merge --squash` path, which is currently relied on as a workaround for an intermittent UI merge-click issue (recent PRs needed CLI to land despite a clean mergeable state). After enforcement is on, the CLI merge will fail rather than silently bypass unless the operator is in the ruleset's bypass list. **Decision needed before flipping enforcement:** either (a) add the operator to the bypass list, preserving the CLI fallback; (b) accept the constraint and resolve the underlying UI issue (browser/extension diagnosis); or (c) leave enforcement off and accept this finding as documented-and-accepted. (a) or (b) close A08-G5; (c) leaves it open.
 
 ---
 
