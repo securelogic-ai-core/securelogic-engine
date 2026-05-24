@@ -3,10 +3,12 @@ import { Pool } from "pg";
 import fs from "fs";
 import path from "path";
 
-const DATABASE_URL = process.env.DATABASE_URL;
+const DATABASE_URL = process.env.MIGRATION_DATABASE_URL ?? process.env.DATABASE_URL;
 
 if (!DATABASE_URL) {
-  console.error("DATABASE_URL is not set");
+  console.error(
+    "Neither MIGRATION_DATABASE_URL nor DATABASE_URL is set"
+  );
   process.exit(1);
 }
 
