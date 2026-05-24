@@ -347,13 +347,17 @@ The original hunt enumerated `src/` and `scripts/` only. The repository also con
 | `services/intelligence-worker/src/generators/newsletterGenerator.ts:77` | `UPDATE insights SET published = TRUE WHERE id = ANY($1)` — no org predicate; updates whatever ids are passed | needs review: under RLS, this UPDATE goes through whichever role runs the worker. If elevated, works as-is; if `app_request`, the WHERE clause must add an org predicate or the update silently no-ops for cross-org rows |
 | `services/posture-worker/src/index.ts:49` → `computeAndSavePostureSnapshot(orgId)` in `src/api/lib/postureSnapshot.ts` | writes `posture_snapshots` (CUSTOMER-DATA), `domain_scores` (INDIRECT) per-org | per-org GUC after the outer enumeration; treatment matches engine-side per-org workers |
 
-#### `assessSignal.ts` — latent bug discovered but not RLS-blocking
+#### `assessSignal.ts` — ✅ CLOSED 2026-05-24 by deletion
 
-`services/intelligence-worker/src/pipeline/assessSignal.ts:122` defines `assessSignal(organizationId, signal)` which writes to **three CUSTOMER-DATA tables**: `assessments` (line 144), `findings` (line 203), `reports` (line 212).
+`services/intelligence-worker/src/pipeline/assessSignal.ts` previously defined `assessSignal(organizationId, signal)`, which wrote to **three CUSTOMER-DATA tables** (`assessments`, `findings`, `reports`) and carried a latent `NOT NULL` constraint bug: the `reports` INSERT omitted `organization_id`, a column made `NOT NULL` after the function was authored (migration `20260504_reports_organization_id.sql`). Reviving the function would have failed before any RLS policy was involved.
 
-- **Caller search:** `grep -rn "assessSignal\b" services/intelligence-worker/src` returns **only the export definition** — no call sites. The function is **dead code** in the live tree.
-- **Latent bug regardless of RLS:** the `reports` INSERT at line 212 lists columns `(assessment_id, type, risk_score, summary, report_json, generated_at)` and **omits `organization_id`**. Since `reports.organization_id` was made `NOT NULL` by migration `20260504_reports_organization_id.sql` (after this code was authored), reviving `assessSignal` would fail with a `null value violates not-null constraint` error before any RLS policy is involved. The `assessments` INSERT *does* pass `organizationId` as `$1` (line 162), so that one would only fail if the caller passed `null`. The `findings` INSERT correctly uses the INDIRECT pattern (no own org column).
-- **Treatment:** before any RLS work, **either fix or delete `assessSignal.ts`**. If kept, the `reports` INSERT needs `organization_id` added to its column list (sourced from the parent assessment's `organization_id`), and the function must run via the per-org GUC (it accepts an `organizationId` argument, so the call-site would set the GUC before invoking). Not on the A04-G1 critical path *unless* something resurrects the function before phase 2.
+The function was confirmed dead across the entire repo via three independent greps:
+- Full-repo name reference → only the export definition (and doc references, no imports).
+- Module-path import grep (`from "…assessSignal"` / `import…assessSignal`) → **zero hits**.
+- Barrel re-exports + `pipeline/index.ts` → none exist.
+- Tests in all four `__tests__/` directories under the worker → zero hits.
+
+**File deleted.** Compiled artifact `dist-intelligence-worker/services/intelligence-worker/src/pipeline/assessSignal.js` was gitignored (`.gitignore:12` — `dist-*/`), so no tracked artifact removal was needed; the artifact stops being emitted on the next build. The latent bug is now closed without a fix-and-revive path. Should the assessment-from-signal capability be needed again in the future, it would be re-implemented with the `organization_id` shape correct from the start.
 
 #### Residual-risk update — IaC is not authoritative for the deploy set
 
@@ -533,5 +537,5 @@ Before the phase-1 flip:
 
 1. Reconcile render.yaml against the Render dashboard's actual service list; codify any undeclared service (notably `securelogic-app-staging`). Confirm whether `securelogic-posture-worker-staging` exists or not.
 2. Add `MIGRATION_DATABASE_URL` env var on `securelogic-engine` and `securelogic-engine-staging`, populated with the existing owner-role URL.
-3. Decide the fate of `services/intelligence-worker/src/pipeline/assessSignal.ts`: fix (add `organization_id` to the `reports` INSERT and wire a caller) or delete (preferred — it's dead code with a latent bug). Either is fine, but it must be resolved before phase 2 lands RLS on `reports`.
+3. ✅ **RESOLVED 2026-05-24 — file deleted.** `services/intelligence-worker/src/pipeline/assessSignal.ts` removed in PR #91. Dead-code confirmation (three independent greps: name reference, module-path import, barrel re-export) and rationale captured in the §4 sub-section. No tracked artifact in `dist-intelligence-worker/` to remove (gitignored).
 4. Confirm `securelogic-app` (Next.js portal) genuinely does not touch Postgres directly — spot-check `app/lib/` and any server-side route handlers for `pg` imports. If anything does, this inventory grows.
