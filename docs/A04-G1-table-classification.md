@@ -498,44 +498,63 @@ The default-privileges step is critical: without it, every new table added in a 
 
 The A1 connection-string flip (engine `DATABASE_URL` repointed from owner to `app_request`) must be applied **simultaneously** to every Render service that connects to the same Postgres. A missed deployable means that service keeps connecting as the owner and silently bypasses RLS — exactly the failure mode the rollout is designed to prevent. A missed deployable that holds the *new* `app_request` URL but doesn't have its NULL-org writes elevated breaks in prod under RLS.
 
-### Inventory (sourced from `render.yaml`, audited 2026-05-24)
+### Inventory (audited 2026-05-24; dashboard-reconciled 2026-05-24)
 
-`grep -c DATABASE_URL render.yaml` → **5 matches**, on five services:
+Sources of truth:
+- `grep -c DATABASE_URL render.yaml` → **5 matches** on five services declared in IaC.
+- **Render dashboard reconciliation 2026-05-24** confirmed the IaC-declared 5 are the complete set. Two findings from the reconciliation:
+  - The previously-implied `securelogic-posture-worker-staging` — **does not exist**.
+  - `securelogic-app-staging` was found to hold a `DATABASE_URL` env var (briefly added a 6th holder); investigation confirmed it was dead config (zero `pg` references in `app/`), and the operator deleted the var the same day. `securelogic-app-staging` is **not** in the flip set. See history note below.
 
-| # | Service name | Type | Env | Source path | Connects as | Phase-1 flip target | NULL-org writes? |
-|---|---|---|---|---|---|---|---|
-| 1 | `securelogic-engine` | web | prod | `src/api/` | owner today → `app_request` after flip | yes | yes — `requestAudit.ts`, `auditLog.ts` (pre-auth events) |
-| 2 | `securelogic-engine-staging` | web | staging | `src/api/` | owner today → `app_request` after flip | yes | yes — same |
-| 3 | `securelogic-intelligence-worker` | worker | prod | `services/intelligence-worker/src/` | owner today → `app_request` after flip | yes | **yes — heavy.** Confirmed writers in §4 update: `cyber_signals`, `signals`, `insights`, `trends`, `newsletter_issues`, `newsletter_deliveries`, `subscribers`, `worker_runs`. All NULL-org or system-table writes need the **elevated role**, not `app_request`. Worker code must take the same shape as the engine's `withTenant` / elevated helper |
-| 4 | `securelogic-intelligence-worker-staging` | worker | staging | `services/intelligence-worker/src/` | owner today → `app_request` after flip | yes | yes — same |
-| 5 | `securelogic-posture-worker` | worker | prod | `services/posture-worker/src/` | owner today → `app_request` after flip | yes | no NULL-org writes — purely per-org. Only the outer org-enumeration is cross-org and that step needs the elevated path |
+**Total flip-set: 5 services.**
 
-### Services in render.yaml that are NOT DATABASE_URL holders
+| # | Service name | Type | Env | Source path | In `render.yaml`? | Connects as | Phase-1 flip target | NULL-org writes? |
+|---|---|---|---|---|---|---|---|---|
+| 1 | `securelogic-engine` | web | prod | `src/api/` | yes | owner today → `app_request` after flip | yes | yes — `requestAudit.ts`, `auditLog.ts` (pre-auth events) |
+| 2 | `securelogic-engine-staging` | web | staging | `src/api/` | yes | owner today → `app_request` after flip | yes | yes — same |
+| 3 | `securelogic-intelligence-worker` | worker | prod | `services/intelligence-worker/src/` | yes | owner today → `app_request` after flip | yes | **yes — heavy.** Confirmed writers in §4 update: `cyber_signals`, `signals`, `insights`, `trends`, `newsletter_issues`, `newsletter_deliveries`, `subscribers`, `worker_runs`. All NULL-org or system-table writes need the **elevated role**, not `app_request`. Worker code must take the same shape as the engine's `withTenant` / elevated helper |
+| 4 | `securelogic-intelligence-worker-staging` | worker | staging | `services/intelligence-worker/src/` | yes | owner today → `app_request` after flip | yes | yes — same |
+| 5 | `securelogic-posture-worker` | worker | prod | `services/posture-worker/src/` | yes | owner today → `app_request` after flip | yes | no NULL-org writes — purely per-org. Only the outer org-enumeration is cross-org and that step needs the elevated path |
 
-| Service | Notes |
-|---|---|
-| `securelogic-app` | Next.js. Calls the engine via `ENGINE_API_URL` over HTTP — does not connect to Postgres directly. No flip needed. |
-| `securelogic-website` | Static marketing site. No DB at all. |
+### `securelogic-app-staging` — history note (dead-config holder, found and removed 2026-05-24)
 
-### Two flip targets need not exist yet but are implied
+For audit-trail completeness — `securelogic-app-staging` briefly appeared as a 6th `DATABASE_URL` holder during the 2026-05-24 dashboard reconciliation, then was removed the same day.
 
-| Target | Why it's implied | Action |
+- **Found:** dashboard showed `securelogic-app-staging` carried a `DATABASE_URL` env var while its prod counterpart `securelogic-app` did not. Prod/staging divergence flagged.
+- **Investigated (read-only):** service is not declared in `render.yaml` (auto-deploys from `develop` per memory `project_staging_frontend_gap_2026_05_07`). `git diff --stat origin/main origin/develop -- app/` returned empty — `app/` source tree is identical between branches. `git grep` against `origin/develop -- app/` for `from "pg"` / `require("pg")` / `new Pool` / `pool.query` / `pg.query` / `process.env.DATABASE_URL` → **zero matches**. 339 files in `app/`, all HTTP-only via `ENGINE_API_URL`.
+- **Verdict at the time:** dead config (case (a)). Env var set-but-unread; no Postgres connection from this deployable.
+- **Resolution (operator, 2026-05-24):** treatment option (ii) — env var deleted from the dashboard. Prod/staging divergence closed.
+
+`securelogic-app-staging` is **no longer in the flip set.** It is now an HTTP-only Next.js portal (same as prod `securelogic-app`), with no Postgres connection and no relevance to the A04-G1 flip. Whether to codify the service into `render.yaml` is a separate IaC-hygiene question (see drift section below) — but with zero RLS/flip implications now that the dead var is gone.
+
+### Services that are NOT DATABASE_URL holders
+
+| Service | In `render.yaml`? | Notes |
 |---|---|---|
-| `securelogic-posture-worker-staging` | Production worker exists but **no staging counterpart is declared in render.yaml.** Either staging posture runs out of the engine-staging in-process (unlikely — the engine has no `setInterval` for posture), or staging has no posture worker, or there's an undeclared staging deployment | Operator: confirm staging posture-worker existence; if it exists, declare in render.yaml and include in the flip |
-| `MIGRATION_DATABASE_URL` on every service | Per §6 item 4 (resolved): the migrate runner needs the owner-role URL. Currently the engine's `startCommand` runs `npm run migrate && npm start` so it needs both URLs. Workers do not run migrations, so they don't need `MIGRATION_DATABASE_URL` — only the engine prod and engine staging do | Phase 0 finalization: add `MIGRATION_DATABASE_URL` env var on `securelogic-engine` and `securelogic-engine-staging` only, populated with the existing owner-role URL |
+| `securelogic-app` (prod) | yes | Next.js. Calls the engine via `ENGINE_API_URL` over HTTP — does not connect to Postgres directly. Verified by grep against `main`'s `app/` tree: zero `pg` / `Pool` / `DATABASE_URL` references. No env var in IaC or dashboard. |
+| `securelogic-app-staging` | **no — dashboard-only** | Same code as prod (`app/` tree identical between `main` and `develop`); no Postgres connection. Previously held a dead `DATABASE_URL` env var, now removed (see history note above). |
+| `securelogic-website` | yes | Static marketing site. No DB at all. |
 
-### IaC drift — render.yaml may not be the complete deploy set
+> **Minor side-note (informational, not blocking).** A separate prod/staging env-var divergence was spotted alongside the `DATABASE_URL` finding: `securelogic-app-staging` carries a `NEXTAUTH_URL` env var that prod `securelogic-app` does not. This is unrelated to A04-G1 (NextAuth isn't a Postgres dependency in this codebase) and out of scope here, but flagging it in case it surfaces during the broader render.yaml-vs-dashboard reconciliation. Likely also dead config given prod doesn't carry it, but a separate read-only verification would confirm.
 
-**This is a load-bearing residual risk.** Per memory `project_staging_frontend_gap_2026_05_07`, `securelogic-app-staging` is **live** but **not declared in render.yaml**. The same drift could conceal a Postgres-connecting deployable.
+### `MIGRATION_DATABASE_URL` introduction (still pending)
 
-Before the phase-1 flip:
-- Operator should pull the Render dashboard's services list and reconcile against render.yaml.
-- Every service that holds a `DATABASE_URL` env var (visible in the dashboard) must be in the §7 inventory. If any is missing, it gets added.
-- Bring `render.yaml` into agreement with reality as part of phase 0 finalization. The undeclared `securelogic-app-staging` should also be codified at this point so the gap doesn't propagate.
+| Target | Why | Action |
+|---|---|---|
+| `securelogic-engine` and `securelogic-engine-staging` only | Per §6 item 4: the migrate runner needs the owner-role URL. Engine `startCommand` runs `npm run migrate && npm start`, so it needs both URLs. Workers do not run migrations; the two non-holder app services also do not. | Phase 0 finalization: add `MIGRATION_DATABASE_URL` env var on the two engine services, populated with the existing owner-role URL |
+
+### IaC drift — render.yaml is NOT the complete deploy set (corroborated, not just suspected)
+
+The 2026-05-24 dashboard reconciliation **confirmed** the IaC drift this section flagged as suspected. Findings:
+- `securelogic-app-staging` — live, declared only in dashboard. Originally found with a `DATABASE_URL` env var (dead config); var removed by operator 2026-05-24. Service itself remains undeclared in `render.yaml`.
+- `securelogic-posture-worker-staging` — **does not exist.** The previously-implied target is resolved: prod posture-worker has no staging counterpart, neither in IaC nor in the dashboard.
+
+**Codifying `securelogic-app-staging` into `render.yaml` is pure IaC hygiene** — it has zero RLS/A04-G1 relevance now that the service is HTTP-only with no Postgres connection. Still worth doing to close the `project_staging_frontend_gap_2026_05_07` gap, but it's not gating phase 1 RLS work. The non-existent `securelogic-posture-worker-staging` needs no action.
 
 ### Action items for phase 0 finalization (depend on operator)
 
-1. Reconcile render.yaml against the Render dashboard's actual service list; codify any undeclared service (notably `securelogic-app-staging`). Confirm whether `securelogic-posture-worker-staging` exists or not.
+1. **Codify `securelogic-app-staging` into `render.yaml`** — pure IaC hygiene (closes the standalone gap tracked under `project_staging_frontend_gap_2026_05_07`). **Zero RLS/flip relevance** now that the dead `DATABASE_URL` var has been removed (action item 5 below). The non-existent `securelogic-posture-worker-staging` needs no action — closed by the dashboard reconciliation.
 2. Add `MIGRATION_DATABASE_URL` env var on `securelogic-engine` and `securelogic-engine-staging`, populated with the existing owner-role URL.
 3. ✅ **RESOLVED 2026-05-24 — file deleted.** `services/intelligence-worker/src/pipeline/assessSignal.ts` removed in PR #91. Dead-code confirmation (three independent greps: name reference, module-path import, barrel re-export) and rationale captured in the §4 sub-section. No tracked artifact in `dist-intelligence-worker/` to remove (gitignored).
-4. Confirm `securelogic-app` (Next.js portal) genuinely does not touch Postgres directly — spot-check `app/lib/` and any server-side route handlers for `pg` imports. If anything does, this inventory grows.
+4. ✅ **RESOLVED 2026-05-24 — confirmed.** `securelogic-app` (Next.js portal) does not touch Postgres directly. Verified by `git grep` against both `main` and `origin/develop` for `pg` / `Pool` / `pool.query` / `pg.query` / `process.env.DATABASE_URL` in `app/` — zero hits in either branch.
+5. ✅ **RESOLVED 2026-05-24 — option (ii) chosen, env var deleted.** Operator deleted the dead `DATABASE_URL` env var from the `securelogic-app-staging` dashboard. Prod/staging divergence closed; `securelogic-app-staging` removed from the flip set (back to 5 holders). See history note above.
