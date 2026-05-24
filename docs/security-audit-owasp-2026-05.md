@@ -55,6 +55,8 @@ The gaps are not "the basics are wrong"; they are well-known defense-in-depth an
 
 A "Critical" or "High" finding does not mean the platform is breached — it means an attacker with the right pre-conditions could reach exploitation. Most criticals here are operational misconfigurations (TLS verify off, missing idempotency) rather than logic flaws.
 
+**Note on table currency:** This table reflects audit-time (2026-05-13) state per the overlay note at the top of this document and is **not** rescored as findings close or new findings are added. A08-G5 was added post-audit on 2026-05-23 and is therefore **not** represented in the A08 cells above — its current status is read from the finding's own status header below.
+
 ---
 
 ## A01 — Broken Access Control
@@ -464,7 +466,7 @@ Discussed under A05-G5. Re-stated here because A08 is the canonical category. Pr
 
 #### A08-G5 — CI gate runs on every PR but is not enforced as a merge requirement on `main` (Medium)
 
-> **Status — 🟥 Open.** Verified 2026-05-23 via GitHub UI → Settings → Rules → Rulesets: the ruleset targeting `main` is `enforcement: disabled`, with no required status checks, `required_approving_review_count: 0`, and only `deletion` + `non_fast_forward` + a permissive `pull_request` rule (squash listed in `allowed_merge_methods`). This is verified at the **repo** level. Whether an **org-level** ruleset overrides this for `main` was not verified at audit time (operator to glance-confirm at Org → Rules → Rulesets); the finding text below assumes there is none.
+> **Status — ✅ Closed (verified 2026-05-23).** Enforcement is now active on the `main` ruleset (`enforcement: disabled → active`) with all 6 CI status checks required by their exact reported names: `typecheck`, `lint`, `test`, `audit`, `build`, `cross-org-isolation`. `non_fast_forward` and `deletion` rules are retained. The merge gate is **enforced for all non-bypass actors**; actors with the Maintain repository role retain an explicit bypass for the documented UI-merge-click / `gh pr merge --squash` fallback. The bypass is documented and named, not silent — same coverage-vs-enforcement honesty this audit uses for A01-G1 ↔ A04-G1: a green `cross-org-isolation` job is required for contributors, and actors with the Maintain repository role carry an explicit bypass for the UI-workaround path. Org-level ruleset: no org-level ruleset targets `main`, so this repo-level enforcement is the binding policy.
 
 `.github/workflows/ci.yml` (shipped in commit `eb285bce`, 2026-05-14) runs 6 jobs on every PR and push to `develop`/`main`: `typecheck`, `lint`, `test`, `audit` (`--audit-level=high`), `build`, and `cross-org-isolation` (added 2026-05-22 with PR #81). All 6 run reliably. **None of them is a required status check** on the `main` ruleset, because the ruleset is disabled and its required-checks list is empty. The gate exists; it is not enforced.
 
