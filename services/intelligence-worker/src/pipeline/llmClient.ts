@@ -25,11 +25,12 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { logger } from "../../../../src/api/infra/logger.js";
+import { instrumentAnthropicClient } from "../../../../src/api/infra/providerQuotaAlert.js";
 
 function getClient(): Anthropic | null {
   const key = process.env.ANTHROPIC_API_KEY?.trim();
   if (!key) return null;
-  return new Anthropic({ apiKey: key });
+  return instrumentAnthropicClient(new Anthropic({ apiKey: key }));
 }
 
 export type SignalAnalysis = {

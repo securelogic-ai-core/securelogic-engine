@@ -14,7 +14,12 @@ import {
 // ====================================================================
 
 function minimal() {
-  return { title: "Gap in access controls", severity: "High", source_type: "manual" };
+  return {
+    title: "Gap in access controls",
+    description: "Access-control gap identified during review.",
+    severity: "High",
+    source_type: "manual",
+  };
 }
 
 function valid(overrides: Record<string, unknown> = {}) {
@@ -151,34 +156,40 @@ describe("validateFindingCreate — source_type", () => {
 // ====================================================================
 
 describe("validateFindingCreate — description", () => {
-  it("defaults description to null when absent", () => {
-    const r = validateFindingCreate(minimal());
-    expect("input" in r).toBe(true);
-    if ("input" in r) expect(r.input.description).toBeNull();
+  it("rejects a missing description", () => {
+    // description is a required non-empty string (findings.description is
+    // NOT NULL); a body without it must fail validation, not coerce to null.
+    const r = validateFindingCreate({
+      title: "Gap in access controls",
+      severity: "High",
+      source_type: "manual",
+    });
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("description_required");
   });
 
-  it("accepts null description", () => {
+  it("rejects a null description", () => {
     const r = validateFindingCreate(valid({ description: null }));
-    expect("input" in r).toBe(true);
-    if ("input" in r) expect(r.input.description).toBeNull();
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("description_required");
   });
 
-  it("accepts string description", () => {
+  it("accepts a non-empty string description", () => {
     const r = validateFindingCreate(valid({ description: "Some detail" }));
     expect("input" in r).toBe(true);
     if ("input" in r) expect(r.input.description).toBe("Some detail");
   });
 
-  it("rejects non-string description", () => {
+  it("rejects a non-string description", () => {
     const r = validateFindingCreate(valid({ description: 42 }));
     expect("error" in r).toBe(true);
-    if ("error" in r) expect(r.error).toBe("description_must_be_string_or_null");
+    if ("error" in r) expect(r.error).toBe("description_required");
   });
 
-  it("normalizes empty description to null", () => {
+  it("rejects an empty / whitespace-only description", () => {
     const r = validateFindingCreate(valid({ description: "   " }));
-    expect("input" in r).toBe(true);
-    if ("input" in r) expect(r.input.description).toBeNull();
+    expect("error" in r).toBe(true);
+    if ("error" in r) expect(r.error).toBe("description_required");
   });
 });
 

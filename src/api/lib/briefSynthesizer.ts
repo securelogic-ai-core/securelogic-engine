@@ -30,6 +30,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { instrumentAnthropicClient } from "../infra/providerQuotaAlert.js";
 import { logger } from "../infra/logger.js";
 import { pg } from "../infra/postgres.js";
 import { parseContentJson } from "./parseBriefContentJson.js";
@@ -40,7 +41,7 @@ const CLAUDE_MODEL = "claude-sonnet-4-6";
 function getClient(): Anthropic | null {
   const key = process.env.ANTHROPIC_API_KEY?.trim();
   if (!key) return null;
-  return new Anthropic({ apiKey: key });
+  return instrumentAnthropicClient(new Anthropic({ apiKey: key }));
 }
 
 // ---------------------------------------------------------------------------

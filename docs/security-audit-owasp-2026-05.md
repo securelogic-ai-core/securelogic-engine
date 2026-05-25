@@ -48,12 +48,14 @@ The gaps are not "the basics are wrong"; they are well-known defense-in-depth an
 | A05 | Security Misconfiguration | **Mostly strong** | 0 | 0 | 4 | 2 |
 | A06 | Vulnerable Components | **Adequate** | 0 | 1 | 3 | 1 |
 | A07 | Authentication Failures | **Strong** | 0 | 0 | 1 | 2 |
-| A08 | Data Integrity | **Two critical gaps** | 2 | 1 | 1 | 0 |
+| A08 | Data Integrity | **Two critical gaps** | 2 | 1 | 2 | 0 |
 | A09 | Logging / Monitoring | **Good** | 0 | 0 | 2 | 2 |
 | A10 | SSRF | **One high** | 0 | 1 | 1 | 1 |
-| **Total** | | | **3** | **7** | **17** | **12** |
+| **Total** | | | **3** | **7** | **18** | **12** |
 
 A "Critical" or "High" finding does not mean the platform is breached — it means an attacker with the right pre-conditions could reach exploitation. Most criticals here are operational misconfigurations (TLS verify off, missing idempotency) rather than logic flaws.
+
+**Note on table currency:** This table reflects audit-time (2026-05-13) state per the overlay note at the top of this document and is **not** rescored as findings close or new findings are added. A08-G5 was added post-audit on 2026-05-23 and is therefore **not** represented in the A08 cells above — its current status is read from the finding's own status header below.
 
 ---
 
@@ -77,11 +79,15 @@ A "Critical" or "High" finding does not mean the platform is breached — it mea
 
 #### A01-G1 — Tenant scoping guard test has narrow coverage (Medium)
 
-> **Status — 🟥 Open.** Postgres RLS (A04-G1) not started; no SQL-AST lint rule added. Structural guard test unchanged from audit time.
+> **Status — ✅ Closed 2026-05-21.** The finding is *narrow cross-org test coverage* — closed by the E1-G1 cross-org isolation harness (PRs #81 and #83). A real HTTP harness now exercises all 13 v1 customer-data `/:id` routes: each is probed cross-org on GET and PATCH (org A's key against org B's resource and the reverse) with a same-org positive control, asserting 404 — 13/13 green, 50 probes, and wired as a permanent `cross-org-isolation` CI job gating every PR/push. `findings`, previously the one route never isolation-tested, is now proven isolated on read and write. **This closes the test-coverage gap only.** It does not add database-layer enforcement: a missed `WHERE organization_id` predicate is still caught only by tests and per-route discipline, not by the database itself. Durable enforcement — Postgres RLS / SQL-AST lint — remains **open and tracked under A04-G1**; closing A01-G1 does **not** close A04-G1, and app-layer test coverage must not be read as DB-layer enforcement.
 
 The guard at `__tests__/tenantScopingGuard.test.ts` is structural: it asserts that customer-data route files import `requireApiKey` + `attachOrganizationContext` and contain the literal string `organization_id`. It does **not** parse SQL or verify that the predicate is on every customer-data WHERE clause. The allowlist is a curated subset, not all 74 org-scoped routes. A developer could pass the guard while writing a SQL statement that omits the predicate on a join. This is documented in TENANT_ISOLATION_STANDARD.md R1 as "High — discipline-only enforcement, no central RLS/helper/lint rule."
 
 **Remediation:** Either (a) Postgres RLS (R8, see A04-G1), or (b) a SQL-AST lint rule that parses query strings and flags customer-data tables without `organization_id` in the predicate. Sequencing: RLS is the durable answer; lint is the cheap stopgap.
+
+> **Follow-up — ✅ RESOLVED 2026-05-21 (findings POST fix).** The E1-G1 harness surfaced **two stacked route/schema mismatches** in `POST /api/findings`, both of which made it 500 on a clean migration build: (1) `findings.ts` + `findingValidation.ts` wire a `due_date` field but no migration ever created the `findings.due_date` column; (2) `description` is `NOT NULL` in the schema while the validator treated it as optional (masked behind bug 1 until the migration exposed it). Fixed: migration `20260617_findings_due_date.sql` (`ALTER TABLE findings ADD COLUMN IF NOT EXISTS due_date DATE` — idempotent), `due_date` added to the `GET /api/findings/:id` select, and `findingValidation.ts` now requires `description` as a non-empty string (missing description → clean 400, not a 500). `findings` is **no longer deferred** — re-enabled in the harness manifest and probed for cross-org isolation on read and write; harness is now **13/13 green, 50 cross-org probes all 404**, no IDOR on the one route that had never been isolation-tested. Trail: `docs/investigation/e1-g1-harness-first-run-2026-05-21.md`.
+>
+> **Effect on this finding (A01-G1 / E1-G1):** the cross-org isolation harness now covers the full v1 route set (13/13) — the original "narrow coverage" gap is closed for v1. A01-G1's status header has been **flipped 🟥 Open → ✅ Closed (2026-05-21)** following operator confirmation. RLS / SQL-AST lint remain the separate durable-enforcement remediation under A04-G1, independent of test coverage; closing A01-G1 does **not** close A04-G1.
 
 #### A01-G2 — Orphan dead code with broken access patterns (Low)
 
@@ -241,7 +247,9 @@ Documented in deferred-followups memory as a pre-existing issue: `apiRateLimiter
 
 #### A04-G4 — No alerting on auth anomalies (Medium)
 
-> **Status — 🟥 Open.** No auth-anomaly alerting wired. (Same item as A09-G2.)
+> **Status — 🟡 Implemented, pending webhook verification.** Tier 1 + Tier 2 auth-anomaly detection shipped (package `auth-anomaly-alerting`, `src/api/lib/authAnomaly.ts`). Tier 1: a distinct `auth.account_locked` audit event + operator alert fired synchronously at account-lockout time. Tier 2: a 5-minute cron in the engine `node-cron` host scans `security_audit_log` over a 15-minute window for credential stuffing (one IP → ≥10 distinct accounts in `auth.login_failed`) and API-key probing (one IP → ≥20 `auth.invalid_api_key`), emits a `security.auth_anomaly_detected` audit event, and alerts via `sendSecurityAlert` → `ALERT_WEBHOOK_URL`; dedup via the `auth_anomaly_alerts` ledger (one alert per IP per 6h). **Not yet Closed:** alert delivery depends on `ALERT_WEBHOOK_URL` being set in prod — until that is verified, detections are recorded in the audit log but no operator notification is delivered. (Same item as A09-G2.)
+>
+> **Residuals — explicitly NOT covered by this package:** MFA brute-force is not detected — MFA verification failures emit no audit event at all (`mfa.ts`), so there is nothing for the scanner to read; closing that requires adding `auth.mfa_failed` events first. Also not covered: impossible-travel / geo anomaly (needs IP geolocation), operator-email recipients, per-org alert preferences, and rate-limit-block events (still unaudited).
 
 No code path alerts on repeated failed logins per IP, on cross-org access attempts (currently silent 404s), or on admin-key failure spikes. The platform has rate limiting and lockout, but no real-time signal to operators that an attack is in progress. (Out of context: an auditor will ask "how would you know?")
 
@@ -456,6 +464,22 @@ Discussed under A05-G5. Re-stated here because A08 is the canonical category. Pr
 
 `intelligenceBriefGenerator.ts:953` and `claudeAssessmentAnalyzer.ts:418` do `JSON.parse` on Claude responses and cast to expected shape without runtime validation against a zod/ajv schema. A malformed response can produce field-type mismatches at runtime; a prompt-injected response can produce structurally-valid but semantically-wrong data (see A03-G1).
 
+#### A08-G5 — CI gate runs on every PR but is not enforced as a merge requirement on `main` (Medium)
+
+> **Status — ✅ Closed (verified 2026-05-23).** Enforcement is now active on the `main` ruleset (`enforcement: disabled → active`) with all 6 CI status checks required by their exact reported names: `typecheck`, `lint`, `test`, `audit`, `build`, `cross-org-isolation`. `non_fast_forward` and `deletion` rules are retained. The merge gate is **enforced for all non-bypass actors**; actors with the Maintain repository role retain an explicit bypass for the documented UI-merge-click / `gh pr merge --squash` fallback. The bypass is documented and named, not silent — same coverage-vs-enforcement honesty this audit uses for A01-G1 ↔ A04-G1: a green `cross-org-isolation` job is required for contributors, and actors with the Maintain repository role carry an explicit bypass for the UI-workaround path. Org-level ruleset: no org-level ruleset targets `main`, so this repo-level enforcement is the binding policy.
+
+`.github/workflows/ci.yml` (shipped in commit `eb285bce`, 2026-05-14) runs 6 jobs on every PR and push to `develop`/`main`: `typecheck`, `lint`, `test`, `audit` (`--audit-level=high`), `build`, and `cross-org-isolation` (added 2026-05-22 with PR #81). All 6 run reliably. **None of them is a required status check** on the `main` ruleset, because the ruleset is disabled and its required-checks list is empty. The gate exists; it is not enforced.
+
+This is a coverage-vs-enforcement gap in the same shape as the A01-G1 ↔ A04-G1 split this audit already uses. **A01-G1 closed the test-coverage gap** for v1 cross-org isolation, and the `cross-org-isolation` CI job is the mechanism that holds that coverage forward on every PR. Because the `main` ruleset is disabled, a PR with a **red** `cross-org-isolation` run is not blocked from merging — the gate is procedural, not enforced. Coverage and enforcement are independent layers: closing A01-G1 (coverage) does not imply the gate is enforced, exactly as closing A01-G1 does not close A04-G1 (DB-layer enforcement). A08-G5 is the missing CI-enforcement layer in the same vertical.
+
+`main` auto-deploys to Render production (`render.yaml`; engine `startCommand` auto-runs `npm run migrate` on every commit). The path from "merged to `main`" to "running in prod" is automatic. An unenforced gate on `main` is therefore materially different from an unenforced gate on a long-lived dev branch — a single merge slip lands directly in production.
+
+Severity **Medium**, not High: the discipline layer is currently holding (CI status is checked manually before each merge to `main`), and the team is small enough that drift is visible. The risk is latent, not active. But the moment discipline slips — a hurried merge, a contributor unfamiliar with the convention, a re-targeted Dependabot PR landing on `main` — the lack of enforcement becomes the failure mode.
+
+**Remediation:** Enable enforcement on the existing `main` ruleset (`enforcement: disabled` → `active`). Set required status checks to all 6 CI jobs by their exact reported names: `typecheck`, `lint`, `test`, `audit`, `build`, `cross-org-isolation`. Keep `non_fast_forward` and `deletion` rules active. Optional and consistent with the rest of this audit's posture: require a pull request before merging with `required_approving_review_count: 1` if a second reviewer is reachable; otherwise leave at 0 and rely on the required-checks gate.
+
+**Tradeoff to surface before enabling:** enforcing required checks/reviews would also constrain the operator's `gh pr merge --squash` path, which is currently relied on as a workaround for an intermittent UI merge-click issue (recent PRs needed CLI to land despite a clean mergeable state). After enforcement is on, the CLI merge will fail rather than silently bypass unless the operator is in the ruleset's bypass list. **Decision needed before flipping enforcement:** either (a) add the operator to the bypass list, preserving the CLI fallback; (b) accept the constraint and resolve the underlying UI issue (browser/extension diagnosis); or (c) leave enforcement off and accept this finding as documented-and-accepted. (a) or (b) close A08-G5; (c) leaves it open.
+
 ---
 
 ## A09 — Security Logging and Monitoring Failures
@@ -483,7 +507,7 @@ Discussed under A05-G5. Re-stated here because A08 is the canonical category. Pr
 
 #### A09-G2 — No real-time alerting on auth anomalies (Medium, also A04-G4)
 
-> **Status — 🟥 Open.** No real-time auth-anomaly alerting. (Same item as A04-G4.)
+> **Status — 🟡 Implemented, pending webhook verification.** Covered by the `auth-anomaly-alerting` package — see A04-G4 for full detail and residuals. The slow-credential-stuffing case described below is the Tier 2 detector's primary target: per-IP distinct-account aggregation of `auth.login_failed` over a 15-minute window catches an attacker spread thin across many accounts that never trips per-account lockout. Closure pending `ALERT_WEBHOOK_URL` verification in prod. (Same item as A04-G4.)
 
 Rate limiting and lockout prevent brute force but no signal reaches operators. An attacker performing slow credential stuffing across many accounts (one attempt per account per hour) would not trip lockout and would not page anyone.
 
@@ -573,13 +597,23 @@ Default `fetch` follows up to 20 redirects. Combined with A10-G1, this multiplie
 
 ### Gaps
 
-#### E1-G1 — Cross-org tests cover only a subset of customer-data routes (Medium)
+#### E1-G1 — Cross-org HTTP harness covers v1 primitives; collection, link, export, and DELETE routes still uncovered (Medium)
 
-> **Status — 🟥 Open.** Programmatic cross-org test generation not implemented.
+> **Status — 🟡 Partial (2026-05-21).** A real cross-org HTTP harness now exists and is CI-gated; the v1 customer-data `/:id` route set is fully covered (closed under A01-G1). The remaining route classes named below are not yet harness-covered.
 
-≈10 of ≈74 org-scoped routes have explicit cross-org 404 tests. The tenant scoping guard test (A01) covers the structural import + literal-string check across more routes, but doesn't simulate cross-org HTTP requests.
+**What landed (the closed subset — see A01-G1, ✅ Closed).** The E1-G1 / A01-G1 cross-org isolation harness (`test/isolation/`, PRs #81 + #83) drives the real `createApp()` over a throwaway two-org Postgres and probes **13 v1 customer-data `/:id` routes** — every org-scoped GET/PATCH single-resource primitive — cross-org in both directions, each with a same-org positive control: **50 cross-org probes, all asserting HTTP 404**, wired as a permanent `cross-org-isolation` CI job gating every PR/push. This **supersedes** the audit-time statement that the tenant test "doesn't simulate cross-org HTTP requests" — for the v1 set it now does, against the live app over real HTTP.
 
-**Remediation:** Generate cross-org tests programmatically from the allowlist of customer-data routes — for each, POST with org A's API key against an org B resource and assert 404. Effort: 2 days, including a generator pattern.
+**What remains open (this finding).** The harness manifest (`test/isolation/routeManifest.ts` → `V1_ROUTES`) is deliberately bounded to single-resource `/api/<resource>/:id` GET/PATCH primitives. Still **not** harness-covered:
+
+- **Collection / list endpoints** (`GET /api/<resource>`) — need a different assertion than a 404: org B's list must not *contain* org A's rows. Outside the `/:id` path-param IDOR shape entirely.
+- **Link / nested routes** (`signalObligationLinks`, `signalVendorLinks`, `signalControlLinks`, `signalAiSystemLinks`, `aiSystemVendorDependencies`, `riskControlLinks`, `riskObligationLinks`, `signalMatchSuggestions`) — carry older inline cross-org tests per `TENANT_ROUTE_CLASSIFICATION.md`, but are not in the harness or its CI gate.
+- **Export endpoints** (vendor-assurance `.pdf` / `.xlsx`) — not probed cross-org.
+- **DELETE routes** (`controls`, `ai-systems`) — gated behind `requireAuth` (JWT); the API-key harness cannot mint a JWT session. Needs a separate JWT-auth harness — phase 2.
+- **Three deferred create-path resources** recorded explicitly in `DEFERRED_ROUTES`: `assessments` (no POST create endpoint — instances come from other workflows; needs a direct-SQL seed path), `dependency-assessments` (needs a 3-deep prerequisite chain — ai-system + vendor + dependency link — before one can exist), `vendor-assurance-documents` (feature-flag-gated and requires a magic-byte-checked multipart PDF upload).
+
+**Remediation.** Extend the existing harness manifest to the collection, link, and export route classes; stand up a JWT-auth harness to cover DELETE; wire fixture/seed paths for the three deferred create-path resources. Effort: ~2 days for the remaining customer-data classes, plus a separate JWT-harness package for DELETE.
+
+**Method note — generator pattern consciously declined.** The original audit remediation proposed generating these tests *programmatically* from the route allowlist with a "generator pattern." This was **deliberately not done**; the harness uses a hand-curated `routeManifest.ts` instead. A naive generator breaks on two route realities the manifest handles per-route, both documented in its source comments: (1) PATCH routes validate the request body *before* the org-scoped row lookup, so a generic probe body 400s at validation and silently never reaches the cross-org 404 path — masking the isolation check; (2) several routes return multi-key envelopes (e.g. `{ assessment, finding }`) where a linked sibling object can be mistaken for the probed resource. The curated manifest encodes a validator-accepted body and the resource envelope key per route; that correctness is judged worth the manual authoring cost. Extending coverage means adding manifest entries, not building a generator.
 
 ---
 

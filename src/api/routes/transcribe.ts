@@ -6,13 +6,14 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { logger } from "../infra/logger.js";
+import { instrumentOpenAIClient } from "../infra/providerQuotaAlert.js";
 
 const router = Router();
 
 function getOpenAIClient(): OpenAI | null {
   const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
-  return new OpenAI({ apiKey: key });
+  return instrumentOpenAIClient(new OpenAI({ apiKey: key }));
 }
 
 const upload = multer({

@@ -34,13 +34,14 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { instrumentAnthropicClient } from "../infra/providerQuotaAlert.js";
 import { logger } from "../infra/logger.js";
 import type { BriefSynthesis } from "./briefSynthesizer.js";
 
 function getClient(): Anthropic | null {
   const key = process.env.ANTHROPIC_API_KEY?.trim();
   if (!key) return null;
-  return new Anthropic({ apiKey: key });
+  return instrumentAnthropicClient(new Anthropic({ apiKey: key }));
 }
 
 // ---------------------------------------------------------------------------

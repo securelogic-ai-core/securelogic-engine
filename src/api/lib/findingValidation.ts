@@ -99,7 +99,7 @@ export type FindingCreateInput = {
   title: string;
   severity: string;
   source_type: string;
-  description: string | null;
+  description: string;
   source_id: string | null;
   domain: string | null;
   priority: string | null;
@@ -152,17 +152,11 @@ export function validateFindingCreate(body: unknown): FindingCreateResult {
   }
   const source_type = b["source_type"] as string;
 
-  // description — optional string or null
-  let description: string | null = null;
-  if ("description" in b) {
-    if (b["description"] !== null && typeof b["description"] !== "string") {
-      return { error: "description_must_be_string_or_null" };
-    }
-    description =
-      typeof b["description"] === "string" && b["description"].trim().length > 0
-        ? sanitizeString(b["description"].trim(), MAX_DESCRIPTION)
-        : null;
+  // description — required non-empty string
+  if (!isNonEmptyString(b["description"])) {
+    return { error: "description_required" };
   }
+  const description = sanitizeString((b["description"] as string).trim(), MAX_DESCRIPTION);
 
   // source_id — optional UUID or null
   let source_id: string | null = null;
