@@ -110,3 +110,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:isolation
+
+  # A04-G1 tenant-coverage census. WARN-ONLY in phase 1: the script emits
+  # warning annotations and always exits 0, so this job never blocks a merge and
+  # is intentionally NOT in the main ruleset's required-checks list. Pure bash
+  # (grep) — no npm install needed. Phase 4 escalates the rogue-pool section to
+  # a hard failure and promotes this job to required.
+  tenant-coverage:
+    name: tenant-coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - run: bash scripts/check-tenant-coverage.sh
