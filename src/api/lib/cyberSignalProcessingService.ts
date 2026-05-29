@@ -36,7 +36,7 @@
  */
 
 import type { PoolClient } from "pg";
-import { pg } from "../infra/postgres.js";
+import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import {
   computePosture,
@@ -214,7 +214,7 @@ export async function runMatcherForSignal(
   const { id: signalId, signal_type: signalType, severity } = signal;
 
   const ownsTransaction = externalClient === undefined;
-  const client: PoolClient = externalClient ?? (await pg.connect());
+  const client: PoolClient = externalClient ?? (await pgElevated.connect());
 
   let matchedVendorId: string | null = null;
   let matchedVendorName: string | null = null;
@@ -545,7 +545,7 @@ export async function processSignal(
     };
   }
 
-  const client = await pg.connect();
+  const client = await pgElevated.connect();
 
   try {
     await client.query("BEGIN");
@@ -704,7 +704,7 @@ export async function processSignal(
  */
 async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
   // Fetch org profile for context-weighted scoring.
-  const orgProfileResult = await pg.query<{
+  const orgProfileResult = await pgElevated.query<{
     regulated: boolean;
     handles_pii: boolean;
     safety_critical: boolean;
@@ -749,7 +749,7 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
     treatedRiskResult,
     vendorInventoryResult,
   ] = await Promise.all([
-      pg.query<DbFindingForPosture>(
+      pgElevated.query<DbFindingForPosture>(
         `
         SELECT id, title, domain, severity
         FROM findings
@@ -760,7 +760,7 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
       ),
       // Engine consumes RESIDUAL per Decision §4. Mirrors the same
       // change in postureSnapshot.ts; both pipelines must stay in sync.
-      pg.query<{ id: string; title: string; domain: string; residual_rating: string }>(
+      pgElevated.query<{ id: string; title: string; domain: string; residual_rating: string }>(
         `
         SELECT id, title, domain, residual_rating
         FROM risks
@@ -770,7 +770,7 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
         `,
         [orgId]
       ),
-      pg.query<{ source_type: string; count: string }>(
+      pgElevated.query<{ source_type: string; count: string }>(
         `
         SELECT source_type, COUNT(*)::text AS count
         FROM findings
@@ -780,7 +780,7 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
         `,
         [orgId]
       ),
-      pg.query<{ count: string }>(
+      pgElevated.query<{ count: string }>(
         `
         SELECT COUNT(DISTINCT r.id)::text AS count
         FROM risks r
@@ -793,7 +793,7 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
         `,
         [orgId]
       ),
-      pg.query<{ id: string; criticality: string }>(
+      pgElevated.query<{ id: string; criticality: string }>(
         `
         SELECT id, criticality FROM vendors
         WHERE organization_id = $1
@@ -823,7 +823,7 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
   const riskSignalCount = riskSignals.length;
 
   // Count open and overdue actions.
-  const actionCountResult = await pg.query<{
+  const actionCountResult = await pgElevated.query<{
     open_count: string;
     overdue_count: string;
   }>(
@@ -869,7 +869,7 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
   const enrichedRationale = { ...computed.computation_rationale, ...rationaleExtension };
 
   // Persist snapshot + domain scores.
-  const snapshotClient = await pg.connect();
+  const snapshotClient = await pgElevated.connect();
 
   try {
     await snapshotClient.query("BEGIN");

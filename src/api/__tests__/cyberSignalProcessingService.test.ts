@@ -9,15 +9,18 @@ const { mockClientQuery, mockClientRelease, mockPgQuery } = vi.hoisted(() => ({
   mockPgQuery: vi.fn()
 }));
 
-vi.mock("../infra/postgres.js", () => ({
-  pg: {
+vi.mock("../infra/postgres.js", () => {
+  const handle = {
     query: mockPgQuery,
     connect: vi.fn().mockResolvedValue({
       query: mockClientQuery,
       release: mockClientRelease
     })
-  }
-}));
+  };
+  // The service now runs elevated (pgElevated); keep pg pointed at the same
+  // spies so transitive importers and assertions are unaffected.
+  return { pg: handle, pgElevated: handle };
+});
 
 // posture snapshot is heavy and side-effecty; we test it at the
 // processSignal-orchestration level only (was-it-called?). The actual
