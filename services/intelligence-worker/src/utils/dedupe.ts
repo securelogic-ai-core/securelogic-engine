@@ -1,4 +1,4 @@
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../../src/api/infra/postgres.js";
 
 /**
  * Check whether a signal has already been ingested into Postgres.
@@ -29,7 +29,7 @@ export async function isDuplicateSignal(event: any): Promise<boolean> {
   if (!externalId && !title) return false;
 
   try {
-    const result = await pg.query(
+    const result = await pgElevated.query(
       `
       SELECT 1
       FROM signals

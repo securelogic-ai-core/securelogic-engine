@@ -1,7 +1,7 @@
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../../src/api/infra/postgres.js";
 
 export async function startRun() {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     INSERT INTO worker_runs (started_at, status)
     VALUES ($1, $2)
@@ -18,7 +18,7 @@ export async function completeRun(
   signals: number,
   insights: number
 ) {
-  await pg.query(
+  await pgElevated.query(
     `
     UPDATE worker_runs
     SET completed_at = $1,
@@ -32,7 +32,7 @@ export async function completeRun(
 }
 
 export async function failRun(id: number, error: string) {
-  await pg.query(
+  await pgElevated.query(
     `
     UPDATE worker_runs
     SET completed_at = $1,

@@ -1,11 +1,11 @@
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../../src/api/infra/postgres.js";
 
 export async function saveInsight(
   signalId: number,
   insight: string,
   riskScore: number
 ) {
-  await pg.query(
+  await pgElevated.query(
     `
     INSERT INTO insights
     (signal_id, analysis, risk_level, created_at, updated_at)
@@ -22,7 +22,7 @@ export async function saveInsight(
 }
 
 export async function getInsights() {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     SELECT *
     FROM insights
