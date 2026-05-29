@@ -21,7 +21,7 @@
  * so a burst straddling a run boundary is still caught whole.
  */
 
-import { pg } from "../infra/postgres.js";
+import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "./auditLog.js";
 import { sendSecurityAlert } from "../infra/alerting.js";
@@ -120,7 +120,7 @@ export async function recordAccountLockout(args: {
  * already claimed within LEDGER_COOLDOWN_HOURS (re-detection — skip).
  */
 async function claimAnomalySlot(anomalyType: AnomalyType, subject: string): Promise<boolean> {
-  const claim = await pg.query(
+  const claim = await pgElevated.query(
     `INSERT INTO auth_anomaly_alerts (anomaly_type, subject)
      VALUES ($1, $2)
      ON CONFLICT (anomaly_type, subject) DO UPDATE
@@ -180,7 +180,7 @@ export async function runAuthAnomalyScan(): Promise<{
   let alertsFired = 0;
 
   // Credential stuffing — one IP -> many distinct accounts via auth.login_failed.
-  const stuffing = await pg.query<{ ip_address: string; account_count: string }>(
+  const stuffing = await pgElevated.query<{ ip_address: string; account_count: string }>(
     `SELECT ip_address, COUNT(DISTINCT payload->>'email') AS account_count
        FROM security_audit_log
       WHERE event_type = 'auth.login_failed'
@@ -202,7 +202,7 @@ export async function runAuthAnomalyScan(): Promise<{
   }
 
   // API-key probing — one IP -> many auth.invalid_api_key hits.
-  const probing = await pg.query<{ ip_address: string; hit_count: string }>(
+  const probing = await pgElevated.query<{ ip_address: string; hit_count: string }>(
     `SELECT ip_address, COUNT(*) AS hit_count
        FROM security_audit_log
       WHERE event_type = 'auth.invalid_api_key'
