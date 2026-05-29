@@ -10,7 +10,7 @@ const { pgQuerySpy, sendSecurityAlertSpy } = vi.hoisted(() => ({
   sendSecurityAlertSpy: vi.fn()
 }));
 
-vi.mock("../infra/postgres.js", () => ({ pg: { query: pgQuerySpy } }));
+vi.mock("../infra/postgres.js", () => ({ pg: { query: pgQuerySpy }, pgElevated: { query: pgQuerySpy } }));
 vi.mock("../infra/alerting.js", () => ({ sendSecurityAlert: sendSecurityAlertSpy }));
 vi.mock("../lib/auditLog.js", () => ({ writeAuditEvent: vi.fn() }));
 
