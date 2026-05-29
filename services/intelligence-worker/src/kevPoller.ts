@@ -36,7 +36,7 @@
 
 import { fetchCisaKevSignals } from "../../../src/api/lib/cisaKevAdapter.js";
 import { normalizeSignal } from "../../../src/api/lib/cyberSignalNormalizer.js";
-import { pg } from "../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../src/api/infra/postgres.js";
 import { logger } from "../../../src/api/infra/logger.js";
 import {
   runMatcherForSignal,
@@ -82,7 +82,7 @@ export async function runKevPoll(): Promise<void> {
       const normalized = normalizeSignal(signal);
 
       try {
-        const result = await pg.query<{ id: string }>(
+        const result = await pgElevated.query<{ id: string }>(
           `INSERT INTO cyber_signals (
              organization_id,
              source,
@@ -197,7 +197,7 @@ async function fanOutKevMatcher(
 
   let activeOrgs: Array<{ id: string }> = [];
   try {
-    const orgsResult = await pg.query<{ id: string }>(
+    const orgsResult = await pgElevated.query<{ id: string }>(
       `SELECT id FROM organizations WHERE status = 'active' ORDER BY id`
     );
     activeOrgs = orgsResult.rows;

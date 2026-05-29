@@ -1,7 +1,7 @@
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../../src/api/infra/postgres.js";
 
 export async function saveSignal(signal: any) {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     INSERT INTO signals
     (source, title, url, published_at, normalized_score, created_at)
@@ -23,7 +23,7 @@ export async function saveSignal(signal: any) {
 }
 
 export async function getSignals() {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     SELECT *
     FROM signals

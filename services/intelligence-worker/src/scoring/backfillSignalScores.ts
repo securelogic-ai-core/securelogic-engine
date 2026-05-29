@@ -1,8 +1,8 @@
-import { pg } from "../../../../src/api/infra/postgres.js"
+import { pgElevated } from "../../../../src/api/infra/postgres.js"
 import { scoreSignal } from "./scoreSignal.js"
 
 async function run() {
-  const result = await pg.query(`
+  const result = await pgElevated.query(`
     SELECT id, title, source, summary, tags
     FROM signals
     ORDER BY created_at DESC
@@ -18,7 +18,7 @@ async function run() {
       tags: Array.isArray(row.tags) ? row.tags : []
     })
 
-    await pg.query(
+    await pgElevated.query(
       `
       UPDATE signals
       SET

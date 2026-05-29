@@ -1,9 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 
-// Mock postgres before importing insightGenerator to avoid DATABASE_URL throw
-vi.mock("../../../../../src/api/infra/postgres.js", () => ({
-  pg: { query: vi.fn() }
-}));
+// Mock postgres before importing insightGenerator to avoid DATABASE_URL throw.
+// insightGenerator now runs elevated (pgElevated); same handle for both.
+vi.mock("../../../../../src/api/infra/postgres.js", () => {
+  const handle = { query: vi.fn() };
+  return { pg: handle, pgElevated: handle };
+});
 
 import { deriveAnalysis, deriveRiskImplication, deriveRecommendation } from "../insightGenerator.js";
 

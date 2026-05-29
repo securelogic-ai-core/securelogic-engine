@@ -1,8 +1,8 @@
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../../src/api/infra/postgres.js";
 import { createIssue } from "../storage/postgresIssueStore.js";
 
 async function getDefaultOrganizationId(): Promise<string> {
-  const result = await pg.query(`
+  const result = await pgElevated.query(`
     SELECT id
     FROM organizations
     ORDER BY created_at ASC

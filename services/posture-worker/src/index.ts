@@ -12,7 +12,7 @@
  * One org failure never stops other orgs — errors are caught per-org.
  */
 
-import { pg } from "../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../src/api/infra/postgres.js";
 import { logger } from "../../../src/api/infra/logger.js";
 import { computeAndSavePostureSnapshot } from "../../../src/api/lib/postureSnapshot.js";
 
@@ -24,7 +24,7 @@ async function computeAllSnapshots(): Promise<void> {
 
   let activeOrgs: string[];
   try {
-    const result = await pg.query<{ id: string }>(
+    const result = await pgElevated.query<{ id: string }>(
       `SELECT id FROM organizations WHERE status = 'active'`
     );
     activeOrgs = result.rows.map((r) => r.id);

@@ -1,4 +1,4 @@
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../../src/api/infra/postgres.js";
 
 export type PostgresSignalInput = {
   organizationId?: string | null;
@@ -41,7 +41,7 @@ export async function saveSignal(signal: PostgresSignalInput) {
   const sourceSystem = normalizeText(signal.sourceSystem);
   const publishedAt = normalizeText(signal.publishedAt);
 
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     INSERT INTO signals (
       organization_id,
@@ -103,7 +103,7 @@ export async function saveSignal(signal: PostgresSignalInput) {
 }
 
 export async function getSignals(limit = 100) {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     SELECT *
     FROM signals

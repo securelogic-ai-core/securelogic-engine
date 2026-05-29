@@ -1,4 +1,4 @@
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../../src/api/infra/postgres.js";
 
 type Signal = {
   id: string;
@@ -123,7 +123,7 @@ export function deriveRecommendation(_text: string): string {
 }
 
 export async function generateInsights(): Promise<number> {
-  const signalResult = await pg.query(`
+  const signalResult = await pgElevated.query(`
     SELECT
       id,
       organization_id,
@@ -166,7 +166,7 @@ export async function generateInsights(): Promise<number> {
 
     if (organizationId === null) {
       // Platform signal: de-dupe against uq_insights_platform_signal (signal_id WHERE org IS NULL)
-      await pg.query(
+      await pgElevated.query(
         `
         INSERT INTO insights (
           organization_id,
@@ -202,7 +202,7 @@ export async function generateInsights(): Promise<number> {
       );
     } else {
       // Org-scoped signal: de-dupe against uq_insights_org_signal (org, signal WHERE org IS NOT NULL)
-      await pg.query(
+      await pgElevated.query(
         `
         INSERT INTO insights (
           organization_id,
