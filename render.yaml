@@ -407,7 +407,7 @@ services:
 
   - type: worker
     name: securelogic-posture-worker
-    region: virginia
+    region: oregon
     env: node
     plan: starter
     buildCommand: npm ci --include=dev && tsc -p services/posture-worker/tsconfig.json
@@ -472,7 +472,7 @@ services:
 
   - type: web
     name: securelogic-app
-    region: virginia
+    region: oregon
     env: node
     plan: starter
     buildCommand: cd app && npm ci --include=dev && rm -rf .next && npm run build
@@ -513,7 +513,7 @@ services:
 
   - type: web
     name: securelogic-website
-    region: virginia
+    region: oregon
     env: node
     plan: starter
     buildCommand: cd website && npm ci --include=dev && npm run build
