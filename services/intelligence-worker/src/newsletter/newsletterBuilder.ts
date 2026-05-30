@@ -1,5 +1,5 @@
 import { getInsights } from "../storage/postgresInsightStore.js";
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../../src/api/infra/postgres.js";
 import { logger } from "../../../../src/api/infra/logger.js";
 import {
   analyzeSignal,
@@ -390,7 +390,7 @@ export function toBriefItem(item: any): Record<string, unknown> {
 
 async function getNextIssueNumber(): Promise<number | null> {
   try {
-    const result = await pg.query(
+    const result = await pgElevated.query(
       "SELECT COUNT(*)::int AS total FROM newsletter_issues"
     );
     const count = result.rows[0]?.total ?? 0;
