@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock postgres + insight store before importing newsletterBuilder to avoid DATABASE_URL throw
-vi.mock("../../../../../src/api/infra/postgres.js", () => ({
-  pg: { query: vi.fn() }
-}));
+// Mock postgres + insight store before importing newsletterBuilder to avoid DATABASE_URL throw.
+// newsletterBuilder now runs elevated (pgElevated); point pg at the same handle so either symbol resolves.
+vi.mock("../../../../../src/api/infra/postgres.js", () => {
+  const handle = { query: vi.fn() };
+  return { pg: handle, pgElevated: handle };
+});
 vi.mock("../../../storage/postgresInsightStore.js", () => ({
   getInsights: vi.fn()
 }));

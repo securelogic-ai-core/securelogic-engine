@@ -1,4 +1,4 @@
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../../src/api/infra/postgres.js";
 import { logger } from "../../../../src/api/infra/logger.js";
 import {
   createIssue,
@@ -18,7 +18,7 @@ export async function generateNewsletter(): Promise<number> {
   }
 
   // Guard against creating a duplicate issue when one was already sent this calendar week.
-  const thisWeekResult = await pg.query<{ id: string }>(
+  const thisWeekResult = await pgElevated.query<{ id: string }>(
     `SELECT id FROM newsletter_issues
      WHERE organization_id IS NULL
        AND created_at >= date_trunc('day', NOW())
@@ -73,7 +73,7 @@ export async function generateNewsletter(): Promise<number> {
   // Mark all included insights as published so they are excluded from future briefs.
   const insightIds = (rawIssue.includedInsightIds ?? []).filter(Boolean) as string[];
   if (insightIds.length > 0) {
-    await pg.query(
+    await pgElevated.query(
       `UPDATE insights SET published = TRUE WHERE id = ANY($1::uuid[])`,
       [insightIds]
     );
@@ -86,5 +86,3 @@ export async function generateNewsletter(): Promise<number> {
   logger.info({ event: "newsletter_issue_created" }, "Newsletter issue created (platform, insight-based)");
   return 1;
 }
-
-export { pg }; // Re-export to satisfy any legacy imports — remove when no longer needed
