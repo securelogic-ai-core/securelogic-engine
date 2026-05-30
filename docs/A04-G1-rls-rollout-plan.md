@@ -270,6 +270,37 @@ Auto-migrate makes every merge to `main` a production change. The phasing assume
 
 ---
 
+## §4a. DATABASE_URL flip-set inventory (PR 7 reference)
+
+The phase-1 "flip" repoints `DATABASE_URL` from the DB owner to the non-owner `app_request` role (Decision A1) so RLS policies apply. **Every service that holds `DATABASE_URL` must flip in lockstep** — a service left on the owner role silently bypasses RLS; a service flipped without the owner channel (`MIGRATION_DATABASE_URL`, for any `pgElevated` cross-org work it does) silently reads zero rows. This is the authoritative list of what PR 7 touches.
+
+### Holders declared in `render.yaml`
+
+| # | Service | Branch | Role at flip | Staging mirror | Notes |
+|---|---------|--------|--------------|----------------|-------|
+| 1 | `securelogic-engine` | main (prod) | `app_request` via `DATABASE_URL`; owner via `MIGRATION_DATABASE_URL` | — (is prod) | Mirror is #2 |
+| 2 | `securelogic-engine-staging` | develop | same | — (is staging) | Rehearses #1 |
+| 3 | `securelogic-intelligence-worker` | main (prod) | cross-org ingestion → owner channel (`pgElevated`); per-org consumption → `app_request` | — (is prod) | Mirror is #4 |
+| 4 | `securelogic-intelligence-worker-staging` | develop | same | — (is staging) | Rehearses #3 |
+| 5 | `securelogic-posture-worker` | main (prod) | cross-org org-enumeration → owner channel (`pgElevated`, `index.ts:27`); per-org snapshot writes → `app_request` (must be wrapped in `withTenant` at phase 1 — see below) | `securelogic-posture-worker-staging` | Mirror added alongside this doc |
+
+**Mirror status:** with `securelogic-posture-worker-staging` added, all three prod workloads (engine, intelligence-worker, posture-worker) now have a develop-tracking staging twin. Before that addition, posture-worker was the only flip-set member with no staging surface — its flip could not be rehearsed.
+
+### Phase-1 gap specific to posture-worker
+
+`services/posture-worker/src/index.ts:49` calls `computeAndSavePostureSnapshot(orgId)` inside the per-org loop, **without** a `withTenant(orgId, …)` wrapper. The snapshot lib writes through the tenant-aware `pg` proxy; with no active tenant scope it falls back to the raw pool (`postgres.ts:52-56`). Today (owner role, no RLS) that is correct. **After the flip it is the textbook silent-failure mode:** `app_request` + no `app.current_org_id` set ⇒ RLS returns zero rows ⇒ snapshots compute on empty data ⇒ dashboard posture tiles go stale with no error logged. Phase 1 must wrap the per-org call in `withTenant`; the new staging posture-worker is the surface that proves it before prod.
+
+### Dashboard-drift caveat — holders NOT in `render.yaml`
+
+This inventory covers IaC-declared services only. Two known drift risks must be reconciled before PR 7, because a `DATABASE_URL` holder created directly in the Render dashboard would be invisible here and would silently miss the flip:
+
+- `services/delivery-worker/src/runner.ts` imports `pg` (`postgres.ts`) but **no `delivery-worker` service exists in `render.yaml`** — confirm whether it is deployed dashboard-only or is dead code.
+- `securelogic-app-staging` is live but absent from `render.yaml` (see memory `project_staging_frontend_gap_2026_05_07`) — it is a Next.js frontend and not a `DATABASE_URL` holder, but it is proof that dashboard-only services exist, so the flip checklist must be validated against the live Render service list, not just this file.
+
+> **TODO — before PR 7 scoping:** run a reconcile pass — diff the live Render dashboard service list against `render.yaml`, and run an import-graph check on `services/delivery-worker`. Classify `delivery-worker` as one of: **deployed-dashboard-only** (→ it's a 6th flip-set holder, add to the table and to the flip), **deployed-IaC-gap** (codify in `render.yaml` first), or **dead code** (remove). This is a PR-7-grade item, not a 4a side task.
+
+---
+
 ## §5. Proof-of-enforcement test — extending the cross-org isolation harness
 
 The existing harness (`test/isolation/crossOrgIsolation.test.ts`, driven by `test/isolation/testDb.ts`) proves *app-layer* isolation: it sends HTTP requests with org-A's key and asserts 404 on org-B's resources. That proves the WHERE clauses exist and work today. It does *not* prove the DB will deny the row if the WHERE clause is removed.
