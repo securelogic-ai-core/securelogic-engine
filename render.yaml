@@ -421,6 +421,42 @@ services:
         sync: false
 
   # =========================================================
+  # POSTURE WORKER — STAGING (background)
+  # Tracks the develop branch. Mirrors the production posture
+  # worker above; NODE_ENV is staging and DATABASE_URL points
+  # at the staging Postgres in the dashboard.
+  #
+  # Computes a posture snapshot for every active org immediately
+  # on boot, then every 6 hours — so a deploy to develop yields
+  # an immediate staging cycle for verification, not a 6h wait.
+  #
+  # Keep this block in lockstep with securelogic-posture-worker.
+  # =========================================================
+
+  - type: worker
+    name: securelogic-posture-worker-staging
+    env: node
+    plan: starter
+    branch: develop
+    buildCommand: npm ci --include=dev && tsc -p services/posture-worker/tsconfig.json
+    startCommand: node dist-posture-worker/services/posture-worker/src/index.js
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: staging
+
+      # Staging Postgres — populate with the securelogic_staging URL in the
+      # dashboard. Same instance engine-staging and intelligence-worker-staging
+      # use. TLS is on by default (src/api/infra/postgres.ts:19-23 — only
+      # DATABASE_SSL_DISABLED=true turns it off); no PGSSL needed.
+      - key: DATABASE_URL
+        sync: false
+
+      # Optional: override log verbosity (default: info)
+      - key: LOG_LEVEL
+        sync: false
+
+  # =========================================================
   # SECURELOGIC APP (Next.js frontend)
   # User-facing web application: landing, registration, login,
   # brief archive, account, and billing flows.
