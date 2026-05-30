@@ -92,89 +92,101 @@ export async function computeAndSavePostureSnapshot(
     };
   }
 
-  // ── 2. Parallel signal + action + prior-snapshot fetch ─────────────────
-  const [
-    findingsResult,
-    risksResult,
-    findingBreakdownResult,
-    treatedRiskResult,
-    actionCountResult,
-    prevDomainResult,
-    vendorInventoryResult,
-  ] = await Promise.all([
-    pg.query<DbFindingForPosture>(
-      `SELECT id, title, domain, severity FROM findings
-       WHERE organization_id = $1 AND status = 'open'`,
-      [organizationId]
-    ),
-    // Engine consumes RESIDUAL rating per Decision §4 — the
-    // post-controls assessment of current-state risk. Risks without a
-    // residual_rating are excluded (the IS NOT NULL filter implements
-    // the spec's fallback rule: skip, do NOT fall back to inherent).
-    // After Phase 1 backfill, every existing row has residual = legacy,
-    // so scoring stays unchanged for orgs that had data before this
-    // package shipped.
-    pg.query<{ id: string; title: string; domain: string; residual_rating: string }>(
-      `SELECT id, title, domain, residual_rating FROM risks
+  // ── 2. Signal + action + prior-snapshot fetch (SEQUENTIAL — see below) ──
+  // These 7 reads were previously issued via `Promise.all`. Under A04-G1
+  // phase 1 (PR 6, the withTenant wrap — Decision B1) this function runs
+  // inside ONE per-tenant transaction, so every `pg.query()` routes to the
+  // single tenant client. node-postgres cannot multiplex concurrent queries
+  // on one client: it serializes them and emits
+  //   DeprecationWarning: Calling client.query() when the client is already
+  //   executing a query …  — which becomes a hard throw under pg@9.
+  // So the `Promise.all` was illusory parallelism plus a deprecation source:
+  // the queries already ran one-at-a-time on the tenant client. Sequential
+  // awaits make the real execution shape explicit. This is the
+  // platform-correct END STATE, not a perf regression to "re-parallelize
+  // later": the only other caller (POST /api/posture/snapshot, the engine
+  // route) will also become withTenant-scoped after PR 7's RLS flip, leaving
+  // no caller that could legitimately run these in parallel on the pool.
+  // The reads are independent SELECTs across different tables with no
+  // inter-query data dependency, so execution order does not affect results.
+  const findingsResult = await pg.query<DbFindingForPosture>(
+    `SELECT id, title, domain, severity FROM findings
+     WHERE organization_id = $1 AND status = 'open'`,
+    [organizationId]
+  );
+
+  // Engine consumes RESIDUAL rating per Decision §4 — the
+  // post-controls assessment of current-state risk. Risks without a
+  // residual_rating are excluded (the IS NOT NULL filter implements
+  // the spec's fallback rule: skip, do NOT fall back to inherent).
+  // After Phase 1 backfill, every existing row has residual = legacy,
+  // so scoring stays unchanged for orgs that had data before this
+  // package shipped.
+  const risksResult = await pg.query<{ id: string; title: string; domain: string; residual_rating: string }>(
+    `SELECT id, title, domain, residual_rating FROM risks
+     WHERE organization_id = $1
+       AND status = 'open'
+       AND residual_rating IS NOT NULL`,
+    [organizationId]
+  );
+
+  const findingBreakdownResult = await pg.query<{ source_type: string; count: string }>(
+    `SELECT source_type, COUNT(*)::text AS count FROM findings
+     WHERE organization_id = $1 AND status = 'open'
+     GROUP BY source_type`,
+    [organizationId]
+  );
+
+  const treatedRiskResult = await pg.query<{ count: string }>(
+    `SELECT COUNT(DISTINCT r.id)::text AS count
+     FROM risks r
+     JOIN risk_treatments rt
+       ON rt.risk_id = r.id
+      AND rt.organization_id = $1
+      AND rt.status IN ('not_started', 'in_progress')
+     WHERE r.organization_id = $1 AND r.status = 'open'`,
+    [organizationId]
+  );
+
+  const actionCountResult = await pg.query<{ open_count: string; overdue_count: string }>(
+    `SELECT
+       COUNT(*)::text AS open_count,
+       COUNT(*) FILTER (
+         WHERE due_date < CURRENT_DATE
+           AND status NOT IN ('closed', 'accepted')
+       )::text AS overdue_count
+     FROM actions
+     WHERE organization_id = $1
+       AND status NOT IN ('closed', 'accepted')`,
+    [organizationId]
+  );
+
+  // Most recent prior snapshot's domain scores — for trend direction
+  const prevDomainResult = await pg.query<{ domain: string; score: number | null }>(
+    `WITH prev AS (
+       SELECT id FROM posture_snapshots
        WHERE organization_id = $1
-         AND status = 'open'
-         AND residual_rating IS NOT NULL`,
-      [organizationId]
-    ),
-    pg.query<{ source_type: string; count: string }>(
-      `SELECT source_type, COUNT(*)::text AS count FROM findings
-       WHERE organization_id = $1 AND status = 'open'
-       GROUP BY source_type`,
-      [organizationId]
-    ),
-    pg.query<{ count: string }>(
-      `SELECT COUNT(DISTINCT r.id)::text AS count
-       FROM risks r
-       JOIN risk_treatments rt
-         ON rt.risk_id = r.id
-        AND rt.organization_id = $1
-        AND rt.status IN ('not_started', 'in_progress')
-       WHERE r.organization_id = $1 AND r.status = 'open'`,
-      [organizationId]
-    ),
-    pg.query<{ open_count: string; overdue_count: string }>(
-      `SELECT
-         COUNT(*)::text AS open_count,
-         COUNT(*) FILTER (
-           WHERE due_date < CURRENT_DATE
-             AND status NOT IN ('closed', 'accepted')
-         )::text AS overdue_count
-       FROM actions
-       WHERE organization_id = $1
-         AND status NOT IN ('closed', 'accepted')`,
-      [organizationId]
-    ),
-    // Most recent prior snapshot's domain scores — for trend direction
-    pg.query<{ domain: string; score: number | null }>(
-      `WITH prev AS (
-         SELECT id FROM posture_snapshots
-         WHERE organization_id = $1
-           AND snapshot_date < CURRENT_DATE
-         ORDER BY snapshot_date DESC
-         LIMIT 1
-       )
-       SELECT ds.domain, ds.score
-       FROM domain_scores ds
-       JOIN prev ON prev.id = ds.posture_snapshot_id`,
-      [organizationId]
-    ),
-    // Active vendors with non-null criticality. Used to synthesize
-    // Vendor Risk domain signals so inventory state influences
-    // posture even when no vendor findings or risks are open. See
-    // src/api/lib/inventoryToSignals.ts for rationale.
-    pg.query<{ id: string; criticality: string }>(
-      `SELECT id, criticality FROM vendors
-       WHERE organization_id = $1
-         AND status = 'active'
-         AND criticality IS NOT NULL`,
-      [organizationId]
-    ),
-  ]);
+         AND snapshot_date < CURRENT_DATE
+       ORDER BY snapshot_date DESC
+       LIMIT 1
+     )
+     SELECT ds.domain, ds.score
+     FROM domain_scores ds
+     JOIN prev ON prev.id = ds.posture_snapshot_id`,
+    [organizationId]
+  );
+
+  // Active vendors with non-null criticality. Used to synthesize
+  // Vendor Risk domain signals so inventory state influences
+  // posture even when no vendor findings or risks are open. See
+  // src/api/lib/inventoryToSignals.ts for rationale.
+  const vendorInventoryResult = await pg.query<{ id: string; criticality: string }>(
+    `SELECT id, criticality FROM vendors
+     WHERE organization_id = $1
+       AND status = 'active'
+       AND criticality IS NOT NULL`,
+    [organizationId]
+  );
 
   // ── 3. Assemble signals ─────────────────────────────────────────────────
   const riskSignals: DbFindingForPosture[] = risksResult.rows.map((r) => ({
