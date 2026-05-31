@@ -29,7 +29,8 @@
  * POST /api/admin/briefs/run-scheduler (manual trigger).
  */
 
-import { pg, pgElevated } from "../infra/postgres.js";
+import { pg, pgElevated, withTenant, requireTenantContext } from "../infra/postgres.js";
+import { createSavepointClient } from "../infra/tenantContext.js";
 import { logger } from "../infra/logger.js";
 import { fetchCisaKevSignals } from "./cisaKevAdapter.js";
 import { fetchNvdSignals } from "./nvdAdapter.js";
@@ -117,73 +118,91 @@ async function ingestSignalsForOrg(
   let skippedInvalid = 0;
   const errors: string[] = [];
 
-  for (const rawSignal of signals) {
-    const validated = validateCyberSignalIngest(rawSignal);
-    if ("error" in validated) {
-      skippedInvalid++;
-      continue;
-    }
+  // Insert every signal inside ONE tenant transaction (savepoint per signal so
+  // a single bad row rolls back without losing the rest — BEGIN/COMMIT/ROLLBACK
+  // route through createSavepointClient as SAVEPOINT/RELEASE/ROLLBACK-TO).
+  //
+  // processSignal runs AFTER this scope's real COMMIT, not inside the loop: it
+  // does all its work on pgElevated (a separate connection) and its contract is
+  // "called after a signal row is committed". Running it inside the scope would
+  // point it at a row the savepoint RELEASE has not really committed yet, so its
+  // `UPDATE cyber_signals ... WHERE id` would match zero rows.
+  const toProcess: CyberSignalRecord[] = [];
 
-    const normalized = normalizeSignal(validated.input);
+  await withTenant(orgId, async () => {
+    const client = createSavepointClient(requireTenantContext());
 
-    const client = await pg.connect();
-    try {
-      await client.query("BEGIN");
-
-      const insertResult = await client.query(
-        `INSERT INTO cyber_signals (
-           organization_id, source, signal_type, severity, raw_payload,
-           normalized_summary, affected_vendor, affected_cve,
-           dedup_hash, ingestion_timestamp, processed
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), FALSE)
-         ON CONFLICT (organization_id, dedup_hash) DO NOTHING
-         RETURNING id, source, signal_type, severity, normalized_summary,
-                   affected_vendor, affected_cve, organization_id`,
-        [
-          orgId,
-          normalized.source,
-          normalized.signal_type,
-          normalized.severity,
-          JSON.stringify(normalized.raw_payload),
-          normalized.normalized_summary,
-          normalized.affected_vendor,
-          normalized.affected_cve,
-          normalized.dedup_hash
-        ]
-      );
-
-      const isDuplicate = (insertResult.rowCount ?? 0) === 0;
-
-      if (isDuplicate) {
-        await client.query("COMMIT");
-        skippedDuplicate++;
+    for (const rawSignal of signals) {
+      const validated = validateCyberSignalIngest(rawSignal);
+      if ("error" in validated) {
+        skippedInvalid++;
         continue;
       }
 
-      const signal = insertResult.rows[0];
-      await client.query("COMMIT");
+      const normalized = normalizeSignal(validated.input);
 
-      const signalRecord: CyberSignalRecord = {
-        id: signal.id,
-        organization_id: orgId,
-        source: signal.source,
-        signal_type: signal.signal_type,
-        severity: signal.severity,
-        normalized_summary: signal.normalized_summary,
-        affected_vendor: signal.affected_vendor,
-        affected_cve: signal.affected_cve
-      };
+      try {
+        await client.query("BEGIN");
 
-      await processSignal(signalRecord);
-      inserted++;
-    } catch (err) {
-      try { await client.query("ROLLBACK"); } catch { /* ignore */ }
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(msg);
-    } finally {
-      client.release();
+        const insertResult = await client.query(
+          `INSERT INTO cyber_signals (
+             organization_id, source, signal_type, severity, raw_payload,
+             normalized_summary, affected_vendor, affected_cve,
+             dedup_hash, ingestion_timestamp, processed
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), FALSE)
+           ON CONFLICT (organization_id, dedup_hash) DO NOTHING
+           RETURNING id, source, signal_type, severity, normalized_summary,
+                     affected_vendor, affected_cve, organization_id`,
+          [
+            orgId,
+            normalized.source,
+            normalized.signal_type,
+            normalized.severity,
+            JSON.stringify(normalized.raw_payload),
+            normalized.normalized_summary,
+            normalized.affected_vendor,
+            normalized.affected_cve,
+            normalized.dedup_hash
+          ]
+        );
+
+        const isDuplicate = (insertResult.rowCount ?? 0) === 0;
+
+        if (isDuplicate) {
+          await client.query("COMMIT");
+          skippedDuplicate++;
+          continue;
+        }
+
+        const signal = insertResult.rows[0];
+        await client.query("COMMIT");
+
+        toProcess.push({
+          id: signal.id,
+          organization_id: orgId,
+          source: signal.source,
+          signal_type: signal.signal_type,
+          severity: signal.severity,
+          normalized_summary: signal.normalized_summary,
+          affected_vendor: signal.affected_vendor,
+          affected_cve: signal.affected_cve
+        });
+      } catch (err) {
+        try { await client.query("ROLLBACK"); } catch { /* ignore */ }
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(msg);
+      }
     }
+  });
+
+  // Process committed signals OUTSIDE the tenant scope (processSignal uses
+  // pgElevated and must see committed rows). It never throws — it returns a
+  // partial result on failure — so a single failure does not abort the batch,
+  // matching the previous per-signal behaviour.
+  for (const signalRecord of toProcess) {
+    await processSignal(signalRecord);
+    inserted++;
   }
 
   return { inserted, skippedDuplicate, skippedInvalid, errors };
@@ -202,55 +221,56 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
   const periodEnd = new Date();
   const periodStart = new Date(periodEnd.getTime() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
-  // ── Phase 1: Insert brief + fetch signals (short transaction, no external I/O) ──
+  // ── Phase 1: Insert brief + fetch signals (own tenant scope) ───────────────
   //
-  // We commit the brief row in 'generating' state and release the DB connection
-  // before calling enrichBriefItems(). Holding a connection open across multiple
-  // Claude API calls wastes pool resources and risks connection timeouts.
+  // Runs in its OWN withTenant scope: the real COMMIT persists the brief row in
+  // 'generating' state AND releases the tenant connection before Phase 2's
+  // Claude calls. Holding a connection (and an open transaction) across multiple
+  // Claude API calls would waste pool resources, risk connection timeouts, and
+  // — post-flip — pin a tenant transaction open far too long. BEGIN/COMMIT/
+  // ROLLBACK route through createSavepointClient as SAVEPOINT/RELEASE/ROLLBACK-TO.
+  // briefId/base come back as the scope's return value so the rest of the
+  // function (and the mark-failed handlers) can address the committed row.
 
-  let briefId: string;
-  let base: ReturnType<typeof generateBrief>;
+  const { briefId, base } = await withTenant(orgId, async () => {
+    const client = createSavepointClient(requireTenantContext());
+    try {
+      await client.query("BEGIN");
 
-  const phase1Client = await pg.connect();
-  try {
-    await phase1Client.query("BEGIN");
+      const insertBriefResult = await client.query<{ id: string }>(
+        `INSERT INTO intelligence_briefs
+           (organization_id, period_start, period_end, status)
+         VALUES ($1, $2, $3, 'generating')
+         RETURNING id`,
+        [orgId, periodStart.toISOString(), periodEnd.toISOString()]
+      );
+      const newBriefId = insertBriefResult.rows[0]!.id;
 
-    const insertBriefResult = await phase1Client.query<{ id: string }>(
-      `INSERT INTO intelligence_briefs
-         (organization_id, period_start, period_end, status)
-       VALUES ($1, $2, $3, 'generating')
-       RETURNING id`,
-      [orgId, periodStart.toISOString(), periodEnd.toISOString()]
-    );
-    briefId = insertBriefResult.rows[0]!.id;
+      const signalsResult = await client.query<CyberSignalForBrief>(
+        `SELECT id, signal_type, severity, normalized_summary,
+                affected_cve, affected_vendor, source, ingestion_timestamp,
+                raw_payload
+         FROM cyber_signals
+         WHERE (organization_id = $1 OR organization_id IS NULL)
+           AND ingestion_timestamp >= $2
+           AND ingestion_timestamp < $3
+         ORDER BY ingestion_timestamp DESC`,
+        [orgId, periodStart.toISOString(), periodEnd.toISOString()]
+      );
 
-    const signalsResult = await phase1Client.query<CyberSignalForBrief>(
-      `SELECT id, signal_type, severity, normalized_summary,
-              affected_cve, affected_vendor, source, ingestion_timestamp,
-              raw_payload
-       FROM cyber_signals
-       WHERE (organization_id = $1 OR organization_id IS NULL)
-         AND ingestion_timestamp >= $2
-         AND ingestion_timestamp < $3
-       ORDER BY ingestion_timestamp DESC`,
-      [orgId, periodStart.toISOString(), periodEnd.toISOString()]
-    );
+      // generateBrief is pure — safe to run inside this transaction.
+      // Returns the pre-enrichment shortlist (top ENRICHMENT_SHORTLIST items
+      // by composite ranking key); enrichment runs on the shortlist, then
+      // capByUrgencyBuckets reduces to BRIEF_MAX_ITEMS.
+      const newBase = generateBrief(signalsResult.rows);
 
-    const signals = signalsResult.rows;
-
-    // generateBrief is pure — safe to run inside this transaction.
-    // Returns the pre-enrichment shortlist (top ENRICHMENT_SHORTLIST items
-    // by composite ranking key); enrichment runs on the shortlist, then
-    // capByUrgencyBuckets reduces to BRIEF_MAX_ITEMS.
-    base = generateBrief(signals);
-
-    await phase1Client.query("COMMIT");
-  } catch (err) {
-    await phase1Client.query("ROLLBACK").catch(() => {});
-    throw err;
-  } finally {
-    phase1Client.release();
-  }
+      await client.query("COMMIT");
+      return { briefId: newBriefId, base: newBase };
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    }
+  });
 
   // ── Phase 2: Enrich (Claude calls, no DB connection held) ───────────────────
   //
@@ -263,14 +283,18 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
   try {
     enrichedItems = await enrichBriefItems(base.shortlist, orgId);
   } catch (enrichErr) {
-    await pg
-      .query(
+    // Mark-failed in its OWN tenant scope. Phase 1 committed the 'generating'
+    // row in a separate scope, so this UPDATE finds it; its own scope keeps the
+    // write RLS-scoped after the app_request flip. Best-effort — never mask the
+    // original enrichment error.
+    await withTenant(orgId, async () => {
+      await pg.query(
         `UPDATE intelligence_briefs
          SET status = 'failed', updated_at = NOW()
          WHERE id = $1`,
         [briefId]
-      )
-      .catch(() => {});
+      );
+    }).catch(() => {});
     throw enrichErr;
   }
 
@@ -303,7 +327,11 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
   // Prior-brief context drives the exec summary's week-on-week calibration
   // sentence. Returns null on first-brief-ever cases; the prompt drops to
   // a 3-sentence summary in that case.
-  const priorContext = await fetchPriorBriefContext(orgId, briefId);
+  // fetchPriorBriefContext reads intelligence_briefs; run it in a read-only
+  // tenant scope so the SELECT is RLS-visible after the app_request flip.
+  const priorContext = await withTenant(orgId, () =>
+    fetchPriorBriefContext(orgId, briefId)
+  );
   const synthesis = await runSynthesisSafely(cappedItems, priorContext, orgId);
 
   const finalized = finalizeBrief(
@@ -314,101 +342,110 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
   );
   const contentJsonWithSynthesis = { ...finalized.content_json, synthesis };
 
-  // ── Phase 3: Insert items + publish (own transaction, explicit fail-safe) ───
+  // ── Phase 3: Insert items + publish (own tenant scope, explicit fail-safe) ──
   //
-  // The publish UPDATE is the last step. If it fails the brief must not remain
-  // stuck in 'generating' — the catch block marks it 'failed' directly by ID
-  // so the scheduler can skip sendBrief() for this org.
+  // Runs in its OWN withTenant scope; BEGIN/COMMIT/ROLLBACK route through
+  // createSavepointClient. The publish UPDATE is the last step. If the scope
+  // throws, withTenant rolls the whole transaction back — so the mark-failed
+  // CANNOT live inside this scope (the rollback would discard it). Instead the
+  // outer catch marks the brief 'failed' in a SEPARATE withTenant scope. The
+  // 'generating' row was committed by Phase 1's own scope, so that UPDATE finds
+  // it, and runScheduler() skips sendBrief() for this org.
 
-  const phase3Client = await pg.connect();
   try {
-    await phase3Client.query("BEGIN");
+    await withTenant(orgId, async () => {
+      const client = createSavepointClient(requireTenantContext());
+      try {
+        await client.query("BEGIN");
 
-    if (finalized.items.length > 0) {
-      const itemValues: unknown[] = [];
-      const itemPlaceholders: string[] = [];
+        if (finalized.items.length > 0) {
+          const itemValues: unknown[] = [];
+          const itemPlaceholders: string[] = [];
 
-      finalized.items.forEach((item: BriefItem, idx: number) => {
-        const b = idx * 17;
-        itemPlaceholders.push(
-          `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, ` +
-          `$${b + 6}, $${b + 7}, $${b + 8}, $${b + 9}, $${b + 10}, ` +
-          `$${b + 11}, $${b + 12}, $${b + 13}, $${b + 14}, $${b + 15}, ` +
-          `$${b + 16}, $${b + 17})`
+          finalized.items.forEach((item: BriefItem, idx: number) => {
+            const b = idx * 17;
+            itemPlaceholders.push(
+              `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, ` +
+              `$${b + 6}, $${b + 7}, $${b + 8}, $${b + 9}, $${b + 10}, ` +
+              `$${b + 11}, $${b + 12}, $${b + 13}, $${b + 14}, $${b + 15}, ` +
+              `$${b + 16}, $${b + 17})`
+            );
+            itemValues.push(
+              orgId,
+              briefId,
+              item.cyber_signal_id,
+              item.category,
+              item.relevance,
+              item.title,
+              item.summary,
+              item.affected_cve,
+              item.affected_vendor,
+              item.source_slug,
+              item.signal_type,
+              item.severity,
+              item.sort_order,
+              item.why_it_matters ?? null,
+              item.recommended_actions ?? null,
+              item.analyst_notes ?? null,
+              item.urgency ?? null
+            );
+          });
+
+          await client.query(
+            `INSERT INTO intelligence_brief_items
+               (organization_id, brief_id, cyber_signal_id, category, relevance,
+                title, summary, affected_cve, affected_vendor, source_slug,
+                signal_type, severity, sort_order,
+                why_it_matters, recommended_actions, analyst_notes,
+                urgency)
+             VALUES ${itemPlaceholders.join(", ")}`,
+            itemValues
+          );
+        }
+
+        // Explicitly set status to 'published' before this function returns so
+        // sendBrief() in runScheduler() sees a fully committed 'published' row.
+        await client.query(
+          `UPDATE intelligence_briefs
+           SET status           = 'published',
+               signal_count     = $2,
+               item_count       = $3,
+               content_json     = $4::jsonb,
+               content_markdown = $5,
+               generated_at     = NOW(),
+               published_at     = NOW(),
+               updated_at       = NOW()
+           WHERE id = $1`,
+          [
+            briefId,
+            finalized.signal_count,
+            finalized.item_count,
+            JSON.stringify(contentJsonWithSynthesis),
+            finalized.content_markdown
+          ]
         );
-        itemValues.push(
-          orgId,
-          briefId,
-          item.cyber_signal_id,
-          item.category,
-          item.relevance,
-          item.title,
-          item.summary,
-          item.affected_cve,
-          item.affected_vendor,
-          item.source_slug,
-          item.signal_type,
-          item.severity,
-          item.sort_order,
-          item.why_it_matters ?? null,
-          item.recommended_actions ?? null,
-          item.analyst_notes ?? null,
-          item.urgency ?? null
-        );
-      });
 
-      await phase3Client.query(
-        `INSERT INTO intelligence_brief_items
-           (organization_id, brief_id, cyber_signal_id, category, relevance,
-            title, summary, affected_cve, affected_vendor, source_slug,
-            signal_type, severity, sort_order,
-            why_it_matters, recommended_actions, analyst_notes,
-            urgency)
-         VALUES ${itemPlaceholders.join(", ")}`,
-        itemValues
-      );
-    }
-
-    // Explicitly set status to 'published' before this function returns so
-    // sendBrief() in runScheduler() sees a fully committed 'published' row.
-    await phase3Client.query(
-      `UPDATE intelligence_briefs
-       SET status           = 'published',
-           signal_count     = $2,
-           item_count       = $3,
-           content_json     = $4::jsonb,
-           content_markdown = $5,
-           generated_at     = NOW(),
-           published_at     = NOW(),
-           updated_at       = NOW()
-       WHERE id = $1`,
-      [
-        briefId,
-        finalized.signal_count,
-        finalized.item_count,
-        JSON.stringify(contentJsonWithSynthesis),
-        finalized.content_markdown
-      ]
-    );
-
-    await phase3Client.query("COMMIT");
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw err;
+      }
+    });
 
     return briefId;
   } catch (err) {
-    await phase3Client.query("ROLLBACK").catch(() => {});
-    // Mark the brief as failed by ID — prevents it staying stuck in 'generating'.
-    // runScheduler() will catch this throw and skip sendBrief() for this org.
-    await pg
-      .query(
+    // Mark the brief 'failed' in a SEPARATE tenant scope so the Phase 3
+    // rollback above cannot discard it. Best-effort — never mask the original
+    // error. runScheduler() catches the rethrow and skips sendBrief().
+    await withTenant(orgId, async () => {
+      await pg.query(
         `UPDATE intelligence_briefs
          SET status = 'failed', updated_at = NOW()
          WHERE id = $1`,
         [briefId]
-      )
-      .catch(() => {});
+      );
+    }).catch(() => {});
     throw err;
-  } finally {
-    phase3Client.release();
   }
 }
 
