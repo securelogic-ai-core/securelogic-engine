@@ -62,43 +62,6 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-async function ensureDeliveryColumns(): Promise<void> {
-  await pg.query(`
-    ALTER TABLE newsletter_deliveries
-    ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ
-  `);
-
-  await pg.query(`
-    ALTER TABLE newsletter_deliveries
-    ADD COLUMN IF NOT EXISTS provider_message_id TEXT
-  `);
-
-  await pg.query(`
-    ALTER TABLE newsletter_deliveries
-    ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0
-  `);
-
-  await pg.query(`
-    ALTER TABLE newsletter_deliveries
-    ADD COLUMN IF NOT EXISTS last_error TEXT
-  `);
-
-  await pg.query(`
-    ALTER TABLE newsletter_deliveries
-    ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ
-  `);
-
-  await pg.query(`
-    ALTER TABLE newsletter_deliveries
-    ADD COLUMN IF NOT EXISTS dead_lettered_at TIMESTAMPTZ
-  `);
-
-  await pg.query(`
-    ALTER TABLE newsletter_deliveries
-    ADD COLUMN IF NOT EXISTS rendered_html TEXT
-  `);
-}
-
 async function reconcileIssueStatuses(): Promise<void> {
   await pg.query(`
     UPDATE newsletter_issues ni
@@ -179,7 +142,6 @@ async function run(): Promise<{
   console.log("SMTP port:", smtpPort);
   console.log("EMAIL_FROM:", emailFrom);
 
-  await ensureDeliveryColumns();
   await transporter.verify();
   console.log("SMTP transport verified");
 
