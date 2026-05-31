@@ -29,7 +29,7 @@
  * POST /api/admin/briefs/run-scheduler (manual trigger).
  */
 
-import { pg } from "../infra/postgres.js";
+import { pg, pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { fetchCisaKevSignals } from "./cisaKevAdapter.js";
 import { fetchNvdSignals } from "./nvdAdapter.js";
@@ -452,7 +452,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   let orgIds: string[];
 
   try {
-    const orgsResult = await pg.query<{ organization_id: string }>(
+    const orgsResult = await pgElevated.query<{ organization_id: string }>(
       `SELECT DISTINCT organization_id
        FROM intelligence_brief_subscribers
        WHERE active = TRUE`
