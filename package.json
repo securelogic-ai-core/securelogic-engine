@@ -31,7 +31,8 @@
   },
   "overrides": {
     "uuid": "^14.0.0",
-    "fast-uri": ">=3.1.2"
+    "fast-uri": ">=3.1.2",
+    "vite": "^7.0.0"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.2",
@@ -95,6 +96,6 @@
     "supertest": "^7.2.2",
     "tsx": "^4.21.0",
     "typescript": "~5.9.3",
-    "vitest": "~4.0.16"
+    "vitest": "4.1.8"
   }
 }
