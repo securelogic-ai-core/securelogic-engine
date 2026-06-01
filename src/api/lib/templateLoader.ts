@@ -51,7 +51,8 @@
  */
 
 import type { PoolClient } from "pg";
-import { pg } from "../infra/postgres.js";
+import { withTenant, requireTenantContext } from "../infra/postgres.js";
+import { createSavepointClient } from "../infra/tenantContext.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "./auditLog.js";
 import {
@@ -157,176 +158,182 @@ export async function loadTemplate(
     new Set(selectedControls.map((c) => c.framework_ref))
   );
 
-  const client = await pg.connect();
-  let inserted = { vendors: 0, ai_systems: 0, obligations: 0, controls: 0 };
-  let skipped  = { vendors: 0, ai_systems: 0, obligations: 0, controls: 0 };
+  const inserted = { vendors: 0, ai_systems: 0, obligations: 0, controls: 0 };
+  const skipped  = { vendors: 0, ai_systems: 0, obligations: 0, controls: 0 };
 
-  try {
-    await client.query("BEGIN");
+  // RLS adoption (A04-G1 gap C'): run the whole additive load inside ONE tenant
+  // transaction so every INSERT routes through the tenant client after the
+  // app_request flip. BEGIN/COMMIT/ROLLBACK route through createSavepointClient
+  // as SAVEPOINT/RELEASE/ROLLBACK-TO; its release() is a no-op (withTenant owns
+  // the real client). No external I/O runs inside the scope — the writeAuditEvent
+  // call below is fire-and-forget and executes after the scope closes.
+  await withTenant(organizationId, async () => {
+    const client = createSavepointClient(requireTenantContext());
+    try {
+      await client.query("BEGIN");
 
-    // ─── 1. Vendors ─────────────────────────────────────────────────
-    for (const v of selectedVendors) {
-      const flagsJson =
-        v.flags !== undefined ? JSON.stringify({ flags: v.flags }) : null;
-      const result = await client.query(
-        `INSERT INTO vendors (
-           organization_id, name, criticality, category,
-           service_description, template_source, template_metadata
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (organization_id, name) DO NOTHING
-         RETURNING id`,
-        [organizationId, v.name, v.criticality, v.category, v.description, industryId, flagsJson]
-      );
-      if ((result.rowCount ?? 0) > 0) inserted.vendors += 1;
-      else skipped.vendors += 1;
-    }
-
-    // ─── 2. AI systems ──────────────────────────────────────────────
-    // v1 templates carry empty ai_systems[]. Loop is in place for the
-    // future; counts always 0/0 until a template populates the array.
-    for (const a of selectedAiSystems) {
-      const result = await client.query(
-        `INSERT INTO ai_systems (
-           organization_id, name, use_case, criticality,
-           data_classification, template_source
-         )
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (organization_id, name) DO NOTHING
-         RETURNING id`,
-        [
-          organizationId,
-          a.name,
-          a.use_case,
-          a.criticality,
-          a.data_classification ?? null,
-          industryId,
-        ]
-      );
-      if ((result.rowCount ?? 0) > 0) inserted.ai_systems += 1;
-      else skipped.ai_systems += 1;
-    }
-
-    // ─── 3. Obligations ─────────────────────────────────────────────
-    for (const o of selectedObligations) {
-      const result = await client.query(
-        `INSERT INTO obligations (
-           organization_id, title, description, jurisdiction,
-           priority, template_source
-         )
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (organization_id, title) DO NOTHING
-         RETURNING id`,
-        [
-          organizationId,
-          o.regulation_name,
-          o.description,
-          o.jurisdiction,
-          o.priority,
-          industryId,
-        ]
-      );
-      if ((result.rowCount ?? 0) > 0) inserted.obligations += 1;
-      else skipped.obligations += 1;
-    }
-
-    // ─── 4. Frameworks (per-org upsert) + synthetic requirements ────
-    // Map of framework_ref → { framework_id, requirement_id } populated
-    // in this pass and consumed by the controls pass that follows.
-    const frameworkResolution = new Map<
-      FrameworkRef,
-      { frameworkId: string; requirementId: string }
-    >();
-
-    for (const ref of distinctFrameworks) {
-      const meta = FRAMEWORK_REFS[ref];
-      // Closed Record — undefined means a future FrameworkRef wasn't
-      // wired into FRAMEWORK_REFS. Fail closed; better than orphaning
-      // controls.
-      if (meta === undefined) {
-        throw new TemplateLoaderInputError(
-          "framework_ref_unresolved",
-          `framework_ref '${ref}' has no entry in FRAMEWORK_REFS`
+      // ─── 1. Vendors ─────────────────────────────────────────────────
+      for (const v of selectedVendors) {
+        const flagsJson =
+          v.flags !== undefined ? JSON.stringify({ flags: v.flags }) : null;
+        const result = await client.query(
+          `INSERT INTO vendors (
+             organization_id, name, criticality, category,
+             service_description, template_source, template_metadata
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (organization_id, name) DO NOTHING
+           RETURNING id`,
+          [organizationId, v.name, v.criticality, v.category, v.description, industryId, flagsJson]
         );
+        if ((result.rowCount ?? 0) > 0) inserted.vendors += 1;
+        else skipped.vendors += 1;
       }
 
-      const fwResult = await client.query<{ id: string }>(
-        `INSERT INTO frameworks (organization_id, name, version)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (organization_id, name, version)
-         DO UPDATE SET updated_at = frameworks.updated_at
-         RETURNING id`,
-        [organizationId, meta.name, meta.version]
-      );
-      const frameworkId = fwResult.rows[0]!.id;
+      // ─── 2. AI systems ──────────────────────────────────────────────
+      // v1 templates carry empty ai_systems[]. Loop is in place for the
+      // future; counts always 0/0 until a template populates the array.
+      for (const a of selectedAiSystems) {
+        const result = await client.query(
+          `INSERT INTO ai_systems (
+             organization_id, name, use_case, criticality,
+             data_classification, template_source
+           )
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (organization_id, name) DO NOTHING
+           RETURNING id`,
+          [
+            organizationId,
+            a.name,
+            a.use_case,
+            a.criticality,
+            a.data_classification ?? null,
+            industryId,
+          ]
+        );
+        if ((result.rowCount ?? 0) > 0) inserted.ai_systems += 1;
+        else skipped.ai_systems += 1;
+      }
 
-      // Synthetic requirement — one per (framework, template). Allows
-      // the same framework to be the umbrella for controls from two
-      // different templates without one template's controls displacing
-      // the other in the readiness report.
-      const reqRefId = `industry-template:${industryId}`;
-      const reqTitle = `${template.name} template baseline`;
-      const reqResult = await client.query<{ id: string }>(
-        `INSERT INTO requirements (framework_id, reference_id, title)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (framework_id, reference_id)
-         DO UPDATE SET title = requirements.title
-         RETURNING id`,
-        [frameworkId, reqRefId, reqTitle]
-      );
-      const requirementId = reqResult.rows[0]!.id;
+      // ─── 3. Obligations ─────────────────────────────────────────────
+      for (const o of selectedObligations) {
+        const result = await client.query(
+          `INSERT INTO obligations (
+             organization_id, title, description, jurisdiction,
+             priority, template_source
+           )
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (organization_id, title) DO NOTHING
+           RETURNING id`,
+          [
+            organizationId,
+            o.regulation_name,
+            o.description,
+            o.jurisdiction,
+            o.priority,
+            industryId,
+          ]
+        );
+        if ((result.rowCount ?? 0) > 0) inserted.obligations += 1;
+        else skipped.obligations += 1;
+      }
 
-      frameworkResolution.set(ref, { frameworkId, requirementId });
-    }
+      // ─── 4. Frameworks (per-org upsert) + synthetic requirements ────
+      // Map of framework_ref → { framework_id, requirement_id } populated
+      // in this pass and consumed by the controls pass that follows.
+      const frameworkResolution = new Map<
+        FrameworkRef,
+        { frameworkId: string; requirementId: string }
+      >();
 
-    // ─── 5. Controls + control_mappings ─────────────────────────────
-    for (const c of selectedControls) {
-      const insertControl = await client.query<{ id: string }>(
-        `INSERT INTO controls (
-           organization_id, name, description, template_source
-         )
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (organization_id, name) DO NOTHING
-         RETURNING id`,
-        [organizationId, c.name, c.description, industryId]
-      );
-
-      if ((insertControl.rowCount ?? 0) > 0) {
-        inserted.controls += 1;
-        const resolution = frameworkResolution.get(c.framework_ref);
-        if (resolution !== undefined) {
-          // ON CONFLICT DO NOTHING because a manual control_mapping with
-          // the same (control, requirement) pair would be a no-op anyway.
-          await client.query(
-            `INSERT INTO control_mappings (control_id, requirement_id)
-             VALUES ($1, $2)
-             ON CONFLICT (control_id, requirement_id) DO NOTHING`,
-            [insertControl.rows[0]!.id, resolution.requirementId]
+      for (const ref of distinctFrameworks) {
+        const meta = FRAMEWORK_REFS[ref];
+        // Closed Record — undefined means a future FrameworkRef wasn't
+        // wired into FRAMEWORK_REFS. Fail closed; better than orphaning
+        // controls.
+        if (meta === undefined) {
+          throw new TemplateLoaderInputError(
+            "framework_ref_unresolved",
+            `framework_ref '${ref}' has no entry in FRAMEWORK_REFS`
           );
         }
-      } else {
-        skipped.controls += 1;
-        // Pre-existing control: do NOT add a control_mapping. See header
-        // comment — retro-tagging manually-created controls is out of
-        // scope for the additive-load contract.
-      }
-    }
 
-    await client.query("COMMIT");
-  } catch (err) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      // ignore rollback failure
+        const fwResult = await client.query<{ id: string }>(
+          `INSERT INTO frameworks (organization_id, name, version)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (organization_id, name, version)
+           DO UPDATE SET updated_at = frameworks.updated_at
+           RETURNING id`,
+          [organizationId, meta.name, meta.version]
+        );
+        const frameworkId = fwResult.rows[0]!.id;
+
+        // Synthetic requirement — one per (framework, template). Allows
+        // the same framework to be the umbrella for controls from two
+        // different templates without one template's controls displacing
+        // the other in the readiness report.
+        const reqRefId = `industry-template:${industryId}`;
+        const reqTitle = `${template.name} template baseline`;
+        const reqResult = await client.query<{ id: string }>(
+          `INSERT INTO requirements (framework_id, reference_id, title)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (framework_id, reference_id)
+           DO UPDATE SET title = requirements.title
+           RETURNING id`,
+          [frameworkId, reqRefId, reqTitle]
+        );
+        const requirementId = reqResult.rows[0]!.id;
+
+        frameworkResolution.set(ref, { frameworkId, requirementId });
+      }
+
+      // ─── 5. Controls + control_mappings ─────────────────────────────
+      for (const c of selectedControls) {
+        const insertControl = await client.query<{ id: string }>(
+          `INSERT INTO controls (
+             organization_id, name, description, template_source
+           )
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (organization_id, name) DO NOTHING
+           RETURNING id`,
+          [organizationId, c.name, c.description, industryId]
+        );
+
+        if ((insertControl.rowCount ?? 0) > 0) {
+          inserted.controls += 1;
+          const resolution = frameworkResolution.get(c.framework_ref);
+          if (resolution !== undefined) {
+            // ON CONFLICT DO NOTHING because a manual control_mapping with
+            // the same (control, requirement) pair would be a no-op anyway.
+            await client.query(
+              `INSERT INTO control_mappings (control_id, requirement_id)
+               VALUES ($1, $2)
+               ON CONFLICT (control_id, requirement_id) DO NOTHING`,
+              [insertControl.rows[0]!.id, resolution.requirementId]
+            );
+          }
+        } else {
+          skipped.controls += 1;
+          // Pre-existing control: do NOT add a control_mapping. See header
+          // comment — retro-tagging manually-created controls is out of
+          // scope for the additive-load contract.
+        }
+      }
+
+      await client.query("COMMIT");
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // ignore rollback failure
+      }
+      logger.error(
+        { event: "template_load_failed", organizationId, industryId, err },
+        "Template load failed; transaction rolled back"
+      );
+      throw err;
     }
-    logger.error(
-      { event: "template_load_failed", organizationId, industryId, err },
-      "Template load failed; transaction rolled back"
-    );
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 
   const result: LoadTemplateResult = {
     industry_id: industryId,
