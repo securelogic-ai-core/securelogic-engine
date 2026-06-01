@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../infra/postgres.js", () => ({
-  pg: { query: vi.fn(), connect: vi.fn() }
+  pg: { query: vi.fn(), connect: vi.fn() },
+  // Phase-1/3 RLS wrap (C3-2): transparent passthrough in unit context.
+  withTenant: (_orgId: string, fn: () => Promise<unknown>) => fn()
 }));
 
 import {

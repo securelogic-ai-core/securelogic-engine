@@ -32,9 +32,12 @@ vi.mock("../../../../src/api/lib/cisaKevAdapter.js", () => ({
   fetchCisaKevSignals: vi.fn()
 }));
 
-vi.mock("../../../../src/api/infra/postgres.js", () => ({
-  pg: { query: vi.fn(), connect: vi.fn() }
-}));
+vi.mock("../../../../src/api/infra/postgres.js", () => {
+  // kevPoller now runs elevated (pgElevated). Point pg at the same handle so
+  // the existing mockedPgQuery assertions keep intercepting the calls.
+  const handle = { query: vi.fn(), connect: vi.fn() };
+  return { pg: handle, pgElevated: handle };
+});
 
 // Mock runMatcherForSignal so the fan-out path is observable without
 // dragging in the matcher's full DB interactions. The active-orgs

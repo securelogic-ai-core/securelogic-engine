@@ -1,4 +1,4 @@
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../../src/api/infra/postgres.js";
 
 export type PostgresTrendInput = {
   organizationId?: string | null;
@@ -12,7 +12,7 @@ export type PostgresTrendInput = {
 export async function saveTrend(trend: PostgresTrendInput): Promise<string | null> {
   const organizationId = trend.organizationId ?? null;
 
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     INSERT INTO trends (
       organization_id,

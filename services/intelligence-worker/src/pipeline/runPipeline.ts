@@ -30,7 +30,7 @@ import {
 } from "../storage/postgresIssueStore.js";
 import { sendNewsletter } from "../delivery/sendNewsletter.js";
 import { logger } from "../../../../src/api/infra/logger.js";
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../../src/api/infra/postgres.js";
 import {
   runMatcherForSignal,
   type CyberSignalRecord
@@ -104,7 +104,7 @@ async function bridgeSignalsToCyberSignals(
     const normalizedSummary = signal.summary.slice(0, 2000) || signal.title;
 
     try {
-      const result = await pg.query<{ id: string }>(
+      const result = await pgElevated.query<{ id: string }>(
         `INSERT INTO cyber_signals (
           organization_id,
           source,
@@ -219,7 +219,7 @@ async function fanOutMatcherToActiveOrgs(
 
   let activeOrgs: Array<{ id: string }> = [];
   try {
-    const orgsResult = await pg.query<{ id: string }>(
+    const orgsResult = await pgElevated.query<{ id: string }>(
       `SELECT id FROM organizations WHERE status = 'active' ORDER BY id`
     );
     activeOrgs = orgsResult.rows;

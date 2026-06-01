@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { capturePublicationContext } from "../lib/briefPublicationContext.js";
 
@@ -66,7 +66,7 @@ router.post("/newsletter-issues", async (req, res) => {
     // Returns null for platform-wide briefs (no org) or when no posture snapshot exists yet.
     const publicationContext =
       status === "sent" && organizationId !== null
-        ? await capturePublicationContext(organizationId, pg)
+        ? await withTenant(organizationId, () => capturePublicationContext(organizationId, pg))
         : null;
 
     const result = await pg.query(

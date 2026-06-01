@@ -16,7 +16,6 @@
     "seed:demo:reset": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx scripts/seed-demo.ts --reset'",
     "seed:staging": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx scripts/seed-staging.ts \"$@\"' --",
     "test:matcher-staging": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx scripts/test-matcher-staging.ts \"$@\"' --",
-    "test:pg-stores": "tsx services/intelligence-worker/src/storage/testPostgresStores.ts",
     "clean": "rm -rf dist",
     "build": "rm -rf dist && tsc -p tsconfig.prod.json && cp -r src/api/public dist/api/public",
     "start": "node dist/api/server.js",
@@ -25,13 +24,15 @@
     "test": "vitest run",
     "test:prod": "vitest run src/_frozen_prod/__tests__",
     "test:isolation": "vitest run --config vitest.isolation.config.ts",
+    "coverage:tenant": "bash scripts/check-tenant-coverage.sh",
     "check": "bash scripts/guard-imports.sh && npm run lint && npm run typecheck && npm run build && npm run test:prod",
     "ci": "bash scripts/check-contract-version.sh && npm run typecheck && npm run build",
     "build:contracts": "cd packages/contracts && npm run build"
   },
   "overrides": {
     "uuid": "^14.0.0",
-    "fast-uri": ">=3.1.2"
+    "fast-uri": ">=3.1.2",
+    "vite": "^7.0.0"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.2",
@@ -95,6 +96,6 @@
     "supertest": "^7.2.2",
     "tsx": "^4.21.0",
     "typescript": "~5.9.3",
-    "vitest": "~4.0.16"
+    "vitest": "4.1.8"
   }
 }

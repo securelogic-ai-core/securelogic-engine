@@ -1,4 +1,4 @@
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../../src/api/infra/postgres.js";
 import { logger } from "../../../../src/api/infra/logger.js";
 
 type QueuedIssue = {
@@ -29,7 +29,7 @@ export async function generateNewsletterDeliveries(): Promise<NewsletterDelivery
   let deliveriesSkippedSuppressed = 0;
   let deliveriesSkippedInactive = 0;
 
-  const issuesResult = await pg.query(`
+  const issuesResult = await pgElevated.query(`
     SELECT id, organization_id, title, COALESCE(audience_tier, 'free') AS audience_tier
     FROM newsletter_issues
     WHERE status = 'queued'
@@ -57,7 +57,7 @@ export async function generateNewsletterDeliveries(): Promise<NewsletterDelivery
       : "";
     const orgParam = issue.organization_id ? [issue.organization_id] : [];
 
-    const activeSubscribersResult = await pg.query(
+    const activeSubscribersResult = await pgElevated.query(
       `
       SELECT s.email
       FROM subscribers s
@@ -71,7 +71,7 @@ export async function generateNewsletterDeliveries(): Promise<NewsletterDelivery
       orgParam
     );
 
-    const suppressedCountResult = await pg.query(
+    const suppressedCountResult = await pgElevated.query(
       `
       SELECT COUNT(*)::int AS count
       FROM subscribers s
@@ -84,7 +84,7 @@ export async function generateNewsletterDeliveries(): Promise<NewsletterDelivery
       orgParam
     );
 
-    const inactiveCountResult = await pg.query(
+    const inactiveCountResult = await pgElevated.query(
       `
       SELECT COUNT(*)::int AS count
       FROM subscribers s
@@ -103,7 +103,7 @@ export async function generateNewsletterDeliveries(): Promise<NewsletterDelivery
     for (const sub of subscribers) {
       const email = String(sub.email).trim().toLowerCase();
 
-      const result = await pg.query(
+      const result = await pgElevated.query(
         `
         INSERT INTO newsletter_deliveries (
           organization_id,

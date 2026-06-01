@@ -1,4 +1,4 @@
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../../src/api/infra/postgres.js";
 
 export type PostgresIssueInput = {
   organizationId?: string | null;
@@ -16,7 +16,7 @@ export type PostgresIssueInput = {
 };
 
 export async function createIssue(issue: PostgresIssueInput) {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     INSERT INTO newsletter_issues (
       organization_id,
@@ -57,7 +57,7 @@ export async function createIssue(issue: PostgresIssueInput) {
 }
 
 export async function getLatestDraftIssue(organizationId: string | null) {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     SELECT *
     FROM newsletter_issues
@@ -76,7 +76,7 @@ export async function getRecentDraftIssue(
   organizationId: string | null,
   minutes = 60
 ) {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     SELECT *
     FROM newsletter_issues
@@ -96,7 +96,7 @@ export async function getActiveIssue(
   organizationId: string | null,
   statuses: string[] = ["draft", "queued"]
 ) {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     SELECT *
     FROM newsletter_issues
@@ -112,7 +112,7 @@ export async function getActiveIssue(
 }
 
 export async function promoteIssueToQueued(issueId: string): Promise<boolean> {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     UPDATE newsletter_issues
     SET status     = 'queued',
@@ -127,7 +127,7 @@ export async function promoteIssueToQueued(issueId: string): Promise<boolean> {
 }
 
 export async function markIssueSent(issueId: string) {
-  await pg.query(
+  await pgElevated.query(
     `
     UPDATE newsletter_issues
     SET status = 'sent',
@@ -140,7 +140,7 @@ export async function markIssueSent(issueId: string) {
 }
 
 export async function getLatestSentIssue(organizationId: string | null) {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     SELECT *
     FROM newsletter_issues

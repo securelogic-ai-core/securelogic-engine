@@ -1,5 +1,5 @@
 import { Resend } from "resend";
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../../src/api/infra/postgres.js";
 import { logger } from "../../../../src/api/infra/logger.js";
 import { markIssueSent } from "../storage/postgresIssueStore.js";
 import { generateUnsubscribeToken } from "../../../../src/api/infra/unsubscribeToken.js";
@@ -57,7 +57,7 @@ function getSenderAddress(): string {
 }
 
 async function fetchIssueContent(issueId: string): Promise<IssueContent | null> {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     SELECT id, title, content_html
     FROM newsletter_issues
@@ -71,7 +71,7 @@ async function fetchIssueContent(issueId: string): Promise<IssueContent | null> 
 }
 
 async function fetchQueuedDeliveries(issueId: string): Promise<QueuedDelivery[]> {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     SELECT id, issue_id, subscriber_email
     FROM newsletter_deliveries
@@ -87,7 +87,7 @@ async function fetchQueuedDeliveries(issueId: string): Promise<QueuedDelivery[]>
 }
 
 async function markDeliverySent(deliveryId: string): Promise<void> {
-  await pg.query(
+  await pgElevated.query(
     `
     UPDATE newsletter_deliveries
     SET status   = 'sent',
@@ -99,7 +99,7 @@ async function markDeliverySent(deliveryId: string): Promise<void> {
 }
 
 async function markDeliveryFailed(deliveryId: string): Promise<void> {
-  await pg.query(
+  await pgElevated.query(
     `
     UPDATE newsletter_deliveries
     SET status = 'failed'
@@ -146,7 +146,7 @@ function injectFooterLinks(html: string, issueId: string, unsubscribeUrl: string
 }
 
 async function isIssueFullySent(issueId: string): Promise<boolean> {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     SELECT COUNT(*)::int AS remaining
     FROM newsletter_deliveries

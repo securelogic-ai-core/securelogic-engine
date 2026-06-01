@@ -19,7 +19,7 @@
  * retry. The status-transition path is one-way.
  */
 
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "./auditLog.js";
 import { getVendorAssurancePdfStream } from "./vendorAssuranceStorage.js";
@@ -38,12 +38,14 @@ async function streamToBuffer(body: unknown): Promise<Buffer> {
 }
 
 async function markExtracting(documentId: string, organizationId: string): Promise<void> {
-  await pg.query(
-    `UPDATE vendor_assurance_documents
-        SET processing_status = 'extracting',
-            updated_at = NOW()
-      WHERE id = $1 AND organization_id = $2 AND processing_status = 'pending'`,
-    [documentId, organizationId]
+  await withTenant(organizationId, () =>
+    pg.query(
+      `UPDATE vendor_assurance_documents
+          SET processing_status = 'extracting',
+              updated_at = NOW()
+        WHERE id = $1 AND organization_id = $2 AND processing_status = 'pending'`,
+      [documentId, organizationId]
+    )
   );
 }
 
@@ -63,15 +65,17 @@ async function markFailed(
     typeof rawResponseExcerpt === "string" && rawResponseExcerpt.length > 0
       ? rawResponseExcerpt.slice(0, RAW_EXCERPT_BYTES)
       : null;
-  await pg.query(
-    `UPDATE vendor_assurance_documents
-        SET processing_status = 'extraction_failed',
-            processing_error_code = $3,
-            processing_error_detail = $4,
-            raw_response_excerpt = $5,
-            updated_at = NOW()
-      WHERE id = $1 AND organization_id = $2`,
-    [documentId, organizationId, errorCode, errorDetail.slice(0, 4000), rawExcerpt]
+  await withTenant(organizationId, () =>
+    pg.query(
+      `UPDATE vendor_assurance_documents
+          SET processing_status = 'extraction_failed',
+              processing_error_code = $3,
+              processing_error_detail = $4,
+              raw_response_excerpt = $5,
+              updated_at = NOW()
+        WHERE id = $1 AND organization_id = $2`,
+      [documentId, organizationId, errorCode, errorDetail.slice(0, 4000), rawExcerpt]
+    )
   );
   writeAuditEvent({
     organizationId,
@@ -91,79 +95,84 @@ async function persistExtractionAndMarkExtracted(
   organizationId: string,
   result: Extract<SocExtractionResult, { ok: true }>
 ): Promise<{ extractionId: string; spanCount: number; fieldCount: number }> {
-  const client = await pg.connect();
-  try {
-    await client.query("BEGIN");
+  // One tenant scope around the whole write transaction. pg.connect() inside
+  // the scope auto-returns a savepoint client, so the BEGIN/COMMIT/ROLLBACK
+  // block is unchanged; the result object escapes the scope as the return value.
+  return await withTenant(organizationId, async () => {
+    const client = await pg.connect();
+    try {
+      await client.query("BEGIN");
 
-    const insertExtraction = await client.query<{ id: string }>(
-      `INSERT INTO vendor_assurance_extractions (
-         organization_id, document_id, model_id, prompt_version, raw_response_excerpt, fields
-       )
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-       RETURNING id`,
-      [
-        organizationId,
-        documentId,
-        result.modelId,
-        result.promptVersion,
-        result.rawExcerpt,
-        JSON.stringify(result.fields)
-      ]
-    );
-    const extractionId = insertExtraction.rows[0]!.id;
-
-    if (result.spans.length > 0) {
-      // Bulk insert with parameter expansion.
-      const values: unknown[] = [];
-      const placeholders: string[] = [];
-      let p = 1;
-      for (const span of result.spans) {
-        placeholders.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++})`);
-        values.push(
+      const insertExtraction = await client.query<{ id: string }>(
+        `INSERT INTO vendor_assurance_extractions (
+           organization_id, document_id, model_id, prompt_version, raw_response_excerpt, fields
+         )
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+         RETURNING id`,
+        [
           organizationId,
-          extractionId,
-          span.field_name,
-          span.page_number,
-          span.char_start,
-          span.char_end,
-          span.quote
+          documentId,
+          result.modelId,
+          result.promptVersion,
+          result.rawExcerpt,
+          JSON.stringify(result.fields)
+        ]
+      );
+      const extractionId = insertExtraction.rows[0]!.id;
+
+      if (result.spans.length > 0) {
+        // Bulk insert with parameter expansion.
+        const values: unknown[] = [];
+        const placeholders: string[] = [];
+        let p = 1;
+        for (const span of result.spans) {
+          placeholders.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++})`);
+          values.push(
+            organizationId,
+            extractionId,
+            span.field_name,
+            span.page_number,
+            span.char_start,
+            span.char_end,
+            span.quote
+          );
+        }
+        await client.query(
+          `INSERT INTO vendor_assurance_extraction_spans
+             (organization_id, extraction_id, field_name, page_number, char_start, char_end, quote)
+           VALUES ${placeholders.join(", ")}`,
+          values
         );
       }
+
       await client.query(
-        `INSERT INTO vendor_assurance_extraction_spans
-           (organization_id, extraction_id, field_name, page_number, char_start, char_end, quote)
-         VALUES ${placeholders.join(", ")}`,
-        values
+        `UPDATE vendor_assurance_documents
+            SET processing_status = 'extracted',
+                processing_error_code = NULL,
+                processing_error_detail = NULL,
+                updated_at = NOW()
+          WHERE id = $1 AND organization_id = $2`,
+        [documentId, organizationId]
       );
+
+      await client.query("COMMIT");
+
+      return {
+        extractionId,
+        spanCount: result.spans.length,
+        fieldCount: Object.keys(result.fields).length
+      };
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        /* ignore */
+      }
+      throw err;
+    } finally {
+      client.release();
     }
-
-    await client.query(
-      `UPDATE vendor_assurance_documents
-          SET processing_status = 'extracted',
-              processing_error_code = NULL,
-              processing_error_detail = NULL,
-              updated_at = NOW()
-        WHERE id = $1 AND organization_id = $2`,
-      [documentId, organizationId]
-    );
-
-    await client.query("COMMIT");
-
-    return {
-      extractionId,
-      spanCount: result.spans.length,
-      fieldCount: Object.keys(result.fields).length
-    };
-  } catch (err) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      /* ignore */
-    }
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**

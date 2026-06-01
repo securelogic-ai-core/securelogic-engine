@@ -44,7 +44,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { instrumentAnthropicClient } from "../infra/providerQuotaAlert.js";
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 
 export const CUEC_MATCHER_PROMPT_VERSION = "cuec-matcher-v1";
@@ -247,60 +247,66 @@ export async function syncCuecRowsForDocument(
   documentId: string,
   organizationId: string
 ): Promise<{ cuecCount: number }> {
-  // Effective list: latest cuecs override wins over the extraction value.
-  const overrideRes = await pg.query<{ override_value: unknown }>(
-    `SELECT override_value FROM vendor_assurance_field_overrides
-      WHERE document_id = $1 AND organization_id = $2 AND field_name = 'cuecs'
-      ORDER BY overridden_at DESC, id DESC
-      LIMIT 1`,
-    [documentId, organizationId]
-  );
-
-  let rawCuecs: unknown;
-  if ((overrideRes.rowCount ?? 0) > 0) {
-    rawCuecs = overrideRes.rows[0]!.override_value;
-  } else {
-    const extRes = await pg.query<{ fields: Record<string, { value?: unknown }> | null }>(
-      `SELECT fields FROM vendor_assurance_extractions
-        WHERE document_id = $1 AND organization_id = $2
+  // Reads + the DELETE-then-INSERT write run in ONE tenant scope. There is no
+  // external I/O between them, so a single withTenant transaction is correct;
+  // pg.connect() inside the scope auto-returns a savepoint client, so the
+  // BEGIN/COMMIT/ROLLBACK block below is unchanged.
+  return await withTenant(organizationId, async () => {
+    // Effective list: latest cuecs override wins over the extraction value.
+    const overrideRes = await pg.query<{ override_value: unknown }>(
+      `SELECT override_value FROM vendor_assurance_field_overrides
+        WHERE document_id = $1 AND organization_id = $2 AND field_name = 'cuecs'
+        ORDER BY overridden_at DESC, id DESC
         LIMIT 1`,
       [documentId, organizationId]
     );
-    rawCuecs = (extRes.rows[0]?.fields ?? {})["cuecs"]?.value ?? null;
-  }
 
-  const normalized = normalizeCuecList(rawCuecs);
-
-  const client = await pg.connect();
-  try {
-    await client.query("BEGIN");
-    await client.query(
-      `DELETE FROM vendor_assurance_cuecs WHERE document_id = $1 AND organization_id = $2`,
-      [documentId, organizationId]
-    );
-    if (normalized.length > 0) {
-      const values: unknown[] = [];
-      const placeholders: string[] = [];
-      let p = 1;
-      for (const c of normalized) {
-        placeholders.push(`($${p++}, $${p++}, $${p++}, $${p++})`);
-        values.push(organizationId, documentId, c.ordinal, c.text);
-      }
-      await client.query(
-        `INSERT INTO vendor_assurance_cuecs (organization_id, document_id, ordinal, cuec_text)
-         VALUES ${placeholders.join(", ")}`,
-        values
+    let rawCuecs: unknown;
+    if ((overrideRes.rowCount ?? 0) > 0) {
+      rawCuecs = overrideRes.rows[0]!.override_value;
+    } else {
+      const extRes = await pg.query<{ fields: Record<string, { value?: unknown }> | null }>(
+        `SELECT fields FROM vendor_assurance_extractions
+          WHERE document_id = $1 AND organization_id = $2
+          LIMIT 1`,
+        [documentId, organizationId]
       );
+      rawCuecs = (extRes.rows[0]?.fields ?? {})["cuecs"]?.value ?? null;
     }
-    await client.query("COMMIT");
-  } catch (err) {
-    try { await client.query("ROLLBACK"); } catch { /* ignore */ }
-    throw err;
-  } finally {
-    client.release();
-  }
 
-  return { cuecCount: normalized.length };
+    const normalized = normalizeCuecList(rawCuecs);
+
+    const client = await pg.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `DELETE FROM vendor_assurance_cuecs WHERE document_id = $1 AND organization_id = $2`,
+        [documentId, organizationId]
+      );
+      if (normalized.length > 0) {
+        const values: unknown[] = [];
+        const placeholders: string[] = [];
+        let p = 1;
+        for (const c of normalized) {
+          placeholders.push(`($${p++}, $${p++}, $${p++}, $${p++})`);
+          values.push(organizationId, documentId, c.ordinal, c.text);
+        }
+        await client.query(
+          `INSERT INTO vendor_assurance_cuecs (organization_id, document_id, ordinal, cuec_text)
+           VALUES ${placeholders.join(", ")}`,
+          values
+        );
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      try { await client.query("ROLLBACK"); } catch { /* ignore */ }
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    return { cuecCount: normalized.length };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -314,38 +320,66 @@ export async function runCuecMatcherForDocument(
 ): Promise<CuecMatcherRunResult> {
   const llmCall = opts?.llmCall ?? defaultCuecMatcherLlmCall;
 
-  const cuecRes = await pg.query<CuecRow>(
-    `SELECT id, ordinal, cuec_text FROM vendor_assurance_cuecs
-      WHERE document_id = $1 AND organization_id = $2
-      ORDER BY ordinal ASC`,
-    [documentId, organizationId]
-  );
-  const cuecs = cuecRes.rows;
-  if (cuecs.length === 0) {
-    return { matched: false, reason: "no_cuecs", cuecCount: 0, controlCount: 0, suggestionsConsidered: 0, suggestionsWritten: 0 };
-  }
-  const cuecIds = cuecs.map((c) => c.id);
-  const cuecIdByOrdinal = new Map<number, string>(cuecs.map((c) => [c.ordinal, c.id]));
-  const knownOrdinals = new Set<number>(cuecs.map((c) => c.ordinal));
+  // ── Phase 1 (DB reads) ──────────────────────────────────────────────────
+  // The two SELECTs and the no-controls cleanup DELETE run in ONE short tenant
+  // scope that CLOSES before the LLM call below — no tenant transaction is held
+  // across the network round-trip. The scope returns a discriminated result:
+  // either an early `done` outcome (no cuecs / no controls) or the `proceed`
+  // bundle the LLM + write phases need.
+  type Phase1Result =
+    | { done: CuecMatcherRunResult }
+    | {
+        proceed: {
+          cuecs: CuecRow[];
+          cuecIds: string[];
+          cuecIdByOrdinal: Map<number, string>;
+          knownOrdinals: Set<number>;
+          controls: ControlRow[];
+          knownControlIdsLower: Set<string>;
+        };
+      };
 
-  const ctlRes = await pg.query<ControlRow>(
-    `SELECT id, name, description FROM controls
-      WHERE organization_id = $1 AND status = 'active'
-      ORDER BY name ASC
-      LIMIT $2`,
-    [organizationId, CUEC_MATCHER_MAX_CONTROLS]
-  );
-  const controls = ctlRes.rows;
-  if (controls.length === 0) {
-    // No inventory to match against — clear any stale suggestions, leave user actions.
-    await pg.query(
-      `DELETE FROM vendor_assurance_cuec_control_mappings
-        WHERE cuec_id = ANY($1::uuid[]) AND mapping_status = 'suggested' AND organization_id = $2`,
-      [cuecIds, organizationId]
+  const phase1 = await withTenant(organizationId, async (): Promise<Phase1Result> => {
+    const cuecRes = await pg.query<CuecRow>(
+      `SELECT id, ordinal, cuec_text FROM vendor_assurance_cuecs
+        WHERE document_id = $1 AND organization_id = $2
+        ORDER BY ordinal ASC`,
+      [documentId, organizationId]
     );
-    return { matched: false, reason: "no_controls", cuecCount: cuecs.length, controlCount: 0, suggestionsConsidered: 0, suggestionsWritten: 0 };
+    const cuecs = cuecRes.rows;
+    if (cuecs.length === 0) {
+      return { done: { matched: false, reason: "no_cuecs", cuecCount: 0, controlCount: 0, suggestionsConsidered: 0, suggestionsWritten: 0 } };
+    }
+    const cuecIds = cuecs.map((c) => c.id);
+    const cuecIdByOrdinal = new Map<number, string>(cuecs.map((c) => [c.ordinal, c.id]));
+    const knownOrdinals = new Set<number>(cuecs.map((c) => c.ordinal));
+
+    const ctlRes = await pg.query<ControlRow>(
+      `SELECT id, name, description FROM controls
+        WHERE organization_id = $1 AND status = 'active'
+        ORDER BY name ASC
+        LIMIT $2`,
+      [organizationId, CUEC_MATCHER_MAX_CONTROLS]
+    );
+    const controls = ctlRes.rows;
+    if (controls.length === 0) {
+      // No inventory to match against — clear any stale suggestions, leave user actions.
+      await pg.query(
+        `DELETE FROM vendor_assurance_cuec_control_mappings
+          WHERE cuec_id = ANY($1::uuid[]) AND mapping_status = 'suggested' AND organization_id = $2`,
+        [cuecIds, organizationId]
+      );
+      return { done: { matched: false, reason: "no_controls", cuecCount: cuecs.length, controlCount: 0, suggestionsConsidered: 0, suggestionsWritten: 0 } };
+    }
+    const knownControlIdsLower = new Set<string>(controls.map((c) => c.id.toLowerCase()));
+
+    return { proceed: { cuecs, cuecIds, cuecIdByOrdinal, knownOrdinals, controls, knownControlIdsLower } };
+  });
+
+  if ("done" in phase1) {
+    return phase1.done;
   }
-  const knownControlIdsLower = new Set<string>(controls.map((c) => c.id.toLowerCase()));
+  const { cuecs, cuecIds, cuecIdByOrdinal, knownOrdinals, controls, knownControlIdsLower } = phase1.proceed;
 
   logger.info(
     { event: "cuec_matcher_llm_call_start", organizationId, documentId, cuecCount: cuecs.length, controlCount: controls.length, model: CUEC_MATCHER_MODEL_ID, prompt_version: CUEC_MATCHER_PROMPT_VERSION },
@@ -381,36 +415,43 @@ export async function runCuecMatcherForDocument(
 
   const suggestions = validated.matches.filter((m) => m.score >= MATCH_SCORE_MIN_THRESHOLD);
 
-  let written = 0;
-  const client = await pg.connect();
-  try {
-    await client.query("BEGIN");
-    // Drop stale auto-suggestions; preserve 'accepted' and 'dismissed' user actions.
-    await client.query(
-      `DELETE FROM vendor_assurance_cuec_control_mappings
-        WHERE cuec_id = ANY($1::uuid[]) AND mapping_status = 'suggested' AND organization_id = $2`,
-      [cuecIds, organizationId]
-    );
-    for (const m of suggestions) {
-      const cuecId = cuecIdByOrdinal.get(m.cuec_ordinal);
-      if (!cuecId) continue; // belt & suspenders — validator already checked
-      const ins = await client.query<{ id: string }>(
-        `INSERT INTO vendor_assurance_cuec_control_mappings
-           (organization_id, cuec_id, control_id, mapping_status, mapping_score, mapping_source, reason, created_by_user_id, updated_by_user_id)
-         VALUES ($1, $2, $3, 'suggested', $4, 'auto', NULL, NULL, NULL)
-         ON CONFLICT (cuec_id, control_id) DO NOTHING
-         RETURNING id`,
-        [organizationId, cuecId, m.control_id, m.score]
+  // ── Phase 3 (DB write) ──────────────────────────────────────────────────
+  // Opened only AFTER the LLM has returned. pg.connect() inside the scope
+  // auto-returns a savepoint client, so the BEGIN/COMMIT/ROLLBACK block is
+  // unchanged. The insert count escapes the scope as the return value.
+  const written = await withTenant(organizationId, async () => {
+    let insertedCount = 0;
+    const client = await pg.connect();
+    try {
+      await client.query("BEGIN");
+      // Drop stale auto-suggestions; preserve 'accepted' and 'dismissed' user actions.
+      await client.query(
+        `DELETE FROM vendor_assurance_cuec_control_mappings
+          WHERE cuec_id = ANY($1::uuid[]) AND mapping_status = 'suggested' AND organization_id = $2`,
+        [cuecIds, organizationId]
       );
-      if ((ins.rowCount ?? 0) > 0) written++;
+      for (const m of suggestions) {
+        const cuecId = cuecIdByOrdinal.get(m.cuec_ordinal);
+        if (!cuecId) continue; // belt & suspenders — validator already checked
+        const ins = await client.query<{ id: string }>(
+          `INSERT INTO vendor_assurance_cuec_control_mappings
+             (organization_id, cuec_id, control_id, mapping_status, mapping_score, mapping_source, reason, created_by_user_id, updated_by_user_id)
+           VALUES ($1, $2, $3, 'suggested', $4, 'auto', NULL, NULL, NULL)
+           ON CONFLICT (cuec_id, control_id) DO NOTHING
+           RETURNING id`,
+          [organizationId, cuecId, m.control_id, m.score]
+        );
+        if ((ins.rowCount ?? 0) > 0) insertedCount++;
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      try { await client.query("ROLLBACK"); } catch { /* ignore */ }
+      throw err;
+    } finally {
+      client.release();
     }
-    await client.query("COMMIT");
-  } catch (err) {
-    try { await client.query("ROLLBACK"); } catch { /* ignore */ }
-    throw err;
-  } finally {
-    client.release();
-  }
+    return insertedCount;
+  });
 
   logger.info(
     { event: "cuec_matcher_complete", organizationId, documentId, cuecCount: cuecs.length, controlCount: controls.length, considered: suggestions.length, written },

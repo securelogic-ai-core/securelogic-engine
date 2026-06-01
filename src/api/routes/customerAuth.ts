@@ -23,7 +23,7 @@ import { Router } from "express";
 import crypto from "crypto";
 import argon2 from "argon2";
 import rateLimit from "express-rate-limit";
-import { pg } from "../infra/postgres.js";
+import { pg, pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { recordAccountLockout } from "../lib/authAnomaly.js";
@@ -312,7 +312,11 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
     const rawApiKey            = generateApiKey();
     const keyHash              = crypto.createHash("sha256").update(rawApiKey).digest("hex");
 
-    const client = await pg.connect();
+    // A04-G1: org-bootstrap runs elevated. Signup is pre-auth — no org exists
+    // yet, so there is no app.current_org_id to set, and once DATABASE_URL
+    // repoints to the non-owner app_request role the organizations RLS policy
+    // would reject this INSERT. pgElevated connects as the owner channel.
+    const client = await pgElevated.connect();
     let orgId: string;
     let userId: string;
 

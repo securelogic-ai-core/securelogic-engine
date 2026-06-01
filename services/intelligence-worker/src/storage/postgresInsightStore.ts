@@ -1,4 +1,4 @@
-import { pg } from "../../../../src/api/infra/postgres.js";
+import { pgElevated } from "../../../../src/api/infra/postgres.js";
 
 export type PostgresInsightInput = {
   organizationId: string | null;
@@ -15,7 +15,7 @@ export type PostgresInsightInput = {
 };
 
 export async function saveInsight(insight: PostgresInsightInput): Promise<string | null> {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     INSERT INTO insights (
       organization_id,
@@ -67,7 +67,7 @@ export async function saveInsight(insight: PostgresInsightInput): Promise<string
 }
 
 export async function getInsights(organizationId: string | null, limit = 100) {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     SELECT *
     FROM insights

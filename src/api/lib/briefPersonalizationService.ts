@@ -305,50 +305,58 @@ export async function fetchOrgPlatformContext(
   orgId: string
 ): Promise<OrgPlatformContext> {
   // Lazy import so the pure-function exports can be imported by unit tests
-  // without triggering the DATABASE_URL check at module load time.
-  const { pg } = await import("../infra/postgres.js");
+  // without triggering the DATABASE_URL check at module load time. withTenant
+  // is pulled from the SAME dynamic import (not a top-level import) so that
+  // test-load contract is preserved.
+  const { pg, withTenant } = await import("../infra/postgres.js");
 
-  const [vendorsResult, risksResult, aiSystemsResult, obligationsResult] =
-    await Promise.all([
-      pg.query<VendorRecord>(
-        `SELECT id, name
-         FROM vendors
-         WHERE organization_id = $1
-           AND status = 'active'
-         ORDER BY name`,
-        [orgId]
-      ),
+  // RLS adoption (A04-G1 gap C'): scope the four reads to the org so they route
+  // through the tenant client after the app_request flip. Inside a withTenant
+  // scope every pg.query() targets the SINGLE tenant client; node-postgres
+  // cannot multiplex concurrent queries on one client (the previous Promise.all
+  // would throw under pg@9), so the reads are issued sequentially. They are
+  // independent SELECTs with no inter-query dependency — order does not affect
+  // results. No external I/O runs inside the scope.
+  return withTenant(orgId, async () => {
+    const vendorsResult = await pg.query<VendorRecord>(
+      `SELECT id, name
+       FROM vendors
+       WHERE organization_id = $1
+         AND status = 'active'
+       ORDER BY name`,
+      [orgId]
+    );
 
-      pg.query<RiskRecord>(
-        `SELECT id, title, description
-         FROM risks
-         WHERE organization_id = $1
-           AND status = 'open'`,
-        [orgId]
-      ),
+    const risksResult = await pg.query<RiskRecord>(
+      `SELECT id, title, description
+       FROM risks
+       WHERE organization_id = $1
+         AND status = 'open'`,
+      [orgId]
+    );
 
-      pg.query<AiSystemRecord>(
-        `SELECT id, name
-         FROM ai_systems
-         WHERE organization_id = $1
-         ORDER BY name`,
-        [orgId]
-      ),
+    const aiSystemsResult = await pg.query<AiSystemRecord>(
+      `SELECT id, name
+       FROM ai_systems
+       WHERE organization_id = $1
+       ORDER BY name`,
+      [orgId]
+    );
 
-      pg.query<ObligationRecord>(
-        `SELECT id, title, description
-         FROM obligations
-         WHERE organization_id = $1`,
-        [orgId]
-      )
-    ]);
+    const obligationsResult = await pg.query<ObligationRecord>(
+      `SELECT id, title, description
+       FROM obligations
+       WHERE organization_id = $1`,
+      [orgId]
+    );
 
-  return {
-    vendors: vendorsResult.rows,
-    risks: risksResult.rows,
-    ai_systems: aiSystemsResult.rows,
-    obligations: obligationsResult.rows
-  };
+    return {
+      vendors: vendorsResult.rows,
+      risks: risksResult.rows,
+      ai_systems: aiSystemsResult.rows,
+      obligations: obligationsResult.rows
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------

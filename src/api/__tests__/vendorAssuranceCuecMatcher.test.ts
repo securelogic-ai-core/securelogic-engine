@@ -21,7 +21,10 @@ vi.mock("../infra/postgres.js", () => ({
   pg: {
     query: pgQuerySpy,
     connect: vi.fn().mockResolvedValue({ query: clientQuerySpy, release: clientReleaseSpy })
-  }
+  },
+  // Split-phase RLS wrap (C3-3): transparent passthrough in unit context so the
+  // wrapped reads/writes run against the mocked pg exactly as before.
+  withTenant: (_orgId: string, fn: () => Promise<unknown>) => fn()
 }));
 
 import {
