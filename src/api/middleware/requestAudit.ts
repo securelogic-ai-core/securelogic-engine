@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { logger } from "../infra/logger.js";
-import { pg } from "../infra/postgres.js";
+import { pgElevated } from "../infra/postgres.js";
 
 /**
  * writeAuditLog — fire-and-forget Postgres write.
@@ -24,7 +24,13 @@ function writeAuditLog(
   const requestId =
     (req as any).requestId ?? req.get("x-request-id") ?? null;
 
-  pg.query(
+  // RLS adoption (A04-G1 gap C', PR-C2): writes go through pgElevated (owner
+  // pool, outside any tenant scope). audit_log is cross-tenant and org-nullable
+  // (organizationId falls back to null when the api_key carries no org), and
+  // this fires on res.finish for every authenticated request — there is no
+  // withTenant(orgId) scope here. Tier B grant (SELECT, INSERT) applies
+  // post-flip. The fail-open .catch below is unchanged.
+  pgElevated.query(
     `
     INSERT INTO audit_log
       (organization_id, api_key_id, actor_type, actor_label,

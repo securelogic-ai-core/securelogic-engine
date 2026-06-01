@@ -23,7 +23,7 @@
  *   });
  */
 
-import { pg } from "../infra/postgres.js";
+import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 
 export type AuditEventInput = {
@@ -57,7 +57,13 @@ export function writeAuditEvent(event: AuditEventInput): void {
 
 async function _writeAsync(event: AuditEventInput): Promise<void> {
   try {
-    await pg.query(
+    // RLS adoption (A04-G1 gap C', PR-C2): writes go through pgElevated (owner
+    // pool, outside any tenant scope). security_audit_log is cross-tenant and
+    // org-nullable — events fire from pre-auth contexts (requireApiKey) and for
+    // platform-level actions where no withTenant(orgId) scope exists. Tier B
+    // grant (SELECT, INSERT) applies post-flip; append-only is enforced by the
+    // immutability trigger. Fire-and-forget swallow below is unchanged.
+    await pgElevated.query(
       `
       INSERT INTO security_audit_log (
         organization_id,
