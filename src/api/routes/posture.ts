@@ -14,7 +14,7 @@
  */
 
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -111,7 +111,9 @@ router.post(
         return;
       }
 
-      const result = await computeAndSavePostureSnapshot(organizationId);
+      const result = await withTenant(organizationId, () =>
+        computeAndSavePostureSnapshot(organizationId)
+      );
 
       dispatchWebhookEvent({
         event_type: "posture.snapshot_created",

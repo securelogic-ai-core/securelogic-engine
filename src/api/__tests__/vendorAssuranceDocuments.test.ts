@@ -41,7 +41,10 @@ vi.mock("../infra/postgres.js", () => ({
       query: pgConnectClientQuerySpy,
       release: pgConnectClientReleaseSpy
     })
-  }
+  },
+  // Route-side RLS wrap (C3-1): transparent passthrough in unit context so the
+  // wrapped callee runs against the mocked `pg` exactly as before the wrap.
+  withTenant: (_orgId: string, fn: () => Promise<unknown>) => fn()
 }));
 
 vi.mock("../lib/auditLog.js", () => ({
