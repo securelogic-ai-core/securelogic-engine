@@ -29,7 +29,7 @@
  * Falls back to "#" if the env var is not set (safe for development).
  */
 
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { renderBriefEmail, renderBriefEmailText, type BriefEmailData, type EmailBriefItem, type EmailBriefCategory } from "./briefEmailRenderer.js";
 import type { BriefSynthesis } from "./briefSynthesizer.js";
@@ -390,64 +390,93 @@ export async function sendBrief(
   briefId: string,
   orgId: string
 ): Promise<SendBriefResult> {
-  // 1. Fetch the brief row
-  const briefResult = await pg.query<BriefRow>(
-    `SELECT id, organization_id, period_start, period_end, status,
-            signal_count,
-            (content_json->>'high_count')::text AS high_count,
-            (content_json->>'medium_count')::text AS medium_count,
-            (content_json->>'low_count')::text AS low_count,
-            content_json
-     FROM intelligence_briefs
-     WHERE id = $1 AND organization_id = $2`,
-    [briefId, orgId]
-  );
+  // ── Phase 1 (DB reads) ──────────────────────────────────────────────────
+  // All five SELECTs run inside ONE tenant scope, which closes BEFORE the
+  // Resend send loop begins — so no tenant transaction is held open across
+  // network I/O. The brief_not_found / brief_not_published throws stay inside
+  // the scope; withTenant ROLLBACKs and re-throws them unchanged, preserving
+  // the route's message-based 404/409 mapping.
+  const bundle = await withTenant(orgId, async () => {
+    // 1. Fetch the brief row
+    const briefResult = await pg.query<BriefRow>(
+      `SELECT id, organization_id, period_start, period_end, status,
+              signal_count,
+              (content_json->>'high_count')::text AS high_count,
+              (content_json->>'medium_count')::text AS medium_count,
+              (content_json->>'low_count')::text AS low_count,
+              content_json
+       FROM intelligence_briefs
+       WHERE id = $1 AND organization_id = $2`,
+      [briefId, orgId]
+    );
 
-  if (briefResult.rows.length === 0) {
-    throw new Error("brief_not_found");
-  }
+    if (briefResult.rows.length === 0) {
+      throw new Error("brief_not_found");
+    }
 
-  const brief = briefResult.rows[0]!;
+    const brief = briefResult.rows[0]!;
 
-  if (brief.status !== "published") {
-    throw new Error(`brief_not_published: status is '${brief.status}'`);
-  }
+    if (brief.status !== "published") {
+      throw new Error(`brief_not_published: status is '${brief.status}'`);
+    }
 
-  // 2. Fetch brief items (including is_personalized for preference filtering)
-  const itemsResult = await pg.query<BriefItemRow>(
-    `SELECT id, category, title, summary, severity, relevance, affected_cve,
-            sort_order, why_it_matters, recommended_actions, is_personalized
-     FROM intelligence_brief_items
-     WHERE brief_id = $1 AND organization_id = $2
-     ORDER BY sort_order ASC`,
-    [briefId, orgId]
-  );
+    // 2. Fetch brief items (including is_personalized for preference filtering)
+    const itemsResult = await pg.query<BriefItemRow>(
+      `SELECT id, category, title, summary, severity, relevance, affected_cve,
+              sort_order, why_it_matters, recommended_actions, is_personalized
+       FROM intelligence_brief_items
+       WHERE brief_id = $1 AND organization_id = $2
+       ORDER BY sort_order ASC`,
+      [briefId, orgId]
+    );
 
-  // 3. Fetch org name and plan
-  const orgResult = await pg.query<OrgRow>(
-    `SELECT name, plan FROM organizations WHERE id = $1`,
-    [orgId]
-  );
-  const orgName = orgResult.rows[0]?.name ?? "Your Organisation";
-  const orgPlan = orgResult.rows[0]?.plan ?? "free";
-  const isFreeTier = orgPlan === "free" || orgPlan === "starter";
+    // 3. Fetch org name and plan
+    const orgResult = await pg.query<OrgRow>(
+      `SELECT name, plan FROM organizations WHERE id = $1`,
+      [orgId]
+    );
+    const orgName = orgResult.rows[0]?.name ?? "Your Organisation";
+    const orgPlan = orgResult.rows[0]?.plan ?? "free";
+    const isFreeTier = orgPlan === "free" || orgPlan === "starter";
 
-  // 4. Fetch active subscribers with their delivery preferences
-  const subscribersResult = await pg.query<SubscriberRow>(
-    `SELECT id, email, name, min_severity, categories, notify_vendor_matches_only
-     FROM intelligence_brief_subscribers
-     WHERE organization_id = $1 AND active = TRUE
-     ORDER BY subscribed_at ASC`,
-    [orgId]
-  );
+    // 4. Fetch active subscribers with their delivery preferences
+    const subscribersResult = await pg.query<SubscriberRow>(
+      `SELECT id, email, name, min_severity, categories, notify_vendor_matches_only
+       FROM intelligence_brief_subscribers
+       WHERE organization_id = $1 AND active = TRUE
+       ORDER BY subscribed_at ASC`,
+      [orgId]
+    );
 
-  if (subscribersResult.rows.length === 0) {
+    // 5. Batch-check which subscriber emails are suppressed before sending.
+    const subscriberEmails = subscribersResult.rows.map(s => s.email.toLowerCase());
+    const suppressedResult = await pg.query<{ email: string }>(
+      `SELECT LOWER(email) AS email FROM email_suppressions
+       WHERE LOWER(email) = ANY($1::text[])`,
+      [subscriberEmails]
+    );
+    const suppressedEmails = new Set(suppressedResult.rows.map(r => r.email));
+
+    return {
+      brief,
+      allItems: itemsResult.rows,
+      orgName,
+      isFreeTier,
+      subscribers: subscribersResult.rows,
+      suppressedEmails
+    };
+  });
+
+  // No active subscribers — nothing to send. Early-return AFTER the read scope
+  // has closed; identical shape to before.
+  if (bundle.subscribers.length === 0) {
     return { sent: 0, failed: 0, skipped: true, skipped_filtered: 0, suppressed: 0, message: "no_active_subscribers" };
   }
 
+  const { brief, allItems, orgName, isFreeTier, subscribers, suppressedEmails } = bundle;
+
   const subject = buildSubject(brief.period_start, brief.period_end);
   const signalCount = parseInt(brief.signal_count, 10) || 0;
-  const allItems = itemsResult.rows;
 
   // Brief-level synthesis lives at content_json.synthesis. Read once here
   // and pass into every per-subscriber emailData literal below; the
@@ -457,22 +486,18 @@ export async function sendBrief(
   const executiveHeadline = synthesis?.headline ?? null;
   const executiveSummary = synthesis?.exec_summary ?? null;
 
-  // 5. Batch-check which subscriber emails are suppressed before sending.
-  const subscriberEmails = subscribersResult.rows.map(s => s.email.toLowerCase());
-  const suppressedResult = await pg.query<{ email: string }>(
-    `SELECT LOWER(email) AS email FROM email_suppressions
-     WHERE LOWER(email) = ANY($1::text[])`,
-    [subscriberEmails]
-  );
-  const suppressedEmails = new Set(suppressedResult.rows.map(r => r.email));
-
-  // 6. Send to each subscriber with per-subscriber preference filtering
+  // 6. Send to each subscriber with per-subscriber preference filtering.
+  // ── Phase 2 (Resend HTTP) ───────────────────────────────────────────────
+  // The send loop holds NO tenant transaction. Each subscriber's audit
+  // outcome is accumulated into auditRows and flushed once after the loop
+  // (Phase 3) — never inline, so nothing pins a tenant tx across a send.
   let sent = 0;
   let failed = 0;
   let skippedFiltered = 0;
   let suppressed = 0;
+  const auditRows: Array<{ subscriberId: string; status: "sent" | "failed" | "suppressed"; errorMessage: string | null }> = [];
 
-  for (const subscriber of subscribersResult.rows) {
+  for (const subscriber of subscribers) {
     // Skip suppressed addresses and record the outcome.
     if (suppressedEmails.has(subscriber.email.toLowerCase())) {
       suppressed++;
@@ -486,16 +511,7 @@ export async function sendBrief(
         },
         "Brief send skipped — subscriber email is suppressed"
       );
-      await pg.query(
-        `INSERT INTO intelligence_brief_sends (brief_id, subscriber_id, status, error_message)
-         VALUES ($1, $2, 'suppressed', 'email_suppressed')`,
-        [briefId, subscriber.id]
-      ).catch((err) => {
-        logger.warn(
-          { event: "brief_send_audit_failed", briefId, subscriberId: subscriber.id, err },
-          "Failed to record suppressed audit row"
-        );
-      });
+      auditRows.push({ subscriberId: subscriber.id, status: "suppressed", errorMessage: "email_suppressed" });
       continue;
     }
 
@@ -559,16 +575,7 @@ export async function sendBrief(
 
     if (result.ok) {
       sent++;
-      await pg.query(
-        `INSERT INTO intelligence_brief_sends (brief_id, subscriber_id, status)
-         VALUES ($1, $2, 'sent')`,
-        [briefId, subscriber.id]
-      ).catch((err) => {
-        logger.warn(
-          { event: "brief_send_audit_failed", briefId, subscriberId: subscriber.id, err },
-          "Failed to record send audit row"
-        );
-      });
+      auditRows.push({ subscriberId: subscriber.id, status: "sent", errorMessage: null });
 
       logger.info(
         { event: "brief_sent", briefId, subscriberId: subscriber.id, email: subscriber.email },
@@ -576,16 +583,7 @@ export async function sendBrief(
       );
     } else {
       failed++;
-      await pg.query(
-        `INSERT INTO intelligence_brief_sends (brief_id, subscriber_id, status, error_message)
-         VALUES ($1, $2, 'failed', $3)`,
-        [briefId, subscriber.id, result.error ?? "unknown_error"]
-      ).catch((err) => {
-        logger.warn(
-          { event: "brief_send_audit_failed", briefId, subscriberId: subscriber.id, err },
-          "Failed to record send audit row"
-        );
-      });
+      auditRows.push({ subscriberId: subscriber.id, status: "failed", errorMessage: result.error ?? "unknown_error" });
 
       logger.error(
         {
@@ -598,6 +596,34 @@ export async function sendBrief(
         "Intelligence Brief send failed"
       );
     }
+  }
+
+  // ── Phase 3 (DB write) ──────────────────────────────────────────────────
+  // Flush all accumulated audit rows in ONE tenant scope, opened only after
+  // the send loop has completed. Best-effort: a failure here is logged and
+  // swallowed so it never aborts a batch whose emails have already been sent
+  // (preserving the prior per-row "audit failure never aborts the batch"
+  // contract).
+  if (auditRows.length > 0) {
+    const values: unknown[] = [];
+    const placeholders: string[] = [];
+    let p = 1;
+    for (const row of auditRows) {
+      placeholders.push(`($${p++}, $${p++}, $${p++}, $${p++})`);
+      values.push(briefId, row.subscriberId, row.status, row.errorMessage);
+    }
+    await withTenant(orgId, () =>
+      pg.query(
+        `INSERT INTO intelligence_brief_sends (brief_id, subscriber_id, status, error_message)
+         VALUES ${placeholders.join(", ")}`,
+        values
+      )
+    ).catch((err) => {
+      logger.warn(
+        { event: "brief_send_audit_failed", briefId, orgId, rowCount: auditRows.length, err },
+        "Failed to record brief send audit rows"
+      );
+    });
   }
 
   return { sent, failed, skipped: false, skipped_filtered: skippedFiltered, suppressed };
