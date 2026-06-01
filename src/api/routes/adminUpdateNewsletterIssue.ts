@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { capturePublicationContext } from "../lib/briefPublicationContext.js";
 
@@ -75,7 +75,7 @@ router.patch("/newsletter-issues/:id", async (req, res) => {
 
     let resolvedPublicationContext: string | null;
     if (isNewSentTransition && orgId !== null) {
-      const captured = await capturePublicationContext(orgId, pg);
+      const captured = await withTenant(orgId, () => capturePublicationContext(orgId, pg));
       resolvedPublicationContext = captured !== null ? JSON.stringify(captured) : null;
     } else if (existing.status === "sent") {
       // Already published — preserve the stored context, do not overwrite

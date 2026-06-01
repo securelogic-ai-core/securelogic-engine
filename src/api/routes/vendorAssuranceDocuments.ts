@@ -33,7 +33,7 @@
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { createHash } from "node:crypto";
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -1122,7 +1122,9 @@ export async function getVendorAssuranceCuecs(req: Request, res: Response): Prom
     return;
   }
 
-  const cuecs = await loadCuecsWithMappings(documentId, organizationId);
+  const cuecs = await withTenant(organizationId, () =>
+    loadCuecsWithMappings(documentId, organizationId)
+  );
   res.status(200).json({
     document_id: documentId,
     cuecs,
@@ -1182,7 +1184,9 @@ export async function rematchVendorAssuranceCuecs(req: Request, res: Response): 
     ipAddress: req.ip ?? null
   });
 
-  const cuecs = await loadCuecsWithMappings(documentId, organizationId);
+  const cuecs = await withTenant(organizationId, () =>
+    loadCuecsWithMappings(documentId, organizationId)
+  );
   res.status(200).json({
     document_id: documentId,
     cuecs,
@@ -1444,7 +1448,9 @@ async function exportVendorAssuranceDocumentInternal(
 
   let bundle;
   try {
-    bundle = await buildExportBundle(documentId, organizationId, { exportedByUserId: req.userId ?? null });
+    bundle = await withTenant(organizationId, () =>
+      buildExportBundle(documentId, organizationId, { exportedByUserId: req.userId ?? null })
+    );
   } catch (err) {
     logger.error(
       { event: "vendor_assurance_export_bundle_failed", organizationId, documentId, format, err },
