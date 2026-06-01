@@ -35,6 +35,8 @@ test.db-*
 # =========================
 keys/
 *.pem
+# KeyStore.loadOrCreate writes PEM blocks inside JSON; *.pem above doesn't catch them.
+*-keypair.json
 
 # =========================
 # REDIS DUMP
