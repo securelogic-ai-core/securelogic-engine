@@ -1,6 +1,7 @@
 services:
   - type: web
     name: securelogic-engine
+    region: virginia
     env: node
     plan: starter
     buildCommand: npm ci --include=dev && npm run build
@@ -134,6 +135,7 @@ services:
 
   - type: web
     name: securelogic-engine-staging
+    region: virginia
     env: node
     plan: starter
     branch: develop
@@ -271,6 +273,7 @@ services:
 
   - type: worker
     name: securelogic-intelligence-worker
+    region: virginia
     env: node
     plan: starter
     buildCommand: npm ci --include=dev && tsc -p services/intelligence-worker/tsconfig.json
@@ -338,6 +341,7 @@ services:
 
   - type: worker
     name: securelogic-intelligence-worker-staging
+    region: virginia
     env: node
     plan: starter
     branch: develop
@@ -403,6 +407,7 @@ services:
 
   - type: worker
     name: securelogic-posture-worker
+    region: oregon
     env: node
     plan: starter
     buildCommand: npm ci --include=dev && tsc -p services/posture-worker/tsconfig.json
@@ -435,6 +440,7 @@ services:
 
   - type: worker
     name: securelogic-posture-worker-staging
+    region: virginia
     env: node
     plan: starter
     branch: develop
@@ -466,6 +472,7 @@ services:
 
   - type: web
     name: securelogic-app
+    region: oregon
     env: node
     plan: starter
     buildCommand: cd app && npm ci --include=dev && rm -rf .next && npm run build
@@ -506,6 +513,7 @@ services:
 
   - type: web
     name: securelogic-website
+    region: oregon
     env: node
     plan: starter
     buildCommand: cd website && npm ci --include=dev && npm run build
