@@ -1,9 +1,28 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // pg mock — pg.connect returns a client whose query is the spy.
+//
+// Since A04-G1 gap C' (PR-C1), loadTemplate runs inside withTenant() and gets
+// its client from createSavepointClient(requireTenantContext()) rather than
+// pg.connect(). The mocks below make those tenant primitives pass-throughs that
+// still route .query() to mockClientQuery, so the existing BEGIN/INSERT/COMMIT
+// query-tape and assertions are unchanged:
+//   - withTenant(orgId, fn) => fn()            (no real transaction)
+//   - requireTenantContext() => synthetic ctx  (carries the mock client)
+//   - createSavepointClient(ctx) => ctx.client (the mockClientQuery client)
+// pg.connect is retained for backward-compat but is no longer exercised.
 const { mockClientQuery, mockClientRelease } = vi.hoisted(() => ({
   mockClientQuery: vi.fn(),
   mockClientRelease: vi.fn(),
+}));
+const { mockSavepointClient, mockWithTenant } = vi.hoisted(() => ({
+  mockSavepointClient: {
+    query: mockClientQuery,
+    release: mockClientRelease,
+  },
+  mockWithTenant: vi.fn(
+    async (_orgId: string, fn: () => Promise<unknown>) => fn()
+  ),
 }));
 vi.mock("../infra/postgres.js", () => ({
   pg: {
@@ -13,6 +32,15 @@ vi.mock("../infra/postgres.js", () => ({
       release: mockClientRelease,
     }),
   },
+  withTenant: mockWithTenant,
+  requireTenantContext: vi.fn(() => ({
+    client: mockSavepointClient,
+    orgId: "test-org",
+    savepoint: { n: 0 },
+  })),
+}));
+vi.mock("../infra/tenantContext.js", () => ({
+  createSavepointClient: vi.fn(() => mockSavepointClient),
 }));
 
 const { mockWriteAuditEvent } = vi.hoisted(() => ({
@@ -38,6 +66,7 @@ const NEW_CONTROL_UUID = "44444444-4444-4444-8444-444444444444";
 beforeEach(() => {
   mockClientQuery.mockReset();
   mockClientRelease.mockReset();
+  mockWithTenant.mockClear();
   mockWriteAuditEvent.mockReset();
 });
 
@@ -158,7 +187,11 @@ describe("loadTemplate — per-industry happy path", () => {
       expect(auditArg.resourceId).toBeNull();
       expect(auditArg.payload.industry_id).toBe(industryId);
 
-      expect(mockClientRelease).toHaveBeenCalledTimes(1);
+      // The load runs inside a single tenant scope (savepoint client's
+      // release() is a no-op owned by withTenant, so the loader no longer
+      // calls client.release() directly — assert the scope was entered).
+      expect(mockWithTenant).toHaveBeenCalledTimes(1);
+      expect(mockWithTenant).toHaveBeenCalledWith(ORG_UUID, expect.any(Function));
     });
   }
 });
@@ -448,8 +481,9 @@ describe("loadTemplate — error handling", () => {
     expect(rollbackCalls.length).toBe(1);
     // Audit event NOT written on rollback.
     expect(mockWriteAuditEvent).not.toHaveBeenCalled();
-    // Client released.
-    expect(mockClientRelease).toHaveBeenCalledTimes(1);
+    // The load ran inside a tenant scope (withTenant owns client release;
+    // the loader no longer calls client.release() directly).
+    expect(mockWithTenant).toHaveBeenCalledTimes(1);
   });
 });
 
