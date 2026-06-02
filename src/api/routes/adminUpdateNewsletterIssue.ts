@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { pg, withTenant } from "../infra/postgres.js";
+import { pg, pgElevated, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { capturePublicationContext } from "../lib/briefPublicationContext.js";
 
@@ -14,7 +14,7 @@ router.patch("/newsletter-issues/:id", async (req, res) => {
       return;
     }
 
-    const existingResult = await pg.query(
+    const existingResult = await pgElevated.query(
       `
       SELECT
         id,
@@ -86,7 +86,7 @@ router.patch("/newsletter-issues/:id", async (req, res) => {
       resolvedPublicationContext = null;
     }
 
-    const result = await pg.query(
+    const result = await pgElevated.query(
       `
       UPDATE newsletter_issues
       SET
