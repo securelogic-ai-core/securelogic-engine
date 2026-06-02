@@ -188,10 +188,18 @@ Files involved (cross-org reads of global signals filtered to one org's perspect
 | `adminOpsHealth.ts:55` | `GET /admin/ops/health` (latest newsletter issue) | LIST-ALL | `pgElevated` |
 | `adminOpsHealth.ts:63` | `GET /admin/ops/health` (latest provider event) | LIST-ALL | `pgElevated` |
 | `adminOpsHealth.ts:71` | `GET /admin/ops/health` (paying-suppressed count, cross-org join) | LIST-ALL | `pgElevated` |
+| `adminApiKeys.ts:57` | `GET /admin/api-keys` (list; dual-mode — all keys or `?organization_id=` filter) | LIST-ALL | `pgElevated` |
+| `adminApiKeys.ts:125` | `POST /admin/api-keys` (org-existence check) | SINGLE-ORG-TARGET | `withTenant(body.organization_id, …)` † |
+| `adminApiKeys.ts:140` | `POST /admin/api-keys` (entitlement lift `UPDATE organizations`) | SINGLE-ORG-TARGET | `withTenant(body.organization_id, …)` † |
+| `adminApiKeys.ts:152` | `POST /admin/api-keys` (`INSERT api_keys`) | SINGLE-ORG-TARGET | `withTenant(body.organization_id, …)` † |
+| `adminApiKeys.ts:201` | `DELETE /admin/api-keys/:id` (revoke `UPDATE`) | OTHER — by-PK revoke, inherently cross-org-capable | `pgElevated` |
+| `adminApiKeys.ts:213` | `DELETE /admin/api-keys/:id` (existence/already-revoked recheck) | OTHER — by-PK, cross-org-capable | `pgElevated` |
+
+† The three POST sites run inside a **single** `withTenant(body.organization_id, …)` transaction (PR 7.b), not three independent scopes. This also makes them atomic — see the PR 7.b behavior-change note. By-PK DELETE is not org-scoped because a staff admin revokes any org's key by id; the two-step "look up org → withTenant" was rejected as over-engineering for a `requireAdminKey`-gated route.
 
 Caveat: `organizations` is the ROOT-TENANT table — whether `withTenant(id)` satisfies RLS for the SINGLE-ORG rows depends on the policy shape chosen for it in phase 2 (likely `id = current_setting('app.current_org_id')::uuid`, TBD). Line numbers in the table are as of `main 8495373c`; treat the route+method (column 2) as the durable anchor — line numbers will shift as code lands. Future per-file PRs should re-anchor at apply time.
 
-**Remaining `admin*.ts` — triage pending** (heaviest first: `adminApiKeys.ts` ×6; `adminSubscribers.ts` ×5; `adminPromoteNewsletterIssue.ts` ×4. Pg-free / no action: `adminBriefs.ts`, `adminEntitlements.ts`, `adminOpsDashboard.ts`. Done: `adminOrganizations.ts` (PR #128), `adminOpsHealth.ts` (this PR, all 8 → `pgElevated`).) If this inventory outgrows §3, extract to `docs/A04-G1-admin-surface-inventory.md` and leave a pointer here.
+**Remaining `admin*.ts` — triage pending** (heaviest first: `adminSubscribers.ts` ×5; `adminPromoteNewsletterIssue.ts` ×4. Pg-free / no action: `adminBriefs.ts`, `adminEntitlements.ts`, `adminOpsDashboard.ts`. Done: `adminOrganizations.ts` (PR #128), `adminOpsHealth.ts` (PR #129, all 8 → `pgElevated`), `adminApiKeys.ts` (PR 7.b, GET+DELETE → `pgElevated`, POST → single `withTenant`).) If this inventory outgrows §3, extract to `docs/A04-G1-admin-surface-inventory.md` and leave a pointer here.
 
 ### Migrations and admin scripts
 
