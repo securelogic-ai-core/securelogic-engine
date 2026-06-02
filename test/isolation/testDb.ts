@@ -165,6 +165,28 @@ async function seedOrg(
 }
 
 /**
+ * Seed one `findings` row for an org and return its id. Used by the RLS pilot
+ * test (test/isolation/findingsRls.test.ts) to give the tenant-isolation policy
+ * real rows to filter. Called as the owner/superuser connection (RLS bypassed),
+ * so seeding is unaffected by the policy.
+ *
+ * `assessment_id` is nullable since 20260410 (findings can come from
+ * non-assessment sources), so a finding needs no parent assessment — only the
+ * NOT-NULL-without-default columns: organization_id, title, severity,
+ * description. `source_type='manual'` satisfies the findings_source_type_check
+ * constraint. The caller owns the pool.
+ */
+export async function seedFinding(pool: Pool, orgId: string): Promise<string> {
+  const res = await pool.query<{ id: string }>(
+    `INSERT INTO findings (organization_id, title, severity, description, source_type)
+     VALUES ($1, $2, $3, $4, 'manual')
+     RETURNING id`,
+    [orgId, "Harness finding", "high", "seed finding for A04-G1 RLS pilot test"],
+  );
+  return res.rows[0].id;
+}
+
+/**
  * Drop, migrate and seed the test database. Returns the two seeded orgs.
  * The caller owns no pool — this opens and closes its own.
  */
