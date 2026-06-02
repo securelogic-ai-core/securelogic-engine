@@ -172,6 +172,27 @@ Files involved (cross-org reads of global signals filtered to one org's perspect
 
 **Treatment:** admin reads of customer data must set `app.current_org_id` to the *target* org (the one the operator is impersonating) — every admin route that takes an `organizationId` parameter must push it into the session GUC, exactly the same way customer routes push the requester's own org. Admin reads that legitimately span orgs (e.g. operator dashboard counting open findings across all orgs) must use the elevated path.
 
+**Concrete inventory (per-route — append as triage completes).** The admin surface is a systemic pre-flip workstream: **~25 `src/api/routes/admin*.ts` files use the raw `pg` proxy, none on `pgElevated`, almost none `withTenant`-wrapped** (audited 2026-06-01 @ `main 8495373c`). Each `pg.query` is classified LIST-ALL (→ elevated), SINGLE-ORG-TARGET (→ `withTenant(targetOrgId)`), or OTHER (provisioning/audit/aggregate → case-by-case). Multi-PR effort; entries are added per file as triaged.
+
+| File:line | Route | Class | Disposition |
+|-----------|-------|-------|-------------|
+| `adminOrganizations.ts:57` | `GET /organizations` (list-all) | LIST-ALL | elevated (`pgElevated`/`withElevated`) |
+| `adminOrganizations.ts:99` | `GET /organizations/:id` | SINGLE-ORG | `withTenant(id, …)` |
+| `adminOrganizations.ts:176` | `POST /organizations` (create) | OTHER — provisioning | elevated/owner (new row, no org to scope to; same class as Migrations & scripts below) |
+| `adminOrganizations.ts:289` | `PATCH /organizations/:id` | SINGLE-ORG | `withTenant(id, …)` |
+| `adminOpsHealth.ts:19` | `GET /admin/ops/health` (queued-deliveries count) | LIST-ALL | `pgElevated` |
+| `adminOpsHealth.ts:26` | `GET /admin/ops/health` (dead-letter count) | LIST-ALL | `pgElevated` |
+| `adminOpsHealth.ts:33` | `GET /admin/ops/health` (suppression count) | LIST-ALL | `pgElevated` |
+| `adminOpsHealth.ts:39` | `GET /admin/ops/health` (failed worker runs / 24h) | LIST-ALL | `pgElevated` |
+| `adminOpsHealth.ts:47` | `GET /admin/ops/health` (stale running workers) | LIST-ALL | `pgElevated` |
+| `adminOpsHealth.ts:55` | `GET /admin/ops/health` (latest newsletter issue) | LIST-ALL | `pgElevated` |
+| `adminOpsHealth.ts:63` | `GET /admin/ops/health` (latest provider event) | LIST-ALL | `pgElevated` |
+| `adminOpsHealth.ts:71` | `GET /admin/ops/health` (paying-suppressed count, cross-org join) | LIST-ALL | `pgElevated` |
+
+Caveat: `organizations` is the ROOT-TENANT table — whether `withTenant(id)` satisfies RLS for the SINGLE-ORG rows depends on the policy shape chosen for it in phase 2 (likely `id = current_setting('app.current_org_id')::uuid`, TBD). Line numbers in the table are as of `main 8495373c`; treat the route+method (column 2) as the durable anchor — line numbers will shift as code lands. Future per-file PRs should re-anchor at apply time.
+
+**Remaining `admin*.ts` — triage pending** (heaviest first: `adminApiKeys.ts` ×6; `adminSubscribers.ts` ×5; `adminPromoteNewsletterIssue.ts` ×4. Pg-free / no action: `adminBriefs.ts`, `adminEntitlements.ts`, `adminOpsDashboard.ts`. Done: `adminOrganizations.ts` (PR #128), `adminOpsHealth.ts` (this PR, all 8 → `pgElevated`).) If this inventory outgrows §3, extract to `docs/A04-G1-admin-surface-inventory.md` and leave a pointer here.
+
 ### Migrations and admin scripts
 
 `scripts/runMigrations.ts` runs DDL — under A1 it runs as the migration role, which is the owner; under A2 it runs as the owner with `row_security = on` and would be blocked from data-touching steps. Scripts in `scripts/` that mutate customer data (`backfill-vendor-assurance-cuecs.ts`, `seed-demo.ts`, `triggerBriefForOrg.ts`, `backfillRequirementDescriptions.ts`) face the same problem.
@@ -273,6 +294,8 @@ Auto-migrate makes every merge to `main` a production change. The phasing assume
 ## §4a. DATABASE_URL flip-set inventory (PR 7 reference)
 
 The phase-1 "flip" repoints `DATABASE_URL` from the DB owner to the non-owner `app_request` role (Decision A1) so RLS policies apply. **Every service that holds `DATABASE_URL` must flip in lockstep** — a service left on the owner role silently bypasses RLS; a service flipped without the owner channel (`MIGRATION_DATABASE_URL`, for any `pgElevated` cross-org work it does) silently reads zero rows. This is the authoritative list of what PR 7 touches.
+
+> **Scope note:** this inventory lists *services* that hold `DATABASE_URL` and flip in lockstep. It does **not** cover the in-engine *code paths* that break under RLS at the flip — those are catalogued in §3 (per-org loops, cross-org workers, **admin surface**, migrations/scripts). The admin-surface route rework (§3 "Admin surface" → concrete inventory) is a required pre-flip workstream tracked there, not in this table.
 
 ### Holders declared in `render.yaml`
 

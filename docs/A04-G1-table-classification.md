@@ -66,6 +66,7 @@ Five overlapping passes; explicit residual-risk acknowledgement at the end of §
 | `dependencies` | yes, NOT NULL | CUSTOMER-DATA | `20260422_dependency_primitives.sql` |
 | `dependency_assessments` | yes, NOT NULL | CUSTOMER-DATA | `20260425_dependency_review_workflow.sql` |
 | `domain_scores` | no | INDIRECT | FK `posture_snapshot_id → posture_snapshots.organization_id`; `20260410_platform_primitives.sql:121` |
+| `email_provider_events` | no | SHARED-REF | global email-provider event log (Resend webhook); writer `emailProviderWebhook.ts:74` inserts (provider, provider_event_id, event_type, email, payload) — no org column; `TENANT_ROUTE_CLASSIFICATION.md` marks touching routes tenant-irrelevant. ⚠️ no `CREATE TABLE` migration in `db/migrations/` on develop — schema-in-DB only (migration gap, reconcile separately) |
 | `email_suppressions` | no | SHARED-REF | platform-wide email block list; migration comment line 9: "no org scoping needed". Read by `alertEmailService.ts:41` and customer-auth flows |
 | `evidence` | yes, NOT NULL | CUSTOMER-DATA | `20260420_evidence_primitives.sql` |
 | `findings` | no | INDIRECT | FK `assessment_id → assessments.organization_id`; cross-org isolation harness (E1-G1) verifies this at app-layer today |

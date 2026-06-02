@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { pg } from "../infra/postgres.js"
+import { pgElevated } from "../infra/postgres.js"
 import { logger } from "../infra/logger.js"
 
 const router = Router()
@@ -16,27 +16,27 @@ router.get("/ops/health", async (_req, res) => {
       latestProviderEventResult,
       suppressedPayingResult
     ] = await Promise.all([
-      pg.query(
+      pgElevated.query(
         `
         SELECT COUNT(*)::int AS queued_count
         FROM newsletter_deliveries
         WHERE status = 'queued'
         `
       ),
-      pg.query(
+      pgElevated.query(
         `
         SELECT COUNT(*)::int AS dead_letter_count
         FROM newsletter_deliveries
         WHERE dead_lettered_at IS NOT NULL
         `
       ),
-      pg.query(
+      pgElevated.query(
         `
         SELECT COUNT(*)::int AS suppression_count
         FROM email_suppressions
         `
       ),
-      pg.query(
+      pgElevated.query(
         `
         SELECT COUNT(*)::int AS failed_worker_runs_last_24h
         FROM worker_runs
@@ -44,7 +44,7 @@ router.get("/ops/health", async (_req, res) => {
           AND started_at >= NOW() - INTERVAL '24 hours'
         `
       ),
-      pg.query(
+      pgElevated.query(
         `
         SELECT COUNT(*)::int AS stale_running_workers
         FROM worker_runs
@@ -52,7 +52,7 @@ router.get("/ops/health", async (_req, res) => {
           AND started_at < NOW() - INTERVAL '5 minutes'
         `
       ),
-      pg.query(
+      pgElevated.query(
         `
         SELECT id, title, status, created_at
         FROM newsletter_issues
@@ -60,7 +60,7 @@ router.get("/ops/health", async (_req, res) => {
         LIMIT 1
         `
       ),
-      pg.query(
+      pgElevated.query(
         `
         SELECT provider, event_type, email, created_at
         FROM email_provider_events
@@ -68,7 +68,7 @@ router.get("/ops/health", async (_req, res) => {
         LIMIT 1
         `
       ),
-      pg.query(
+      pgElevated.query(
         `
         SELECT COUNT(DISTINCT u.id)::int AS suppressed_paying_count
         FROM users u
