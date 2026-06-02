@@ -180,10 +180,18 @@ Files involved (cross-org reads of global signals filtered to one org's perspect
 | `adminOrganizations.ts:99` | `GET /organizations/:id` | SINGLE-ORG | `withTenant(id, …)` |
 | `adminOrganizations.ts:176` | `POST /organizations` (create) | OTHER — provisioning | elevated/owner (new row, no org to scope to; same class as Migrations & scripts below) |
 | `adminOrganizations.ts:289` | `PATCH /organizations/:id` | SINGLE-ORG | `withTenant(id, …)` |
+| `adminOpsHealth.ts:19` | `GET /admin/ops/health` (queued-deliveries count) | LIST-ALL | `pgElevated` |
+| `adminOpsHealth.ts:26` | `GET /admin/ops/health` (dead-letter count) | LIST-ALL | `pgElevated` |
+| `adminOpsHealth.ts:33` | `GET /admin/ops/health` (suppression count) | LIST-ALL | `pgElevated` |
+| `adminOpsHealth.ts:39` | `GET /admin/ops/health` (failed worker runs / 24h) | LIST-ALL | `pgElevated` |
+| `adminOpsHealth.ts:47` | `GET /admin/ops/health` (stale running workers) | LIST-ALL | `pgElevated` |
+| `adminOpsHealth.ts:55` | `GET /admin/ops/health` (latest newsletter issue) | LIST-ALL | `pgElevated` |
+| `adminOpsHealth.ts:63` | `GET /admin/ops/health` (latest provider event) | LIST-ALL | `pgElevated` |
+| `adminOpsHealth.ts:71` | `GET /admin/ops/health` (paying-suppressed count, cross-org join) | LIST-ALL | `pgElevated` |
 
 Caveat: `organizations` is the ROOT-TENANT table — whether `withTenant(id)` satisfies RLS for the SINGLE-ORG rows depends on the policy shape chosen for it in phase 2 (likely `id = current_setting('app.current_org_id')::uuid`, TBD). Line numbers in the table are as of `main 8495373c`; treat the route+method (column 2) as the durable anchor — line numbers will shift as code lands. Future per-file PRs should re-anchor at apply time.
 
-**Remaining `admin*.ts` — triage pending** (heaviest first: `adminOpsHealth.ts` ×8 — ops dashboard, likely cross-org aggregates → elevated; `adminApiKeys.ts` ×6; `adminSubscribers.ts` ×5; `adminPromoteNewsletterIssue.ts` ×4. Pg-free / no action: `adminBriefs.ts`, `adminEntitlements.ts`, `adminOpsDashboard.ts`). If this inventory outgrows §3, extract to `docs/A04-G1-admin-surface-inventory.md` and leave a pointer here.
+**Remaining `admin*.ts` — triage pending** (heaviest first: `adminApiKeys.ts` ×6; `adminSubscribers.ts` ×5; `adminPromoteNewsletterIssue.ts` ×4. Pg-free / no action: `adminBriefs.ts`, `adminEntitlements.ts`, `adminOpsDashboard.ts`. Done: `adminOrganizations.ts` (PR #128), `adminOpsHealth.ts` (this PR, all 8 → `pgElevated`).) If this inventory outgrows §3, extract to `docs/A04-G1-admin-surface-inventory.md` and leave a pointer here.
 
 ### Migrations and admin scripts
 
