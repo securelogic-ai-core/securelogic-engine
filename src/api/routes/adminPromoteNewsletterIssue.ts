@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { pg } from "../infra/postgres.js"
+import { pgElevated } from "../infra/postgres.js"
 import { logger } from "../infra/logger.js"
 import { canPromoteIssue } from "../lib/newsletterLifecycle.js"
 
@@ -14,7 +14,7 @@ router.post("/newsletter-issues/:id/promote", async (req, res) => {
       return
     }
 
-    const issueResult = await pg.query(
+    const issueResult = await pgElevated.query(
       `
       SELECT id, organization_id, title, status, content_html, created_at
       FROM newsletter_issues
@@ -49,17 +49,17 @@ router.post("/newsletter-issues/:id/promote", async (req, res) => {
     }
 
     const subscriberResult = issue.organization_id
-      ? await pg.query(
+      ? await pgElevated.query(
           `SELECT COUNT(*)::int AS count FROM subscribers WHERE organization_id = $1 AND status = 'active'`,
           [issue.organization_id]
         )
-      : await pg.query(
+      : await pgElevated.query(
           `SELECT COUNT(*)::int AS count FROM subscribers WHERE organization_id IS NULL AND status = 'active'`
         )
 
     const activeSubscriberCount = Number(subscriberResult.rows[0]?.count ?? 0)
 
-    const updateResult = await pg.query(
+    const updateResult = await pgElevated.query(
       `
       UPDATE newsletter_issues
       SET status = 'queued',
