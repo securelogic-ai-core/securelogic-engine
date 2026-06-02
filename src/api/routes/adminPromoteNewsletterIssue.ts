@@ -64,11 +64,23 @@ router.post("/newsletter-issues/:id/promote", async (req, res) => {
       UPDATE newsletter_issues
       SET status = 'queued',
           updated_at = NOW()
-      WHERE id = $1
+      WHERE id = $1 AND status = 'draft'
       RETURNING id, organization_id, title, status, created_at
       `,
       [issueId]
     )
+
+    // The issue existed and was 'draft' at the SELECT above, so the only way the
+    // guarded UPDATE affects 0 rows is a concurrent promote flipping it out of
+    // 'draft' between that read and this write (TOCTOU) — report the race, don't
+    // silently return ok:true with a null issue.
+    if ((updateResult.rowCount ?? 0) === 0) {
+      res.status(409).json({
+        error: "issue_state_changed",
+        message: "Issue is no longer in draft state — likely promoted concurrently"
+      })
+      return
+    }
 
     res.status(200).json({
       ok: true,
