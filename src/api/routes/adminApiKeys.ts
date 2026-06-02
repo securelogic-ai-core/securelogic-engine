@@ -1,6 +1,6 @@
 import { Router } from "express";
 import crypto from "crypto";
-import { pg } from "../infra/postgres.js";
+import { pg, pgElevated, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 
 const router = Router();
@@ -54,7 +54,7 @@ router.get("/api-keys", async (req, res) => {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    const result = await pg.query(
+    const result = await pgElevated.query(
       `
       SELECT
         id,
@@ -121,44 +121,60 @@ router.post("/api-keys", async (req, res) => {
       return;
     }
 
-    // Verify organization exists
-    const orgCheck = await pg.query(
-      `SELECT id FROM organizations WHERE id = $1`,
-      [organizationId]
-    );
+    // RLS adoption (A04-G1 PR 7.b): the org-existence check, the entitlement
+    // lift, and the api_key INSERT now run inside ONE withTenant transaction
+    // scoped to organization_id. Inside this scope pg.query() routes to the
+    // tenant client (SET LOCAL app.current_org_id). This also makes the three
+    // writes atomic — previously they autocommitted independently, so an INSERT
+    // failure after the UPDATE left the org's entitlement_level/plan orphaned.
+    const outcome = await withTenant(organizationId, async () => {
+      // Verify organization exists
+      const orgCheck = await pg.query(
+        `SELECT id FROM organizations WHERE id = $1`,
+        [organizationId]
+      );
 
-    if ((orgCheck.rowCount ?? 0) === 0) {
+      if ((orgCheck.rowCount ?? 0) === 0) {
+        // Abort before the UPDATE/INSERT run. The transaction has executed only
+        // a SELECT, so commit-vs-rollback is immaterial — nothing was written.
+        return { ok: false as const };
+      }
+
+      // Entitlement is an org property. If the admin is granting a non-starter
+      // tier, lift the org's entitlement_level (and plan, kept in lock-step).
+      // Skip when the request asks for 'starter' to avoid silently downgrading
+      // a paying org if an admin creates an additional key.
+      if (entitlementLevel !== "starter") {
+        await pg.query(
+          `UPDATE organizations
+              SET entitlement_level = $1,
+                  plan              = $1
+            WHERE id = $2 AND entitlement_level <> $1`,
+          [entitlementLevel, organizationId]
+        );
+      }
+
+      const rawKey = generateApiKey();
+      const keyHash = crypto.createHash("sha256").update(rawKey).digest("hex");
+
+      const result = await pg.query(
+        `
+        INSERT INTO api_keys (organization_id, label, key_hash, status, created_at)
+        VALUES ($1, $2, $3, 'active', NOW())
+        RETURNING id, organization_id, label, status, created_at
+        `,
+        [organizationId, label, keyHash]
+      );
+
+      return { ok: true as const, row: result.rows[0], rawKey };
+    });
+
+    if (!outcome.ok) {
       res.status(404).json({ error: "organization_not_found" });
       return;
     }
 
-    // Entitlement is an org property. If the admin is granting a non-starter
-    // tier, lift the org's entitlement_level (and plan, kept in lock-step).
-    // Skip when the request asks for 'starter' to avoid silently downgrading
-    // a paying org if an admin creates an additional key.
-    if (entitlementLevel !== "starter") {
-      await pg.query(
-        `UPDATE organizations
-            SET entitlement_level = $1,
-                plan              = $1
-          WHERE id = $2 AND entitlement_level <> $1`,
-        [entitlementLevel, organizationId]
-      );
-    }
-
-    const rawKey = generateApiKey();
-    const keyHash = crypto.createHash("sha256").update(rawKey).digest("hex");
-
-    const result = await pg.query(
-      `
-      INSERT INTO api_keys (organization_id, label, key_hash, status, created_at)
-      VALUES ($1, $2, $3, 'active', NOW())
-      RETURNING id, organization_id, label, status, created_at
-      `,
-      [organizationId, label, keyHash]
-    );
-
-    const row = result.rows[0];
+    const { row, rawKey } = outcome;
 
     logger.info(
       {
@@ -198,7 +214,7 @@ router.delete("/api-keys/:id", async (req, res) => {
       return;
     }
 
-    const result = await pg.query(
+    const result = await pgElevated.query(
       `
       UPDATE api_keys
       SET status = 'revoked', revoked_at = NOW()
@@ -210,7 +226,7 @@ router.delete("/api-keys/:id", async (req, res) => {
 
     if ((result.rowCount ?? 0) === 0) {
       // Check if key exists at all vs already revoked
-      const exists = await pg.query(`SELECT id, status FROM api_keys WHERE id = $1`, [id]);
+      const exists = await pgElevated.query(`SELECT id, status FROM api_keys WHERE id = $1`, [id]);
 
       if ((exists.rowCount ?? 0) === 0) {
         res.status(404).json({ error: "api_key_not_found" });
