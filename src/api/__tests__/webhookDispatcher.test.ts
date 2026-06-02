@@ -15,8 +15,11 @@ const {
   agentCloseMock: vi.fn().mockResolvedValue(undefined),
 }));
 
+// A04-G1 PR β1: the dispatcher now talks to the DB via `pgElevated` (owner
+// pool, insulated from any request-path tenant scope), not the ambient `pg`
+// proxy. Mock that handle instead; the assertions below are unchanged.
 vi.mock("../infra/postgres.js", () => ({
-  pg: { query: pgQueryMock },
+  pgElevated: { query: pgQueryMock },
 }));
 
 vi.mock("../infra/logger.js", () => ({

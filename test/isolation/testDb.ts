@@ -187,6 +187,29 @@ export async function seedFinding(pool: Pool, orgId: string): Promise<string> {
 }
 
 /**
+ * Seed one active `webhook_endpoints` row for an org and return its id. Used by
+ * the A04-G1 PR β1 dispatcher test (test/isolation/webhookDispatcherElevated
+ * .test.ts). The URL defaults to a loopback address so the dispatcher's SSRF
+ * guard (assertSafeWebhookUrl) rejects it deterministically — exercising the
+ * INSERT + scheduleRetry DB writes without any real network I/O. `event_types`
+ * defaults to ['*'] so it matches any event. Seed as the owner (RLS irrelevant
+ * — webhook tables carry no policy). The caller owns the pool.
+ */
+export async function seedWebhookEndpoint(
+  pool: Pool,
+  orgId: string,
+  url = "http://127.0.0.1:9/webhook",
+): Promise<string> {
+  const res = await pool.query<{ id: string }>(
+    `INSERT INTO webhook_endpoints (organization_id, url, secret, status, event_types)
+     VALUES ($1, $2, $3, 'active', ARRAY['*'])
+     RETURNING id`,
+    [orgId, url, "harness-webhook-secret"],
+  );
+  return res.rows[0].id;
+}
+
+/**
  * Drop, migrate and seed the test database. Returns the two seeded orgs.
  * The caller owns no pool — this opens and closes its own.
  */

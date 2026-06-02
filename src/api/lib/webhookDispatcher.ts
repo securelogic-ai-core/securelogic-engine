@@ -1,6 +1,30 @@
+/**
+ * webhookDispatcher.ts — outbound webhook fan-out and delivery bookkeeping.
+ *
+ * RLS adoption (A04-G1 PR β1): all DB access goes through `pgElevated` (the
+ * owner pool, outside any tenant scope), NOT the ambient `pg` proxy. The
+ * dispatcher runs as fire-and-forget continuations — `dispatchWebhookEvent`
+ * fans out to `deliverWebhook(...)` per endpoint WITHOUT awaiting (preserving
+ * the best-effort, off-request-path delivery contract), and the callers
+ * (`findings`/`risks`/`posture`/`vendorAssessments` write routes) invoke it
+ * without awaiting. Once those routes are wrapped in `asTenant()` (β2+), an
+ * ambient `pg.query()` here would execute AFTER the request transaction has
+ * committed and released its tenant client — a use-after-release on the pooled
+ * connection. `pgElevated` is a separate pool whose `.query()` bypasses the
+ * proxy and the tenant AsyncLocalStorage entirely, so the dispatcher's
+ * connection lifecycle is wholly independent of any caller's request scope.
+ *
+ * This mirrors the established `auditLog.ts` pattern (writeAuditEvent →
+ * pgElevated). Both `webhook_endpoints` and `webhook_deliveries` are
+ * CUSTOMER-DATA; isolation on this owner channel is provided by every query
+ * filtering/writing `organization_id` explicitly (the event payload carries
+ * it), consistent with the existing owner-path enumeration in
+ * `startupCheck.ts`. See docs/A04-G1-pr-beta-design.md (Option 2).
+ */
+
 import crypto from "crypto";
 import { fetch as undiciFetch } from "undici";
-import { pg } from "../infra/postgres.js";
+import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { buildWebhookHeaders } from "./webhookSigning.js";
 import {
@@ -16,7 +40,7 @@ export interface WebhookEvent {
 }
 
 export async function dispatchWebhookEvent(event: WebhookEvent): Promise<void> {
-  const endpointsResult = await pg.query<{
+  const endpointsResult = await pgElevated.query<{
     id: string;
     url: string;
     secret: string;
@@ -57,7 +81,7 @@ export async function deliverWebhook(
 ): Promise<{ deliveryId: string; status: string; responseStatus: number | null }> {
   const headers = buildWebhookHeaders(payload, endpoint.secret);
 
-  const deliveryResult = await pg.query<{ id: string }>(
+  const deliveryResult = await pgElevated.query<{ id: string }>(
     `INSERT INTO webhook_deliveries
        (webhook_endpoint_id, organization_id, event_type, payload, status)
      VALUES ($1, $2, $3, $4::jsonb, 'pending')
@@ -119,7 +143,7 @@ export async function deliverWebhook(
 
     if (response.ok) {
       const responseBody = await response.text().catch(() => "");
-      await pg.query(
+      await pgElevated.query(
         `UPDATE webhook_deliveries
          SET status = 'delivered',
              attempt_count = attempt_count + 1,
@@ -129,7 +153,7 @@ export async function deliverWebhook(
          WHERE id = $3`,
         [response.status, responseBody.slice(0, 500), deliveryId]
       );
-      await pg.query(
+      await pgElevated.query(
         `UPDATE webhook_endpoints
          SET last_success_at = NOW(), failure_count = 0
          WHERE id = $1`,
@@ -165,7 +189,7 @@ async function scheduleRetry(
   responseBody: string | null,
   errorMessage: string
 ): Promise<void> {
-  const result = await pg.query<{ attempt_count: number }>(
+  const result = await pgElevated.query<{ attempt_count: number }>(
     `UPDATE webhook_deliveries
      SET attempt_count = attempt_count + 1,
          response_status = $1,
@@ -178,12 +202,12 @@ async function scheduleRetry(
   const attempts = result.rows[0]?.attempt_count ?? 1;
 
   if (attempts >= 3) {
-    await pg.query(
+    await pgElevated.query(
       `UPDATE webhook_deliveries SET status = 'failed' WHERE id = $1`,
       [deliveryId]
     );
     // Auto-disable endpoint after 10 consecutive failures
-    await pg.query(
+    await pgElevated.query(
       `UPDATE webhook_endpoints
        SET failure_count = failure_count + 1,
            last_failure_at = NOW(),
@@ -193,7 +217,7 @@ async function scheduleRetry(
     );
   } else {
     const delayMinutes = attempts === 1 ? 1 : 5;
-    await pg.query(
+    await pgElevated.query(
       `UPDATE webhook_deliveries
        SET status = 'retrying',
            next_retry_at = NOW() + ($2 * INTERVAL '1 minute')
