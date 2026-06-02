@@ -14,6 +14,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { validateFindingCreate } from "../lib/findingValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
@@ -66,6 +67,15 @@ function isIsoDate(v: unknown): v is string {
    POST /api/findings
    Create a new finding for the requesting organization.
    When source_type='risk', source_id must belong to the org.
+
+   A04-G1 PR α: deliberately NOT wrapped in asTenant. The read routes below
+   (GET list / summary / :id) are wrapped; the write paths (this POST and the
+   PATCH below) are deferred to a later PR because they schedule fire-and-forget
+   work — dispatchWebhookEvent() issues ambient pg.query() calls that are not
+   awaited, so under a request-transaction wrap they would run as continuations
+   AFTER the wrap commits and releases the tenant client (use-after-release on
+   the pooled connection). Wrapping the writes needs that side-effect lifecycle
+   handled explicitly. See docs/A04-G1-request-scope-wrap-design.md.
    ========================================================= */
 
 router.post(
@@ -222,7 +232,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -415,7 +425,7 @@ router.get(
       );
       res.status(500).json({ error: "findings_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -428,7 +438,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -483,7 +493,7 @@ router.get(
       logger.error({ event: "findings_summary_failed", err }, "GET /api/findings/summary failed");
       res.status(500).json({ error: "findings_summary_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -497,7 +507,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -567,7 +577,7 @@ router.get(
       );
       res.status(500).json({ error: "finding_get_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
