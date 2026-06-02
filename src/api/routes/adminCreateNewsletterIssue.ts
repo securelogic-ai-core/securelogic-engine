@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { pg, withTenant } from "../infra/postgres.js";
+import { pg, pgElevated, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { capturePublicationContext } from "../lib/briefPublicationContext.js";
 
@@ -51,7 +51,7 @@ router.post("/newsletter-issues", async (req, res) => {
 
     // If organizationId provided, verify it exists
     if (organizationId) {
-      const orgResult = await pg.query(
+      const orgResult = await pgElevated.query(
         `SELECT id FROM organizations WHERE id = $1 LIMIT 1`,
         [organizationId]
       );
@@ -69,7 +69,7 @@ router.post("/newsletter-issues", async (req, res) => {
         ? await withTenant(organizationId, () => capturePublicationContext(organizationId, pg))
         : null;
 
-    const result = await pg.query(
+    const result = await pgElevated.query(
       `
       INSERT INTO newsletter_issues (
         organization_id,
