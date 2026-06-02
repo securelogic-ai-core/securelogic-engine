@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { pg } from "../infra/postgres.js"
+import { pgElevated } from "../infra/postgres.js"
 import { logger } from "../infra/logger.js"
 import { canPromoteIssue } from "../lib/newsletterLifecycle.js"
 
@@ -14,7 +14,7 @@ router.post("/newsletter-issues/:id/promote", async (req, res) => {
       return
     }
 
-    const issueResult = await pg.query(
+    const issueResult = await pgElevated.query(
       `
       SELECT id, organization_id, title, status, content_html, created_at
       FROM newsletter_issues
@@ -49,26 +49,38 @@ router.post("/newsletter-issues/:id/promote", async (req, res) => {
     }
 
     const subscriberResult = issue.organization_id
-      ? await pg.query(
+      ? await pgElevated.query(
           `SELECT COUNT(*)::int AS count FROM subscribers WHERE organization_id = $1 AND status = 'active'`,
           [issue.organization_id]
         )
-      : await pg.query(
+      : await pgElevated.query(
           `SELECT COUNT(*)::int AS count FROM subscribers WHERE organization_id IS NULL AND status = 'active'`
         )
 
     const activeSubscriberCount = Number(subscriberResult.rows[0]?.count ?? 0)
 
-    const updateResult = await pg.query(
+    const updateResult = await pgElevated.query(
       `
       UPDATE newsletter_issues
       SET status = 'queued',
           updated_at = NOW()
-      WHERE id = $1
+      WHERE id = $1 AND status = 'draft'
       RETURNING id, organization_id, title, status, created_at
       `,
       [issueId]
     )
+
+    // The issue existed and was 'draft' at the SELECT above, so the only way the
+    // guarded UPDATE affects 0 rows is a concurrent promote flipping it out of
+    // 'draft' between that read and this write (TOCTOU) — report the race, don't
+    // silently return ok:true with a null issue.
+    if ((updateResult.rowCount ?? 0) === 0) {
+      res.status(409).json({
+        error: "issue_state_changed",
+        message: "Issue is no longer in draft state — likely promoted concurrently"
+      })
+      return
+    }
 
     res.status(200).json({
       ok: true,

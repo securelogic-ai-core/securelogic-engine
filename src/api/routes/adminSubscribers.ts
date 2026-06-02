@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+import { pg, pgElevated, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 
 const router = Router();
@@ -39,7 +39,7 @@ router.get("/subscribers", async (req, res) => {
     const useCursor = Boolean(beforeCreatedAt && beforeId);
 
     const result = useCursor
-      ? await pg.query(
+      ? await pgElevated.query(
           `
           SELECT
             id,
@@ -55,7 +55,7 @@ router.get("/subscribers", async (req, res) => {
           `,
           [limit, beforeCreatedAt, beforeId]
         )
-      : await pg.query(
+      : await pgElevated.query(
           `
           SELECT
             id,
@@ -127,23 +127,25 @@ router.post("/subscribers", async (req, res) => {
       return;
     }
 
-    const result = await pg.query(
-      `
-      INSERT INTO subscribers (
-        organization_id,
-        email,
-        tier,
-        status,
-        created_at
+    const result = await withTenant(organizationId, () =>
+      pg.query(
+        `
+        INSERT INTO subscribers (
+          organization_id,
+          email,
+          tier,
+          status,
+          created_at
+        )
+        VALUES ($1,$2,$3,$4,NOW())
+        ON CONFLICT (organization_id, email)
+        DO UPDATE SET
+          tier = EXCLUDED.tier,
+          status = EXCLUDED.status
+        RETURNING id, organization_id, email, tier, status, created_at
+        `,
+        [organizationId, email, tier, status]
       )
-      VALUES ($1,$2,$3,$4,NOW())
-      ON CONFLICT (organization_id, email)
-      DO UPDATE SET
-        tier = EXCLUDED.tier,
-        status = EXCLUDED.status
-      RETURNING id, organization_id, email, tier, status, created_at
-      `,
-      [organizationId, email, tier, status]
     );
 
     res.status(200).json({
@@ -185,7 +187,7 @@ router.patch("/subscribers/:id", async (req, res) => {
       return;
     }
 
-    const result = await pg.query(
+    const result = await pgElevated.query(
       `
       UPDATE subscribers
       SET
@@ -225,7 +227,7 @@ router.delete("/subscribers/:id", async (req, res) => {
       return;
     }
 
-    const result = await pg.query(
+    const result = await pgElevated.query(
       `
       DELETE FROM subscribers
       WHERE id = $1
