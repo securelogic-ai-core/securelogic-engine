@@ -119,6 +119,62 @@ function txControlKeyword(value: unknown): TxControl | null {
 }
 
 /**
+ * A04-G1 PR γ.0 — savepoint-safety guard error.
+ *
+ * `createSavepointClient` rewrites ONLY the bare `BEGIN`/`COMMIT`/`ROLLBACK`
+ * form into SAVEPOINT semantics (see `txControlKeyword`). Any other
+ * transaction-control or session-level statement issued on the savepoint-
+ * rewritten tenant client would execute UN-rewritten against the ambient
+ * request transaction — a real nested BEGIN, a session lock that rides the
+ * pooled connection back, an async-notify channel that leaks across reuse, a
+ * COPY stream the proxy can't frame, or a SET TRANSACTION that mutates the
+ * request transaction's isolation. The guard (below) throws this before any
+ * such statement reaches the real client. See
+ * docs/A04-G1-pr-gamma0-design.md §2.
+ */
+export class TenantWrapUnrewriteableStatementError extends Error {
+  constructor(statement: string) {
+    super(
+      `asTenant wrap: statement "${statement}" cannot run on the savepoint-rewritten ` +
+        `tenant client — createSavepointClient only rewrites the bare BEGIN/COMMIT/ROLLBACK ` +
+        `form, so this would execute un-rewritten on the request transaction. If a connection ` +
+        `legitimately needs this (explicit ISOLATION LEVEL, advisory lock, LISTEN/NOTIFY, COPY, ` +
+        `bespoke tx lifecycle), use the pgRaw escape hatch with its own set_config — see ` +
+        `tenantContext.ts:44-53.`
+    );
+    this.name = "TenantWrapUnrewriteableStatementError";
+  }
+}
+
+/**
+ * True when `kw` (an already-`trim().toUpperCase()`-normalised statement) is a
+ * transaction-control / session-level statement that the savepoint rewriter
+ * does NOT handle and therefore must not reach the tenant client. Bare
+ * BEGIN/COMMIT/ROLLBACK are handled upstream by `txControlKeyword` and never
+ * reach this check. Word-boundary / prefix-anchored so that ordinary SQL
+ * carrying these tokens as data or column names (`SELECT 'BEGIN'`,
+ * `... SET begin_at = ...`, `SET LOCAL app.current_org_id = ...`) does NOT match.
+ * See docs/A04-G1-pr-gamma0-design.md §2.2.
+ */
+export function isUnrewriteableStatement(kw: string): boolean {
+  // Non-bare transaction control (bare forms already rewritten upstream).
+  if (/^BEGIN\b/.test(kw) && kw !== "BEGIN") return true;
+  if (/^COMMIT\b/.test(kw) && kw !== "COMMIT") return true;
+  if (/^ROLLBACK\b/.test(kw) && kw !== "ROLLBACK") return true;
+  if (/^END\b/.test(kw)) return true; // COMMIT synonym, never rewritten
+  if (/^START\s+TRANSACTION\b/.test(kw)) return true;
+  // SET TRANSACTION / SET LOCAL TRANSACTION mutate the ambient tx (decision 1).
+  // Anchored to `... TRANSACTION` so legit `SET LOCAL <guc> = ...` is untouched.
+  if (/^SET\s+TRANSACTION\b/.test(kw)) return true;
+  if (/^SET\s+LOCAL\s+TRANSACTION\b/.test(kw)) return true;
+  // Advisory locks (session + xact + unlock + shared variants).
+  if (/^SELECT\s+PG_ADVISORY_/.test(kw)) return true;
+  if (/^(LISTEN|UNLISTEN|NOTIFY)\b/.test(kw)) return true;
+  if (/^COPY\b/.test(kw)) return true;
+  return false;
+}
+
+/**
  * Wraps an already-checked-out, in-transaction client so legacy
  * explicit-transaction call sites nest safely inside the ambient request
  * transaction:
@@ -137,13 +193,22 @@ export function createSavepointClient(ctx: TenantContext): PoolClient {
   const stack: string[] = [];
 
   const query = (...args: unknown[]): unknown => {
+    // Candidate statement string — string form OR config-object { text } form
+    // (mirrors the rewriter's text-branch below). Used by both the bare-control
+    // rewrite and the γ.0 guard. null when args[0] is neither (cursor/Submittable).
+    const first = args[0];
+    const stmt: string | null =
+      typeof first === "string"
+        ? first
+        : typeof first === "object" &&
+            first !== null &&
+            "text" in first &&
+            typeof (first as { text: unknown }).text === "string"
+          ? (first as { text: string }).text
+          : null;
+
     if (args.length === 1) {
-      const first = args[0];
-      const control =
-        txControlKeyword(first) ??
-        (typeof first === "object" && first !== null && "text" in first
-          ? txControlKeyword((first as { text: unknown }).text)
-          : null);
+      const control = txControlKeyword(stmt);
 
       if (control === "BEGIN") {
         const name = `sp_${++ctx.savepoint.n}`;
@@ -164,6 +229,18 @@ export function createSavepointClient(ctx: TenantContext): PoolClient {
           .then(() => real.query(`RELEASE SAVEPOINT ${name}`));
       }
     }
+
+    // A04-G1 PR γ.0 guard (Approach B). Bare control statements have returned
+    // above; anything reaching here that is an un-rewriteable tx-control /
+    // session statement would execute on the tenant client and corrupt the
+    // request transaction. Throw SYNCHRONOUSLY (before any promise is built),
+    // matching β1.5's TenantWrapStreamingError posture. Fires in the
+    // fall-through path only, so the savepoint stack is untouched. See
+    // docs/A04-G1-pr-gamma0-design.md §2.3 / §6.
+    if (stmt !== null && isUnrewriteableStatement(stmt.trim().toUpperCase())) {
+      throw new TenantWrapUnrewriteableStatementError(stmt);
+    }
+
     return (real.query as (...a: unknown[]) => unknown)(...args);
   };
 
