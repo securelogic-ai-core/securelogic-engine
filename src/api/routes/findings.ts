@@ -68,14 +68,17 @@ function isIsoDate(v: unknown): v is string {
    Create a new finding for the requesting organization.
    When source_type='risk', source_id must belong to the org.
 
-   A04-G1 PR α: deliberately NOT wrapped in asTenant. The read routes below
-   (GET list / summary / :id) are wrapped; the write paths (this POST and the
-   PATCH below) are deferred to a later PR because they schedule fire-and-forget
-   work — dispatchWebhookEvent() issues ambient pg.query() calls that are not
-   awaited, so under a request-transaction wrap they would run as continuations
-   AFTER the wrap commits and releases the tenant client (use-after-release on
-   the pooled connection). Wrapping the writes needs that side-effect lifecycle
-   handled explicitly. See docs/A04-G1-request-scope-wrap-design.md.
+   A04-G1 PR β2: wrapped in asTenant — all five findings customer routes
+   (GET list / summary / :id from PR α, and this POST + the PATCH below) now run
+   inside the per-request tenant transaction. This was deferred in PR α because
+   the write paths schedule fire-and-forget work; PR β1 closed that gap by
+   moving the webhook dispatcher to pgElevated. The remaining non-awaited side
+   effects are all safe under the wrap: writeAuditEvent (pgElevated),
+   triggerFindingAlert (opens its own withTenant), dispatchWebhookEvent
+   (pgElevated since β1) — none touch the request's tenant client. The awaited
+   risk-ownership SELECT and the INSERT run in-scope, which is the point: after
+   the operator DATABASE_URL flip the findings RLS policy enforces on writes too.
+   See docs/A04-G1-pr-beta-design.md and feedback_route_wrap_fire_and_forget.
    ========================================================= */
 
 router.post(
@@ -83,7 +86,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -218,7 +221,7 @@ router.post(
       );
       res.status(500).json({ error: "finding_create_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -591,7 +594,7 @@ router.patch(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -725,7 +728,7 @@ router.patch(
       );
       res.status(500).json({ error: "finding_patch_failed" });
     }
-  }
+  })
 );
 
 export default router;
