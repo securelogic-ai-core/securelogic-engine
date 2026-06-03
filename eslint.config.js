@@ -1,6 +1,14 @@
 import tseslint from "@typescript-eslint/eslint-plugin";
 import tsparser from "@typescript-eslint/parser";
 
+import noUnrewriteableStmtInTenantWrap from "./eslint-rules/no-unrewriteable-stmt-in-tenant-wrap.js";
+
+const securelogicLocal = {
+  rules: {
+    "no-unrewriteable-stmt-in-tenant-wrap": noUnrewriteableStmtInTenantWrap
+  }
+};
+
 export default [
   // -----------------------------
   // GLOBAL IGNORE
@@ -50,6 +58,19 @@ export default [
     files: ["**/__tests__/**/*.ts"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off"
+    }
+  },
+
+  // -----------------------------
+  // A04-G1 γ.0 — savepoint-safety guard (route handlers only)
+  // -----------------------------
+  {
+    files: ["src/api/routes/**/*.ts"],
+    plugins: {
+      "securelogic-local": securelogicLocal
+    },
+    rules: {
+      "securelogic-local/no-unrewriteable-stmt-in-tenant-wrap": "error"
     }
   }
 ];
