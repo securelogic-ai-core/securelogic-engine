@@ -187,6 +187,35 @@ export async function seedFinding(pool: Pool, orgId: string): Promise<string> {
 }
 
 /**
+ * Seed one `risks` row for an org and return its id. Used by the A04-G1 PR γ.1
+ * risks tenant-wrap test (test/isolation/risksTenantWrap.test.ts). Seeded as the
+ * owner connection (the `risks` table carries NO RLS policy yet — that is a
+ * phase-3 Batch-A deliverable — so seeding is unaffected regardless).
+ *
+ * Only the NOT-NULL-without-default columns are required: organization_id,
+ * title, domain, likelihood, impact, risk_rating. `status` defaults to 'open'.
+ * residual_rating is set (= risk_rating) so the summary/intelligence aggregates
+ * have a non-null residual bucket to count. Values satisfy the risk_*_check
+ * constraints (likelihood ∈ very_likely…rare; impact/rating ∈ Critical…Low).
+ * The caller owns the pool.
+ */
+export async function seedRisk(
+  pool: Pool,
+  orgId: string,
+  opts: { rating?: string; title?: string } = {},
+): Promise<string> {
+  const rating = opts.rating ?? "High";
+  const res = await pool.query<{ id: string }>(
+    `INSERT INTO risks
+       (organization_id, title, domain, likelihood, impact, risk_rating, residual_rating, status)
+     VALUES ($1, $2, 'Vendor Risk', 'possible', 'High', $3, $3, 'open')
+     RETURNING id`,
+    [orgId, opts.title ?? "Harness risk", rating],
+  );
+  return res.rows[0].id;
+}
+
+/**
  * Seed one active `webhook_endpoints` row for an org and return its id. Used by
  * the A04-G1 PR β1 dispatcher test (test/isolation/webhookDispatcherElevated
  * .test.ts). The URL defaults to a loopback address so the dispatcher's SSRF
