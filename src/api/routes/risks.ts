@@ -23,6 +23,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import {
   validateRiskCreate,
   validateRiskUpdate,
@@ -236,7 +237,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -405,7 +406,7 @@ router.post(
       );
       res.status(500).json({ error: "risk_create_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -420,7 +421,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -513,7 +514,7 @@ router.get(
       );
       res.status(500).json({ error: "risk_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -530,7 +531,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -540,77 +541,73 @@ router.get(
     }
 
     try {
-      const [
-        byStatusResult,
-        byRatingResult,
-        byDomainResult,
-        byInherentRatingResult,
-        byResidualRatingResult,
-        overdueReviewResult,
-      ] = await Promise.all([
-        pg.query<{ status: string; count: string }>(
-          `
-          SELECT status, COUNT(*)::text AS count
-          FROM risks
-          WHERE organization_id = $1
-          GROUP BY status
-          `,
-          [organizationId]
-        ),
-        pg.query<{ risk_rating: string; count: string }>(
-          `
-          SELECT risk_rating, COUNT(*)::text AS count
-          FROM risks
-          WHERE organization_id = $1
-          GROUP BY risk_rating
-          `,
-          [organizationId]
-        ),
-        pg.query<{ domain: string; count: string }>(
-          `
-          SELECT domain, COUNT(*)::text AS count
-          FROM risks
-          WHERE organization_id = $1
-          GROUP BY domain
-          ORDER BY count DESC, domain ASC
-          `,
-          [organizationId]
-        ),
-        pg.query<{ inherent_rating: string; count: string }>(
-          `
-          SELECT inherent_rating, COUNT(*)::text AS count
-          FROM risks
-          WHERE organization_id = $1
-            AND inherent_rating IS NOT NULL
-          GROUP BY inherent_rating
-          `,
-          [organizationId]
-        ),
-        pg.query<{ residual_rating: string; count: string }>(
-          `
-          SELECT residual_rating, COUNT(*)::text AS count
-          FROM risks
-          WHERE organization_id = $1
-            AND residual_rating IS NOT NULL
-          GROUP BY residual_rating
-          `,
-          [organizationId]
-        ),
-        // RR-5: count of risks whose review is overdue right now. Single
-        // scalar — feeds the "Overdue Reviews" stat tile on the risk list
-        // page. Same predicate as the review_status='overdue' list filter
-        // and the is_overdue computed column in RISK_SELECT.
-        pg.query<{ count: string }>(
-          `
-          SELECT COUNT(*)::text AS count
-          FROM risks
-          WHERE organization_id = $1
-            AND next_review_due IS NOT NULL
-            AND next_review_due < CURRENT_DATE
-          `,
-          [organizationId]
-        ),
-      ]);
+      // A04-G1 γ.1 — serialized (was Promise.all). Under the asTenant wrap all
+      // six aggregates run on the SINGLE per-request tenant client, which cannot
+      // execute concurrent queries (the item-5 landmine). Sequential awaits keep
+      // one query in flight at a time. Query text unchanged; only the result
+      // binding changed from array-destructure to six consts. See design §2.1(i).
+      const byStatusResult = await pg.query<{ status: string; count: string }>(
+        `
+        SELECT status, COUNT(*)::text AS count
+        FROM risks
+        WHERE organization_id = $1
+        GROUP BY status
+        `,
+        [organizationId]
+      );
+      const byRatingResult = await pg.query<{ risk_rating: string; count: string }>(
+        `
+        SELECT risk_rating, COUNT(*)::text AS count
+        FROM risks
+        WHERE organization_id = $1
+        GROUP BY risk_rating
+        `,
+        [organizationId]
+      );
+      const byDomainResult = await pg.query<{ domain: string; count: string }>(
+        `
+        SELECT domain, COUNT(*)::text AS count
+        FROM risks
+        WHERE organization_id = $1
+        GROUP BY domain
+        ORDER BY count DESC, domain ASC
+        `,
+        [organizationId]
+      );
+      const byInherentRatingResult = await pg.query<{ inherent_rating: string; count: string }>(
+        `
+        SELECT inherent_rating, COUNT(*)::text AS count
+        FROM risks
+        WHERE organization_id = $1
+          AND inherent_rating IS NOT NULL
+        GROUP BY inherent_rating
+        `,
+        [organizationId]
+      );
+      const byResidualRatingResult = await pg.query<{ residual_rating: string; count: string }>(
+        `
+        SELECT residual_rating, COUNT(*)::text AS count
+        FROM risks
+        WHERE organization_id = $1
+          AND residual_rating IS NOT NULL
+        GROUP BY residual_rating
+        `,
+        [organizationId]
+      );
+      // RR-5: count of risks whose review is overdue right now. Single
+      // scalar — feeds the "Overdue Reviews" stat tile on the risk list
+      // page. Same predicate as the review_status='overdue' list filter
+      // and the is_overdue computed column in RISK_SELECT.
+      const overdueReviewResult = await pg.query<{ count: string }>(
+        `
+        SELECT COUNT(*)::text AS count
+        FROM risks
+        WHERE organization_id = $1
+          AND next_review_due IS NOT NULL
+          AND next_review_due < CURRENT_DATE
+        `,
+        [organizationId]
+      );
 
       const summary = buildRiskSummary(
         byStatusResult.rows,
@@ -633,7 +630,7 @@ router.get(
       );
       res.status(500).json({ error: "risk_summary_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -703,7 +700,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -776,7 +773,7 @@ router.get(
       );
       res.status(500).json({ error: "risk_intelligence_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -790,7 +787,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -833,7 +830,7 @@ router.get(
       );
       res.status(500).json({ error: "risk_get_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -868,7 +865,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -912,7 +909,12 @@ router.get(
       // treatment + link subqueries are org-scoped so a stale resource_id
       // from a different org cannot bleed in.
       // ORDER BY (created_at DESC, id DESC) matches GET /api/audit-log.
-      const eventsPromise = pg.query(
+      // A04-G1 γ.1 — serialized (was eager `eventsPromise`/`countPromise` +
+      // Promise.all). Under the asTenant wrap both queries share the SINGLE
+      // per-request tenant client, which cannot run concurrent queries. The
+      // eager promise variables are removed so the events query is issued and
+      // settled before the count query starts. Query text unchanged. See §2.1(ii).
+      const eventsResult = await pg.query(
         `
         SELECT
           sal.id,
@@ -952,7 +954,7 @@ router.get(
         [organizationId, riskId, limit, offset]
       );
 
-      const countPromise = pg.query<{ total: string }>(
+      const countResult = await pg.query<{ total: string }>(
         `
         SELECT COUNT(*)::text AS total
         FROM security_audit_log sal
@@ -979,11 +981,6 @@ router.get(
         [organizationId, riskId]
       );
 
-      const [eventsResult, countResult] = await Promise.all([
-        eventsPromise,
-        countPromise
-      ]);
-
       const total_count = parseInt(countResult.rows[0]?.total ?? "0", 10);
 
       res.status(200).json({
@@ -999,7 +996,7 @@ router.get(
       );
       res.status(500).json({ error: "risk_history_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -1031,7 +1028,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -1209,7 +1206,7 @@ router.post(
     } finally {
       client.release();
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -1222,7 +1219,7 @@ router.patch(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -1455,7 +1452,7 @@ router.patch(
     } finally {
       client.release();
     }
-  }
+  })
 );
 
 export default router;
