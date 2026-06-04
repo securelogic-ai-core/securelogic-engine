@@ -216,6 +216,36 @@ export async function seedRisk(
 }
 
 /**
+ * Seed one `posture_snapshots` row for an org and return its id. Used by the
+ * A04-G1 Batch A.1 RLS enforcement test
+ * (test/isolation/postureSnapshotsRls.test.ts). Seeded as the owner connection
+ * (RLS bypassed for seeding) — the Batch A.1 migration enables RLS on
+ * posture_snapshots, but the owner/superuser harness pool bypasses it, so
+ * seeding is unaffected.
+ *
+ * Only the NOT-NULL-without-default columns are required: organization_id,
+ * snapshot_date. `overall_score` is set (nullable, CHECK 0..100) for a
+ * realistic row; the *_count columns default to 0 and computation_rationale to
+ * '{}'. `snapshot_date` is parameterised (default '2026-01-01') because
+ * posture_snapshots has UNIQUE (organization_id, snapshot_date) — a test that
+ * INSERTs an additional row for the same org must pass a distinct date. The
+ * caller owns the pool.
+ */
+export async function seedPostureSnapshot(
+  pool: Pool,
+  orgId: string,
+  opts: { snapshotDate?: string; overallScore?: number } = {},
+): Promise<string> {
+  const res = await pool.query<{ id: string }>(
+    `INSERT INTO posture_snapshots (organization_id, snapshot_date, overall_score)
+     VALUES ($1, $2, $3)
+     RETURNING id`,
+    [orgId, opts.snapshotDate ?? "2026-01-01", opts.overallScore ?? 75],
+  );
+  return res.rows[0].id;
+}
+
+/**
  * Seed one `vendors` row for an org and return its id. Used by the A04-G1 PR γ.3
  * vendorAssessments tenant-wrap test (test/isolation/vendorAssessmentsTenantWrap
  * .test.ts). Seeded as the owner connection (`vendors` carries NO RLS policy yet
