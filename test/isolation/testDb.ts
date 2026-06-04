@@ -216,6 +216,33 @@ export async function seedRisk(
 }
 
 /**
+ * Seed one `vendors` row for an org and return its id. Used by the A04-G1 PR γ.3
+ * vendorAssessments tenant-wrap test (test/isolation/vendorAssessmentsTenantWrap
+ * .test.ts). Seeded as the owner connection (`vendors` carries NO RLS policy yet
+ * — phase-3 Batch A — so seeding is unaffected regardless).
+ *
+ * Only the NOT-NULL-without-default columns are required: organization_id, name.
+ * `status` defaults to 'active' (the POST /vendor-assessments precheck requires
+ * status='active' via SELECT … FOR UPDATE). `criticality` is set (defaults
+ * 'high') so the background risk-score recompute produces a non-trivial score —
+ * the value satisfies vendors_criticality_check (critical/high/medium/low). The
+ * caller owns the pool.
+ */
+export async function seedVendor(
+  pool: Pool,
+  orgId: string,
+  opts: { name?: string; criticality?: string } = {},
+): Promise<string> {
+  const res = await pool.query<{ id: string }>(
+    `INSERT INTO vendors (organization_id, name, status, criticality)
+     VALUES ($1, $2, 'active', $3)
+     RETURNING id`,
+    [orgId, opts.name ?? `Harness vendor ${Date.now()}`, opts.criticality ?? "high"],
+  );
+  return res.rows[0].id;
+}
+
+/**
  * Seed one active `webhook_endpoints` row for an org and return its id. Used by
  * the A04-G1 PR β1 dispatcher test (test/isolation/webhookDispatcherElevated
  * .test.ts). The URL defaults to a loopback address so the dispatcher's SSRF
