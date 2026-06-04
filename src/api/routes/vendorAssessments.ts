@@ -24,11 +24,12 @@
  */
 
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { validateVendorAssessmentCreate } from "../lib/vendorAssessmentValidation.js";
 import { severityToPriority } from "../lib/postureComputation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
@@ -82,7 +83,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -279,34 +280,48 @@ router.post(
       }).catch(() => {});
 
       // Background: recompute and persist vendor risk score after new assessment.
-      setImmediate(async () => {
-        try {
-          const vendorRow = await pg.query<{ criticality: string | null }>(
-            `SELECT criticality FROM vendors WHERE id = $1 AND organization_id = $2`,
-            [input.vendor_id, organizationId]
-          );
-          if ((vendorRow.rowCount ?? 0) === 0) return;
+      // A04-G1 γ.3 — this fire-and-forget job runs as a macrotask AFTER the
+      // asTenant wrap has committed and RELEASED the request's tenant client, so
+      // it must NOT touch the ambient `pg` proxy on its own (that would route to
+      // the released ctx.client — use-after-release on a pooled connection; see
+      // feedback_route_wrap_fire_and_forget). It opens its OWN withTenant(orgId)
+      // scope: a fresh client + transaction + `SET LOCAL app.current_org_id`, so
+      // the ambient `pg` queries inside route to that client and (post-flip) the
+      // vendors UPDATE / findings read are RLS-scoped, not merely WHERE-scoped.
+      // Behavior-preserving: the recompute still runs and still updates
+      // vendors.current_risk_score; only its DB channel changed. See design §2.1.
+      setImmediate(() => {
+        void withTenant(organizationId, async () => {
+          try {
+            const vendorRow = await pg.query<{ criticality: string | null }>(
+              `SELECT criticality FROM vendors WHERE id = $1 AND organization_id = $2`,
+              [input.vendor_id, organizationId]
+            );
+            if ((vendorRow.rowCount ?? 0) === 0) return;
 
-          const criticality = vendorRow.rows[0]!.criticality;
-          const findingsRows = await pg.query<{ severity: string; status: string }>(
-            `SELECT f.severity, f.status
-             FROM findings f
-             JOIN vendor_assessments va ON va.id::text = f.source_id::text
-             WHERE va.vendor_id = $1
-               AND f.organization_id = $2
-               AND f.status IN ('open', 'in_progress')`,
-            [input.vendor_id, organizationId]
-          );
+            const criticality = vendorRow.rows[0]!.criticality;
+            const findingsRows = await pg.query<{ severity: string; status: string }>(
+              `SELECT f.severity, f.status
+               FROM findings f
+               JOIN vendor_assessments va ON va.id::text = f.source_id::text
+               WHERE va.vendor_id = $1
+                 AND f.organization_id = $2
+                 AND f.status IN ('open', 'in_progress')`,
+              [input.vendor_id, organizationId]
+            );
 
-          const { score } = computeVendorRiskScore(criticality, findingsRows.rows);
-          await pg.query(
-            `UPDATE vendors SET current_risk_score = $1, updated_at = NOW()
-             WHERE id = $2 AND organization_id = $3`,
-            [score, input.vendor_id, organizationId]
-          );
-        } catch {
-          // silent — score update is best-effort
-        }
+            const { score } = computeVendorRiskScore(criticality, findingsRows.rows);
+            await pg.query(
+              `UPDATE vendors SET current_risk_score = $1, updated_at = NOW()
+               WHERE id = $2 AND organization_id = $3`,
+              [score, input.vendor_id, organizationId]
+            );
+          } catch {
+            // silent — score update is best-effort
+          }
+        }).catch(() => {
+          // withTenant itself failed (connect/commit) — best-effort, swallow.
+        });
       });
 
       res.status(201).json({ assessment, finding });
@@ -325,7 +340,7 @@ router.post(
     } finally {
       client.release();
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -339,7 +354,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -421,7 +436,7 @@ router.get(
       );
       res.status(500).json({ error: "vendor_assessments_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -439,7 +454,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -515,7 +530,7 @@ router.get(
       );
       res.status(500).json({ error: "vendor_assessment_get_failed" });
     }
-  }
+  })
 );
 
 export default router;

@@ -95,7 +95,9 @@ If we naively wrap this handler in `asTenant`, the inner `withTenant` **nests**,
 
 ---
 
-## 4. Phase 2 — the two standing-rule audits
+## 4. Phase 2 — the four standing-rule audits
+
+> **Doc-sync (γ.3):** this section originally listed only the two audits known when γ was first designed (fire-and-forget §4.1, streaming §4.2). γ.1 surfaced two further standing pre-wrap axes — **concurrent-query (§4.3)** and **post-commit-ambient-query (§4.4)** — now part of every wrap PR's audit set. They are added below, and the §4.1 vendorAssessments verdict is corrected (it had missed a fire-and-forget channel).
 
 ### 4.1 Fire-and-forget audit (`feedback_route_wrap_fire_and_forget.md`)
 Per-route classification of every non-awaited side-effect in the three γ families:
@@ -106,16 +108,29 @@ Per-route classification of every non-awaited side-effect in the three γ famili
 | `risks` POST `/risks/:id/review` | `writeAuditEvent` (`:1170`); explicit tx via savepoint client | pgElevated; tenant client (savepoint) | **PASS** |
 | `risks` PATCH `/risks/:id` | `dispatchWebhookEvent` (`:1429`), `writeAuditEvent` (`:1403`); explicit tx | pgElevated / pgElevated; savepoint | **PASS** |
 | `posture` POST `/posture/snapshot` | `dispatchWebhookEvent` (`:118`); `computeAndSavePostureSnapshot` | pgElevated; ambient (after §2.3 refactor) | **PASS — conditional on §2.3 refactor** |
-| `vendorAssessments` POST | `dispatchWebhookEvent` (`:271`), `writeAuditEvent` (`:260`); explicit tx | pgElevated / pgElevated; savepoint | **PASS** |
+| `vendorAssessments` POST | `dispatchWebhookEvent` (`:271`), `writeAuditEvent` (`:260`); **`setImmediate` risk-score recompute (`:282`) — 3 ambient `pg.query`**; explicit tx | pgElevated / pgElevated; **ambient → BLOCKER**; savepoint | **BLOCKED until the `setImmediate` recompute moves off the request tenant client (γ.3 §2.1)** |
 | all GET routes (8) | none | — | **PASS** |
 
-**No route is BLOCKED by the fire-and-forget rule.** β1 retired the only blocker (the dispatcher). The single action item is the posture inner-`withTenant` removal (§2.3) — a refactor, not a deferral.
+**One route is BLOCKED by the fire-and-forget rule: `vendorAssessments` POST** (corrected here during γ.3 — the original audit missed it). Its non-awaited `setImmediate` risk-score recompute issues 3 queries on the ambient `pg` proxy; under the wrap they run as a macrotask AFTER the request transaction COMMITs and the tenant client is released → use-after-release on a pooled connection. β1 retired the *dispatcher* blocker, but this `setImmediate` channel is a separate one. **γ.3 §2.1 fixes it by wrapping the recompute body in its own `withTenant(orgId)` scope** (a fresh scoped client; the recompute still runs and still updates `vendors.current_risk_score`). The other action item is the posture inner-`withTenant` removal (§2.3, landed in γ.2) — a refactor, not a deferral.
 
 ### 4.2 Streaming-guard audit (`feedback_route_wrap_streaming_guard.md`)
 Grepped all three families for `res.write|pipe|send|end|setHeader|cookie|redirect|type`:
 
 - **`risks.ts`, `posture.ts`, `vendorAssessments.ts`: zero hits.** Every handler terminates in a single `res.status(n).json(body)`. **All PASS.**
 - The only streaming hit in the entire risk*/vendor* surface is **`vendors.ts:488-515`** (`/vendors/export.csv`: `res.setHeader` ×2 + `res.write` loop + `res.end`) — in a **deferred** family (§6), not a γ candidate. It is the same canonical counter-example class as `findingsExport.ts`: **must not be wrapped** without a commit-then-stream redesign.
+
+### 4.3 Concurrent-query audit (`feedback_route_wrap_concurrent_query.md`) — added γ.1
+Under the wrap, every ambient `pg.query` routes to the single per-request tenant client, which node-postgres cannot drive with concurrent in-flight queries (pg 8.x `DeprecationWarning`, pg@9 throws). Grep each family for `Promise.all` over `pg.query`, eager `const p = pg.query(...)` promise-binding, and helper fan-out:
+- **`risks`: 2 sites** — `GET /risks/summary` (6-query `Promise.all`) and `GET /risks/:id/history` (eager `events`/`count` promises). Serialized to sequential awaits in γ.1 §2.1.
+- **`posture`: 1 site** — `GET /posture/compliance-summary` (2-query `Promise.all`). Serialized in γ.2 §2.1. (The helper `computeAndSavePostureSnapshot`'s former 7-query fan-out was already serialized by PR 6.)
+- **`vendorAssessments`: 0 sites** — all writes are sequential awaits; `GET /:id`'s two reads are already sequential. No serialization needed (γ.3).
+Fires the moment a route is wrapped, **not** on the flip. Fix = serialize in the wrap PR.
+
+### 4.4 Post-commit-ambient-query audit (`feedback_route_wrap_post_commit_ambient_query.md`) — added γ.1
+A handler that issues an awaited ambient `pg.query` AFTER its explicit `COMMIT` and BEFORE the response poisons the tenant client into Postgres aborted state (25P02) on error, making the outer `COMMIT` silently a `ROLLBACK` — so the wrap makes that write **atomic-on-error** (a behavior change vs today's "500-to-client but write persisted"). Per family:
+- **`risks`: 1 site** — `POST /risks/:id/review` refreshes via `SELECT ${RISK_SELECT}` after its inner COMMIT. γ.1 pinned the now-atomic behavior (`risksReviewPostCommitThrow.test.ts`). PATCH unaffected.
+- **`posture`: 0 sites** — run and clear (γ.2).
+- **`vendorAssessments`: 0 sites** — run and clear (γ.3); assessments are immutable (no review/approval handler), and the POST's only post-COMMIT work is the pgElevated audit/dispatch + the deferred `setImmediate` (a separate macrotask, not an awaited in-handler query). No γ.1-style atomicity change.
 
 ---
 
@@ -167,13 +182,17 @@ The wrap itself is mechanical — `asTenant(async (req, res) => { … })` around
 Identical to β2: wrap each handler in `asTenant(...)`, inheriting β1.5 commit-before-respond. No change to `asTenant`, `withTenant`, the savepoint client, or the dispatcher. The only handler-body edit beyond the wrap is the posture §2.3 inner-`withTenant` removal.
 
 ### 7.2 Test plan (per family, under the role-simulation harness — `options=-c role=app_request`, like `findingsTenantWrap.test.ts`)
+
+> **Two-axis certification (doc-sync, γ.1/γ.2/γ.3).** The γ wrap PRs certify **transaction-shape only** (savepoint safety, commit-before-respond, single-connection, serialization order, dispatch survival). They do **NOT** certify **RLS isolation** — `risks`, `posture_snapshots`/`domain_scores`, and `vendor_assessments` carry **no RLS policy** (they land in phase-3 **Batch A / A+G / C** respectively; only `findings` has the phase-2 pilot policy). Cross-org isolation in the γ families today is enforced by the handlers' `WHERE organization_id = $n` clauses, not the DB; RLS isolation is certified later by the per-batch migrations. So the "cross-org" tests below are **WHERE-clause tripwires**, and the NULLIF "fail-closed" test applies only where a policy already exists (`findings`).
+
 Mirror β2's certifying tests:
-- **Positive:** write succeeds (201/200) and the row is visible **only** under the writer org's scope.
-- **Cross-org:** a write/patch under `orgA`'s scope cannot read or mutate `orgB`'s row (RLS isolation of the write).
+- **Positive:** write succeeds (201/200) and the row is visible **only** under the writer org's scope (WHERE-clause; or the live `findings` policy where the write touches `findings`).
+- **Cross-org tripwire:** a write/patch under `orgA`'s scope cannot read or mutate `orgB`'s row. *(WHERE-clause isolation today; upgrade to a real RLS proof when the table's phase-3 batch policy lands — Batch A for risks/posture, Batch C for vendor_assessments.)*
 - **Dispatch-survives** (for the dispatching writes — risks POST/PATCH, posture POST, vendorAssessments POST): with an active `orgA` `webhook_endpoint` seeded, perform the write and poll `webhook_deliveries` for the delivery row — proving dispatch completed on the `pgElevated` channel *after* the wrap committed. This is the test that would catch a regression of the β1 fix.
 - **Savepoint nesting** (for the explicit-tx writes — risks review/patch, vendorAssessments POST): assert the handler's inner `BEGIN/COMMIT` (now `SAVEPOINT/RELEASE`) commits correctly *as part of* the outer request transaction, and that a handler-internal `ROLLBACK` rolls back only its savepoint, not the whole request.
-- **Fail-closed:** an unscoped write (no GUC) under `app_request` writes nothing (NULLIF policy — `feedback_rls_policy_nullif.md`).
+- **Fail-closed (policy-bearing tables only):** an unscoped write (no GUC) under `app_request` writes nothing via the NULLIF policy (`feedback_rls_policy_nullif.md`) — applies to `findings` (pilot policy), and to the γ tables only *after* their phase-3 batch policies land. Not assertable against `risks`/`posture_snapshots`/`vendor_assessments` today (no policy).
 - **posture-specific:** assert the snapshot row commits under the *outer* wrap transaction (proves the §2.3 refactor removed the inner `withTenant` correctly — only one transaction, one connection).
+- **vendorAssessments-specific (γ.3):** assert the `setImmediate` risk-score recompute still runs after the response (poll `vendors.current_risk_score`), proving the §2.1 fire-and-forget fix (own `withTenant` scope) didn't kill the feature or hit a released client.
 
 ### 7.3 Risks
 1. **posture inner-`withTenant` (§2.3)** — the one non-mechanical change. If missed, double-transaction + commit-before-respond defeated. Mitigation: the posture-specific test above; review γ.2 in isolation.
