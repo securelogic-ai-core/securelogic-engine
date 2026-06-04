@@ -14,11 +14,12 @@
  */
 
 import { Router } from "express";
-import { pg, withTenant } from "../infra/postgres.js";
+import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { computeAndSavePostureSnapshot } from "../lib/postureSnapshot.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 
@@ -101,7 +102,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -111,9 +112,15 @@ router.post(
         return;
       }
 
-      const result = await withTenant(organizationId, () =>
-        computeAndSavePostureSnapshot(organizationId)
-      );
+      // A04-G1 γ.2 — inner withTenant removed. The asTenant wrap already opened
+      // withTenant(orgId) for this request, so the snapshot must run inside that
+      // ONE scope. withTenant does not detect nesting: a second withTenant would
+      // open an independent client + transaction that COMMITs before the outer
+      // wrap commits (defeating β1.5 commit-before-respond) and burn two
+      // connections. computeAndSavePostureSnapshot uses the ambient pg proxy, so
+      // its reads route to the outer wrap's tenant client and its pg.connect()
+      // write tx nests as a savepoint inside the request tx. See design §2.2.
+      const result = await computeAndSavePostureSnapshot(organizationId);
 
       dispatchWebhookEvent({
         event_type: "posture.snapshot_created",
@@ -144,7 +151,7 @@ router.post(
       );
       res.status(500).json({ error: "posture_snapshot_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -158,7 +165,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -237,7 +244,7 @@ router.get(
       );
       res.status(500).json({ error: "posture_latest_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -251,7 +258,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -294,7 +301,7 @@ router.get(
       );
       res.status(500).json({ error: "posture_history_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -310,7 +317,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -320,26 +327,30 @@ router.get(
         return;
       }
 
-      const [obligationResult, assessmentResult] = await Promise.all([
-        pg.query<{ status: string; count: string }>(
-          `
-          SELECT status, COUNT(*)::text AS count
-          FROM obligations
-          WHERE organization_id = $1
-          GROUP BY status
-          `,
-          [organizationId]
-        ),
-        pg.query<{ status: string; count: string }>(
-          `
-          SELECT status, COUNT(*)::text AS count
-          FROM obligation_assessments
-          WHERE organization_id = $1
-          GROUP BY status
-          `,
-          [organizationId]
-        )
-      ]);
+      // A04-G1 γ.2 — serialized (was Promise.all). Under the asTenant wrap both
+      // queries run on the SINGLE per-request tenant client, which cannot execute
+      // concurrent queries (pg 8.20 DeprecationWarning, pg@9 hard throw).
+      // Sequential awaits keep one query in flight at a time. Query text
+      // unchanged; only the result binding changed from array-destructure to two
+      // consts. See design §2.1.
+      const obligationResult = await pg.query<{ status: string; count: string }>(
+        `
+        SELECT status, COUNT(*)::text AS count
+        FROM obligations
+        WHERE organization_id = $1
+        GROUP BY status
+        `,
+        [organizationId]
+      );
+      const assessmentResult = await pg.query<{ status: string; count: string }>(
+        `
+        SELECT status, COUNT(*)::text AS count
+        FROM obligation_assessments
+        WHERE organization_id = $1
+        GROUP BY status
+        `,
+        [organizationId]
+      );
 
       const summary = buildComplianceSummary(
         obligationResult.rows,
@@ -354,7 +365,7 @@ router.get(
       );
       res.status(500).json({ error: "compliance_summary_failed" });
     }
-  }
+  })
 );
 
 export default router;
