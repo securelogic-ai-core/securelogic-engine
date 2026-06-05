@@ -4,6 +4,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { decryptField } from "../lib/fieldEncryption.js";
 
 /**
@@ -48,7 +49,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -114,7 +115,7 @@ router.get(
       logger.error({ event: "assessments_list_failed", err }, "GET /api/assessments failed");
       res.status(500).json({ error: "assessments_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -129,7 +130,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -236,7 +237,7 @@ router.get(
       logger.error({ event: "assessment_get_failed", err }, "GET /api/assessments/:id failed");
       res.status(500).json({ error: "assessment_get_failed" });
     }
-  }
+  })
 );
 
 export default router;
