@@ -44,6 +44,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import {
   validateRiskControlLinkCreate,
@@ -484,9 +485,14 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  createRiskControlLink
+  asTenant(createRiskControlLink)
 );
 
+// DELETE is intentionally left UNWRAPPED. Its terminal is res.status(204).send(),
+// which the asTenant deferredResponse shim's streaming guard rejects at runtime
+// (TenantWrapStreamingError). It is deferred to Wave 0d for a commit-then-respond
+// / bodyless-204 redesign, paired with riskObligationLinks' DELETE — see
+// memory project_a04_g1_reader_wrap_wave_0a "Streaming-guard sub-axis".
 router.delete(
   "/risks/:id/controls/:controlId",
   requireApiKey,
@@ -500,7 +506,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  listControlsForRisk
+  asTenant(listControlsForRisk)
 );
 
 router.get(
@@ -508,7 +514,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  listRisksForControl
+  asTenant(listRisksForControl)
 );
 
 export default router;
