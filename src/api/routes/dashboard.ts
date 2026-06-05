@@ -23,6 +23,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { buildEvidenceSummary } from "./evidence.js";
 
 const router = Router();
@@ -122,7 +123,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -651,7 +652,7 @@ router.get(
       );
       res.status(500).json({ error: "dashboard_summary_failed" });
     }
-  }
+  })
 );
 
 export default router;
