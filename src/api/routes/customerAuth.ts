@@ -25,6 +25,7 @@ import argon2 from "argon2";
 import rateLimit from "express-rate-limit";
 import { pg, pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { captureException } from "../lib/sentry.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { recordAccountLockout } from "../lib/authAnomaly.js";
 import { signJwt, signMfaChallenge } from "../lib/jwt.js";
@@ -386,6 +387,7 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
     res.status(201).json({ ok: true, message: "verification_email_sent" });
   } catch (err) {
     logger.error({ event: "customer_signup_failed", err }, "POST /api/auth/signup failed");
+    captureException(err, { event: "customer_signup_failed" });
     res.status(500).json({ error: "signup_failed" });
   }
 });
@@ -457,6 +459,7 @@ router.post("/auth/verify-email", verifyLimiter, async (req, res) => {
     res.status(200).json({ ok: true, token: jwt });
   } catch (err) {
     logger.error({ event: "email_verify_failed", err }, "POST /api/auth/verify-email failed");
+    captureException(err, { event: "email_verify_failed" });
     res.status(500).json({ error: "verification_failed" });
   }
 });
@@ -508,6 +511,7 @@ router.post("/auth/resend-verification", forgotPasswordLimiter, async (req, res)
     respond();
   } catch (err) {
     logger.error({ event: "resend_verification_failed", err }, "POST /api/auth/resend-verification failed");
+    captureException(err, { event: "resend_verification_failed" });
     respond();
   }
 });
@@ -736,6 +740,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
     });
   } catch (err) {
     logger.error({ event: "customer_login_failed", err }, "POST /api/auth/login failed");
+    captureException(err, { event: "customer_login_failed" });
     res.status(500).json({ error: "login_failed" });
   }
 });
@@ -817,6 +822,7 @@ router.post("/auth/forgot-password", forgotPasswordLimiter, async (req, res) => 
     respond();
   } catch (err) {
     logger.error({ event: "forgot_password_failed", err }, "POST /api/auth/forgot-password failed");
+    captureException(err, { event: "forgot_password_failed" });
     respond();
   }
 });
@@ -904,6 +910,7 @@ router.post("/auth/reset-password", verifyLimiter, async (req, res) => {
     res.status(200).json({ ok: true });
   } catch (err) {
     logger.error({ event: "reset_password_failed", err }, "POST /api/auth/reset-password failed");
+    captureException(err, { event: "reset_password_failed" });
     res.status(500).json({ error: "reset_failed" });
   }
 });
@@ -989,6 +996,7 @@ router.post("/auth/change-password", requireAuth, async (req, res) => {
     res.status(200).json({ success: true, token: freshJwt });
   } catch (err) {
     logger.error({ event: "change_password_failed", err }, "POST /api/auth/change-password failed");
+    captureException(err, { event: "change_password_failed" });
     res.status(500).json({ error: "change_password_failed" });
   }
 });
@@ -1067,6 +1075,7 @@ router.get("/auth/me", requireAuth, async (req, res) => {
     });
   } catch (err) {
     logger.error({ event: "auth_me_failed", err }, "GET /api/auth/me failed");
+    captureException(err, { event: "auth_me_failed" });
     res.status(500).json({ error: "fetch_failed" });
   }
 });
@@ -1092,6 +1101,7 @@ router.post("/auth/onboarding-complete", requireAuth, async (req, res) => {
     res.status(200).json({ ok: true });
   } catch (err) {
     logger.error({ event: "onboarding_complete_failed", err }, "POST /api/auth/onboarding-complete failed");
+    captureException(err, { event: "onboarding_complete_failed" });
     res.status(500).json({ error: "onboarding_complete_failed" });
   }
 });
@@ -1147,6 +1157,7 @@ router.post("/auth/admin/unlock-user", requireAuth, async (req, res) => {
     res.status(200).json({ ok: true, user_id: targetUserId });
   } catch (err) {
     logger.error({ event: "unlock_user_failed", err }, "POST /api/auth/admin/unlock-user failed");
+    captureException(err, { event: "unlock_user_failed" });
     res.status(500).json({ error: "unlock_failed" });
   }
 });

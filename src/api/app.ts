@@ -49,6 +49,8 @@ import { requestAudit } from "./middleware/requestAudit.js";
 
 import { errorHandler } from "./middleware/errorHandler.js";
 
+import { Sentry } from "./lib/sentry.js";
+
 // Lemon Squeezy is dormant: route /webhooks/lemon is unmounted (returns 404).
 // Re-enable by re-adding these imports and the app.post block in the WEBHOOKS
 // section. See memory: project_lemon_webhook_body_buffer_bug.md — also fix the
@@ -455,6 +457,18 @@ export function createApp(opts: CreateAppOptions): express.Express {
       path: req.originalUrl
     });
   });
+
+  /* =========================================================
+     SENTRY ERROR CAPTURE (BEFORE THE RESPONDING HANDLER)
+
+     Captures errors propagated via next(err) and forwards them to the
+     engine's own errorHandler, which still owns the response. This is a
+     no-op capture when Sentry is not initialized (no DSN). In @sentry/node
+     v10 there is no separate requestHandler middleware — request isolation is
+     automatic — so only the error handler is registered here.
+     ========================================================= */
+
+  Sentry.setupExpressErrorHandler(app);
 
   /* =========================================================
      ERROR HANDLER (LAST)

@@ -116,6 +116,15 @@ services:
       - key: OPENAI_API_KEY
         sync: false
 
+      # Sentry error tracking (engine). DSN + environment label are set in the
+      # Render dashboard, never in the repo. When SENTRY_DSN_ENGINE is unset the
+      # engine boots normally with Sentry disabled. See docs/sentry-setup.md.
+      - key: SENTRY_DSN_ENGINE
+        sync: false
+
+      - key: SENTRY_ENV
+        sync: false
+
   # =========================================================
   # SECURELOGIC ENGINE — STAGING (web)
   # Tracks the develop branch. Mirrors the production engine
@@ -261,6 +270,15 @@ services:
       # not receive this var; production enablement is a future package decision.
       - key: SECURELOGIC_VENDOR_ASSURANCE_ENABLED
         value: "true"
+
+      # Sentry error tracking (engine — staging). Kept in lockstep with the
+      # production engine block above; set SENTRY_ENV=staging in the dashboard.
+      # See docs/sentry-setup.md.
+      - key: SENTRY_DSN_ENGINE
+        sync: false
+
+      - key: SENTRY_ENV
+        sync: false
 
   # =========================================================
   # INTELLIGENCE WORKER (background)
@@ -502,6 +520,21 @@ services:
       # Absolute session lifetime in seconds. Default: 28800 (8 hours).
       # Set lower for higher-security deployments.
       - key: SESSION_TIMEOUT_SECONDS
+        sync: false
+
+      # Sentry error tracking (app). Values set in the Render dashboard.
+      # SENTRY_DSN_APP is server-only; NEXT_PUBLIC_SENTRY_DSN_APP is inlined
+      # into the browser bundle at build time (must be present at build to be
+      # picked up). NEXT_PUBLIC_SENTRY_ENV labels the environment. All optional
+      # — when unset the app builds and runs with Sentry disabled.
+      # See docs/sentry-setup.md.
+      - key: SENTRY_DSN_APP
+        sync: false
+
+      - key: NEXT_PUBLIC_SENTRY_DSN_APP
+        sync: false
+
+      - key: NEXT_PUBLIC_SENTRY_ENV
         sync: false
 
   # =========================================================
