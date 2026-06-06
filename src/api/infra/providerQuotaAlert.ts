@@ -13,6 +13,7 @@
 
 import { logger } from "./logger.js";
 import { sendSecurityAlert } from "./alerting.js";
+import { captureException } from "../lib/sentry.js";
 
 export interface ProviderQuotaError {
   provider: "anthropic" | "openai";
@@ -89,6 +90,15 @@ export async function maybeAlertProviderQuotaError(err: unknown): Promise<void> 
   if (!classified) return;
   if (alertedThisProcess) return;
   alertedThisProcess = true;
+
+  // Telemetry beyond the structured log + Discord alert: an unexpected,
+  // ops-critical provider quota/credit exhaustion. Deduped once-per-process by
+  // the guard above, so this cannot flood Sentry. No-op when Sentry is unset.
+  captureException(err, {
+    event: "provider_quota_exhausted",
+    provider: classified.provider,
+    kind: classified.kind
+  });
 
   const message =
     err && typeof err === "object" && "message" in err
