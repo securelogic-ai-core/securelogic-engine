@@ -1,6 +1,8 @@
 import path from "path";
 import { fileURLToPath } from "url";
 
+import { withSentryConfig } from "@sentry/nextjs";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
@@ -62,4 +64,22 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+// Wrap the existing config with Sentry. This only adds Sentry build-time
+// behavior (source map upload when SENTRY_AUTH_TOKEN is present); all settings
+// in nextConfig above are preserved unchanged.
+//
+// org / project / authToken are read from env. When authToken is absent the
+// build still succeeds — Sentry simply skips source map upload (a deliberate
+// follow-up PR, not wired here). silent suppresses Sentry's build chatter in CI.
+//
+// tunnelRoute routes browser SDK events through a same-origin Next.js route
+// handler (/monitoring) that proxies to Sentry. This keeps client-side capture
+// working under the strict CSP connect-src (only 'self' + the engine) WITHOUT
+// widening the CSP — /monitoring is same-origin, already allowed by 'self'.
+export default withSentryConfig(nextConfig, {
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  silent: process.env.CI === "true",
+  tunnelRoute: "/monitoring",
+});

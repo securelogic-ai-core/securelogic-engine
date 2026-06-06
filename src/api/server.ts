@@ -1,5 +1,7 @@
 import "dotenv/config";
 
+import { initSentry } from "./lib/sentry.js";
+
 import { validateEnv } from "./startup/validateEnv.js";
 import { runSelfTest } from "./startup/selfTest.js";
 import { connectDatabase } from "./startup/connectDatabase.js";
@@ -20,6 +22,19 @@ import { createApp } from "./app.js";
    shutdown. The application itself — the entire middleware
    chain and route tree — is built by createApp() in app.ts.
    ========================================================= */
+
+/* =========================================================
+   SENTRY (FIRST EXECUTABLE STATEMENT)
+
+   Initialize error tracking before the boot guards so any throw they
+   produce is captured. NOTE (ESM): top-level imports above are hoisted and
+   evaluated before this runs, so Sentry's automatic incoming-HTTP tracing
+   instrumentation is not fully applied — error capture is unaffected. See the
+   ordering note in lib/sentry.ts. No-op (with a log line) when
+   SENTRY_DSN_ENGINE is unset; never throws.
+   ========================================================= */
+
+initSentry();
 
 /* =========================================================
    BOOT-TIME GUARDS
