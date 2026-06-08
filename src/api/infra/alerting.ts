@@ -1,19 +1,27 @@
 import { logger } from "./logger.js"
 
 /**
- * alerting.ts — operator webhook delivery via Discord-compatible payload.
+ * alerting.ts — operator webhook delivery, Slack- or Discord-shaped per target.
  *
- * The `ALERT_WEBHOOK_URL` env var points at a Discord channel webhook
- * (https://discord.com/api/webhooks/{id}/{token}). Both functions emit
- * `{embeds: [...]}` payloads matching Discord's webhook schema so the
- * destination channel renders rich, structured messages instead of
- * rejecting an arbitrary JSON shape.
+ * The `ALERT_WEBHOOK_URL` env var points at either a Slack incoming webhook
+ * (https://hooks.slack.com/services/...) or a Discord channel webhook
+ * (https://discord.com/api/webhooks/{id}/{token}). Both alert functions build
+ * the SAME internal embed structure ({title, description, color, fields,
+ * footer}) and then serialize it to whichever payload shape the destination
+ * accepts — Slack Block Kit (`{text, blocks}`) or Discord (`{embeds: [...]}`).
+ * Slack rejects a Discord `{embeds}` body with HTTP 400, so the shape must
+ * match the host.
  *
- * Contracts preserved across the Discord-reshape:
+ * Format is chosen by `detectWebhookFormat()` from the URL hostname:
+ *   - discord.com / discordapp.com (and subdomains) → Discord `{embeds}`
+ *   - hooks.slack.com, and any other / unparseable host → Slack blocks
+ *     (Slack is the most common target, so it is the safe default)
+ *
+ * Contracts preserved across the dual-format reshape:
  *   - No-op when `ALERT_WEBHOOK_URL` is unset (same `alert_skipped` /
  *     `security_alert_skipped` debug events).
- *   - Throws on non-2xx webhook response (Discord returns 204 on success;
- *     `response.ok` covers it). Callers decide whether to swallow.
+ *   - Throws on non-2xx webhook response (Slack returns 200, Discord 204 on
+ *     success; `response.ok` covers both). Callers decide whether to swallow.
  *   - Function signatures unchanged — no call site touched by this file.
  *
  * Title prefixes + embed color let operators distinguish kinds at a glance:
@@ -81,6 +89,118 @@ function detailToFields(detail: Record<string, unknown> | undefined): DiscordEmb
   return fields
 }
 
+// ---------------------------------------------------------------------------
+// Webhook format selection + serialization
+//
+// Both alert functions build a `DiscordEmbed` (the internal structure) and
+// hand it to `buildWebhookBody`, which picks the wire shape from the URL host.
+// ---------------------------------------------------------------------------
+
+export type WebhookFormat = "slack" | "discord"
+
+/**
+ * Choose the payload shape from the webhook URL's hostname.
+ *   - discord.com / discordapp.com (or a subdomain) → "discord"
+ *   - everything else (hooks.slack.com, unknown hosts, unparseable URLs) →
+ *     "slack", the most common webhook target and our active destination.
+ */
+export function detectWebhookFormat(url: string): WebhookFormat {
+  let host: string
+  try {
+    host = new URL(url).hostname.toLowerCase()
+  } catch {
+    return "slack"
+  }
+  if (
+    host === "discord.com" ||
+    host === "discordapp.com" ||
+    host.endsWith(".discord.com") ||
+    host.endsWith(".discordapp.com")
+  ) {
+    return "discord"
+  }
+  return "slack"
+}
+
+// Slack Block Kit limits — https://api.slack.com/reference/block-kit/blocks
+const SLACK_HEADER_MAX = 150        // header block plain_text limit
+const SLACK_SECTION_TEXT_MAX = 3000 // section block text/field mrkdwn limit
+const SLACK_FIELDS_PER_SECTION = 10 // section block `fields` array cap
+
+interface SlackTextObject { type: "plain_text" | "mrkdwn"; text: string; emoji?: boolean }
+interface SlackBlock {
+  type: "header" | "section" | "context"
+  text?: SlackTextObject
+  fields?: SlackTextObject[]
+  elements?: SlackTextObject[]
+}
+interface SlackMessage { text: string; blocks: SlackBlock[] }
+
+/**
+ * Serialize the internal embed structure into a Slack Block Kit message:
+ *   - title       → `header` block (plain_text, emoji enabled)
+ *   - description → `section` block (mrkdwn)
+ *   - fields      → `section` block(s) with a `fields` array of mrkdwn
+ *                   `*name*\nvalue` cells, chunked to Slack's 10-per-section cap
+ *   - footer      → `context` block (mrkdwn)
+ * Plus a top-level `text` fallback used for notification previews / push.
+ */
+function embedToSlackMessage(embed: DiscordEmbed): SlackMessage {
+  const blocks: SlackBlock[] = []
+
+  if (embed.title) {
+    blocks.push({
+      type: "header",
+      text: { type: "plain_text", text: truncate(embed.title, SLACK_HEADER_MAX), emoji: true }
+    })
+  }
+
+  if (embed.description) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: truncate(embed.description, SLACK_SECTION_TEXT_MAX) }
+    })
+  }
+
+  const fields = embed.fields ?? []
+  for (let i = 0; i < fields.length; i += SLACK_FIELDS_PER_SECTION) {
+    const chunk = fields.slice(i, i + SLACK_FIELDS_PER_SECTION)
+    blocks.push({
+      type: "section",
+      fields: chunk.map((f) => ({
+        type: "mrkdwn",
+        text: truncate(`*${f.name}*\n${f.value}`, SLACK_SECTION_TEXT_MAX)
+      }))
+    })
+  }
+
+  if (embed.footer) {
+    blocks.push({
+      type: "context",
+      elements: [{ type: "mrkdwn", text: truncate(embed.footer.text, SLACK_SECTION_TEXT_MAX) }]
+    })
+  }
+
+  const fallback = [embed.title, embed.description].filter(Boolean).join(" — ")
+  return {
+    text: truncate(fallback || "securelogic-engine alert", SLACK_SECTION_TEXT_MAX),
+    blocks
+  }
+}
+
+/**
+ * Build the webhook request body for the configured target. Discord keeps its
+ * existing `{embeds: [...]}` shape exactly; everything else gets Slack blocks.
+ */
+export function buildWebhookBody(
+  url: string,
+  embed: DiscordEmbed
+): SlackMessage | { embeds: DiscordEmbed[] } {
+  return detectWebhookFormat(url) === "discord"
+    ? { embeds: [embed] }
+    : embedToSlackMessage(embed)
+}
+
 export async function sendFailureAlert(
   workerName: string,
   errorMessage: string
@@ -107,7 +227,7 @@ export async function sendFailureAlert(
   const response = await fetch(alertUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ embeds: [embed] })
+    body: JSON.stringify(buildWebhookBody(alertUrl, embed))
   })
 
   if (!response.ok) {
@@ -158,7 +278,7 @@ export async function sendSecurityAlert(args: {
   const response = await fetch(alertUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ embeds: [embed] })
+    body: JSON.stringify(buildWebhookBody(alertUrl, embed))
   })
 
   if (!response.ok) {
