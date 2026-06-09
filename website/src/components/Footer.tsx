@@ -81,6 +81,8 @@ export function Footer({ appUrl }: FooterProps) {
           <div className="flex gap-6">
             <Link href="/privacy/" className="hover:text-white transition-colors">Privacy Policy</Link>
             <Link href="/terms/" className="hover:text-white transition-colors">Terms of Service</Link>
+            <Link href="/ai-policy/" className="hover:text-white transition-colors">AI Policy</Link>
+            <Link href="/security/" className="hover:text-white transition-colors">Security</Link>
           </div>
         </div>
       </div>
