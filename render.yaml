@@ -552,6 +552,14 @@ services:
     buildCommand: cd website && npm ci --include=dev && npm run build
     startCommand: cd website && npx serve@latest out -l $PORT
     autoDeploy: true
+    # Public marketing domain. Next.js on Render is the production site
+    # (the legacy WordPress host is being retired). The apex and www both
+    # serve this service. NOTE: declaring domains here records intent in IaC;
+    # the custom domain must still be added in the Render dashboard and the
+    # DNS records pointed at Render's targets at the registrar.
+    domains:
+      - securelogicai.com
+      - www.securelogicai.com
     envVars:
       - key: NODE_ENV
         value: production
