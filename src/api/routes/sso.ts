@@ -251,7 +251,14 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
       userId   = u.id;
       userRole = u.role ?? "analyst";
     } else {
-      // JIT provisioning — new user, analyst role only
+      // JIT provisioning — new user, analyst role only.
+      //
+      // NOTE: SSO JIT does not record legal consent at user creation. Per the
+      // operator's design, SSO users are required to consent at first-login via
+      // an interstitial dialog. The requireConsent middleware will return 403
+      // consent_required for these users until they accept terms via
+      // POST /api/auth/accept-terms (handled by the customer app UI in a
+      // separate PR).
       const inserted = await pg.query<{ id: string }>(
         `INSERT INTO users (organization_id, email, name, password_hash, email_verified, role, sso_provider)
          VALUES ($1, $2, $3, '', true, 'analyst', 'saml')

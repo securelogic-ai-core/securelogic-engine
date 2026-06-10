@@ -112,6 +112,7 @@ import riskScaleRouter from "./riskScale.js";
 import executiveReportRouter from "./executiveReport.js";
 
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { requireConsent } from "../middleware/requireConsent.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { trackApiUsage } from "../middleware/trackApiUsage.js";
@@ -214,6 +215,13 @@ export function buildRoutes(opts: RoutesOptions): Router {
 
   // SAML 2.0 SSO — public endpoints (check-domain, login, acs, metadata) + protected config endpoints
   router.use("/api", ssoRouter);
+
+  // Legal-consent gate. Mounted AFTER all /api/auth/* routers (auth, mfa, sso)
+  // so login + POST /api/auth/accept-terms remain reachable, and BEFORE the
+  // authenticated platform routers below. Only gates JWT (human) sessions;
+  // raw machine API keys pass through. Fails open on DB error. See
+  // middleware/requireConsent.ts for scope rationale.
+  router.use("/api", requireConsent);
 
   // Customer self-service API key management — own requireApiKey inline
   router.use("/api", customerApiKeysRouter);

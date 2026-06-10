@@ -24,6 +24,7 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireRole } from "../middleware/requireRole.js";
 import { signJwt } from "../lib/jwt.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { recordAllCurrentConsents } from "../lib/legalConsent.js";
 
 const router = Router();
 
@@ -651,6 +652,16 @@ router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
       return;
     }
 
+    // Legal consent is required to accept an invite and create/activate an
+    // account. The accept form must send acceptedTerms === true.
+    if (body.acceptedTerms !== true) {
+      res.status(400).json({
+        error: "missing_terms_acceptance",
+        detail: "You must accept the Terms of Service, Privacy Policy, and AI Transparency Policy to join."
+      });
+      return;
+    }
+
     const name     = String(nameRaw).trim();
     const password = String(passwordRaw);
 
@@ -731,6 +742,18 @@ router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
           [invite.organization_id, invite.email, name, invite.role, passwordHash]
         );
         newUserId = userResult.rows[0].id as string;
+
+        // Record consent for the newly created user in the same transaction.
+        // Reactivated (previously-inactive) users follow the UPDATE branch above
+        // and are intentionally not recorded here — the requireConsent
+        // middleware catches them on their next authenticated request.
+        await recordAllCurrentConsents(client, {
+          userId: newUserId,
+          organizationId: invite.organization_id,
+          consentMethod: "team_invite_accept",
+          ipAddress: req.ip,
+          userAgent: req.headers["user-agent"],
+        });
       }
 
       await client.query(
