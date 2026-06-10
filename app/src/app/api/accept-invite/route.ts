@@ -11,14 +11,21 @@ export async function POST(request: Request) {
       token?: string;
       name?: string;
       password?: string;
+      acceptedTerms?: unknown;
     };
 
-    const token    = typeof body.token    === "string" ? body.token.trim()    : "";
-    const name     = typeof body.name     === "string" ? body.name.trim()     : "";
-    const password = typeof body.password === "string" ? body.password        : "";
+    const token         = typeof body.token    === "string" ? body.token.trim()    : "";
+    const name          = typeof body.name     === "string" ? body.name.trim()     : "";
+    const password      = typeof body.password === "string" ? body.password        : "";
+    const acceptedTerms = body.acceptedTerms === true;
 
     if (!token || !name || !password) {
       return NextResponse.json({ error: "missing_fields" }, { status: 400 });
+    }
+
+    // Legal consent is required to accept an invite (engine enforces this too).
+    if (!acceptedTerms) {
+      return NextResponse.json({ error: "missing_terms_acceptance" }, { status: 400 });
     }
 
     const res = await fetch(
@@ -26,7 +33,7 @@ export async function POST(request: Request) {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, password }),
+        body: JSON.stringify({ name, password, acceptedTerms }),
         cache: "no-store",
       }
     );

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import PasswordInput from "@/components/PasswordInput";
+import ConsentCheckbox from "@/components/ConsentCheckbox";
 
 interface Props {
   token: string;
@@ -51,6 +52,7 @@ export default function AcceptInviteForm({ token, email, orgName, inviterName, r
   const [name,            setName]            = useState("");
   const [password,        setPassword]        = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [accepted,        setAccepted]        = useState(false);
   const [submitting,      setSubmitting]      = useState(false);
   const [error,           setError]           = useState<string | null>(null);
 
@@ -73,12 +75,17 @@ export default function AcceptInviteForm({ token, email, orgName, inviterName, r
       return;
     }
 
+    if (!accepted) {
+      setError("Please accept the Terms of Service, Privacy Policy, and AI Transparency & Responsible Use Policy to continue.");
+      return;
+    }
+
     setSubmitting(true);
 
     const res = await fetch("/api/accept-invite", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, name: name.trim(), password }),
+      body: JSON.stringify({ token, name: name.trim(), password, acceptedTerms: true }),
     });
 
     const data = (await res.json()) as { ok?: boolean; error?: string; detail?: string };
@@ -280,20 +287,23 @@ export default function AcceptInviteForm({ token, email, orgName, inviterName, r
               />
             </div>
 
+            <ConsentCheckbox checked={accepted} onChange={setAccepted} />
+
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !accepted}
               style={{
                 width: "100%",
-                background: submitting ? "#0d9488" : "#00c4b4",
+                background: submitting || !accepted ? "#0d9488" : "#00c4b4",
                 color: "#0a0f1a",
                 fontWeight: 700,
                 fontSize: "15px",
                 padding: "14px",
                 borderRadius: "8px",
                 border: "none",
-                cursor: submitting ? "not-allowed" : "pointer",
-                transition: "background 0.15s",
+                cursor: submitting || !accepted ? "not-allowed" : "pointer",
+                opacity: submitting || !accepted ? 0.7 : 1,
+                transition: "background 0.15s, opacity 0.15s",
               }}
             >
               {submitting ? "Accepting…" : "Accept Invitation"}
