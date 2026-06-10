@@ -10,6 +10,7 @@ import {
   AuthLink,
   AuthDivider,
 } from "@/components/AuthCard";
+import ConsentCheckbox from "@/components/ConsentCheckbox";
 
 type PaidTier = "professional" | "teams" | "platform" | "platform_annual";
 
@@ -47,6 +48,7 @@ export function SignupForm({ plan: rawPlan }: Props) {
   const [email,      setEmail]      = useState("");
   const [password,   setPassword]   = useState("");
   const [promoCode,  setPromoCode]  = useState("");
+  const [accepted,   setAccepted]   = useState(false);
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState<string | null>(null);
 
@@ -64,6 +66,11 @@ export function SignupForm({ plan: rawPlan }: Props) {
     const pwErr = clientValidatePassword(password);
     if (pwErr) { setError(pwErr); return; }
 
+    if (!accepted) {
+      setError("Please accept the Terms of Service, Privacy Policy, and AI Transparency & Responsible Use Policy to continue.");
+      return;
+    }
+
     setLoading(true);
 
     const res = await fetch("/api/auth-signup", {
@@ -76,6 +83,7 @@ export function SignupForm({ plan: rawPlan }: Props) {
         password,
         promoCode: promoCode.trim() || undefined,
         plan: plan ?? undefined,
+        acceptedTerms: true,
       }),
     });
 
@@ -236,7 +244,9 @@ export function SignupForm({ plan: rawPlan }: Props) {
           />
         </div>
 
-        <AuthButton loading={loading}>
+        <ConsentCheckbox checked={accepted} onChange={setAccepted} />
+
+        <AuthButton loading={loading} disabled={!accepted}>
           {plan ? `Continue to ${planLabel(plan)}` : "Create Account"}
         </AuthButton>
       </form>
