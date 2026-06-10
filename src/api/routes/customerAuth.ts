@@ -31,6 +31,14 @@ import { recordAccountLockout } from "../lib/authAnomaly.js";
 import { signJwt, signMfaChallenge } from "../lib/jwt.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { checkPasswordReuse, recordPasswordHash } from "../lib/passwordHistory.js";
+import {
+  recordConsent,
+  recordAllCurrentConsents,
+  CURRENT_VERSIONS,
+  DOCUMENT_TYPES,
+  type DocumentType,
+  type ConsentMethod,
+} from "../lib/legalConsent.js";
 import { Resend } from "resend";
 
 const router = Router();
@@ -286,6 +294,18 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
       return;
     }
 
+    // Legal consent is a hard required field. The signup form must send
+    // acceptedTerms === true (boolean) to confirm acceptance of the Terms of
+    // Service, Privacy Policy, and AI Transparency Policy. No acceptance → no
+    // account. Consent rows are written inside the signup transaction below.
+    if (req.body?.acceptedTerms !== true) {
+      res.status(400).json({
+        error: "missing_terms_acceptance",
+        detail: "You must accept the Terms of Service, Privacy Policy, and AI Transparency Policy to create an account."
+      });
+      return;
+    }
+
     const orgName   = String(orgNameRaw).trim();
     const name      = String(nameRaw).trim();
     const email     = String(emailRaw).trim().toLowerCase();
@@ -353,6 +373,18 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
          ON CONFLICT (organization_id, email) DO NOTHING`,
         [orgId, email, name]
       );
+
+      // Record consent to all three legal documents at their current versions.
+      // Same transaction client as the user INSERT — consent is durable iff the
+      // signup commits. trust proxy is configured (app.ts), so req.ip is the
+      // real client address.
+      await recordAllCurrentConsents(client, {
+        userId,
+        organizationId: orgId,
+        consentMethod: "signup_checkbox",
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+      });
 
       await client.query("COMMIT");
     } catch (err) {
@@ -1159,6 +1191,80 @@ router.post("/auth/admin/unlock-user", requireAuth, async (req, res) => {
     logger.error({ event: "unlock_user_failed", err }, "POST /api/auth/admin/unlock-user failed");
     captureException(err, { event: "unlock_user_failed" });
     res.status(500).json({ error: "unlock_failed" });
+  }
+});
+
+/* =========================================================
+   POST /api/auth/accept-terms   (JWT required)
+   { acceptedDocuments?: string[] }
+
+   Records consent for the current user at the current document versions.
+   Used by the customer app for the SSO first-login interstitial and for the
+   re-consent dialog when a document version changes. Idempotent — re-accepting
+   an already-current document is a no-op (ON CONFLICT DO NOTHING).
+   ========================================================= */
+
+router.post("/auth/accept-terms", requireAuth, async (req, res) => {
+  try {
+    const userId = req.jwtPayload!.sub;
+    const orgId  = req.jwtPayload!.org;
+
+    // Resolve which documents to record. Default to all three current docs.
+    const raw = req.body?.acceptedDocuments;
+    let targets: DocumentType[];
+    if (raw === undefined || raw === null) {
+      targets = [...DOCUMENT_TYPES];
+    } else {
+      if (!Array.isArray(raw)) {
+        res.status(400).json({ error: "invalid_accepted_documents", detail: "acceptedDocuments must be an array of document type strings." });
+        return;
+      }
+      const known = new Set<string>(DOCUMENT_TYPES);
+      for (const d of raw) {
+        if (typeof d !== "string" || !known.has(d)) {
+          res.status(400).json({ error: "invalid_document_type", detail: `Unknown document type: ${String(d)}` });
+          return;
+        }
+      }
+      // De-dupe while preserving the known set.
+      targets = DOCUMENT_TYPES.filter((d) => raw.includes(d));
+    }
+
+    // Determine the consent method from prior history: a user with zero
+    // existing consent rows is accepting for the first time (SSO interstitial);
+    // anyone with prior records is re-consenting after a version bump.
+    const prior = await pgElevated.query<{ id: string }>(
+      `SELECT id FROM legal_consents WHERE user_id = $1 LIMIT 1`,
+      [userId]
+    );
+    const consentMethod: ConsentMethod =
+      prior.rows.length === 0 ? "sso_first_login_interstitial" : "re_consent_dialog";
+
+    const recorded: { documentType: DocumentType; documentVersion: string }[] = [];
+    for (const docType of targets) {
+      const version = CURRENT_VERSIONS[docType];
+      await recordConsent(pgElevated, {
+        userId,
+        organizationId: orgId,
+        documentType: docType,
+        documentVersion: version,
+        consentMethod,
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+      });
+      recorded.push({ documentType: docType, documentVersion: version });
+    }
+
+    logger.info(
+      { event: "accept_terms", userId, orgId, consentMethod, count: recorded.length },
+      "Legal consent recorded via accept-terms"
+    );
+
+    res.status(200).json({ recordedConsents: recorded });
+  } catch (err) {
+    logger.error({ event: "accept_terms_failed", err }, "POST /api/auth/accept-terms failed");
+    captureException(err, { event: "accept_terms_failed" });
+    res.status(500).json({ error: "accept_terms_failed" });
   }
 });
 
