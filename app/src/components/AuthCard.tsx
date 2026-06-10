@@ -193,22 +193,25 @@ export function AuthInput({
 export function AuthButton({
   children,
   loading = false,
+  disabled = false,
   type = "submit",
   onClick,
   variant = "primary",
 }: {
   children: React.ReactNode;
   loading?: boolean;
+  disabled?: boolean;
   type?: "submit" | "button";
   onClick?: () => void;
   variant?: "primary" | "secondary";
 }) {
   const isPrimary = variant === "primary";
+  const isBlocked = loading || disabled;
   return (
     <button
       type={type}
       onClick={onClick}
-      disabled={loading}
+      disabled={isBlocked}
       style={{
         width: "100%",
         padding: "13px",
@@ -218,8 +221,8 @@ export function AuthButton({
         borderRadius: "8px",
         fontSize: "15px",
         fontWeight: 600,
-        cursor: loading ? "not-allowed" : "pointer",
-        opacity: loading ? 0.7 : 1,
+        cursor: isBlocked ? "not-allowed" : "pointer",
+        opacity: isBlocked ? 0.7 : 1,
         transition: "opacity 0.15s",
         fontFamily: "inherit",
       }}

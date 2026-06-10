@@ -13,6 +13,7 @@ export async function POST(request: Request) {
       password?: unknown;
       promoCode?: unknown;
       plan?: unknown;
+      acceptedTerms?: unknown;
     };
 
     const organizationName = typeof body.organizationName === "string" ? body.organizationName.trim() : "";
@@ -20,6 +21,7 @@ export async function POST(request: Request) {
     const email            = typeof body.email === "string" ? body.email.trim() : "";
     const password         = typeof body.password === "string" ? body.password : "";
     const promoCode        = typeof body.promoCode === "string" && body.promoCode.trim() ? body.promoCode.trim() : undefined;
+    const acceptedTerms    = body.acceptedTerms === true;
     const plan             =
       body.plan === "professional" ||
       body.plan === "teams" ||
@@ -32,7 +34,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "missing_fields" }, { status: 400 });
     }
 
-    const result = await authSignup(organizationName, name, email, password, promoCode);
+    // Legal consent is required. The engine also enforces this, but rejecting
+    // here avoids a wasted round-trip and surfaces the same error contract.
+    if (!acceptedTerms) {
+      return NextResponse.json({ error: "missing_terms_acceptance" }, { status: 400 });
+    }
+
+    const result = await authSignup(organizationName, name, email, password, promoCode, acceptedTerms);
 
     if ("error" in result) {
       const status = result.error === "email_already_registered" ? 409 : 400;

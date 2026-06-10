@@ -1414,15 +1414,87 @@ export async function authSignup(
   name: string,
   email: string,
   password: string,
-  promoCode?: string
+  promoCode: string | undefined,
+  acceptedTerms: boolean
 ): Promise<AuthSignupResponse> {
   const res = await fetch(`${ENGINE_URL}/api/auth/signup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ organizationName, name, email, password, promoCode }),
+    body: JSON.stringify({ organizationName, name, email, password, promoCode, acceptedTerms }),
     cache: "no-store",
   });
   return res.json() as Promise<AuthSignupResponse>;
+}
+
+// ─── Legal consent (PR #2) ──────────────────────────────────────────────────
+
+/** The three legal documents tracked by the engine. */
+export type ConsentDocumentType =
+  | "terms_of_service"
+  | "privacy_policy"
+  | "ai_transparency_policy";
+
+export type ConsentStatus =
+  | { consentRequired: false }
+  | { consentRequired: true; missingDocuments: ConsentDocumentType[] };
+
+/**
+ * Probe whether the current JWT user still owes consent to any current-version
+ * legal document. Uses GET /api/me — a route behind the engine's requireConsent
+ * middleware — so a user lacking consent comes back as 403 { error:
+ * "consent_required", missingDocuments: [...] }.
+ *
+ * Fails OPEN (consentRequired: false) on any network/parse error or unexpected
+ * status: a transient probe failure must never wall off the whole app. This
+ * mirrors the engine middleware, which also fails open.
+ */
+export async function getConsentStatus(jwtToken: string): Promise<ConsentStatus> {
+  try {
+    const res = await fetch(`${ENGINE_URL}/api/me`, {
+      headers: { Authorization: `Bearer ${jwtToken}` },
+      cache: "no-store",
+    });
+    if (res.status !== 403) return { consentRequired: false };
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      missingDocuments?: ConsentDocumentType[];
+    };
+    if (body.error !== "consent_required") return { consentRequired: false };
+    return {
+      consentRequired: true,
+      missingDocuments: Array.isArray(body.missingDocuments) ? body.missingDocuments : [],
+    };
+  } catch {
+    return { consentRequired: false };
+  }
+}
+
+/**
+ * Record consent for the current JWT user. Empty body lets the engine default
+ * to all currently-missing documents (re-consent / first-login interstitial).
+ */
+export async function acceptTerms(
+  jwtToken: string,
+  acceptedDocuments?: ConsentDocumentType[]
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(`${ENGINE_URL}/api/auth/accept-terms`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${jwtToken}`,
+      },
+      body: JSON.stringify(acceptedDocuments ? { acceptedDocuments } : {}),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { ok: false, error: body.error ?? "accept_terms_failed" };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "network_error" };
+  }
 }
 
 export async function authLogin(
