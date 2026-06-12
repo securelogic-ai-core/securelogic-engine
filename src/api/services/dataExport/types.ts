@@ -70,16 +70,65 @@ export interface RowStreamer<T = Record<string, unknown>> {
   close(): Promise<void>;
 }
 
+/** Self-export (one data subject) vs full-org export (Decision Q2). */
+export type ExportScope = "user_self" | "org_full";
+
 /**
- * SKETCH ONLY (Decision: manifest implementation deferred to PR #2b). Declared
- * here so #2a code can reference the shape without building the manifest writer.
- * The manifest itself is JSON (not NDJSON) — Decision Q9.
+ * One table's entry in the bundle manifest (`manifest.json`). Keys are
+ * snake_case ON PURPOSE: the manifest is a user-facing artifact and its keys
+ * mirror the snake_case of the NDJSON data rows and the `data_export_files`
+ * columns, so `JSON.stringify(manifest)` is the exact documented shape with no
+ * camel/snake mapping layer. Decision Q9 (manifest is JSON, data is NDJSON).
  */
-export interface ManifestEntry {
-  table: string;
+export interface ManifestTableEntry {
+  /** Table name (the NDJSON entry stem, e.g. `findings`). */
+  name: string;
   category: DataCategory;
   /** Authoritative row count for the table's `.ndjson` file. */
-  rowCount: number;
+  row_count: number;
   /** NDJSON entry path within the zip, e.g. `tables/findings.ndjson`. */
   file: string;
+  /** Byte length of the uncompressed NDJSON payload. */
+  size_bytes: number;
+  /** SHA-256 of the uncompressed NDJSON payload (tamper-evidence for the subject). */
+  sha256: string;
+  /** Optional traceability note carried from the `ExportQuery` (e.g. probe outcome). */
+  note?: string;
+}
+
+/** One R2 attachment's entry in the manifest (org_full only — PR #2c wires it). */
+export interface ManifestAttachmentEntry {
+  /** Entry path within the zip, e.g. `attachments/vendor-assurance/<docId>.pdf`. */
+  path: string;
+  size_bytes: number;
+  sha256: string;
+  source_table: string;
+  source_row_id: string;
+}
+
+/**
+ * The bundle manifest (`manifest.json`). Built by `manifest.ts#buildManifest`.
+ * snake_case keys — see `ManifestTableEntry`.
+ */
+export interface ExportManifest {
+  export_id: string;
+  scope: ExportScope;
+  target_user_id: string | null;
+  target_organization_id: string;
+  generated_at: string;
+  generator_version: string;
+  /** Latest applied migration filename (Decision Q1), or null if unavailable. */
+  schema_version: string | null;
+  tables: ManifestTableEntry[];
+  /** Always present; empty `[]` for user_self and for org_full until PR #2c. */
+  attachments: ManifestAttachmentEntry[];
+  notes: string[];
+  gdpr_note: string;
+}
+
+/** What `runExport` returns to its caller (the PR #3 worker). */
+export interface ExportResult {
+  manifest: ExportManifest;
+  /** Total uncompressed payload bytes across all table entries (NOT the zip size). */
+  bytes_written: number;
 }
