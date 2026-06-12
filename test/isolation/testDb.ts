@@ -296,6 +296,36 @@ export async function seedWebhookEndpoint(
 }
 
 /**
+ * Seed one `users` row for an org and return its id + email. Used by the GDPR
+ * export integration test (test/isolation/dataExport.test.ts). Only
+ * organization_id + email are required (UNIQUE per (organization_id, email));
+ * `name`/`password_hash` carry defaults. `withSecrets` populates the
+ * credential columns the export MUST omit (password_hash, totp_secret) so the
+ * test can assert they never reach the bundle. Seeded as the owner connection.
+ * The caller owns the pool.
+ */
+export async function seedUser(
+  pool: Pool,
+  orgId: string,
+  opts: { email?: string; name?: string; withSecrets?: boolean } = {},
+): Promise<{ id: string; email: string }> {
+  const email = opts.email ?? `user-${orgId.slice(0, 8)}-${crypto.randomBytes(4).toString("hex")}@example.com`;
+  const res = await pool.query<{ id: string }>(
+    `INSERT INTO users (organization_id, email, name, password_hash, totp_secret)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id`,
+    [
+      orgId,
+      email,
+      opts.name ?? "Seed User",
+      opts.withSecrets ? "SECRET_PASSWORD_HASH" : "",
+      opts.withSecrets ? "SECRET_TOTP_SEED" : null,
+    ],
+  );
+  return { id: res.rows[0].id, email };
+}
+
+/**
  * Drop, migrate and seed the test database. Returns the two seeded orgs.
  * The caller owns no pool — this opens and closes its own.
  */
