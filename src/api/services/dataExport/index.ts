@@ -23,11 +23,22 @@
  *    on it directly, and `subscribers` has NO `organization_id` and is keyed by
  *    email alone: a `withTenant` scope does NOT constrain it, so a client-supplied
  *    or malformed email parameter would enumerate platform-wide subscriber PII.
+ *    The org_full builders (`buildOrgExportQueries`) take the same care: the
+ *    `memberEmails` they match the platform-level email-keyed tables against MUST
+ *    be the CURRENT `users.email` of the org's members, never client input.
  *
  * 4. Tables in `tablesRequiringProjection()` (those with `exportExcludedColumns`)
  *    MUST have their live column list probed via `getTableColumns` /
  *    `buildTableColumnsMap` and passed in as `tableColumns`. Omitting it makes the
  *    builder throw (fail-closed) rather than emit a secret-leaking `SELECT *`.
+ *    As of PR #2b this set is `users`, `org_invites` (self-export) plus
+ *    `organizations`, `webhook_endpoints` (org_full secret/Stripe omission, Q5).
+ *
+ * 5. org_full (Decision Q2) is a FULL TABLE DUMP with no actor predicate, so the
+ *    org boundary is NOT `withTenant` alone (RLS is bypassed under owner creds and
+ *    absent on pending-RLS tables): every `buildOrgExportQueries` query carries an
+ *    EXPLICIT org predicate. The executor's org_full path is unwired until PR #2c;
+ *    `runExport` throws `OrgExportNotWiredError` for it today.
  */
 
 export type {
@@ -36,7 +47,11 @@ export type {
   RowStreamer,
   QueryRunner,
   TableColumns,
-  ManifestEntry,
+  ExportScope,
+  ManifestTableEntry,
+  ManifestAttachmentEntry,
+  ExportManifest,
+  ExportResult,
 } from "./types.js";
 
 export {
@@ -75,27 +90,36 @@ export {
   SECURITY_AUDIT_LOG_TABLE,
 } from "./historicalAuthorship.js";
 
-import type { ExportQuery, ExportSubject, TableColumns } from "./types.js";
-import { buildCategoryQueries, type CategoryCOptions } from "./categoryQueries.js";
-import { buildHistoricalAuthorshipQuery } from "./historicalAuthorship.js";
+/** The ordered self-export read list (Art. 15). See selfQueries.ts. */
+export { buildSelfExportQueries } from "./selfQueries.js";
 
 /**
- * Every read that makes up a user self-export: all category-derived queries plus
- * the `security_audit_log` historical-authorship query (O-1). The order is
- * stable (A → B → C → email-keyed → historical authorship) so the bundle
- * generator (PR #2b) and the manifest are deterministic.
- *
- * `tableColumns` must carry the live column list for every table in
- * `tablesRequiringProjection()` (see trust model, item 4) — otherwise building
- * those tables' queries throws fail-closed.
+ * Full-organization export read list + builders (Decision Q2). PR #2b ships and
+ * tests these as pure functions; the org_full executor wiring + R2 attachments
+ * land in PR #2c (see `runExport` below, which throws for org_full today).
  */
-export function buildSelfExportQueries(
-  subject: ExportSubject,
-  opts: CategoryCOptions = {},
-  tableColumns?: TableColumns,
-): ExportQuery[] {
-  return [
-    ...buildCategoryQueries(subject, opts, tableColumns),
-    buildHistoricalAuthorshipQuery(subject),
-  ];
-}
+export {
+  buildOrgExportQueries,
+  buildOrgDumpQueries,
+  buildOrgEmailKeyedQueries,
+  ORG_EXPORT_DEFERRED_TABLES,
+  ORG_MEMBERSHIP_SCOPED_TABLES,
+} from "./orgQueries.js";
+
+/** Bundle manifest builder + constants (manifest.json — Decision Q9/Q10). */
+export {
+  buildManifest,
+  serializeManifest,
+  GENERATOR_VERSION,
+  EXPORT_GDPR_NOTE,
+  type BuildManifestInput,
+} from "./manifest.js";
+
+/**
+ * The executor (`runExport`) lives in `./exporter.js` and is DELIBERATELY NOT
+ * re-exported here: it imports the DB layer (infra/postgres), which throws at
+ * module-eval if DATABASE_URL is unset. Keeping this barrel free of that import
+ * lets the pure query/manifest surface (and its drift tests) be consumed with
+ * no database. Callers of the executor (the PR #3 worker) import it directly:
+ *   import { runExport } from "../services/dataExport/exporter.js";
+ */

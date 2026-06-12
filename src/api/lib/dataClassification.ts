@@ -152,7 +152,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   signal_obligation_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "pending" },
 
   // ── D — Org data not tied to a specific user (leave alone on user delete) ──
-  organizations: { category: "D", piiRisk: "low", rlsStatus: "none", specialHandling: "ROOT-TENANT. Carries Stripe F-fields (stripe_customer_id, stripe_subscription_*, payment_failed_at) with legal-retention. Only touched on ORG deletion, which is out of scope for this workstream." },
+  organizations: { category: "D", piiRisk: "low", rlsStatus: "none", exportExcludedColumns: ["stripe_customer_id", "stripe_subscription_id", "stripe_subscription_tier", "stripe_subscription_status", "payment_failed_at", "promo_code"], specialHandling: "ROOT-TENANT. Carries Stripe F-fields (stripe_customer_id, stripe_subscription_*, payment_failed_at) + promo_code with legal-retention — OMITTED from the org_full export (exportExcludedColumns, PR #2b/Q5); entitlement_level (the portable plan tier) is retained. Only touched on ORG deletion, which is out of scope for this workstream." },
   vendor_assurance_extractions: { category: "D", piiRisk: "low", rlsStatus: "pending" },
   vendor_assurance_extraction_spans: { category: "D", piiRisk: "low", rlsStatus: "pending" },
   frameworks: { category: "D", piiRisk: "low", rlsStatus: "pending" },
@@ -167,7 +167,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   posture_snapshots: { category: "D", piiRisk: "none", rlsStatus: "enabled" },
   domain_scores: { category: "D", piiRisk: "none", rlsStatus: "pending" },
   organization_risk_scales: { category: "D", piiRisk: "none", rlsStatus: "pending" },
-  webhook_endpoints: { category: "D", piiRisk: "low", rlsStatus: "pending" },
+  webhook_endpoints: { category: "D", piiRisk: "low", rlsStatus: "pending", exportExcludedColumns: ["secret"], specialHandling: "`secret` is the HMAC signing secret for webhook delivery — OMITTED from the org_full export (exportExcludedColumns, PR #2b/Q5); url, event_types, status, description are retained for portability." },
   webhook_deliveries: { category: "D", piiRisk: "low", rlsStatus: "pending" },
   org_sso_configs: { category: "D", piiRisk: "low", rlsStatus: "none", specialHandling: "Org-level SAML IdP config; no user ref." },
   api_usage_daily: { category: "D", piiRisk: "none", rlsStatus: "pending" },

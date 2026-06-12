@@ -41,11 +41,18 @@ const USERS_TABLE = "users";
 
 /**
  * Tables that are classified for retention purposes but are NEVER included in a
- * data export. `password_history` holds password hashes (Decision: exclude from
- * export, per DATA_CLASSIFICATION.md). The coverage test exempts these.
+ * data export (user_self OR org_full). The coverage test exempts these.
+ *   • `password_history`           — password hashes (PR #2a).
+ *   • `jobs` / `data_export_files` — operational metadata ABOUT the export
+ *     process itself, not the user's/org's data (Decision Q7, PR #2b). Both are
+ *     Category E so the category filters already skip them; listing them here is
+ *     belt-and-suspenders and documents the intent for the org_full dump, which
+ *     would otherwise be tempted to include every org-scoped row.
  */
 export const EXPORT_EXCLUDED_TABLES: ReadonlySet<string> = new Set([
   "password_history",
+  "jobs",
+  "data_export_files",
 ]);
 
 /**
@@ -69,7 +76,7 @@ const LEGACY_TEXT_ACTOR_COLUMNS: Readonly<Record<string, readonly string[]>> = {
  * marks WHICH tables are email-keyed; this map records the column name, which the
  * classification does not carry. Verified against db/migrations/.
  */
-const EMAIL_KEYED_COLUMNS: Readonly<Record<string, string>> = {
+export const EMAIL_KEYED_COLUMNS: Readonly<Record<string, string>> = {
   subscribers: "email",
   intelligence_brief_subscribers: "email",
   newsletter_deliveries: "subscriber_email",
@@ -147,7 +154,7 @@ function quoteIdent(identifier: string): string {
  * that could leak the excluded secrets. The executor (PR #2b) must probe the
  * column list (`columnProbe.ts`) for `tablesRequiringProjection()` and pass it in.
  */
-function buildProjection(table: string, tableColumns?: TableColumns): string {
+export function buildProjection(table: string, tableColumns?: TableColumns): string {
   const excluded = TABLE_CLASSIFICATION[table]?.exportExcludedColumns;
   if (!excluded || excluded.length === 0) return "*";
 

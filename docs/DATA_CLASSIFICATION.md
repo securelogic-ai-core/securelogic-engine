@@ -7,10 +7,14 @@ admin-initiated org-wide export. Every table the platform owns is classified
 A–F so the export engine and the deletion reaper know exactly what to read,
 what to scrub, what to anonymize, and what to leave alone.
 
-**Last updated.** 2026-06-12 (PR #2a — export engine query + streaming core:
-added `exportByEmailOnly`, `vendor_assurance_documents.approved_by_user_id`, and
-the NDJSON file-format decision). Originally created 2026-06-11 (PR #1 — schema +
-classification foundation).
+**Last updated.** 2026-06-12 (PR #2b — export executor + org_full query layer:
+added `organizations` / `webhook_endpoints` `exportExcludedColumns`, the org_full
+full-dump model + deferred-table set, the `jobs` / `data_export_files` export
+exclusion, and the executor + manifest spec). Preceded by PR #2a (export engine
+query + streaming core: `exportByEmailOnly`,
+`vendor_assurance_documents.approved_by_user_id`, the NDJSON file-format
+decision). Originally created 2026-06-11 (PR #1 — schema + classification
+foundation).
 
 **Machine-readable mirror.** `src/api/lib/dataClassification.ts` encodes this
 document for runtime use. `src/api/__tests__/dataClassification.test.ts` asserts
@@ -249,10 +253,15 @@ excluded from export.
 | `users` | `email_verification_token`, `email_verification_expires_at` | Live capability token + its expiry. |
 | `users` | `password_reset_token`, `password_reset_expires_at` | Live capability token + its expiry. |
 | `org_invites` | `token` | Live invite-acceptance capability (UNIQUE, 7-day TTL). |
+| `organizations` | `stripe_customer_id`, `stripe_subscription_id`, `stripe_subscription_tier`, `stripe_subscription_status`, `payment_failed_at`, `promo_code` | Stripe billing identifiers / financial state (legal-retention F-fields). `entitlement_level` — the portable plan tier — is **retained** (Decision N3). org_full only. |
+| `webhook_endpoints` | `secret` | HMAC signing secret for webhook delivery. `url`, `event_types`, `status` retained for portability. org_full only. |
 
 A drift test (`dataClassification.test.ts`) asserts every `exportExcludedColumns`
 entry references a column that actually exists in the migration schema, and that
-the two known secret-bearing tables still carry their exclusions.
+the known secret-bearing tables (`users`, `org_invites`, `organizations`,
+`webhook_endpoints`) still carry their exclusions. The `organizations` and
+`webhook_endpoints` exclusions matter only for the org_full export — neither
+table appears in a user self-export.
 
 > **Not a free-text PII substitute.** This excludes *structured* secret columns
 > only. Free-text PII a user typed into a body field is the O-7 manual process.
@@ -292,6 +301,35 @@ A **user self-export** is the same shape but `tables/*.ndjson` contain only the
 requesting user's A/B rows and the C rows where they are the actor (current
 ownership **and** historical authorship via `security_audit_log`, O-1; full
 rows, not field-sliced), and `attachments/` is omitted.
+
+### Executor + org_full model (PR #2b)
+
+The executor (`runExport`, `dataExport/exporter.ts`) drives each query inside its
+own short `withTenant` scope, streams the cursor through the NDJSON transform into
+a zip entry, and writes `manifest.json` last. **`user_self` is wired end-to-end in
+PR #2b; `org_full` throws `OrgExportNotWiredError` until PR #2c** (its query
+builders ship and are tested now). Manifest fields: `export_id`, `scope`,
+`target_user_id` / `target_organization_id`, `generated_at`, `generator_version`
+(`2.0.0` — first complete service layer), `schema_version` (the **latest applied
+migration filename** from `schema_migrations`, Decision Q1; `null` if unavailable),
+`tables[]` (name, category, `row_count`, `file`, `size_bytes`, `sha256`),
+`attachments[]` (org_full, PR #2c), `notes[]`, and `gdpr_note`.
+
+The **org_full** export (`buildOrgExportQueries`) is a **full table dump, not a
+union of per-member self-exports** (Decision Q2): every org-scoped Category-A/B/C/D
+table is selected in full with **no actor predicate**, so unassigned / NULL-actor
+rows are included. Because RLS is bypassed under owner credentials and absent on
+pending-RLS tables, every org_full query carries an **explicit org predicate**
+(`organization_id = $1`; `organizations` by `id`; user-scoped tables with no org
+column via a membership subquery). Email-keyed tables follow Decision N4
+(`intelligence_brief_subscribers` by `organization_id`; `subscribers` /
+`newsletter_deliveries` by the UNION of current member emails). Five Category-D
+tables with neither an `organization_id` column nor a user ref (`requirements`,
+`policy_control_links`, `control_mappings`, `obligation_mappings`, `domain_scores`)
+are **explicitly deferred to PR #2c** (`ORG_EXPORT_DEFERRED_TABLES`) pending a
+ratified parent-join scoping; the coverage drift test asserts they are the only
+uncovered A/B/C/D tables. `jobs` and `data_export_files` (operational metadata
+about the export process itself) are excluded from both scopes (Decision Q7).
 
 ### Email-keyed export inclusion (Decision Q6)
 
