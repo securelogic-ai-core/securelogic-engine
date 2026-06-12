@@ -66,7 +66,7 @@
     "pino-http": "^11.0.0",
     "qrcode": "^1.5.4",
     "redis": "^5.10.0",
-    "resend": "^6.12.2",
+    "resend": "^6.12.3",
     "rss-parser": "^3.13.0",
     "samlify": "^2.13.1",
     "securelogic-contracts": "^0.1.2",
