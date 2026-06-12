@@ -18,8 +18,11 @@ import {
 } from "../lib/dataClassification";
 import {
   buildSelfExportQueries,
+  buildOrgExportQueries,
   EXPORT_EXCLUDED_TABLES,
   tablesRequiringProjection,
+  ORG_EXPORT_DEFERRED_TABLES,
+  ORG_MEMBERSHIP_SCOPED_TABLES,
 } from "../services/dataExport/index";
 
 const MIGRATIONS_DIR = resolve(__dirname, "../../../db/migrations");
@@ -228,11 +231,87 @@ describe("export query-builder coverage (PR #2a)", () => {
     expect(problems).toEqual([]);
   });
 
-  it("guards that the two known secret-bearing tables carry exclusions", () => {
+  it("guards that the known secret-bearing tables carry exclusions", () => {
     // If these regress to no exclusions, the projection silently becomes SELECT *.
     expect(TABLE_CLASSIFICATION.users?.exportExcludedColumns).toContain("password_hash");
     expect(TABLE_CLASSIFICATION.users?.exportExcludedColumns).toContain("totp_secret");
     expect(TABLE_CLASSIFICATION.org_invites?.exportExcludedColumns).toContain("token");
+    // PR #2b / Q5 org_full additions.
+    expect(TABLE_CLASSIFICATION.organizations?.exportExcludedColumns).toContain("stripe_customer_id");
+    expect(TABLE_CLASSIFICATION.organizations?.exportExcludedColumns).toContain("promo_code");
+    expect(TABLE_CLASSIFICATION.webhook_endpoints?.exportExcludedColumns).toContain("secret");
+    // entitlement_level (the portable plan tier) must NOT be excluded (N3).
+    expect(TABLE_CLASSIFICATION.organizations?.exportExcludedColumns).not.toContain("entitlement_level");
+  });
+});
+
+describe("org export builder coverage (PR #2b — Decision Q2)", () => {
+  const ORG_CATEGORIES = new Set(["A", "B", "C", "D"]);
+
+  // Projection-table column stub from the live schema (same approach the
+  // self-export coverage uses for tablesRequiringProjection()).
+  const orgColumnStub: Record<string, string[]> = {};
+  for (const t of tablesRequiringProjection()) {
+    orgColumnStub[t] = [...migrationColumnsFor(t)];
+  }
+  const orgCovered = new Set(
+    buildOrgExportQueries("00000000-0000-0000-0000-0000000000aa", [], orgColumnStub).map((q) => q.table),
+  );
+
+  function abcdTables(): string[] {
+    return Object.entries(TABLE_CLASSIFICATION)
+      .filter(([table, c]) => ORG_CATEGORIES.has(c.category) && !EXPORT_EXCLUDED_TABLES.has(table))
+      .map(([table]) => table);
+  }
+
+  it("covers every A/B/C/D table except the explicitly deferred ones", () => {
+    const expected = abcdTables().filter((t) => !ORG_EXPORT_DEFERRED_TABLES.has(t));
+    const missing = expected.filter((t) => !orgCovered.has(t)).sort();
+    expect(missing).toEqual([]);
+  });
+
+  it("emits no excluded, deferred, E, or F table", () => {
+    for (const t of EXPORT_EXCLUDED_TABLES) expect(orgCovered.has(t)).toBe(false);
+    for (const t of ORG_EXPORT_DEFERRED_TABLES) expect(orgCovered.has(t)).toBe(false);
+    // A Category-F table (billing) and a non-email-keyed Category-E table.
+    expect(orgCovered.has("api_keys")).toBe(false);
+    expect(orgCovered.has("signals")).toBe(false);
+  });
+
+  it("the deferral + membership sets equal exactly the no-organization_id A/B/C/D tables", () => {
+    // Every A/B/C/D table that the dump scopes by `organization_id` MUST actually
+    // have that column. The only tables allowed NOT to are `organizations`
+    // (scoped by id), the membership-scoped set, and the deferred set. If a
+    // migration adds/removes organization_id, this fails and forces an update.
+    const noOrgColumn = abcdTables().filter(
+      (t) => t !== "organizations" && !migrationColumnsFor(t).has("organization_id"),
+    );
+    const unhandled = noOrgColumn
+      .filter((t) => !ORG_MEMBERSHIP_SCOPED_TABLES.has(t) && !ORG_EXPORT_DEFERRED_TABLES.has(t))
+      .sort();
+    expect(unhandled).toEqual([]);
+
+    // No stale entries: the static sets must not list tables that DO have
+    // organization_id (which would mean they should be scoped normally now).
+    for (const t of ORG_MEMBERSHIP_SCOPED_TABLES) {
+      expect(migrationColumnsFor(t).has("organization_id"), `${t} now has organization_id`).toBe(false);
+    }
+    for (const t of ORG_EXPORT_DEFERRED_TABLES) {
+      expect(migrationColumnsFor(t).has("organization_id"), `${t} now has organization_id`).toBe(false);
+    }
+  });
+
+  it("membership-scoped tables declare the userRefColumns their subquery needs", () => {
+    for (const t of ORG_MEMBERSHIP_SCOPED_TABLES) {
+      const refs = TABLE_CLASSIFICATION[t]?.userRefColumns ?? [];
+      expect(refs.length, `${t} needs userRefColumns`).toBeGreaterThan(0);
+      const cols = migrationColumnsFor(t);
+      for (const ref of refs) expect(cols.has(ref), `${t}.${ref} missing`).toBe(true);
+    }
+  });
+
+  it("scopes the organizations row by its own id column", () => {
+    expect(migrationColumnsFor("organizations").has("id")).toBe(true);
   });
 });
 
