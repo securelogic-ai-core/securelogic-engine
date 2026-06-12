@@ -16,6 +16,11 @@ import {
   TOMBSTONE_USER_PATCH,
   TOMBSTONE_PRESERVED_COLUMNS,
 } from "../lib/dataClassification";
+import {
+  buildSelfExportQueries,
+  EXPORT_EXCLUDED_TABLES,
+  tablesRequiringProjection,
+} from "../services/dataExport/index";
 
 const MIGRATIONS_DIR = resolve(__dirname, "../../../db/migrations");
 
@@ -82,6 +87,44 @@ function usersColumns(): Map<string, boolean> {
   return cols;
 }
 
+/**
+ * Generic column-name parser for any table: the CREATE TABLE [IF NOT EXISTS]
+ * <table> (...) block plus every ALTER TABLE <table> ADD COLUMN. Used to assert
+ * exportExcludedColumns reference columns that actually exist.
+ */
+function migrationColumnsFor(table: string): Set<string> {
+  const sql = stripSqlComments(allMigrationSql());
+  const cols = new Set<string>();
+
+  const blockRe = new RegExp(
+    `CREATE TABLE (?:IF NOT EXISTS )?${table}\\s*\\(([\\s\\S]*?)\\);`,
+    "i",
+  );
+  const block = blockRe.exec(sql);
+  if (block) {
+    for (const raw of block[1].split("\n")) {
+      const line = raw.trim();
+      if (!line) continue;
+      if (/^(UNIQUE|PRIMARY|CONSTRAINT|CHECK|FOREIGN)\b/i.test(line)) continue;
+      const col = /^([a-z_][a-z0-9_]*)\s/i.exec(line);
+      if (col) cols.add(col[1].toLowerCase());
+    }
+  }
+
+  // A single `ALTER TABLE <table> ... ;` may carry MANY comma-separated
+  // `ADD COLUMN` clauses, so scan each whole statement body for every clause.
+  const stmtRe = new RegExp(`ALTER TABLE ${table}\\b([\\s\\S]*?);`, "gi");
+  const addRe = /ADD COLUMN(?:\s+IF NOT EXISTS)?\s+([a-z_][a-z0-9_]*)/gi;
+  let stmt: RegExpExecArray | null;
+  while ((stmt = stmtRe.exec(sql)) !== null) {
+    addRe.lastIndex = 0;
+    let add: RegExpExecArray | null;
+    while ((add = addRe.exec(stmt[1])) !== null) cols.add(add[1].toLowerCase());
+  }
+
+  return cols;
+}
+
 // Columns we treat as personal-identifier PII that MUST be addressed on
 // tombstone (scrubbed or explicitly preserved).
 const PII_USER_COLUMNS = ["email", "name"];
@@ -106,6 +149,90 @@ describe("TABLE_CLASSIFICATION completeness", () => {
       expect(["high", "medium", "low", "none"], table).toContain(c.piiRisk);
       expect(["enabled", "pending", "none"], table).toContain(c.rlsStatus);
     }
+  });
+});
+
+describe("export query-builder coverage (PR #2a)", () => {
+  // The self-export builders must cover every table the classification says holds
+  // exportable user data, so a future migration that adds such a table can't
+  // silently escape the export. Mirror of the categoryQueries matching rules.
+  const subject = {
+    userId: "00000000-0000-0000-0000-000000000000",
+    userEmail: "drift@example.com",
+    orgId: "00000000-0000-0000-0000-0000000000ff",
+  };
+  // Tables with exportExcludedColumns require a live column list, else the
+  // builder throws fail-closed. Build the stub from the actual migration schema.
+  const exportColumnStub: Record<string, string[]> = {};
+  for (const t of tablesRequiringProjection()) {
+    exportColumnStub[t] = [...migrationColumnsFor(t)];
+  }
+
+  // Probe both branches so dependency_assessments is covered regardless of the
+  // reviewer_uuid presence flag.
+  const coveredTables = new Set([
+    ...buildSelfExportQueries(subject, {}, exportColumnStub).map((q) => q.table),
+    ...buildSelfExportQueries(
+      subject,
+      { dependencyAssessmentsReviewerUuidPresent: false },
+      exportColumnStub,
+    ).map((q) => q.table),
+  ]);
+
+  it("has a query builder for every Category-B and Category-C table (minus exclusions)", () => {
+    const expected = Object.entries(TABLE_CLASSIFICATION)
+      .filter(
+        ([table, c]) =>
+          (c.category === "B" || c.category === "C") && !EXPORT_EXCLUDED_TABLES.has(table),
+      )
+      .map(([table]) => table);
+
+    const missing = expected.filter((t) => !coveredTables.has(t)).sort();
+    expect(missing).toEqual([]);
+  });
+
+  it("has a query builder for every exportByEmailOnly table", () => {
+    const expected = Object.entries(TABLE_CLASSIFICATION)
+      .filter(([, c]) => c.exportByEmailOnly === true)
+      .map(([table]) => table);
+
+    expect(expected.length).toBeGreaterThan(0); // guard against the filter going stale
+    const missing = expected.filter((t) => !coveredTables.has(t)).sort();
+    expect(missing).toEqual([]);
+  });
+
+  it("never emits an excluded table (password_history)", () => {
+    expect(coveredTables.has("password_history")).toBe(false);
+    for (const t of EXPORT_EXCLUDED_TABLES) expect(coveredTables.has(t)).toBe(false);
+  });
+
+  it("exportByEmailOnly is only set on Category-E tables", () => {
+    for (const [table, c] of Object.entries(TABLE_CLASSIFICATION)) {
+      if (c.exportByEmailOnly) {
+        expect(c.category, table).toBe("E");
+      }
+    }
+  });
+
+  it("every exportExcludedColumns entry references a column that exists in the schema", () => {
+    const problems: string[] = [];
+    for (const [table, c] of Object.entries(TABLE_CLASSIFICATION)) {
+      if (!c.exportExcludedColumns?.length) continue;
+      const actual = migrationColumnsFor(table);
+      // Sanity: the parser found the table at all.
+      expect(actual.size, `parser found no columns for ${table}`).toBeGreaterThan(0);
+      for (const col of c.exportExcludedColumns) {
+        if (!actual.has(col.toLowerCase())) problems.push(`${table}.${col}`);
+      }
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it("guards that the two known secret-bearing tables carry exclusions", () => {
+    // If these regress to no exclusions, the projection silently becomes SELECT *.
+    expect(TABLE_CLASSIFICATION.users?.exportExcludedColumns).toContain("password_hash");
+    expect(TABLE_CLASSIFICATION.users?.exportExcludedColumns).toContain("totp_secret");
+    expect(TABLE_CLASSIFICATION.org_invites?.exportExcludedColumns).toContain("token");
   });
 });
 

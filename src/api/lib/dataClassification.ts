@@ -39,6 +39,44 @@ export interface TableClassification {
   userRefColumns?: string[];
   piiRisk: PiiRisk;
   rlsStatus: RlsStatus;
+  /**
+   * Email-keyed export inclusion (Decision Q6). A handful of Category-E tables
+   * key personal data by EMAIL ADDRESS rather than a users.id FK
+   * (`subscribers`, `intelligence_brief_subscribers`, `newsletter_deliveries`).
+   * They are STILL category 'E' for deletion (leave alone — a subscriber is an
+   * email, not necessarily a platform user), but a user's Art. 15 self-export
+   * MUST include the rows matching the requester's CURRENT email. This flag
+   * marks that "delete=leave, export=include-by-email" distinction so the export
+   * engine includes them and the reaper still skips them.
+   *
+   * NOT set on `email_suppressions`: that table is excluded from both delete and
+   * export (Decision O-8 — removing/exposing a suppression risks re-enabling mail
+   * to a bounced/complained address).
+   *
+   * Historical email matching is NOT supported (no email history is tracked) —
+   * only the subject's current `users.email` is matched. Mirrored in the
+   * DATA_CLASSIFICATION.md export-format section.
+   */
+  exportByEmailOnly?: boolean;
+  /**
+   * Columns that physically exist on the table but MUST NOT appear in a data
+   * export — credentials, capability tokens, and their expiry companions. The
+   * export engine projects an explicit column allowlist (every column EXCEPT
+   * these) instead of `SELECT *` for any table that sets this; a missing column
+   * list for such a table is a hard error (it refuses to fall back to `SELECT *`).
+   *
+   * This is the EXPORT-side mirror of `TOMBSTONE_USER_PATCH`, but a SEPARATE
+   * field on purpose: deletion and export concerns differ. Tombstone scrubs a
+   * column's VALUE in place on delete (Art. 17) while keeping the column; export
+   * OMITS the column entirely from the Art. 15 copy. A column can need one,
+   * the other, or both — e.g. `users.email` is tombstone-scrubbed but MUST be
+   * exported (it is the subject's own data), whereas `users.password_hash` is
+   * both scrubbed on delete AND excluded from export. Keeping the lists distinct
+   * prevents one concern silently dictating the other.
+   *
+   * NOT a substitute for the free-text PII manual-review process (O-7).
+   */
+  exportExcludedColumns?: string[];
   /** Notes that the reaper / export engine must respect for this table. */
   specialHandling?: string;
 }
@@ -55,6 +93,18 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
     category: "A",
     piiRisk: "high",
     rlsStatus: "pending",
+    // Credentials + live capability tokens (+ their expiry companions) are
+    // omitted from the Art. 15 export. password_hash is a hash, but totp_secret
+    // and the *_token columns are live plaintext secrets. See exportExcludedColumns.
+    exportExcludedColumns: [
+      "password_hash",
+      "totp_secret",
+      "totp_backup_codes",
+      "email_verification_token",
+      "email_verification_expires_at",
+      "password_reset_token",
+      "password_reset_expires_at",
+    ],
     specialHandling:
       "TOMBSTONE on delete (O-3): never DELETE this row. Scrub PII in place via TOMBSTONE_USER_PATCH, preserve the UUID. RLS pending — users is a pre-context-auth structural prerequisite for the A04-G1 flip.",
   },
@@ -65,7 +115,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   alert_sends: { category: "B", userRefColumns: ["user_id"], piiRisk: "low", rlsStatus: "pending" },
   dashboard_preferences: { category: "B", userRefColumns: ["user_id"], piiRisk: "low", rlsStatus: "pending", specialHandling: "preference_type='org_default' rows have user_id NULL and are effectively category D — leave those." },
   legal_consents: { category: "B", userRefColumns: ["user_id"], piiRisk: "high", rlsStatus: "pending", specialHandling: "Holds ip_address + user_agent. CASCADE. NO RLS today (NOT a template — canonical RLS pattern is the findings pilot)." },
-  org_invites: { category: "B", userRefColumns: ["invited_by_user_id"], piiRisk: "medium", rlsStatus: "pending", specialHandling: "invited_by_user_id is ON DELETE CASCADE — under tombstone the user row is never deleted, so pending invites this user sent are preserved." },
+  org_invites: { category: "B", userRefColumns: ["invited_by_user_id"], piiRisk: "medium", rlsStatus: "pending", exportExcludedColumns: ["token"], specialHandling: "invited_by_user_id is ON DELETE CASCADE — under tombstone the user row is never deleted, so pending invites this user sent are preserved. `token` is a live invite-acceptance capability (UNIQUE, 7-day TTL) — excluded from export." },
 
   // ── C — Org content authored by a user (anonymize actor) ───────────────────
   risks: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "enabled" },
@@ -82,7 +132,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   vendors: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "pending" },
   vendor_assessments: { category: "C", userRefColumns: ["reviewer_id"], piiRisk: "high", rlsStatus: "pending" },
   vendor_reviews: { category: "C", userRefColumns: ["reviewer_uuid", "reviewer_id"], piiRisk: "high", rlsStatus: "pending", specialHandling: "Deprecated TEXT reviewer_id may hold a raw email/name." },
-  vendor_assurance_documents: { category: "C", userRefColumns: ["uploaded_by_user_id", "finalized_by_user_id"], piiRisk: "medium", rlsStatus: "pending", specialHandling: "Original PDFs live in R2 under org/{orgId}/vendor-assurance/ — org-owned, included in org export, not user export." },
+  vendor_assurance_documents: { category: "C", userRefColumns: ["uploaded_by_user_id", "finalized_by_user_id", "approved_by_user_id"], piiRisk: "medium", rlsStatus: "pending", specialHandling: "Original PDFs live in R2 under org/{orgId}/vendor-assurance/ — org-owned, included in org export, not user export." },
   vendor_assurance_cuecs: { category: "C", userRefColumns: ["review_status_updated_by_user_id"], piiRisk: "high", rlsStatus: "pending" },
   vendor_assurance_cuec_control_mappings: { category: "C", userRefColumns: ["created_by_user_id", "updated_by_user_id"], piiRisk: "none", rlsStatus: "pending" },
   vendor_assurance_review_decisions: { category: "C", userRefColumns: ["decided_by_user_id"], piiRisk: "high", rlsStatus: "pending" },
@@ -147,9 +197,9 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   security_audit_log: { category: "E", piiRisk: "medium", rlsStatus: "none", specialHandling: "APPEND-ONLY (immutability triggers, 20260614). actor_user_id is ON DELETE SET NULL — a hard user delete would trigger a cascade UPDATE the trigger REJECTS, aborting the delete. Tombstone (O-3) avoids this entirely by never deleting the user row. Tier B (SELECT+INSERT)." },
 
   // ── E (special, email-keyed PII — not user-id keyed) ───────────────────────
-  subscribers: { category: "E", piiRisk: "high", rlsStatus: "pending", specialHandling: "Email-keyed (UNIQUE email), NOT user_id keyed. Match by the user's email, not a user FK, when honoring a request." },
-  intelligence_brief_subscribers: { category: "E", piiRisk: "high", rlsStatus: "pending", specialHandling: "Keyed by (organization_id, email), NOT user_id. A subscriber is an email address, not necessarily a platform user. Match by email." },
-  newsletter_deliveries: { category: "E", piiRisk: "medium", rlsStatus: "pending", specialHandling: "Holds subscriber_email. Delivery audit trail." },
+  subscribers: { category: "E", exportByEmailOnly: true, piiRisk: "high", rlsStatus: "pending", specialHandling: "Email-keyed (UNIQUE email), NOT user_id keyed. Match by the user's current email, not a user FK. Platform-level (no organization_id) — email is the sole key. delete=leave, export=include-by-email (Q6)." },
+  intelligence_brief_subscribers: { category: "E", exportByEmailOnly: true, piiRisk: "high", rlsStatus: "pending", specialHandling: "Keyed by (organization_id, email), NOT user_id. A subscriber is an email address, not necessarily a platform user. Match by current email. delete=leave, export=include-by-email (Q6)." },
+  newsletter_deliveries: { category: "E", exportByEmailOnly: true, piiRisk: "medium", rlsStatus: "pending", specialHandling: "Holds subscriber_email. Delivery audit trail. Match by current email. delete=leave, export=include-by-email (Q6)." },
   email_suppressions: { category: "E", piiRisk: "medium", rlsStatus: "none", specialHandling: "KEEP on user delete (O-8): deleting a suppression could re-enable mail to a bounced/complained address. Lawful basis = deliverability/compliance obligation. Tier C (SELECT-only). Platform-level, no org column." },
 
   // ── F — Billing / financial (special legal-retention handling) ─────────────

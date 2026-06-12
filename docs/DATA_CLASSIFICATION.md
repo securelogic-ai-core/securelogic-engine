@@ -7,7 +7,10 @@ admin-initiated org-wide export. Every table the platform owns is classified
 A–F so the export engine and the deletion reaper know exactly what to read,
 what to scrub, what to anonymize, and what to leave alone.
 
-**Last updated.** 2026-06-11 (PR #1 — schema + classification foundation).
+**Last updated.** 2026-06-12 (PR #2a — export engine query + streaming core:
+added `exportByEmailOnly`, `vendor_assurance_documents.approved_by_user_id`, and
+the NDJSON file-format decision). Originally created 2026-06-11 (PR #1 — schema +
+classification foundation).
 
 **Machine-readable mirror.** `src/api/lib/dataClassification.ts` encodes this
 document for runtime use. `src/api/__tests__/dataClassification.test.ts` asserts
@@ -101,7 +104,7 @@ tables once the `app_request` flip lands).
 ### A — User PII root
 | Table | userRef | PII | RLS | Notes |
 |---|---|---|---|---|
-| `users` | — | high | pending | TOMBSTONE. See spec below. |
+| `users` | — | high | pending | TOMBSTONE on delete; export omits `password_hash`, `totp_secret`, `totp_backup_codes`, `email_verification_token`/`_expires_at`, `password_reset_token`/`_expires_at` (see Export column exclusions). |
 
 ### B — User-scoped (delete with the user)
 | Table | userRef | PII | RLS | Notes |
@@ -111,7 +114,7 @@ tables once the `app_request` flip lands).
 | `alert_sends` | user_id | low | pending | Dedup ledger. |
 | `dashboard_preferences` | user_id | low | pending | `org_default` rows (user_id NULL) are effectively D — leave them. |
 | `legal_consents` | user_id | high | pending | Holds `ip_address` + `user_agent`. **No RLS today** (not an RLS template). |
-| `org_invites` | invited_by_user_id | medium | pending | FK is `ON DELETE CASCADE`; tombstone preserves pending invites this user sent. |
+| `org_invites` | invited_by_user_id | medium | pending | FK is `ON DELETE CASCADE`; tombstone preserves pending invites this user sent. Export omits `token` (live invite capability). |
 
 ### C — Org content authored by a user (anonymize actor)
 | Table | userRef | PII | RLS |
@@ -130,7 +133,7 @@ tables once the `app_request` flip lands).
 | `vendors` | owner_user_id | high | pending |
 | `vendor_assessments` | reviewer_id | high | pending |
 | `vendor_reviews` | reviewer_uuid, *reviewer_id (TEXT)* | high | pending |
-| `vendor_assurance_documents` | uploaded_by_user_id, finalized_by_user_id | medium | pending |
+| `vendor_assurance_documents` | uploaded_by_user_id, finalized_by_user_id, approved_by_user_id | medium | pending |
 | `vendor_assurance_cuecs` | review_status_updated_by_user_id | high | pending |
 | `vendor_assurance_cuec_control_mappings` | created_by_user_id, updated_by_user_id | none | pending |
 | `vendor_assurance_review_decisions` | decided_by_user_id | high | pending |
@@ -220,28 +223,109 @@ user's own UUID (keeps the scrubbed email globally unique under
 
 ---
 
-## Org-wide export format (Decision O-2)
+## Export column exclusions (`exportExcludedColumns`)
+
+The Art. 15 export omits credentials and live capability tokens. The export engine
+projects an **explicit column allowlist** (every column EXCEPT the excluded ones)
+instead of `SELECT *` for any table that declares `exportExcludedColumns` in
+`dataClassification.ts`; a table that declares the field but whose live column list
+is unavailable causes the query builder to **throw (fail-closed)** rather than
+fall back to `SELECT *`. The live column list is read from `information_schema`
+(`columnProbe.ts`) so the export stays complete as new columns are added, while
+the denylist keeps secrets out.
+
+**This is the export-side mirror of `TOMBSTONE_USER_PATCH`, but a separate field.**
+Deletion scrubs a column's *value* in place and keeps the column (Art. 17); export
+*omits* the column entirely (Art. 15). The two lists overlap but are not identical
+— e.g. `users.email` is tombstone-scrubbed yet MUST be exported (it is the
+subject's own data), whereas `users.password_hash` is both scrubbed on delete and
+excluded from export.
+
+| Table | Excluded columns | Why |
+|---|---|---|
+| `users` | `password_hash` | Credential hash. |
+| `users` | `totp_secret` | **Live plaintext** TOTP seed. |
+| `users` | `totp_backup_codes` | Live MFA recovery secrets. |
+| `users` | `email_verification_token`, `email_verification_expires_at` | Live capability token + its expiry. |
+| `users` | `password_reset_token`, `password_reset_expires_at` | Live capability token + its expiry. |
+| `org_invites` | `token` | Live invite-acceptance capability (UNIQUE, 7-day TTL). |
+
+A drift test (`dataClassification.test.ts`) asserts every `exportExcludedColumns`
+entry references a column that actually exists in the migration schema, and that
+the two known secret-bearing tables still carry their exclusions.
+
+> **Not a free-text PII substitute.** This excludes *structured* secret columns
+> only. Free-text PII a user typed into a body field is the O-7 manual process.
+
+---
+
+## Org-wide export format (Decision O-2, file format Decision Q9)
 
 A single `.zip` per org-export job, stored in R2 under
-`org/{organizationId}/data-exports/{jobId}/export.zip` (7-day lifetime, O-11):
+`org/{organizationId}/data-exports/{jobId}/export.zip` (7-day lifetime, O-11).
+
+**Data files are NDJSON; the manifest is JSON (Decision Q9).** Each table file is
+newline-delimited JSON — one complete row object per line, no enclosing array.
+This is what lets the export engine **stream** arbitrarily large tables a row at a
+time (cursor → NDJSON `Transform` → zip entry) without buffering a whole table in
+memory. The manifest stays plain JSON because it is small and read whole.
 
 ```
 export.zip
 ├── manifest.json              # job id, org id, generated_at, schema version,
-│                              # per-table row counts, attachment index
+│                              # per-table row counts, attachment index, format note
 ├── tables/
-│   ├── users.json             # one JSON file per A/B/C/D table, scoped to org
-│   ├── findings.json
-│   ├── risks.json
+│   ├── users.ndjson           # one NDJSON file per included table, scoped to org
+│   ├── findings.ndjson
+│   ├── risks.ndjson
 │   └── … (one per included table)
 └── attachments/
     └── vendor-assurance/      # org-owned R2 blobs (e.g. SOC2 PDFs) by document id
 ```
 
-A **user self-export** is the same shape but `tables/*.json` contain only the
+> **Converting NDJSON → a JSON array.** `jq -s '.' tables/findings.ndjson`, or in
+> code read line-by-line and `JSON.parse` each. The manifest's `gdpr_note` records
+> the format and this conversion hint for the data subject. Empty tables produce a
+> zero-byte (or absent) `.ndjson` file; the manifest row count is authoritative.
+
+A **user self-export** is the same shape but `tables/*.ndjson` contain only the
 requesting user's A/B rows and the C rows where they are the actor (current
 ownership **and** historical authorship via `security_audit_log`, O-1; full
 rows, not field-sliced), and `attachments/` is omitted.
+
+### Email-keyed export inclusion (Decision Q6)
+
+Three Category-E tables key personal data by **email address**, not a `users.id`
+FK, and are included in a user self-export by matching the subject's **current**
+`users.email` (machine-readable as `exportByEmailOnly: true` in
+`dataClassification.ts`):
+
+| Table | Email column | Notes |
+|---|---|---|
+| `subscribers` | `email` | Platform-level (no `organization_id`) — email is the sole key. |
+| `intelligence_brief_subscribers` | `email` | Keyed by `(organization_id, email)`. |
+| `newsletter_deliveries` | `subscriber_email` | Delivery audit trail. |
+
+These remain **category E for deletion** (leave alone — a subscriber is an email,
+not necessarily a platform user). The `exportByEmailOnly` flag encodes the
+"delete=leave, export=include-by-email" distinction so the export engine includes
+them while the reaper still skips them. `email_suppressions` is **NOT** in this set
+— it is excluded from both delete and export (O-8).
+
+> **Historical email matching is not supported.** Only the subject's current
+> `users.email` is matched; the platform tracks no email-address history, so rows
+> tied to a prior address the user no longer holds cannot be located. Recorded in
+> the manifest `gdpr_note`.
+
+> **⚠ Recycled-email collision (tracked for PR #2b/#5).** These tables are NOT
+> tombstoned on user deletion (Category E, left alone), and subscriber/delivery
+> rows are not user-FK'd. If email address `e` belonged to a now-deleted user A
+> and is later held by user B, B's self-export — matching on current `users.email`
+> — would include A's old `subscribers`/`newsletter_deliveries` rows. Rare, but a
+> cross-subject leak. PR #2b/#5 must decide the mitigation (e.g. confirm the row's
+> own org/created window against the subject, or gate on verified email ownership).
+> The manifest `gdpr_note` should disclose that email-keyed rows reflect the
+> current address holder.
 
 ---
 
@@ -257,9 +341,11 @@ rows, not field-sliced), and `attachments/` is omitted.
   could re-enable mail to a bounced/complained address. Lawful basis:
   deliverability / anti-spam compliance obligation. Platform-level (no org
   column), Tier C (SELECT-only).
-- **`subscribers` / `intelligence_brief_subscribers`** — **email-keyed, not
-  user-id keyed.** A subscriber is an email address, not necessarily a platform
-  user. When honoring a request, match by the user's email, not a user FK.
+- **`subscribers` / `intelligence_brief_subscribers` / `newsletter_deliveries`**
+  — **email-keyed, not user-id keyed** (`exportByEmailOnly: true`). A subscriber is
+  an email address, not necessarily a platform user. When honoring a request, match
+  by the user's current email, not a user FK. Included in self-export (Q6), left
+  alone on delete. See "Email-keyed export inclusion" above.
 - **`jobs` / `data_export_files`** (new) — org-scoped, RLS **enabled**.
   `data_export_files` points at an R2 bundle that **contains a full PII export**
   — the purge job deletes it after 7 days (O-11). The download route looks the
@@ -298,7 +384,9 @@ handled as a documented manual process:
 This document is created by **PR #1** (schema + classification foundation).
 Subsequent PRs (not yet open) reference it:
 
-- **PR #2** — export engine (per-category query layer).
+- **PR #2** — export engine. Split: **#2a** (per-category query layer + NDJSON
+  streaming core — `src/api/services/dataExport/`; this PR) and **#2b** (zip/bundle
+  orchestration, manifest builder, org-wide outer loop, R2 attachment streaming).
 - **PR #3** — `data-rights-worker` service (render.yaml) + `jobs` poller.
 - **PR #4** — shared `sendEmail()` helper + export/deletion email templates.
 - **PR #5** — self-service export + delete API (`/account/privacy`).
