@@ -52,10 +52,26 @@ Billing note:
 - Platform Annual is not a product tier; it is the annual billing option for Platform Professional
 
 ## Active package
-`vendor-assurance-intelligence-phase-1` — staging-only vendor-assurance intelligence. Delivers the four-table schema (`vendor_assurance_documents`, `vendor_assurance_extractions`, `vendor_assurance_extraction_spans`, `vendor_assurance_review_decisions`), the seven-route surface, the in-process extraction runner, the closed material-field set, append-only review decisions, the projection-at-read-time vendor detail card, and the queue/review UI. Routes are gated behind `SECURELOGIC_VENDOR_ASSURANCE_ENABLED`, set on the staging engine block only. Production stays untouched. Acceptance gate: ≥30 real SOC reports across ≥3 distinct auditors finalized end-to-end on staging, captured in `docs/investigation/2026-05_vendor_assurance_phase1_validation.md`.
+`gdpr-data-subject-rights` — the GDPR/CCPA data-subject-rights capability (umbrella workstream: Arts. 15 / 17 / 20 + CCPA equivalents). It delivers, across an enumerated sequence of increments, the schema foundation, the export engine, the deletion/tombstone model, the async data-rights worker, and supporting query layers.
+
+Current authorized increment: **PR #2c — org_full export wiring**. PR #2a built the export engine query + streaming core; PR #2b added the executor (`runExport`) and the `org_full` query layer as tested pure functions, but the executor's `org_full` path is deliberately UNWIRED (see `src/api/services/dataExport/index.ts`). PR #2c wires it.
+
+Scope guard: only PR #2c is authorized under this package. Do not begin the data-rights worker, the deletion reaper, the route surface, or the UI.
+
+Increment caveat: beyond PR #2c, the increment numbering that appears in code comments and migration headers (a worker PR, a reaper "PR #6", etc.) is aspirational shorthand, not a committed roadmap. The tail (#4 / #6 / #7 / #8) is unenumerated — do not treat those numbers as a plan of record.
 
 ## Completed (since last update)
-- `vendor-assurance-intelligence-phase-0-blob-storage` — Cloudflare R2 blob primitive shipped to staging. Phase 1 is the first consumer.
+- `vendor-assurance-intelligence-phase-0-blob-storage` — Cloudflare R2 blob primitive shipped to staging.
+- `vendor-assurance-intelligence-phase-1` — superseded as the Active package by `gdpr-data-subject-rights`. The four-table schema, seven-route surface, in-process extraction runner, projection-at-read-time vendor card, and queue/review UI shipped to staging behind `SECURELOGIC_VENDOR_ASSURANCE_ENABLED`. NOTE: the ≥30-SOC-report / ≥3-auditor acceptance gate is **not verified in this doc-sync** — confirm before marking truly done.
+- GDPR data-subject-rights increments (all merged):
+  - **PR #1** (`#182`) — schema foundation for data-subject rights (`db/migrations/20260621_gdpr_foundations.sql`).
+  - **PR #2a** (`#184`) — export engine query + streaming core.
+  - **PR #2b** (`#188`) — export executor + `org_full` query layer (pure functions; executor `org_full` path unwired pending #2c).
+
+## In-Flight Infrastructure
+Cross-cutting hardening that runs in parallel with the active product package — neither queued nor blocked. It is not a feature increment, so it does not pass through the Active-package one-at-a-time discipline; it is sequenced internally by its own rollout plan.
+
+- **A04-G1 — Postgres Row-Level Security rollout.** Table-by-table RLS enablement toward an eventual `owner → app_request` role flip. Landed: the route-wrap mechanism (`asTenant`), the commit-before-respond shim, the findings/risks/posture route wraps, and the findings pilot + batch A.1 (`risks` + `posture_snapshots`) policies. All policies are INERT pre-flip (owner cred, NOT FORCE). Remaining: continue per-table batches, then the `DATABASE_URL` `app_request` flip (phase-3) and the staging flip. Tracked in `TENANT_ISOLATION_STANDARD.md` and the A04-G1 rollout docs. Genuinely parallel to the active product package — do not fold it into the priority queue.
 
 ## Current build priorities
 Priority order is fixed unless explicitly changed in this document.
