@@ -13,7 +13,7 @@ This document describes what SecureLogic AI has actually built today, what is pa
 - Node.js + TypeScript
 - Express-based API
 - PostgreSQL-backed domain model
-- Redis (sessions, rate-limit state, feed ETag short-circuit)
+- Redis (rate-limit state, feed ETag short-circuit)
 - route-based modular architecture
 - email/password customer authentication with JWT bridge for cross-service identity (engine ↔ app)
 - SAML SSO (samlify) and TOTP-based MFA (otplib) for enterprise authentication
@@ -33,7 +33,7 @@ This document describes what SecureLogic AI has actually built today, what is pa
 - GitHub for source control
 - Resend for email delivery
 - Stripe is the active billing system (subscriptions, webhooks, customer portal)
-- LemonSqueezy webhook signing remains wired as a legacy artifact and is slated for removal — Stripe is authoritative
+- LemonSqueezy webhook handler is retained as dormant code, but the `/webhooks/lemon` route is unmounted (returns 404); Stripe is authoritative and Lemon is slated for full removal
 - Google Workspace and Microsoft 365 are expected business systems
 - Zoho tools are part of the expected business operating environment
 
@@ -180,12 +180,19 @@ Current expectation:
 
 Status (honest):
 - the request-time tenant model is real: `attachOrganizationContext` is the sole loader of `entitlement_level`, JWT bridge always swaps to an active API key, and customer auth is in production
-- query scoping is route-by-route discipline; ~74% of route files reference `organization_id` directly, the rest are health/public/auth/admin (unverified)
-- there is no Postgres Row-Level Security yet — query scoping is the only defense
-- file/object storage is in-memory only; there is no blob layer
-- per-org background jobs follow the canonical posture-worker pattern; the intelligence worker is global and fans out per-org at consumption time (consumption path not yet independently verified)
+- query scoping is route-by-route discipline; an approximate ~74% of route files reference `organization_id` directly, the rest are health/public/auth/admin (figure is an unverified estimate — not re-measured this cycle)
+- Postgres Row-Level Security is being rolled out table-by-table under A04-G1 (findings pilot, then batch A.1: `risks` + `posture_snapshots`); policies exist but are INERT pre-flip (owner cred, NOT FORCE), so route-by-route query scoping remains the only *live* tenant defense until the `app_request` role flip
+- a Cloudflare R2 blob layer has shipped (`src/api/lib/blobStorage.ts`); vendor-assurance document storage is its first consumer (staging-gated)
+- per-org background jobs follow the canonical posture-worker pattern; the intelligence worker is global and fans out per-org at consumption time — the consumption path is now verified (brief and digest schedulers enumerate per-org on `pgElevated` with per-org `withTenant` bodies)
 - audit logging is wired but coverage across mutations is uneven
 - the standard surfaces 11 specific code risks (R1–R11 in `TENANT_ISOLATION_STANDARD.md` §11) that drive the recommended `tenant-isolation-enforcement` follow-on package
+
+### Data-subject rights (GDPR/CCPA)
+Status (honest):
+- schema foundation shipped (`db/migrations/20260621_gdpr_foundations.sql`): a tombstone-delete model (the `users` row is never hard-deleted — PII is scrubbed in place and the UUID is preserved for audit-trail integrity), `pending_deletion` / `deleted` status states, and a generic `jobs` table for async data-rights work
+- the export engine exists as query + streaming core plus an executor (`src/api/services/dataExport/`): self-export read lists (Art. 15), full-organization read lists, NDJSON streaming, and `runExport`
+- the `org_full` executor path is built but DELIBERATELY UNWIRED pending PR #2c (org_full export wiring); there is no route, worker, or UI yet
+- the data-rights worker and the deletion reaper are not built; PR numbering beyond #2c referenced in code comments is not a committed roadmap
 
 ### Brief generation
 Current expectation:
