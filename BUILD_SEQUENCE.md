@@ -54,11 +54,17 @@ Billing note:
 ## Active package
 `gdpr-data-subject-rights` — the GDPR/CCPA data-subject-rights capability (umbrella workstream: Arts. 15 / 17 / 20 + CCPA equivalents). It delivers, across an enumerated sequence of increments, the schema foundation, the export engine, the deletion/tombstone model, the async data-rights worker, and supporting query layers.
 
-Current authorized increment: **PR #2c — org_full export wiring**. PR #2a built the export engine query + streaming core; PR #2b added the executor (`runExport`) and the `org_full` query layer as tested pure functions, but the executor's `org_full` path is deliberately UNWIRED (see `src/api/services/dataExport/index.ts`). PR #2c wires it.
+Increment status: the export path (PR #2a / #2b / #2c) is shipped to prod. NO increment is currently authorized — the next increment must be explicitly selected and scoped at next session start before any code.
 
-Scope guard: only PR #2c is authorized under this package. Do not begin the data-rights worker, the deletion reaper, the route surface, or the UI.
+Scope guard: no increment is authorized under this package right now. Do not begin the data-rights worker, the deletion reaper, the route surface, or the UI.
 
-Increment caveat: beyond PR #2c, the increment numbering that appears in code comments and migration headers (a worker PR, a reaper "PR #6", etc.) is aspirational shorthand, not a committed roadmap. The tail (#4 / #6 / #7 / #8) is unenumerated — do not treat those numbers as a plan of record.
+Increment caveat: the increment numbering that appears in code comments and migration headers (a worker PR, a reaper "PR #6", etc.) is aspirational shorthand, not a committed roadmap. The tail (#4 / #6 / #7 / #8) is unenumerated — do not treat those numbers as a plan of record.
+
+Candidate next increments (NOT authorized — listed for orientation only; selection and scoping happen at next session start):
+- PR #2d — R2 attachment streaming (export stored blob attachments, deferred from the tables-only export path). Candidate, not authorized.
+- Data-rights worker — async job runner for data-subject requests. Candidate, not authorized.
+- Deletion reaper — Art. 17 erasure; destructive, requires heavy Phase 0 before any code. Candidate, not authorized.
+- Route/intake + UI surface — data-subject-request intake routes and UI. Candidate, not authorized.
 
 ## Completed (since last update)
 - `vendor-assurance-intelligence-phase-0-blob-storage` — Cloudflare R2 blob primitive shipped to staging.
@@ -67,6 +73,7 @@ Increment caveat: beyond PR #2c, the increment numbering that appears in code co
   - **PR #1** (`#182`) — schema foundation for data-subject rights (`db/migrations/20260621_gdpr_foundations.sql`).
   - **PR #2a** (`#184`) — export engine query + streaming core.
   - **PR #2b** (`#188`) — export executor + `org_full` query layer (pure functions; executor `org_full` path unwired pending #2c).
+  - **PR #2c** (`#192` → develop; promote `#193` → main `11c6969f`, prod-verified 2026-06-13T14:59:09Z) — org_full export executor wiring (wires the `runExport` `org_full` path). Tables-only; R2 attachment streaming deferred.
 
 ## In-Flight Infrastructure
 Cross-cutting hardening that runs in parallel with the active product package — neither queued nor blocked. It is not a feature increment, so it does not pass through the Active-package one-at-a-time discipline; it is sequenced internally by its own rollout plan.
