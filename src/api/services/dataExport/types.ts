@@ -96,14 +96,50 @@ export interface ManifestTableEntry {
   note?: string;
 }
 
-/** One R2 attachment's entry in the manifest (org_full only — PR #2c wires it). */
+/**
+ * One R2 attachment's entry in the manifest (org_full only — PR #2d streams the
+ * bytes). `status` distinguishes an attachment whose bytes were streamed into the
+ * bundle from one that was DISCLOSED-but-not-bundled because the underlying R2
+ * object was confirmed absent (Decision Q6/#6 — a recorded gap, never a silent
+ * omission). For an `unavailable` entry there is NO zip member at `path`,
+ * `size_bytes`/`sha256` are null (nothing was streamed to measure), and
+ * `unavailable_reason` explains why. Indeterminate R2 errors and sha256
+ * mismatches do NOT produce an `unavailable` entry — they fail the whole export.
+ */
 export interface ManifestAttachmentEntry {
   /** Entry path within the zip, e.g. `attachments/vendor-assurance/<docId>.pdf`. */
   path: string;
-  size_bytes: number;
-  sha256: string;
+  /** `included` = bytes streamed into the bundle; `unavailable` = disclosed gap. */
+  status: "included" | "unavailable";
+  /** Byte length of the streamed payload; null for an `unavailable` entry. */
+  size_bytes: number | null;
+  /** SHA-256 of the streamed payload; null for an `unavailable` entry. */
+  sha256: string | null;
   source_table: string;
   source_row_id: string;
+  /** Present only when `status === "unavailable"`: why the blob was not bundled. */
+  unavailable_reason?: string;
+}
+
+/**
+ * One attachment-bearing row to bundle (org_full only — Decision Q6/#3). Read
+ * from `vendor_assurance_documents` inside `withTenant(orgId)` with an explicit
+ * `organization_id` predicate (metadata only; the bytes stream from R2 OUTSIDE
+ * any DB scope). `sizeBytes`/`sha256` are the values recorded at upload time —
+ * the streamed sha256 is cross-checked against `sha256` (mismatch ⇒ fail-whole).
+ */
+export interface AttachmentRef {
+  /** `vendor_assurance_documents.id` — also the zip entry stem and source_row_id. */
+  documentId: string;
+  orgId: string;
+  /** Stored absolute R2 key (`org/{orgId}/...`); for provenance / cross-check. */
+  storageKey: string;
+  /** `byte_size` recorded at upload (NOT authoritative for the manifest). */
+  sizeBytes: number;
+  /** `sha256` recorded at upload — the integrity baseline for the streamed bytes. */
+  sha256: string;
+  /** Source table name (always `vendor_assurance_documents` today). */
+  sourceTable: string;
 }
 
 /**
@@ -120,7 +156,11 @@ export interface ExportManifest {
   /** Latest applied migration filename (Decision Q1), or null if unavailable. */
   schema_version: string | null;
   tables: ManifestTableEntry[];
-  /** Always present; empty `[]` for user_self and for org_full until PR #2c. */
+  /**
+   * Always present. Empty `[]` for user_self (attachments are an org-owned,
+   * org_full-only concern — Decision Q6). For org_full, one entry per
+   * attachment-bearing row, `included` or `unavailable` (PR #2d).
+   */
   attachments: ManifestAttachmentEntry[];
   notes: string[];
   gdpr_note: string;
@@ -129,6 +169,10 @@ export interface ExportManifest {
 /** What `runExport` returns to its caller (the PR #3 worker). */
 export interface ExportResult {
   manifest: ExportManifest;
-  /** Total uncompressed payload bytes across all table entries (NOT the zip size). */
+  /**
+   * Total uncompressed payload bytes across all table entries plus every
+   * `included` attachment's streamed bytes (NOT the zip size). `unavailable`
+   * attachments contribute nothing.
+   */
   bytes_written: number;
 }

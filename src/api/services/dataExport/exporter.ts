@@ -28,24 +28,39 @@
  * the org's current member emails are enumerated once (the `readMemberEmails`
  * seam, default `WHERE status <> 'deleted'` per Decision Q3), then
  * `buildOrgExportQueries` drives the same per-table streaming loop as the self
- * export. The R2 vendor-assurance ATTACHMENT bytes (Q6) are NOT bundled yet —
- * `manifest.attachments` stays `[]` and an org_full manifest note discloses it;
- * attachment streaming lands in a follow-up PR.
+ * export.
+ *
+ * ── R2 attachment streaming (PR #2d, Decision Q6) ────────────────────────────
+ * For org_full, after the tables are written the attachment-bearing rows
+ * (`vendor_assurance_documents` — the only blob-backed table) are enumerated
+ * once via the `readAttachments` seam (metadata only, inside `withTenant` with
+ * an explicit org predicate), then each R2 blob is streamed — OUTSIDE any DB
+ * scope, since the read needs no connection — through a sha256 hash into its own
+ * `attachments/vendor-assurance/<docId>.pdf` zip entry, one blob at a time so
+ * peak memory is one blob's stream high-water mark. The streamed sha256 is
+ * cross-checked against the upload-time `sha256`. Failure semantics (Decision
+ * #6): a CONFIRMED-ABSENT blob (`AttachmentNotFoundError`) becomes a disclosed
+ * `status:'unavailable'` manifest entry and the export continues; an
+ * INDETERMINATE R2 error or a sha256 MISMATCH fails the whole export (no silent
+ * partial, no silently-wrong bytes). user_self never bundles attachments.
  */
 
 import { once } from "node:events";
 import { createHash } from "node:crypto";
-import { PassThrough } from "node:stream";
+import { PassThrough, type Readable } from "node:stream";
 
 import archiver from "archiver";
 
 import { pg, withTenant, withElevated, requireTenantContext } from "../../infra/postgres.js";
 import { logger } from "../../infra/logger.js";
+import { getVendorAssurancePdfStream } from "../../lib/vendorAssuranceStorage.js";
 import type {
+  AttachmentRef,
   ExportQuery,
   ExportResult,
   ExportScope,
   ExportSubject,
+  ManifestAttachmentEntry,
   ManifestTableEntry,
   QueryRunner,
   RowStreamer,
@@ -64,13 +79,37 @@ type ArchiverInstance = ReturnType<typeof archiver>;
 /** Cursor read batch size (Invariant D) — bounds memory to one batch + zlib window. */
 export const EXPORT_BATCH_SIZE = 500;
 
+/** The only attachment-bearing (R2 blob-backed) table today (Decision Q6/#2). */
+export const VENDOR_ASSURANCE_DOCUMENTS_TABLE = "vendor_assurance_documents";
+
 /**
- * Honest disclosure (no silent cap) recorded in every org_full manifest until
- * R2 attachment streaming (Q6) lands: this bundle carries database tables only,
- * not the vendor-assurance document files those tables reference.
+ * Raised by the `openAttachment` seam when an attachment's R2 object is
+ * CONFIRMED ABSENT (NoSuchKey / 404). The executor catches THIS specific error
+ * and records a disclosed `status:'unavailable'` manifest gap (Decision #6);
+ * every OTHER error from the seam is indeterminate and fails the whole export.
  */
-export const ORG_FULL_ATTACHMENTS_DEFERRED_NOTE =
-  "attachments: vendor-assurance document files (Q6) are not bundled in this export — only database tables are included. Attachment streaming lands in a follow-up release.";
+export class AttachmentNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AttachmentNotFoundError";
+  }
+}
+
+/** The zip entry path for one attachment (matches `ManifestAttachmentEntry.path`). */
+function attachmentZipPath(documentId: string): string {
+  return `attachments/vendor-assurance/${documentId}.pdf`;
+}
+
+/** True for an AWS SDK / R2 "object does not exist" error (404 / NoSuchKey). */
+function isObjectAbsentError(err: unknown): boolean {
+  const e = err as { name?: string; Code?: string; $metadata?: { httpStatusCode?: number } };
+  return (
+    e?.name === "NoSuchKey" ||
+    e?.name === "NotFound" ||
+    e?.Code === "NoSuchKey" ||
+    e?.$metadata?.httpStatusCode === 404
+  );
+}
 
 export interface RunExportArgs {
   /** The data subject. `userEmail` MUST come from the authenticated users.email (Invariant B). */
@@ -103,6 +142,23 @@ export interface RunExportDeps {
    * `buildOrgEmailKeyedQueries`. Unused for `user_self`.
    */
   readMemberEmails?: (orgId: string) => Promise<readonly string[]>;
+  /**
+   * org_full only (Decision Q6/#3): enumerate the org's attachment-bearing rows
+   * (metadata only — id / storage_key / byte_size / sha256), read from
+   * `vendor_assurance_documents` inside `withTenant(orgId)` with an EXPLICIT
+   * `organization_id` predicate (the real boundary on a pending-RLS table). The
+   * bytes are NOT read here — they stream from R2 via `openAttachment`, outside
+   * any DB scope. Unused for `user_self`.
+   */
+  readAttachments?: (orgId: string) => Promise<readonly AttachmentRef[]>;
+  /**
+   * org_full only (Decision Q6/#4): open a streaming read of one attachment's
+   * bytes from R2. MUST throw `AttachmentNotFoundError` when the object is
+   * confirmed absent (so the executor can record a disclosed gap); any other
+   * error is indeterminate and fails the whole export. Defaults to the
+   * vendor-assurance R2 wrapper (key reconstructed from the documentId).
+   */
+  openAttachment?: (ref: AttachmentRef) => Promise<Readable>;
   now?: () => Date;
 }
 
@@ -136,6 +192,63 @@ async function defaultReadMemberEmails(orgId: string): Promise<readonly string[]
     );
     return (rows as Array<{ email: unknown }>).map((r) => String(r.email));
   });
+}
+
+/**
+ * Default attachment enumeration for org_full (Decision Q6/#3). Reads the
+ * metadata of every `vendor_assurance_documents` row for the org inside
+ * `withTenant(orgId)` with an EXPLICIT `organization_id` predicate (the same
+ * belt-and-suspenders boundary the table dump uses — RLS is bypassed under owner
+ * creds / pending on this table, so the predicate is the real boundary). Returns
+ * metadata ONLY; the blob bytes stream from R2 separately. `byte_size` is BIGINT
+ * (pg returns it as a string), so it is parsed to a number for the ref.
+ */
+async function defaultReadAttachments(orgId: string): Promise<readonly AttachmentRef[]> {
+  return withTenant(orgId, async () => {
+    const { rows } = await pg.query(
+      `SELECT id, storage_key, byte_size, sha256
+         FROM ${VENDOR_ASSURANCE_DOCUMENTS_TABLE}
+        WHERE organization_id = $1
+        ORDER BY id`,
+      [orgId],
+    );
+    return (rows as Array<Record<string, unknown>>).map((r) => ({
+      documentId: String(r.id),
+      orgId,
+      storageKey: String(r.storage_key),
+      sizeBytes: Number(r.byte_size),
+      sha256: String(r.sha256),
+      sourceTable: VENDOR_ASSURANCE_DOCUMENTS_TABLE,
+    }));
+  });
+}
+
+/**
+ * Default attachment byte read for org_full (Decision Q6/#4). Streams the
+ * original PDF from R2 via the vendor-assurance wrapper, which reconstructs the
+ * org-prefixed key from the documentId (so we never trust a stored key string)
+ * and asserts the org prefix before any I/O. A confirmed-absent object is mapped
+ * to `AttachmentNotFoundError` (→ disclosed gap); every other error propagates
+ * unchanged (→ fail-whole). An empty/missing body is treated as absent.
+ */
+async function defaultOpenAttachment(ref: AttachmentRef): Promise<Readable> {
+  let output;
+  try {
+    output = await getVendorAssurancePdfStream({
+      organizationId: ref.orgId,
+      documentId: ref.documentId,
+    });
+  } catch (err) {
+    if (isObjectAbsentError(err)) {
+      throw new AttachmentNotFoundError(`attachment object not found in R2 for document ${ref.documentId}`);
+    }
+    throw err;
+  }
+  const body = output.Body;
+  if (!body) {
+    throw new AttachmentNotFoundError(`attachment object has no body in R2 for document ${ref.documentId}`);
+  }
+  return body as Readable;
 }
 
 /**
@@ -227,6 +340,98 @@ async function consumeTableIntoArchive(params: {
 }
 
 /**
+ * Stream one attachment's R2 bytes into the archive, returning its manifest
+ * entry. Decision Q6/#4-#6/#8:
+ *  • The blob streams a chunk at a time through a sha256 hash into its own zip
+ *    entry; peak memory is one blob's stream high-water mark. No DB scope is
+ *    held (the R2 read needs no connection), so there is no withTenant pinch.
+ *  • A CONFIRMED-ABSENT object (`AttachmentNotFoundError` from the seam) yields a
+ *    disclosed `status:'unavailable'` entry — NO zip member is appended — and the
+ *    export continues. Any OTHER seam error propagates (→ fail-whole).
+ *  • The streamed sha256 is cross-checked against the upload-time `sha256`; a
+ *    MISMATCH throws (→ fail-whole) rather than emit silently-wrong bytes.
+ */
+async function consumeAttachmentIntoArchive(params: {
+  ref: AttachmentRef;
+  archive: ArchiverInstance;
+  openAttachment: (ref: AttachmentRef) => Promise<Readable>;
+}): Promise<ManifestAttachmentEntry> {
+  const { ref, archive, openAttachment } = params;
+  const file = attachmentZipPath(ref.documentId);
+
+  let blob: Readable;
+  try {
+    blob = await openAttachment(ref);
+  } catch (err) {
+    if (err instanceof AttachmentNotFoundError) {
+      // Disclosed gap (no silent omission): recorded in the manifest, NOT in the zip.
+      return {
+        path: file,
+        status: "unavailable",
+        size_bytes: null,
+        sha256: null,
+        source_table: ref.sourceTable,
+        source_row_id: ref.documentId,
+        unavailable_reason: err.message,
+      };
+    }
+    throw err; // indeterminate → fail-whole
+  }
+
+  const pass = new PassThrough();
+  const hash = createHash("sha256");
+  let sizeBytes = 0;
+
+  // Resolve when archiver has fully consumed THIS entry (match by name).
+  const entryConsumed = new Promise<void>((resolve) => {
+    const onEntry = (data: { name: string }): void => {
+      if (data.name === file) {
+        archive.off("entry", onEntry);
+        resolve();
+      }
+    };
+    archive.on("entry", onEntry);
+  });
+
+  archive.append(pass, { name: file });
+
+  try {
+    // for-await pulls one chunk at a time; awaiting 'drain' on backpressure keeps
+    // memory bounded to the high-water mark instead of buffering the whole file.
+    for await (const chunk of blob) {
+      const buf = chunk as Buffer;
+      hash.update(buf);
+      sizeBytes += buf.length;
+      if (!pass.write(buf)) await once(pass, "drain");
+    }
+    pass.end();
+    await entryConsumed;
+  } catch (err) {
+    pass.destroy(err as Error);
+    throw err;
+  } finally {
+    if (!blob.destroyed) blob.destroy();
+  }
+
+  const digest = hash.digest("hex");
+  if (ref.sha256 && digest !== ref.sha256) {
+    // Corruption / tamper — never emit silently-wrong bytes (Decision #5/#6).
+    throw new Error(
+      `attachment ${ref.documentId}: sha256 mismatch (stored ${ref.sha256}, streamed ${digest})`,
+    );
+  }
+
+  return {
+    path: file,
+    status: "included",
+    size_bytes: sizeBytes,
+    sha256: digest,
+    source_table: ref.sourceTable,
+    source_row_id: ref.documentId,
+  };
+}
+
+/**
  * Run a GDPR/CCPA export and write the zip bundle to `sink`. Returns the
  * manifest + total uncompressed payload size. Fails the WHOLE export on any
  * table error (no partial bundle) — retries are the PR #3 worker's job.
@@ -240,21 +445,20 @@ export async function runExport(args: RunExportArgs, deps: RunExportDeps = {}): 
   const openStreamer = deps.openStreamer ?? defaultOpenStreamer;
   const readSchemaVersion = deps.readSchemaVersion ?? defaultReadSchemaVersion;
   const readMemberEmails = deps.readMemberEmails ?? defaultReadMemberEmails;
+  const readAttachments = deps.readAttachments ?? defaultReadAttachments;
+  const openAttachment = deps.openAttachment ?? defaultOpenAttachment;
 
   // Probes + (org_full) member enumeration run once, before the per-table
   // tenant scopes (N2). The schema_version + column probes apply to both scopes.
   const tableColumns = await buildTableColumnsMap(probeRunner);
   const schemaVersion = await readSchemaVersion();
 
-  // org_full bundles a per-scope disclosure note (no silent attachment cap).
-  const seedNotes: string[] = [];
   let queries: ExportQuery[];
   let memberCount = 0;
   if (scope === "org_full") {
     const memberEmails = await readMemberEmails(subject.orgId);
     memberCount = memberEmails.length;
     queries = buildOrgExportQueries(subject.orgId, memberEmails, tableColumns);
-    seedNotes.push(ORG_FULL_ATTACHMENTS_DEFERRED_NOTE);
   } else {
     // reviewer_uuid matching is a self-export concern only (org_full full-dumps
     // dependency_assessments by org predicate), so probe it only when needed.
@@ -286,7 +490,8 @@ export async function runExport(args: RunExportArgs, deps: RunExportDeps = {}): 
   archive.pipe(sink);
 
   const tables: ManifestTableEntry[] = [];
-  const notes: string[] = [...seedNotes];
+  const attachments: ManifestAttachmentEntry[] = [];
+  const notes: string[] = [];
   let bytesWritten = 0;
 
   try {
@@ -301,6 +506,22 @@ export async function runExport(args: RunExportArgs, deps: RunExportDeps = {}): 
       if (entry.note) notes.push(`${entry.name}: ${entry.note}`);
     }
 
+    // Attachment phase (org_full only, Decision Q6/#9): streamed AFTER every
+    // table, BEFORE the manifest, so the manifest's hashes/sizes stay
+    // authoritative for the bundle that was actually written.
+    if (scope === "org_full") {
+      const refs = await readAttachments(subject.orgId);
+      for (const ref of refs) {
+        if (signal?.aborted) throw new Error("runExport: aborted before completing the export");
+        const entry = await Promise.race([
+          consumeAttachmentIntoArchive({ ref, archive, openAttachment }),
+          archiveErrored,
+        ]);
+        attachments.push(entry);
+        if (entry.size_bytes) bytesWritten += entry.size_bytes;
+      }
+    }
+
     const manifest = buildManifest({
       exportId,
       scope,
@@ -311,6 +532,7 @@ export async function runExport(args: RunExportArgs, deps: RunExportDeps = {}): 
       generatedAt: now,
       schemaVersion,
       tables,
+      attachments,
       notes,
     });
     archive.append(serializeManifest(manifest), { name: "manifest.json" });
@@ -329,6 +551,12 @@ export async function runExport(args: RunExportArgs, deps: RunExportDeps = {}): 
         member_count: scope === "org_full" ? memberCount : undefined,
         table_count: tables.length,
         tables: tables.map((t) => ({ name: t.name, row_count: t.row_count })),
+        // Attachment counts only (Invariant E): never log keys / filenames / PII.
+        attachment_count: scope === "org_full" ? attachments.length : undefined,
+        attachments_unavailable:
+          scope === "org_full"
+            ? attachments.filter((a) => a.status === "unavailable").length
+            : undefined,
         bytes_written: bytesWritten,
       },
       "data export completed",
