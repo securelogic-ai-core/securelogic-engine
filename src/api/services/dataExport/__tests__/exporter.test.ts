@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { Writable } from "node:stream";
+import { Writable, Readable } from "node:stream";
 import { createHash } from "node:crypto";
 import yauzl from "yauzl";
 
@@ -26,11 +26,11 @@ vi.mock("../../../infra/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { runExport, ORG_FULL_ATTACHMENTS_DEFERRED_NOTE } from "../exporter";
+import { runExport, AttachmentNotFoundError } from "../exporter";
 import { ArrayRowStreamer } from "../rowStreamer";
 import { resetColumnCache } from "../columnProbe";
 import { rowToNdjsonLine } from "../ndjsonTransform";
-import type { ExportQuery, QueryRunner, RunExportDeps } from "../types";
+import type { AttachmentRef, ExportQuery, QueryRunner, RunExportDeps } from "../types";
 
 const SUBJECT = {
   userId: "11111111-1111-1111-1111-111111111111",
@@ -78,7 +78,30 @@ function testDeps(over: Partial<RunExportDeps> = {}): RunExportDeps {
     probeRunner,
     readSchemaVersion: async () => "20260621_test",
     readMemberEmails: async () => MEMBER_EMAILS,
+    // org_full attachment seams default to "no attachments" so the table-only
+    // org_full cases are deterministic; attachment cases override both.
+    readAttachments: async () => [],
+    openAttachment: async () => {
+      throw new Error("openAttachment should not be called when there are no attachment refs");
+    },
     now: () => new Date("2026-06-12T00:00:00.000Z"),
+    ...over,
+  };
+}
+
+// One attachment fixture row + its ASCII bytes (ASCII so the readZip utf8 decode
+// round-trips for content assertions). The ref's sha256 is the digest of these
+// bytes, so the executor's streamed-vs-stored cross-check passes on the happy path.
+const ATTACHMENT_BYTES = Buffer.from("%PDF-1.4 fake-soc-report-bytes\n");
+const ATTACHMENT_DOC_ID = "doc-aaaa-bbbb-cccc";
+function attachmentRef(over: Partial<AttachmentRef> = {}): AttachmentRef {
+  return {
+    documentId: ATTACHMENT_DOC_ID,
+    orgId: SUBJECT.orgId,
+    storageKey: `org/${SUBJECT.orgId}/vendor-assurance/${ATTACHMENT_DOC_ID}/original.pdf`,
+    sizeBytes: ATTACHMENT_BYTES.length,
+    sha256: createHash("sha256").update(ATTACHMENT_BYTES).digest("hex"),
+    sourceTable: "vendor_assurance_documents",
     ...over,
   };
 }
@@ -133,7 +156,7 @@ describe("runExport — user_self", () => {
     const manifestJson = entries.get("manifest.json");
     expect(manifestJson).toBeDefined();
     const manifest = JSON.parse(manifestJson!);
-    expect(manifest.generator_version).toBe("2.0.0");
+    expect(manifest.generator_version).toBe("2.1.0");
     expect(manifest.schema_version).toBe("20260621_test");
     expect(manifest.scope).toBe("user_self");
     expect(manifest.target_user_id).toBe(SUBJECT.userId);
@@ -232,14 +255,118 @@ describe("runExport — org_full (PR #2c)", () => {
     }
   });
 
-  it("discloses deferred attachments and leaves manifest.attachments empty", async () => {
+  it("leaves manifest.attachments empty when the org has no attachment-bearing rows", async () => {
     const sink = new BufferSink();
     const result = await runExport(
       { subject: SUBJECT, scope: "org_full", sink, exportId: "org-export-2" },
-      testDeps(),
+      testDeps({ readAttachments: async () => [] }),
     );
     expect(result.manifest.attachments).toEqual([]);
-    expect(result.manifest.notes).toContain(ORG_FULL_ATTACHMENTS_DEFERRED_NOTE);
+  });
+});
+
+describe("runExport — org_full R2 attachments (PR #2d)", () => {
+  it("streams an attachment into the bundle with a verified sha256 (status: included)", async () => {
+    const sink = new BufferSink();
+    const ref = attachmentRef();
+    const openAttachment = vi.fn(async () => Readable.from([ATTACHMENT_BYTES]));
+    const result = await runExport(
+      { subject: SUBJECT, scope: "org_full", sink, exportId: "org-export-att-1" },
+      testDeps({ readAttachments: async () => [ref], openAttachment }),
+    );
+
+    expect(openAttachment).toHaveBeenCalledTimes(1);
+    expect(result.manifest.attachments).toHaveLength(1);
+
+    const entry = result.manifest.attachments[0]!;
+    const expectedPath = `attachments/vendor-assurance/${ATTACHMENT_DOC_ID}.pdf`;
+    expect(entry).toMatchObject({
+      path: expectedPath,
+      status: "included",
+      size_bytes: ATTACHMENT_BYTES.length,
+      sha256: ref.sha256,
+      source_table: "vendor_assurance_documents",
+      source_row_id: ATTACHMENT_DOC_ID,
+    });
+    expect(entry.unavailable_reason).toBeUndefined();
+
+    // The bytes are actually in the zip, and attachment bytes count toward the total.
+    const entries = await readZip(sink.toBuffer());
+    expect(entries.get(expectedPath)).toBe(ATTACHMENT_BYTES.toString("utf8"));
+    const tableBytes = result.manifest.tables.reduce((s, t) => s + t.size_bytes, 0);
+    expect(result.bytes_written).toBe(tableBytes + ATTACHMENT_BYTES.length);
+  });
+
+  it("records a CONFIRMED-ABSENT blob as a disclosed gap and still completes (status: unavailable)", async () => {
+    const sink = new BufferSink();
+    const ref = attachmentRef();
+    const openAttachment = vi.fn(async () => {
+      throw new AttachmentNotFoundError("attachment object not found in R2 for document doc-aaaa-bbbb-cccc");
+    });
+
+    // The export RESOLVES — a confirmed-absent blob is disclosed, never fatal.
+    const result = await runExport(
+      { subject: SUBJECT, scope: "org_full", sink, exportId: "org-export-att-2" },
+      testDeps({ readAttachments: async () => [ref], openAttachment }),
+    );
+
+    expect(result.manifest.attachments).toHaveLength(1);
+    const entry = result.manifest.attachments[0]!;
+    expect(entry).toMatchObject({
+      path: `attachments/vendor-assurance/${ATTACHMENT_DOC_ID}.pdf`,
+      status: "unavailable",
+      size_bytes: null,
+      sha256: null,
+      source_table: "vendor_assurance_documents",
+      source_row_id: ATTACHMENT_DOC_ID,
+    });
+    expect(entry.unavailable_reason).toMatch(/not found/i);
+
+    // No zip member was written for the unavailable attachment, and it adds no bytes.
+    const entries = await readZip(sink.toBuffer());
+    expect(entries.has(`attachments/vendor-assurance/${ATTACHMENT_DOC_ID}.pdf`)).toBe(false);
+    expect(result.bytes_written).toBe(
+      result.manifest.tables.reduce((s, t) => s + t.size_bytes, 0),
+    );
+  });
+
+  it("fails the WHOLE export on an INDETERMINATE R2 error (not a disclosed gap)", async () => {
+    const sink = new BufferSink();
+    const ref = attachmentRef();
+    const openAttachment = vi.fn(async () => {
+      // A non-AttachmentNotFoundError = indeterminate (network/5xx/timeout).
+      throw new Error("R2 connection reset");
+    });
+    await expect(
+      runExport(
+        { subject: SUBJECT, scope: "org_full", sink, exportId: "org-export-att-3" },
+        testDeps({ readAttachments: async () => [ref], openAttachment }),
+      ),
+    ).rejects.toThrow(/connection reset/);
+  });
+
+  it("fails the WHOLE export on a sha256 MISMATCH between streamed and stored bytes", async () => {
+    const sink = new BufferSink();
+    // Stored sha256 deliberately does not match the streamed bytes.
+    const ref = attachmentRef({ sha256: "0".repeat(64) });
+    const openAttachment = vi.fn(async () => Readable.from([ATTACHMENT_BYTES]));
+    await expect(
+      runExport(
+        { subject: SUBJECT, scope: "org_full", sink, exportId: "org-export-att-4" },
+        testDeps({ readAttachments: async () => [ref], openAttachment }),
+      ),
+    ).rejects.toThrow(/sha256 mismatch/);
+  });
+
+  it("does not bundle attachments for a user_self export (org-owned concern only)", async () => {
+    const sink = new BufferSink();
+    const readAttachments = vi.fn(async () => [attachmentRef()]);
+    const result = await runExport(
+      { subject: SUBJECT, scope: "user_self", sink, exportId: "self-no-att" },
+      testDeps({ readAttachments }),
+    );
+    expect(readAttachments).not.toHaveBeenCalled();
+    expect(result.manifest.attachments).toEqual([]);
   });
 });
 

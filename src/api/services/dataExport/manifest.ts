@@ -13,12 +13,15 @@ import type {
 } from "./types.js";
 
 /**
- * Manifest generator version. `2.0.0` marks the first COMPLETE export service
+ * Manifest generator version. `2.0.0` marked the first COMPLETE export service
  * layer — the query+streaming core (PR #2a) plus the executor+bundle+manifest
- * (PR #2b) together. Bump on any backward-incompatible change to the bundle
- * layout or manifest shape (Decision Q10).
+ * (PR #2b) together. `2.1.0` (PR #2d) adds org_full R2 attachment streaming:
+ * additive — `attachments[]` is now populated for org_full (with `status` and
+ * the nullable size/sha for disclosed gaps) and an `attachments/` zip tree may
+ * appear. Bump the MINOR on additive bundle/manifest changes, the MAJOR on a
+ * backward-incompatible one (Decision Q10).
  */
-export const GENERATOR_VERSION = "2.0.0";
+export const GENERATOR_VERSION = "2.1.0";
 
 /**
  * The standing GDPR/CCPA explainer embedded in every manifest. Covers the four

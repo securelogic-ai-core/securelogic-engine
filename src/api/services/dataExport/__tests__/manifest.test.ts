@@ -40,12 +40,12 @@ describe("buildManifest", () => {
       target_user_id: base.targetUserId,
       target_organization_id: base.targetOrganizationId,
       generated_at: "2026-06-12T08:00:00.000Z",
-      generator_version: "2.0.0",
+      generator_version: "2.1.0",
       schema_version: "20260621_gdpr_foundations",
     });
     expect(m.tables).toHaveLength(1);
     expect(m.gdpr_note).toBe(EXPORT_GDPR_NOTE);
-    expect(GENERATOR_VERSION).toBe("2.0.0");
+    expect(GENERATOR_VERSION).toBe("2.1.0");
   });
 
   it("defaults attachments and notes to empty arrays", () => {
@@ -66,6 +66,7 @@ describe("buildManifest", () => {
       attachments: [
         {
           path: "attachments/vendor-assurance/abc.pdf",
+          status: "included",
           size_bytes: 10,
           sha256: "feed",
           source_table: "vendor_assurance_documents",
@@ -75,6 +76,7 @@ describe("buildManifest", () => {
     });
     expect(m.notes).toEqual(["dependency_assessments: reviewer_uuid absent"]);
     expect(m.attachments[0]?.path).toBe("attachments/vendor-assurance/abc.pdf");
+    expect(m.attachments[0]?.status).toBe("included");
   });
 
   it("gdpr_note discloses NDJSON, current-email matching, recycled-email, and tombstones", () => {
@@ -97,7 +99,7 @@ describe("serializeManifest", () => {
       tables: [],
     });
     const json = serializeManifest(m);
-    expect(json).toContain('"generator_version": "2.0.0"');
+    expect(json).toContain('"generator_version": "2.1.0"');
     expect(JSON.parse(json)).toEqual(m);
   });
 });
