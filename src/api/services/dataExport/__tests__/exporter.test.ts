@@ -26,7 +26,7 @@ vi.mock("../../../infra/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { runExport, OrgExportNotWiredError } from "../exporter";
+import { runExport, ORG_FULL_ATTACHMENTS_DEFERRED_NOTE } from "../exporter";
 import { ArrayRowStreamer } from "../rowStreamer";
 import { resetColumnCache } from "../columnProbe";
 import { rowToNdjsonLine } from "../ndjsonTransform";
@@ -55,7 +55,12 @@ const FIXTURES: Record<string, Array<Record<string, unknown>>> = {
     { id: "f2", title: "Finding two", severity: "low" },
   ],
   subscribers: [{ email: SUBJECT.userEmail, status: "subscribed" }],
+  organizations: [{ id: SUBJECT.orgId, name: "Acme", entitlement_level: "platform_professional" }],
 };
+
+// The org's current members (Decision Q3) — what the readMemberEmails seam
+// returns in tests. The no-DB executor never reads these from a database.
+const MEMBER_EMAILS = ["a@example.com", "b@example.com"];
 
 // Stub probe runner: 1-param queries = column-list probe; 2-param = the
 // dependency reviewer_uuid presence probe (return absent → exercises the note).
@@ -72,6 +77,7 @@ function testDeps(over: Partial<RunExportDeps> = {}): RunExportDeps {
     openStreamer: (q: ExportQuery) => new ArrayRowStreamer(FIXTURES[q.table] ?? []),
     probeRunner,
     readSchemaVersion: async () => "20260621_test",
+    readMemberEmails: async () => MEMBER_EMAILS,
     now: () => new Date("2026-06-12T00:00:00.000Z"),
     ...over,
   };
@@ -195,14 +201,49 @@ describe("runExport — user_self", () => {
   });
 });
 
-describe("runExport — guards", () => {
-  it("throws OrgExportNotWiredError for org_full (PR #2c)", async () => {
+describe("runExport — org_full (PR #2c)", () => {
+  it("enumerates members and bundles the org dump with an org-scoped manifest", async () => {
     const sink = new BufferSink();
-    await expect(
-      runExport({ subject: SUBJECT, scope: "org_full", sink, exportId: "x" }, testDeps()),
-    ).rejects.toBeInstanceOf(OrgExportNotWiredError);
+    const readMemberEmails = vi.fn(async () => MEMBER_EMAILS);
+    const result = await runExport(
+      { subject: SUBJECT, scope: "org_full", sink, exportId: "org-export-1" },
+      testDeps({ readMemberEmails }),
+    );
+
+    // The member-enumeration seam is driven once, scoped to the subject's org.
+    expect(readMemberEmails).toHaveBeenCalledTimes(1);
+    expect(readMemberEmails).toHaveBeenCalledWith(SUBJECT.orgId);
+
+    const entries = await readZip(sink.toBuffer());
+    const manifest = JSON.parse(entries.get("manifest.json")!);
+
+    // Org-level artifact: scoped to the org, NOT a single subject.
+    expect(manifest.scope).toBe("org_full");
+    expect(manifest.target_user_id).toBeNull();
+    expect(manifest.target_organization_id).toBe(SUBJECT.orgId);
+    expect(result.manifest.scope).toBe("org_full");
+
+    // The org dump includes whole-table reads the self-export never makes
+    // (e.g. organizations), and one NDJSON entry exists per manifest table.
+    const orgEntry = result.manifest.tables.find((t) => t.name === "organizations");
+    expect(orgEntry?.row_count).toBe(1);
+    for (const t of result.manifest.tables) {
+      expect(entries.has(t.file)).toBe(true);
+    }
   });
 
+  it("discloses deferred attachments and leaves manifest.attachments empty", async () => {
+    const sink = new BufferSink();
+    const result = await runExport(
+      { subject: SUBJECT, scope: "org_full", sink, exportId: "org-export-2" },
+      testDeps(),
+    );
+    expect(result.manifest.attachments).toEqual([]);
+    expect(result.manifest.notes).toContain(ORG_FULL_ATTACHMENTS_DEFERRED_NOTE);
+  });
+});
+
+describe("runExport — guards", () => {
   it("fails the whole export if any table errors (no silent partial)", async () => {
     const sink = new BufferSink();
     const boomStreamer = (q: ExportQuery) => {
