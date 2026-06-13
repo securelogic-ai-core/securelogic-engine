@@ -54,9 +54,9 @@ Billing note:
 ## Active package
 `gdpr-data-subject-rights` — the GDPR/CCPA data-subject-rights capability (umbrella workstream: Arts. 15 / 17 / 20 + CCPA equivalents). It delivers, across an enumerated sequence of increments, the schema foundation, the export engine, the deletion/tombstone model, the async data-rights worker, and supporting query layers.
 
-Increment status: the export path (PR #2a / #2b / #2c) is shipped to prod. **PR #2d — R2 attachment streaming for the org_full export — is the AUTHORIZED active increment** (Phase 0 decision-lock approved; in build on `feat/gdpr-org-attachments-pr2d`). No other increment is authorized.
+Increment status: the export path (PR #2a / #2b / #2c / #2d) is shipped to prod — export capability complete (tables + attachments). **NO increment is currently authorized — the next increment must be explicitly selected and scoped at next session start before any code.**
 
-Scope guard: only PR #2d is in scope. Do not begin the data-rights worker, the deletion reaper, the route surface, or the UI.
+Scope guard: no increment is authorized under this package right now. Do not begin the data-rights worker, the deletion reaper, the route surface, or the UI.
 
 Increment caveat: the increment numbering that appears in code comments and migration headers (a worker PR, a reaper "PR #6", etc.) is aspirational shorthand, not a committed roadmap. The tail (#4 / #6 / #7 / #8) is unenumerated — do not treat those numbers as a plan of record.
 
@@ -73,9 +73,7 @@ Candidate next increments (NOT authorized — listed for orientation only; selec
   - **PR #2a** (`#184`) — export engine query + streaming core.
   - **PR #2b** (`#188`) — export executor + `org_full` query layer (pure functions; executor `org_full` path unwired pending #2c).
   - **PR #2c** (`#192` → develop; promote `#193` → main `11c6969f`, prod-verified 2026-06-13T14:59:09Z) — org_full export executor wiring (wires the `runExport` `org_full` path). Tables-only; R2 attachment streaming deferred.
-
-In build (authorized active increment):
-  - **PR #2d** — R2 attachment streaming for the org_full export. Streams `vendor_assurance_documents` blobs from R2 into `attachments/vendor-assurance/<docId>.pdf` (one at a time, bounded memory), cross-checks each streamed sha256 against the upload-time digest, and discloses a confirmed-absent blob as a `status:"unavailable"` manifest gap (indeterminate R2 errors and sha256 mismatches fail the whole export). Bumps `GENERATOR_VERSION` to `2.1.0`. This authorization commit rides the feature branch and reaches main with the code.
+  - **PR #2d** (`#196` → develop `07d8c63c`; promote `#197` → main `0dd01f91`, prod-verified 2026-06-13T20:49:33Z) — R2 attachment streaming for the org_full export. Streams `vendor_assurance_documents` blobs from R2 into `attachments/vendor-assurance/<docId>.pdf` (one at a time, bounded memory), cross-checks each streamed sha256 against the upload-time digest. `GENERATOR_VERSION 2.1.0`; confirmed-absent blob → disclosed `status:"unavailable"` manifest gap, indeterminate R2 error / sha256 mismatch → fail-whole.
 
 ## In-Flight Infrastructure
 Cross-cutting hardening that runs in parallel with the active product package — neither queued nor blocked. It is not a feature increment, so it does not pass through the Active-package one-at-a-time discipline; it is sequenced internally by its own rollout plan.
