@@ -307,13 +307,18 @@ rows, not field-sliced), and `attachments/` is omitted.
 The executor (`runExport`, `dataExport/exporter.ts`) drives each query inside its
 own short `withTenant` scope, streams the cursor through the NDJSON transform into
 a zip entry, and writes `manifest.json` last. **`user_self` is wired end-to-end in
-PR #2b; `org_full` throws `OrgExportNotWiredError` until PR #2c** (its query
-builders ship and are tested now). Manifest fields: `export_id`, `scope`,
+PR #2b; `org_full` is wired in PR #2c** — member enumeration via the
+`readMemberEmails` seam (current `users.email` of non-deleted members, Decision Q3)
+feeds `buildOrgExportQueries`, which drives the same per-table streaming loop. For
+org_full the manifest `scope` is `org_full` and `target_user_id` is `null` (it is
+an org-level artifact). **R2 vendor-assurance attachment bytes (Q6) are not bundled
+yet** — `attachments` stays `[]` and an org_full manifest note discloses it; a
+follow-up PR adds attachment streaming. Manifest fields: `export_id`, `scope`,
 `target_user_id` / `target_organization_id`, `generated_at`, `generator_version`
 (`2.0.0` — first complete service layer), `schema_version` (the **latest applied
 migration filename** from `schema_migrations`, Decision Q1; `null` if unavailable),
 `tables[]` (name, category, `row_count`, `file`, `size_bytes`, `sha256`),
-`attachments[]` (org_full, PR #2c), `notes[]`, and `gdpr_note`.
+`attachments[]` (org_full; populated in the attachment follow-up), `notes[]`, and `gdpr_note`.
 
 The **org_full** export (`buildOrgExportQueries`) is a **full table dump, not a
 union of per-member self-exports** (Decision Q2): every org-scoped Category-A/B/C/D
