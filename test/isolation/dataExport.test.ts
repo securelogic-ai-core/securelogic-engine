@@ -117,7 +117,7 @@ describe("GDPR export engine — user_self against real Postgres", () => {
     const entries = await readZip(sink.toBuffer());
 
     const manifest = JSON.parse(entries.get("manifest.json")!);
-    expect(manifest.generator_version).toBe("2.0.0");
+    expect(manifest.generator_version).toBe("2.1.0");
     expect(manifest.scope).toBe("user_self");
     expect(manifest.target_user_id).toBe(userA.id);
     expect(manifest.target_organization_id).toBe(seed.orgA.id);

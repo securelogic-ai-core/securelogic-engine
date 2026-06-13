@@ -39,8 +39,9 @@
  *    absent on pending-RLS tables): every `buildOrgExportQueries` query carries an
  *    EXPLICIT org predicate. The executor's org_full path is wired in PR #2c
  *    (member enumeration via the `readMemberEmails` seam + the same per-table
- *    streaming loop); R2 vendor-assurance attachment bytes (Q6) are not bundled
- *    yet (manifest.attachments stays []), and a follow-up PR adds them.
+ *    streaming loop) and PR #2d (R2 vendor-assurance attachment bytes, Q6 —
+ *    streamed into `attachments/` with the bytes cross-checked against the
+ *    upload-time sha256; confirmed-absent blobs disclosed as manifest gaps).
  */
 
 export type {
