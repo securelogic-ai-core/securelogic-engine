@@ -24,9 +24,13 @@
  * and we await archiver consuming that entry (`'entry'`) BEFORE leaving the
  * scope. Memory stays bounded to one batch + the stream's high-water mark.
  *
- * `scope:'org_full'` is intentionally NOT wired here — it lands in PR #2c. The
- * org_full query builders (`orgQueries.ts`) ship in PR #2b and are unit-tested,
- * but the executor only runs `user_self`.
+ * `scope:'org_full'` (PR #2c) is wired here on top of PR #2b's pure builders:
+ * the org's current member emails are enumerated once (the `readMemberEmails`
+ * seam, default `WHERE status <> 'deleted'` per Decision Q3), then
+ * `buildOrgExportQueries` drives the same per-table streaming loop as the self
+ * export. The R2 vendor-assurance ATTACHMENT bytes (Q6) are NOT bundled yet —
+ * `manifest.attachments` stays `[]` and an org_full manifest note discloses it;
+ * attachment streaming lands in a follow-up PR.
  */
 
 import { once } from "node:events";
@@ -49,6 +53,7 @@ import type {
 import { CursorRowStreamer } from "./rowStreamer.js";
 import { rowToNdjsonLine } from "./ndjsonTransform.js";
 import { buildSelfExportQueries } from "./selfQueries.js";
+import { buildOrgExportQueries } from "./orgQueries.js";
 import { buildTableColumnsMap } from "./columnProbe.js";
 import { dependencyAssessmentsHasReviewerUuid } from "./dependencyAssessmentsProbe.js";
 import { buildManifest, serializeManifest } from "./manifest.js";
@@ -59,16 +64,13 @@ type ArchiverInstance = ReturnType<typeof archiver>;
 /** Cursor read batch size (Invariant D) — bounds memory to one batch + zlib window. */
 export const EXPORT_BATCH_SIZE = 500;
 
-/** Thrown when `runExport` is asked for an org_full export, which lands in PR #2c. */
-export class OrgExportNotWiredError extends Error {
-  constructor() {
-    super(
-      "runExport: scope 'org_full' is not wired yet — it lands in PR #2c. The org_full " +
-        "query builders (buildOrgExportQueries) ship in PR #2b but the executor only runs 'user_self'.",
-    );
-    this.name = "OrgExportNotWiredError";
-  }
-}
+/**
+ * Honest disclosure (no silent cap) recorded in every org_full manifest until
+ * R2 attachment streaming (Q6) lands: this bundle carries database tables only,
+ * not the vendor-assurance document files those tables reference.
+ */
+export const ORG_FULL_ATTACHMENTS_DEFERRED_NOTE =
+  "attachments: vendor-assurance document files (Q6) are not bundled in this export — only database tables are included. Attachment streaming lands in a follow-up release.";
 
 export interface RunExportArgs {
   /** The data subject. `userEmail` MUST come from the authenticated users.email (Invariant B). */
@@ -93,6 +95,14 @@ export interface RunExportDeps {
   openStreamer?: (query: ExportQuery) => RowStreamer;
   probeRunner?: QueryRunner;
   readSchemaVersion?: () => Promise<string | null>;
+  /**
+   * org_full only (Decision Q3/N4): the CURRENT emails of the org's members,
+   * read from `users.email` (NEVER client input — trust-model invariant). The
+   * default enumerates non-deleted members (`status <> 'deleted'`); the result
+   * is matched against the platform-level email-keyed tables in
+   * `buildOrgEmailKeyedQueries`. Unused for `user_self`.
+   */
+  readMemberEmails?: (orgId: string) => Promise<readonly string[]>;
   now?: () => Date;
 }
 
@@ -107,6 +117,26 @@ const defaultProbeRunner: QueryRunner = async (text, values) => {
   const result = await pg.query(text, values as unknown[]);
   return { rows: result.rows as Array<Record<string, unknown>> };
 };
+
+/**
+ * Default member-email enumeration for org_full (Decision Q3/N4). Reads the
+ * CURRENT `users.email` of every non-deleted member inside `withTenant(orgId)`
+ * with an EXPLICIT `organization_id` predicate — the same belt-and-suspenders
+ * boundary the org dump uses (RLS is bypassed under owner creds / absent on
+ * pending-RLS tables, so the explicit predicate is the real boundary; live RLS
+ * is defense-in-depth). Deleted accounts are excluded because their email was
+ * scrubbed at tombstone time, so it no longer keys their old records (manifest
+ * gdpr_note discloses this). Emails are read from the DB, never request input.
+ */
+async function defaultReadMemberEmails(orgId: string): Promise<readonly string[]> {
+  return withTenant(orgId, async () => {
+    const { rows } = await pg.query(
+      "SELECT email FROM users WHERE organization_id = $1 AND status <> 'deleted' AND email IS NOT NULL ORDER BY email",
+      [orgId],
+    );
+    return (rows as Array<{ email: unknown }>).map((r) => String(r.email));
+  });
+}
 
 /**
  * Default schema_version read (Decision Q1/N2): the latest applied migration
@@ -203,24 +233,38 @@ async function consumeTableIntoArchive(params: {
  */
 export async function runExport(args: RunExportArgs, deps: RunExportDeps = {}): Promise<ExportResult> {
   const { subject, scope, sink, exportId, signal } = args;
-  if (scope === "org_full") throw new OrgExportNotWiredError();
 
   const now = (deps.now ?? (() => new Date()))();
   const probeRunner = deps.probeRunner ?? defaultProbeRunner;
   const withScope = deps.withScope ?? withTenant;
   const openStreamer = deps.openStreamer ?? defaultOpenStreamer;
   const readSchemaVersion = deps.readSchemaVersion ?? defaultReadSchemaVersion;
+  const readMemberEmails = deps.readMemberEmails ?? defaultReadMemberEmails;
 
-  // Probes run once, before the per-table tenant scopes (N2).
+  // Probes + (org_full) member enumeration run once, before the per-table
+  // tenant scopes (N2). The schema_version + column probes apply to both scopes.
   const tableColumns = await buildTableColumnsMap(probeRunner);
-  const reviewerUuidPresent = await dependencyAssessmentsHasReviewerUuid(probeRunner);
   const schemaVersion = await readSchemaVersion();
 
-  const queries = buildSelfExportQueries(
-    subject,
-    { dependencyAssessmentsReviewerUuidPresent: reviewerUuidPresent },
-    tableColumns,
-  );
+  // org_full bundles a per-scope disclosure note (no silent attachment cap).
+  const seedNotes: string[] = [];
+  let queries: ExportQuery[];
+  let memberCount = 0;
+  if (scope === "org_full") {
+    const memberEmails = await readMemberEmails(subject.orgId);
+    memberCount = memberEmails.length;
+    queries = buildOrgExportQueries(subject.orgId, memberEmails, tableColumns);
+    seedNotes.push(ORG_FULL_ATTACHMENTS_DEFERRED_NOTE);
+  } else {
+    // reviewer_uuid matching is a self-export concern only (org_full full-dumps
+    // dependency_assessments by org predicate), so probe it only when needed.
+    const reviewerUuidPresent = await dependencyAssessmentsHasReviewerUuid(probeRunner);
+    queries = buildSelfExportQueries(
+      subject,
+      { dependencyAssessmentsReviewerUuidPresent: reviewerUuidPresent },
+      tableColumns,
+    );
+  }
 
   const archive = archiver("zip", { zlib: { level: 9 } });
   // Race every awaited archive step against this so a mid-stream archiver error
@@ -242,7 +286,7 @@ export async function runExport(args: RunExportArgs, deps: RunExportDeps = {}): 
   archive.pipe(sink);
 
   const tables: ManifestTableEntry[] = [];
-  const notes: string[] = [];
+  const notes: string[] = [...seedNotes];
   let bytesWritten = 0;
 
   try {
@@ -259,8 +303,10 @@ export async function runExport(args: RunExportArgs, deps: RunExportDeps = {}): 
 
     const manifest = buildManifest({
       exportId,
-      scope: "user_self",
-      targetUserId: subject.userId,
+      scope,
+      // An org_full bundle is an org-level artifact, not a single subject's —
+      // its target is the organization, so target_user_id is null (Q2/§4).
+      targetUserId: scope === "org_full" ? null : subject.userId,
       targetOrganizationId: subject.orgId,
       generatedAt: now,
       schemaVersion,
@@ -275,10 +321,12 @@ export async function runExport(args: RunExportArgs, deps: RunExportDeps = {}): 
     logger.info(
       {
         event: "data_export_completed",
-        scope: "user_self",
+        scope,
         subject_id: subject.userId,
         org_id: subject.orgId,
         bundle_key: exportId,
+        // Count only (Invariant E): never log member emails / PII values.
+        member_count: scope === "org_full" ? memberCount : undefined,
         table_count: tables.length,
         tables: tables.map((t) => ({ name: t.name, row_count: t.row_count })),
         bytes_written: bytesWritten,
@@ -297,7 +345,7 @@ export async function runExport(args: RunExportArgs, deps: RunExportDeps = {}): 
     logger.error(
       {
         event: "data_export_failed",
-        scope: "user_self",
+        scope,
         subject_id: subject.userId,
         org_id: subject.orgId,
         bundle_key: exportId,

@@ -37,8 +37,10 @@
  * 5. org_full (Decision Q2) is a FULL TABLE DUMP with no actor predicate, so the
  *    org boundary is NOT `withTenant` alone (RLS is bypassed under owner creds and
  *    absent on pending-RLS tables): every `buildOrgExportQueries` query carries an
- *    EXPLICIT org predicate. The executor's org_full path is unwired until PR #2c;
- *    `runExport` throws `OrgExportNotWiredError` for it today.
+ *    EXPLICIT org predicate. The executor's org_full path is wired in PR #2c
+ *    (member enumeration via the `readMemberEmails` seam + the same per-table
+ *    streaming loop); R2 vendor-assurance attachment bytes (Q6) are not bundled
+ *    yet (manifest.attachments stays []), and a follow-up PR adds them.
  */
 
 export type {
@@ -95,8 +97,9 @@ export { buildSelfExportQueries } from "./selfQueries.js";
 
 /**
  * Full-organization export read list + builders (Decision Q2). PR #2b ships and
- * tests these as pure functions; the org_full executor wiring + R2 attachments
- * land in PR #2c (see `runExport` below, which throws for org_full today).
+ * tests these as pure functions; PR #2c wires them into `runExport`'s org_full
+ * path (member enumeration + the per-table streaming loop). R2 attachments are a
+ * follow-up.
  */
 export {
   buildOrgExportQueries,
