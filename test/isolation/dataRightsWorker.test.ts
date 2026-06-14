@@ -37,6 +37,7 @@ import yauzl from "yauzl";
 import { bootstrapTestDb, seedUser, type TestDbSeed } from "./testDb.js";
 import { runOneTick } from "../../src/api/workers/dataRightsWorker.js";
 import type { ObjectWriteHandle } from "../../src/api/lib/blobStorage.js";
+import { BlobStorageNotConfiguredError } from "../../src/api/lib/blobStorageConfig.js";
 
 let seed: TestDbSeed;
 let pool: Pool;
@@ -246,5 +247,69 @@ describe("data-rights worker — cross-org isolation against real Postgres", () 
     expect(rows[0].next_attempt_at).toBeNull();
     expect(rows[0].error).toContain("not found");
     expect(bundles.get(jobId)).toBeUndefined(); // never produced a bundle
+  });
+
+  // An openSink that throws synchronously mimics R2 being unconfigured:
+  // createObjectWriteStream → getBlobStorageClient throws BlobStorageNotConfiguredError
+  // BEFORE the first await. The fault must be caught at the JOB level (routed
+  // through recordFailure/decideFailureState as a retryable config fault), NOT
+  // escape to the tick handler and leave the job stale-locked in 'processing'.
+  const failingSink = (): ObjectWriteHandle => {
+    throw new BlobStorageNotConfiguredError();
+  };
+
+  it("(d) an R2-unavailable sink failure is caught per-job → requeued, tick does NOT throw, no stale lock", async () => {
+    const jobId = await enqueueJob(seed.orgA.id, "data_export_org", {}, userA.id);
+
+    // The whole point: runOneTick resolves instead of throwing out to the tick
+    // handler (which would have logged data_rights_worker_tick_error).
+    await expect(
+      runOneTick({ openSink: failingSink, workerId: "test-worker" }),
+    ).resolves.toBeGreaterThanOrEqual(1);
+
+    const { rows } = await pool.query(
+      "SELECT status, attempts, max_attempts, error, next_attempt_at, scheduled_for, locked_by, locked_at FROM jobs WHERE id = $1",
+      [jobId],
+    );
+    const row = rows[0];
+    // Retryable: requeued, not failed/dead-lettered, attempts incremented but < max.
+    expect(row.status).toBe("queued");
+    expect(row.attempts).toBe(1);
+    expect(row.attempts).toBeLessThan(row.max_attempts);
+    // Backoff was scheduled and the row is NOT stale-locked in 'processing'.
+    expect(row.next_attempt_at).not.toBeNull();
+    expect(new Date(row.scheduled_for).getTime()).toBeGreaterThan(Date.now());
+    expect(row.locked_by).toBeNull();
+    expect(row.locked_at).toBeNull();
+    // The R2 fault is recorded as the job error.
+    expect(row.error).toContain("blob storage is not configured");
+  });
+
+  it("(d2) an R2-unavailable sink failure on the final attempt → 'dead_lettered'", async () => {
+    // Seed at attempts = max_attempts - 1 (4) so the claim bumps it to max (5)
+    // and decideFailureState routes the failure to the terminal dead-letter state.
+    const { rows: ins } = await pool.query<{ id: string }>(
+      `INSERT INTO jobs (organization_id, requested_by_user_id, job_type, payload, attempts, max_attempts)
+       VALUES ($1, $2, 'data_export_org', '{}'::jsonb, 4, 5)
+       RETURNING id`,
+      [seed.orgA.id, userA.id],
+    );
+    const jobId = ins[0].id;
+
+    await expect(
+      runOneTick({ openSink: failingSink, workerId: "test-worker" }),
+    ).resolves.toBeGreaterThanOrEqual(1);
+
+    const { rows } = await pool.query(
+      "SELECT status, attempts, error, next_attempt_at, locked_by, locked_at FROM jobs WHERE id = $1",
+      [jobId],
+    );
+    const row = rows[0];
+    expect(row.status).toBe("dead_lettered");
+    expect(row.attempts).toBe(5);
+    expect(row.next_attempt_at).toBeNull();
+    expect(row.locked_by).toBeNull();
+    expect(row.locked_at).toBeNull();
+    expect(row.error).toContain("blob storage is not configured");
   });
 });
