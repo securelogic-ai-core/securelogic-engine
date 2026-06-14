@@ -333,8 +333,11 @@ The phase-1 "flip" repoints `DATABASE_URL` from the DB owner to the non-owner `a
 | 3 | `securelogic-intelligence-worker` | main (prod) | cross-org ingestion → owner channel (`pgElevated`); per-org consumption → `app_request` | — (is prod) | Mirror is #4 |
 | 4 | `securelogic-intelligence-worker-staging` | develop | same | — (is staging) | Rehearses #3 |
 | 5 | `securelogic-posture-worker` | main (prod) | cross-org org-enumeration → owner channel (`pgElevated`, `index.ts:27`); per-org snapshot writes → `app_request` (must be wrapped in `withTenant` at phase 1 — see below) | `securelogic-posture-worker-staging` | Mirror added alongside this doc |
+| 6 | `securelogic-data-rights-worker` | main (prod) | cross-org claim poll → owner channel (`pgElevated`, `dataRightsWorker.ts` `claimNextJob`); per-job execution + terminal `jobs` writes → `app_request` (already wrapped in `withTenant(job.organization_id)`) | `securelogic-data-rights-worker-staging` | Added with GDPR PR #3; already `withTenant`-correct by construction |
 
-**Mirror status:** with `securelogic-posture-worker-staging` added, all three prod workloads (engine, intelligence-worker, posture-worker) now have a develop-tracking staging twin. Before that addition, posture-worker was the only flip-set member with no staging surface — its flip could not be rehearsed.
+**Mirror status:** with `securelogic-posture-worker-staging` and the GDPR PR #3 `securelogic-data-rights-worker(-staging)` pair added, all four prod workloads (engine, intelligence-worker, posture-worker, data-rights-worker) now have a develop-tracking staging twin. Before the posture-worker-staging addition, posture-worker was the only flip-set member with no staging surface — its flip could not be rehearsed.
+
+> **PR #3 holder note (data-rights-worker):** unlike the posture-worker phase-1 gap below, this worker is already flip-correct by construction — its claim poll is on `pgElevated` and every per-org body (subject resolution, `runExport`, terminal `jobs` UPDATE, `jobs.result` write) is inside `withTenant(job.organization_id)`. At the flip it needs `DATABASE_URL`→`app_request` **and** `MIGRATION_DATABASE_URL`→owner (the claim poll reads zero rows on the tenant channel). It is also a customer-data reader/writer of the RLS-policied `jobs` + `data_export_files` tables (policies INERT pre-flip under owner creds).
 
 ### Phase-1 gap specific to posture-worker
 

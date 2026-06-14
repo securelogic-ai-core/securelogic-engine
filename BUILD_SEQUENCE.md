@@ -54,16 +54,16 @@ Billing note:
 ## Active package
 `gdpr-data-subject-rights` — the GDPR/CCPA data-subject-rights capability (umbrella workstream: Arts. 15 / 17 / 20 + CCPA equivalents). It delivers, across an enumerated sequence of increments, the schema foundation, the export engine, the deletion/tombstone model, the async data-rights worker, and supporting query layers.
 
-Increment status: the export path (PR #2a / #2b / #2c / #2d) is shipped to prod — export capability complete (tables + attachments). **NO increment is currently authorized — the next increment must be explicitly selected and scoped at next session start before any code.**
+Increment status: the export path (PR #2a / #2b / #2c / #2d) is shipped to prod — export capability complete (tables + attachments). **PR #3 — the data-rights worker, EXPORT-ONLY — is the AUTHORIZED active increment** (Phase 0 decision-lock approved; in build on `feat/gdpr-data-rights-worker`). It runs `data_export_self` / `data_export_org` jobs from the `jobs` table via `runExport`, streaming bundles to R2. No other increment is authorized.
 
-Scope guard: no increment is authorized under this package right now. Do not begin the data-rights worker, the deletion reaper, the route surface, or the UI.
+Scope guard: only PR #3 (export-job execution) is in scope. The worker does NOT handle `account_deletion_reap` (deferred until the deletion reaper exists) or `export_file_purge` (a maintenance job, not an export) — both job types are left unclaimed. Do not begin the deletion reaper, the route/intake surface, or the UI.
 
 Increment caveat: the increment numbering that appears in code comments and migration headers (a worker PR, a reaper "PR #6", etc.) is aspirational shorthand, not a committed roadmap. The tail (#4 / #6 / #7 / #8) is unenumerated — do not treat those numbers as a plan of record.
 
 Candidate next increments (NOT authorized — listed for orientation only; selection and scoping happen at next session start):
-- Data-rights worker — async job runner for data-subject requests. Candidate, not authorized.
 - Deletion reaper — Art. 17 erasure; destructive, requires heavy Phase 0 before any code. Candidate, not authorized.
-- Route/intake + UI surface — data-subject-request intake routes and UI. Candidate, not authorized.
+- Route/intake + UI surface — data-subject-request intake routes and UI (also owns the `data_export_files` row + download token + email, deferred from PR #3 per Decision D-1). Candidate, not authorized.
+- Export-file purge — the O-11 7-day R2 bundle reaper (`export_file_purge` jobs). Candidate, not authorized.
 
 ## Completed (since last update)
 - `vendor-assurance-intelligence-phase-0-blob-storage` — Cloudflare R2 blob primitive shipped to staging.
@@ -74,6 +74,9 @@ Candidate next increments (NOT authorized — listed for orientation only; selec
   - **PR #2b** (`#188`) — export executor + `org_full` query layer (pure functions; executor `org_full` path unwired pending #2c).
   - **PR #2c** (`#192` → develop; promote `#193` → main `11c6969f`, prod-verified 2026-06-13T14:59:09Z) — org_full export executor wiring (wires the `runExport` `org_full` path). Tables-only; R2 attachment streaming deferred.
   - **PR #2d** (`#196` → develop `07d8c63c`; promote `#197` → main `0dd01f91`, prod-verified 2026-06-13T20:49:33Z) — R2 attachment streaming for the org_full export. Streams `vendor_assurance_documents` blobs from R2 into `attachments/vendor-assurance/<docId>.pdf` (one at a time, bounded memory), cross-checks each streamed sha256 against the upload-time digest. `GENERATOR_VERSION 2.1.0`; confirmed-absent blob → disclosed `status:"unavailable"` manifest gap, indeterminate R2 error / sha256 mismatch → fail-whole.
+
+In build (authorized active increment):
+  - **PR #3** — data-rights worker, EXPORT-ONLY. New `services/data-rights-worker/` (thin runner) over `src/api/lib/dataRightsWorker.ts` (testable core): claims `data_export_self` / `data_export_org` jobs from `jobs` via `UPDATE … FOR UPDATE SKIP LOCKED` on the elevated channel (with a 15-min visibility-timeout reclaim of crashed jobs), resolves the self-export subject email from `users.email` inside `withTenant` (never the payload), runs `runExport`, and streams the bundle to R2 via a new `@aws-sdk/lib-storage` multipart sink (`blobStorage.createObjectWriteStream` + `dataExportStorage.ts`, key `org/{orgId}/data-exports/{exportId}.zip`). Terminal write is `jobs.result` (`{r2_key, file_size_bytes, scope}`) + `status='succeeded'`; the `data_export_files` row + token + email are deferred to PR #5 (Decision D-1). Retry/backoff → `queued`; non-retryable → `failed`; exhausted → `dead_lettered`. Two new `render.yaml` worker blocks (prod=oregon / staging=virginia, NO auto-migrate); the worker is the 6th `DATABASE_URL` flip-set holder (see `docs/A04-G1-rls-rollout-plan.md` §4a). Carries a cross-org-isolation test proving org-A jobs never read org-B rows and the payload-email-poison case. Phase 0: `docs/investigation/gdpr-pr3-phase0.md`.
 
 ## In-Flight Infrastructure
 Cross-cutting hardening that runs in parallel with the active product package — neither queued nor blocked. It is not a feature increment, so it does not pass through the Active-package one-at-a-time discipline; it is sequenced internally by its own rollout plan.
