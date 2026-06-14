@@ -19,9 +19,10 @@
  *       payload carries a POISONED email produces a bundle keyed by the real
  *       DB email, and the poison never appears anywhere in the bundle.
  *
- * It also asserts the terminal write (Decision D-1): status='succeeded' with a
- * jobs.result of { r2_key, file_size_bytes, scope } and no data_export_files row
- * (deferred to PR #5).
+ * It also asserts the terminal write (Decision D-1, revised by PR #5):
+ * status='succeeded' with a jobs.result of { r2_key, file_size_bytes, scope }
+ * AND the data_export_files delivery row the worker now writes inside
+ * withTenant (token hash stored, expiry in the future, scoped to the job).
  *
  * setup.ts points DATABASE_URL at TEST_DATABASE_URL before this module imports,
  * so infra/postgres (pulled in by dataRightsWorker) boots against the throwaway
@@ -188,8 +189,22 @@ describe("data-rights worker — cross-org isolation against real Postgres", () 
     expect(rows[0].result.r2_key).toBe(`org/${seed.orgA.id}/data-exports/${jobId}.zip`);
     expect(typeof rows[0].result.file_size_bytes).toBe("number");
 
-    const { rows: files } = await pool.query("SELECT count(*)::int AS n FROM data_export_files");
-    expect(files[0].n).toBe(0); // deferred to PR #5
+    // PR #5: the worker writes a data_export_files delivery row for this job,
+    // scoped to org A, with a stored token hash and a future expiry.
+    const { rows: files } = await pool.query(
+      `SELECT organization_id, requested_by_user_id, scope, r2_key,
+              file_size_bytes, download_token_hash, download_token_expires_at
+         FROM data_export_files WHERE job_id = $1`,
+      [jobId],
+    );
+    expect(files.length).toBe(1);
+    expect(files[0].organization_id).toBe(seed.orgA.id);
+    expect(files[0].requested_by_user_id).toBe(userA.id);
+    expect(files[0].scope).toBe("org_full");
+    expect(files[0].r2_key).toBe(`org/${seed.orgA.id}/data-exports/${jobId}.zip`);
+    // Only the SHA-256 hash is stored (64 hex chars), never a raw token.
+    expect(files[0].download_token_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(new Date(files[0].download_token_expires_at).getTime()).toBeGreaterThan(Date.now());
   });
 
   it("(b) resolves subject email from users.email in the DB, never from job.payload", async () => {
@@ -226,6 +241,15 @@ describe("data-rights worker — cross-org isolation against real Postgres", () 
     const { rows } = await pool.query("SELECT status, result FROM jobs WHERE id = $1", [jobId]);
     expect(rows[0].status).toBe("succeeded");
     expect(rows[0].result).toMatchObject({ scope: "user_self" });
+
+    // PR #5: a user_self delivery row is written for the subject user.
+    const { rows: files } = await pool.query(
+      "SELECT scope, requested_by_user_id FROM data_export_files WHERE job_id = $1",
+      [jobId],
+    );
+    expect(files.length).toBe(1);
+    expect(files[0].scope).toBe("user_self");
+    expect(files[0].requested_by_user_id).toBe(userA.id);
   });
 
   it("(c) sends a self-export job with an unknown user to 'failed' (non-retryable), not retried", async () => {
