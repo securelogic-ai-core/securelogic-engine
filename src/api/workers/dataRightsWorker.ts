@@ -223,8 +223,15 @@ export async function processClaimedJob(job: JobRow, deps: WorkerDeps = {}): Pro
     return;
   }
 
-  const sink = openSink(orgId, exportId);
+  // `openSink` is INSIDE the try: createObjectWriteStream throws synchronously
+  // (e.g. BlobStorageNotConfiguredError when R2 env is absent) before the first
+  // await, and that fault must be caught at the job level — routed through
+  // recordFailure/decideFailureState (config faults are retryable → 'queued',
+  // then 'dead_lettered' at max_attempts) — NOT escape to the tick handler and
+  // leave the job stale-locked in 'processing' until the reclaim timeout.
+  let sink: ObjectWriteHandle | undefined;
   try {
+    sink = openSink(orgId, exportId);
     const result = await runExportFn({
       subject: resolved.subject,
       scope: resolved.scope,
@@ -251,10 +258,13 @@ export async function processClaimedJob(job: JobRow, deps: WorkerDeps = {}): Pro
     );
   } catch (err) {
     // Fail-closed: tear down the in-flight multipart upload (no orphan parts).
-    try {
-      await sink.abort();
-    } catch {
-      /* upload may not have started a multipart yet */
+    // `sink` may be undefined if openSink itself threw — nothing to abort then.
+    if (sink) {
+      try {
+        await sink.abort();
+      } catch {
+        /* upload may not have started a multipart yet */
+      }
     }
     await recordFailure(job, err, now());
     logger.error(
