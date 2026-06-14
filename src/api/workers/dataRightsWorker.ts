@@ -1,0 +1,282 @@
+/**
+ * dataRightsWorker.ts — core logic for the GDPR/CCPA data-rights worker (PR #3).
+ *
+ * EXPORT-ONLY scope (Phase 0 decision-lock). The worker claims and executes
+ * `data_export_self` and `data_export_org` jobs from the generic `jobs` table
+ * (migration 20260621_gdpr_foundations.sql), runs the now-complete `runExport`
+ * (PR #2a–#2d), and streams the bundle to R2. It deliberately does NOT touch
+ * `account_deletion_reap` (deferred until the deletion reaper exists) or
+ * `export_file_purge` (a maintenance job, not an export) — those job types are
+ * left unclaimed, never errored.
+ *
+ * ── Tenant isolation (A04-G1-adjacent — the load-bearing invariant) ──────────
+ *  • CLAIM POLL runs on the elevated/owner channel (`pgElevated`). It scans the
+ *    whole `jobs` queue across every org; under the eventual app_request flip a
+ *    context-less poller on the tenant channel would see ZERO rows (jobs RLS
+ *    filters to current_org_id). The poll must therefore be elevated. This is
+ *    the established cross-org-enumeration pattern (posture-worker, schedulers).
+ *  • EVERYTHING ELSE — subject-email resolution, export execution, the terminal
+ *    jobs UPDATE and the jobs.result write — runs inside `withTenant(orgId)` so
+ *    it is RLS-correct post-flip and provably single-org.
+ *  • `subject.userEmail` for a self-export is read from `users.email` IN THE DB
+ *    inside `withTenant`, NEVER from `job.payload` (export trust invariant B).
+ *    A poisoned payload email can never reach the bundle.
+ *
+ * ── Terminal write (Decision D-1) ────────────────────────────────────────────
+ * The worker's success output is the R2 object + `jobs.result` JSONB
+ * ({ r2_key, file_size_bytes, scope }) + status='succeeded'. The
+ * `data_export_files` row (download token + expiry + email) is O-9 / download
+ * delivery — DEFERRED to the route/intake PR (#5). The worker mints no token.
+ *
+ * ── Retry / failure (Decisions D-4 / D-5) ────────────────────────────────────
+ *  • Transient failure with attempts left → status='queued' with exponential
+ *    backoff (scheduled_for bumped). Non-retryable → status='failed' at once.
+ *    Attempts exhausted → status='dead_lettered' (needs a human).
+ *  • A worker that crashes mid-run strands the job in 'processing' with its lock
+ *    held; the claim poll reclaims any 'processing' job whose locked_at is older
+ *    than LOCK_TIMEOUT_MS (visibility timeout).
+ *  • runExport already fails the whole export (no partial bundle); on any
+ *    failure we also abort the in-flight multipart upload so no orphan R2 parts
+ *    linger (mirrors the #2b fail-closed discipline).
+ */
+
+import { pg, pgElevated, withTenant } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
+import { runExport } from "../services/dataExport/exporter.js";
+import { createDataExportWriteStream } from "../lib/dataExportStorage.js";
+import type { ExportScope, ExportSubject } from "../services/dataExport/types.js";
+import type { ObjectWriteHandle } from "../lib/blobStorage.js";
+import {
+  EXPORT_JOB_TYPES,
+  LOCK_TIMEOUT_MS,
+  NonRetryableJobError,
+  decideFailureState,
+} from "../lib/dataRightsWorkerPolicy.js";
+
+// Re-export the DB-free policy surface so callers import everything from here.
+export {
+  EXPORT_JOB_TYPES,
+  LOCK_TIMEOUT_MS,
+  MAX_BACKOFF_MS,
+  NonRetryableJobError,
+  backoffMs,
+  decideFailureState,
+} from "../lib/dataRightsWorkerPolicy.js";
+
+/** The columns the claim returns — the subset the worker needs to process a job. */
+export interface JobRow {
+  id: string;
+  organization_id: string;
+  requested_by_user_id: string | null;
+  job_type: string;
+  status: string;
+  attempts: number;
+  max_attempts: number;
+  payload: Record<string, unknown>;
+}
+
+/** Injectable seams so the executor core is testable with no R2 / a Buffer sink. */
+export interface WorkerDeps {
+  /** Identifies this worker instance in locked_by. */
+  workerId?: string;
+  now?: () => Date;
+  /** Open the bundle sink — defaults to R2 via dataExportStorage. */
+  openSink?: (orgId: string, exportId: string) => ObjectWriteHandle;
+  /** The export executor — defaults to runExport. */
+  runExportFn?: typeof runExport;
+  /** Loop guard: runOneTick stops claiming when this returns false (shutdown). */
+  shouldContinue?: () => boolean;
+}
+
+/**
+ * Atomically claim the next export job (or reclaim a crashed one) on the
+ * ELEVATED channel. SELECT ... FOR UPDATE SKIP LOCKED inside the UPDATE makes
+ * two worker instances unable to double-claim. Returns null when nothing is
+ * claimable.
+ */
+const CLAIM_SQL = `
+  UPDATE jobs
+     SET status = 'processing',
+         locked_by = $1,
+         locked_at = now(),
+         attempts = attempts + 1,
+         updated_at = now()
+   WHERE id = (
+     SELECT id FROM jobs
+      WHERE job_type = ANY($2::text[])
+        AND (
+              (status = 'queued' AND scheduled_for <= now())
+           OR (status = 'processing' AND locked_at < now() - ($3::bigint * interval '1 millisecond'))
+        )
+      ORDER BY scheduled_for
+      FOR UPDATE SKIP LOCKED
+      LIMIT 1
+   )
+   RETURNING id, organization_id, requested_by_user_id, job_type, status, attempts, max_attempts, payload`;
+
+export async function claimNextJob(workerId: string): Promise<JobRow | null> {
+  const { rows } = await pgElevated.query(CLAIM_SQL, [
+    workerId,
+    [...EXPORT_JOB_TYPES],
+    LOCK_TIMEOUT_MS,
+  ]);
+  return (rows[0] as JobRow | undefined) ?? null;
+}
+
+/**
+ * Resolve the export scope + subject for a claimed job. For a self-export the
+ * subject's email is read from `users.email` inside `withTenant` (trust
+ * invariant B) — the payload supplies only the userId. For an org export the
+ * executor enumerates members itself, so only orgId matters.
+ */
+async function resolveSubject(
+  job: JobRow,
+): Promise<{ scope: ExportScope; subject: ExportSubject }> {
+  const orgId = job.organization_id;
+
+  if (job.job_type === "data_export_org") {
+    // org_full nulls target_user_id and reads member emails from the DB itself;
+    // userId/userEmail here are unused beyond logging.
+    return {
+      scope: "org_full",
+      subject: { userId: job.requested_by_user_id ?? "", userEmail: "", orgId },
+    };
+  }
+
+  const userId = typeof job.payload?.userId === "string" ? job.payload.userId : null;
+  if (!userId) {
+    throw new NonRetryableJobError("data_export_self job payload missing a string userId");
+  }
+
+  const email = await withTenant(orgId, async () => {
+    const { rows } = await pg.query(
+      "SELECT email FROM users WHERE id = $1 AND organization_id = $2",
+      [userId, orgId],
+    );
+    return (rows[0] as { email?: string } | undefined)?.email;
+  });
+
+  if (!email) {
+    throw new NonRetryableJobError(
+      `data_export_self subject user ${userId} not found in org ${orgId}`,
+    );
+  }
+
+  return { scope: "user_self", subject: { userId, userEmail: String(email), orgId } };
+}
+
+/** Mark a job succeeded with its result, inside the org's tenant scope. */
+async function recordSuccess(
+  job: JobRow,
+  result: { r2_key: string; file_size_bytes: number; scope: ExportScope },
+): Promise<void> {
+  await withTenant(job.organization_id, async () => {
+    await pg.query(
+      `UPDATE jobs
+          SET status = 'succeeded', result = $2::jsonb, error = NULL,
+              locked_by = NULL, locked_at = NULL,
+              completed_at = now(), updated_at = now()
+        WHERE id = $1`,
+      [job.id, JSON.stringify(result)],
+    );
+  });
+}
+
+/** Persist a failure outcome (requeue with backoff / failed / dead_lettered). */
+async function recordFailure(job: JobRow, err: unknown, now: Date): Promise<void> {
+  const decision = decideFailureState(job, err, now);
+  const message = ((err as Error)?.message ?? String(err)).slice(0, 2000);
+  await withTenant(job.organization_id, async () => {
+    await pg.query(
+      `UPDATE jobs
+          SET status = $2, error = $3, next_attempt_at = $4,
+              scheduled_for = COALESCE($4, scheduled_for),
+              locked_by = NULL, locked_at = NULL, updated_at = now()
+        WHERE id = $1`,
+      [job.id, decision.status, message, decision.nextAttemptAt],
+    );
+  });
+}
+
+/**
+ * Process one already-claimed job to completion. Never throws — every outcome is
+ * persisted to the row. (The claim already moved the job to 'processing'.)
+ */
+export async function processClaimedJob(job: JobRow, deps: WorkerDeps = {}): Promise<void> {
+  const now = deps.now ?? (() => new Date());
+  const openSink =
+    deps.openSink ??
+    ((orgId, exportId) => createDataExportWriteStream({ organizationId: orgId, exportId }));
+  const runExportFn = deps.runExportFn ?? runExport;
+  const orgId = job.organization_id;
+  const exportId = job.id;
+
+  let resolved: { scope: ExportScope; subject: ExportSubject };
+  try {
+    resolved = await resolveSubject(job);
+  } catch (err) {
+    await recordFailure(job, err, now());
+    logger.error(
+      { event: "data_rights_job_failed", job_id: job.id, org_id: orgId, phase: "resolve", message: (err as Error)?.message },
+      "data-rights export job failed to resolve subject",
+    );
+    return;
+  }
+
+  const sink = openSink(orgId, exportId);
+  try {
+    const result = await runExportFn({
+      subject: resolved.subject,
+      scope: resolved.scope,
+      sink: sink.stream,
+      exportId,
+    });
+    const uploaded = await sink.done; // wait for the R2 multipart upload to finish
+    await recordSuccess(job, {
+      r2_key: uploaded.key,
+      file_size_bytes: uploaded.byteSize,
+      scope: resolved.scope,
+    });
+    logger.info(
+      {
+        event: "data_rights_job_succeeded",
+        job_id: job.id,
+        org_id: orgId,
+        scope: resolved.scope,
+        r2_key: uploaded.key,
+        file_size_bytes: uploaded.byteSize,
+        bytes_written: result.bytes_written,
+      },
+      "data-rights export job succeeded",
+    );
+  } catch (err) {
+    // Fail-closed: tear down the in-flight multipart upload (no orphan parts).
+    try {
+      await sink.abort();
+    } catch {
+      /* upload may not have started a multipart yet */
+    }
+    await recordFailure(job, err, now());
+    logger.error(
+      { event: "data_rights_job_failed", job_id: job.id, org_id: orgId, phase: "execute", message: (err as Error)?.message },
+      "data-rights export job failed",
+    );
+  }
+}
+
+/**
+ * Drain the queue: claim + process jobs until none are claimable (or shutdown
+ * is requested between jobs). Returns the number of jobs processed this tick.
+ */
+export async function runOneTick(deps: WorkerDeps = {}): Promise<number> {
+  const workerId = deps.workerId ?? `data-rights-worker-${process.pid}`;
+  let processed = 0;
+  for (;;) {
+    if (deps.shouldContinue && !deps.shouldContinue()) break;
+    const job = await claimNextJob(workerId);
+    if (!job) break;
+    await processClaimedJob(job, deps);
+    processed += 1;
+  }
+  return processed;
+}

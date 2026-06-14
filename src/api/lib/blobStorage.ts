@@ -23,6 +23,8 @@ import {
 } from "@aws-sdk/client-s3";
 import type { GetObjectCommandOutput } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { Upload } from "@aws-sdk/lib-storage";
+import { Transform } from "node:stream";
 import { getBlobStorageClient } from "./blobStorageConfig.js";
 
 export const MAX_SIGNED_URL_TTL_SECONDS = 120;
@@ -143,6 +145,80 @@ export async function putObject(args: PutObjectArgs): Promise<PutObjectResult> {
   );
 
   return { key, byteSize: args.bytes.byteLength };
+}
+
+/**
+ * A streaming multipart upload handle. The producer writes bytes into `stream`
+ * (e.g. `archive.pipe(handle.stream)`); the bytes are uploaded to R2 a part at a
+ * time via @aws-sdk/lib-storage's managed multipart, so peak memory is bounded
+ * to the part buffer (a few parts × partSize) rather than the whole object. This
+ * is what lets a large GDPR export bundle stream to R2 without buffering — the
+ * buffered `putObject` above would defeat the export engine's streaming design.
+ */
+export type ObjectWriteHandle = {
+  /** Destination for the object bytes. Ending this stream finalizes the upload. */
+  stream: NodeJS.WritableStream;
+  /**
+   * Resolves AFTER the multipart upload completes (key + actual byte count,
+   * tallied as bytes flow — no follow-up HeadObject). Rejects if the upload
+   * fails. Pre-attached with a no-op catch so an abort-before-await never trips
+   * an unhandledRejection; the awaiter still sees the rejection.
+   */
+  done: Promise<PutObjectResult>;
+  /**
+   * Abort the in-flight multipart upload so no orphan parts linger in R2. Call
+   * this when the producer fails mid-stream (fail-closed). Safe to call before
+   * any part was uploaded.
+   */
+  abort: () => Promise<void>;
+};
+
+export type CreateObjectWriteStreamArgs = {
+  organizationId: string;
+  /** Relative key (org prefix is attached by the wrapper). */
+  relativeKey: string;
+  contentType: string;
+};
+
+export function createObjectWriteStream(args: CreateObjectWriteStreamArgs): ObjectWriteHandle {
+  const key = buildObjectKey(args.organizationId, args.relativeKey);
+  assertKeyBelongsToOrg(args.organizationId, key);
+  if (typeof args.contentType !== "string" || args.contentType.length === 0) {
+    throw new BlobStorageInvalidArgumentError("contentType must be non-empty");
+  }
+
+  // Tally bytes in `_transform` (not a 'data' listener) so we never force
+  // flowing mode and fight lib-storage's backpressure-based reads of the Body.
+  let byteSize = 0;
+  const counter = new Transform({
+    transform(chunk, _enc, cb) {
+      byteSize += (chunk as Buffer).length;
+      cb(null, chunk);
+    }
+  });
+
+  const { client, config } = getBlobStorageClient();
+  const upload = new Upload({
+    client,
+    params: {
+      Bucket: config.bucket,
+      Key: key,
+      Body: counter,
+      ContentType: args.contentType
+    }
+  });
+
+  const done: Promise<PutObjectResult> = upload.done().then(() => ({ key, byteSize }));
+  // Keep the rejection "handled" even if the caller aborts without awaiting done.
+  done.catch(() => undefined);
+
+  return {
+    stream: counter,
+    done,
+    abort: async () => {
+      await upload.abort();
+    }
+  };
 }
 
 export type GetObjectArgs = {

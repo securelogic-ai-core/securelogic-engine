@@ -481,6 +481,118 @@ services:
         sync: false
 
   # =========================================================
+  # DATA-RIGHTS WORKER (background)
+  # GDPR/CCPA data-subject-rights job runner (O-10). EXPORT-ONLY:
+  # claims data_export_self / data_export_org jobs from the `jobs`
+  # table, runs runExport, streams the bundle to R2. Deletion-reap
+  # and export-purge jobs are out of scope and left unclaimed.
+  #
+  # Cross-org claim poll uses the elevated channel; per-job work
+  # (execution + terminal writes) runs inside withTenant(orgId).
+  # Polls every 15s, single-flight, drains SIGTERM. Workers do NOT
+  # auto-migrate — the engine startCommand owns migrations.
+  #
+  # PROD R2 NOTE: production R2 is intentionally unconfigured today
+  # (see the engine block — Phase 0 shipped R2 to staging only).
+  # This worker is INERT in prod until R2_* is populated AND the
+  # data-rights intake (PR #5) begins enqueuing jobs. Declared here
+  # so the IaC is complete and the flip-set (docs/A04-G1-rls-rollout
+  # -plan.md §4a) records it as a DATABASE_URL holder.
+  #
+  # Keep this block in lockstep with the staging twin below.
+  # =========================================================
+
+  - type: worker
+    name: securelogic-data-rights-worker
+    region: oregon
+    env: node
+    plan: starter
+    buildCommand: npm ci --include=dev && tsc -p services/data-rights-worker/tsconfig.json
+    startCommand: node dist-data-rights-worker/services/data-rights-worker/src/index.js
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Shared with API service — same Postgres instance. At the A04-G1 flip
+      # this becomes the app_request channel and a MIGRATION_DATABASE_URL
+      # (owner) is added for the cross-org claim poll (pgElevated). See
+      # docs/A04-G1-rls-rollout-plan.md §4a (6th flip-set holder).
+      - key: DATABASE_URL
+        sync: false
+
+      # Cloudflare R2 — destination for export bundles
+      # (org/{orgId}/data-exports/{exportId}.zip). Populate in the dashboard;
+      # prod enablement is a pending platform decision (see PROD R2 NOTE).
+      - key: R2_ACCOUNT_ID
+        sync: false
+
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+
+      - key: R2_BUCKET
+        sync: false
+
+      - key: R2_ENDPOINT
+        sync: false
+
+      # Optional: override log verbosity (default: info)
+      - key: LOG_LEVEL
+        sync: false
+
+  # =========================================================
+  # DATA-RIGHTS WORKER — STAGING (background)
+  # Tracks the develop branch. Mirrors the production data-rights
+  # worker above; NODE_ENV is staging, DATABASE_URL + R2_* point at
+  # the staging Postgres / R2 in the dashboard. This is where export
+  # job execution is validated before prod (R2 is configured here).
+  #
+  # Keep this block in lockstep with securelogic-data-rights-worker.
+  # =========================================================
+
+  - type: worker
+    name: securelogic-data-rights-worker-staging
+    region: virginia
+    env: node
+    plan: starter
+    branch: develop
+    buildCommand: npm ci --include=dev && tsc -p services/data-rights-worker/tsconfig.json
+    startCommand: node dist-data-rights-worker/services/data-rights-worker/src/index.js
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: staging
+
+      # Staging Postgres — same instance engine-staging, intelligence-worker-
+      # staging and posture-worker-staging use. TLS on by default; no PGSSL.
+      - key: DATABASE_URL
+        sync: false
+
+      # Cloudflare R2 — STAGING. Same bucket the engine-staging block uses for
+      # vendor-assurance blobs; export bundles land under data-exports/.
+      - key: R2_ACCOUNT_ID
+        sync: false
+
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+
+      - key: R2_BUCKET
+        sync: false
+
+      - key: R2_ENDPOINT
+        sync: false
+
+      # Optional: override log verbosity (default: info)
+      - key: LOG_LEVEL
+        sync: false
+
+  # =========================================================
   # SECURELOGIC APP (Next.js frontend)
   # User-facing web application: landing, registration, login,
   # brief archive, account, and billing flows.
