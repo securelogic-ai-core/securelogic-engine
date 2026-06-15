@@ -15,7 +15,7 @@
     }
   },
   "dependencies": {
-    "@sentry/nextjs": "^10.56.0",
+    "@sentry/nextjs": "^10.57.0",
     "autoprefixer": "^10.4.0",
     "exceljs": "^4.4.0",
     "iron-session": "^8.0.4",
