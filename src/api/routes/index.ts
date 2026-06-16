@@ -4,6 +4,7 @@ import adminOpsDashboardRouter from "./adminOpsDashboard.js";
 import unsubscribeRouter from "./unsubscribe.js";
 import accountRouter from "./account.js";
 import accountRecoveryRouter from "./accountRecovery.js";
+import dataExportsRouter, { dataExportPublicDownloadRouter } from "./dataExports.js";
 
 import newsletterIssuesRouter from "./newsletterIssues.js";
 import newsletterDeliveriesRouter from "./newsletterDeliveries.js";
@@ -203,6 +204,12 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", publicBriefSignupRouter);
 
   router.use("/api", accountRecoveryRouter);
+
+  // GDPR self-export tokenized download — session-optional (no API key / no
+  // login). Mounted in the PUBLIC section, BEFORE requireConsent + the API-key
+  // rate limiter, so a future emailed download link resolves with no session.
+  // It resolves the file strictly by SHA-256 token hash (Decisions E/F).
+  router.use("/api", dataExportPublicDownloadRouter);
 
   // Customer email/password auth — public (rate-limited), JWT-issuing
   router.use("/api", customerAuthRouter);
@@ -454,6 +461,10 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", auditPackageRouter);
   router.use("/api", gapReportRouter);
   router.use("/api", findingsExportRouter);
+  // GDPR self-export intake + authenticated list/download (each route owns
+  // requireApiKey + attachOrganizationContext). The session-optional tokenized
+  // download lives in dataExportPublicDownloadRouter, mounted above.
+  router.use("/api", dataExportsRouter);
   router.use("/api", alertPreferencesRouter);
   router.use("/api", dashboardPreferencesRouter);
   router.use("/api", policiesRouter);
