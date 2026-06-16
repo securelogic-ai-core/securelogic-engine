@@ -53,6 +53,13 @@
 -- already Tier A and all grants in this schema are table-level (there are no
 -- column-level grants anywhere), so new columns inherit the table grant.
 --
+-- Post-ship amendment (PR #5): the download_token_hash comments below were
+-- corrected from "HMAC-SHA256" to plain "SHA-256" to match the implementation
+-- (a plain SHA-256 of a 256-bit random token — see dataExportDownloadToken.ts).
+-- This file is already recorded in schema_migrations, so the runner will NOT
+-- re-apply it; the live COMMENT ON TABLE keeps its old wording until a future
+-- migration restates it. The correction here is for source/code agreement only.
+--
 -- Idempotent throughout: ADD COLUMN IF NOT EXISTS, CREATE TABLE IF NOT EXISTS,
 -- CREATE INDEX IF NOT EXISTS, a pg_constraint guard around the new CHECK, and
 -- DROP POLICY IF EXISTS before each CREATE POLICY. GRANT is inherently
@@ -159,9 +166,9 @@ CREATE TABLE IF NOT EXISTS data_export_files (
   scope                     TEXT        NOT NULL CHECK (scope IN ('user_self', 'org_full')),
   r2_key                    TEXT        NOT NULL,
   file_size_bytes           BIGINT      NULL,
-  -- download_token_hash stores the HMAC-SHA256 hash of the download token,
+  -- download_token_hash stores the plain SHA-256 hash of the download token,
   -- NEVER the raw token. The raw token only ever exists in the emailed download
-  -- link (O-9: authenticated app-route + HMAC token; no long-lived presigned
+  -- link (O-9: authenticated app-route + SHA-256 token; no long-lived presigned
   -- R2 URL in email). The download route looks the file up BY this hash, which
   -- happens before org context is established — that lookup must therefore run
   -- on the elevated/owner channel (pgElevated), see docs/DATA_CLASSIFICATION.md.
@@ -183,7 +190,7 @@ CREATE INDEX IF NOT EXISTS idx_data_export_files_expires
   ON data_export_files (download_token_expires_at);
 
 COMMENT ON TABLE data_export_files IS
-  'Tracks generated GDPR data-export bundles in R2 (7-day lifetime, O-11). download_token_hash = HMAC-SHA256 of the token; the raw token lives only in the email link (O-9).';
+  'Tracks generated GDPR data-export bundles in R2 (7-day lifetime, O-11). download_token_hash = plain SHA-256 of the token; the raw token lives only in the email link (O-9).';
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- D. RLS + app_request grants (A04-G1 Option Y) — INERT until the flip

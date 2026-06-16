@@ -22,11 +22,18 @@
  *    inside `withTenant`, NEVER from `job.payload` (export trust invariant B).
  *    A poisoned payload email can never reach the bundle.
  *
- * ── Terminal write (Decision D-1) ────────────────────────────────────────────
+ * ── Terminal write (Decision D-1, revised by PR #5) ──────────────────────────
  * The worker's success output is the R2 object + `jobs.result` JSONB
- * ({ r2_key, file_size_bytes, scope }) + status='succeeded'. The
- * `data_export_files` row (download token + expiry + email) is O-9 / download
- * delivery — DEFERRED to the route/intake PR (#5). The worker mints no token.
+ * ({ r2_key, file_size_bytes, scope }) + status='succeeded' AND the
+ * `data_export_files` delivery row. PR #5 folds the delivery row back into the
+ * worker success path (it was briefly deferred to the route PR under the
+ * original D-1): on success the worker mints a 256-bit download token, stores
+ * only its plain SHA-256 hash + a 7-day expiry, and INSERTs the
+ * `data_export_files` row INSIDE the same `withTenant(orgId)` as the jobs
+ * UPDATE — so the delivery metadata exists the instant the bundle lands. The
+ * raw token is intentionally discarded here in PR #5: there is no sender yet
+ * (email is deferred to PR #4); the in-app authenticated download path resolves
+ * files by (org, requesting user), not by token.
  *
  * ── Retry / failure (Decisions D-4 / D-5) ────────────────────────────────────
  *  • Transient failure with attempts left → status='queued' with exponential
@@ -44,6 +51,7 @@ import { pg, pgElevated, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { runExport } from "../services/dataExport/exporter.js";
 import { createDataExportWriteStream } from "../lib/dataExportStorage.js";
+import { mintDownloadToken } from "../lib/dataExportDownloadToken.js";
 import type { ExportScope, ExportSubject } from "../services/dataExport/types.js";
 import type { ObjectWriteHandle } from "../lib/blobStorage.js";
 import {
@@ -165,11 +173,20 @@ async function resolveSubject(
   return { scope: "user_self", subject: { userId, userEmail: String(email), orgId } };
 }
 
-/** Mark a job succeeded with its result, inside the org's tenant scope. */
+/**
+ * Mark a job succeeded with its result AND write the `data_export_files`
+ * delivery row, both inside the org's tenant scope (PR #5, revises D-1). The
+ * download token is minted here: only its SHA-256 hash + a 7-day expiry are
+ * stored; the raw token is discarded (no sender yet — email is PR #4). The jobs
+ * UPDATE and the files INSERT run in the SAME `withTenant` callback so they
+ * share one tenant-scoped connection and are RLS-correct post-flip.
+ */
 async function recordSuccess(
   job: JobRow,
   result: { r2_key: string; file_size_bytes: number; scope: ExportScope },
+  now: Date,
 ): Promise<void> {
+  const minted = mintDownloadToken(now);
   await withTenant(job.organization_id, async () => {
     await pg.query(
       `UPDATE jobs
@@ -178,6 +195,22 @@ async function recordSuccess(
               completed_at = now(), updated_at = now()
         WHERE id = $1`,
       [job.id, JSON.stringify(result)],
+    );
+    await pg.query(
+      `INSERT INTO data_export_files
+         (job_id, organization_id, requested_by_user_id, scope, r2_key,
+          file_size_bytes, download_token_hash, download_token_expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        job.id,
+        job.organization_id,
+        job.requested_by_user_id,
+        result.scope,
+        result.r2_key,
+        result.file_size_bytes,
+        minted.tokenHash,
+        minted.expiresAt,
+      ],
     );
   });
 }
@@ -239,11 +272,15 @@ export async function processClaimedJob(job: JobRow, deps: WorkerDeps = {}): Pro
       exportId,
     });
     const uploaded = await sink.done; // wait for the R2 multipart upload to finish
-    await recordSuccess(job, {
-      r2_key: uploaded.key,
-      file_size_bytes: uploaded.byteSize,
-      scope: resolved.scope,
-    });
+    await recordSuccess(
+      job,
+      {
+        r2_key: uploaded.key,
+        file_size_bytes: uploaded.byteSize,
+        scope: resolved.scope,
+      },
+      now(),
+    );
     logger.info(
       {
         event: "data_rights_job_succeeded",

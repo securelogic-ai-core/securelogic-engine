@@ -18,11 +18,21 @@
 
 import {
   createObjectWriteStream,
+  getSignedReadUrl,
   buildObjectKey,
   type ObjectWriteHandle
 } from "./blobStorage.js";
 
 const CONTENT_TYPE = "application/zip";
+
+/**
+ * Download-link TTL for an export bundle. Clamped by blobStorage to
+ * MAX_SIGNED_URL_TTL_SECONDS (120s) — short-lived ON PURPOSE: the durable
+ * credential the subject holds is the download TOKEN (7-day, O-9), and the
+ * route mints a fresh ≤120s signed URL on each download. No long-lived presigned
+ * URL is ever stored or emailed (O-9). This mirrors vendorAssuranceStorage.
+ */
+const DOWNLOAD_SIGNED_URL_TTL_SECONDS = 120;
 
 /** The relative key (org prefix is attached by blobStorage). */
 function relativeKey(exportId: string): string {
@@ -48,5 +58,25 @@ export function createDataExportWriteStream(args: {
     organizationId: args.organizationId,
     relativeKey: relativeKey(args.exportId),
     contentType: CONTENT_TYPE
+  });
+}
+
+/**
+ * Mint a short-lived (≤120s) single-org signed download URL for a stored export
+ * bundle. The caller passes the EXACT key recorded in
+ * `data_export_files.r2_key`; blobStorage re-asserts the key belongs to
+ * `organizationId` before signing, so a row from org A can never produce a URL
+ * for org B's bytes. The download routes 302-redirect to this URL — the engine
+ * never proxies the bundle bytes (bounded memory; same pattern as
+ * vendorAssuranceStorage's PDF download).
+ */
+export async function getDataExportSignedUrl(args: {
+  organizationId: string;
+  r2Key: string;
+}): Promise<{ url: string; ttlSeconds: number; expiresAt: Date }> {
+  return getSignedReadUrl({
+    organizationId: args.organizationId,
+    key: args.r2Key,
+    ttlSeconds: DOWNLOAD_SIGNED_URL_TTL_SECONDS
   });
 }
