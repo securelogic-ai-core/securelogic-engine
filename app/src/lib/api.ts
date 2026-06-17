@@ -1497,6 +1497,55 @@ export async function acceptTerms(
   }
 }
 
+// ─── Self-service data export (GDPR/CCPA, user_self scope) ──────────────────
+
+/**
+ * One row in the engine's data-export bundle (only present once the worker has
+ * written the file at completion). `available` collapses the purged/expired
+ * checks the engine already computed — the client never re-derives them.
+ */
+export type DataExportFile = {
+  id: string;
+  sizeBytes: number | null;
+  expiresAt: string | null;
+  downloadedAt: string | null;
+  purged: boolean;
+  available: boolean;
+  downloadPath: string | null;
+};
+
+/** One self-export request and its (possibly not-yet-ready) bundle. */
+export type DataExportRecord = {
+  jobId: string;
+  status: string;
+  requestedAt: string;
+  completedAt: string | null;
+  file: DataExportFile | null;
+};
+
+export type DataExportsListResponse = {
+  exports: DataExportRecord[];
+};
+
+/**
+ * Server-side initial fetch of the caller's own export requests, mirroring the
+ * dashboard's lib-level engine reads. JWT-only: the engine answers 403
+ * jwt_required for a legacy API-key session, which surfaces here as null — the
+ * privacy page renders the sign-in explainer in that case rather than calling
+ * this at all.
+ */
+export async function getDataExports(
+  jwtToken: string
+): Promise<DataExportsListResponse | null> {
+  try {
+    const res = await engineFetch("/api/data-exports", jwtToken);
+    if (!res.ok) return null;
+    return res.json() as Promise<DataExportsListResponse>;
+  } catch {
+    return null;
+  }
+}
+
 export async function authLogin(
   email: string,
   password: string

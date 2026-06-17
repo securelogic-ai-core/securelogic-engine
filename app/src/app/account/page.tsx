@@ -201,6 +201,23 @@ export default async function AccountPage({
           </Link>
         </div>
 
+        {/* Privacy & Your Data — self-service GDPR/CCPA export. Not tier-gated:
+            data-subject rights apply to every account. */}
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
+          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">
+            Privacy &amp; Your Data
+          </h2>
+          <p className="text-sm text-slate-600 mb-4">
+            Download a copy of the personal data we hold about you.
+          </p>
+          <Link
+            href="/account/privacy"
+            className="text-sm font-medium text-teal-600 hover:text-teal-700 transition-colors"
+          >
+            Privacy &amp; Your Data →
+          </Link>
+        </div>
+
         {/* API Keys */}
         {isPlatform && (
           <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
