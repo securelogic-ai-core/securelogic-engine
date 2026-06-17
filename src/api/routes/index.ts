@@ -400,8 +400,13 @@ export function buildRoutes(opts: RoutesOptions): Router {
 
   // =========================================================
   // API ROUTES (engine + intelligence)
-  // Each router owns its own requireApiKey + attachOrganizationContext
-  // + requireEntitlement guards — mounted here for centralized routing.
+  // Each router owns its own requireApiKey + attachOrganizationContext;
+  // entitlement gating is per-router, NOT universal. Engine/intelligence
+  // routers add their own requireEntitlement (as /issues + /api/intelligence
+  // do above), but self-service routers deliberately carry NO entitlement
+  // gate — e.g. dataExportsRouter, where GDPR/CCPA data-subject access &
+  // portability rights are not tier-gated (same rationale as accountRouter's
+  // "free tier must see own status"). Mounted here for centralized routing.
   // =========================================================
 
   router.use("/api", billingRouter);
