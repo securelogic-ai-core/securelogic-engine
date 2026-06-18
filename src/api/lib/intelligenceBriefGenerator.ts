@@ -35,6 +35,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { instrumentAnthropicClient } from "../infra/providerQuotaAlert.js";
+import { z } from "zod";
 import { logger } from "../infra/logger.js";
 import type { BriefSynthesis } from "./briefSynthesizer.js";
 
@@ -838,6 +839,22 @@ function isBriefUrgency(value: unknown): value is BriefUrgency {
  * Requires ANTHROPIC_API_KEY in the environment. If the key is absent,
  * fallback content is returned immediately without making any API call.
  */
+// A08-G4: this enrichment text flows into a paid, customer-facing Intelligence
+// Brief. A prompt-injected or malformed Claude response must not reach the
+// brief. Unlike the assessment-analyzer path there is no severity enum to
+// forge and the function contract is Promise<BriefItem> (never null), so a
+// schema failure routes into the SAME fallback BriefItem the catch already
+// produces — not a rejection. All fields are optional+length-capped: the
+// per-field typeof/fallback logic below still applies to a well-typed
+// response; the schema's job is to reject structurally-broken or oversize
+// (bloat-injection) payloads before that logic runs.
+const EnrichmentResponseSchema = z.object({
+  analysis: z.string().max(20000).optional(),
+  why_it_matters: z.string().max(20000).optional(),
+  recommended_actions: z.string().max(20000).optional(),
+  urgency: z.string().max(50).optional()
+});
+
 async function enrichItemWithClaude(
   item: BriefItem,
   organizationId: string | null = null
@@ -952,12 +969,45 @@ async function enrichItemWithClaude(
     // Strip markdown code fences if Claude wrapped the JSON
     const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
 
-    const parsed = JSON.parse(cleaned) as {
-      analysis?: string;
-      why_it_matters?: string;
-      recommended_actions?: string;
-      urgency?: string;
+    const fallbackItem: BriefItem = {
+      ...item,
+      analysis: null,
+      why_it_matters: fallbackWhyItMatters(item),
+      recommended_actions: fallbackRecommendedActions(item),
+      analyst_notes: null,
+      urgency: URGENCY_FALLBACK
     };
+
+    let parsedUnknown: unknown;
+    try {
+      parsedUnknown = JSON.parse(cleaned);
+    } catch {
+      logger.warn(
+        {
+          event: "brief_enrichment_invalid_json",
+          signal_id: item.cyber_signal_id,
+          organizationId
+        },
+        "Brief enrichment: response did not JSON-parse — using fallback (A08-G4)"
+      );
+      return fallbackItem;
+    }
+
+    const validated = EnrichmentResponseSchema.safeParse(parsedUnknown);
+    if (!validated.success) {
+      logger.warn(
+        {
+          event: "brief_enrichment_invalid_shape",
+          signal_id: item.cyber_signal_id,
+          organizationId,
+          issues: validated.error.issues.slice(0, 10)
+        },
+        "Brief enrichment: response failed schema validation — using fallback (A08-G4)"
+      );
+      return fallbackItem;
+    }
+
+    const parsed = validated.data;
 
     const analysis =
       typeof parsed.analysis === "string" && parsed.analysis.trim().length > 0
