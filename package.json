@@ -58,7 +58,7 @@
     "helmet": "^8.1.0",
     "hpp": "^0.2.3",
     "json-canonicalize": "^2.0.0",
-    "multer": "^2.1.1",
+    "multer": "^2.2.0",
     "node-cron": "^4.2.1",
     "openai": "^6.34.0",
     "otplib": "^13.4.0",
