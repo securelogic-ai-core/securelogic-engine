@@ -7,7 +7,7 @@ import PasswordInput from "./PasswordInput";
  * Logo + tagline at top, card in center, max-width 420px.
  */
 
-const LOGO_URL = "https://api.securelogicai.com/assets/logo.png";
+const LOGO_URL = "https://app.securelogicai.com/branding/securelogic-ai-logo.png";
 
 /** Shared inline style for AuthInput's underlying <input> (and its PasswordInput variant). */
 const authInputStyle = {

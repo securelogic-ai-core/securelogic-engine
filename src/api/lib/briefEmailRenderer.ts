@@ -239,7 +239,7 @@ function renderMasthead(data: BriefEmailData): string {
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
             <td style="vertical-align:middle;">
-              <img src="https://api.securelogicai.com/assets/logo.png"
+              <img src="https://app.securelogicai.com/branding/securelogic-ai-logo.png"
                    alt="SecureLogic AI" height="36"
                    style="display:block;">
             </td>
@@ -584,7 +584,7 @@ function renderFooter(orgName: string): string {
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
             <td style="padding-bottom:16px;">
-              <img src="https://api.securelogicai.com/assets/logo.png"
+              <img src="https://app.securelogicai.com/branding/securelogic-ai-logo.png"
                    alt="SecureLogic AI" height="24"
                    style="display:block;">
             </td>
