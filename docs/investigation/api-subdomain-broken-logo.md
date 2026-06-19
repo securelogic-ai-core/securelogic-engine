@@ -13,7 +13,7 @@ not fix the DNS.
   points at the broken `api.securelogicai.com/assets/logo.png`.
 - **DNS root cause: STILL OPEN.** `api.securelogicai.com` returns Cloudflare 1000/403
   — "DNS points to prohibited IP" (apex A-record / prohibited-IP misconfig). The
-  `api.` hostname remains broken at the edge.
+  `api.` hostname remains broken at the edge. **Tracked in #224.**
 - Engine `/version` is fine via `securelogic-engine.onrender.com` — only the `api.`
   hostname is misconfigured.
 
@@ -27,6 +27,8 @@ All 6 repointed from `https://api.securelogicai.com/assets/logo.png` to
 No customer-facing surface still renders the broken logo.
 
 ## Root cause — STILL OPEN
+**Tracking issue: #224** — https://github.com/securelogic-ai-core/securelogic-engine/issues/224
+
 PR #221 took option 2 below for the logo (repointed the references to the live
 `app.securelogicai.com` asset), which unblocks the customer-facing breakage. But the
 actual `api.securelogicai.com` DNS misconfiguration is unresolved. Remaining work:
