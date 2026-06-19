@@ -156,7 +156,7 @@ function verificationEmailHtml(name: string, verificationUrl: string): string {
     <table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
       <!-- Logo -->
       <tr><td align="center" style="padding-bottom:32px;">
-        <img src="https://api.securelogicai.com/assets/logo.png" alt="SecureLogic AI" height="36" style="display:block;">
+        <img src="https://app.securelogicai.com/branding/securelogic-ai-logo.png" alt="SecureLogic AI" height="36" style="display:block;">
       </td></tr>
       <!-- Card -->
       <tr><td style="background:#0d1b2e;border:1px solid #1e2d45;border-radius:12px;padding:40px;">
@@ -191,7 +191,7 @@ function passwordResetEmailHtml(name: string, resetUrl: string): string {
   <tr><td align="center" style="padding:40px 16px;">
     <table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
       <tr><td align="center" style="padding-bottom:32px;">
-        <img src="https://api.securelogicai.com/assets/logo.png" alt="SecureLogic AI" height="36" style="display:block;">
+        <img src="https://app.securelogicai.com/branding/securelogic-ai-logo.png" alt="SecureLogic AI" height="36" style="display:block;">
       </td></tr>
       <tr><td style="background:#0d1b2e;border:1px solid #1e2d45;border-radius:12px;padding:40px;">
         <p style="margin:0 0 8px;font-size:22px;font-weight:700;color:#f1f5f9;">Reset your password</p>
@@ -230,7 +230,7 @@ function lockoutEmailHtml(lockedUntil: Date): string {
   <tr><td align="center" style="padding:40px 16px;">
     <table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
       <tr><td align="center" style="padding-bottom:32px;">
-        <img src="https://api.securelogicai.com/assets/logo.png" alt="SecureLogic AI" height="36" style="display:block;">
+        <img src="https://app.securelogicai.com/branding/securelogic-ai-logo.png" alt="SecureLogic AI" height="36" style="display:block;">
       </td></tr>
       <tr><td style="background:#0d1b2e;border:1px solid #1e2d45;border-radius:12px;padding:40px;">
         <p style="margin:0 0 8px;font-size:22px;font-weight:700;color:#f1f5f9;">Account temporarily locked</p>
