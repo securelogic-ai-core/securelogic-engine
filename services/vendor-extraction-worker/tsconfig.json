@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "../../dist-vendor-extraction-worker",
+    "rootDir": "../..",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "src",
+    "../../src/api/infra",
+    "../../src/api/types"
+  ]
+}
