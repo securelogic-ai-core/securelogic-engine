@@ -37,7 +37,13 @@ async function streamToBuffer(body: unknown): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-async function markExtracting(documentId: string, organizationId: string): Promise<void> {
+// markExtracting / markFailed / persistExtractionAndMarkExtracted are the
+// reusable extraction steps shared with the durable worker
+// (src/api/workers/vendorExtractionWorker.ts, spec §B.4 — "we keep
+// persistExtractionAndMarkExtracted … and only change what drives them"). They
+// are exported (not re-implemented) so the worker reuses the exact same
+// transactional persist + document state transitions as this in-process runner.
+export async function markExtracting(documentId: string, organizationId: string): Promise<void> {
   await withTenant(organizationId, () =>
     pg.query(
       `UPDATE vendor_assurance_documents
@@ -49,7 +55,7 @@ async function markExtracting(documentId: string, organizationId: string): Promi
   );
 }
 
-async function markFailed(
+export async function markFailed(
   documentId: string,
   organizationId: string,
   errorCode: string,
@@ -90,7 +96,7 @@ async function markFailed(
   });
 }
 
-async function persistExtractionAndMarkExtracted(
+export async function persistExtractionAndMarkExtracted(
   documentId: string,
   organizationId: string,
   result: Extract<SocExtractionResult, { ok: true }>
