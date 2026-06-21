@@ -58,7 +58,6 @@ import {
   putVendorAssurancePdf,
   getVendorAssurancePdfSignedUrl
 } from "../lib/vendorAssuranceStorage.js";
-import { scheduleExtraction } from "../lib/vendorAssuranceExtractionRunner.js";
 import { MATERIAL_FIELD_NAMES } from "../lib/socExtractionPrompt.js";
 import {
   refreshCuecMappingsForDocument,
@@ -303,12 +302,34 @@ export async function uploadVendorAssuranceDocument(req: Request, res: Response)
     ipAddress: req.ip ?? null
   });
 
-  // Schedule extraction. setImmediate so the POST response is unblocked.
-  scheduleExtraction({
-    documentId,
-    organizationId,
-    documentTypeHint: meta.document_type_hint
-  });
+  // Enqueue a durable extraction job on the generic `jobs` table (Pillar 1,
+  // §E step 4). The vendor-extraction worker claims and runs it out-of-process,
+  // so an engine redeploy can no longer strand a document mid-extraction the way
+  // the old in-process setImmediate(scheduleExtraction) runner did. The web
+  // process does NO Claude work. Payload keys (documentId/documentTypeHint) are
+  // exactly what the worker's resolveDocumentId reads; status/scheduled_for/
+  // attempts/max_attempts use the table defaults. job_type is permitted by the
+  // step-1 CHECK migration (20260622).
+  try {
+    await pg.query(
+      `INSERT INTO jobs (organization_id, requested_by_user_id, job_type, payload)
+       VALUES ($1, $2, 'vendor_assurance_extract',
+               jsonb_build_object('documentId', $3::text, 'documentTypeHint', $4::text))`,
+      [organizationId, req.userId ?? null, documentId, meta.document_type_hint]
+    );
+  } catch (err) {
+    // Durable enqueue failed (e.g. transient DB fault). The document row and its
+    // R2 object are intact, so this is NOT a content failure — leave the row
+    // 'pending' (do not mislabel it extraction_failed) and surface a 500 so the
+    // client can retry the upload. Failing closed here is the whole point of the
+    // durable queue: a lost enqueue must be visible, never silently dropped.
+    logger.error(
+      { event: "vendor_assurance_extraction_enqueue_failed", organizationId, documentId, err },
+      "Failed to enqueue vendor-assurance extraction job"
+    );
+    res.status(500).json({ error: "extraction_enqueue_failed" });
+    return;
+  }
 
   const docResult = await pg.query(
     `SELECT ${DOC_SELECT} FROM vendor_assurance_documents
