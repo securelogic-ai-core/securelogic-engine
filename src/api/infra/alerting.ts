@@ -48,12 +48,14 @@ type SecurityAlertKind =
   | "credential_stuffing"
   | "api_key_probing"
   | "provider_quota_exhausted"
+  | "vendor_queue_backlog"
 
 const KIND_META: Record<SecurityAlertKind, { emoji: string; label: string; color: number }> = {
   account_locked:           { emoji: "🔒", label: "Account locked",           color: COLOR_SECURITY_HIGH },
   credential_stuffing:      { emoji: "🚨", label: "Credential stuffing",      color: COLOR_SECURITY_HIGH },
   api_key_probing:          { emoji: "🔑", label: "API key probing",          color: COLOR_SECURITY_HIGH },
-  provider_quota_exhausted: { emoji: "💸", label: "Provider quota exhausted", color: COLOR_OPERATIONAL  }
+  provider_quota_exhausted: { emoji: "💸", label: "Provider quota exhausted", color: COLOR_OPERATIONAL  },
+  vendor_queue_backlog:     { emoji: "📥", label: "Vendor queue backlog",     color: COLOR_OPERATIONAL  }
 }
 
 function truncate(s: string, max: number): string {
