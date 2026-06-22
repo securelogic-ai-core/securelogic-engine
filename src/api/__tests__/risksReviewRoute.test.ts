@@ -62,7 +62,7 @@ describe("POST /api/risks/:id/review — registration & middleware", () => {
   it("uses the standard middleware chain (not admin-gated)", () => {
     expect(REVIEW_BLOCK).toMatch(/requireApiKey/);
     expect(REVIEW_BLOCK).toMatch(/attachOrganizationContext/);
-    expect(REVIEW_BLOCK).toMatch(/requireEntitlement\(["']standard["']\)/);
+    expect(REVIEW_BLOCK).toMatch(/requireEntitlement\(["']premium["']\)/);
     expect(REVIEW_BLOCK).not.toMatch(/requireAdminRole/);
   });
 });

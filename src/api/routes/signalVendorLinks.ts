@@ -449,7 +449,7 @@ router.post(
   "/signal-vendor-links",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   createSignalVendorLink
 );
 
@@ -457,7 +457,7 @@ router.delete(
   "/signal-vendor-links/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   deleteSignalVendorLink
 );
 
@@ -465,7 +465,7 @@ router.get(
   "/vendors/:id/signals",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   listSignalsForVendor
 );
 
@@ -473,7 +473,7 @@ router.get(
   "/cyber-signals/:id/vendors",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   listVendorsForSignal
 );
 

@@ -82,7 +82,7 @@ router.post(
   "/vendor-assessments",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -353,7 +353,7 @@ router.get(
   "/vendor-assessments",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -453,7 +453,7 @@ router.get(
   "/vendor-assessments/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;

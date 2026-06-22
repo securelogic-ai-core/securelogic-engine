@@ -85,7 +85,7 @@ router.post(
   "/findings",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -234,7 +234,7 @@ router.get(
   "/findings",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -440,7 +440,7 @@ router.get(
   "/findings/summary",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -509,7 +509,7 @@ router.get(
   "/findings/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -593,7 +593,7 @@ router.patch(
   "/findings/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;

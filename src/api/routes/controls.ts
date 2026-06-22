@@ -93,7 +93,7 @@ router.post(
   "/controls",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -216,7 +216,7 @@ router.get(
   "/controls",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -326,7 +326,7 @@ router.get(
   "/controls/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -383,7 +383,7 @@ router.patch(
   "/controls/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -523,7 +523,7 @@ router.delete(
   "/controls/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   requireAdminRole,
   requireAuth,
   async (req, res) => {

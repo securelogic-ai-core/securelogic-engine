@@ -468,7 +468,7 @@ router.post(
   "/signal-control-links",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   createSignalControlLink
 );
 
@@ -476,7 +476,7 @@ router.delete(
   "/signal-control-links/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   deleteSignalControlLink
 );
 
@@ -484,7 +484,7 @@ router.get(
   "/controls/:id/signals",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   listSignalsForControl
 );
 
@@ -492,7 +492,7 @@ router.get(
   "/cyber-signals/:id/controls",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   listControlsForSignal
 );
 

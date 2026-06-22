@@ -473,7 +473,7 @@ router.post(
   "/risks/:id/obligations",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   createRiskObligationLink
 );
 
@@ -481,7 +481,7 @@ router.delete(
   "/risks/:id/obligations/:obligationId",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   deleteRiskObligationLink
 );
 
@@ -489,7 +489,7 @@ router.get(
   "/risks/:id/obligations",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   listObligationsForRisk
 );
 
@@ -497,7 +497,7 @@ router.get(
   "/obligations/:id/risks",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   listRisksForObligation
 );
 

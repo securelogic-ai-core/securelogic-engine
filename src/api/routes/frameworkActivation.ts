@@ -31,7 +31,7 @@ router.post(
   "/frameworks/activate",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   requireAdminRole,
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;

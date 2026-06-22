@@ -59,7 +59,7 @@ router.post(
   "/actions",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -143,7 +143,7 @@ router.get(
   "/actions",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -290,7 +290,7 @@ router.get(
   "/actions/summary",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -347,7 +347,7 @@ router.get(
   "/actions/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -404,7 +404,7 @@ router.patch(
   "/actions/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;

@@ -45,7 +45,7 @@ router.get(
   "/risk-scale",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const orgCtx = (req as any).organizationContext ?? null;
     const organizationId = orgCtx?.organizationId ?? null;
@@ -119,7 +119,7 @@ router.get(
   "/risk-scale/presets",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const orgCtx = (req as any).organizationContext ?? null;
     if (!orgCtx?.organizationId) {
@@ -164,7 +164,7 @@ router.put(
   "/risk-scale",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const orgCtx = (req as any).organizationContext ?? null;
     const organizationId = orgCtx?.organizationId ?? null;

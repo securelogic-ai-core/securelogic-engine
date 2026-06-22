@@ -236,7 +236,7 @@ router.post(
   "/risks",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -420,7 +420,7 @@ router.get(
   "/risks",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -530,7 +530,7 @@ router.get(
   "/risks/summary",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -699,7 +699,7 @@ router.get(
   "/risks/intelligence",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -786,7 +786,7 @@ router.get(
   "/risks/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -864,7 +864,7 @@ router.get(
   "/risks/:id/history",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -1027,7 +1027,7 @@ router.post(
   "/risks/:id/review",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -1218,7 +1218,7 @@ router.patch(
   "/risks/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;

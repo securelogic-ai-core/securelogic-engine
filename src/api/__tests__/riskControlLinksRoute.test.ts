@@ -58,8 +58,8 @@ describe("riskControlLinks.ts — route registration", () => {
     for (const block of blocks) {
       expect(block).toMatch(/requireApiKey/);
       expect(block).toMatch(/attachOrganizationContext/);
-      expect(block).toMatch(/requireEntitlement\(["']standard["']\)/);
-      // Must NOT be admin-gated — risk-control linkage is for any standard user.
+      expect(block).toMatch(/requireEntitlement\(["']premium["']\)/);
+      // Must NOT be admin-gated — risk-control linkage is for any platform (premium) user.
       expect(block).not.toMatch(/requireAdminRole/);
     }
   });

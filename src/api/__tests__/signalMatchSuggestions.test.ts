@@ -241,9 +241,9 @@ describe("signalMatchSuggestions route — tenant isolation invariants", () => {
     expect(ROUTE_SOURCE).toMatch(/from ["'][^"']*attachOrganizationContext/);
   });
 
-  it("imports requireEntitlement middleware and gates on standard", () => {
+  it("imports requireEntitlement middleware and gates on premium", () => {
     expect(ROUTE_SOURCE).toMatch(/from ["'][^"']*requireEntitlement/);
-    expect(ROUTE_SOURCE).toMatch(/requireEntitlement\(["']standard["']\)/);
+    expect(ROUTE_SOURCE).toMatch(/requireEntitlement\(["']premium["']\)/);
   });
 
   it("references organization_id in SQL", () => {

@@ -73,7 +73,7 @@ router.post(
   "/ai-systems",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -175,7 +175,7 @@ router.get(
   "/ai-systems",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -277,7 +277,7 @@ router.get(
   "/ai-systems/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -338,7 +338,7 @@ router.patch(
   "/ai-systems/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -494,7 +494,7 @@ router.delete(
   "/ai-systems/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   requireAdminRole,
   requireAuth,
   async (req, res) => {

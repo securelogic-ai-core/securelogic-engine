@@ -64,7 +64,7 @@ router.post(
   "/control-mappings",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -193,7 +193,7 @@ router.get(
   "/control-mappings",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;

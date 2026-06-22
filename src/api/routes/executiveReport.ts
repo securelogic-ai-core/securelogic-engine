@@ -5,7 +5,7 @@
  * framework compliance, and open findings. Designed for leadership.
  *
  * Route: GET /api/reports/executive.pdf
- * Auth: requireApiKey → attachOrganizationContext → requireEntitlement("standard")
+ * Auth: requireApiKey → attachOrganizationContext → requireEntitlement("premium")
  */
 
 import { Router } from "express";
@@ -780,7 +780,7 @@ router.get(
   "/reports/executive.pdf",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId      = organizationContext?.organizationId ?? null;
