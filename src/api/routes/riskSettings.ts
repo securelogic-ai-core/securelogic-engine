@@ -248,7 +248,7 @@ router.get(
   "/orgs/me/risk-settings",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   getRiskSettings
 );
 
@@ -256,7 +256,7 @@ router.put(
   "/orgs/me/risk-settings",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   putRiskSettings
 );
 

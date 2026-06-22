@@ -484,7 +484,7 @@ router.post(
   "/risks/:id/controls",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(createRiskControlLink)
 );
 
@@ -497,7 +497,7 @@ router.delete(
   "/risks/:id/controls/:controlId",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   deleteRiskControlLink
 );
 
@@ -505,7 +505,7 @@ router.get(
   "/risks/:id/controls",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(listControlsForRisk)
 );
 
@@ -513,7 +513,7 @@ router.get(
   "/controls/:id/risks",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(listRisksForControl)
 );
 

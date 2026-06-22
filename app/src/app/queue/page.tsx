@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import {
+  getMe,
   getSignalMatchSuggestions,
   getSignalMatchSuggestionCounts,
   type SignalMatchTargetType,
@@ -48,6 +49,16 @@ export default async function QueuePage({
   const session = await getSession();
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
+
+  // Platform (rank-4) feature: the signal-match-suggestions API the queue reads
+  // is gated at requireEntitlement("premium"). getMe() is the source of truth for
+  // entitlement (never the session cookie, which may be stale after a Stripe
+  // upgrade). Redirect rank-2 (Brief-Pro) users to /dashboard so the premium API
+  // flip doesn't strand them on an empty page.
+  const me = await getMe(token);
+  const entitlementLevel = me?.entitlementLevel ?? "starter";
+  const isPlatformUser = ["premium", "platform", "team"].includes(entitlementLevel);
+  if (!isPlatformUser) redirect("/dashboard");
 
   const sp = await searchParams;
   const targetFilter = isTargetType(sp.target_type) ? sp.target_type : undefined;

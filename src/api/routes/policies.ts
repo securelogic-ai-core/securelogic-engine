@@ -117,7 +117,7 @@ router.post(
   "/policies",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const organizationId =
       (req as any).organizationContext?.organizationId ?? null;
@@ -232,7 +232,7 @@ router.get(
   "/policies",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const organizationId =
       (req as any).organizationContext?.organizationId ?? null;
@@ -370,7 +370,7 @@ router.get(
   "/policies/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const organizationId =
       (req as any).organizationContext?.organizationId ?? null;
@@ -433,7 +433,7 @@ router.patch(
   "/policies/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const organizationId =
       (req as any).organizationContext?.organizationId ?? null;
@@ -631,7 +631,7 @@ router.post(
   "/policies/:id/controls",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const organizationId =
       (req as any).organizationContext?.organizationId ?? null;
@@ -703,7 +703,7 @@ router.delete(
   "/policies/:id/controls/:controlId",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   requireAdminRole,
   async (req, res) => {
     const organizationId =

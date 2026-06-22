@@ -58,7 +58,7 @@ router.post(
   "/ask/transcribe",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   transcribeRateLimit,
   upload.single("audio"),
   async (req, res) => {

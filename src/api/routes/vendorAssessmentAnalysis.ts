@@ -85,7 +85,7 @@ router.post(
   "/vendor-assessments/analyze-document",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   upload.single("document"),
   analyzeAssessmentDocumentHandler
 );

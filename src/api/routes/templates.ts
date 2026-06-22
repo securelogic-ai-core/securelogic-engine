@@ -272,7 +272,7 @@ router.get(
   "/templates",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   listTemplates
 );
 
@@ -280,7 +280,7 @@ router.get(
   "/templates/:industry",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   previewTemplate
 );
 
@@ -288,7 +288,7 @@ router.post(
   "/templates/load",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   loadTemplateRoute
 );
 

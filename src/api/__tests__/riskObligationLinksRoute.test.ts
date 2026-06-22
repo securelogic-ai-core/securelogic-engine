@@ -52,7 +52,7 @@ describe("riskObligationLinks.ts — route registration", () => {
     for (const block of blocks) {
       expect(block).toMatch(/requireApiKey/);
       expect(block).toMatch(/attachOrganizationContext/);
-      expect(block).toMatch(/requireEntitlement\(["']standard["']\)/);
+      expect(block).toMatch(/requireEntitlement\(["']premium["']\)/);
       expect(block).not.toMatch(/requireAdminRole/);
     }
   });

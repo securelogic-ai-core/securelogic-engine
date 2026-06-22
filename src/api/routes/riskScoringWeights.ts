@@ -222,7 +222,7 @@ router.get(
   "/risk-scoring-weights",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   getRiskScoringWeights
 );
 
@@ -230,7 +230,7 @@ router.put(
   "/risk-scoring-weights",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   putRiskScoringWeights
 );
 

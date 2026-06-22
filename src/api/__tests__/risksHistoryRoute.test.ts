@@ -39,7 +39,7 @@ describe("GET /api/risks/:id/history — source guards", () => {
     const block = m![0];
     expect(block).toMatch(/requireApiKey/);
     expect(block).toMatch(/attachOrganizationContext/);
-    expect(block).toMatch(/requireEntitlement\(["']standard["']\)/);
+    expect(block).toMatch(/requireEntitlement\(["']premium["']\)/);
     // Per-risk history must NOT be admin-gated — anyone with risk read
     // access should see the trail.
     expect(block).not.toMatch(/requireAdminRole/);

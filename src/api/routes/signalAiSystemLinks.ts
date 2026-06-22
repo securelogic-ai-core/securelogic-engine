@@ -458,7 +458,7 @@ router.post(
   "/signal-ai-system-links",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   createSignalAiSystemLink
 );
 
@@ -466,7 +466,7 @@ router.delete(
   "/signal-ai-system-links/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   deleteSignalAiSystemLink
 );
 
@@ -474,7 +474,7 @@ router.get(
   "/ai-systems/:id/signals",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   listSignalsForAiSystem
 );
 
@@ -482,7 +482,7 @@ router.get(
   "/cyber-signals/:id/ai-systems",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   listAiSystemsForSignal
 );
 

@@ -472,7 +472,7 @@ router.post(
   "/ai-system-vendor-dependencies",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   createAiSystemVendorDependency
 );
 
@@ -480,7 +480,7 @@ router.delete(
   "/ai-system-vendor-dependencies/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   deleteAiSystemVendorDependency
 );
 
@@ -488,7 +488,7 @@ router.get(
   "/ai-systems/:id/vendors",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   listVendorsForAiSystem
 );
 
@@ -496,7 +496,7 @@ router.get(
   "/vendors/:id/ai-systems",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   listAiSystemsForVendor
 );
 

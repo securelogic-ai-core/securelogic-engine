@@ -258,7 +258,7 @@ router.post(
   "/assess",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const startedAt = Date.now();
 

@@ -12,7 +12,7 @@ router.get(
   "/obligations/:id/compliance-context",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req: Request, res: Response) => {
     try {
       const orgId: string = (req as unknown as { organizationContext: { organizationId: string } }).organizationContext?.organizationId;
