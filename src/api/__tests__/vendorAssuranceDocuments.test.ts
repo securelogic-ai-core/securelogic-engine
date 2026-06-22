@@ -67,10 +67,10 @@ vi.mock("../lib/vendorAssuranceStorage.js", () => ({
   vendorAssuranceObjectKey: (orgId: string, docId: string) => `org/${orgId}/vendor-assurance/${docId}/original.pdf`
 }));
 
-const scheduleExtractionSpy = vi.fn();
-vi.mock("../lib/vendorAssuranceExtractionRunner.js", () => ({
-  scheduleExtraction: (...args: unknown[]) => scheduleExtractionSpy(...args)
-}));
+// Step 4 (§E): the upload route no longer calls scheduleExtraction — it enqueues
+// a `vendor_assurance_extract` row on the generic `jobs` table, which the
+// out-of-process worker drains. So there is no runner to mock here; the trigger
+// is now an INSERT on the (mocked) `pg`, asserted directly below.
 
 // Export builders: keep vendorAssuranceExportData.js mostly real (loadCuecsWithMappings
 // is used by the CUEC route handlers under test), but stub buildExportBundle; fully stub
@@ -158,7 +158,6 @@ beforeEach(() => {
   pgConnectClientReleaseSpy.mockReset();
   putVendorAssurancePdfSpy.mockReset();
   getVendorAssurancePdfSignedUrlSpy.mockReset();
-  scheduleExtractionSpy.mockReset();
   refreshCuecMappingsForDocumentSpy.mockReset();
   refreshCuecMappingsForDocumentSpy.mockResolvedValue({
     matched: true, cuecCount: 2, controlCount: 5, suggestionsConsidered: 2, suggestionsWritten: 2
@@ -247,12 +246,13 @@ describe("uploadVendorAssuranceDocument", () => {
     expect(putVendorAssurancePdfSpy).not.toHaveBeenCalled();
   });
 
-  it("happy path returns 202, writes blob with org-prefixed key, audits, and schedules extraction", async () => {
+  it("happy path returns 202, writes blob with org-prefixed key, audits, and enqueues an extraction job", async () => {
     pgQuerySpy
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // vendor pre-flight
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ total_bytes: "0", document_count: "0" }] }) // A05-G2 quota SUM
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, created_at: "2026-05-08T00:00:00Z" }] }) // INSERT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, created_at: "2026-05-08T00:00:00Z" }] }) // INSERT document
       .mockResolvedValueOnce({ rowCount: 1, rows: [{}] }) // UPDATE storage_key
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // INSERT INTO jobs (enqueue)
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "pending" }] }); // SELECT for response
 
     putVendorAssurancePdfSpy.mockResolvedValueOnce({
@@ -273,14 +273,56 @@ describe("uploadVendorAssuranceDocument", () => {
       documentId: DOC_ID,
       bytes: expect.any(Buffer)
     });
-    expect(scheduleExtractionSpy).toHaveBeenCalledWith({
-      documentId: DOC_ID,
-      organizationId: ORG_A,
-      documentTypeHint: "soc2_type2"
-    });
+    // Extraction is now enqueued on the generic `jobs` table (not run in-process).
+    const jobsInsert = pgQuerySpy.mock.calls.find(
+      (c) => typeof c[0] === "string" && /INSERT INTO jobs/.test(c[0] as string)
+    );
+    expect(jobsInsert).toBeDefined();
+    expect(jobsInsert![0]).toMatch(/'vendor_assurance_extract'/);
+    expect(jobsInsert![0]).toMatch(/jsonb_build_object\('documentId'/);
+    // params: [organization_id, requested_by_user_id, documentId, documentTypeHint]
+    expect(jobsInsert![1]).toEqual([ORG_A, USER_ID, DOC_ID, "soc2_type2"]);
     const auditCalls = (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mock.calls;
     expect(auditCalls.some((c) => c[0]?.eventType === "vendor_assurance.document.uploaded")).toBe(true);
     expect(json).toHaveBeenCalled();
+  });
+
+  it("500 extraction_enqueue_failed when the durable enqueue throws; document left 'pending' (option A — recoverable)", async () => {
+    // Doc row + R2 object already exist; only the jobs INSERT fails. Per option A
+    // the route must NOT mislabel the row extraction_failed — it stays 'pending'
+    // so the client can retry the upload, with both doc and blob intact.
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // vendor pre-flight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ total_bytes: "0", document_count: "0" }] }) // A05-G2 quota SUM
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, created_at: "x" }] }) // INSERT document ('pending')
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] }) // UPDATE storage_key
+      .mockRejectedValueOnce(new Error("DB unreachable")); // INSERT INTO jobs (enqueue) throws
+
+    putVendorAssurancePdfSpy.mockResolvedValueOnce({
+      key: `org/${ORG_A}/vendor-assurance/${DOC_ID}/original.pdf`,
+      byteSize: 4
+    });
+
+    const req = buildReq({
+      body: { vendor_id: VENDOR_ID, document_type_hint: "soc2_type2" },
+      file: { buffer: Buffer.from("%PDF"), originalname: "report.pdf", size: 4, mimetype: "application/pdf" }
+    });
+    const { res, status, json } = buildRes();
+    await uploadVendorAssuranceDocument(req as never, res as never);
+
+    // Fail-closed: the lost enqueue surfaces as a 500, never a silent 202.
+    expect(status).toHaveBeenCalledWith(500);
+    expect(json).toHaveBeenCalledWith({ error: "extraction_enqueue_failed" });
+    // The enqueue was actually attempted (it's the failure under test).
+    expect(
+      pgQuerySpy.mock.calls.some((c) => typeof c[0] === "string" && /INSERT INTO jobs/.test(c[0] as string))
+    ).toBe(true);
+    // Document left 'pending' (recoverable): no row was marked extraction_failed.
+    expect(
+      pgQuerySpy.mock.calls.some(
+        (c) => typeof c[0] === "string" && /processing_status = 'extraction_failed'/.test(c[0] as string)
+      )
+    ).toBe(false);
   });
 
   it("500 when blob put fails; document marked extraction_failed", async () => {
@@ -299,7 +341,10 @@ describe("uploadVendorAssuranceDocument", () => {
     await uploadVendorAssuranceDocument(req as never, res as never);
     expect(status).toHaveBeenCalledWith(500);
     expect(json).toHaveBeenCalledWith({ error: "blob_put_failed" });
-    expect(scheduleExtractionSpy).not.toHaveBeenCalled();
+    // Blob put failed before the enqueue point — no job row is created.
+    expect(
+      pgQuerySpy.mock.calls.some((c) => typeof c[0] === "string" && /INSERT INTO jobs/.test(c[0] as string))
+    ).toBe(false);
   });
 
   // --- A05-G2: per-org cumulative storage quota -----------------------------
@@ -310,8 +355,9 @@ describe("uploadVendorAssuranceDocument", () => {
     pgQuerySpy
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // vendor pre-flight
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ total_bytes: String(MAX_ORG_STORAGE_BYTES - 4), document_count: "118" }] }) // quota SUM
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, created_at: "x" }] }) // INSERT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, created_at: "x" }] }) // INSERT document
       .mockResolvedValueOnce({ rowCount: 1, rows: [{}] }) // UPDATE storage_key
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // INSERT INTO jobs (enqueue)
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "pending" }] }); // SELECT
     putVendorAssurancePdfSpy.mockResolvedValueOnce({
       key: `org/${ORG_A}/vendor-assurance/${DOC_ID}/original.pdf`,
@@ -351,10 +397,12 @@ describe("uploadVendorAssuranceDocument", () => {
       limit_bytes: MAX_ORG_STORAGE_BYTES,
       document_count: 118
     });
-    // No row created, no blob put, no extraction scheduled.
+    // No row created, no blob put, no extraction enqueued.
     expect(pgQuerySpy).toHaveBeenCalledTimes(2); // vendor pre-flight + quota SUM only
     expect(putVendorAssurancePdfSpy).not.toHaveBeenCalled();
-    expect(scheduleExtractionSpy).not.toHaveBeenCalled();
+    expect(
+      pgQuerySpy.mock.calls.some((c) => typeof c[0] === "string" && /INSERT INTO jobs/.test(c[0] as string))
+    ).toBe(false);
   });
 
   it("A05-G2: quota SUM filters on storage_key LIKE 'org/%' — R2-put-failed rows (storage_key='pending') are excluded", async () => {

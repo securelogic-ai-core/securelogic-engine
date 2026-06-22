@@ -1,6 +1,7 @@
 import { setInterval } from "node:timers";
 import { runWorker, validateWorkerEnv } from "./runner.js";
 import { runKevPoll } from "./kevPoller.js";
+import { checkVendorQueueDepth } from "../../../src/api/lib/vendorQueueDepthAlert.js";
 import { logger } from "../../../src/api/infra/logger.js";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -18,6 +19,11 @@ async function start() {
   // cost <1s, full fetches only when CISA publishes a new catalog.
   await runKevPoll();
 
+  // Vendor-extraction queue-depth alerting (§E step 7 / §F.4). Cheap COUNT on
+  // the `jobs` backlog; fires one operator alert on the rising edge. Best-effort
+  // (never throws). Once at boot, then every 15 minutes alongside the KEV poll.
+  await checkVendorQueueDepth();
+
   setInterval(async () => {
     try {
       logger.info({ event: "cycle_start" }, "Starting scheduled intelligence cycle");
@@ -29,6 +35,7 @@ async function start() {
   }, ONE_HOUR_MS);
 
   setInterval(runKevPoll, FIFTEEN_MINUTES_MS);
+  setInterval(checkVendorQueueDepth, FIFTEEN_MINUTES_MS);
 }
 
 start().catch((error) => {

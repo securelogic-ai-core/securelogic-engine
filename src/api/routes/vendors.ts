@@ -80,7 +80,7 @@ router.post(
   "/vendors",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -184,7 +184,7 @@ router.get(
   "/vendors",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -301,7 +301,7 @@ router.get(
   "/vendors/summary",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -417,7 +417,7 @@ router.get(
   "/vendors/export.csv",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -530,7 +530,7 @@ router.get(
   "/vendors/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -584,7 +584,7 @@ router.patch(
   "/vendors/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -723,7 +723,7 @@ router.get(
   "/vendors/:id/risk-score",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -814,7 +814,7 @@ router.get(
   "/vendors/:id/findings",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
