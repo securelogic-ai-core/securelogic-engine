@@ -593,6 +593,127 @@ services:
         sync: false
 
   # =========================================================
+  # VENDOR-EXTRACTION WORKER (background)
+  # Durable SOC-extraction worker (Pillar 1). Claims
+  # vendor_assurance_extract jobs from the generic `jobs` table
+  # (UPDATE … FOR UPDATE SKIP LOCKED, 15-min visibility-timeout
+  # reclaim) and runs the Claude extraction pipeline out-of-process,
+  # so an engine redeploy can no longer strand an in-flight extraction.
+  # Mirrors securelogic-data-rights-worker; single serial instance,
+  # SIGTERM drain. Workers do NOT auto-migrate — the engine web
+  # startCommand owns migrations.
+  #
+  # REGION: virginia — pinned to where the prod Postgres lives (the prod
+  # engine web block is virginia and migrates the prod DB). This follows
+  # the region-pin rule (pin the worker to its DB's region). It does NOT
+  # match the data-rights-worker / posture-worker prod blocks, which run
+  # oregon and are therefore cross-region against the virginia prod DB —
+  # a known pre-existing divergence, not a template. Do NOT "correct"
+  # this block to oregon.
+  #
+  # ANTHROPIC_API_KEY lives on THIS worker only (spec §C.2) — it does the
+  # Claude extraction work and is intentionally absent from the engine
+  # web blocks. Keep this block in lockstep with the staging twin below.
+  # =========================================================
+
+  - type: worker
+    name: securelogic-vendor-extraction-worker
+    region: virginia
+    env: node
+    plan: starter
+    buildCommand: npm ci --include=dev && tsc -p services/vendor-extraction-worker/tsconfig.json
+    startCommand: node dist-vendor-extraction-worker/services/vendor-extraction-worker/src/index.js
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Shared with API service — same (virginia) Postgres instance.
+      - key: DATABASE_URL
+        sync: false
+
+      # Cloudflare R2 — source of the uploaded SOC PDFs the worker
+      # extracts (org/{orgId}/vendor-assurance/...). Populate in the
+      # dashboard; prod enablement is a separate Part-2 decision.
+      - key: R2_ACCOUNT_ID
+        sync: false
+
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+
+      - key: R2_BUCKET
+        sync: false
+
+      - key: R2_ENDPOINT
+        sync: false
+
+      # Anthropic API key — required for SOC extraction (Claude). Lives on
+      # the worker ONLY (spec §C.2), never on an engine web block.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      # Optional: override log verbosity (default: info)
+      - key: LOG_LEVEL
+        sync: false
+
+  # =========================================================
+  # VENDOR-EXTRACTION WORKER — STAGING (background)
+  # Tracks the develop branch. Mirrors the production worker above;
+  # NODE_ENV is staging, and DATABASE_URL + R2_* + ANTHROPIC_API_KEY
+  # point at the staging Postgres / R2 / Anthropic credentials in the
+  # dashboard. This is where SOC extraction is validated end-to-end
+  # (upload → extract → CUEC map → export) before prod.
+  #
+  # Keep this block in lockstep with securelogic-vendor-extraction-worker.
+  # =========================================================
+
+  - type: worker
+    name: securelogic-vendor-extraction-worker-staging
+    region: virginia
+    env: node
+    plan: starter
+    branch: develop
+    buildCommand: npm ci --include=dev && tsc -p services/vendor-extraction-worker/tsconfig.json
+    startCommand: node dist-vendor-extraction-worker/services/vendor-extraction-worker/src/index.js
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: staging
+
+      # Staging Postgres — same instance engine-staging and the other
+      # staging workers use. TLS on by default; no PGSSL.
+      - key: DATABASE_URL
+        sync: false
+
+      # Cloudflare R2 — STAGING. Same bucket engine-staging uses for
+      # vendor-assurance blobs.
+      - key: R2_ACCOUNT_ID
+        sync: false
+
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+
+      - key: R2_BUCKET
+        sync: false
+
+      - key: R2_ENDPOINT
+        sync: false
+
+      # Anthropic API key — staging credential. Worker-only (spec §C.2).
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      # Optional: override log verbosity (default: info)
+      - key: LOG_LEVEL
+        sync: false
+
+  # =========================================================
   # SECURELOGIC APP (Next.js frontend)
   # User-facing web application: landing, registration, login,
   # brief archive, account, and billing flows.
