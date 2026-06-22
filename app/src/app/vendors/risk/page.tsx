@@ -304,6 +304,13 @@ export default async function VendorRiskPage() {
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
+  const entitlementLevel = session.entitlementLevel ?? "free";
+  const isPlatformUser =
+    entitlementLevel === "premium" ||
+    entitlementLevel === "platform" ||
+    entitlementLevel === "team";
+  if (!isPlatformUser) redirect("/dashboard");
+
   const [vendorsData, assessmentsData, findingsData] = await Promise.all([
     getVendors(token, "active"),
     getVendorAssessments(token, 100),

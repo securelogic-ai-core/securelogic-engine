@@ -20,6 +20,13 @@ export default async function VendorFrameworkAssessPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
+  const entitlementLevel = session.entitlementLevel ?? "free";
+  const isPlatformUser =
+    entitlementLevel === "premium" ||
+    entitlementLevel === "platform" ||
+    entitlementLevel === "team";
+  if (!isPlatformUser) redirect("/dashboard");
+
   const [vendor, frameworksData] = await Promise.all([
     getVendor(token, id),
     getFrameworks(token),
