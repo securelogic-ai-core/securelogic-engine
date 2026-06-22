@@ -51,6 +51,7 @@ import { getVendorAssurancePdfStream } from "../lib/vendorAssuranceStorage.js";
 import { extractPdfText } from "../lib/vendorAssurancePdfExtractor.js";
 import { runSocExtraction } from "../lib/claudeSocExtractor.js";
 import { refreshCuecMappingsForDocument } from "../lib/vendorAssuranceCuecMatcher.js";
+import { vendorAssuranceEnabled } from "../lib/vendorAssuranceFeatureFlag.js";
 import {
   markExtracting,
   markFailed,
@@ -420,6 +421,23 @@ export async function processClaimedJob(job: JobRow, deps: WorkerDeps = {}): Pro
  * is requested between jobs). Returns the number of jobs processed this tick.
  */
 export async function runOneTick(deps: WorkerDeps = {}): Promise<number> {
+  // Part 2 Phase 2A — claim-path flag gate. SECURELOGIC_VENDOR_ASSURANCE_ENABLED
+  // gates the web ENQUEUE route only (vendorAssuranceDocuments.ts); the worker's
+  // claim path was flag-blind and safe only while the prod jobs table stayed
+  // empty. Refuse to claim when the feature is disabled in THIS service's
+  // environment — independent of queue contents. Idle-skip, never exit/crash:
+  // the tick processes zero jobs and the poll loop sleeps to the next interval.
+  // NODE_ENV!=production defaults ON (vendorAssuranceEnabled), so staging and all
+  // tests are unaffected; prod is OFF until the var is set 'true' on the worker
+  // service (Part 2 enablement).
+  if (!vendorAssuranceEnabled()) {
+    logger.info(
+      { event: "vendor_extraction_worker_disabled_skip" },
+      "Vendor-extraction worker: feature flag off — skipping claim (idle tick)",
+    );
+    return 0;
+  }
+
   const workerId = deps.workerId ?? `vendor-extraction-worker-${process.pid}`;
   let processed = 0;
   for (;;) {
