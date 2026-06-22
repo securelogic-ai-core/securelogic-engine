@@ -53,6 +53,13 @@ export default async function VendorAssuranceQueuePage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
+  const entitlementLevel = session.entitlementLevel ?? "free";
+  const isPlatformUser =
+    entitlementLevel === "premium" ||
+    entitlementLevel === "platform" ||
+    entitlementLevel === "team";
+  if (!isPlatformUser) redirect("/dashboard");
+
   const sp = await searchParams;
   const statusFilter = isStatus(sp.status) ? sp.status : undefined;
   const vendorIdFilter = typeof sp.vendor_id === "string" && sp.vendor_id.length > 0 ? sp.vendor_id : undefined;

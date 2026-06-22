@@ -3,9 +3,10 @@
  *
  * Middleware on every route:
  *   vendorAssuranceFeatureFlag → requireApiKey → attachOrganizationContext
- *     → requireEntitlement("standard") → handler
+ *     → requireEntitlement("premium") → handler
  *
- * Mirrors vendors.ts entitlement exactly. Cross-org access returns 404.
+ * Mirrors vendors.ts entitlement exactly (rank 4 / premium — Platform pillar,
+ * §D entitlement reconciliation). Cross-org access returns 404.
  *
  * Routes:
  *   POST   /api/vendor-assurance/documents
@@ -1569,7 +1570,7 @@ router.post(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   upload.single("document"),
   multerErrorHandler,
   uploadVendorAssuranceDocument
@@ -1580,7 +1581,7 @@ router.get(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   listVendorAssuranceDocuments
 );
 
@@ -1589,7 +1590,7 @@ router.get(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   getVendorAssuranceDocument
 );
 
@@ -1598,7 +1599,7 @@ router.get(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   getVendorAssuranceExtraction
 );
 
@@ -1607,7 +1608,7 @@ router.get(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   getVendorAssurancePdfRedirect
 );
 
@@ -1616,7 +1617,7 @@ router.post(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   exportVendorAssuranceDocumentXlsx
 );
 
@@ -1625,7 +1626,7 @@ router.post(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   exportVendorAssuranceDocumentPdf
 );
 
@@ -1634,7 +1635,7 @@ router.post(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   recordVendorAssuranceReviewDecisions
 );
 
@@ -1643,7 +1644,7 @@ router.post(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   finalizeVendorAssuranceDocument
 );
 
@@ -1652,7 +1653,7 @@ router.post(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   recordVendorAssuranceFieldOverride
 );
 
@@ -1661,7 +1662,7 @@ router.post(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   approveVendorAssuranceDocument
 );
 
@@ -1670,7 +1671,7 @@ router.post(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   requestVendorAssuranceManualReview
 );
 
@@ -1679,7 +1680,7 @@ router.post(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   rejectVendorAssuranceDocument
 );
 
@@ -1690,7 +1691,7 @@ router.get(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   getVendorAssuranceCuecs
 );
 
@@ -1699,7 +1700,7 @@ router.post(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   rematchVendorAssuranceCuecs
 );
 
@@ -1708,7 +1709,7 @@ router.post(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   createVendorAssuranceCuecMapping
 );
 
@@ -1717,7 +1718,7 @@ router.post(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   updateVendorAssuranceCuecReviewStatus
 );
 
@@ -1726,7 +1727,7 @@ router.patch(
   vendorAssuranceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   updateVendorAssuranceCuecMapping
 );
 
