@@ -66,8 +66,8 @@ describe("riskSettings route — tenant isolation invariants", () => {
     expect(ROUTE_SOURCE).toMatch(/from ["'][^"']*attachOrganizationContext/);
   });
 
-  it("gates on standard entitlement", () => {
-    expect(ROUTE_SOURCE).toMatch(/requireEntitlement\(["']standard["']\)/);
+  it("gates on premium entitlement", () => {
+    expect(ROUTE_SOURCE).toMatch(/requireEntitlement\(["']premium["']\)/);
   });
 
   it("never reads organization_id from req.body", () => {

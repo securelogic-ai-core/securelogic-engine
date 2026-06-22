@@ -104,7 +104,7 @@ router.post(
   "/ask",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   askRateLimit,
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;

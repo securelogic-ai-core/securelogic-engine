@@ -48,7 +48,7 @@ router.get(
   "/assessments",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -129,7 +129,7 @@ router.get(
   "/assessments/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;

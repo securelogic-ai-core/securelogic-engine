@@ -155,7 +155,7 @@ router.post(
   "/team/invite",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   requireRole("admin"),
   inviteLimiter,
   async (req, res) => {
@@ -271,7 +271,7 @@ router.get(
   "/team/members",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const orgId = (req as any).organizationContext?.organizationId as string | null;
@@ -348,7 +348,7 @@ router.delete(
   "/team/members/:userId",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   requireRole("admin"),
   async (req, res) => {
     try {
@@ -427,7 +427,7 @@ router.patch(
   "/team/members/:userId/role",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   requireRole("admin"),
   async (req, res) => {
     try {
@@ -515,7 +515,7 @@ router.delete(
   "/team/invites/:inviteId",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   requireRole("admin"),
   async (req, res) => {
     try {

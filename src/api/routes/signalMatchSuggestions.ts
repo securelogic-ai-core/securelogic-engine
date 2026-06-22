@@ -1157,7 +1157,7 @@ router.get(
   "/signal-match-suggestions",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   listSignalMatchSuggestions
 );
 
@@ -1168,7 +1168,7 @@ router.get(
   "/signal-match-suggestions/counts",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   getSignalMatchSuggestionCounts
 );
 
@@ -1176,7 +1176,7 @@ router.post(
   "/signal-match-suggestions/:id/accept",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   acceptSignalMatchSuggestion
 );
 
@@ -1184,7 +1184,7 @@ router.post(
   "/signal-match-suggestions/:id/dismiss",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   dismissSignalMatchSuggestion
 );
 
@@ -1192,7 +1192,7 @@ router.post(
   "/signal-match-suggestions/:id/recompute-score",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   recomputeSignalMatchSuggestionScore
 );
 

@@ -288,7 +288,7 @@ describe("signalVendorLinks route — tenant isolation invariants", () => {
 
   it("imports requireEntitlement middleware", () => {
     expect(ROUTE_SOURCE).toMatch(/from ["'][^"']*requireEntitlement/);
-    expect(ROUTE_SOURCE).toMatch(/requireEntitlement\(["']standard["']\)/);
+    expect(ROUTE_SOURCE).toMatch(/requireEntitlement\(["']premium["']\)/);
   });
 
   it("references organization_id in SQL", () => {

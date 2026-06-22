@@ -104,7 +104,7 @@ router.get(
   "/webhooks",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationId = (req as any).organizationContext?.organizationId ?? null;
@@ -142,7 +142,7 @@ router.post(
   "/webhooks",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   requireNotViewer,
   async (req, res) => {
     try {
@@ -237,7 +237,7 @@ router.get(
   "/webhooks/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationId = (req as any).organizationContext?.organizationId ?? null;
@@ -284,7 +284,7 @@ router.patch(
   "/webhooks/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   requireNotViewer,
   async (req, res) => {
     try {
@@ -391,7 +391,7 @@ router.delete(
   "/webhooks/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   requireNotViewer,
   async (req, res) => {
     try {
@@ -439,7 +439,7 @@ router.post(
   "/webhooks/:id/test",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   requireNotViewer,
   async (req, res) => {
     try {
@@ -507,7 +507,7 @@ router.get(
   "/webhooks/:id/deliveries",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   async (req, res) => {
     try {
       const organizationId = (req as any).organizationContext?.organizationId ?? null;

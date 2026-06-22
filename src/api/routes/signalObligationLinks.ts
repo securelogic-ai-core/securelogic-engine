@@ -471,7 +471,7 @@ router.post(
   "/signal-obligation-links",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   createSignalObligationLink
 );
 
@@ -479,7 +479,7 @@ router.delete(
   "/signal-obligation-links/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   deleteSignalObligationLink
 );
 
@@ -487,7 +487,7 @@ router.get(
   "/obligations/:id/signals",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   listSignalsForObligation
 );
 
@@ -495,7 +495,7 @@ router.get(
   "/cyber-signals/:id/obligations",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("standard"),
+  requireEntitlement("premium"),
   listObligationsForSignal
 );
 
