@@ -45,6 +45,10 @@ import {
 } from "../lib/controlAssessmentValidation.js";
 import { severityToPriority } from "../lib/postureComputation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import {
+  actionEngineEnabled,
+  buildFindingActionDraft
+} from "../lib/actionRecommendationEngine.js";
 
 const router = Router();
 
@@ -577,6 +581,44 @@ router.patch(
           );
 
           finding = findingResult.rows[0];
+
+          // GAP-3 generator 4: failed-control-assessment → action. The control
+          // test just created a finding; reuse the finding→action machinery
+          // (same buildFindingActionDraft threshold + the existing
+          // idx_actions_generated_finding index) so a failed/remediation-required
+          // control becomes a concrete "what to do next". Flag-gated OFF by
+          // default; idempotent. No new migration — source_type='finding'.
+          if (actionEngineEnabled() && finding != null) {
+            const actionDraft = buildFindingActionDraft({
+              findingId: (finding as { id: string }).id,
+              title: findingTitle,
+              severity: resolvedSeverity,
+              priority
+            });
+            if (actionDraft !== null) {
+              await client.query(
+                `
+                INSERT INTO actions (
+                  organization_id, title, description, action_type,
+                  source_type, source_id, priority, status
+                )
+                VALUES ($1, $2, $3, $4, $5, $6::uuid, $7, 'open')
+                ON CONFLICT (organization_id, source_type, source_id)
+                  WHERE action_type = 'auto_finding_remediation'
+                  DO NOTHING
+                `,
+                [
+                  organizationId,
+                  actionDraft.title,
+                  actionDraft.description,
+                  actionDraft.action_type,
+                  actionDraft.source_type,
+                  actionDraft.source_id,
+                  actionDraft.priority
+                ]
+              );
+            }
+          }
         } else {
           // No finding created: severity not resolvable.
           // This should not happen — validation enforces overall_severity when
