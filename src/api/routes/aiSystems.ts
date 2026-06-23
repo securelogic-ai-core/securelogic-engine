@@ -28,6 +28,7 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { requireAdminRole } from "../middleware/requireRole.js";
 import { validateAiSystemCreate } from "../lib/aiSystemValidation.js";
+import { enforceEntityLimit } from "../lib/entityLimit.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
@@ -87,6 +88,17 @@ router.post(
       const validated = validateAiSystemCreate(req.body);
       if ("error" in validated) {
         res.status(400).json(validated);
+        return;
+      }
+
+      // Monitored-entity cap (vendors + ai_systems combined). Checked at
+      // creation time; existing over-cap rows are grandfathered.
+      const limit = await enforceEntityLimit(organizationId);
+      if (limit.exceeded) {
+        res.status(409).json({
+          error: "entity_limit_reached",
+          detail: `Your plan allows up to ${limit.cap} monitored entities (vendors + AI systems). Delete one or upgrade to add more.`
+        });
         return;
       }
 
