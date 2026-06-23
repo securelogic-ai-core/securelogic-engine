@@ -73,6 +73,7 @@ import {
   buildRiskActionDraft,
   buildObligationActionDraft
 } from "./actionRecommendationEngine.js";
+import { runLlmControlMatcherForSignal } from "./llmControlMatcher.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1041,6 +1042,23 @@ export async function processSignal(
       );
     }
   }
+
+  // ---------------------------------------------------------------
+  // 7. GAP-1: LLM control matcher (suggest-only, AFTER commit, non-fatal).
+  //    Self-gated (flag OFF by default + relevant signal-type + Critical/High
+  //    + API key) so it no-ops cheaply with zero spend when disabled. Never
+  //    throws. Runs here, post-commit, because an LLM call must not block the
+  //    matcher transaction.
+  // ---------------------------------------------------------------
+  await runLlmControlMatcherForSignal(
+    {
+      id: signalId,
+      signal_type: signal.signal_type,
+      severity: signal.severity,
+      normalized_summary: signal.normalized_summary
+    },
+    orgId
+  );
 
   return {
     finding: createdFinding,
