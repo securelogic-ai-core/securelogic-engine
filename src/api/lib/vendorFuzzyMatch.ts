@@ -18,13 +18,23 @@
  *     can be enabled per-environment after measuring precision against real
  *     vendors. The threshold below was NOT calibrated against production data.
  *
- * SIMILARITY: token-set Jaccard over the two ALREADY-canonical names (space-
- * split tokens). Jaccard — not containment — is deliberate: containment
+ * SIMILARITY: WEIGHTED token-set Jaccard over the two ALREADY-canonical names
+ * (space-split tokens). Jaccard — not containment — is deliberate: containment
  * (|A∩B|/min) makes a single common token catastrophic ("Oracle" ⊂ "Oracle
  * Health" → 1.0), the exact failure mode that makes naive fuzzy dangerous.
- * Jaccard penalizes the extra tokens ("oracle" vs "oracle health" = 1/2 = 0.50),
- * so a conservative threshold rejects it. Character typos are NOT caught (token
- * level only) — a deliberate precision-first limitation; that is Phase 2.x.
+ *
+ * Phase 2.x — token-distinctiveness weighting: plain Jaccard scored
+ * "Sensata Technologies" ~ "Sensata" and "Oracle" ~ "Oracle Health" IDENTICALLY
+ * (both 1/2 = 0.50), so no single threshold separated the real win from the
+ * false positive. The difference is that "technologies" is a generic corporate
+ * word while "health" distinguishes a different company. So generic
+ * organizational tokens (technologies/systems/holdings/…) are DOWN-WEIGHTED:
+ *   - "sensata technologies" ~ "sensata"  → 1.0 / 1.15 = 0.87  (now SUGGESTED)
+ *   - "oracle" ~ "oracle health"          → 1.0 / 2.0  = 0.50  (still rejected)
+ *   - "american airlines" ~ "american express" → 1/3 = 0.33    (still rejected)
+ * Industry nouns (health, bank, airlines, …) are deliberately NOT generic —
+ * they carry brand identity and must keep full weight. Character typos are still
+ * NOT caught (token level only) — a deliberate precision-first limitation.
  *
  * SHORT-NAME SAFETY: short canonicals are exact-only (see MIN_CANONICAL_LEN). A
  * 2-char "hp" never reaches fuzzy, so it cannot Jaccard-collide with anything.
@@ -54,8 +64,32 @@ export function fuzzyVendorMatchEnabled(
 }
 
 /**
- * Token-set Jaccard similarity of two ALREADY-canonical vendor names, scaled to
- * an integer in [0, 100] (signal_match_suggestions.match_score is INTEGER).
+ * Generic corporate/organizational tokens that carry little brand identity.
+ * Down-weighted so a single distinctive shared token can still match across a
+ * generic suffix difference ("Sensata" ~ "Sensata Technologies"). Industry nouns
+ * (health, bank, airlines, foods, energy, …) are deliberately ABSENT — they
+ * distinguish different companies and must keep full weight.
+ */
+const GENERIC_VENDOR_TOKENS = new Set<string>([
+  "technologies", "technology", "systems", "solutions", "services",
+  "holdings", "holding", "group", "international", "global", "worldwide",
+  "labs", "software", "platforms", "industries", "enterprises", "partners",
+  "ventures", "networks", "communications"
+]);
+
+const GENERIC_TOKEN_WEIGHT = 0.15;
+const DISTINCTIVE_TOKEN_WEIGHT = 1.0;
+
+function tokenWeight(token: string): number {
+  return GENERIC_VENDOR_TOKENS.has(token)
+    ? GENERIC_TOKEN_WEIGHT
+    : DISTINCTIVE_TOKEN_WEIGHT;
+}
+
+/**
+ * WEIGHTED token-set Jaccard similarity of two ALREADY-canonical vendor names,
+ * scaled to an integer in [0, 100] (signal_match_suggestions.match_score is
+ * INTEGER): sum(weight of shared tokens) / sum(weight of union tokens).
  *
  * Inputs are expected to be the output of canonicalizeVendorName (lowercased,
  * punctuation flattened to single spaces). Returns 0 if either side has no
@@ -70,10 +104,15 @@ export function vendorNameSimilarity(
   const b = new Set(canonicalB.split(" ").filter((t) => t.length > 0));
   if (a.size === 0 || b.size === 0) return 0;
 
-  let intersection = 0;
+  let sharedWeight = 0;
+  let unionWeight = 0;
   for (const token of a) {
-    if (b.has(token)) intersection++;
+    unionWeight += tokenWeight(token);
+    if (b.has(token)) sharedWeight += tokenWeight(token);
   }
-  const union = a.size + b.size - intersection;
-  return Math.round((intersection / union) * 100);
+  for (const token of b) {
+    if (!a.has(token)) unionWeight += tokenWeight(token);
+  }
+  if (unionWeight === 0) return 0;
+  return Math.round((sharedWeight / unionWeight) * 100);
 }
