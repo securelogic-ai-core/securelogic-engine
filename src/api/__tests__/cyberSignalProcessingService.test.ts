@@ -55,6 +55,7 @@ vi.mock("../lib/workflowScoringIntegration.js", () => ({
 import {
   runMatcherForSignal,
   processSignal,
+  canonicalizeVendorName,
   type CyberSignalRecord
 } from "../lib/cyberSignalProcessingService.js";
 import { DEFAULT_WEIGHTS } from "../lib/riskScoring.js";
@@ -234,7 +235,12 @@ describe("runMatcherForSignal — ai_system match", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
       .mockResolvedValueOnce(EMPTY);                                            // COMMIT
 
-    const result = await runMatcherForSignal(makeSignal(), ORG_A);
+    // affected_vendor must canonicalize to the AI system's name now that
+    // matching happens in TS (the old SQL-mock short-circuited any name).
+    const result = await runMatcherForSignal(
+      makeSignal({ affected_vendor: "Claude API" }),
+      ORG_A
+    );
 
     expect(result.matched_branch).toBe("ai_system_name_ilike");
     expect(result.matched_vendor_id).toBeNull();
@@ -735,5 +741,112 @@ describe("dual-write invariant", () => {
     const sqls = mockClientQuery.mock.calls.map((c) => c[0] as string);
     expect(sqls.find((s) => /INSERT INTO findings/.test(s))).toBeDefined();
     expect(sqls.find((s) => /INSERT INTO signal_match_suggestions/.test(s))).toBeDefined();
+  });
+});
+
+// =====================================================================
+// canonicalizeVendorName — Phase 1 normalization (pure)
+// =====================================================================
+
+describe("canonicalizeVendorName", () => {
+  it("strips trailing legal suffixes so EDGAR legal names meet informal vendor names", () => {
+    expect(canonicalizeVendorName("DATA I/O CORP")).toBe("data i o");
+    expect(canonicalizeVendorName("Data I/O")).toBe("data i o");      // both sides converge
+    expect(canonicalizeVendorName("NUCOR CORP")).toBe("nucor");
+    expect(canonicalizeVendorName("Nucor")).toBe("nucor");
+    expect(canonicalizeVendorName("Conduent Inc")).toBe("conduent");
+  });
+
+  it("is case-insensitive and CPE-slug friendly (KEV / NVD)", () => {
+    expect(canonicalizeVendorName("microsoft")).toBe("microsoft");     // NVD CPE slug
+    expect(canonicalizeVendorName("Microsoft")).toBe("microsoft");     // KEV vendorProject
+    expect(canonicalizeVendorName("palo alto networks")).toBe("palo alto networks");
+    expect(canonicalizeVendorName("Palo Alto Networks")).toBe("palo alto networks");
+  });
+
+  it("strips repeated trailing suffixes but never the last remaining token", () => {
+    expect(canonicalizeVendorName("Acme Holdings Inc")).toBe("acme");
+    expect(canonicalizeVendorName("Co")).toBe("co");                  // a vendor literally named "Co" survives
+    expect(canonicalizeVendorName("Holdings")).toBe("holdings");
+  });
+
+  it("does not strip a suffix word that appears mid-name", () => {
+    expect(canonicalizeVendorName("Corp of America")).toBe("corp of america");
+  });
+
+  it("collapses punctuation and whitespace", () => {
+    expect(canonicalizeVendorName("AT&T  Inc.")).toBe("at t");
+    expect(canonicalizeVendorName("  Cisco   Systems ")).toBe("cisco systems");
+  });
+
+  it("short names canonicalize to themselves — no wildcard leakage", () => {
+    expect(canonicalizeVendorName("HP")).toBe("hp");
+    expect(canonicalizeVendorName("F5")).toBe("f5");
+    expect(canonicalizeVendorName("IBM")).toBe("ibm");
+    expect(canonicalizeVendorName("HP")).not.toBe(canonicalizeVendorName("HPE"));
+  });
+
+  it("empty / punctuation-only input → empty canonical (guarded as non-matching)", () => {
+    expect(canonicalizeVendorName("")).toBe("");
+    expect(canonicalizeVendorName("...")).toBe("");
+  });
+
+  it("distinct vendors do not collide", () => {
+    expect(canonicalizeVendorName("Apple Inc")).not.toBe(canonicalizeVendorName("Apple Bank"));
+    expect(canonicalizeVendorName("Oracle")).not.toBe(canonicalizeVendorName("Oracle Health"));
+  });
+});
+
+// =====================================================================
+// runMatcherForSignal — Phase 1 normalized-exact vendor match (end-to-end)
+// =====================================================================
+
+describe("runMatcherForSignal — normalized vendor match", () => {
+  it("EDGAR 'DATA I/O CORP' matches vendor 'Data I/O' (suffix+punctuation gap closed)", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                                                       // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: VENDOR_ID, name: "Data I/O", criticality: "high" }] }) // vendor SELECT (active)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })                                       // findings INSERT
+      .mockResolvedValueOnce(EMPTY)                                                                       // weights
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })                           // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY);                                                                      // COMMIT
+
+    const result = await runMatcherForSignal(
+      makeSignal({ source: "sec_edgar", signal_type: "third_party_breach", affected_vendor: "DATA I/O CORP" }),
+      ORG_A
+    );
+
+    expect(result.matched_vendor_id).toBe(VENDOR_ID);
+    expect(result.matched_branch).toBe("vendor_name_ilike");
+  });
+
+  it("does NOT match a vendor that only shares a leading word ('Acme Inc' ≠ 'Acme Robotics')", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                                                            // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: VENDOR_ID, name: "Acme Robotics", criticality: "high" }] }) // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                                                            // ai_system SELECT (no match)
+      .mockResolvedValueOnce(EMPTY);                                                                           // COMMIT
+
+    const result = await runMatcherForSignal(
+      makeSignal({ affected_vendor: "Acme Inc" }),   // canonical "acme" ≠ "acme robotics"
+      ORG_A
+    );
+
+    expect(result.matched_vendor_id).toBeNull();
+    expect(result.matched_ai_system_id).toBeNull();
+    expect(result.matched_branch).toBe("no_match");
+  });
+
+  it("short name 'HP' does not wildcard-match vendor 'Sharp' (exactness on canonical form)", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                                                       // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: VENDOR_ID, name: "Sharp", criticality: "high" }] }) // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                                                       // ai_system SELECT
+      .mockResolvedValueOnce(EMPTY);                                                                      // COMMIT
+
+    const result = await runMatcherForSignal(makeSignal({ affected_vendor: "HP" }), ORG_A);
+
+    expect(result.matched_vendor_id).toBeNull();
+    expect(result.matched_branch).toBe("no_match");
   });
 });
