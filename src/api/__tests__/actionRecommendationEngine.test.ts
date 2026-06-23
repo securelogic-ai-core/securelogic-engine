@@ -1,4 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 
 import {
   buildFindingActionDraft,
@@ -107,5 +109,29 @@ describe("actionEngineEnabled", () => {
 
   it("defaults to reading process.env", () => {
     expect(actionEngineEnabled()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Generator wiring guards (source-level — the 4 generators stay wired)
+// ---------------------------------------------------------------------------
+
+describe("action generator wiring", () => {
+  const read = (p: string) => readFileSync(resolve(__dirname, "../", p), "utf8");
+
+  it("finding→action + risk→action + obligation→action are wired in the matcher", () => {
+    const src = read("lib/cyberSignalProcessingService.ts");
+    expect(src).toMatch(/buildFindingActionDraft/);
+    expect(src).toMatch(/buildRiskActionDraft/);
+    expect(src).toMatch(/buildObligationActionDraft/);
+    // each guarded by the flag
+    expect((src.match(/actionEngineEnabled\(\)/g) || []).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("failed-control-assessment→action is wired in controlAssessments, using the finding index predicate", () => {
+    const src = read("routes/controlAssessments.ts");
+    expect(src).toMatch(/actionEngineEnabled\(\)/);
+    expect(src).toMatch(/buildFindingActionDraft/);
+    expect(src).toMatch(/action_type = 'auto_finding_remediation'/);
   });
 });
