@@ -108,7 +108,7 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "ask.ts": 1,
   "transcribe.ts": 1,
   // cyber signals (customer CRUD + fetch + reprocess)
-  "cyberSignals.ts": 12,
+  "cyberSignals.ts": 13,
   // Bucket C rank-4 flips
   "teamInvites.ts": 5,
   "webhooks.ts": 7,
@@ -262,6 +262,7 @@ describe("cyberSignals fetch/reprocess — premium-gated, rejects rank-2", () =>
     "/cyber-signals/fetch/cisa-kev",
     "/cyber-signals/fetch/nvd",
     "/cyber-signals/fetch/sec-edgar",
+    "/cyber-signals/fetch/federal-register",
     "/cyber-signals/fetch/cisa-alerts",
     "/cyber-signals/fetch/threat-intel-rss",
     "/cyber-signals/fetch/regulatory",
@@ -270,7 +271,7 @@ describe("cyberSignals fetch/reprocess — premium-gated, rejects rank-2", () =>
     "/cyber-signals/:id/reprocess",
   ];
 
-  it("all 8 fetch routes + reprocess are present and the file has zero standard gates", () => {
+  it("all 9 fetch routes + reprocess are present and the file has zero standard gates", () => {
     for (const route of FETCH_ROUTES) {
       expect(CYBER_SOURCE).toContain(`"${route}"`);
     }
