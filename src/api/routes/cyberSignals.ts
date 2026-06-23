@@ -52,6 +52,7 @@ import { normalizeSignal } from "../lib/cyberSignalNormalizer.js";
 import { processSignal, type CyberSignalRecord } from "../lib/cyberSignalProcessingService.js";
 import { fetchCisaKevSignals } from "../lib/cisaKevAdapter.js";
 import { fetchNvdSignals } from "../lib/nvdAdapter.js";
+import { fetchSecEdgarSignals } from "../lib/secEdgarAdapter.js";
 import { fetchCisaAlerts } from "../lib/cisaAlertsAdapter.js";
 import {
   fetchAllFeeds,
@@ -873,6 +874,181 @@ router.post(
       res.status(502).json({
         error: "nvd_fetch_failed",
         message: err instanceof Error ? err.message : "Unknown error fetching NVD CVE data"
+      });
+    }
+  }
+);
+
+/* =========================================================
+   POST /api/cyber-signals/fetch/sec-edgar
+   Pull SEC EDGAR 8-K Item 1.05 (Material Cybersecurity Incident) filings and
+   ingest each as a third_party_breach signal keyed on the filer company name.
+
+   Mirrors /fetch/nvd. EDGAR-specific: external_id (the accession number) is
+   persisted — it is the dedup discriminator that keeps two 8-Ks from the same
+   filer distinct (NVD leaves external_id null).
+
+   Returns: { fetched, inserted, skipped_duplicate, skipped_invalid, errors }
+   ========================================================= */
+
+router.post(
+  "/cyber-signals/fetch/sec-edgar",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    // Parse and clamp the days parameter.
+    const rawDays = parseInt(String(req.query.days ?? "7"), 10);
+    const windowDays = !Number.isFinite(rawDays) || rawDays < 1
+      ? 7
+      : Math.min(rawDays, 30);
+
+    let fetched = 0;
+    let inserted = 0;
+    let skippedDuplicate = 0;
+    let skippedInvalid = 0;
+    let pagesFetched = 0;
+    const errors: string[] = [];
+
+    try {
+      const {
+        signals,
+        total,
+        pages,
+        skipped: skippedMapping
+      } = await fetchSecEdgarSignals(windowDays);
+
+      fetched = total;
+      pagesFetched = pages;
+      skippedInvalid = skippedMapping;
+
+      for (const rawSignal of signals) {
+        const validated = validateCyberSignalIngest(rawSignal);
+        if ("error" in validated) {
+          skippedInvalid++;
+          errors.push(
+            `validation_failed: ${validated.error}${validated.detail ? ` — ${validated.detail}` : ""}`
+          );
+          continue;
+        }
+
+        const normalized = normalizeSignal(validated.input);
+
+        const client = await pg.connect();
+        try {
+          await client.query("BEGIN");
+
+          const insertResult = await client.query(
+            `
+            INSERT INTO cyber_signals (
+              organization_id,
+              source,
+              signal_type,
+              severity,
+              raw_payload,
+              normalized_summary,
+              affected_vendor,
+              affected_cve,
+              external_id,
+              dedup_hash,
+              ingestion_timestamp,
+              processed
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), FALSE)
+            ON CONFLICT (organization_id, dedup_hash) DO NOTHING
+            RETURNING id, source, signal_type, severity, normalized_summary,
+                      affected_vendor, affected_cve, organization_id
+            `,
+            [
+              organizationId,
+              normalized.source,
+              normalized.signal_type,
+              normalized.severity,
+              JSON.stringify(encryptField(JSON.stringify(normalized.raw_payload))),
+              normalized.normalized_summary,
+              normalized.affected_vendor,
+              normalized.affected_cve,
+              normalized.external_id,
+              normalized.dedup_hash
+            ]
+          );
+
+          const isDuplicate = (insertResult.rowCount ?? 0) === 0;
+
+          if (isDuplicate) {
+            await client.query("COMMIT");
+            skippedDuplicate++;
+            continue;
+          }
+
+          const signal = insertResult.rows[0];
+          await client.query("COMMIT");
+
+          const signalRecord: CyberSignalRecord = {
+            id: signal.id,
+            organization_id: organizationId,
+            source: signal.source,
+            signal_type: signal.signal_type,
+            severity: signal.severity,
+            normalized_summary: signal.normalized_summary,
+            affected_vendor: signal.affected_vendor,
+            affected_cve: signal.affected_cve
+          };
+
+          await processSignal(signalRecord);
+          inserted++;
+        } catch (innerErr) {
+          try {
+            await client.query("ROLLBACK");
+          } catch {
+            // ignore rollback failure
+          }
+          const msg = innerErr instanceof Error ? innerErr.message : String(innerErr);
+          errors.push(`insert_failed: ${msg}`);
+        } finally {
+          client.release();
+        }
+      }
+
+      logger.info(
+        {
+          event: "sec_edgar_fetch_complete",
+          organizationId,
+          windowDays,
+          fetched,
+          inserted,
+          skippedDuplicate,
+          skippedInvalid,
+          pagesFetched,
+          errorCount: errors.length
+        },
+        "SEC EDGAR fetch complete"
+      );
+
+      res.status(200).json({
+        fetched,
+        inserted,
+        skipped_duplicate: skippedDuplicate,
+        skipped_invalid: skippedInvalid,
+        pages_fetched: pagesFetched,
+        errors: errors.length > 0 ? errors.slice(0, 20) : []
+      });
+    } catch (err) {
+      logger.error(
+        { event: "sec_edgar_fetch_failed", organizationId, windowDays, err },
+        "POST /api/cyber-signals/fetch/sec-edgar failed"
+      );
+      res.status(502).json({
+        error: "sec_edgar_fetch_failed",
+        message: err instanceof Error ? err.message : "Unknown error fetching SEC EDGAR data"
       });
     }
   }
