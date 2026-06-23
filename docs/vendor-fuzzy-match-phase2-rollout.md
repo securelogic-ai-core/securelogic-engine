@@ -61,14 +61,20 @@ prod. Staging enablement IS that measurement.
      feat→develop→promote) before widening.
    - Back out → set staging vars `false`/delete; pending suggestions are dismissible.
 
-## Known limitation (informs threshold tuning)
+## Recall coverage (Phase 2.x shipped)
 
-Pure token-Jaccard at 60 catches multi-token overlaps (`palo alto networks` ~
-`Palo Alto` = 67) and rejects the common-word trap (`Oracle` ~ `Oracle Health`
-= 50). It MISSES single-brand-token-vs-multiword (`Sensata Technologies` ~
-`Sensata`, `Cisco Systems` ~ `Cisco`, both 50) — lowering to 50 would also admit
-the Oracle false positive, so they're indistinguishable by Jaccard alone.
-Recovering that tail needs token-distinctiveness weighting → **Phase 2.x**.
+Similarity is **weighted** token-set Jaccard: generic corporate tokens
+(technologies/systems/holdings/networks/…) are down-weighted, industry nouns
+(health/bank/airlines) keep full weight. At threshold 60 this:
+- catches multi-token overlaps — `palo alto networks` ~ `Palo Alto` = **93**;
+- **recovers the single-brand-token tail** — `Sensata Technologies` ~ `Sensata`
+  = **87**, `Cisco Systems` ~ `Cisco` = **87** (these were missed at 50 under
+  plain Jaccard);
+- still rejects the common-word trap — `Oracle` ~ `Oracle Health` = **50**,
+  `American Airlines` ~ `American Express` = **33**, `Acme Systems` ~
+  `Beta Systems` = **7**.
+
+Remaining gap: character-level typos are still not caught (token level only).
 
 ## Decision log
 

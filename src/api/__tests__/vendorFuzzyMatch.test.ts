@@ -11,22 +11,28 @@ import {
 // ---------------------------------------------------------------------------
 
 describe("vendorNameSimilarity", () => {
-  it("scores token-count variants the exact branch misses (the recall target)", () => {
-    // NVD "palo alto networks" vs customer "Palo Alto": {palo,alto,networks} ∩ {palo,alto} = 2 / union 3
-    expect(vendorNameSimilarity("palo alto networks", "palo alto")).toBe(67);
-    // EDGAR "sensata technologies" vs "sensata": 1/2
-    expect(vendorNameSimilarity("sensata technologies", "sensata")).toBe(50);
+  it("Phase 2.x: down-weights generic tokens so the single-brand-token tail now clears threshold", () => {
+    // "technologies"/"systems"/"networks" are generic → near-1.0 weighted similarity.
+    expect(vendorNameSimilarity("sensata technologies", "sensata")).toBe(87); // 1.0 / 1.15
+    expect(vendorNameSimilarity("cisco systems", "cisco")).toBe(87);
+    expect(vendorNameSimilarity("palo alto networks", "palo alto")).toBe(93); // 2.0 / 2.15
   });
 
-  it("penalizes a shared common token (Jaccard, not containment — the danger case)", () => {
-    // Containment would score 1.0 here; Jaccard keeps it low so the threshold rejects it.
-    expect(vendorNameSimilarity("oracle", "oracle health")).toBe(50);
-    expect(vendorNameSimilarity("oracle health", "oracle bank")).toBe(33); // {oracle} / {oracle,health,bank}
+  it("keeps the common-word/industry-noun false positives OUT (distinctive tokens keep full weight)", () => {
+    // 'health' is NOT generic → full weight → stays below threshold.
+    expect(vendorNameSimilarity("oracle", "oracle health")).toBe(50);          // 1.0 / 2.0
+    expect(vendorNameSimilarity("oracle health", "oracle bank")).toBe(33);     // 1 / 3
+    expect(vendorNameSimilarity("american airlines", "american express")).toBe(33);
   });
 
   it("returns 100 for identical token sets (incl. word-order variants)", () => {
     expect(vendorNameSimilarity("microsoft", "microsoft")).toBe(100);
     expect(vendorNameSimilarity("palo alto", "alto palo")).toBe(100); // word-order — exact misses, fuzzy catches
+  });
+
+  it("two different companies sharing only a generic token do NOT match", () => {
+    // shared {systems:0.15}; distinct acme/beta keep full weight → tiny score.
+    expect(vendorNameSimilarity("acme systems", "beta systems")).toBeLessThan(FUZZY_VENDOR_MIN_SCORE);
   });
 
   it("returns 0 for disjoint names or empty input", () => {
@@ -35,9 +41,11 @@ describe("vendorNameSimilarity", () => {
     expect(vendorNameSimilarity("anything", "")).toBe(0);
   });
 
-  it("the documented threshold accepts the real wins and rejects the common-word case", () => {
-    expect(vendorNameSimilarity("palo alto networks", "palo alto")).toBeGreaterThanOrEqual(FUZZY_VENDOR_MIN_SCORE);
+  it("the threshold accepts the real wins (incl. the recovered tail) and rejects the common-word case", () => {
+    expect(vendorNameSimilarity("sensata technologies", "sensata")).toBeGreaterThanOrEqual(FUZZY_VENDOR_MIN_SCORE);
+    expect(vendorNameSimilarity("cisco systems", "cisco")).toBeGreaterThanOrEqual(FUZZY_VENDOR_MIN_SCORE);
     expect(vendorNameSimilarity("oracle", "oracle health")).toBeLessThan(FUZZY_VENDOR_MIN_SCORE);
+    expect(vendorNameSimilarity("american airlines", "american express")).toBeLessThan(FUZZY_VENDOR_MIN_SCORE);
   });
 });
 

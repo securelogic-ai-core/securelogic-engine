@@ -67,6 +67,10 @@ import {
   FUZZY_VENDOR_SUGGESTION_CAP,
   FUZZY_VENDOR_MIN_CANONICAL_LEN
 } from "./vendorFuzzyMatch.js";
+import {
+  actionEngineEnabled,
+  buildFindingActionDraft
+} from "./actionRecommendationEngine.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -453,6 +457,46 @@ export async function runMatcherForSignal(
       );
 
       createdFinding = findingResult.rows[0] ?? null;
+
+      // GAP-3: action recommendation — turn a high-signal finding into a
+      // concrete "what to do next". Flag-gated (OFF by default) and threshold-
+      // gated (Critical/High only) so the action queue stays meaningful. Built
+      // from the in-scope finding fields (not the RETURNING shape) + the new
+      // finding id. Idempotent: ON CONFLICT against idx_actions_generated_finding
+      // (partial on action_type marker) so re-processing never duplicates, and a
+      // user's manual finding-action never collides.
+      if (createdFinding !== null && actionEngineEnabled()) {
+        const actionDraft = buildFindingActionDraft({
+          findingId: createdFinding.id as string,
+          title: findingTitle,
+          severity,
+          priority
+        });
+
+        if (actionDraft !== null) {
+          await client.query(
+            `
+            INSERT INTO actions (
+              organization_id, title, description, action_type,
+              source_type, source_id, priority, status
+            )
+            VALUES ($1, $2, $3, $4, $5, $6::uuid, $7, 'open')
+            ON CONFLICT (organization_id, source_type, source_id)
+              WHERE action_type = 'auto_finding_remediation'
+              DO NOTHING
+            `,
+            [
+              orgId,
+              actionDraft.title,
+              actionDraft.description,
+              actionDraft.action_type,
+              actionDraft.source_type,
+              actionDraft.source_id,
+              actionDraft.priority
+            ]
+          );
+        }
+      }
 
       // ---------------------------------------------------------------
       // 3b. Suggestion INSERT + score compute.
