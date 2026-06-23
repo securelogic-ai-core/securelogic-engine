@@ -51,7 +51,8 @@ vi.mock("../../../../src/api/lib/cyberSignalProcessingService.js", () => ({
     suggestion_id: null,
     match_score: null,
     domain: "Vulnerability",
-    matched_branch: "no_match"
+    matched_branch: "no_match",
+    obligation_suggestion_ids: []
   })
 }));
 
@@ -182,7 +183,8 @@ describe("runKevPoll — behaviour", () => {
       suggestion_id: null,
       match_score: null,
       domain: "Vulnerability",
-      matched_branch: "no_match"
+      matched_branch: "no_match",
+      obligation_suggestion_ids: []
     });
   });
 
@@ -330,7 +332,8 @@ describe("runKevPoll — matcher fan-out", () => {
       suggestion_id: null,
       match_score: null,
       domain: "Vulnerability",
-      matched_branch: "no_match"
+      matched_branch: "no_match",
+      obligation_suggestion_ids: []
     });
   });
 
