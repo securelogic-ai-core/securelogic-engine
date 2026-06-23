@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS signal_match_suggestions (
   -- these; rows seeded by other paths (admin tooling, future imports)
   -- need not.
   match_reason         TEXT         NULL,    -- short code: 'vendor_name_ilike', 'cve_match', etc.
-  match_score          NUMERIC(4,3) NULL,    -- 0.000..1.000 confidence; NULL when matcher does not score
+  match_score          NUMERIC(4,3) NULL,    -- DOC NOTE: superseded by 20260505_signal_match_suggestions_score_type_fix.sql, which retypes this column to INTEGER with CHECK (match_score BETWEEN 0 AND 100). The matcher writes an integer 0–100, not a 0.000–1.000 fraction. NULL when the matcher does not score.
 
   created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
 
