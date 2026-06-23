@@ -69,7 +69,8 @@ import {
 } from "./vendorFuzzyMatch.js";
 import {
   actionEngineEnabled,
-  buildFindingActionDraft
+  buildFindingActionDraft,
+  buildRiskActionDraft
 } from "./actionRecommendationEngine.js";
 
 // ---------------------------------------------------------------------------
@@ -903,6 +904,38 @@ export async function processSignal(
     );
 
     risksUpdated = riskUpdateResult.rowCount ?? 0;
+
+    // GAP-3 increment 2: action recommendation for newly exposure-flagged risks.
+    // One "review exposed risk" action per risk just flagged by THIS signal.
+    // Flag-gated (OFF by default) + idempotent via idx_actions_generated_risk
+    // (partial on the 'auto_risk_exposure' marker) so re-processing / a manual
+    // risk-action never collides. Same posture as the finding→action generator.
+    if (actionEngineEnabled() && riskUpdateResult.rows.length > 0) {
+      for (const flaggedRisk of riskUpdateResult.rows) {
+        const riskActionDraft = buildRiskActionDraft(flaggedRisk.id, domain);
+        await client.query(
+          `
+          INSERT INTO actions (
+            organization_id, title, description, action_type,
+            source_type, source_id, priority, status
+          )
+          VALUES ($1, $2, $3, $4, $5, $6::uuid, $7, 'open')
+          ON CONFLICT (organization_id, source_type, source_id)
+            WHERE action_type = 'auto_risk_exposure'
+            DO NOTHING
+          `,
+          [
+            orgId,
+            riskActionDraft.title,
+            riskActionDraft.description,
+            riskActionDraft.action_type,
+            riskActionDraft.source_type,
+            riskActionDraft.source_id,
+            riskActionDraft.priority
+          ]
+        );
+      }
+    }
 
     await client.query("COMMIT");
 
