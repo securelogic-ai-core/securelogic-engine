@@ -60,6 +60,13 @@ import {
   MIN_MATCH_SCORE,
   SUGGESTION_CAP
 } from "./signalTargetMatching.js";
+import {
+  fuzzyVendorMatchEnabled,
+  vendorNameSimilarity,
+  FUZZY_VENDOR_MIN_SCORE,
+  FUZZY_VENDOR_SUGGESTION_CAP,
+  FUZZY_VENDOR_MIN_CANONICAL_LEN
+} from "./vendorFuzzyMatch.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -306,6 +313,11 @@ export async function runMatcherForSignal(
         ? canonicalizeVendorName(signal.affected_vendor)
         : "";
 
+    // Hoisted so the Phase-2 fuzzy branch (below) can reuse the org's active
+    // vendor rows without a second query. Populated only when we enter the
+    // exact branch — which is exactly the precondition for fuzzy to run.
+    let activeVendorRows: Array<{ id: string; name: string; criticality: string | null }> = [];
+
     if (canonicalSignalVendor !== "") {
       // Normalization-then-exact: fetch this org's active vendors and compare
       // canonical forms in TS using the SAME canonicalizeVendorName as the
@@ -325,6 +337,7 @@ export async function runMatcherForSignal(
         `,
         [orgId]
       );
+      activeVendorRows = vendorResult.rows;
 
       const row = vendorResult.rows.find(
         (v) => canonicalizeVendorName(v.name) === canonicalSignalVendor
@@ -527,6 +540,71 @@ export async function runMatcherForSignal(
         // Score not refreshed (recompute endpoint exists for that).
         // Surface as null suggestion_id; matcher is idempotent.
         matchScore = null;
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // Phase 2: fuzzy vendor matching — SUGGEST-ONLY, OFF by default.
+    //
+    // Runs ONLY when the exact (Phase-1) branch found no vendor AND no AI
+    // match, and only when the flag is enabled. Writes signal_match_suggestions
+    // (target_type 'vendor') for token-similar vendors so a human can accept or
+    // dismiss — it NEVER creates a finding or flags a risk (a false fuzzy match
+    // must not reach the customer). Mirrors the GAP-1 obligation branch's
+    // suggest-only posture and ON CONFLICT idempotency. MatcherResult is
+    // intentionally unchanged (no field for fuzzy ids — telemetry is deferred;
+    // suggestions are observable directly via match_reason='vendor_fuzzy_match').
+    //
+    // Short canonicals are exact-only (MIN_CANONICAL_LEN) so short/common names
+    // cannot Jaccard-collide. Candidates reuse activeVendorRows (already fetched).
+    // ---------------------------------------------------------------
+    if (
+      fuzzyVendorMatchEnabled() &&
+      matchedVendorId === null &&
+      matchedAiSystemId === null &&
+      canonicalSignalVendor.length >= FUZZY_VENDOR_MIN_CANONICAL_LEN
+    ) {
+      const fuzzyCandidates = activeVendorRows
+        .map((v) => ({
+          vendor: v,
+          score: vendorNameSimilarity(
+            canonicalSignalVendor,
+            canonicalizeVendorName(v.name)
+          )
+        }))
+        // No upper bound: the fuzzy branch only runs when the exact branch found
+        // no canonical-equal vendor, so a score of 100 here means same token SET
+        // but different string (word-order variant) — a legitimate fuzzy win.
+        .filter((c) => c.score >= FUZZY_VENDOR_MIN_SCORE)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, FUZZY_VENDOR_SUGGESTION_CAP);
+
+      for (const cand of fuzzyCandidates) {
+        await client.query(
+          `
+          INSERT INTO signal_match_suggestions (
+            organization_id, signal_id, target_type, target_id,
+            match_reason, match_score, match_metadata
+          )
+          VALUES ($1, $2::uuid, 'vendor', $3::uuid, 'vendor_fuzzy_match', $4, $5::jsonb)
+          ON CONFLICT (organization_id, signal_id, target_type, target_id)
+            WHERE accepted_at IS NULL AND dismissed_at IS NULL
+            DO NOTHING
+          `,
+          [
+            orgId,
+            signalId,
+            cand.vendor.id,
+            cand.score,
+            JSON.stringify({
+              source: signal.source,
+              matched_branch: "vendor_fuzzy",
+              matched_string: signal.affected_vendor,
+              candidate_name: cand.vendor.name,
+              similarity: cand.score
+            })
+          ]
+        );
       }
     }
 
