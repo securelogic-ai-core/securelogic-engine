@@ -434,14 +434,14 @@ describe("runMatcherForSignal — GAP-1 obligation branch", () => {
       ...overrides
     });
 
-  it("walk (a): GDPR obligation is written; CCPA obligation sharing the domain is NOT", async () => {
+  it("walk (a): GDPR obligation is written; a HIPAA obligation (different family) is NOT", async () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)                                       // BEGIN
       .mockResolvedValueOnce({                                            // obligations SELECT
         rowCount: 2,
         rows: [
-          obligationRow("o-gdpr", "GDPR", "data protection"), // reg cited → 80
-          obligationRow("o-ccpa", "CCPA", "data protection")  // reg NOT cited → 0
+          obligationRow("o-gdpr", "GDPR Art. 32", "Privacy"),     // family cited → 80
+          obligationRow("o-hipaa", "HIPAA §164.308", "Healthcare") // family NOT cited → 0
         ]
       })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "sug-gdpr" }] }) // INSERT (GDPR only)
@@ -454,12 +454,12 @@ describe("runMatcherForSignal — GAP-1 obligation branch", () => {
     const insertCalls = mockClientQuery.mock.calls.filter(
       (c) => /INSERT INTO signal_match_suggestions/.test(c[0] as string)
     );
-    expect(insertCalls.length).toBe(1); // CCPA NOT inserted
+    expect(insertCalls.length).toBe(1); // HIPAA NOT inserted
     const sql = insertCalls[0]![0] as string;
     expect(sql).toMatch(/'obligation', \$3::uuid, 'obligation_domain_match'/);
     const params = insertCalls[0]![1] as unknown[];
     expect(params[2]).toBe("o-gdpr"); // target_id
-    expect(params[3]).toBe(80);       // base score, no domain overlap in this signal
+    expect(params[3]).toBe(80);       // base score, no domain/citation echo in this signal
   });
 
   it("walk (b): a signal citing no recognizable regulation writes nothing", async () => {
@@ -468,8 +468,8 @@ describe("runMatcherForSignal — GAP-1 obligation branch", () => {
       .mockResolvedValueOnce({                                            // obligations SELECT
         rowCount: 2,
         rows: [
-          obligationRow("o-gdpr", "GDPR", "data protection"),
-          obligationRow("o-ccpa", "CCPA", "data protection")
+          obligationRow("o-gdpr", "GDPR Art. 32", "Privacy"),
+          obligationRow("o-hipaa", "HIPAA §164.308", "Healthcare")
         ]
       })
       .mockResolvedValueOnce(EMPTY);                                      // COMMIT (no inserts)
@@ -492,16 +492,16 @@ describe("runMatcherForSignal — GAP-1 obligation branch", () => {
       .mockResolvedValueOnce({                                            // obligations SELECT
         rowCount: 2,
         rows: [
-          obligationRow("o-a", "GDPR", "data protection"), // 80 + 20 = 100
-          obligationRow("o-b", "GDPR", "workplace safety")  // 80 + 0  = 80
+          obligationRow("o-a", "GDPR Art. 32", "Privacy"), // 80 + 10 = 90 (domain echoed)
+          obligationRow("o-b", "GDPR Art. 33", "Audit")    // 80 + 0  = 80
         ]
       })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "sug-a" }] })    // INSERT o-a (100)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "sug-a" }] })    // INSERT o-a (90)
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "sug-b" }] })    // INSERT o-b (80)
       .mockResolvedValueOnce(EMPTY);                                      // COMMIT
 
     const result = await runMatcherForSignal(
-      gdprSignal({ normalized_summary: "New GDPR data protection breach notification rule" }),
+      gdprSignal({ normalized_summary: "New GDPR privacy breach notification rule" }),
       ORG_A
     );
 
@@ -509,16 +509,16 @@ describe("runMatcherForSignal — GAP-1 obligation branch", () => {
     const insertCalls = mockClientQuery.mock.calls.filter(
       (c) => /INSERT INTO signal_match_suggestions/.test(c[0] as string)
     );
-    // Sorted desc: o-a (100) inserted before o-b (80).
+    // Sorted desc: o-a (90, domain "Privacy" echoed) before o-b (80).
     expect((insertCalls[0]![1] as unknown[])[2]).toBe("o-a");
-    expect((insertCalls[0]![1] as unknown[])[3]).toBe(100);
+    expect((insertCalls[0]![1] as unknown[])[3]).toBe(90);
     expect((insertCalls[1]![1] as unknown[])[2]).toBe("o-b");
     expect((insertCalls[1]![1] as unknown[])[3]).toBe(80);
   });
 
   it("caps at 20 when more than 20 obligations cite the regulation", async () => {
     const rows = Array.from({ length: 25 }, (_, i) =>
-      obligationRow(`o${i}`, "GDPR", "data protection")
+      obligationRow(`o${i}`, "GDPR Art. 32", "Privacy")
     );
     mockClientQuery.mockResolvedValueOnce(EMPTY); // BEGIN
     mockClientQuery.mockResolvedValueOnce({ rowCount: 25, rows }); // obligations SELECT
@@ -539,7 +539,7 @@ describe("runMatcherForSignal — GAP-1 obligation branch", () => {
   it("ON CONFLICT skip → not collected, idempotent", async () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)
-      .mockResolvedValueOnce({ rowCount: 1, rows: [obligationRow("o1", "GDPR", "data protection")] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [obligationRow("o1", "GDPR Art. 32", "Privacy")] })
       .mockResolvedValueOnce(EMPTY) // INSERT — ON CONFLICT no-op
       .mockResolvedValueOnce(EMPTY); // COMMIT
 
@@ -557,7 +557,7 @@ describe("runMatcherForSignal — GAP-1 obligation branch", () => {
   it("NO findings INSERT and NO risk flagging on an obligation-only match (suggest-only)", async () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)
-      .mockResolvedValueOnce({ rowCount: 1, rows: [obligationRow("o1", "GDPR", "data protection")] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [obligationRow("o1", "GDPR Art. 32", "Privacy")] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "sug-o1" }] })
       .mockResolvedValueOnce(EMPTY);
 
@@ -593,7 +593,7 @@ describe("runMatcherForSignal — GAP-1 obligation branch", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })             // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                             // weights SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] }) // vendor suggestion INSERT
-      .mockResolvedValueOnce({ rowCount: 1, rows: [obligationRow("o1", "GDPR", "data protection")] }) // obligations SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [obligationRow("o1", "GDPR Art. 32", "Privacy")] }) // obligations SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "sug-o1" }] })         // obligation INSERT
       .mockResolvedValueOnce(EMPTY);                                            // COMMIT
 
