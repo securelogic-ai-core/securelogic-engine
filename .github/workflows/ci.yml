@@ -73,7 +73,18 @@ jobs:
           node-version-file: ".nvmrc"
           cache: npm
       - run: npm ci
-      - run: npm run build
+      - name: engine build
+        run: npm run build
+      # The intelligence-worker is built and deployed separately, and
+      # `npm run build` (tsconfig.prod.json) does NOT compile it. A worker-only
+      # type error — e.g. a test mock drifting from a shared type after #251 made
+      # MatcherResult.obligation_suggestion_ids required — therefore passed PR CI
+      # but broke the worker DEPLOY (red for a day). Compile the worker here with
+      # the same command Render runs so the break fails the PR instead. Folded
+      # into the already-required `build` check so it blocks merges without a
+      # branch-protection ruleset change.
+      - name: intelligence-worker build
+        run: npx tsc -p services/intelligence-worker/tsconfig.json
 
   # E1-G1 cross-org tenant-isolation harness. Deliberately a SEPARATE job from
   # `test` so the unit run stays database-free — only this job provisions
