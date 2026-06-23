@@ -366,6 +366,16 @@ async function syncOrgEntitlement(
       UPDATE organizations
          SET entitlement_level          = $1,
              plan                       = $1,
+             -- Reset the monitored-entity cap to the plan default ONLY on a
+             -- genuine entitlement-level transition (e.g. free→premium grant,
+             -- premium→free downgrade). The RHS sees the OLD column value, so
+             -- this compares the prior level to the new one. On a routine
+             -- renewal (level unchanged) the cap is left as-is, which preserves
+             -- any admin-elevated ("Platform Scale") cap.
+             max_monitored_entities     = CASE
+                                            WHEN entitlement_level IS DISTINCT FROM $1 THEN 50
+                                            ELSE max_monitored_entities
+                                          END,
              stripe_customer_id         = COALESCE(stripe_customer_id, $3),
              stripe_subscription_id     = COALESCE($4, stripe_subscription_id),
              stripe_subscription_tier   = COALESCE($5, stripe_subscription_tier),

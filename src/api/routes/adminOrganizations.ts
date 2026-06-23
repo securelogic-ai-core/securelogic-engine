@@ -258,6 +258,23 @@ router.patch("/organizations/:id", async (req, res) => {
       safetyCritical = req.body.safety_critical;
     }
 
+    // Monitored-entity cap (vendors + ai_systems combined). This is the
+    // operator path for the sales-led "Platform Scale" raise — set a higher
+    // cap per contract. Must be a non-negative integer. An admin-set cap
+    // survives Stripe renewals (the webhook only resets it on a level change).
+    let maxMonitoredEntities: number | null = null;
+    if (req.body?.max_monitored_entities !== undefined) {
+      const v = req.body.max_monitored_entities;
+      if (typeof v !== "number" || !Number.isInteger(v) || v < 0) {
+        res.status(400).json({
+          error: "invalid_max_monitored_entities",
+          expected: "non-negative integer"
+        });
+        return;
+      }
+      maxMonitoredEntities = v;
+    }
+
     if (plan !== null && !VALID_PLANS.has(plan)) {
       res.status(400).json({ error: "invalid_plan", allowed: ["starter", "standard", "premium"] });
       return;
@@ -279,7 +296,8 @@ router.patch("/organizations/:id", async (req, res) => {
       regulated !== null ||
       handlesPii !== null ||
       safetyCritical !== null ||
-      scale !== null;
+      scale !== null ||
+      maxMonitoredEntities !== null;
 
     if (!hasUpdate) {
       res.status(400).json({ error: "no_fields_to_update" });
@@ -290,19 +308,21 @@ router.patch("/organizations/:id", async (req, res) => {
       `
       UPDATE organizations
       SET
-        plan            = COALESCE($2, plan),
-        status          = COALESCE($3, status),
-        regulated       = COALESCE($4, regulated),
-        handles_pii     = COALESCE($5, handles_pii),
-        safety_critical = COALESCE($6, safety_critical),
-        scale           = COALESCE($7, scale),
-        updated_at      = NOW()
+        plan                   = COALESCE($2, plan),
+        status                 = COALESCE($3, status),
+        regulated              = COALESCE($4, regulated),
+        handles_pii            = COALESCE($5, handles_pii),
+        safety_critical        = COALESCE($6, safety_critical),
+        scale                  = COALESCE($7, scale),
+        max_monitored_entities = COALESCE($8, max_monitored_entities),
+        updated_at             = NOW()
       WHERE id = $1
       RETURNING id, name, slug, plan, status,
                 regulated, handles_pii, safety_critical, scale,
+                max_monitored_entities,
                 created_at, updated_at
       `,
-      [id, plan, status, regulated, handlesPii, safetyCritical, scale]
+      [id, plan, status, regulated, handlesPii, safetyCritical, scale, maxMonitoredEntities]
     );
 
     if ((result.rowCount ?? 0) === 0) {
@@ -321,7 +341,8 @@ router.patch("/organizations/:id", async (req, res) => {
         regulated: org.regulated,
         handles_pii: org.handles_pii,
         safety_critical: org.safety_critical,
-        scale: org.scale
+        scale: org.scale,
+        max_monitored_entities: org.max_monitored_entities
       },
       "admin: organization updated"
     );
