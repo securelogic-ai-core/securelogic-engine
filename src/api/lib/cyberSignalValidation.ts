@@ -39,6 +39,7 @@ export const VALID_SOURCES = new Set([
   "mitre_attack",
   "mitre_atlas",
   "sec_edgar",
+  "federal_register",
   "rss",
   "mock",
   "manual"

@@ -178,6 +178,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   trends: { category: "E", piiRisk: "low", rlsStatus: "pending" },
   trend_signals: { category: "E", piiRisk: "none", rlsStatus: "pending" },
   cyber_signals: { category: "E", piiRisk: "low", rlsStatus: "pending" },
+  feed_health: { category: "E", piiRisk: "none", rlsStatus: "none", specialHandling: "GLOBAL operational table — per-source ingestion health (source, timestamps, counts, last_error). Not org-scoped, no PII." },
   intelligence_briefs: { category: "E", piiRisk: "low", rlsStatus: "pending" },
   intelligence_brief_items: { category: "E", piiRisk: "low", rlsStatus: "pending" },
   intelligence_brief_sends: { category: "E", piiRisk: "low", rlsStatus: "pending", specialHandling: "Delivery audit trail; subscriber_id FK. Retained for deliverability/audit." },
