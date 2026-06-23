@@ -955,3 +955,68 @@ describe("runMatcherForSignal — fuzzy vendor suggestions (Phase 2)", () => {
     expect(suggestionInserts()).toHaveLength(0);
   });
 });
+
+// =====================================================================
+// runMatcherForSignal — GAP-3 action recommendation (flag-gated)
+// =====================================================================
+
+describe("runMatcherForSignal — action recommendation (GAP-3)", () => {
+  const FLAG = "SECURELOGIC_ACTION_ENGINE_ENABLED";
+  afterEach(() => { delete process.env[FLAG]; });
+
+  const actionInserts = () =>
+    mockClientQuery.mock.calls.map((c) => c[0] as string).filter((s) => /INSERT INTO actions/.test(s));
+  const actionInsertIdx = () =>
+    mockClientQuery.mock.calls.map((c) => c[0] as string).findIndex((s) => /INSERT INTO actions/.test(s));
+
+  it("flag ON + vendor match (High) → generates a finding-action linked to the finding", async () => {
+    process.env[FLAG] = "true";
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // actions INSERT (ON CONFLICT)
+      .mockResolvedValueOnce(EMPTY)                                              // weights SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY);                                            // COMMIT
+
+    const result = await runMatcherForSignal(makeSignal(), ORG_A); // default severity High
+
+    expect(result.matched_branch).toBe("vendor_name_ilike");
+    const idx = actionInsertIdx();
+    expect(idx).toBeGreaterThanOrEqual(0);
+    // params: [org, title, description, action_type, source_type, source_id, priority]
+    const params = mockClientQuery.mock.calls[idx]![1] as unknown[];
+    expect(params[3]).toBe("auto_finding_remediation");  // action_type marker
+    expect(params[4]).toBe("finding");                   // source_type
+    expect(params[5]).toBe(FINDING_ID);                  // source_id = finding id
+    expect(params[6]).toBe("near_term");                 // High → near_term
+  });
+
+  it("flag OFF (default): NO action generated even on a match", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // weights SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY);                                            // COMMIT
+
+    await runMatcherForSignal(makeSignal(), ORG_A);
+    expect(actionInserts()).toHaveLength(0);
+  });
+
+  it("flag ON but Moderate severity: below threshold, NO action", async () => {
+    process.env[FLAG] = "true";
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // weights SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY);                                            // COMMIT
+
+    await runMatcherForSignal(makeSignal({ severity: "Moderate" }), ORG_A);
+    expect(actionInserts()).toHaveLength(0);
+  });
+});
