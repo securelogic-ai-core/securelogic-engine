@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
@@ -648,10 +648,10 @@ describe("GAP-1 wiring — source asserts", () => {
     expect(MATCHING_SRC).not.toMatch(/scoreControlMatch/);
   });
 
-  it("exactly two ON CONFLICT dedup INSERTs remain (vendor + obligation)", () => {
+  it("exactly three ON CONFLICT dedup INSERTs remain (vendor exact + obligation + vendor fuzzy)", () => {
     const conflictCount =
       (SUT_SRC.match(/ON CONFLICT \(organization_id, signal_id, target_type, target_id\)\s*\n\s*WHERE accepted_at IS NULL AND dismissed_at IS NULL\s*\n\s*DO NOTHING/g) || []).length;
-    expect(conflictCount).toBe(2);
+    expect(conflictCount).toBe(3);
   });
 
   it("threshold (MIN_MATCH_SCORE) is applied via filter before the top-N slice", () => {
@@ -848,5 +848,110 @@ describe("runMatcherForSignal — normalized vendor match", () => {
 
     expect(result.matched_vendor_id).toBeNull();
     expect(result.matched_branch).toBe("no_match");
+  });
+});
+
+// =====================================================================
+// runMatcherForSignal — Phase 2 fuzzy vendor SUGGESTIONS (flag-gated, suggest-only)
+// =====================================================================
+
+describe("runMatcherForSignal — fuzzy vendor suggestions (Phase 2)", () => {
+  const FLAG = "SECURELOGIC_FUZZY_VENDOR_MATCH_ENABLED";
+  afterEach(() => { delete process.env[FLAG]; });
+
+  const suggestionInserts = () =>
+    (mockClientQuery.mock.calls.map((c) => c[0] as string)).filter((s) =>
+      /INSERT INTO signal_match_suggestions/.test(s)
+    );
+  const fuzzyInsertCallIdx = () =>
+    (mockClientQuery.mock.calls.map((c) => c[0] as string)).findIndex((s) =>
+      /vendor_fuzzy_match/.test(s)
+    );
+
+  it("flag ON: token-similar vendor with NO exact match → writes a vendor_fuzzy_match suggestion, NO finding/risk", async () => {
+    process.env[FLAG] = "true";
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                                                         // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: VENDOR_ID, name: "Palo Alto", criticality: "high" }] }) // vendor SELECT (no exact)
+      .mockResolvedValueOnce(EMPTY)                                                                         // ai_system SELECT (no match)
+      .mockResolvedValueOnce(EMPTY)                                                                         // fuzzy suggestion INSERT (DO NOTHING)
+      .mockResolvedValueOnce(EMPTY);                                                                        // COMMIT
+
+    const result = await runMatcherForSignal(makeSignal({ affected_vendor: "Palo Alto Networks" }), ORG_A);
+
+    // No exact match → MatcherResult unchanged shape, no finding, no risk.
+    expect(result.matched_vendor_id).toBeNull();
+    expect(result.matched_branch).toBe("no_match");
+    expect(result.finding).toBeNull();
+
+    // A fuzzy suggestion WAS written (reason 'vendor_fuzzy_match'), with the
+    // candidate vendor id and a score above the threshold.
+    const idx = fuzzyInsertCallIdx();
+    expect(idx).toBeGreaterThanOrEqual(0);
+    const params = mockClientQuery.mock.calls[idx]![1] as unknown[];
+    expect(params[2]).toBe(VENDOR_ID);                       // target_id
+    expect(params[3] as number).toBeGreaterThanOrEqual(60);  // match_score
+    const meta = JSON.parse(params[4] as string);
+    expect(meta.matched_branch).toBe("vendor_fuzzy");
+  });
+
+  it("flag OFF (default): NO fuzzy suggestion even for a token-similar vendor", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                                                         // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: VENDOR_ID, name: "Palo Alto", criticality: "high" }] }) // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                                                         // ai_system SELECT
+      .mockResolvedValueOnce(EMPTY);                                                                        // COMMIT
+
+    const result = await runMatcherForSignal(makeSignal({ affected_vendor: "Palo Alto Networks" }), ORG_A);
+
+    expect(result.matched_branch).toBe("no_match");
+    expect(suggestionInserts()).toHaveLength(0);
+  });
+
+  it("flag ON but an EXACT match fired: fuzzy does NOT run (exact path owns it)", async () => {
+    process.env[FLAG] = "true";
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                                                         // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: VENDOR_ID, name: "Microsoft", criticality: "high" }] }) // vendor SELECT (exact)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })                                         // findings INSERT
+      .mockResolvedValueOnce(EMPTY)                                                                         // weights
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })                             // exact suggestion INSERT
+      .mockResolvedValueOnce(EMPTY);                                                                        // COMMIT
+
+    const result = await runMatcherForSignal(makeSignal({ affected_vendor: "Microsoft" }), ORG_A);
+
+    expect(result.matched_branch).toBe("vendor_name_ilike");
+    // exactly the one exact suggestion; no fuzzy insert
+    expect(suggestionInserts()).toHaveLength(1);
+    expect(fuzzyInsertCallIdx()).toBe(-1);
+  });
+
+  it("flag ON, short name 'HP': exact-only, NO fuzzy (min canonical length guard)", async () => {
+    process.env[FLAG] = "true";
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                                                         // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: VENDOR_ID, name: "Sharp", criticality: "high" }] }) // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                                                         // ai_system SELECT
+      .mockResolvedValueOnce(EMPTY);                                                                        // COMMIT
+
+    const result = await runMatcherForSignal(makeSignal({ affected_vendor: "HP" }), ORG_A);
+
+    expect(result.matched_branch).toBe("no_match");
+    expect(suggestionInserts()).toHaveLength(0);
+  });
+
+  it("flag ON, common-word below threshold ('Oracle' vs 'Oracle Health'): NO suggestion", async () => {
+    process.env[FLAG] = "true";
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                                                         // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: VENDOR_ID, name: "Oracle Health", criticality: "high" }] }) // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                                                         // ai_system SELECT
+      .mockResolvedValueOnce(EMPTY);                                                                        // COMMIT
+
+    const result = await runMatcherForSignal(makeSignal({ affected_vendor: "Oracle" }), ORG_A);
+
+    // Jaccard("oracle","oracle health") = 50 < 60 → filtered, no suggestion written.
+    expect(result.matched_branch).toBe("no_match");
+    expect(suggestionInserts()).toHaveLength(0);
   });
 });
