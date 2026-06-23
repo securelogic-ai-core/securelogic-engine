@@ -241,6 +241,26 @@ describe("mapRegulatoryItemToSignal", () => {
     expect(signal?.raw_payload.guid).toBe(relevantNistItem.guid);
   });
 
+  it("sets external_id to guid for per-item dedup (collapse fix)", () => {
+    const signal = mapRegulatoryItemToSignal(relevantNistItem, "nist_news");
+    expect(signal?.external_id).toBe(relevantNistItem.guid);
+  });
+
+  it("falls back to link when guid is absent", () => {
+    const item: RegulatoryFeedItem = { ...relevantNistItem, guid: null };
+    const signal = mapRegulatoryItemToSignal(item, "nist_news");
+    expect(signal?.external_id).toBe(relevantNistItem.link);
+  });
+
+  it("two distinct items produce different external_id (no collapse)", () => {
+    const a = mapRegulatoryItemToSignal(relevantNistItem, "nist_news");
+    const b = mapRegulatoryItemToSignal(
+      { ...relevantNistItem, guid: "nist-other-release", link: "https://www.nist.gov/news/other" },
+      "nist_news"
+    );
+    expect(a?.external_id).not.toBe(b?.external_id);
+  });
+
   it("builds normalized_summary from title and description", () => {
     const signal = mapRegulatoryItemToSignal(relevantNistItem, "nist_news");
     expect(signal?.normalized_summary).toContain("NIST Releases Cybersecurity Framework 2.0");

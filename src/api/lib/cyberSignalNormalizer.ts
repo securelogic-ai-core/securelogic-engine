@@ -5,8 +5,10 @@
  *
  * DEDUPLICATION HASH
  * ------------------
- * SHA-256 of the normalized composite key:
- *   source|signal_type|affected_cve|affected_vendor
+ * Two key shapes, selected by whether a stable per-item external_id is present:
+ *
+ *   external_id ABSENT (legacy):  source|signal_type|affected_cve|affected_vendor
+ *   external_id PRESENT:          source|signal_type|id:<external_id>
  *
  * Each component is lowercased and trimmed before hashing; absent components
  * are empty strings. This ensures:
@@ -15,6 +17,13 @@
  *   - Same CVE, same source, same org → duplicate (blocked by unique constraint).
  *   - Different orgs ingesting the same signal each get their own row; uniqueness
  *     is enforced by the DB UNIQUE(organization_id, dedup_hash) constraint.
+ *
+ * The external_id branch exists because vendorless / CVE-less sources (every
+ * regulatory feed; news items with no CVE/vendor in the title) otherwise hash
+ * to an identical source|signal_type|| key and collapse to a single stored row
+ * per (source, signal_type). Sources that DO set affected_cve (CISA KEV, NVD)
+ * leave external_id null and therefore take the legacy branch BYTE-FOR-BYTE
+ * unchanged — no hash drift, no re-ingestion.
  *
  * NORMALIZED SUMMARY AUTO-DERIVATION
  * -----------------------------------
@@ -40,6 +49,7 @@ export type NormalizedCyberSignal = {
   normalized_summary: string;
   affected_vendor: string | null;
   affected_cve: string | null;
+  external_id: string | null;
   dedup_hash: string;
 };
 
@@ -51,25 +61,39 @@ export type NormalizedCyberSignal = {
  * Build a deterministic SHA-256 deduplication hash for a signal.
  *
  * All inputs are normalized to lowercase and trimmed before hashing.
- * Absent components contribute an empty string segment so the hash
- * format stays stable regardless of which optional fields are present.
+ *
+ * When `externalId` is present and non-empty, the key is
+ *   source|signal_type|id:<external_id>
+ * so the per-item id is the sole discriminator. When it is null/empty, the key
+ * is the LEGACY composite source|signal_type|cve|vendor — reproduced here
+ * byte-for-byte so callers that do not pass an external_id (CISA KEV, NVD, and
+ * every existing row) keep their exact current hash. Do not alter the legacy
+ * branch: its stability is the zero-regression guarantee.
  *
  * @example
  *   buildDedupHash("cisa", "cve", "CVE-2024-12345", null)
  *   // sha256("cisa|cve|cve-2024-12345|")
+ *   buildDedupHash("nist_news", "regulatory_change", null, null, "guid-abc")
+ *   // sha256("nist_news|regulatory_change|id:guid-abc")
  */
 export function buildDedupHash(
   source: string,
   signalType: string,
   affectedCve: string | null,
-  affectedVendor: string | null
+  affectedVendor: string | null,
+  externalId: string | null = null
 ): string {
-  const key = [
-    source.toLowerCase().trim(),
-    signalType.toLowerCase().trim(),
-    (affectedCve ?? "").toLowerCase().trim(),
-    (affectedVendor ?? "").toLowerCase().trim()
-  ].join("|");
+  const trimmedId = externalId?.trim() ?? "";
+
+  const key =
+    trimmedId !== ""
+      ? `${source.toLowerCase().trim()}|${signalType.toLowerCase().trim()}|id:${trimmedId.toLowerCase()}`
+      : [
+          source.toLowerCase().trim(),
+          signalType.toLowerCase().trim(),
+          (affectedCve ?? "").toLowerCase().trim(),
+          (affectedVendor ?? "").toLowerCase().trim()
+        ].join("|");
 
   return createHash("sha256").update(key, "utf8").digest("hex");
 }
@@ -144,11 +168,17 @@ export function normalizeSignal(input: CyberSignalIngestInput): NormalizedCyberS
           input.affected_vendor
         );
 
+  const externalId =
+    typeof input.external_id === "string" && input.external_id.trim() !== ""
+      ? input.external_id.trim()
+      : null;
+
   const dedupHash = buildDedupHash(
     input.source,
     input.signal_type,
     input.affected_cve,
-    input.affected_vendor
+    input.affected_vendor,
+    externalId
   );
 
   return {
@@ -159,6 +189,7 @@ export function normalizeSignal(input: CyberSignalIngestInput): NormalizedCyberS
     normalized_summary: normalizedSummary,
     affected_vendor: input.affected_vendor,
     affected_cve: input.affected_cve,
+    external_id: externalId,
     dedup_hash: dedupHash
   };
 }

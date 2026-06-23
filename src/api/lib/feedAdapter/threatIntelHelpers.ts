@@ -190,8 +190,7 @@ export function mapRssItemToSignal(
 
   const normalizedSummary = buildRssNormalizedSummary(title, item.description);
 
-  // Include canonical URL in raw_payload so the dedup hash incorporates it.
-  // Two fetches of the same article from the same source will hash identically.
+  // Carry the canonical URL / guid in raw_payload for traceability.
   const rawPayload: Record<string, unknown> = {
     title,
     description: item.description,
@@ -208,6 +207,11 @@ export function mapRssItemToSignal(
     raw_payload: rawPayload,
     normalized_summary: normalizedSummary,
     affected_vendor: affectedVendor,
-    affected_cve: affectedCve
+    affected_cve: affectedCve,
+    // Per-item dedup discriminator. News items with no CVE/vendor in the title
+    // would otherwise hash to an identical source|signal_type|| key and collapse
+    // to one row. guid is the stable RSS id; link is the fallback. Two fetches of
+    // the same article share a guid and still dedup correctly.
+    external_id: item.guid ?? item.link ?? null
   };
 }

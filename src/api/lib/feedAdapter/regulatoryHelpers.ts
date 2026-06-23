@@ -123,6 +123,10 @@ export function mapRegulatoryItemToSignal(
     raw_payload: rawPayload,
     normalized_summary: normalizedSummary,
     affected_vendor: null,   // regulatory signals are org-wide, not vendor-specific
-    affected_cve: null
+    affected_cve: null,
+    // Per-item dedup discriminator. Regulatory signals carry no CVE/vendor, so
+    // without this every item would hash identically and collapse to one row
+    // per (source, signal_type). guid is the stable RSS id; link is the fallback.
+    external_id: item.guid ?? item.link ?? null
   };
 }
