@@ -366,14 +366,19 @@ async function syncOrgEntitlement(
       UPDATE organizations
          SET entitlement_level          = $1,
              plan                       = $1,
-             -- Reset the monitored-entity cap to the plan default ONLY on a
-             -- genuine entitlement-level transition (e.g. free→premium grant,
-             -- premium→free downgrade). The RHS sees the OLD column value, so
-             -- this compares the prior level to the new one. On a routine
-             -- renewal (level unchanged) the cap is left as-is, which preserves
-             -- any admin-elevated ("Platform Scale") cap.
+             -- Monitored-entity cap. The webhook only ever RAISES a paid org to
+             -- at least the 50 default (GREATEST sees the OLD column value) and
+             -- NEVER lowers it. This preserves an admin-elevated ("Platform
+             -- Scale") cap across renewals AND across a past_due dip: status
+             -- past_due/canceled transiently writes entitlement_level='starter'
+             -- (the ELSE branch leaves the cap untouched), and the recovery back
+             -- to premium keeps the elevated cap instead of resetting it. A
+             -- genuine Scale→base downgrade is an operator action (the same
+             -- admin path that raised the cap), not a webhook side effect. The
+             -- cap is moot while downgraded — those orgs are premium-gated out
+             -- of entity creation.
              max_monitored_entities     = CASE
-                                            WHEN entitlement_level IS DISTINCT FROM $1 THEN 50
+                                            WHEN $1 IN ('premium','professional') THEN GREATEST(max_monitored_entities, 50)
                                             ELSE max_monitored_entities
                                           END,
              stripe_customer_id         = COALESCE(stripe_customer_id, $3),

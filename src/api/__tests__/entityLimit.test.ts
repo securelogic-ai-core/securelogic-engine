@@ -132,11 +132,17 @@ describe("max_monitored_entities migration", () => {
 // ---------------------------------------------------------------------------
 const WEBHOOK_SRC = readFileSync(resolve(__dirname, "../webhooks/stripeWebhook.ts"), "utf8");
 
-describe("stripeWebhook — cap reset only on entitlement-level transition", () => {
-  it("resets max_monitored_entities to 50 only when the prior level differs", () => {
+describe("stripeWebhook — cap is raised to default on paid grant, never lowered", () => {
+  it("uses GREATEST so a paid-level write only raises the cap to >= 50", () => {
     expect(WEBHOOK_SRC).toMatch(
-      /max_monitored_entities\s*=\s*CASE[\s\S]{0,160}entitlement_level IS DISTINCT FROM \$1 THEN 50[\s\S]{0,80}ELSE max_monitored_entities/
+      /max_monitored_entities\s*=\s*CASE[\s\S]{0,200}\$1 IN \('premium','professional'\) THEN GREATEST\(max_monitored_entities, 50\)[\s\S]{0,80}ELSE max_monitored_entities/
     );
+  });
+
+  it("does NOT lower the cap on downgrade (no bare '= 50' / IS DISTINCT FROM reset)", () => {
+    // Guard against re-introducing the past_due cap-wipe: the cap must never be
+    // hard-reset on a level transition.
+    expect(WEBHOOK_SRC).not.toMatch(/max_monitored_entities\s*=\s*CASE[\s\S]{0,160}IS DISTINCT FROM \$1 THEN 50/);
   });
 });
 

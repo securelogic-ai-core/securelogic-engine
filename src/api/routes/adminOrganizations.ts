@@ -261,7 +261,8 @@ router.patch("/organizations/:id", async (req, res) => {
     // Monitored-entity cap (vendors + ai_systems combined). This is the
     // operator path for the sales-led "Platform Scale" raise — set a higher
     // cap per contract. Must be a non-negative integer. An admin-set cap
-    // survives Stripe renewals (the webhook only resets it on a level change).
+    // survives Stripe events (the webhook only raises to the default, never
+    // lowers), so lowering a cap is exclusively this operator action.
     let maxMonitoredEntities: number | null = null;
     if (req.body?.max_monitored_entities !== undefined) {
       const v = req.body.max_monitored_entities;
