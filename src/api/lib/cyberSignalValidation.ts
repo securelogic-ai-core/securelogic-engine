@@ -24,6 +24,7 @@ import { sanitizeString } from "./sanitize.js";
 
 const MAX_SUMMARY = 2000;
 const MAX_VENDOR = 255;
+const MAX_EXTERNAL_ID = 512;
 
 export const VALID_SOURCES = new Set([
   "cisa",
@@ -81,6 +82,15 @@ export type CyberSignalIngestInput = {
   affected_vendor: string | null;
   /** Normalised to uppercase CVE-YYYY-NNNNN */
   affected_cve: string | null;
+  /**
+   * Stable per-item identifier (RSS guid/link, EDGAR accession, HHS breach id).
+   * Optional. When present it becomes the sole dedup discriminator so that
+   * vendorless / CVE-less sources (every regulatory feed, news items with no
+   * CVE/vendor in the title) dedup per-item instead of collapsing to one row
+   * per (source, signal_type). When absent, dedup falls back to the legacy
+   * source|signal_type|cve|vendor key — see buildDedupHash.
+   */
+  external_id?: string | null;
 };
 
 export type CyberSignalIngestResult =
@@ -185,6 +195,17 @@ export function validateCyberSignalIngest(body: unknown): CyberSignalIngestResul
     affectedCve = cveRaw;
   }
 
+  // external_id — optional; if present must be a non-empty string. Threaded
+  // through here (not just dropped) because adapter output is re-validated by
+  // this function before normalizeSignal — see briefScheduler.ingestSignalsForOrg.
+  let externalId: string | null = null;
+  if ("external_id" in b && b.external_id !== null && b.external_id !== undefined) {
+    if (!isNonEmptyString(b.external_id)) {
+      return { error: "external_id_must_be_non_empty_string" };
+    }
+    externalId = sanitizeString((b.external_id as string).trim(), MAX_EXTERNAL_ID);
+  }
+
   return {
     input: {
       source,
@@ -193,7 +214,8 @@ export function validateCyberSignalIngest(body: unknown): CyberSignalIngestResul
       raw_payload: b.raw_payload as Record<string, unknown>,
       normalized_summary: normalizedSummary,
       affected_vendor: affectedVendor,
-      affected_cve: affectedCve
+      affected_cve: affectedCve,
+      external_id: externalId
     }
   };
 }

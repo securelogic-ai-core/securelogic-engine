@@ -147,10 +147,10 @@ async function ingestSignalsForOrg(
         const insertResult = await client.query(
           `INSERT INTO cyber_signals (
              organization_id, source, signal_type, severity, raw_payload,
-             normalized_summary, affected_vendor, affected_cve,
+             normalized_summary, affected_vendor, affected_cve, external_id,
              dedup_hash, ingestion_timestamp, processed
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), FALSE)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), FALSE)
            ON CONFLICT (organization_id, dedup_hash) DO NOTHING
            RETURNING id, source, signal_type, severity, normalized_summary,
                      affected_vendor, affected_cve, organization_id`,
@@ -163,6 +163,7 @@ async function ingestSignalsForOrg(
             normalized.normalized_summary,
             normalized.affected_vendor,
             normalized.affected_cve,
+            normalized.external_id,
             normalized.dedup_hash
           ]
         );
