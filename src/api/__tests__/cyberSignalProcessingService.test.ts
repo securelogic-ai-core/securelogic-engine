@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 
 // Mocks must be hoisted above the SUT import. vitest hoists vi.mock to the
 // top of the module, but the mock factories below must capture symbols
@@ -65,6 +67,14 @@ const AI_SYSTEM_ID = "55555555-5555-4555-8555-555555555555";
 const FINDING_ID = "66666666-6666-4666-8666-666666666666";
 const SUGGESTION_ID = "77777777-7777-4777-8777-777777777777";
 
+// GAP-1: every default-fixture signal uses signal_type 'cve', which now ALSO
+// fires the control branch. Tests that exercise the vendor/AI path therefore
+// see one extra `SELECT … FROM controls` query before COMMIT. Returning an
+// empty control set keeps those tests focused on the vendor/AI path: empty →
+// zero candidates → zero suggestion INSERTs. The control/obligation branches
+// have their own dedicated coverage further down.
+const EMPTY = { rowCount: 0, rows: [] };
+
 function makeSignal(overrides: Partial<CyberSignalRecord> = {}): CyberSignalRecord {
   return {
     id: SIGNAL_ID,
@@ -117,12 +127,13 @@ describe("runMatcherForSignal — vendor match", () => {
   it("happy path: vendor matches → finding INSERT + suggestion INSERT, returns score from computeRiskScore", async () => {
     // Standalone call (no external client) — owns the BEGIN/COMMIT.
     mockClientQuery
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // BEGIN
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // weights SELECT (defaults)
+      .mockResolvedValueOnce(EMPTY)                                              // weights SELECT (defaults)
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                         // COMMIT
+      .mockResolvedValueOnce(EMPTY)                                              // GAP-1 control SELECT (empty)
+      .mockResolvedValueOnce(EMPTY);                                            // COMMIT
 
     const result = await runMatcherForSignal(makeSignal(), ORG_A);
 
@@ -134,6 +145,9 @@ describe("runMatcherForSignal — vendor match", () => {
     expect(result.match_score).toBe(56);
     expect(result.finding).toEqual(findingRow());
     expect(result.domain).toBe("Vendor Risk");
+    // GAP-1 accumulators default to empty for a vendor-only signal with no controls.
+    expect(result.control_suggestion_ids).toEqual([]);
+    expect(result.obligation_suggestion_ids).toEqual([]);
 
     // Verify the suggestion INSERT included match_metadata with the right shape.
     const suggestionInsertCall = mockClientQuery.mock.calls[4]!;
@@ -148,8 +162,8 @@ describe("runMatcherForSignal — vendor match", () => {
     // match_score parameter is the integer 56, not a string.
     expect(suggestionParams[5]).toBe(56);
 
-    // BEGIN + 4 work queries + COMMIT = 6 client.query calls.
-    expect(mockClientQuery).toHaveBeenCalledTimes(6);
+    // BEGIN + 4 work queries + control SELECT + COMMIT = 7 client.query calls.
+    expect(mockClientQuery).toHaveBeenCalledTimes(7);
     expect(mockClientRelease).toHaveBeenCalledTimes(1);
   });
 
@@ -161,8 +175,9 @@ describe("runMatcherForSignal — vendor match", () => {
     externalClient.query
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })       // vendor SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })            // findings INSERT
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                        // weights SELECT
-      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] }); // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                            // weights SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] }) // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY);                                          // GAP-1 control SELECT (empty)
 
     const result = await runMatcherForSignal(
       makeSignal(),
@@ -182,12 +197,13 @@ describe("runMatcherForSignal — vendor match", () => {
 
   it("idempotent: ON CONFLICT skip → suggestion_id null and match_score null", async () => {
     mockClientQuery
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                    // BEGIN
+      .mockResolvedValueOnce(EMPTY)                                        // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })   // vendor SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })        // findings INSERT
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                    // weights SELECT
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                    // suggestion INSERT — ON CONFLICT
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                   // COMMIT
+      .mockResolvedValueOnce(EMPTY)                                        // weights SELECT
+      .mockResolvedValueOnce(EMPTY)                                        // suggestion INSERT — ON CONFLICT
+      .mockResolvedValueOnce(EMPTY)                                        // GAP-1 control SELECT (empty)
+      .mockResolvedValueOnce(EMPTY);                                      // COMMIT
 
     const result = await runMatcherForSignal(makeSignal(), ORG_A);
 
@@ -203,12 +219,13 @@ describe("runMatcherForSignal — vendor match", () => {
 
   it("ON CONFLICT INSERT statement uses the partial-unique WHERE predicate", async () => {
     mockClientQuery
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // BEGIN
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // weights
+      .mockResolvedValueOnce(EMPTY)                                              // weights
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                         // COMMIT
+      .mockResolvedValueOnce(EMPTY)                                              // GAP-1 control SELECT (empty)
+      .mockResolvedValueOnce(EMPTY);                                            // COMMIT
 
     await runMatcherForSignal(makeSignal(), ORG_A);
 
@@ -228,13 +245,14 @@ describe("runMatcherForSignal — vendor match", () => {
 describe("runMatcherForSignal — ai_system match", () => {
   it("ai_system matches when no vendor matches: writes both finding and suggestion with target_type='ai_system'", async () => {
     mockClientQuery
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // BEGIN
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // vendor: no match
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
+      .mockResolvedValueOnce(EMPTY)                                              // vendor: no match
       .mockResolvedValueOnce({ rowCount: 1, rows: [aiSystemRow("medium")] })     // ai_system SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // weights SELECT
+      .mockResolvedValueOnce(EMPTY)                                              // weights SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                         // COMMIT
+      .mockResolvedValueOnce(EMPTY)                                              // GAP-1 control SELECT (empty)
+      .mockResolvedValueOnce(EMPTY);                                            // COMMIT
 
     const result = await runMatcherForSignal(makeSignal(), ORG_A);
 
@@ -260,10 +278,11 @@ describe("runMatcherForSignal — ai_system match", () => {
 describe("runMatcherForSignal — no match", () => {
   it("no vendor and no ai_system match: no finding, no suggestion, branch='no_match'", async () => {
     mockClientQuery
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })  // BEGIN
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })  // vendor: no match
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })  // ai_system: no match
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // COMMIT
+      .mockResolvedValueOnce(EMPTY)  // BEGIN
+      .mockResolvedValueOnce(EMPTY)  // vendor: no match
+      .mockResolvedValueOnce(EMPTY)  // ai_system: no match
+      .mockResolvedValueOnce(EMPTY)  // GAP-1 control SELECT (empty)
+      .mockResolvedValueOnce(EMPTY); // COMMIT
 
     const result = await runMatcherForSignal(makeSignal(), ORG_A);
 
@@ -273,15 +292,17 @@ describe("runMatcherForSignal — no match", () => {
     expect(result.finding).toBeNull();
     expect(result.suggestion_id).toBeNull();
     expect(result.match_score).toBeNull();
-    // Skips findings INSERT, weights SELECT, suggestion INSERT entirely.
-    // 4 calls total: BEGIN, vendor, ai_system, COMMIT.
-    expect(mockClientQuery).toHaveBeenCalledTimes(4);
+    // Skips findings INSERT, weights SELECT, suggestion INSERT. The control
+    // branch still runs (signal_type 'cve') with an empty control set.
+    // 5 calls: BEGIN, vendor, ai_system, control SELECT, COMMIT.
+    expect(mockClientQuery).toHaveBeenCalledTimes(5);
   });
 
-  it("affected_vendor null short-circuits matching entirely", async () => {
+  it("affected_vendor null short-circuits VENDOR matching (control branch still runs)", async () => {
     mockClientQuery
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })  // BEGIN
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // COMMIT
+      .mockResolvedValueOnce(EMPTY)  // BEGIN
+      .mockResolvedValueOnce(EMPTY)  // GAP-1 control SELECT (empty) — signal_type 'cve'
+      .mockResolvedValueOnce(EMPTY); // COMMIT
 
     const result = await runMatcherForSignal(
       makeSignal({ affected_vendor: null }),
@@ -291,8 +312,9 @@ describe("runMatcherForSignal — no match", () => {
     expect(result.matched_branch).toBe("no_match");
     expect(result.finding).toBeNull();
     expect(result.suggestion_id).toBeNull();
-    // BEGIN + COMMIT only — neither vendor nor ai_system query ran.
-    expect(mockClientQuery).toHaveBeenCalledTimes(2);
+    // No vendor/ai_system query ran (affected_vendor null), but the control
+    // branch's controls SELECT did. BEGIN + control SELECT + COMMIT = 3.
+    expect(mockClientQuery).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -302,15 +324,12 @@ describe("runMatcherForSignal — no match", () => {
 
 describe("runMatcherForSignal — cross-org isolation", () => {
   it("vendor query is parameterized by orgId — passing a different org returns no match against ORG_A's inventory", async () => {
-    // The vendor SELECT receives ORG_B as $1. Our mock returns 0 rows
-    // because the SELECT predicate (organization_id = $1) won't match a
-    // vendor row scoped to ORG_A. We assert the SQL includes the
-    // organization_id filter so the function CANNOT leak across orgs.
     mockClientQuery
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })  // BEGIN
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })  // vendor: no rows for ORG_B
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })  // ai_system: no rows
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // COMMIT
+      .mockResolvedValueOnce(EMPTY)  // BEGIN
+      .mockResolvedValueOnce(EMPTY)  // vendor: no rows for ORG_B
+      .mockResolvedValueOnce(EMPTY)  // ai_system: no rows
+      .mockResolvedValueOnce(EMPTY)  // GAP-1 control SELECT (empty)
+      .mockResolvedValueOnce(EMPTY); // COMMIT
 
     await runMatcherForSignal(makeSignal({ organization_id: ORG_A }), ORG_B);
 
@@ -323,6 +342,13 @@ describe("runMatcherForSignal — cross-org isolation", () => {
     const aiParams = mockClientQuery.mock.calls[2]![1] as unknown[];
     expect(aiSql).toMatch(/WHERE organization_id = \$1/);
     expect(aiParams[0]).toBe(ORG_B);
+
+    // GAP-1: the control candidates SELECT is org-scoped to the same org too.
+    const controlSql = mockClientQuery.mock.calls[3]![0] as string;
+    const controlParams = mockClientQuery.mock.calls[3]![1] as unknown[];
+    expect(controlSql).toMatch(/FROM controls/);
+    expect(controlSql).toMatch(/WHERE organization_id = \$1/);
+    expect(controlParams[0]).toBe(ORG_B);
   });
 });
 
@@ -333,12 +359,13 @@ describe("runMatcherForSignal — cross-org isolation", () => {
 describe("runMatcherForSignal — KEV override", () => {
   it("source='cisa-kev' + severity='Low' produces score=100 for critical vendor", async () => {
     mockClientQuery
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // BEGIN
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("critical")] })     // vendor: critical
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // weights: defaults
+      .mockResolvedValueOnce(EMPTY)                                              // weights: defaults
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                         // COMMIT
+      .mockResolvedValueOnce(EMPTY)                                              // GAP-1 control SELECT (empty)
+      .mockResolvedValueOnce(EMPTY);                                            // COMMIT
 
     const result = await runMatcherForSignal(
       makeSignal({ severity: "Low", source: "cisa-kev" }),
@@ -363,12 +390,13 @@ describe("runMatcherForSignal — KEV override", () => {
 describe("runMatcherForSignal — weights fallback", () => {
   it("org with no risk_scoring_weights row uses DEFAULT_WEIGHTS, score is sensible", async () => {
     mockClientQuery
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // BEGIN
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // weights: NONE
+      .mockResolvedValueOnce(EMPTY)                                              // weights: NONE
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                         // COMMIT
+      .mockResolvedValueOnce(EMPTY)                                              // GAP-1 control SELECT (empty)
+      .mockResolvedValueOnce(EMPTY);                                            // COMMIT
 
     const result = await runMatcherForSignal(makeSignal(), ORG_A);
 
@@ -384,12 +412,13 @@ describe("runMatcherForSignal — weights fallback", () => {
       severity_weights: { Critical: 1.0, High: 1.0, Moderate: 0.5, Low: 0.25 }
     };
     mockClientQuery
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // BEGIN
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings
       .mockResolvedValueOnce({ rowCount: 1, rows: [customWeights] })             // weights: configured
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                         // COMMIT
+      .mockResolvedValueOnce(EMPTY)                                              // GAP-1 control SELECT (empty)
+      .mockResolvedValueOnce(EMPTY);                                            // COMMIT
 
     const result = await runMatcherForSignal(makeSignal(), ORG_A);
 
@@ -400,15 +429,16 @@ describe("runMatcherForSignal — weights fallback", () => {
 
 // =====================================================================
 // runMatcherForSignal — error propagation
+// (errors fire in the vendor block, before the GAP-1 branches — unaffected)
 // =====================================================================
 
 describe("runMatcherForSignal — error propagation", () => {
   it("when standalone, ROLLBACKs on inner error and propagates", async () => {
     mockClientQuery
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                  // BEGIN
+      .mockResolvedValueOnce(EMPTY)                                      // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] }) // vendor
       .mockRejectedValueOnce(new Error("simulated findings INSERT fail")) // findings INSERT throws
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                  // ROLLBACK
+      .mockResolvedValueOnce(EMPTY);                                     // ROLLBACK
 
     await expect(runMatcherForSignal(makeSignal(), ORG_A)).rejects.toThrow(
       /simulated findings INSERT fail/
@@ -445,20 +475,297 @@ describe("runMatcherForSignal — error propagation", () => {
 });
 
 // =====================================================================
+// GAP-1: control branch — signal_type cve/vulnerability/advisory
+// =====================================================================
+
+function controlRow(id: string, name: string, description: string | null = null) {
+  return { id, name, description };
+}
+
+describe("runMatcherForSignal — GAP-1 control branch", () => {
+  // A signal whose summary strongly overlaps "web application firewall".
+  const wafSignal = (overrides: Partial<CyberSignalRecord> = {}) =>
+    makeSignal({
+      affected_vendor: null, // skip the vendor/AI block; isolate the control branch
+      signal_type: "cve",
+      normalized_summary: "Apache Struts remote code execution behind a web application firewall",
+      ...overrides
+    });
+
+  it("cve signal writes a control suggestion (target_type='control') for an overlapping control", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                                  // BEGIN
+      .mockResolvedValueOnce({                                                       // controls SELECT
+        rowCount: 2,
+        rows: [
+          controlRow("c1", "Web Application Firewall"),       // high overlap → ≥40
+          controlRow("c2", "Encryption at rest")              // no overlap → <40
+        ]
+      })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "sug-c1" }] })             // control INSERT (c1)
+      .mockResolvedValueOnce(EMPTY);                                                // COMMIT
+
+    const result = await runMatcherForSignal(wafSignal(), ORG_A);
+
+    expect(result.control_suggestion_ids).toEqual(["sug-c1"]);
+    expect(result.obligation_suggestion_ids).toEqual([]);
+    // matched_branch is unchanged by the control branch.
+    expect(result.matched_branch).toBe("no_match");
+
+    // Exactly one control INSERT. target_type is a SQL literal ('control');
+    // bound params are [orgId, signalId, target_id, score, metadata].
+    const insertCall = mockClientQuery.mock.calls.find(
+      (c) => /INSERT INTO signal_match_suggestions/.test(c[0] as string)
+    )!;
+    expect(insertCall).toBeDefined();
+    const sql = insertCall[0] as string;
+    expect(sql).toMatch(/'control', \$3::uuid, 'control_keyword_match'/);
+    const params = insertCall[1] as unknown[];
+    expect(params[2]).toBe("c1");             // target_id
+    expect(typeof params[3]).toBe("number");  // integer score
+    expect(params[3] as number).toBeGreaterThanOrEqual(40);
+  });
+
+  for (const t of ["vulnerability", "advisory"] as const) {
+    it(`fires for signal_type='${t}' as well as 'cve'`, async () => {
+      mockClientQuery
+        .mockResolvedValueOnce(EMPTY)                                               // BEGIN
+        .mockResolvedValueOnce({ rowCount: 1, rows: [controlRow("c1", "Web Application Firewall")] }) // controls SELECT
+        .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "sug-c1" }] })          // control INSERT
+        .mockResolvedValueOnce(EMPTY);                                             // COMMIT
+
+      const result = await runMatcherForSignal(wafSignal({ signal_type: t }), ORG_A);
+      expect(result.control_suggestion_ids).toEqual(["sug-c1"]);
+    });
+  }
+
+  it("control INSERT uses the ON CONFLICT dedup predicate; ON CONFLICT skip → id not collected", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                                  // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [controlRow("c1", "Web Application Firewall")] })
+      .mockResolvedValueOnce(EMPTY)                                                  // control INSERT — ON CONFLICT no-op
+      .mockResolvedValueOnce(EMPTY);                                                // COMMIT
+
+    const result = await runMatcherForSignal(wafSignal(), ORG_A);
+    expect(result.control_suggestion_ids).toEqual([]); // skipped → not counted
+
+    const insertSql = mockClientQuery.mock.calls.find(
+      (c) => /INSERT INTO signal_match_suggestions/.test(c[0] as string)
+    )![0] as string;
+    expect(insertSql).toMatch(/ON CONFLICT \(organization_id, signal_id, target_type, target_id\)/);
+    expect(insertSql).toMatch(/WHERE accepted_at IS NULL AND dismissed_at IS NULL/);
+    expect(insertSql).toMatch(/DO NOTHING/);
+  });
+
+  it("NO findings INSERT and NO risk flagging on a control-only match (suggest-only)", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                                  // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [controlRow("c1", "Web Application Firewall")] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "sug-c1" }] })             // control INSERT
+      .mockResolvedValueOnce(EMPTY);                                                // COMMIT
+
+    const result = await runMatcherForSignal(wafSignal(), ORG_A);
+    expect(result.control_suggestion_ids).toEqual(["sug-c1"]);
+    expect(result.finding).toBeNull();
+
+    const sqls = mockClientQuery.mock.calls.map((c) => c[0] as string);
+    expect(sqls.some((s) => /INSERT INTO findings/.test(s))).toBe(false);
+    expect(sqls.some((s) => /UPDATE risks/.test(s))).toBe(false);
+  });
+});
+
+// =====================================================================
+// GAP-1: obligation branch — signal_type regulatory_change
+// =====================================================================
+
+function obligationRow(id: string, source_regulation: string | null, domain: string | null) {
+  return { id, source_regulation, domain };
+}
+
+describe("runMatcherForSignal — GAP-1 obligation branch", () => {
+  const gdprSignal = () =>
+    makeSignal({
+      affected_vendor: null,
+      signal_type: "regulatory_change",
+      source: "ftc",
+      normalized_summary: "New GDPR enforcement guidance on data protection breach notification"
+    });
+
+  it("threshold drops <40 and writes in descending score order, target_type='obligation'", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                                  // BEGIN
+      .mockResolvedValueOnce({                                                       // obligations SELECT
+        rowCount: 3,
+        rows: [
+          obligationRow("o-high", "GDPR", "data protection"),  // 3/3 tokens → 100
+          obligationRow("o-mid", "GDPR", "workplace safety"),  // gdpr only of {gdpr,workplace,safety} → 33 <40? -> dropped
+          obligationRow("o-zero", "OSHA", "occupational")      // 0 → dropped
+        ]
+      })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "sug-o-high" }] })         // obligation INSERT (o-high)
+      .mockResolvedValueOnce(EMPTY);                                                // COMMIT
+
+    const result = await runMatcherForSignal(gdprSignal(), ORG_A);
+
+    // Only o-high clears 40.
+    expect(result.obligation_suggestion_ids).toEqual(["sug-o-high"]);
+    expect(result.control_suggestion_ids).toEqual([]);
+
+    const insertCalls = mockClientQuery.mock.calls.filter(
+      (c) => /INSERT INTO signal_match_suggestions/.test(c[0] as string)
+    );
+    expect(insertCalls.length).toBe(1);
+    const sql = insertCalls[0]![0] as string;
+    expect(sql).toMatch(/'obligation', \$3::uuid, 'obligation_domain_match'/);
+    const params = insertCalls[0]![1] as unknown[];
+    expect(params[2]).toBe("o-high"); // target_id (target_type is a SQL literal)
+  });
+
+  it("caps at 20 suggestions when more than 20 candidates clear the threshold", async () => {
+    // 25 obligations all matching GDPR + data + protection → all score 100.
+    const rows = Array.from({ length: 25 }, (_, i) =>
+      obligationRow(`o${i}`, "GDPR", "data protection")
+    );
+    mockClientQuery.mockResolvedValueOnce(EMPTY); // BEGIN
+    mockClientQuery.mockResolvedValueOnce({ rowCount: 25, rows }); // obligations SELECT
+    for (let i = 0; i < 20; i++) {
+      mockClientQuery.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: `sug-${i}` }] }); // 20 INSERTs
+    }
+    mockClientQuery.mockResolvedValueOnce(EMPTY); // COMMIT
+
+    const result = await runMatcherForSignal(gdprSignal(), ORG_A);
+
+    expect(result.obligation_suggestion_ids.length).toBe(20);
+    const insertCount = mockClientQuery.mock.calls.filter(
+      (c) => /INSERT INTO signal_match_suggestions/.test(c[0] as string)
+    ).length;
+    expect(insertCount).toBe(20); // capped — not 25
+  });
+
+  it("ON CONFLICT skip on an obligation → not collected, idempotent", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                                  // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [obligationRow("o1", "GDPR", "data protection")] })
+      .mockResolvedValueOnce(EMPTY)                                                  // obligation INSERT — ON CONFLICT no-op
+      .mockResolvedValueOnce(EMPTY);                                                // COMMIT
+
+    const result = await runMatcherForSignal(gdprSignal(), ORG_A);
+    expect(result.obligation_suggestion_ids).toEqual([]);
+  });
+});
+
+// =====================================================================
+// GAP-1: routing short-circuit + combined branches
+// =====================================================================
+
+describe("runMatcherForSignal — GAP-1 routing", () => {
+  it("signal_type not in any branch set → neither control nor obligation SELECT runs", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)  // BEGIN
+      .mockResolvedValueOnce(EMPTY); // COMMIT
+
+    const result = await runMatcherForSignal(
+      makeSignal({ affected_vendor: null, signal_type: "breach" }),
+      ORG_A
+    );
+
+    expect(result.control_suggestion_ids).toEqual([]);
+    expect(result.obligation_suggestion_ids).toEqual([]);
+    // Only BEGIN + COMMIT — no controls/obligations SELECT.
+    expect(mockClientQuery).toHaveBeenCalledTimes(2);
+    const sqls = mockClientQuery.mock.calls.map((c) => c[0] as string);
+    expect(sqls.some((s) => /FROM controls/.test(s))).toBe(false);
+    expect(sqls.some((s) => /FROM obligations/.test(s))).toBe(false);
+  });
+
+  it("cve + vendor match fires BOTH the vendor branch AND the control branch", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                                  // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })             // vendor SELECT (match)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })                  // findings INSERT
+      .mockResolvedValueOnce(EMPTY)                                                  // weights SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })      // vendor suggestion INSERT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [controlRow("c1", "Web Application Firewall")] }) // controls SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "sug-c1" }] })             // control INSERT
+      .mockResolvedValueOnce(EMPTY);                                                // COMMIT
+
+    const result = await runMatcherForSignal(
+      makeSignal({
+        normalized_summary: "Apache Struts RCE behind a web application firewall"
+      }),
+      ORG_A
+    );
+
+    expect(result.matched_branch).toBe("vendor_name_ilike"); // vendor branch fired
+    expect(result.suggestion_id).toBe(SUGGESTION_ID);
+    expect(result.control_suggestion_ids).toEqual(["sug-c1"]); // control branch also fired
+  });
+});
+
+// =====================================================================
+// GAP-1: source-asserts (wiring guards)
+// =====================================================================
+
+const SUT_SRC = readFileSync(
+  resolve(__dirname, "../lib/cyberSignalProcessingService.ts"),
+  "utf8"
+);
+const MATCHING_SRC = readFileSync(
+  resolve(__dirname, "../lib/signalTargetMatching.ts"),
+  "utf8"
+);
+
+describe("GAP-1 wiring — source asserts", () => {
+  it("obligation branch gates on signal_type 'regulatory_change'", () => {
+    expect(SUT_SRC).toMatch(/signalType === "regulatory_change"/);
+  });
+
+  it("control branch gates on cve/vulnerability/advisory", () => {
+    expect(SUT_SRC).toMatch(/signalType === "cve"/);
+    expect(SUT_SRC).toMatch(/signalType === "vulnerability"/);
+    expect(SUT_SRC).toMatch(/signalType === "advisory"/);
+  });
+
+  it("both new branches insert with target_type literals 'control' / 'obligation'", () => {
+    expect(SUT_SRC).toMatch(/'control', \$3::uuid, 'control_keyword_match'/);
+    expect(SUT_SRC).toMatch(/'obligation', \$3::uuid, 'obligation_domain_match'/);
+  });
+
+  it("both new INSERTs reuse the ON CONFLICT dedup predicate", () => {
+    const conflictCount =
+      (SUT_SRC.match(/ON CONFLICT \(organization_id, signal_id, target_type, target_id\)\s*\n\s*WHERE accepted_at IS NULL AND dismissed_at IS NULL\s*\n\s*DO NOTHING/g) || []).length;
+    // vendor + control + obligation = 3 occurrences.
+    expect(conflictCount).toBe(3);
+  });
+
+  it("threshold (MIN_MATCH_SCORE) is applied via filter before the top-N slice", () => {
+    expect(SUT_SRC).toMatch(/\.filter\(\(c\) => c\.score >= MIN_MATCH_SCORE\)/);
+    expect(SUT_SRC).toMatch(/\.sort\(\(a, b\) => b\.score - a\.score\)/);
+    expect(SUT_SRC).toMatch(/\.slice\(0, SUGGESTION_CAP\)/);
+  });
+
+  it("constants are MIN_MATCH_SCORE=40, SUGGESTION_CAP=20", () => {
+    expect(MATCHING_SRC).toMatch(/MIN_MATCH_SCORE\s*=\s*40/);
+    expect(MATCHING_SRC).toMatch(/SUGGESTION_CAP\s*=\s*20/);
+  });
+});
+
+// =====================================================================
 // processSignal — orchestration over runMatcherForSignal + phases 4-5
 // =====================================================================
 
 describe("processSignal — org-scoped signal", () => {
   it("calls runMatcherForSignal AND runs phases 4-5 (linked_finding_id, risk exposure)", async () => {
     mockClientQuery
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // BEGIN
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // weights
+      .mockResolvedValueOnce(EMPTY)                                              // weights
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // phase 4: signal UPDATE
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // phase 5: risks UPDATE
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                         // COMMIT
+      .mockResolvedValueOnce(EMPTY)                                              // GAP-1 control SELECT (empty)
+      .mockResolvedValueOnce(EMPTY)                                              // phase 4: signal UPDATE
+      .mockResolvedValueOnce(EMPTY)                                              // phase 5: risks UPDATE
+      .mockResolvedValueOnce(EMPTY);                                            // COMMIT
 
     // Phase 6: org profile + 4 parallel selects + posture writes (mocked).
     mockPgQuery.mockResolvedValue({ rowCount: 0, rows: [] });
@@ -469,22 +776,19 @@ describe("processSignal — org-scoped signal", () => {
     expect(result.finding).toEqual(findingRow());
 
     // Phase 4: cyber_signals UPDATE was issued with the finding id.
-    const phase4Sql = mockClientQuery.mock.calls[5]![0] as string;
+    // Index shifts +1 vs pre-GAP-1 (control SELECT inserted before phase 4).
+    const phase4Sql = mockClientQuery.mock.calls[6]![0] as string;
     expect(phase4Sql).toMatch(/UPDATE cyber_signals/);
     expect(phase4Sql).toMatch(/SET processed\s+= TRUE/);
     expect(phase4Sql).toMatch(/linked_finding_id = \$1/);
-    const phase4Params = mockClientQuery.mock.calls[5]![1] as unknown[];
+    const phase4Params = mockClientQuery.mock.calls[6]![1] as unknown[];
     expect(phase4Params[0]).toBe(FINDING_ID);
   });
 });
 
 describe("processSignal — global signal short-circuit", () => {
   it("source signal with org_id IS NULL: short-circuits before phase 4 entirely", async () => {
-    // No client.query calls expected — processSignal returns immediately
-    // before opening a connection.
     const result = await processSignal(
-      // CyberSignalRecord types organization_id as string, but we test
-      // the runtime null handling because that's the actual invariant.
       makeSignal({ organization_id: null as unknown as string })
     );
 
@@ -501,9 +805,6 @@ describe("processSignal — global signal short-circuit", () => {
   });
 
   it("never writes linked_finding_id when source signal has org_id IS NULL", async () => {
-    // Belt-and-suspenders: invariant is row-based, not caller-based.
-    // If a future caller passes through processSignal with a null-org
-    // row, the linked_finding_id write must still be skipped.
     await processSignal(
       makeSignal({ organization_id: null as unknown as string })
     );
@@ -523,12 +824,13 @@ describe("processSignal — global signal short-circuit", () => {
 describe("dual-write invariant", () => {
   it("vendor match via runMatcherForSignal writes BOTH findings and suggestions", async () => {
     mockClientQuery
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+      .mockResolvedValueOnce(EMPTY)  // GAP-1 control SELECT (empty)
+      .mockResolvedValueOnce(EMPTY);
 
     await runMatcherForSignal(makeSignal(), ORG_A);
 
