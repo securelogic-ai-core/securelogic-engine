@@ -34,6 +34,7 @@ import { createSavepointClient } from "../infra/tenantContext.js";
 import { logger } from "../infra/logger.js";
 import { fetchCisaKevSignals } from "./cisaKevAdapter.js";
 import { fetchNvdSignals } from "./nvdAdapter.js";
+import { fetchSecEdgarSignals } from "./secEdgarAdapter.js";
 import { fetchCisaAlerts } from "./cisaAlertsAdapter.js";
 import { fetchMitreAttackSignals } from "./mitreAttackAdapter.js";
 import { fetchMitreAtlasSignals } from "./mitreAtlasAdapter.js";
@@ -82,6 +83,7 @@ export type SchedulerRunSummary = {
   signals_fetched: {
     cisa_kev: number;
     nvd: number;
+    sec_edgar: number;
     cisa_alerts: number;
     mitre_attack: number;
     mitre_atlas: number;
@@ -471,6 +473,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     signals_fetched: {
       cisa_kev: 0,
       nvd: 0,
+      sec_edgar: 0,
       cisa_alerts: 0,
       mitre_attack: 0,
       mitre_atlas: 0,
@@ -514,6 +517,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
 
   let cisaKevSignals: CyberSignalIngestInput[] = [];
   let nvdSignals: CyberSignalIngestInput[] = [];
+  let secEdgarSignals: CyberSignalIngestInput[] = [];
 
   try {
     const { signals, total } = await fetchCisaKevSignals();
@@ -541,6 +545,20 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`nvd_fetch_failed: ${msg}`);
     logger.error({ event: "scheduler_nvd_failed", err }, "NVD fetch failed — continuing without NVD signals");
+  }
+
+  try {
+    const { signals, total, pages } = await fetchSecEdgarSignals(WINDOW_DAYS);
+    secEdgarSignals = signals;
+    summary.signals_fetched.sec_edgar = total;
+    logger.info(
+      { event: "scheduler_sec_edgar_fetched", total, mapped: signals.length, pages },
+      "SEC EDGAR 8-K Item 1.05 feed fetched"
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    summary.errors.push(`sec_edgar_fetch_failed: ${msg}`);
+    logger.error({ event: "scheduler_sec_edgar_failed", err }, "SEC EDGAR fetch failed — continuing without EDGAR signals");
   }
 
   let cisaAlertSignals: CyberSignalIngestInput[] = [];
@@ -700,6 +718,31 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
         const msg = err instanceof Error ? err.message : String(err);
         summary.errors.push(`org:${orgId} nvd_ingest_fatal: ${msg}`);
         logger.error({ event: "scheduler_nvd_ingest_failed", orgId, err }, "NVD ingest failed for org");
+      }
+    }
+
+    // Ingest SEC EDGAR 8-K Item 1.05 signals for this org
+    if (secEdgarSignals.length > 0) {
+      try {
+        const result = await ingestSignalsForOrg(secEdgarSignals, orgId);
+        logger.info(
+          {
+            event: "scheduler_sec_edgar_ingested",
+            orgId,
+            inserted: result.inserted,
+            skippedDuplicate: result.skippedDuplicate,
+            skippedInvalid: result.skippedInvalid,
+            errors: result.errors.length
+          },
+          "SEC EDGAR ingested for org"
+        );
+        for (const e of result.errors) {
+          summary.errors.push(`org:${orgId} sec_edgar_ingest: ${e}`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        summary.errors.push(`org:${orgId} sec_edgar_ingest_fatal: ${msg}`);
+        logger.error({ event: "scheduler_sec_edgar_ingest_failed", orgId, err }, "SEC EDGAR ingest failed for org");
       }
     }
 
