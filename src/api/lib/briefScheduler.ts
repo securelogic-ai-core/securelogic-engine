@@ -36,6 +36,7 @@ import { fetchCisaKevSignals } from "./cisaKevAdapter.js";
 import { fetchNvdSignals } from "./nvdAdapter.js";
 import { fetchSecEdgarSignals } from "./secEdgarAdapter.js";
 import { fetchFederalRegisterSignals } from "./federalRegisterAdapter.js";
+import { recordFeedSuccess, recordFeedFailure } from "./feedHealth.js";
 import { fetchCisaAlerts } from "./cisaAlertsAdapter.js";
 import { fetchMitreAttackSignals } from "./mitreAttackAdapter.js";
 import { fetchMitreAtlasSignals } from "./mitreAtlasAdapter.js";
@@ -527,6 +528,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     const { signals, total } = await fetchCisaKevSignals();
     cisaKevSignals = signals;
     summary.signals_fetched.cisa_kev = total;
+    await recordFeedSuccess("cisa_kev", total);
     logger.info(
       { event: "scheduler_cisa_kev_fetched", total, mapped: signals.length },
       "CISA KEV feed fetched"
@@ -534,6 +536,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`cisa_kev_fetch_failed: ${msg}`);
+    await recordFeedFailure("cisa_kev", msg);
     logger.error({ event: "scheduler_cisa_kev_failed", err }, "CISA KEV fetch failed — continuing with NVD only");
   }
 
@@ -541,6 +544,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     const { signals, total, pages } = await fetchNvdSignals(WINDOW_DAYS);
     nvdSignals = signals;
     summary.signals_fetched.nvd = total;
+    await recordFeedSuccess("nvd", total);
     logger.info(
       { event: "scheduler_nvd_fetched", total, mapped: signals.length, pages },
       "NVD feed fetched"
@@ -548,6 +552,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`nvd_fetch_failed: ${msg}`);
+    await recordFeedFailure("nvd", msg);
     logger.error({ event: "scheduler_nvd_failed", err }, "NVD fetch failed — continuing without NVD signals");
   }
 
@@ -555,6 +560,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     const { signals, total, pages } = await fetchSecEdgarSignals(WINDOW_DAYS);
     secEdgarSignals = signals;
     summary.signals_fetched.sec_edgar = total;
+    await recordFeedSuccess("sec_edgar", total);
     logger.info(
       { event: "scheduler_sec_edgar_fetched", total, mapped: signals.length, pages },
       "SEC EDGAR 8-K Item 1.05 feed fetched"
@@ -562,6 +568,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`sec_edgar_fetch_failed: ${msg}`);
+    await recordFeedFailure("sec_edgar", msg);
     logger.error({ event: "scheduler_sec_edgar_failed", err }, "SEC EDGAR fetch failed — continuing without EDGAR signals");
   }
 
@@ -569,6 +576,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     const { signals, total, pages } = await fetchFederalRegisterSignals(WINDOW_DAYS);
     federalRegisterSignals = signals;
     summary.signals_fetched.federal_register = total;
+    await recordFeedSuccess("federal_register", total);
     logger.info(
       { event: "scheduler_federal_register_fetched", total, mapped: signals.length, pages },
       "Federal Register feed fetched"
@@ -576,6 +584,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`federal_register_fetch_failed: ${msg}`);
+    await recordFeedFailure("federal_register", msg);
     logger.error({ event: "scheduler_federal_register_failed", err }, "Federal Register fetch failed — continuing without FR signals");
   }
 
@@ -585,6 +594,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     const { signals, total } = await fetchCisaAlerts();
     cisaAlertSignals = signals;
     summary.signals_fetched.cisa_alerts = total;
+    await recordFeedSuccess("cisa_alerts", total);
     logger.info(
       { event: "scheduler_cisa_alerts_fetched", total, mapped: signals.length },
       "CISA Alerts feed fetched"
@@ -592,6 +602,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`cisa_alerts_fetch_failed: ${msg}`);
+    await recordFeedFailure("cisa_alerts", msg);
     logger.error({ event: "scheduler_cisa_alerts_failed", err }, "CISA Alerts fetch failed — continuing");
   }
 
@@ -605,6 +616,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     const { signals, total, fromCache } = await fetchMitreAttackSignals();
     mitreAttackSignals = signals;
     summary.signals_fetched.mitre_attack = signals.length;
+    await recordFeedSuccess("mitre_attack", signals.length);
     logger.info(
       { event: "scheduler_mitre_attack_fetched", total, mapped: signals.length, fromCache },
       fromCache
@@ -614,6 +626,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`mitre_attack_fetch_failed: ${msg}`);
+    await recordFeedFailure("mitre_attack", msg);
     logger.error({ event: "scheduler_mitre_attack_failed", err }, "MITRE ATT&CK fetch failed — continuing");
   }
 
@@ -625,6 +638,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     const { signals, total, fromCache } = await fetchMitreAtlasSignals();
     mitreAtlasSignals = signals;
     summary.signals_fetched.mitre_atlas = signals.length;
+    await recordFeedSuccess("mitre_atlas", signals.length);
     logger.info(
       { event: "scheduler_mitre_atlas_fetched", total, mapped: signals.length, fromCache },
       fromCache
@@ -634,6 +648,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`mitre_atlas_fetch_failed: ${msg}`);
+    await recordFeedFailure("mitre_atlas", msg);
     logger.error({ event: "scheduler_mitre_atlas_failed", err }, "MITRE ATLAS fetch failed — continuing");
   }
 
@@ -645,6 +660,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     });
     threatIntelSignals = signals;
     summary.signals_fetched.threat_intel_rss = signals.length;
+    await recordFeedSuccess("threat_intel_rss", signals.length);
     // Log per-source results
     for (const [src, r] of Object.entries(results)) {
       if (r.error) {
@@ -657,6 +673,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`threat_intel_rss_fetch_failed: ${msg}`);
+    await recordFeedFailure("threat_intel_rss", msg);
     logger.error({ event: "scheduler_threat_rss_failed", err }, "Threat intel RSS fetch failed — continuing");
   }
 
@@ -668,6 +685,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     });
     regulatorySignals = signals;
     summary.signals_fetched.regulatory = signals.length;
+    await recordFeedSuccess("regulatory", signals.length);
     for (const [src, r] of Object.entries(results)) {
       if (r.error) {
         summary.errors.push(`regulatory[${src}]: ${r.error}`);
@@ -679,6 +697,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`regulatory_fetch_failed: ${msg}`);
+    await recordFeedFailure("regulatory", msg);
     logger.error({ event: "scheduler_regulatory_failed", err }, "Regulatory feed fetch failed — continuing");
   }
 
