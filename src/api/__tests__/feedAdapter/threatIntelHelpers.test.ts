@@ -285,6 +285,27 @@ describe("mapRssItemToSignal", () => {
     expect(mapRssItemToSignal(baseItem, "krebsonsecurity")?.source).toBe("krebsonsecurity");
   });
 
+  it("sets external_id to guid for per-item dedup (collapse fix)", () => {
+    expect(mapRssItemToSignal(baseItem, "bleepingcomputer")?.external_id).toBe(baseItem.guid);
+  });
+
+  it("falls back to link when guid is absent", () => {
+    const item: RssFeedItem = { ...baseItem, guid: null };
+    expect(mapRssItemToSignal(item, "bleepingcomputer")?.external_id).toBe(baseItem.link);
+  });
+
+  it("vendorless/cve-less items get distinct external_id so they do not collapse", () => {
+    // Two generic news items with no CVE and no known vendor in the title:
+    // pre-fix these would have produced an identical source|signal_type|| hash.
+    const a: RssFeedItem = { ...baseItem, title: "Security roundup: weekly news", description: "general", guid: "g-a", link: "l-a" };
+    const b: RssFeedItem = { ...baseItem, title: "Security roundup: weekly news", description: "general", guid: "g-b", link: "l-b" };
+    const sa = mapRssItemToSignal(a, "bleepingcomputer");
+    const sb = mapRssItemToSignal(b, "bleepingcomputer");
+    expect(sa?.external_id).toBe("g-a");
+    expect(sb?.external_id).toBe("g-b");
+    expect(sa?.external_id).not.toBe(sb?.external_id);
+  });
+
   it("derives patch_advisory signal_type for patch title", () => {
     expect(mapRssItemToSignal(baseItem, "bleepingcomputer")?.signal_type).toBe("patch_advisory");
   });
