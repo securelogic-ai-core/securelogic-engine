@@ -35,6 +35,7 @@ import { logger } from "../infra/logger.js";
 import { fetchCisaKevSignals } from "./cisaKevAdapter.js";
 import { fetchNvdSignals } from "./nvdAdapter.js";
 import { fetchSecEdgarSignals } from "./secEdgarAdapter.js";
+import { fetchFederalRegisterSignals } from "./federalRegisterAdapter.js";
 import { fetchCisaAlerts } from "./cisaAlertsAdapter.js";
 import { fetchMitreAttackSignals } from "./mitreAttackAdapter.js";
 import { fetchMitreAtlasSignals } from "./mitreAtlasAdapter.js";
@@ -84,6 +85,7 @@ export type SchedulerRunSummary = {
     cisa_kev: number;
     nvd: number;
     sec_edgar: number;
+    federal_register: number;
     cisa_alerts: number;
     mitre_attack: number;
     mitre_atlas: number;
@@ -474,6 +476,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
       cisa_kev: 0,
       nvd: 0,
       sec_edgar: 0,
+      federal_register: 0,
       cisa_alerts: 0,
       mitre_attack: 0,
       mitre_atlas: 0,
@@ -518,6 +521,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   let cisaKevSignals: CyberSignalIngestInput[] = [];
   let nvdSignals: CyberSignalIngestInput[] = [];
   let secEdgarSignals: CyberSignalIngestInput[] = [];
+  let federalRegisterSignals: CyberSignalIngestInput[] = [];
 
   try {
     const { signals, total } = await fetchCisaKevSignals();
@@ -559,6 +563,20 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`sec_edgar_fetch_failed: ${msg}`);
     logger.error({ event: "scheduler_sec_edgar_failed", err }, "SEC EDGAR fetch failed — continuing without EDGAR signals");
+  }
+
+  try {
+    const { signals, total, pages } = await fetchFederalRegisterSignals(WINDOW_DAYS);
+    federalRegisterSignals = signals;
+    summary.signals_fetched.federal_register = total;
+    logger.info(
+      { event: "scheduler_federal_register_fetched", total, mapped: signals.length, pages },
+      "Federal Register feed fetched"
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    summary.errors.push(`federal_register_fetch_failed: ${msg}`);
+    logger.error({ event: "scheduler_federal_register_failed", err }, "Federal Register fetch failed — continuing without FR signals");
   }
 
   let cisaAlertSignals: CyberSignalIngestInput[] = [];
@@ -743,6 +761,31 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
         const msg = err instanceof Error ? err.message : String(err);
         summary.errors.push(`org:${orgId} sec_edgar_ingest_fatal: ${msg}`);
         logger.error({ event: "scheduler_sec_edgar_ingest_failed", orgId, err }, "SEC EDGAR ingest failed for org");
+      }
+    }
+
+    // Ingest Federal Register regulatory signals for this org
+    if (federalRegisterSignals.length > 0) {
+      try {
+        const result = await ingestSignalsForOrg(federalRegisterSignals, orgId);
+        logger.info(
+          {
+            event: "scheduler_federal_register_ingested",
+            orgId,
+            inserted: result.inserted,
+            skippedDuplicate: result.skippedDuplicate,
+            skippedInvalid: result.skippedInvalid,
+            errors: result.errors.length
+          },
+          "Federal Register ingested for org"
+        );
+        for (const e of result.errors) {
+          summary.errors.push(`org:${orgId} federal_register_ingest: ${e}`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        summary.errors.push(`org:${orgId} federal_register_ingest_fatal: ${msg}`);
+        logger.error({ event: "scheduler_federal_register_ingest_failed", orgId, err }, "Federal Register ingest failed for org");
       }
     }
 
