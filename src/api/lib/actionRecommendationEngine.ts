@@ -31,6 +31,9 @@
 /** action_type marker stamped on generated finding-actions. MUST equal the literal in the partial unique index (migration 20260625) and the caller's ON CONFLICT predicate. */
 export const GENERATED_FINDING_ACTION_TYPE = "auto_finding_remediation";
 
+/** action_type marker for generated risk-exposure actions (increment 2). MUST equal the literal in idx_actions_generated_risk (migration 20260627). */
+export const GENERATED_RISK_ACTION_TYPE = "auto_risk_exposure";
+
 /** Severities that warrant an auto-generated action. Moderate/Low are surfaced as findings but do not spawn queue items. */
 const ACTIONABLE_SEVERITIES = new Set<string>(["Critical", "High"]);
 
@@ -60,7 +63,7 @@ export type ActionDraft = {
   title: string;
   description: string;
   action_type: string;
-  source_type: "finding";
+  source_type: "finding" | "risk";
   source_id: string;
   priority: string;
 };
@@ -83,5 +86,28 @@ export function buildFindingActionDraft(
     source_type: "finding",
     source_id: finding.findingId,
     priority: finding.priority
+  };
+}
+
+// ---------------------------------------------------------------------------
+// buildRiskActionDraft (pure — increment 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the action a newly exposure-flagged risk should spawn. Exposure flagging
+ * (a matched signal hitting an open risk in the matched domain) is itself the
+ * trigger — no severity threshold; the flag means it's relevant. Flat near_term
+ * priority (a live signal exposing an open risk warrants near-term review).
+ */
+export function buildRiskActionDraft(riskId: string, domain: string): ActionDraft {
+  return {
+    title: `Review exposed risk (${domain})`,
+    description:
+      `A matched signal flagged exposure on this open ${domain} risk. Review it, ` +
+      `confirm the exposure, and remediate or formally re-accept the risk.`,
+    action_type: GENERATED_RISK_ACTION_TYPE,
+    source_type: "risk",
+    source_id: riskId,
+    priority: "near_term"
   };
 }
