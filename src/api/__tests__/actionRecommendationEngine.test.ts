@@ -3,9 +3,12 @@ import { describe, it, expect, afterEach } from "vitest";
 import {
   buildFindingActionDraft,
   buildRiskActionDraft,
+  buildObligationActionDraft,
   actionEngineEnabled,
   GENERATED_FINDING_ACTION_TYPE,
-  GENERATED_RISK_ACTION_TYPE
+  GENERATED_RISK_ACTION_TYPE,
+  GENERATED_OBLIGATION_ACTION_TYPE,
+  ACTION_OBLIGATION_MIN_SCORE
 } from "../lib/actionRecommendationEngine.js";
 
 // ---------------------------------------------------------------------------
@@ -59,6 +62,28 @@ describe("buildRiskActionDraft", () => {
 
   it("uses a distinct action_type marker from the finding generator", () => {
     expect(GENERATED_RISK_ACTION_TYPE).not.toBe(GENERATED_FINDING_ACTION_TYPE);
+  });
+});
+
+describe("buildObligationActionDraft", () => {
+  it("builds an action for a high-confidence (>= threshold) obligation match", () => {
+    const d = buildObligationActionDraft("ob-1", "HIPAA", ACTION_OBLIGATION_MIN_SCORE);
+    expect(d).not.toBeNull();
+    expect(d!.source_type).toBe("obligation");
+    expect(d!.source_id).toBe("ob-1");
+    expect(d!.action_type).toBe(GENERATED_OBLIGATION_ACTION_TYPE);
+    expect(d!.priority).toBe("near_term");
+    expect(d!.title).toContain("HIPAA");
+  });
+
+  it("returns null below the confidence threshold (avoids queue flood)", () => {
+    expect(buildObligationActionDraft("ob-1", "HIPAA", ACTION_OBLIGATION_MIN_SCORE - 1)).toBeNull();
+    expect(buildObligationActionDraft("ob-1", "HIPAA", 40)).toBeNull(); // MIN_MATCH_SCORE-level → no action
+  });
+
+  it("falls back to a generic label when none is provided", () => {
+    const d = buildObligationActionDraft("ob-1", "", 90);
+    expect(d!.title).toContain("a tracked obligation");
   });
 });
 
