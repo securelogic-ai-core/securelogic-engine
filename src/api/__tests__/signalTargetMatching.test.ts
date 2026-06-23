@@ -1,11 +1,15 @@
 /**
- * Unit tests for the GAP-1 score functions (pure, no DB).
- * Scores must be integers in [0,100]; no-overlap must fall below MIN_MATCH_SCORE.
+ * Unit tests for the GAP-1 obligation score function (pure, no DB).
+ *
+ * Scoring model: regulation identity dominates, domain is a weak tiebreaker.
+ * - regulation cited → >= REGULATION_BASE_SCORE (80), well above MIN_MATCH_SCORE
+ * - regulation cited + domain overlap → up to 100
+ * - regulation NOT cited → 0 (domain overlap alone never scores)
+ * Output is always an integer in [0,100].
  */
 import { describe, it, expect } from "vitest";
 import {
   tokenize,
-  scoreControlMatch,
   scoreObligationMatch,
   MIN_MATCH_SCORE,
   SUGGESTION_CAP
@@ -33,83 +37,96 @@ describe("constants", () => {
   });
 });
 
-describe("scoreControlMatch", () => {
-  it("full overlap → 100 (integer)", () => {
-    const s = scoreControlMatch(
-      "Apache Struts remote code execution behind a web application firewall",
-      { name: "Web Application Firewall", description: null }
-    );
-    expect(s).toBe(100);
+describe("scoreObligationMatch — regulation identity", () => {
+  it("regulation cited, no domain overlap → 80 (base, above threshold)", () => {
+    const s = scoreObligationMatch("New GDPR breach notification rule published", {
+      source_regulation: "GDPR",
+      domain: "data protection"
+    });
+    expect(s).toBe(80);
     expect(Number.isInteger(s)).toBe(true);
-  });
-
-  it("no overlap → 0, well below threshold", () => {
-    const s = scoreControlMatch("unrelated database backup rotation", {
-      name: "Web Application Firewall",
-      description: null
-    });
-    expect(s).toBe(0);
-    expect(s).toBeLessThan(MIN_MATCH_SCORE);
-  });
-
-  it("partial overlap (1 of 3 target tokens) → below threshold (33)", () => {
-    const s = scoreControlMatch("web server hardening guide", {
-      name: "Web Application Firewall",
-      description: null
-    });
-    expect(s).toBe(33);
-    expect(s).toBeLessThan(MIN_MATCH_SCORE);
-  });
-
-  it("description tokens count toward the target set", () => {
-    const s = scoreControlMatch(
-      "incident response runbook for ransomware containment",
-      { name: "Incident Response", description: "ransomware containment runbook" }
-    );
     expect(s).toBeGreaterThanOrEqual(MIN_MATCH_SCORE);
-    expect(s).toBeLessThanOrEqual(100);
-    expect(Number.isInteger(s)).toBe(true);
   });
 
-  it("empty target → 0 (nothing to match)", () => {
-    expect(scoreControlMatch("anything", { name: "", description: null })).toBe(0);
-  });
-});
-
-describe("scoreObligationMatch", () => {
-  it("full overlap on source_regulation + domain → 100", () => {
-    const s = scoreObligationMatch(
-      "New GDPR enforcement guidance on data protection breach notification ftc",
-      { source_regulation: "GDPR", domain: "data protection" }
-    );
+  it("regulation cited + full domain overlap → 100 (domain nudges)", () => {
+    const s = scoreObligationMatch("New GDPR data protection breach notification", {
+      source_regulation: "GDPR",
+      domain: "data protection"
+    });
     expect(s).toBe(100);
-    expect(Number.isInteger(s)).toBe(true);
   });
 
-  it("no overlap → 0", () => {
-    const s = scoreObligationMatch(
-      "New GDPR enforcement guidance on data protection",
-      { source_regulation: "OSHA", domain: "occupational safety" }
-    );
+  it("regulation NOT cited → 0, even when the domain fully overlaps", () => {
+    // The CCPA-on-a-GDPR-signal case at the unit level: shared domain
+    // ("data protection") must NOT produce a match.
+    const s = scoreObligationMatch("New GDPR data protection breach notification", {
+      source_regulation: "CCPA",
+      domain: "data protection"
+    });
+    expect(s).toBe(0);
+    expect(s).toBeLessThan(MIN_MATCH_SCORE);
+  });
+
+  it("domain overlap ALONE never clears the threshold", () => {
+    // Signal cites no regulation token; domain fully overlaps → still 0.
+    const s = scoreObligationMatch("data protection breach guidance issued", {
+      source_regulation: "CCPA",
+      domain: "data protection"
+    });
     expect(s).toBe(0);
   });
 
-  it("null source_regulation and domain → 0", () => {
+  it("null/empty source_regulation → 0 (regulation cannot be identified)", () => {
     expect(
-      scoreObligationMatch("anything at all", {
+      scoreObligationMatch("anything mentioning GDPR here", {
         source_regulation: null,
-        domain: null
+        domain: "data protection"
+      })
+    ).toBe(0);
+    expect(
+      scoreObligationMatch("anything mentioning GDPR here", {
+        source_regulation: "",
+        domain: "data protection"
       })
     ).toBe(0);
   });
 
   it("output is always an integer within [0,100]", () => {
-    const s = scoreObligationMatch("partial gdpr mention only", {
-      source_regulation: "GDPR",
-      domain: "data protection privacy"
+    const s = scoreObligationMatch("HIPAA security rule update on data privacy", {
+      source_regulation: "HIPAA",
+      domain: "data privacy controls"
     });
     expect(Number.isInteger(s)).toBe(true);
     expect(s).toBeGreaterThanOrEqual(0);
     expect(s).toBeLessThanOrEqual(100);
+  });
+
+  // ------------------------------------------------------------------
+  // The two required walks (also exercised behaviorally in the matcher
+  // tests; pinned here at the unit level).
+  // ------------------------------------------------------------------
+  it("walk (a): GDPR signal → GDPR obligation high (written), CCPA obligation below threshold", () => {
+    const signal = "GDPR breach notification requirement tightened";
+    const gdpr = scoreObligationMatch(signal, {
+      source_regulation: "GDPR",
+      domain: "data protection"
+    });
+    const ccpa = scoreObligationMatch(signal, {
+      source_regulation: "CCPA",
+      domain: "data protection"
+    });
+    expect(gdpr).toBeGreaterThanOrEqual(MIN_MATCH_SCORE); // written
+    expect(ccpa).toBeLessThan(MIN_MATCH_SCORE);           // NOT written
+  });
+
+  it("walk (b): signal with no recognizable regulation → nothing clears threshold", () => {
+    const signal = "General security advisory about a software patch release";
+    for (const reg of ["GDPR", "CCPA", "HIPAA"]) {
+      const s = scoreObligationMatch(signal, {
+        source_regulation: reg,
+        domain: "data protection"
+      });
+      expect(s).toBeLessThan(MIN_MATCH_SCORE);
+    }
   });
 });

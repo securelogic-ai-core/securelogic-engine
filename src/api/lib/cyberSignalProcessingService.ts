@@ -56,7 +56,6 @@ import {
   type RiskScoringWeights
 } from "./riskScoring.js";
 import {
-  scoreControlMatch,
   scoreObligationMatch,
   MIN_MATCH_SCORE,
   SUGGESTION_CAP
@@ -108,11 +107,9 @@ export type MatcherResult = {
   match_score: number | null;
   /** Domain assigned by routing (Vendor Risk / AI Governance / Vulnerability / etc.). */
   domain: string;
-  /** Which vendor/AI matcher branch fired. 'no_match' when neither vendor nor ai_system matched. NOTE: control/obligation generation (GAP-1) is independent of this field — it never sets a control/obligation value here; see control_suggestion_ids / obligation_suggestion_ids. */
+  /** Which vendor/AI matcher branch fired. 'no_match' when neither vendor nor ai_system matched. NOTE: obligation generation (GAP-1) is independent of this field — it never sets an obligation value here; see obligation_suggestion_ids. */
   matched_branch: "vendor_name_ilike" | "ai_system_name_ilike" | "no_match";
-  /** IDs of signal_match_suggestions written by the control branch (target_type 'control'). Empty when the branch did not fire or wrote nothing (below threshold / all deduped). */
-  control_suggestion_ids: string[];
-  /** IDs of signal_match_suggestions written by the obligation branch (target_type 'obligation'). Empty when the branch did not fire or wrote nothing. */
+  /** IDs of signal_match_suggestions written by the obligation branch (target_type 'obligation'). Empty when the branch did not fire or wrote nothing (below threshold / all deduped). */
   obligation_suggestion_ids: string[];
 };
 
@@ -237,9 +234,8 @@ export async function runMatcherForSignal(
   let matchScore: number | null = null;
   let matchedBranch: MatcherResult["matched_branch"] = "no_match";
 
-  // GAP-1 accumulators — control/obligation suggestion IDs (target_type
-  // 'control'/'obligation'). Independent of the vendor/AI branch above.
-  const controlSuggestionIds: string[] = [];
+  // GAP-1 accumulator — obligation suggestion IDs (target_type 'obligation').
+  // Independent of the vendor/AI branch above.
   const obligationSuggestionIds: string[] = [];
 
   try {
@@ -464,19 +460,23 @@ export async function runMatcherForSignal(
     }
 
     // ---------------------------------------------------------------
-    // GAP-1: control / obligation suggestion generation.
+    // GAP-1: obligation suggestion generation.
     //
     // Independent of the vendor/AI branch above — keyed on signal_type,
-    // NOT affected_vendor (a cve-with-vendor signal fires the vendor
-    // branch AND the control branch). SUGGEST-ONLY: writes
-    // signal_match_suggestions (target_type 'control'/'obligation') and
-    // nothing else — no findings, no risk flagging, never the link
-    // tables (the accept→link path handles those). Dedup + idempotency
-    // via the same ON CONFLICT partial-unique predicate as above.
+    // NOT affected_vendor. SUGGEST-ONLY: writes signal_match_suggestions
+    // (target_type 'obligation') and nothing else — no findings, no risk
+    // flagging, never the link tables (the accept→link path handles
+    // those). Dedup + idempotency via the same ON CONFLICT partial-unique
+    // predicate as above.
+    //
+    // The signal→control branch was removed from this package: token
+    // overlap can't bridge CVE-feed vocabulary to control names; it is
+    // being rebuilt as a separate LLM-based package.
+    //
+    // Obligation matching privileges regulation identity (does the signal
+    // cite this obligation's source_regulation?) with domain as a weak
+    // tiebreaker — see scoreObligationMatch.
     // ---------------------------------------------------------------
-
-    // Obligation branch — regulatory signals → obligations by
-    // source_regulation + domain overlap against the signal text.
     if (signalType === "regulatory_change") {
       const obligationCandidates = await client.query<{
         id: string;
@@ -490,7 +490,10 @@ export async function runMatcherForSignal(
         [orgId]
       );
 
-      const signalText = `${signal.normalized_summary} ${signal.source}`;
+      // Regulation identity is matched against the signal's CONTENT
+      // (normalized_summary), not the feed `source` — otherwise every
+      // NIST-sourced signal would "cite" every NIST obligation.
+      const signalText = signal.normalized_summary;
       const scored = obligationCandidates.rows
         .map((o) => ({
           id: o.id,
@@ -544,78 +547,6 @@ export async function runMatcherForSignal(
       }
     }
 
-    // Control branch — vulnerability/advisory signals → controls by
-    // keyword overlap between the signal summary and control name/description.
-    if (
-      signalType === "cve" ||
-      signalType === "vulnerability" ||
-      signalType === "advisory"
-    ) {
-      const controlCandidates = await client.query<{
-        id: string;
-        name: string;
-        description: string | null;
-      }>(
-        `SELECT id, name, description
-           FROM controls
-          WHERE organization_id = $1`,
-        [orgId]
-      );
-
-      const signalText = signal.normalized_summary;
-      const scored = controlCandidates.rows
-        .map((c) => ({
-          id: c.id,
-          label: c.name,
-          score: scoreControlMatch(signalText, c)
-        }))
-        .filter((c) => c.score >= MIN_MATCH_SCORE)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, SUGGESTION_CAP);
-
-      for (const cand of scored) {
-        const ins = await client.query<{ id: string }>(
-          `
-          INSERT INTO signal_match_suggestions (
-            organization_id, signal_id, target_type, target_id,
-            match_reason, match_score, match_metadata
-          )
-          VALUES ($1, $2::uuid, 'control', $3::uuid, 'control_keyword_match', $4, $5::jsonb)
-          ON CONFLICT (organization_id, signal_id, target_type, target_id)
-            WHERE accepted_at IS NULL AND dismissed_at IS NULL
-            DO NOTHING
-          RETURNING id
-          `,
-          [
-            orgId,
-            signalId,
-            cand.id,
-            cand.score,
-            JSON.stringify({
-              source: signal.source,
-              matched_branch: "control_keyword_match",
-              matched_string: cand.label
-            })
-          ]
-        );
-        if ((ins.rowCount ?? 0) > 0) controlSuggestionIds.push(ins.rows[0]!.id);
-      }
-
-      if (scored.length > 0) {
-        logger.info(
-          {
-            event: "matcher_control_suggestions",
-            orgId,
-            signalId,
-            targetType: "control",
-            candidates: scored.length,
-            written: controlSuggestionIds.length
-          },
-          "Matcher wrote control suggestions"
-        );
-      }
-    }
-
     if (ownsTransaction) await client.query("COMMIT");
 
     logger.info(
@@ -642,7 +573,6 @@ export async function runMatcherForSignal(
       match_score: matchScore,
       domain,
       matched_branch: matchedBranch,
-      control_suggestion_ids: controlSuggestionIds,
       obligation_suggestion_ids: obligationSuggestionIds
     };
   } catch (err) {

@@ -1,21 +1,32 @@
 /**
- * signalTargetMatching.ts — scoring for the signal→control / signal→obligation
- * suggestion generator (GAP-1).
+ * signalTargetMatching.ts — scoring for the signal→obligation suggestion
+ * generator (GAP-1).
  *
  * Pure functions, no DB. `runMatcherForSignal` (cyberSignalProcessingService.ts)
- * calls these to score each candidate control/obligation against a signal, then
- * applies MIN_MATCH_SCORE (drop anything below) and SUGGESTION_CAP (keep the
- * top-N by score) before writing `signal_match_suggestions` rows.
+ * calls `scoreObligationMatch` against each candidate obligation, then applies
+ * MIN_MATCH_SCORE (drop anything below) and SUGGESTION_CAP (keep the top-N by
+ * score) before writing `signal_match_suggestions` rows.
+ *
+ * SCORING MODEL — regulation identity, with domain as a weak tiebreaker.
+ * The dominant question is "does the signal cite THIS obligation's
+ * source_regulation?". Regulation identity alone clears the threshold; domain
+ * overlap alone never does. This deliberately prevents the cross-regulation
+ * false positive of loose bag-of-words overlap (a GDPR-specific signal must not
+ * match a CCPA obligation just because both are domain "data protection"), and
+ * the corresponding false negative (the true GDPR match being dragged below
+ * threshold by domain tokens the signal didn't echo). See scoreObligationMatch.
  *
  * Scores are INTEGER [0,100] — the live domain of
  * `signal_match_suggestions.match_score` (CHECK BETWEEN 0 AND 100; the original
- * NUMERIC(4,3)/"0.000–1.000" was superseded by the type-fix migration). Overlap
- * is computed as a [0,1] fraction then scaled ×100, rounded, and clamped —
- * mirroring computeRiskScore's `product * 100 → clampInteger`.
+ * NUMERIC(4,3)/"0.000–1.000" was superseded by the type-fix migration).
  *
- * Matching is deliberately crude (token overlap, no CPE/identifier/semantics) —
- * a suggestion the user reviews, never an automatic link. Precision tuning lives
- * behind MIN_MATCH_SCORE.
+ * Matching is lexical (no CPE/identifier/semantics) — a suggestion the user
+ * reviews, never an automatic link. Precision tuning lives behind
+ * MIN_MATCH_SCORE.
+ *
+ * NOTE: the signal→control branch was removed from this package — token overlap
+ * cannot bridge CVE-feed vocabulary to control names; it is being rebuilt as a
+ * separate LLM-based package.
  */
 
 /** Suggestions below this score are not written. Integer on the 0–100 scale. */
@@ -46,45 +57,59 @@ export function tokenize(text: string): Set<string> {
   return out;
 }
 
+/** Score awarded when the signal cites the obligation's source_regulation. */
+const REGULATION_BASE_SCORE = 80;
+/** Max additional points the domain tiebreaker can add on top of a reg match. */
+const DOMAIN_TIEBREAK_MAX = 20;
+
 /**
- * Fraction of the target's distinct tokens that appear in the signal, scaled to
- * an integer [0,100]. Empty target → 0 (nothing to match against).
+ * How many of `needles` appear in `haystack`, and whether ALL of them do.
+ * `all` is false for an empty needle set (nothing to identify).
  */
-function overlapScore(signalTokens: Set<string>, targetText: string): number {
-  const targetTokens = tokenize(targetText);
-  if (targetTokens.size === 0) return 0;
+function tokensPresent(
+  needles: Set<string>,
+  haystack: Set<string>
+): { all: boolean; fraction: number } {
+  if (needles.size === 0) return { all: false, fraction: 0 };
   let hits = 0;
-  for (const t of targetTokens) {
-    if (signalTokens.has(t)) hits++;
+  for (const t of needles) {
+    if (haystack.has(t)) hits++;
   }
-  const fraction = hits / targetTokens.size;
-  return Math.min(100, Math.max(0, Math.round(fraction * 100)));
+  return { all: hits === needles.size, fraction: hits / needles.size };
 }
 
 /**
- * Score a control against a signal by keyword overlap between the signal text
- * and the control's name + description. Integer [0,100].
- */
-export function scoreControlMatch(
-  signalText: string,
-  control: { name: string; description: string | null }
-): number {
-  const signalTokens = tokenize(signalText);
-  return overlapScore(signalTokens, `${control.name} ${control.description ?? ""}`);
-}
-
-/**
- * Score an obligation against a signal by overlap between the signal text and
- * the obligation's source_regulation + domain (the structured match keys).
- * Integer [0,100].
+ * Score an obligation against a signal by REGULATION IDENTITY, with domain as a
+ * weak tiebreaker. Integer [0,100].
+ *
+ * Model:
+ *   - The signal must CITE the obligation's source_regulation: every distinct
+ *     token of source_regulation must appear in the signal text (e.g. "GDPR"
+ *     for source_regulation "GDPR"). Acronyms / distinctive names match best;
+ *     a regulation that tokenizes to nothing (empty/too-short) can never be
+ *     cited and scores 0.
+ *   - Regulation cited → REGULATION_BASE_SCORE (80), already well above
+ *     MIN_MATCH_SCORE. Domain-token overlap adds up to DOMAIN_TIEBREAK_MAX (20)
+ *     as a nudge among obligations that already match on regulation.
+ *   - Regulation NOT cited → 0. Domain overlap ALONE never scores, so two
+ *     obligations sharing a domain ("data protection") but citing different
+ *     regulations (GDPR vs CCPA) are NOT both suggested on a GDPR-specific
+ *     signal — and the true GDPR match is never dragged below threshold by
+ *     domain tokens the signal happened not to echo.
  */
 export function scoreObligationMatch(
   signalText: string,
   obligation: { source_regulation: string | null; domain: string | null }
 ): number {
   const signalTokens = tokenize(signalText);
-  return overlapScore(
-    signalTokens,
-    `${obligation.source_regulation ?? ""} ${obligation.domain ?? ""}`
-  );
+
+  const regTokens = tokenize(obligation.source_regulation ?? "");
+  const reg = tokensPresent(regTokens, signalTokens);
+  if (!reg.all) return 0; // regulation not cited → no match
+
+  const domainTokens = tokenize(obligation.domain ?? "");
+  const domain = tokensPresent(domainTokens, signalTokens);
+  const tiebreak = Math.round(domain.fraction * DOMAIN_TIEBREAK_MAX);
+
+  return Math.min(100, Math.max(0, REGULATION_BASE_SCORE + tiebreak));
 }
