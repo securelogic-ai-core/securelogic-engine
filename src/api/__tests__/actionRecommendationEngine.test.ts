@@ -2,8 +2,10 @@ import { describe, it, expect, afterEach } from "vitest";
 
 import {
   buildFindingActionDraft,
+  buildRiskActionDraft,
   actionEngineEnabled,
-  GENERATED_FINDING_ACTION_TYPE
+  GENERATED_FINDING_ACTION_TYPE,
+  GENERATED_RISK_ACTION_TYPE
 } from "../lib/actionRecommendationEngine.js";
 
 // ---------------------------------------------------------------------------
@@ -41,6 +43,22 @@ describe("buildFindingActionDraft", () => {
 
   it("unknown severity → no action (fail closed)", () => {
     expect(buildFindingActionDraft({ findingId: "f", title: "t", severity: "Informational", priority: "watch" })).toBeNull();
+  });
+});
+
+describe("buildRiskActionDraft", () => {
+  it("builds a near_term risk-exposure action linked to the risk", () => {
+    const d = buildRiskActionDraft("risk-1", "Vendor Risk");
+    expect(d.source_type).toBe("risk");
+    expect(d.source_id).toBe("risk-1");
+    expect(d.action_type).toBe(GENERATED_RISK_ACTION_TYPE);
+    expect(d.priority).toBe("near_term");
+    expect(d.title).toContain("Vendor Risk");
+    expect(d.description).toContain("exposure");
+  });
+
+  it("uses a distinct action_type marker from the finding generator", () => {
+    expect(GENERATED_RISK_ACTION_TYPE).not.toBe(GENERATED_FINDING_ACTION_TYPE);
   });
 });
 
