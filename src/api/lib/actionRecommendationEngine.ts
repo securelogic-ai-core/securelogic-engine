@@ -34,6 +34,18 @@ export const GENERATED_FINDING_ACTION_TYPE = "auto_finding_remediation";
 /** action_type marker for generated risk-exposure actions (increment 2). MUST equal the literal in idx_actions_generated_risk (migration 20260627). */
 export const GENERATED_RISK_ACTION_TYPE = "auto_risk_exposure";
 
+/** action_type marker for generated obligation-review actions (increment 3). MUST equal the literal in idx_actions_generated_obligation (migration 20260628). */
+export const GENERATED_OBLIGATION_ACTION_TYPE = "auto_obligation_review";
+
+/**
+ * Minimum obligation match score to spawn an action. Obligation matching is
+ * suggest-only and produces up to SUGGESTION_CAP candidates per signal at
+ * MIN_MATCH_SCORE (40); generating an action for each would flood the queue.
+ * 80 = a confident regulation-FAMILY citation (REGULATION_BASE_SCORE), not a weak
+ * domain-only tiebreak — so only high-confidence regulatory hits become actions.
+ */
+export const ACTION_OBLIGATION_MIN_SCORE = 80;
+
 /** Severities that warrant an auto-generated action. Moderate/Low are surfaced as findings but do not spawn queue items. */
 const ACTIONABLE_SEVERITIES = new Set<string>(["Critical", "High"]);
 
@@ -63,7 +75,7 @@ export type ActionDraft = {
   title: string;
   description: string;
   action_type: string;
-  source_type: "finding" | "risk";
+  source_type: "finding" | "risk" | "obligation";
   source_id: string;
   priority: string;
 };
@@ -108,6 +120,35 @@ export function buildRiskActionDraft(riskId: string, domain: string): ActionDraf
     action_type: GENERATED_RISK_ACTION_TYPE,
     source_type: "risk",
     source_id: riskId,
+    priority: "near_term"
+  };
+}
+
+// ---------------------------------------------------------------------------
+// buildObligationActionDraft (pure — increment 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the action a high-confidence obligation match should spawn, or null
+ * below ACTION_OBLIGATION_MIN_SCORE. Only the TOP obligation match per signal
+ * should be passed here (the caller picks scored[0]) to keep the queue meaningful.
+ */
+export function buildObligationActionDraft(
+  obligationId: string,
+  label: string,
+  score: number
+): ActionDraft | null {
+  if (score < ACTION_OBLIGATION_MIN_SCORE) return null;
+
+  const reg = label.trim().length > 0 ? label.trim() : "a tracked obligation";
+  return {
+    title: `Assess regulatory change against ${reg}`,
+    description:
+      `A regulatory-change signal matched ${reg}. Review whether it affects this ` +
+      `obligation and update your compliance assessment.`,
+    action_type: GENERATED_OBLIGATION_ACTION_TYPE,
+    source_type: "obligation",
+    source_id: obligationId,
     priority: "near_term"
   };
 }

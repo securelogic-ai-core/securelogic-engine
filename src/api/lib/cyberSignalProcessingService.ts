@@ -70,7 +70,8 @@ import {
 import {
   actionEngineEnabled,
   buildFindingActionDraft,
-  buildRiskActionDraft
+  buildRiskActionDraft,
+  buildObligationActionDraft
 } from "./actionRecommendationEngine.js";
 
 // ---------------------------------------------------------------------------
@@ -724,6 +725,42 @@ export async function runMatcherForSignal(
           ]
         );
         if ((ins.rowCount ?? 0) > 0) obligationSuggestionIds.push(ins.rows[0]!.id);
+      }
+
+      // GAP-3 increment 3: action recommendation for the TOP, high-confidence
+      // obligation match only (suggest-only obligation matches are many + lower-
+      // confidence; one action per signal keeps the queue meaningful). Flag-gated
+      // OFF by default + idempotent via idx_actions_generated_obligation.
+      if (actionEngineEnabled() && scored.length > 0) {
+        const topObligation = scored[0]!;
+        const obligationActionDraft = buildObligationActionDraft(
+          topObligation.id,
+          topObligation.label,
+          topObligation.score
+        );
+        if (obligationActionDraft !== null) {
+          await client.query(
+            `
+            INSERT INTO actions (
+              organization_id, title, description, action_type,
+              source_type, source_id, priority, status
+            )
+            VALUES ($1, $2, $3, $4, $5, $6::uuid, $7, 'open')
+            ON CONFLICT (organization_id, source_type, source_id)
+              WHERE action_type = 'auto_obligation_review'
+              DO NOTHING
+            `,
+            [
+              orgId,
+              obligationActionDraft.title,
+              obligationActionDraft.description,
+              obligationActionDraft.action_type,
+              obligationActionDraft.source_type,
+              obligationActionDraft.source_id,
+              obligationActionDraft.priority
+            ]
+          );
+        }
       }
 
       if (scored.length > 0) {
