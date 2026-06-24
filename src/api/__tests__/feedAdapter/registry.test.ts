@@ -2,8 +2,8 @@
  * registry.test.ts — Registry shape + per-feed mapping equivalence.
  *
  * Verifies:
- *   - Exactly 5 adapters registered (the legacy threat-intel + regulatory
- *     feeds, ported verbatim).
+ *   - The registered adapters: 3 threat-intel + 3 regulatory (NIST, FTC, and
+ *     the ONC healthcare feed).
  *   - Each adapter declares the expected id, sourceTier, signalType, and
  *     uses the correct mapper (proven by sending a hand-crafted item
  *     through toCyberSignal() and asserting the produced ingest payload).
@@ -21,6 +21,7 @@ import type { RssFeedItem } from "../../lib/feedAdapter/threatIntelHelpers.js";
 import type { RegulatoryFeedItem } from "../../lib/feedAdapter/regulatoryHelpers.js";
 
 describe("registry shape", () => {
+
   it("registers the threat-intel + regulatory RSS feeds (incl. ONC healthcare)", () => {
     expect(FEEDS.map((f) => f.id).sort()).toEqual([
       "bleepingcomputer",
