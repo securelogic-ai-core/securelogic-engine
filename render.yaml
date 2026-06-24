@@ -125,6 +125,20 @@ services:
       - key: SENTRY_ENV
         sync: false
 
+      # Dormant-engine enablement — PRODUCTION (operator-authorized 2026-06-24).
+      # The "match → surface → what to do next" engine, live. All three are
+      # read from process.env at signal-processing time; disable any one by
+      # setting it to "false". The LLM control matcher spends Anthropic credits
+      # per qualifying signal (Critical/High + relevant type, ≤80 controls,
+      # ≤1024 out, after-commit) — ANTHROPIC_API_KEY must be set (dashboard) or
+      # it no-ops; watch console balance.
+      - key: SECURELOGIC_FUZZY_VENDOR_MATCH_ENABLED   # item 3 — suggest-only, free
+        value: "true"
+      - key: SECURELOGIC_ACTION_ENGINE_ENABLED        # item 1 — idempotent action writes, free
+        value: "true"
+      - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
+        value: "true"
+
   # =========================================================
   # SECURELOGIC ENGINE — STAGING (web)
   # Tracks the develop branch. Mirrors the production engine
@@ -271,6 +285,15 @@ services:
       - key: SECURELOGIC_VENDOR_ASSURANCE_ENABLED
         value: "true"
 
+      # Dormant-engine enablement — STAGING (lockstep with the prod engine block).
+      # All three signal-engine capabilities on; disable any by setting "false".
+      - key: SECURELOGIC_FUZZY_VENDOR_MATCH_ENABLED   # item 3 — suggest-only, free
+        value: "true"
+      - key: SECURELOGIC_ACTION_ENGINE_ENABLED        # item 1 — idempotent action writes, free
+        value: "true"
+      - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
+        value: "true"
+
       # Sentry error tracking (engine — staging). Kept in lockstep with the
       # production engine block above; set SENTRY_ENV=staging in the dashboard.
       # See docs/sentry-setup.md.
@@ -349,6 +372,16 @@ services:
       - key: LOG_LEVEL
         sync: false
 
+      # Dormant-engine enablement — PRODUCTION worker (the main signal-ingestion
+      # volume; operator-authorized 2026-06-24). All three on; the LLM matcher
+      # uses this block's ANTHROPIC_API_KEY. Disable any by setting "false".
+      - key: SECURELOGIC_FUZZY_VENDOR_MATCH_ENABLED   # item 3 — suggest-only, free
+        value: "true"
+      - key: SECURELOGIC_ACTION_ENGINE_ENABLED        # item 1 — idempotent action writes, free
+        value: "true"
+      - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
+        value: "true"
+
   # =========================================================
   # INTELLIGENCE WORKER — STAGING (background)
   # Tracks the develop branch. Mirrors the production worker
@@ -415,6 +448,15 @@ services:
       # Optional: override log verbosity (default: info)
       - key: LOG_LEVEL
         sync: false
+
+      # Dormant-engine enablement — STAGING worker (lockstep with prod worker).
+      # All three on; disable any by setting "false".
+      - key: SECURELOGIC_FUZZY_VENDOR_MATCH_ENABLED   # item 3 — suggest-only, free
+        value: "true"
+      - key: SECURELOGIC_ACTION_ENGINE_ENABLED        # item 1 — idempotent action writes, free
+        value: "true"
+      - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
+        value: "true"
 
   # =========================================================
   # POSTURE WORKER (background)
