@@ -9,6 +9,7 @@ import {
   type EntitlementRecord
 } from "../infra/entitlementStore.js";
 import { claimWebhookEvent } from "./webhookIdempotency.js";
+import { applyBriefToPlatformCredit } from "../lib/briefPlatformCredit.js";
 
 /* =========================================================
    CONSTANTS
@@ -886,6 +887,29 @@ export async function stripeWebhook(
         typeof session.subscription === "string"
           ? session.subscription
           : session.subscription?.id ?? null;
+
+      // Brief → Platform upgrade credit (#9). Compute the prior Brief sub IDs
+      // (active subs other than the new Platform one) and credit BEFORE the
+      // cancel, while those subs are still active and their paid invoices are
+      // listable. Gated/idempotent/non-fatal — a no-op unless
+      // SECURELOGIC_BRIEF_PLATFORM_CREDIT_ENABLED=true.
+      try {
+        const active = await getStripe().subscriptions.list({ customer: customerId, status: "active" });
+        const priorBriefSubscriptionIds = active.data
+          .map((s) => s.id)
+          .filter((id) => id !== newSubscriptionId);
+        await applyBriefToPlatformCredit({
+          customerId,
+          newSubscriptionId,
+          priorBriefSubscriptionIds,
+          organizationId: orgId,
+        });
+      } catch (err) {
+        logger.error(
+          { event: "brief_platform_credit_wiring_failed", orgId, customerId, err },
+          "stripeWebhook: brief→platform credit step failed (non-fatal)"
+        );
+      }
 
       await cancelPriorBriefSubscriptions(customerId, newSubscriptionId);
     }
