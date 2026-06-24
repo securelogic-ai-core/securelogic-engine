@@ -61,6 +61,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import {
   validateSignalMatchSuggestionAccept,
@@ -1151,6 +1152,16 @@ export async function getSignalMatchSuggestionCounts(
 /* =========================================================
    Router wiring — handlers above are exported by name for direct
    invocation in targeted behavioral tests.
+
+   All five handlers are asTenant()-wrapped (A04-G1 phase-3) so the RLS
+   policy in 20260702_signal_match_suggestions_rls is fully covered at the
+   owner->app_request DATABASE_URL flip. Each handler ends in a single
+   status().json() terminal (β1.5 deferred-response safe), issues only
+   sequential awaits on the ambient pg client (no Promise.all), and runs
+   writeAuditEvent on its own pgElevated pool. The accept handler opens its
+   own explicit pg.connect() transaction; under the wrap its BEGIN/COMMIT/
+   ROLLBACK rewrite to SAVEPOINT semantics and its client.release() is a
+   no-op (createSavepointClient), so it nests safely in the request tx.
    ========================================================= */
 
 router.get(
@@ -1158,7 +1169,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  listSignalMatchSuggestions
+  asTenant(listSignalMatchSuggestions)
 );
 
 // /counts is a static path, not a :id pattern; no GET /:id route exists in
@@ -1169,7 +1180,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  getSignalMatchSuggestionCounts
+  asTenant(getSignalMatchSuggestionCounts)
 );
 
 router.post(
@@ -1177,7 +1188,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  acceptSignalMatchSuggestion
+  asTenant(acceptSignalMatchSuggestion)
 );
 
 router.post(
@@ -1185,7 +1196,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  dismissSignalMatchSuggestion
+  asTenant(dismissSignalMatchSuggestion)
 );
 
 router.post(
@@ -1193,7 +1204,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  recomputeSignalMatchSuggestionScore
+  asTenant(recomputeSignalMatchSuggestionScore)
 );
 
 export default router;
