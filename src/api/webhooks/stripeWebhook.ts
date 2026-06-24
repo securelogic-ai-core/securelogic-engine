@@ -478,87 +478,6 @@ async function syncOrgEntitlement(
 }
 
 /**
- * Best-effort upsert of subscriber record when entitlement is granted or revoked.
- *
- * When a subscriber pays: ensure they exist in the subscribers table with
- * tier = 'paid' so the newsletter delivery pipeline includes them.
- * When a subscription is cancelled: downgrade to tier = 'free'.
- *
- * The email must be sourced from the Stripe Customer record. If the customer
- * has no email on file (rare in B2B flows), the sync is skipped with a warning.
- *
- * Errors are non-fatal — a subscriber sync failure must never block the webhook.
- */
-async function syncSubscriber(
-  customerId: string | null,
-  entitlement: EntitlementRecord
-): Promise<void> {
-  if (!customerId) return;
-
-  let email: string | null = null;
-
-  try {
-    const customer = await getStripe().customers.retrieve(customerId);
-
-    if (customer.deleted) {
-      logger.warn(
-        { event: "stripe_webhook_customer_deleted", customerId },
-        "stripeWebhook: Stripe customer is deleted — skipping subscriber sync"
-      );
-      return;
-    }
-
-    email = customer.email ?? null;
-  } catch (err) {
-    logger.error(
-      { event: "stripe_webhook_customer_fetch_failed", customerId, err },
-      "stripeWebhook: failed to fetch Stripe customer for subscriber sync (non-fatal)"
-    );
-    return;
-  }
-
-  if (!email) {
-    logger.warn(
-      { event: "stripe_webhook_no_customer_email", customerId },
-      "stripeWebhook: Stripe customer has no email — subscriber table not updated"
-    );
-    return;
-  }
-
-  const subscriberTier =
-    entitlement.tier === "paid" ||
-    entitlement.tier === "professional" ||
-    entitlement.tier === "admin"
-      ? "paid"
-      : "free";
-
-  const subscriberStatus = "active";
-
-  try {
-    await pg.query(
-      `
-      INSERT INTO subscribers (email, tier, status, created_at)
-      VALUES ($1, $2, $3, NOW())
-      ON CONFLICT (email) DO UPDATE
-        SET tier   = EXCLUDED.tier,
-            status = EXCLUDED.status
-      `,
-      [email.toLowerCase().trim(), subscriberTier, subscriberStatus]
-    );
-
-    logger.info(
-      { event: "stripe_webhook_subscriber_synced", customerId, tier: subscriberTier },
-      "stripeWebhook: subscriber record synced"
-    );
-  } catch (err) {
-    logger.error(
-      { event: "stripe_webhook_subscriber_sync_failed", customerId, err },
-      "stripeWebhook: failed to sync subscriber record (non-fatal)"
-    );
-  }
-}
-
-/**
  * When a customer upgrades to a Platform plan (platform or platform_annual),
  * cancel any other active subscriptions on the same Stripe customer. This
  * prevents a subscriber who previously paid for a Brief plan from being
@@ -914,14 +833,12 @@ export async function stripeWebhook(
       await cancelPriorBriefSubscriptions(customerId, newSubscriptionId);
     }
 
-    // Sync subscriber record so newsletter delivery includes this subscriber.
-    // Fire-and-forget wrapper: errors logged inside syncSubscriber, never thrown.
-    syncSubscriber(customerId, entitlement).catch((err) => {
-      logger.error(
-        { event: "stripe_webhook_subscriber_sync_unexpected", err },
-        "stripeWebhook: unexpected error in subscriber sync (non-fatal)"
-      );
-    });
+    // NOTE: Stripe no longer auto-enrolls payers into the `subscribers` list.
+    // That list fed the legacy Newsletter / Daily Digest sends, which are now
+    // disabled (the Intelligence Brief is the single weekly email; findings stay
+    // in-app). Brief subscription is handled separately via
+    // intelligence_brief_subscribers above. The `subscribers` table remains
+    // admin-managed (routes/adminSubscribers.ts) for any manual use.
 
     logger.info(
       {
