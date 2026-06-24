@@ -113,7 +113,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   password_history: { category: "B", userRefColumns: ["user_id"], piiRisk: "high", rlsStatus: "pending", specialHandling: "Password hashes. CASCADE. Exclude from data export." },
   user_alert_preferences: { category: "B", userRefColumns: ["user_id"], piiRisk: "low", rlsStatus: "pending" },
   alert_sends: { category: "B", userRefColumns: ["user_id"], piiRisk: "low", rlsStatus: "pending" },
-  dashboard_preferences: { category: "B", userRefColumns: ["user_id"], piiRisk: "low", rlsStatus: "pending", specialHandling: "preference_type='org_default' rows have user_id NULL and are effectively category D — leave those." },
+  dashboard_preferences: { category: "B", userRefColumns: ["user_id"], piiRisk: "low", rlsStatus: "enabled", specialHandling: "preference_type='org_default' rows have user_id NULL and are effectively category D — leave those. RLS: org_default rows still carry organization_id, so the org-scoped policy covers them." },
   legal_consents: { category: "B", userRefColumns: ["user_id"], piiRisk: "high", rlsStatus: "pending", specialHandling: "Holds ip_address + user_agent. CASCADE. NO RLS today (NOT a template — canonical RLS pattern is the findings pilot)." },
   org_invites: { category: "B", userRefColumns: ["invited_by_user_id"], piiRisk: "medium", rlsStatus: "pending", exportExcludedColumns: ["token"], specialHandling: "invited_by_user_id is ON DELETE CASCADE — under tombstone the user row is never deleted, so pending invites this user sent are preserved. `token` is a live invite-acceptance capability (UNIQUE, 7-day TTL) — excluded from export." },
 
