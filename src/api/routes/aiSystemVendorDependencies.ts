@@ -54,6 +54,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import {
   validateAiSystemVendorDependencyCreate,
@@ -466,6 +467,12 @@ export async function listAiSystemsForVendor(req: Request, res: Response): Promi
 /* =========================================================
    Router wiring — handlers above are exported by name for
    direct invocation in targeted behavioral tests.
+
+   All four handlers are asTenant()-wrapped (A04-G1 phase-3) — same posture
+   as the signal-link tables: single status().json() terminals (DELETE 200
+   json), sequential awaits, writeAuditEvent on its own pgElevated pool, and
+   the table is written only by these routes → full coverage for the RLS
+   policy in 20260702_ai_system_vendor_dependencies_rls at the DATABASE_URL flip.
    ========================================================= */
 
 router.post(
@@ -473,7 +480,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  createAiSystemVendorDependency
+  asTenant(createAiSystemVendorDependency)
 );
 
 router.delete(
@@ -481,7 +488,7 @@ router.delete(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  deleteAiSystemVendorDependency
+  asTenant(deleteAiSystemVendorDependency)
 );
 
 router.get(
@@ -489,7 +496,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  listVendorsForAiSystem
+  asTenant(listVendorsForAiSystem)
 );
 
 router.get(
@@ -497,7 +504,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  listAiSystemsForVendor
+  asTenant(listAiSystemsForVendor)
 );
 
 export default router;

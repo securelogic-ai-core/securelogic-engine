@@ -140,7 +140,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   ai_systems: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "pending" },
   ai_governance_assessments: { category: "C", userRefColumns: ["reviewer_uuid", "reviewer_id"], piiRisk: "high", rlsStatus: "pending", specialHandling: "Deprecated TEXT reviewer_id may hold a raw email/name." },
   governance_reviews: { category: "C", userRefColumns: ["reviewer_id"], piiRisk: "high", rlsStatus: "pending" },
-  ai_system_vendor_dependencies: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "high", rlsStatus: "pending" },
+  ai_system_vendor_dependencies: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "high", rlsStatus: "enabled" },
   dependency_assessments: { category: "C", userRefColumns: ["reviewer_uuid", "reviewer_id"], piiRisk: "high", rlsStatus: "pending", specialHandling: "Deprecated TEXT reviewer_id may hold a raw email/name." },
   assessments: { category: "C", userRefColumns: ["created_by"], piiRisk: "high", rlsStatus: "pending" },
   findings: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "enabled" },
