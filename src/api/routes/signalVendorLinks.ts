@@ -37,6 +37,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import {
   validateSignalVendorLinkCreate,
@@ -445,12 +446,21 @@ export async function listVendorsForSignal(req: Request, res: Response): Promise
    direct invocation in targeted behavioral tests.
    ========================================================= */
 
+// All four handlers are asTenant()-wrapped (A04-G1 phase-3): each runs in a
+// per-request tenant transaction with app.current_org_id set, so the RLS policy
+// on signal_vendor_links (20260702_signal_vendor_links_rls) filters correctly at
+// the DATABASE_URL flip. Pre-wrap audit: every handler ends in a single
+// res.status().json() (DELETE already returns 200 json, not 204), uses only
+// sequential awaits (no Promise.all on the tenant client), and the non-awaited
+// writeAuditEvent runs on its own pgElevated pool — safe across the wrap. The
+// table is written only by these routes (no matcher/pgElevated writer), so
+// wrapping the family is full coverage.
 router.post(
   "/signal-vendor-links",
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  createSignalVendorLink
+  asTenant(createSignalVendorLink)
 );
 
 router.delete(
@@ -458,7 +468,7 @@ router.delete(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  deleteSignalVendorLink
+  asTenant(deleteSignalVendorLink)
 );
 
 router.get(
@@ -466,7 +476,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  listSignalsForVendor
+  asTenant(listSignalsForVendor)
 );
 
 router.get(
@@ -474,7 +484,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  listVendorsForSignal
+  asTenant(listVendorsForSignal)
 );
 
 export default router;
