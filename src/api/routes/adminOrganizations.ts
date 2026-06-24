@@ -276,6 +276,25 @@ router.patch("/organizations/:id", async (req, res) => {
       maxMonitoredEntities = v;
     }
 
+    // Seat cap (active members). The sales-led operator path for seat
+    // allocation above the default 10 — Team is "up to 10 seats" (= default),
+    // Platform / Enterprise ("Unlimited seats", Custom / invoice) are raised
+    // here per contract. Mirrors max_monitored_entities: non-negative integer,
+    // never auto-touched by Stripe (no self-serve tier exceeds 10 seats), so
+    // lowering or raising it is exclusively this operator action. (#9b)
+    let maxMembers: number | null = null;
+    if (req.body?.max_members !== undefined) {
+      const v = req.body.max_members;
+      if (typeof v !== "number" || !Number.isInteger(v) || v < 0) {
+        res.status(400).json({
+          error: "invalid_max_members",
+          expected: "non-negative integer"
+        });
+        return;
+      }
+      maxMembers = v;
+    }
+
     if (plan !== null && !VALID_PLANS.has(plan)) {
       res.status(400).json({ error: "invalid_plan", allowed: ["starter", "standard", "premium"] });
       return;
@@ -298,7 +317,8 @@ router.patch("/organizations/:id", async (req, res) => {
       handlesPii !== null ||
       safetyCritical !== null ||
       scale !== null ||
-      maxMonitoredEntities !== null;
+      maxMonitoredEntities !== null ||
+      maxMembers !== null;
 
     if (!hasUpdate) {
       res.status(400).json({ error: "no_fields_to_update" });
@@ -316,14 +336,15 @@ router.patch("/organizations/:id", async (req, res) => {
         safety_critical        = COALESCE($6, safety_critical),
         scale                  = COALESCE($7, scale),
         max_monitored_entities = COALESCE($8, max_monitored_entities),
+        max_members            = COALESCE($9, max_members),
         updated_at             = NOW()
       WHERE id = $1
       RETURNING id, name, slug, plan, status,
                 regulated, handles_pii, safety_critical, scale,
-                max_monitored_entities,
+                max_monitored_entities, max_members,
                 created_at, updated_at
       `,
-      [id, plan, status, regulated, handlesPii, safetyCritical, scale, maxMonitoredEntities]
+      [id, plan, status, regulated, handlesPii, safetyCritical, scale, maxMonitoredEntities, maxMembers]
     );
 
     if ((result.rowCount ?? 0) === 0) {
@@ -343,7 +364,8 @@ router.patch("/organizations/:id", async (req, res) => {
         handles_pii: org.handles_pii,
         safety_critical: org.safety_critical,
         scale: org.scale,
-        max_monitored_entities: org.max_monitored_entities
+        max_monitored_entities: org.max_monitored_entities,
+        max_members: org.max_members
       },
       "admin: organization updated"
     );
