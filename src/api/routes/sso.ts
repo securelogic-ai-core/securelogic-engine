@@ -17,6 +17,7 @@ import * as samlify from "samlify";
 import { pg } from "../infra/postgres.js";
 import { signJwt } from "../lib/jwt.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { enforceSeatLimit } from "../lib/seatLimit.js";
 import { logger } from "../infra/logger.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { requireRole } from "../middleware/requireRole.js";
@@ -251,6 +252,30 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
       userId   = u.id;
       userRole = u.role ?? "analyst";
     } else {
+      // Seat-cap enforcement BEFORE JIT provisioning (#9a). Without this, SSO
+      // JIT silently bypassed the `max_members` cap that the invite-acceptance
+      // path enforces — a cap bypassable on one user-creation path is not a
+      // cap. An org at its seat cap cannot provision a new SSO user; the
+      // operator raises the cap via PATCH /admin/organizations/:id (the
+      // sales-led seat-allocation path for Platform / Enterprise). Existing
+      // members are unaffected — only NEW JIT provisioning is gated.
+      const seat = await enforceSeatLimit(orgId);
+      if (seat.exceeded) {
+        logger.warn(
+          { event: "sso_seat_limit_reached", orgId, email, used: seat.used, cap: seat.cap },
+          "SSO JIT provisioning blocked — seat limit reached"
+        );
+        writeAuditEvent({
+          organizationId: orgId,
+          eventType: "auth.sso_seat_limit_reached",
+          resourceType: "organization",
+          resourceId: orgId,
+          payload: { email, used: seat.used, cap: seat.cap },
+        });
+        res.redirect(`${APP_URL}/login?error=seat_limit_reached`);
+        return;
+      }
+
       // JIT provisioning — new user, analyst role only.
       //
       // NOTE: SSO JIT does not record legal consent at user creation. Per the
