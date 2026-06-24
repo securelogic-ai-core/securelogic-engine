@@ -149,7 +149,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   signal_vendor_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
   signal_ai_system_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "pending" },
   signal_control_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
-  signal_obligation_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "pending" },
+  signal_obligation_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
 
   // ── D — Org data not tied to a specific user (leave alone on user delete) ──
   organizations: { category: "D", piiRisk: "low", rlsStatus: "none", exportExcludedColumns: ["stripe_customer_id", "stripe_subscription_id", "stripe_subscription_tier", "stripe_subscription_status", "payment_failed_at", "promo_code"], specialHandling: "ROOT-TENANT. Carries Stripe F-fields (stripe_customer_id, stripe_subscription_*, payment_failed_at) + promo_code with legal-retention — OMITTED from the org_full export (exportExcludedColumns, PR #2b/Q5); entitlement_level (the portable plan tier) is retained. Only touched on ORG deletion, which is out of scope for this workstream." },
