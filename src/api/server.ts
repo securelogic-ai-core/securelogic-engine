@@ -11,6 +11,7 @@ import { ensureRedisConnected, redisReady } from "./infra/redis.js";
 import { logger } from "./infra/logger.js";
 
 import { startScheduler } from "./lib/schedulerRunner.js";
+import { startAccountDeletionReaperEnqueuer } from "./lib/accountDeletionEnqueuer.js";
 import { createApp } from "./app.js";
 
 /* =========================================================
@@ -121,6 +122,7 @@ await connectDatabase();
 await startupCheck();
 
 startScheduler();
+startAccountDeletionReaperEnqueuer();
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   logger.info(

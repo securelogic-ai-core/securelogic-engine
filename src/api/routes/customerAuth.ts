@@ -577,9 +577,10 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
       failed_login_attempts: number;
       lockout_until: Date | null;
       last_failed_login_at: Date | null;
+      status: string;
     }>(
       `SELECT id, organization_id, name, email, role, password_hash, email_verified, totp_enabled,
-              failed_login_attempts, lockout_until, last_failed_login_at
+              failed_login_attempts, lockout_until, last_failed_login_at, status
        FROM users
        WHERE email = $1
        LIMIT 1`,
@@ -617,6 +618,29 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
         error: "account_locked",
         detail: "Account is temporarily locked due to too many failed login attempts. Try again later.",
         locked_until: user.lockout_until
+      });
+      return;
+    }
+
+    // Block accounts pending deletion or already tombstoned (GDPR Art.17
+    // lifecycle). A `pending_deletion` user still holds a valid password, so
+    // the status gate — not the password check — is what stops them; the
+    // cancel endpoint is the only path back to 'active'. A `deleted` user's
+    // email was scrubbed so they are normally unfindable, but the gate is kept
+    // for defence in depth. Only triggers for known users (unknown emails fall
+    // through to the generic 401), so it adds no enumeration oracle.
+    if (user && (user.status === "pending_deletion" || user.status === "deleted")) {
+      writeAuditEvent({
+        actorUserId: null,
+        eventType: "auth.login_blocked",
+        resourceType: "user",
+        resourceId: user.id,
+        payload: { reason: user.status, email: email.slice(0, 4) + "***" },
+        ipAddress: req.ip ?? null
+      });
+      res.status(403).json({
+        error: "account_pending_deletion",
+        detail: "This account is scheduled for deletion. Contact your administrator to cancel."
       });
       return;
     }
