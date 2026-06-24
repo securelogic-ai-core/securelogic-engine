@@ -121,7 +121,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   risks: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "enabled" },
   risk_treatments: { category: "C", userRefColumns: ["reviewer_uuid", "owner_user_id", "reviewer_id"], piiRisk: "high", rlsStatus: "pending", specialHandling: "Deprecated TEXT reviewer_id may hold a raw email/name — anonymize too." },
   risk_control_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
-  risk_obligation_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "pending" },
+  risk_obligation_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
   risk_scoring_weights: { category: "C", userRefColumns: ["updated_by_user_id"], piiRisk: "none", rlsStatus: "pending" },
   risk_settings: { category: "C", userRefColumns: ["updated_by_user_id"], piiRisk: "none", rlsStatus: "pending" },
   controls: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "pending" },
