@@ -53,6 +53,12 @@ import { runExport } from "../services/dataExport/exporter.js";
 import { createDataExportWriteStream } from "../lib/dataExportStorage.js";
 import { mintDownloadToken } from "../lib/dataExportDownloadToken.js";
 import { exportEmailEnabled, sendExportReadyEmail } from "../lib/exportReadyEmail.js";
+import { processReapJob } from "./accountDeletionReaper.js";
+import {
+  accountDeletionReaperEnabled,
+  claimedJobTypes,
+  ACCOUNT_DELETION_REAP_JOB_TYPE,
+} from "../lib/accountDeletionReaperPolicy.js";
 import type { ExportScope, ExportSubject } from "../services/dataExport/types.js";
 import type { ObjectWriteHandle } from "../lib/blobStorage.js";
 import {
@@ -124,9 +130,12 @@ const CLAIM_SQL = `
    RETURNING id, organization_id, requested_by_user_id, job_type, status, attempts, max_attempts, payload`;
 
 export async function claimNextJob(workerId: string): Promise<JobRow | null> {
+  // The reap job type is claimed ONLY when the reaper flag is on (the gated
+  // enqueuer also produces none while off), so reap jobs are never drained
+  // while the feature is disabled — the export behaviour is unchanged.
   const { rows } = await pgElevated.query(CLAIM_SQL, [
     workerId,
-    [...EXPORT_JOB_TYPES],
+    claimedJobTypes(accountDeletionReaperEnabled()),
     LOCK_TIMEOUT_MS,
   ]);
   return (rows[0] as JobRow | undefined) ?? null;
@@ -257,6 +266,13 @@ async function recordFailure(job: JobRow, err: unknown, now: Date): Promise<void
  * persisted to the row. (The claim already moved the job to 'processing'.)
  */
 export async function processClaimedJob(job: JobRow, deps: WorkerDeps = {}): Promise<void> {
+  // GDPR Art.17 erasure jobs take a different path (no sink / no export). The
+  // claim filter only yields these when the reaper flag is on.
+  if (job.job_type === ACCOUNT_DELETION_REAP_JOB_TYPE) {
+    await processReapJob(job, deps.now ? { now: deps.now } : {});
+    return;
+  }
+
   const now = deps.now ?? (() => new Date());
   const openSink =
     deps.openSink ??

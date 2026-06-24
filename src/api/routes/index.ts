@@ -98,6 +98,7 @@ import intelligenceBriefsRouter from "./intelligenceBriefs.js";
 import adminBriefsRouter from "./adminBriefs.js";
 import auditLogRouter from "./auditLog.js";
 import teamInvitesRouter from "./teamInvites.js";
+import accountDeletionRouter from "./accountDeletion.js";
 import auditPackageRouter from "./auditPackage.js";
 import gapReportRouter from "./gapReport.js";
 import findingsExportRouter from "./findingsExport.js";
@@ -213,6 +214,10 @@ export function buildRoutes(opts: RoutesOptions): Router {
 
   // Customer email/password auth — public (rate-limited), JWT-issuing
   router.use("/api", customerAuthRouter);
+
+  // GDPR Art.17 self-service account deletion request + cancel — JWT-protected,
+  // request gated by the reaper flag (404 when disabled)
+  router.use("/api", accountDeletionRouter);
 
   // MFA routes — mix of public (verify, use-backup) and JWT-protected (setup, disable, reset)
   router.use("/api", mfaRouter);
