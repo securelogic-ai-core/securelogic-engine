@@ -46,6 +46,8 @@ import {
 // directly (the service does not re-export it — confirmed). Mirrors processSignal
 // phase 7, which runs the control matcher AFTER its commit.
 import { runLlmControlMatcherForSignal } from "../../../src/api/lib/llmControlMatcher.js";
+import { createAlertBatcher } from "../../../src/api/lib/alerting/alertService.js";
+import { matcherAlertsEnabled } from "../../../src/api/lib/alerting/matcherAlertsFeatureFlag.js";
 
 /**
  * Run a single KEV poll cycle.
@@ -226,6 +228,14 @@ async function fanOutKevMatcher(
     return;
   }
 
+  // Real-time critical-alert coalescing (flag-gated, OFF by default). Mirrors
+  // the runPipeline fan-out: collect this cycle's Critical/High findings per org,
+  // flush ONE email per org after the loop (post-commit; runMatcherForSignal
+  // commits before returning result.finding).
+  const alertBatcher = matcherAlertsEnabled()
+    ? createAlertBatcher("critical_finding", "kev")
+    : null;
+
   for (const signal of signals) {
     for (const org of activeOrgs) {
       pairsAttempted++;
@@ -234,6 +244,18 @@ async function fanOutKevMatcher(
         pairsSucceeded++;
         if (result.matched_branch !== "no_match") {
           matchesProduced++;
+        }
+
+        if (alertBatcher && result.finding) {
+          const sev = result.finding.severity as string;
+          if (sev === "Critical" || sev === "High") {
+            alertBatcher.add(org.id, {
+              findingId: result.finding.id as string,
+              title: (result.finding.title as string) ?? "",
+              severity: sev,
+              domain: (result.finding.domain as string | null) ?? null
+            });
+          }
         }
 
         // Post-matcher sibling — LLM control matcher (suggest-only, self-gated,
@@ -258,6 +280,18 @@ async function fanOutKevMatcher(
           "KEV matcher fan-out pair failed; continuing with remaining pairs"
         );
       }
+    }
+  }
+
+  // Flush coalesced alerts — non-fatal so an alert failure never breaks KEV polling.
+  if (alertBatcher) {
+    try {
+      await alertBatcher.flush();
+    } catch (err) {
+      logger.warn(
+        { event: "kev_matcher_fanout_alert_flush_failed", err },
+        "KEV matcher alert flush failed (non-fatal)"
+      );
     }
   }
 

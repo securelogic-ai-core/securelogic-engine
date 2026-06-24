@@ -1,6 +1,7 @@
-import { pg, withTenant } from "../infra/postgres.js";
+import { withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { sendCriticalFindingAlert } from "./alertEmailService.js";
+import { selectAlertRecipients } from "./alerting/alertRecipients.js";
 
 type FindingAlertInput = {
   findingId: string;
@@ -27,24 +28,12 @@ async function doTrigger(input: FindingAlertInput): Promise<void> {
   // RLS adoption (A04-G1 gap C'): scope the recipient query to the org so it
   // routes through the tenant client after the app_request flip. The per-
   // recipient sends are fire-and-forget (not awaited), so no email I/O is held
-  // open inside the tenant transaction.
+  // open inside the tenant transaction. Recipient selection is the shared
+  // selectAlertRecipients (extracted verbatim — same query, same tenant scope).
   await withTenant(organizationId, async () => {
-    const result = await pg.query<{ user_id: string; email: string; organization_name: string }>(
-      `SELECT
-         u.id AS user_id,
-         u.email,
-         o.name AS organization_name
-       FROM users u
-       JOIN organizations o ON o.id = u.organization_id
-       LEFT JOIN user_alert_preferences uap ON uap.user_id = u.id
-       WHERE u.organization_id = $1
-         AND u.status = 'active'
-         AND u.email_verified = TRUE
-         AND COALESCE(uap.${prefCol}, TRUE) = TRUE`,
-      [organizationId]
-    );
+    const rows = await selectAlertRecipients(organizationId, prefCol);
 
-    for (const row of result.rows) {
+    for (const row of rows) {
       sendCriticalFindingAlert({
         userId: row.user_id,
         email: row.email,

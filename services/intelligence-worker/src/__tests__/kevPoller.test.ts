@@ -729,3 +729,28 @@ describe("runKevPoll — LLM control matcher fan-out", () => {
     expect(mockedControlMatcher.mock.calls[0]![1]).toBe("org-2");
   });
 });
+
+describe("kevPoller.ts source — matcher alert wiring (flag-gated)", () => {
+  it("imports the alert batcher and the matcher-alerts flag", () => {
+    expect(kevPollerSource).toMatch(/import \{ createAlertBatcher \} from "[^"]*alerting\/alertService\.js"/);
+    expect(kevPollerSource).toMatch(/import \{ matcherAlertsEnabled \} from "[^"]*alerting\/matcherAlertsFeatureFlag\.js"/);
+  });
+
+  it("creates the batcher only when the flag is enabled (null otherwise)", () => {
+    expect(kevPollerSource).toMatch(
+      /const alertBatcher = matcherAlertsEnabled\(\)\s*\?\s*createAlertBatcher\("critical_finding", "kev"\)\s*:\s*null;/
+    );
+  });
+
+  it("adds only Critical/High committed findings to the batch inside the loop", () => {
+    expect(kevPollerSource).toMatch(
+      /if \(alertBatcher && result\.finding\) \{[\s\S]*?sev === "Critical" \|\| sev === "High"[\s\S]*?alertBatcher\.add\(org\.id/
+    );
+  });
+
+  it("flushes after the loop, non-fatal", () => {
+    expect(kevPollerSource).toMatch(
+      /if \(alertBatcher\) \{[\s\S]*?await alertBatcher\.flush\(\)[\s\S]*?kev_matcher_fanout_alert_flush_failed/
+    );
+  });
+});
