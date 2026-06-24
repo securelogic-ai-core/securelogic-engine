@@ -123,7 +123,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   risk_control_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
   risk_obligation_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
   risk_scoring_weights: { category: "C", userRefColumns: ["updated_by_user_id"], piiRisk: "none", rlsStatus: "enabled" },
-  risk_settings: { category: "C", userRefColumns: ["updated_by_user_id"], piiRisk: "none", rlsStatus: "pending" },
+  risk_settings: { category: "C", userRefColumns: ["updated_by_user_id"], piiRisk: "none", rlsStatus: "enabled" },
   controls: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "pending" },
   control_assessments: { category: "C", userRefColumns: ["reviewer_id"], piiRisk: "high", rlsStatus: "pending" },
   requirement_responses: { category: "C", userRefColumns: ["assessed_by"], piiRisk: "high", rlsStatus: "pending" },
