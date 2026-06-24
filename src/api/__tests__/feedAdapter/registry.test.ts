@@ -21,15 +21,17 @@ import type { RssFeedItem } from "../../lib/feedAdapter/threatIntelHelpers.js";
 import type { RegulatoryFeedItem } from "../../lib/feedAdapter/regulatoryHelpers.js";
 
 describe("registry shape", () => {
-  it("registers exactly the five legacy RSS feeds", () => {
+  it("registers the threat-intel + regulatory RSS feeds (incl. ONC healthcare)", () => {
     expect(FEEDS.map((f) => f.id).sort()).toEqual([
       "bleepingcomputer",
       "ftc_news",
       "krebsonsecurity",
       "nist_news",
+      "onc_healthit",
       "sans_isc"
     ]);
   });
+
 
   it("threat-intel feeds are sourceTier 2, regulatory feeds are sourceTier 1", () => {
     const byId = Object.fromEntries(FEEDS.map((f) => [f.id, f]));
@@ -38,6 +40,7 @@ describe("registry shape", () => {
     expect(byId.sans_isc.sourceTier).toBe(2);
     expect(byId.nist_news.sourceTier).toBe(1);
     expect(byId.ftc_news.sourceTier).toBe(1);
+    expect(byId.onc_healthit.sourceTier).toBe(1);
   });
 
   it("threat-intel feeds default to patch_advisory; regulatory to regulatory_change", () => {
@@ -47,6 +50,7 @@ describe("registry shape", () => {
     expect(byId.sans_isc.signalType).toBe("patch_advisory");
     expect(byId.nist_news.signalType).toBe("regulatory_change");
     expect(byId.ftc_news.signalType).toBe("regulatory_change");
+    expect(byId.onc_healthit.signalType).toBe("regulatory_change");
   });
 
   it("no feed declares a defaultVendor (existing 5 derive vendor per item or leave null)", () => {
@@ -63,8 +67,8 @@ describe("registry shape", () => {
     ]);
   });
 
-  it("REGULATORY_FEED_IDS contains the two regulatory ids", () => {
-    expect([...REGULATORY_FEED_IDS].sort()).toEqual(["ftc_news", "nist_news"]);
+  it("REGULATORY_FEED_IDS contains the regulatory ids (incl. ONC healthcare)", () => {
+    expect([...REGULATORY_FEED_IDS].sort()).toEqual(["ftc_news", "nist_news", "onc_healthit"]);
   });
 });
 
@@ -134,6 +138,22 @@ describe("per-feed toCyberSignal mapping", () => {
     const feed = FEEDS.find((f) => f.id === "ftc_news")!;
     const signal = feed.toCyberSignal(sampleRegulatoryItem)!;
     expect(signal.source).toBe("ftc_news");
+  });
+
+  it("onc_healthit maps healthcare-regulatory items via the regulatory mapper", () => {
+    const feed = FEEDS.find((f) => f.id === "onc_healthit")!;
+    const hipaaItem: RegulatoryFeedItem = {
+      title: "ONC Finalizes HIPAA Security Rule Updates for Health IT",
+      description: "New privacy and breach-notification expectations for certified health IT.",
+      link: "https://www.healthit.gov/blog/hipaa-security-update",
+      guid: "onc-hipaa-security-update",
+      pubDate: "Tue, 23 Jun 2026 09:00:00 +0000"
+    };
+    const signal = feed.toCyberSignal(hipaaItem)!;
+    expect(signal.source).toBe("onc_healthit");
+    expect(signal.signal_type).toBe("regulatory_change");
+    expect(signal.affected_vendor).toBeNull();
+    expect(signal.affected_cve).toBeNull();
   });
 
   it("regulatory mapper drops items without cybersecurity-relevance keywords", () => {

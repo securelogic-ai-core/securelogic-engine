@@ -56,7 +56,30 @@ export const FEEDS: FeedAdapter[] = [
   }),
   makeRssFeed({
     id: "ftc_news",
-    url: "https://www.ftc.gov/rss/news.xml",
+    // The legacy https://www.ftc.gov/rss/news.xml now 404s — FTC moved its feed
+    // to /feeds/press-release.xml (verified 2026-06-24). The old URL was a dead
+    // feed silently producing zero items; feed-health would flag it as failing.
+    url: "https://www.ftc.gov/feeds/press-release.xml",
+    sourceTier: 1,
+    signalType: "regulatory_change",
+    mapper: mapRegulatoryItemToSignal
+  }),
+
+  // ── Healthcare regulatory RSS (Tier 1 — US-gov authoritative) ─────────
+  // ONC / ASTP (Office of the National Coordinator for Health IT). The
+  // regulatory mapper's relevance filter keeps only cyber/privacy-relevant
+  // posts (HIPAA, breach, security, privacy …); the rest are dropped, so this
+  // adds healthcare-regulatory coverage without noise. Flows through the
+  // obligation branch like the other regulatory feeds.
+  //
+  // NOTE: CMS was evaluated alongside ONC but exposes no discoverable RSS feed
+  // (its newsroom is a JS-rendered SPA; every documented feed path 404s as of
+  // 2026-06-24). It is intentionally NOT registered — a 404 feed would only
+  // generate perpetual feed-health failures. CMS needs a different integration
+  // (GovDelivery email or HTML scrape), tracked separately.
+  makeRssFeed({
+    id: "onc_healthit",
+    url: "https://healthit.gov/blog/feed/",
     sourceTier: 1,
     signalType: "regulatory_change",
     mapper: mapRegulatoryItemToSignal
@@ -77,5 +100,6 @@ export const THREAT_INTEL_FEED_IDS: ReadonlySet<string> = new Set([
 /** Stable id-set for the regulatory feeds. */
 export const REGULATORY_FEED_IDS: ReadonlySet<string> = new Set([
   "nist_news",
-  "ftc_news"
+  "ftc_news",
+  "onc_healthit"
 ]);
