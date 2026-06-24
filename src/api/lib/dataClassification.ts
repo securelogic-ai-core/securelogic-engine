@@ -161,7 +161,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   policy_control_links: { category: "D", piiRisk: "none", rlsStatus: "pending" },
   control_mappings: { category: "D", piiRisk: "none", rlsStatus: "pending" },
   obligation_mappings: { category: "D", piiRisk: "none", rlsStatus: "pending" },
-  dependencies: { category: "D", piiRisk: "medium", rlsStatus: "pending" },
+  dependencies: { category: "D", piiRisk: "medium", rlsStatus: "enabled" },
   evidence: { category: "D", piiRisk: "medium", rlsStatus: "pending", specialHandling: "collected_by is free TEXT (not a user FK) — may embed a name/email; manual-review territory (O-7)." },
   reports: { category: "D", piiRisk: "low", rlsStatus: "pending" },
   posture_snapshots: { category: "D", piiRisk: "none", rlsStatus: "enabled" },
