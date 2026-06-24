@@ -33,6 +33,10 @@ import {
   runMatcherForSignal,
   type CyberSignalRecord
 } from "../../../../src/api/lib/cyberSignalProcessingService.js";
+// Post-matcher sibling on the worker fan-out. Imported from llmControlMatcher.js
+// directly (cyberSignalProcessingService re-exports nothing here — confirmed).
+// Mirrors processSignal phase 7, which runs the control matcher AFTER its commit.
+import { runLlmControlMatcherForSignal } from "../../../../src/api/lib/llmControlMatcher.js";
 import { buildDedupHash } from "../../../../src/api/lib/cyberSignalNormalizer.js";
 
 export type PipelineResult = {
@@ -215,6 +219,8 @@ async function fanOutMatcherToActiveOrgs(
   pairsSucceeded: number;
   pairsFailed: number;
   matchesProduced: number;
+  controlMatcherCalls: number;
+  controlSuggestionsWritten: number;
   elapsedMs: number;
 }> {
   const start = Date.now();
@@ -222,6 +228,11 @@ async function fanOutMatcherToActiveOrgs(
   let pairsSucceeded = 0;
   let pairsFailed = 0;
   let matchesProduced = 0;
+  // Observability: how many (signal, org) pairs reached the LLM control matcher
+  // this cycle, and how many control suggestions it wrote. Surfaced so LLM call
+  // volume is visible BEFORE it scales with active-org count.
+  let controlMatcherCalls = 0;
+  let controlSuggestionsWritten = 0;
 
   if (signals.length === 0) {
     return {
@@ -229,6 +240,8 @@ async function fanOutMatcherToActiveOrgs(
       pairsSucceeded: 0,
       pairsFailed: 0,
       matchesProduced: 0,
+      controlMatcherCalls: 0,
+      controlSuggestionsWritten: 0,
       elapsedMs: 0
     };
   }
@@ -249,6 +262,8 @@ async function fanOutMatcherToActiveOrgs(
       pairsSucceeded: 0,
       pairsFailed: 0,
       matchesProduced: 0,
+      controlMatcherCalls: 0,
+      controlSuggestionsWritten: 0,
       elapsedMs: Date.now() - start
     };
   }
@@ -263,6 +278,8 @@ async function fanOutMatcherToActiveOrgs(
       pairsSucceeded: 0,
       pairsFailed: 0,
       matchesProduced: 0,
+      controlMatcherCalls: 0,
+      controlSuggestionsWritten: 0,
       elapsedMs: Date.now() - start
     };
   }
@@ -276,6 +293,17 @@ async function fanOutMatcherToActiveOrgs(
         if (result.matched_branch !== "no_match") {
           matchesProduced++;
         }
+
+        // Post-matcher sibling — LLM control matcher (suggest-only, self-gated,
+        // never throws). Runs AFTER the base matcher per (signal, org), mirroring
+        // processSignal phase 7 which runs it after its commit. NOT placed inside
+        // runMatcherForSignal: that function is shared with processSignal (which
+        // already calls the control matcher), so nesting it there would double-fire
+        // on the web path and run an LLM call inside the matcher transaction.
+        // signal carries normalized_summary (set at the bridge push site), which
+        // is the field the control-matcher prompt consumes.
+        controlMatcherCalls++;
+        controlSuggestionsWritten += await runLlmControlMatcherForSignal(signal, org.id);
       } catch (err) {
         pairsFailed++;
         logger.warn(
@@ -301,9 +329,11 @@ async function fanOutMatcherToActiveOrgs(
       pairsSucceeded,
       pairsFailed,
       matchesProduced,
+      controlMatcherCalls,
+      controlSuggestionsWritten,
       elapsedMs
     },
-    `Matcher fan-out complete — ${pairsSucceeded}/${pairsAttempted} pairs succeeded, ${matchesProduced} matches produced in ${elapsedMs}ms`
+    `Matcher fan-out complete — ${pairsSucceeded}/${pairsAttempted} pairs succeeded, ${matchesProduced} matches produced, ${controlMatcherCalls} control-matcher calls (${controlSuggestionsWritten} suggestions) in ${elapsedMs}ms`
   );
 
   return {
@@ -311,6 +341,8 @@ async function fanOutMatcherToActiveOrgs(
     pairsSucceeded,
     pairsFailed,
     matchesProduced,
+    controlMatcherCalls,
+    controlSuggestionsWritten,
     elapsedMs
   };
 }

@@ -42,6 +42,10 @@ import {
   runMatcherForSignal,
   type CyberSignalRecord
 } from "../../../src/api/lib/cyberSignalProcessingService.js";
+// Post-matcher sibling on the KEV fan-out. Imported from llmControlMatcher.js
+// directly (the service does not re-export it — confirmed). Mirrors processSignal
+// phase 7, which runs the control matcher AFTER its commit.
+import { runLlmControlMatcherForSignal } from "../../../src/api/lib/llmControlMatcher.js";
 
 /**
  * Run a single KEV poll cycle.
@@ -194,6 +198,11 @@ async function fanOutKevMatcher(
   let pairsSucceeded = 0;
   let pairsFailed = 0;
   let matchesProduced = 0;
+  // Observability: how many (signal, org) pairs reached the LLM control matcher
+  // this cycle, and how many control suggestions it wrote. Surfaced so LLM call
+  // volume is visible BEFORE it scales with active-org count.
+  let controlMatcherCalls = 0;
+  let controlSuggestionsWritten = 0;
 
   let activeOrgs: Array<{ id: string }> = [];
   try {
@@ -226,6 +235,17 @@ async function fanOutKevMatcher(
         if (result.matched_branch !== "no_match") {
           matchesProduced++;
         }
+
+        // Post-matcher sibling — LLM control matcher (suggest-only, self-gated,
+        // never throws). Runs AFTER the base matcher per (signal, org), mirroring
+        // processSignal phase 7 which runs it after its commit. NOT placed inside
+        // runMatcherForSignal: that function is shared with processSignal (which
+        // already calls the control matcher), so nesting it there would double-fire
+        // on the web path and run an LLM call inside the matcher transaction.
+        // signal carries normalized_summary (set at the insertedSignals push site),
+        // which is the field the control-matcher prompt consumes.
+        controlMatcherCalls++;
+        controlSuggestionsWritten += await runLlmControlMatcherForSignal(signal, org.id);
       } catch (err) {
         pairsFailed++;
         logger.warn(
@@ -250,8 +270,10 @@ async function fanOutKevMatcher(
       pairsSucceeded,
       pairsFailed,
       matchesProduced,
+      controlMatcherCalls,
+      controlSuggestionsWritten,
       elapsedMs: Date.now() - start
     },
-    `KEV matcher fan-out complete — ${pairsSucceeded}/${pairsAttempted} pairs succeeded, ${matchesProduced} matches produced`
+    `KEV matcher fan-out complete — ${pairsSucceeded}/${pairsAttempted} pairs succeeded, ${matchesProduced} matches produced, ${controlMatcherCalls} control-matcher calls (${controlSuggestionsWritten} suggestions)`
   );
 }

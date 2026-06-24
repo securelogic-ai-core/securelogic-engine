@@ -129,6 +129,32 @@ describe("runPipeline.ts source — matcher fan-out wiring", () => {
     // the call site catches and logs without aborting the pipeline.
     expect(source).toMatch(/matcher_fanout_unexpected_error/);
   });
+
+  it("imports runLlmControlMatcherForSignal from llmControlMatcher.js (not the matcher service)", () => {
+    // Must come from llmControlMatcher.js directly — cyberSignalProcessingService
+    // does not re-export it.
+    expect(source).toMatch(
+      /import\s*\{\s*runLlmControlMatcherForSignal\s*\}\s*from\s*"\.\.\/\.\.\/\.\.\/\.\.\/src\/api\/lib\/llmControlMatcher\.js"/
+    );
+    // Guard against it sneaking into the cyberSignalProcessingService import.
+    expect(source).not.toMatch(
+      /import\s*\{[^}]*runLlmControlMatcherForSignal[^}]*\}\s*from\s*"[^"]*cyberSignalProcessingService\.js"/
+    );
+  });
+
+  it("calls the control matcher as a post-matcher sibling: after runMatcherForSignal, inside the per-pair try", () => {
+    // The control-matcher call must appear AFTER the base matcher call within the
+    // same per-(signal, org) try block — proving it is a sibling, not nested in
+    // runMatcherForSignal.
+    expect(source).toMatch(
+      /runMatcherForSignal\(signal, org\.id\)[\s\S]*?runLlmControlMatcherForSignal\(signal, org\.id\)[\s\S]*?\}\s*catch/
+    );
+  });
+
+  it("surfaces control-matcher call volume in the fan-out completion log", () => {
+    expect(source).toMatch(/controlMatcherCalls/);
+    expect(source).toMatch(/event:\s*"matcher_fanout_complete"/);
+  });
 });
 
 describe("runPipeline.ts source — dedup-collapse fix wiring", () => {

@@ -56,14 +56,23 @@ vi.mock("../../../../src/api/lib/cyberSignalProcessingService.js", () => ({
   })
 }));
 
+// Mock the LLM control matcher (the post-matcher sibling wired into the fan-out)
+// so its invocation is observable without touching the real withTenant/LLM path.
+// Resolves a suggestion count (number), matching the real signature.
+vi.mock("../../../../src/api/lib/llmControlMatcher.js", () => ({
+  runLlmControlMatcherForSignal: vi.fn().mockResolvedValue(0)
+}));
+
 import { runKevPoll } from "../kevPoller.js";
 import { fetchCisaKevSignals } from "../../../../src/api/lib/cisaKevAdapter.js";
 import { pg } from "../../../../src/api/infra/postgres.js";
 import { runMatcherForSignal } from "../../../../src/api/lib/cyberSignalProcessingService.js";
+import { runLlmControlMatcherForSignal } from "../../../../src/api/lib/llmControlMatcher.js";
 
 const mockedFetchKev = vi.mocked(fetchCisaKevSignals);
 const mockedPgQuery = vi.mocked(pg.query);
 const mockedRunMatcher = vi.mocked(runMatcherForSignal);
+const mockedControlMatcher = vi.mocked(runLlmControlMatcherForSignal);
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const schedulerSourcePath = path.resolve(here, "../scheduler.ts");
@@ -163,6 +172,32 @@ describe("kevPoller.ts source — shape", () => {
     expect(kevPollerSource).toMatch(/INSERT\s+INTO\s+cyber_signals/);
     expect(kevPollerSource).toMatch(/ON\s+CONFLICT\s*\(\s*dedup_hash\s*\)\s*WHERE\s+organization_id\s+IS\s+NULL\s+DO\s+NOTHING/);
   });
+
+  it("imports runLlmControlMatcherForSignal from llmControlMatcher.js (not from the matcher service)", () => {
+    // Must come from llmControlMatcher.js directly — cyberSignalProcessingService
+    // does not re-export it.
+    expect(kevPollerSource).toMatch(
+      /import\s*\{\s*runLlmControlMatcherForSignal\s*\}\s*from\s*"\.\.\/\.\.\/\.\.\/src\/api\/lib\/llmControlMatcher\.js"/
+    );
+    // Guard against it sneaking into the cyberSignalProcessingService import.
+    expect(kevPollerSource).not.toMatch(
+      /import\s*\{[^}]*runLlmControlMatcherForSignal[^}]*\}\s*from\s*"[^"]*cyberSignalProcessingService\.js"/
+    );
+  });
+
+  it("calls the control matcher as a post-matcher sibling: after runMatcherForSignal, inside the per-pair try", () => {
+    // The control-matcher call must appear AFTER the base matcher call within the
+    // same per-(signal, org) try block — proving it is a sibling, not nested in
+    // runMatcherForSignal.
+    expect(kevPollerSource).toMatch(
+      /runMatcherForSignal\(signal, org\.id\)[\s\S]*?runLlmControlMatcherForSignal\(signal, org\.id\)[\s\S]*?\}\s*catch/
+    );
+  });
+
+  it("surfaces control-matcher call volume in the fan-out completion log", () => {
+    expect(kevPollerSource).toMatch(/controlMatcherCalls/);
+    expect(kevPollerSource).toMatch(/event:\s*"kev_matcher_fanout_complete"/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -174,6 +209,8 @@ describe("runKevPoll — behaviour", () => {
     mockedFetchKev.mockReset();
     mockedPgQuery.mockReset();
     mockedRunMatcher.mockReset();
+    mockedControlMatcher.mockReset();
+    mockedControlMatcher.mockResolvedValue(0);
     // Default matcher behavior: returns no_match. Individual fan-out
     // tests override this with mockResolvedValueOnce.
     mockedRunMatcher.mockResolvedValue({
@@ -325,6 +362,8 @@ describe("runKevPoll — matcher fan-out", () => {
     mockedFetchKev.mockReset();
     mockedPgQuery.mockReset();
     mockedRunMatcher.mockReset();
+    mockedControlMatcher.mockReset();
+    mockedControlMatcher.mockResolvedValue(0);
     mockedRunMatcher.mockResolvedValue({
       matched_vendor_id: null,
       matched_ai_system_id: null,
@@ -499,5 +538,194 @@ describe("runKevPoll — matcher fan-out", () => {
     // were inserted.
     expect(mockedPgQuery).toHaveBeenCalledTimes(1);
     expect(mockedRunMatcher).not.toHaveBeenCalled();
+    // No pairs reached → control matcher never invoked either.
+    expect(mockedControlMatcher).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Control-matcher fan-out wiring — the post-matcher sibling call
+// ---------------------------------------------------------------------------
+
+describe("runKevPoll — LLM control matcher fan-out", () => {
+  beforeEach(() => {
+    mockedFetchKev.mockReset();
+    mockedPgQuery.mockReset();
+    mockedRunMatcher.mockReset();
+    mockedControlMatcher.mockReset();
+    mockedControlMatcher.mockResolvedValue(0);
+    mockedRunMatcher.mockResolvedValue({
+      matched_vendor_id: null,
+      matched_ai_system_id: null,
+      finding: null,
+      suggestion_id: null,
+      match_score: null,
+      domain: "Vulnerability",
+      matched_branch: "no_match",
+      obligation_suggestion_ids: []
+    });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("fires the control matcher once per (signal, org) pair, with the same (signal, orgId) args as the base matcher", async () => {
+    mockedFetchKev.mockResolvedValueOnce({
+      signals: [
+        {
+          source: "cisa_kev",
+          signal_type: "cve",
+          severity: "Critical",
+          raw_payload: { cveID: "CVE-2026-6001" },
+          normalized_summary: "KEV ctrl one",
+          affected_vendor: "VendorOne",
+          affected_cve: "CVE-2026-6001"
+        },
+        {
+          source: "cisa_kev",
+          signal_type: "cve",
+          severity: "High",
+          raw_payload: { cveID: "CVE-2026-6002" },
+          normalized_summary: "KEV ctrl two",
+          affected_vendor: "VendorTwo",
+          affected_cve: "CVE-2026-6002"
+        }
+      ],
+      total: 2,
+      skipped: 0,
+      fromCache: false
+    });
+
+    // Both INSERTs return new IDs, then the active-orgs SELECT returns 2 orgs.
+    mockedPgQuery.mockResolvedValueOnce({ rows: [{ id: "sig-1" }] } as never);
+    mockedPgQuery.mockResolvedValueOnce({ rows: [{ id: "sig-2" }] } as never);
+    mockedPgQuery.mockResolvedValueOnce({
+      rowCount: 2,
+      rows: [{ id: "org-A" }, { id: "org-B" }]
+    } as never);
+
+    await runKevPoll();
+
+    // One control-matcher call per (signal, org) pair: 2 × 2 = 4.
+    expect(mockedControlMatcher).toHaveBeenCalledTimes(4);
+    const ctrlPairs = mockedControlMatcher.mock.calls.map((c) => ({
+      signalId: (c[0] as { id: string }).id,
+      orgId: c[1]
+    }));
+    expect(ctrlPairs).toContainEqual({ signalId: "sig-1", orgId: "org-A" });
+    expect(ctrlPairs).toContainEqual({ signalId: "sig-1", orgId: "org-B" });
+    expect(ctrlPairs).toContainEqual({ signalId: "sig-2", orgId: "org-A" });
+    expect(ctrlPairs).toContainEqual({ signalId: "sig-2", orgId: "org-B" });
+
+    // The control matcher receives the SAME signal struct (carrying
+    // normalized_summary) that the base matcher does — the field its prompt reads.
+    const firstCtrlSignal = mockedControlMatcher.mock.calls[0]![0] as {
+      id: string;
+      normalized_summary: string;
+    };
+    expect(firstCtrlSignal).toHaveProperty("normalized_summary");
+    expect(typeof firstCtrlSignal.normalized_summary).toBe("string");
+  });
+
+  it("runs the control matcher AFTER the base matcher for each pair (post-matcher sibling, not nested in runMatcherForSignal)", async () => {
+    mockedFetchKev.mockResolvedValueOnce({
+      signals: [
+        {
+          source: "cisa_kev",
+          signal_type: "cve",
+          severity: "Critical",
+          raw_payload: { cveID: "CVE-2026-7001" },
+          normalized_summary: "KEV order",
+          affected_vendor: null,
+          affected_cve: "CVE-2026-7001"
+        }
+      ],
+      total: 1,
+      skipped: 0,
+      fromCache: false
+    });
+    mockedPgQuery.mockResolvedValueOnce({ rows: [{ id: "sig-order" }] } as never);
+    mockedPgQuery.mockResolvedValueOnce({
+      rowCount: 2,
+      rows: [{ id: "org-1" }, { id: "org-2" }]
+    } as never);
+
+    await runKevPoll();
+
+    expect(mockedRunMatcher).toHaveBeenCalledTimes(2);
+    expect(mockedControlMatcher).toHaveBeenCalledTimes(2);
+
+    // Invocation order proves the call is a SIBLING that runs after the base
+    // matcher per pair. runMatcherForSignal is a pure mock with no body, so it
+    // cannot itself invoke the control matcher — every control-matcher call must
+    // originate from the fan-out loop. For each pair index i, the base matcher's
+    // call order precedes the control matcher's.
+    const baseOrder = mockedRunMatcher.mock.invocationCallOrder;
+    const ctrlOrder = mockedControlMatcher.mock.invocationCallOrder;
+    for (let i = 0; i < ctrlOrder.length; i++) {
+      expect(baseOrder[i]).toBeLessThan(ctrlOrder[i]!);
+    }
+  });
+
+  it("does not invoke the control matcher when there are 0 active orgs (no pairs)", async () => {
+    mockedFetchKev.mockResolvedValueOnce({
+      signals: [
+        {
+          source: "cisa_kev",
+          signal_type: "cve",
+          severity: "High",
+          raw_payload: { cveID: "CVE-2026-8001" },
+          normalized_summary: "KEV no-orgs",
+          affected_vendor: null,
+          affected_cve: "CVE-2026-8001"
+        }
+      ],
+      total: 1,
+      skipped: 0,
+      fromCache: false
+    });
+    mockedPgQuery.mockResolvedValueOnce({ rows: [{ id: "sig-z" }] } as never);
+    mockedPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] } as never);
+
+    await runKevPoll();
+
+    expect(mockedControlMatcher).not.toHaveBeenCalled();
+  });
+
+  it("a base-matcher failure on a pair skips that pair's control matcher but continues other pairs", async () => {
+    mockedFetchKev.mockResolvedValueOnce({
+      signals: [
+        {
+          source: "cisa_kev",
+          signal_type: "cve",
+          severity: "Critical",
+          raw_payload: { cveID: "CVE-2026-9001" },
+          normalized_summary: "KEV partial",
+          affected_vendor: null,
+          affected_cve: "CVE-2026-9001"
+        }
+      ],
+      total: 1,
+      skipped: 0,
+      fromCache: false
+    });
+    mockedPgQuery.mockResolvedValueOnce({ rows: [{ id: "sig-p" }] } as never);
+    mockedPgQuery.mockResolvedValueOnce({
+      rowCount: 2,
+      rows: [{ id: "org-1" }, { id: "org-2" }]
+    } as never);
+
+    // First pair's base matcher throws → its control-matcher call is skipped
+    // (the call sits after the base matcher inside the same per-pair try).
+    mockedRunMatcher.mockRejectedValueOnce(new Error("org-1 drift"));
+
+    await expect(runKevPoll()).resolves.toBeUndefined();
+
+    // Both base-matcher pairs attempted; only the surviving pair reaches the
+    // control matcher.
+    expect(mockedRunMatcher).toHaveBeenCalledTimes(2);
+    expect(mockedControlMatcher).toHaveBeenCalledTimes(1);
+    expect(mockedControlMatcher.mock.calls[0]![1]).toBe("org-2");
   });
 });
