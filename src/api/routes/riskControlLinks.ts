@@ -300,7 +300,11 @@ export async function deleteRiskControlLink(
       ipAddress:     req.ip ?? null
     });
 
-    res.status(204).send();
+    // 200 + JSON (not 204) so this handler is asTenant-wrappable: the β1.5
+    // deferred-response shim buffers status()+json() for commit-before-respond
+    // but rejects res.send()/.end() (streaming guard). The link is soft-deleted;
+    // the body just acknowledges it. The app BFF forwards any 2xx body through.
+    res.status(200).json({ deleted: true, linkId: link.id, riskId, controlId });
   } catch (err) {
     logger.error(
       { event: "risk_control_link_delete_failed", err, riskId, controlId },
@@ -488,17 +492,18 @@ router.post(
   asTenant(createRiskControlLink)
 );
 
-// DELETE is intentionally left UNWRAPPED. Its terminal is res.status(204).send(),
-// which the asTenant deferredResponse shim's streaming guard rejects at runtime
-// (TenantWrapStreamingError). It is deferred to Wave 0d for a commit-then-respond
-// / bodyless-204 redesign, paired with riskObligationLinks' DELETE — see
-// memory project_a04_g1_reader_wrap_wave_0a "Streaming-guard sub-axis".
+// DELETE is now wrapped (Wave 0d): its terminal was changed from the
+// unbufferable res.status(204).send() to res.status(200).json(...), which the
+// β1.5 deferred-response shim buffers for commit-before-respond. The non-awaited
+// writeAuditEvent uses pgElevated (its own pool), so it is safe across the wrap
+// boundary (fire-and-forget rule). This completes the riskControlLinks route
+// family → unblocks RLS on risk_control_links (20260701_risk_control_links_rls).
 router.delete(
   "/risks/:id/controls/:controlId",
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  deleteRiskControlLink
+  asTenant(deleteRiskControlLink)
 );
 
 router.get(

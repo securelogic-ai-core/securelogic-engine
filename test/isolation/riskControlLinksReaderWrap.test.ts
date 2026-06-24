@@ -6,10 +6,11 @@
  * `app_request` role, and that the RLS-policied `risks` table each route reads is
  * correctly scoped by the GUC the wrap sets.
  *
- * The DELETE route (deleteRiskControlLink) is intentionally NOT exercised here:
- * it is deferred to Wave 0d (its terminal is res.status(204).send(), which the
- * asTenant streaming guard rejects), so it is wired UNWRAPPED and testing it
- * would either pass trivially (no isolation) or fail for the wrong reason.
+ * The DELETE route (deleteRiskControlLink) is not exercised here — this file
+ * covers the read/POST wraps. As of Wave 0d DELETE is now asTenant-wrapped (its
+ * terminal moved 204.send → 200.json) and risk_control_links carries an RLS
+ * policy; the DB-layer cross-org cert for the table lives in
+ * test/isolation/riskControlLinksRls.test.ts.
  *
  * WHAT THIS FILE CERTIFIES (and what it defers) — read before adding asserts
  * -------------------------------------------------------------------------
