@@ -186,10 +186,11 @@ router.post(
           affected_vendor,
           affected_cve,
           dedup_hash,
+          external_id,
           ingestion_timestamp,
           processed
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), FALSE)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), FALSE)
         ON CONFLICT (organization_id, dedup_hash) DO NOTHING
         RETURNING ${SIGNAL_SELECT}
         `,
@@ -202,7 +203,8 @@ router.post(
           normalized.normalized_summary,
           normalized.affected_vendor,
           normalized.affected_cve,
-          normalized.dedup_hash
+          normalized.dedup_hash,
+          normalized.external_id
         ]
       );
 
@@ -605,10 +607,11 @@ router.post(
               affected_vendor,
               affected_cve,
               dedup_hash,
+              external_id,
               ingestion_timestamp,
               processed
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), FALSE)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), FALSE)
             ON CONFLICT (organization_id, dedup_hash) DO NOTHING
             RETURNING id, source, signal_type, severity, normalized_summary,
                       affected_vendor, affected_cve, organization_id
@@ -622,7 +625,8 @@ router.post(
               normalized.normalized_summary,
               normalized.affected_vendor,
               normalized.affected_cve,
-              normalized.dedup_hash
+              normalized.dedup_hash,
+              normalized.external_id
             ]
           );
 
@@ -786,10 +790,11 @@ router.post(
               affected_vendor,
               affected_cve,
               dedup_hash,
+              external_id,
               ingestion_timestamp,
               processed
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), FALSE)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), FALSE)
             ON CONFLICT (organization_id, dedup_hash) DO NOTHING
             RETURNING id, source, signal_type, severity, normalized_summary,
                       affected_vendor, affected_cve, organization_id
@@ -803,7 +808,8 @@ router.post(
               normalized.normalized_summary,
               normalized.affected_vendor,
               normalized.affected_cve,
-              normalized.dedup_hash
+              normalized.dedup_hash,
+              normalized.external_id
             ]
           );
 
@@ -1287,9 +1293,10 @@ router.post(
             `INSERT INTO cyber_signals (
                organization_id, source, signal_type, severity, raw_payload,
                normalized_summary, affected_vendor, affected_cve,
-               dedup_hash, ingestion_timestamp, processed
+               dedup_hash,
+               external_id, ingestion_timestamp, processed
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), FALSE)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), FALSE)
              ON CONFLICT (organization_id, dedup_hash) DO NOTHING
              RETURNING id, source, signal_type, severity, normalized_summary,
                        affected_vendor, affected_cve, organization_id`,
@@ -1302,7 +1309,8 @@ router.post(
               normalized.normalized_summary,
               normalized.affected_vendor,
               normalized.affected_cve,
-              normalized.dedup_hash
+              normalized.dedup_hash,
+              normalized.external_id
             ]
           );
 
@@ -1464,9 +1472,10 @@ router.post(
             `INSERT INTO cyber_signals (
                organization_id, source, signal_type, severity, raw_payload,
                normalized_summary, affected_vendor, affected_cve,
-               dedup_hash, ingestion_timestamp, processed
+               dedup_hash,
+               external_id, ingestion_timestamp, processed
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), FALSE)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), FALSE)
              ON CONFLICT (organization_id, dedup_hash) DO NOTHING
              RETURNING id, source, signal_type, severity, normalized_summary,
                        affected_vendor, affected_cve, organization_id`,
@@ -1479,7 +1488,8 @@ router.post(
               normalized.normalized_summary,
               normalized.affected_vendor,
               normalized.affected_cve,
-              normalized.dedup_hash
+              normalized.dedup_hash,
+              normalized.external_id
             ]
           );
 
@@ -1625,9 +1635,10 @@ router.post(
             `INSERT INTO cyber_signals (
                organization_id, source, signal_type, severity, raw_payload,
                normalized_summary, affected_vendor, affected_cve,
-               dedup_hash, ingestion_timestamp, processed
+               dedup_hash,
+               external_id, ingestion_timestamp, processed
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), FALSE)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), FALSE)
              ON CONFLICT (organization_id, dedup_hash) DO NOTHING
              RETURNING id, source, signal_type, severity, normalized_summary,
                        affected_vendor, affected_cve, organization_id`,
@@ -1640,7 +1651,8 @@ router.post(
               normalized.normalized_summary,
               normalized.affected_vendor,
               normalized.affected_cve,
-              normalized.dedup_hash
+              normalized.dedup_hash,
+              normalized.external_id
             ]
           );
 
@@ -1791,10 +1803,11 @@ router.post(
               affected_vendor,
               affected_cve,
               dedup_hash,
+              external_id,
               ingestion_timestamp,
               processed
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), FALSE)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), FALSE)
             ON CONFLICT (organization_id, dedup_hash) DO NOTHING
             RETURNING id, source, signal_type, severity, normalized_summary,
                       affected_vendor, affected_cve, organization_id
@@ -1808,7 +1821,8 @@ router.post(
               normalized.normalized_summary,
               normalized.affected_vendor,
               normalized.affected_cve,
-              normalized.dedup_hash
+              normalized.dedup_hash,
+              normalized.external_id
             ]
           );
 
@@ -1948,10 +1962,11 @@ router.post(
               affected_vendor,
               affected_cve,
               dedup_hash,
+              external_id,
               ingestion_timestamp,
               processed
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), FALSE)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), FALSE)
             ON CONFLICT (organization_id, dedup_hash) DO NOTHING
             RETURNING id, source, signal_type, severity, normalized_summary,
                       affected_vendor, affected_cve, organization_id
@@ -1965,7 +1980,8 @@ router.post(
               normalized.normalized_summary,
               normalized.affected_vendor,
               normalized.affected_cve,
-              normalized.dedup_hash
+              normalized.dedup_hash,
+              normalized.external_id
             ]
           );
 
