@@ -36,6 +36,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { DEFAULT_WEIGHTS, type RiskScoringWeights } from "../lib/riskScoring.js";
 import { validateRiskScoringWeightsPut } from "../lib/riskScoringWeightsValidation.js";
@@ -223,7 +224,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  getRiskScoringWeights
+  asTenant(getRiskScoringWeights)
 );
 
 router.put(
@@ -231,7 +232,7 @@ router.put(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  putRiskScoringWeights
+  asTenant(putRiskScoringWeights)
 );
 
 export default router;
