@@ -157,6 +157,32 @@ describe("runPipeline.ts source — matcher fan-out wiring", () => {
   });
 });
 
+describe("runPipeline.ts source — legacy Newsletter kill switch", () => {
+  it("imports the legacyNewsletterEnabled flag from src/api/lib", () => {
+    expect(source).toMatch(
+      /import\s*\{\s*legacyNewsletterEnabled\s*\}\s*from\s*"\.\.\/\.\.\/\.\.\/\.\.\/src\/api\/lib\/legacyNewsletterFeatureFlag\.js"/
+    );
+  });
+
+  it("gates the daily send window on !legacyNewsletterEnabled() (OFF by default)", () => {
+    expect(source).toMatch(
+      /currentHour === BRIEF_SEND_HOUR && !legacyNewsletterEnabled\(\)/
+    );
+  });
+
+  it("logs a legacy_newsletter_disabled event when the flag is off", () => {
+    expect(source).toMatch(/event:\s*"legacy_newsletter_disabled"/);
+  });
+
+  it("only dispatches sendNewsletter inside the enabled branch (not unconditionally)", () => {
+    // The disabled branch comes first and must NOT call sendNewsletter; the
+    // send lives in the else-if (enabled) branch.
+    expect(source).toMatch(
+      /legacy_newsletter_disabled[\s\S]*?\}\s*else if \(currentHour === BRIEF_SEND_HOUR\)[\s\S]*?await sendNewsletter\(/
+    );
+  });
+});
+
 describe("runPipeline.ts source — dedup-collapse fix wiring", () => {
   it("imports the canonical buildDedupHash (no second hash impl)", () => {
     expect(source).toMatch(
