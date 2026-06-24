@@ -52,6 +52,7 @@ import { logger } from "../infra/logger.js";
 import { runExport } from "../services/dataExport/exporter.js";
 import { createDataExportWriteStream } from "../lib/dataExportStorage.js";
 import { mintDownloadToken } from "../lib/dataExportDownloadToken.js";
+import { exportEmailEnabled, sendExportReadyEmail } from "../lib/exportReadyEmail.js";
 import type { ExportScope, ExportSubject } from "../services/dataExport/types.js";
 import type { ObjectWriteHandle } from "../lib/blobStorage.js";
 import {
@@ -187,6 +188,11 @@ async function recordSuccess(
   now: Date,
 ): Promise<void> {
   const minted = mintDownloadToken(now);
+  // Resolved inside the tenant scope (RLS-correct) so the notification can be
+  // sent AFTER commit. Only queried when the export-email flag is on (zero
+  // overhead otherwise). The trust invariant holds — the address comes from
+  // users.email in the DB, never from job.payload.
+  let recipientEmail: string | null = null;
   await withTenant(job.organization_id, async () => {
     await pg.query(
       `UPDATE jobs
@@ -212,7 +218,22 @@ async function recordSuccess(
         minted.expiresAt,
       ],
     );
+    if (exportEmailEnabled() && job.requested_by_user_id) {
+      const r = await pg.query<{ email: string }>(
+        "SELECT email FROM users WHERE id = $1 AND organization_id = $2",
+        [job.requested_by_user_id, job.organization_id],
+      );
+      recipientEmail = r.rows[0]?.email ?? null;
+    }
   });
+
+  // GDPR export #4: notify the requester their export is ready (flag-gated,
+  // never-throws). Sent AFTER commit so a slow/failed email can't affect the
+  // already-succeeded job. Uses the raw download token (the tokenized public
+  // download route) — minted above, no longer discarded.
+  if (recipientEmail) {
+    await sendExportReadyEmail({ to: recipientEmail, rawToken: minted.token, expiresAt: minted.expiresAt });
+  }
 }
 
 /** Persist a failure outcome (requeue with backoff / failed / dead_lettered). */
