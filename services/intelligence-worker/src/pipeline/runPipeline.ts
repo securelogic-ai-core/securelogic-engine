@@ -27,6 +27,7 @@ import {
   promoteIssueToQueued
 } from "../storage/postgresIssueStore.js";
 import { sendNewsletter } from "../delivery/sendNewsletter.js";
+import { legacyNewsletterEnabled } from "../../../../src/api/lib/legacyNewsletterFeatureFlag.js";
 import { logger } from "../../../../src/api/infra/logger.js";
 import { pgElevated } from "../../../../src/api/infra/postgres.js";
 import {
@@ -486,7 +487,19 @@ export async function runPipeline(): Promise<PipelineResult> {
   const BRIEF_SEND_HOUR = 8;
   const currentHour = new Date().getUTCHours();
 
-  if (currentHour === BRIEF_SEND_HOUR) {
+  if (currentHour === BRIEF_SEND_HOUR && !legacyNewsletterEnabled()) {
+    // Legacy worker Newsletter is retired: the Intelligence Brief (engine
+    // briefScheduler → briefEmailSender) is the sole daily customer email. This
+    // worker path duplicated it (different signal table + subscriber list) and
+    // a Stripe-enrolled customer sits in both lists, so leaving it live risked
+    // two daily emails an hour apart. Gated OFF by default; flip
+    // SECURELOGIC_LEGACY_NEWSLETTER_ENABLED=true to restore. See
+    // src/api/lib/legacyNewsletterFeatureFlag.ts.
+    logger.info(
+      { event: "legacy_newsletter_disabled", sendHour: BRIEF_SEND_HOUR },
+      "Legacy Newsletter send path disabled (SECURELOGIC_LEGACY_NEWSLETTER_ENABLED!=true); Intelligence Brief is the sole daily customer email"
+    );
+  } else if (currentHour === BRIEF_SEND_HOUR) {
     try {
       newslettersCreated = await generateNewsletter();
     } catch (err) {
