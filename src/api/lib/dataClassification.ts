@@ -130,7 +130,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   obligations: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "pending" },
   obligation_assessments: { category: "C", userRefColumns: ["reviewer_uuid", "reviewer_id"], piiRisk: "high", rlsStatus: "pending", specialHandling: "Deprecated TEXT reviewer_id may hold a raw email/name." },
   vendors: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "pending" },
-  vendor_assessments: { category: "C", userRefColumns: ["reviewer_id"], piiRisk: "high", rlsStatus: "pending" },
+  vendor_assessments: { category: "C", userRefColumns: ["reviewer_id"], piiRisk: "high", rlsStatus: "enabled" },
   vendor_reviews: { category: "C", userRefColumns: ["reviewer_uuid", "reviewer_id"], piiRisk: "high", rlsStatus: "pending", specialHandling: "Deprecated TEXT reviewer_id may hold a raw email/name." },
   vendor_assurance_documents: { category: "C", userRefColumns: ["uploaded_by_user_id", "finalized_by_user_id", "approved_by_user_id"], piiRisk: "medium", rlsStatus: "pending", specialHandling: "Original PDFs live in R2 under org/{orgId}/vendor-assurance/ — org-owned, included in org export, not user export." },
   vendor_assurance_cuecs: { category: "C", userRefColumns: ["review_status_updated_by_user_id"], piiRisk: "high", rlsStatus: "pending" },
