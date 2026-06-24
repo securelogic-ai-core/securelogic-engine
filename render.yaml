@@ -271,6 +271,20 @@ services:
       - key: SECURELOGIC_VENDOR_ASSURANCE_ENABLED
         value: "true"
 
+      # Dormant-engine enablement — STAGING-FIRST VALIDATION (runbook
+      # docs/engine-enablement-review-2026-06-24.md). The two FREE, reversible
+      # capabilities are enabled here for staging validation; production blocks
+      # are intentionally NOT given these vars (prod enablement follows staging
+      # validation, per BUILD_SEQUENCE release discipline). The PAID LLM control
+      # matcher (SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED) is deliberately NOT set
+      # — it spends per signal and is gated on an operator Anthropic-balance
+      # pre-check (3 documented cost-exhaustion incidents). Roll back by removing
+      # these vars; both are suggest-only / idempotent so no rows are auto-applied.
+      - key: SECURELOGIC_FUZZY_VENDOR_MATCH_ENABLED   # item 3 — suggest-only, free
+        value: "true"
+      - key: SECURELOGIC_ACTION_ENGINE_ENABLED        # item 1 — idempotent action writes, free
+        value: "true"
+
       # Sentry error tracking (engine — staging). Kept in lockstep with the
       # production engine block above; set SENTRY_ENV=staging in the dashboard.
       # See docs/sentry-setup.md.
@@ -415,6 +429,17 @@ services:
       # Optional: override log verbosity (default: info)
       - key: LOG_LEVEL
         sync: false
+
+      # Dormant-engine enablement — STAGING-FIRST VALIDATION (runbook
+      # docs/engine-enablement-review-2026-06-24.md). Signal processing runs on
+      # BOTH this worker (scheduled ingestion volume) and the engine (manual
+      # routes), so the two FREE capabilities are enabled on both staging twins.
+      # The PAID LLM control matcher is deliberately NOT set (operator
+      # Anthropic-balance pre-check). Production worker block is NOT given these.
+      - key: SECURELOGIC_FUZZY_VENDOR_MATCH_ENABLED   # item 3 — suggest-only, free
+        value: "true"
+      - key: SECURELOGIC_ACTION_ENGINE_ENABLED        # item 1 — idempotent action writes, free
+        value: "true"
 
   # =========================================================
   # POSTURE WORKER (background)
