@@ -9,7 +9,9 @@ const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
  *   DELETE /api/risks/[id]/obligations/[obligationId]
  *
  * Forwards to DELETE /api/risks/:id/obligations/:obligationId on the engine.
- * Engine returns 204 on success; we propagate that without a body.
+ * Engine returns 200 { deleted: true, ... } on success (changed from 204 in
+ * Wave 0d so the handler is asTenant-wrappable); the generic 2xx path below
+ * propagates the body. The 204 branch is kept as defensive back-compat.
  */
 export async function DELETE(
   _request: Request,
