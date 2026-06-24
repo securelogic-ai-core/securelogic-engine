@@ -41,6 +41,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import {
   validateRiskObligationLinkCreate,
@@ -288,7 +289,10 @@ export async function deleteRiskObligationLink(
       ipAddress:     req.ip ?? null
     });
 
-    res.status(204).send();
+    // 200 + JSON (not 204) so this handler is asTenant-wrappable: the β1.5
+    // deferred-response shim buffers status()+json() for commit-before-respond
+    // but rejects res.send()/.end() (streaming guard). Mirror of RR-4 Wave 0d.
+    res.status(200).json({ deleted: true, linkId: link.id, riskId, obligationId });
   } catch (err) {
     logger.error(
       { event: "risk_obligation_link_delete_failed", err, riskId, obligationId },
@@ -469,12 +473,19 @@ export async function listRisksForObligation(
    targeted behavioral tests.
    ========================================================= */
 
+// All four handlers are asTenant()-wrapped (Wave 0d): each runs in a per-request
+// tenant transaction with app.current_org_id set, so the RLS policy on
+// risk_obligation_links (20260701_risk_obligation_links_rls) filters correctly at
+// the DATABASE_URL flip. Pre-wrap audit: every handler ends in a single
+// res.status().json() (DELETE moved 204.send→200.json above), uses only
+// sequential awaits (no Promise.all on the tenant client), and the non-awaited
+// writeAuditEvent runs on its own pgElevated pool (safe across the wrap boundary).
 router.post(
   "/risks/:id/obligations",
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  createRiskObligationLink
+  asTenant(createRiskObligationLink)
 );
 
 router.delete(
@@ -482,7 +493,7 @@ router.delete(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  deleteRiskObligationLink
+  asTenant(deleteRiskObligationLink)
 );
 
 router.get(
@@ -490,7 +501,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  listObligationsForRisk
+  asTenant(listObligationsForRisk)
 );
 
 router.get(
@@ -498,7 +509,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  listRisksForObligation
+  asTenant(listRisksForObligation)
 );
 
 export default router;
