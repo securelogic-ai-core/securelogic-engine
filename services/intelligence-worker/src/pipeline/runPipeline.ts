@@ -1,5 +1,3 @@
-import crypto from "crypto";
-
 // rssCollector.ts retired — CISA coverage handled by regulatoryFeed.ts
 // import { collectRssSignals } from "../collectors/rssCollector.js";
 
@@ -35,6 +33,7 @@ import {
   runMatcherForSignal,
   type CyberSignalRecord
 } from "../../../../src/api/lib/cyberSignalProcessingService.js";
+import { buildDedupHash } from "../../../../src/api/lib/cyberSignalNormalizer.js";
 
 export type PipelineResult = {
   signals: number;
@@ -81,6 +80,7 @@ type BridgeableSignal = {
   category: string;
   title: string;
   summary: string;
+  url: string | null;
   affectedCve: string | null;
   affectedVendor: string | null;
   impactScore: number;
@@ -97,9 +97,23 @@ async function bridgeSignalsToCyberSignals(
     const signalType = mapCategoryToSignalType(signal.category);
     const severity = mapImpactToSeverity(signal.impactScore);
 
-    const dedupInput =
-      `${signal.source}|${signalType}|${signal.affectedCve ?? ""}|${signal.affectedVendor ?? ""}`.toLowerCase();
-    const dedupHash = crypto.createHash("sha256").update(dedupInput).digest("hex");
+    // Per-item dedup discriminator. The vendorless/CVE-less feeds (every
+    // regulatory/news/AI/vendor RSS source) carry no affected_cve and no
+    // affected_vendor, so the legacy source|signal_type|cve|vendor key
+    // collapsed every item to ONE row per (source, signal_type), starving
+    // the matcher fan-out. We feed the RSS item URL (the guid/link) as the
+    // external_id discriminator — falling back to the title so a url-less
+    // item still does not collapse against its siblings. Reuses the canonical
+    // buildDedupHash (same call shape as the normalizer / kevPoller path);
+    // no second hash implementation.
+    const externalId = signal.url ?? signal.title;
+    const dedupHash = buildDedupHash(
+      signal.source,
+      signalType,
+      signal.affectedCve,
+      signal.affectedVendor,
+      externalId
+    );
 
     const normalizedSummary = signal.summary.slice(0, 2000) || signal.title;
 
@@ -114,13 +128,14 @@ async function bridgeSignalsToCyberSignals(
           normalized_summary,
           affected_vendor,
           affected_cve,
+          external_id,
           dedup_hash,
           processed
         ) VALUES (
           NULL, $1, $2, $3,
           $4::jsonb, $5,
           $6, $7,
-          $8, FALSE
+          $8, $9, FALSE
         )
         ON CONFLICT (dedup_hash) WHERE organization_id IS NULL DO NOTHING
         RETURNING id`,
@@ -132,6 +147,7 @@ async function bridgeSignalsToCyberSignals(
           normalizedSummary,
           signal.affectedVendor,
           signal.affectedCve,
+          externalId,
           dedupHash
         ]
       );
@@ -376,6 +392,7 @@ export async function runPipeline(): Promise<PipelineResult> {
           category: signal.category ?? "GENERAL",
           title: signal.title ?? "",
           summary: signal.summary ?? "",
+          url: signal.url ?? null,
           affectedCve: signal.affectedCve ?? null,
           affectedVendor: signal.affectedVendor ?? null,
           impactScore: scores.impactScore
