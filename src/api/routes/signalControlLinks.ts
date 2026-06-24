@@ -45,6 +45,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import {
   validateSignalControlLinkCreate,
@@ -464,12 +465,17 @@ export async function listControlsForSignal(req: Request, res: Response): Promis
    direct invocation in targeted behavioral tests.
    ========================================================= */
 
+// All four handlers are asTenant()-wrapped (A04-G1 phase-3) — same posture as
+// signalVendorLinks: single status().json() terminals (DELETE 200 json),
+// sequential awaits, writeAuditEvent on its own pgElevated pool, and the table
+// is written only by these routes → full coverage for the RLS policy in
+// 20260702_signal_control_links_rls at the DATABASE_URL flip.
 router.post(
   "/signal-control-links",
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  createSignalControlLink
+  asTenant(createSignalControlLink)
 );
 
 router.delete(
@@ -477,7 +483,7 @@ router.delete(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  deleteSignalControlLink
+  asTenant(deleteSignalControlLink)
 );
 
 router.get(
@@ -485,7 +491,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  listSignalsForControl
+  asTenant(listSignalsForControl)
 );
 
 router.get(
@@ -493,7 +499,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  listControlsForSignal
+  asTenant(listControlsForSignal)
 );
 
 export default router;
