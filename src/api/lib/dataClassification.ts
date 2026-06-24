@@ -148,7 +148,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   signal_match_suggestions: { category: "C", userRefColumns: ["accepted_by_user_id", "dismissed_by_user_id"], piiRisk: "medium", rlsStatus: "pending" },
   signal_vendor_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
   signal_ai_system_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "pending" },
-  signal_control_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "pending" },
+  signal_control_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
   signal_obligation_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "pending" },
 
   // ── D — Org data not tied to a specific user (leave alone on user delete) ──
