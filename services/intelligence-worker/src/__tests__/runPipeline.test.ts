@@ -272,3 +272,28 @@ describe("bridge dedup behaviour — collapse is fixed", () => {
     expect(hashA).not.toBe(hashB);
   });
 });
+
+describe("runPipeline.ts source — matcher alert wiring (flag-gated)", () => {
+  it("imports the alert batcher and the matcher-alerts flag", () => {
+    expect(source).toMatch(/import \{ createAlertBatcher \} from "[^"]*alerting\/alertService\.js"/);
+    expect(source).toMatch(/import \{ matcherAlertsEnabled \} from "[^"]*alerting\/matcherAlertsFeatureFlag\.js"/);
+  });
+
+  it("creates the batcher only when the flag is enabled (null otherwise)", () => {
+    expect(source).toMatch(
+      /const alertBatcher = matcherAlertsEnabled\(\)\s*\?\s*createAlertBatcher\("critical_finding", "pipeline"\)\s*:\s*null;/
+    );
+  });
+
+  it("adds only Critical/High committed findings to the batch inside the loop", () => {
+    expect(source).toMatch(
+      /if \(alertBatcher && result\.finding\) \{[\s\S]*?sev === "Critical" \|\| sev === "High"[\s\S]*?alertBatcher\.add\(org\.id/
+    );
+  });
+
+  it("flushes after the loop, non-fatal", () => {
+    expect(source).toMatch(
+      /if \(alertBatcher\) \{[\s\S]*?await alertBatcher\.flush\(\)[\s\S]*?matcher_fanout_alert_flush_failed/
+    );
+  });
+});

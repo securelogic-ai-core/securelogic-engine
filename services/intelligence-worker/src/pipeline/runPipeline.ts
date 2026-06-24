@@ -39,6 +39,8 @@ import {
 // Mirrors processSignal phase 7, which runs the control matcher AFTER its commit.
 import { runLlmControlMatcherForSignal } from "../../../../src/api/lib/llmControlMatcher.js";
 import { buildDedupHash } from "../../../../src/api/lib/cyberSignalNormalizer.js";
+import { createAlertBatcher } from "../../../../src/api/lib/alerting/alertService.js";
+import { matcherAlertsEnabled } from "../../../../src/api/lib/alerting/matcherAlertsFeatureFlag.js";
 
 export type PipelineResult = {
   signals: number;
@@ -285,6 +287,14 @@ async function fanOutMatcherToActiveOrgs(
     };
   }
 
+  // Real-time critical-alert coalescing (flag-gated, OFF by default). Collect
+  // this cycle's new Critical/High findings per org; flush ONE email per org
+  // after the fan-out completes. runMatcherForSignal commits before returning
+  // result.finding, so collection here is inherently post-commit.
+  const alertBatcher = matcherAlertsEnabled()
+    ? createAlertBatcher("critical_finding", "pipeline")
+    : null;
+
   for (const signal of signals) {
     for (const org of activeOrgs) {
       pairsAttempted++;
@@ -293,6 +303,18 @@ async function fanOutMatcherToActiveOrgs(
         pairsSucceeded++;
         if (result.matched_branch !== "no_match") {
           matchesProduced++;
+        }
+
+        if (alertBatcher && result.finding) {
+          const sev = result.finding.severity as string;
+          if (sev === "Critical" || sev === "High") {
+            alertBatcher.add(org.id, {
+              findingId: result.finding.id as string,
+              title: (result.finding.title as string) ?? "",
+              severity: sev,
+              domain: (result.finding.domain as string | null) ?? null
+            });
+          }
         }
 
         // Post-matcher sibling — LLM control matcher (suggest-only, self-gated,
@@ -317,6 +339,19 @@ async function fanOutMatcherToActiveOrgs(
           "Matcher fan-out pair failed; continuing with remaining pairs"
         );
       }
+    }
+  }
+
+  // Flush coalesced alerts — one email per org for this cycle's criticals.
+  // Non-fatal: an alert failure must never break the ingestion cycle.
+  if (alertBatcher) {
+    try {
+      await alertBatcher.flush();
+    } catch (err) {
+      logger.warn(
+        { event: "matcher_fanout_alert_flush_failed", err },
+        "Matcher alert flush failed (non-fatal)"
+      );
     }
   }
 
