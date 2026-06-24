@@ -11,7 +11,7 @@
 import { Router } from "express";
 import type { Response } from "express";
 import PDFDocument from "pdfkit";
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -117,37 +117,29 @@ function daysOpen(createdAt: string): number {
 // ─── Data assembly ────────────────────────────────────────────────────────────
 
 async function assembleExecReport(organizationId: string): Promise<ExecReportData> {
-  const [
-    orgResult,
-    postureResult,
-    riskResult,
-    inherentRiskResult,
-    frameworkResult,
-    findingsSevResult,
-    recentFindingsResult,
-    actionsResult,
-  ] = await Promise.all([
+  // Serialized reads (single tenant client under withTenant; see
+  // docs/investigation/rls-aggregator-track-determination-2026-06-24.md).
 
     // 1. Org name
-    pg.query<{ name: string }>(
+  const orgResult = await pg.query<{ name: string }>(
       `SELECT name FROM organizations WHERE id = $1`,
       [organizationId]
-    ),
+    );
 
     // 2. Latest posture snapshot
-    pg.query<PostureRow>(
+  const postureResult = await pg.query<PostureRow>(
       `SELECT overall_score, overall_severity, snapshot_date::text AS snapshot_date
        FROM posture_snapshots
        WHERE organization_id = $1
        ORDER BY snapshot_date DESC
        LIMIT 1`,
       [organizationId]
-    ),
+    );
 
     // 3. Open risks by RESIDUAL rating per Decision §3 — the executive
     // report shows the post-controls assessment as primary. Inherent
     // is collected separately (next pg.query) for context.
-    pg.query<{ residual_rating: string; count: string }>(
+  const riskResult = await pg.query<{ residual_rating: string; count: string }>(
       `SELECT residual_rating, COUNT(*)::text AS count
        FROM risks
        WHERE organization_id = $1
@@ -159,10 +151,10 @@ async function assembleExecReport(organizationId: string): Promise<ExecReportDat
          WHEN 'Moderate' THEN 3 WHEN 'Low'  THEN 4
          ELSE 5 END`,
       [organizationId]
-    ),
+    );
 
     // 3b. Open risks by INHERENT rating — context only.
-    pg.query<{ inherent_rating: string; count: string }>(
+  const inherentRiskResult = await pg.query<{ inherent_rating: string; count: string }>(
       `SELECT inherent_rating, COUNT(*)::text AS count
        FROM risks
        WHERE organization_id = $1
@@ -174,16 +166,16 @@ async function assembleExecReport(organizationId: string): Promise<ExecReportDat
          WHEN 'Moderate' THEN 3 WHEN 'Low'  THEN 4
          ELSE 5 END`,
       [organizationId]
-    ),
+    );
 
     // 4. Framework compliance via control-mapping logic (same as gapReport.ts)
-    pg.query<FrameworkRow>(
+  const frameworkResult = await pg.query<FrameworkRow>(
       `WITH fw_reqs AS (
          SELECT f.id AS framework_id, f.name, f.version, r.id AS req_id
          FROM frameworks f
          JOIN requirements r ON r.framework_id = f.id
          WHERE f.organization_id = $1
-       ),
+       );
        req_status AS (
          SELECT
            fr.framework_id,
@@ -221,10 +213,10 @@ async function assembleExecReport(organizationId: string): Promise<ExecReportDat
        GROUP BY framework_id, name, version
        ORDER BY name`,
       [organizationId]
-    ),
+    );
 
     // 5. Open findings by severity
-    pg.query<FindingSeverityRow>(
+  const findingsSevResult = await pg.query<FindingSeverityRow>(
       `SELECT severity, COUNT(*)::text AS count
        FROM findings
        WHERE organization_id = $1
@@ -235,10 +227,10 @@ async function assembleExecReport(organizationId: string): Promise<ExecReportDat
          WHEN 'Moderate' THEN 3 WHEN 'Low'      THEN 4
          ELSE 5 END`,
       [organizationId]
-    ),
+    );
 
     // 6. 5 most critical open findings (for the findings table)
-    pg.query<RecentFinding>(
+  const recentFindingsResult = await pg.query<RecentFinding>(
       `SELECT title, severity, status, created_at::text AS created_at
        FROM findings
        WHERE organization_id = $1
@@ -251,17 +243,16 @@ async function assembleExecReport(organizationId: string): Promise<ExecReportDat
          created_at ASC
        LIMIT 5`,
       [organizationId]
-    ),
+    );
 
     // 7. Open actions count
-    pg.query<{ count: string }>(
+  const actionsResult = await pg.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count
        FROM actions
        WHERE organization_id = $1
          AND status NOT IN ('done', 'cancelled', 'closed', 'resolved')`,
       [organizationId]
-    ),
-  ]);
+    );
 
   return {
     generated_at:       new Date().toISOString(),
@@ -792,7 +783,7 @@ router.get(
 
     let data: ExecReportData;
     try {
-      data = await assembleExecReport(organizationId);
+      data = await withTenant(organizationId, () => assembleExecReport(organizationId));
     } catch (err) {
       logger.error({ event: "executive_report_assembly_failed", err }, "executive report assembly failed");
       res.status(500).json({ error: "executive_report_failed" });

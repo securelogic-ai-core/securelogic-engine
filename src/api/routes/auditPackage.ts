@@ -12,7 +12,7 @@
 
 import { Router } from "express";
 import PDFDocument from "pdfkit";
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -339,7 +339,7 @@ router.get(
     }
 
     try {
-      const pkg = await assembleAuditPackage(organizationId, frameworkId);
+      const pkg = await withTenant(organizationId, () => assembleAuditPackage(organizationId, frameworkId));
       if (!pkg) {
         res.status(404).json({ error: "framework_not_found" });
         return;
@@ -419,7 +419,7 @@ router.get(
 
     let pkg: AuditPackage | null;
     try {
-      pkg = await assembleAuditPackage(organizationId, frameworkId);
+      pkg = await withTenant(organizationId, () => assembleAuditPackage(organizationId, frameworkId));
     } catch (err) {
       logger.error({ event: "audit_package_pdf_failed", err }, "PDF assembly failed");
       res.status(500).json({ error: "audit_package_failed" });
