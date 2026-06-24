@@ -4,6 +4,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 
 const router = Router();
 
@@ -139,8 +140,9 @@ router.get("/intelligence/:id", async (req, res, next) => {
 // chain in index.ts applies to GET routes mounted there; POST routes added
 // here also need explicit guards so they are not left open).
 //
-// Six parallel queries are run and assembled by the pure buildLeadershipSummary
-// function, which is exported for unit testing.
+// Six sequential queries are run and assembled by the pure buildLeadershipSummary
+// function, which is exported for unit testing. (Sequential, not parallel: the
+// asTenant wrap runs the handler on one tenant client — see the handler body.)
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
@@ -416,7 +418,7 @@ export function buildLeadershipSummary(
    POST /api/intelligence/summary
    Leadership intelligence summary — live structured payload.
 
-   Runs six parallel DB queries and assembles a response
+   Runs six sequential DB queries and assembles a response
    designed for executive dashboards and decision support.
    No mocked or hardcoded values. Every field comes from
    a live DB query scoped to the calling organization.
@@ -427,7 +429,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -437,21 +439,16 @@ router.post(
         return;
       }
 
-      // Run all six queries in parallel.
-      const [
-        topRisksResult,
-        affectedEntitiesResult,
-        highCriticalFindingsResult,
-        treatmentSummaryResult,
-        recentSignalsResult,
-        snapshotsResult
-      ] = await Promise.all([
+      // Serialized sequential reads (was Promise.all). The asTenant wrap runs
+      // this handler on a SINGLE tenant client; concurrent pg.query on one client
+      // is unsafe (pg@8 serializes with a warning, pg@9 throws). Sequential awaits
+      // preserve identical results. See feedback_route_wrap_concurrent_query.
 
         // 1. Top 5 open risks by RESIDUAL severity then recency.
         // Residual is the post-controls assessment; matches the
         // executive intuition of "what should we be most worried about
         // RIGHT NOW given current mitigations." Decision §3 + §4.
-        pg.query<TopRiskRow>(
+        const topRisksResult = await pg.query<TopRiskRow>(
           `
           SELECT
             id,
@@ -479,7 +476,7 @@ router.post(
           LIMIT 5
           `,
           [organizationId]
-        ),
+        );
 
         // 2. Entities (vendors, AI systems, dependencies) that have open findings,
         //    aggregated across all workflow source types that link to a named entity.
@@ -489,7 +486,7 @@ router.post(
         //                     dependency_review → dependencies,
         //                     cyber_signal → vendors (via affected_vendor match).
         //    Outer GROUP BY deduplicates entities that appear in multiple paths.
-        pg.query<AffectedEntityRow>(
+        const affectedEntitiesResult = await pg.query<AffectedEntityRow>(
           `
           SELECT
             entity_id,
@@ -619,11 +616,11 @@ router.post(
           ORDER BY MAX(max_sev_rank) DESC, SUM(finding_count) DESC
           `,
           [organizationId]
-        ),
+        );
 
         // 3. Open findings with High or Critical severity driving posture down,
         //    ordered by severity then creation date.
-        pg.query<HighCriticalFindingRow>(
+        const highCriticalFindingsResult = await pg.query<HighCriticalFindingRow>(
           `
           SELECT
             id,
@@ -647,11 +644,11 @@ router.post(
           LIMIT 25
           `,
           [organizationId]
-        ),
+        );
 
         // 4. Risk treatment status: in_progress count, overdue count (past due_date
         //    and not yet in a terminal state), total active (non-terminal) count.
-        pg.query<TreatmentSummaryRow>(
+        const treatmentSummaryResult = await pg.query<TreatmentSummaryRow>(
           `
           SELECT
             COUNT(*) FILTER (
@@ -669,10 +666,10 @@ router.post(
           WHERE organization_id = $1
           `,
           [organizationId]
-        ),
+        );
 
         // 5. Cyber signals ingested in the last 7 days, with linked finding context.
-        pg.query<RecentSignalRow>(
+        const recentSignalsResult = await pg.query<RecentSignalRow>(
           `
           SELECT
             cs.id,
@@ -697,10 +694,10 @@ router.post(
           LIMIT 25
           `,
           [organizationId]
-        ),
+        );
 
         // 6. Two most recent posture snapshots for current state and trend comparison.
-        pg.query<PostureSnapshotRow>(
+        const snapshotsResult = await pg.query<PostureSnapshotRow>(
           `
           SELECT
             id,
@@ -714,8 +711,7 @@ router.post(
           LIMIT 2
           `,
           [organizationId]
-        )
-      ]);
+        );
 
       const snapshots = snapshotsResult.rows;
       const currentSnapshot = snapshots[0] ?? null;
@@ -752,7 +748,7 @@ router.post(
       );
       res.status(500).json({ error: "intelligence_summary_failed" });
     }
-  }
+  })
 );
 
 export default router;
