@@ -661,12 +661,19 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     threatIntelSignals = signals;
     summary.signals_fetched.threat_intel_rss = signals.length;
     await recordFeedSuccess("threat_intel_rss", signals.length);
-    // Log per-source results
+    // Record per-feed health (in ADDITION to the aggregate "threat_intel_rss"
+    // row above): fetchAllFeeds isolates per-source failures and still returns
+    // the surviving feeds' signals, so a single dead feed never throws here and
+    // the aggregate row records success. Without per-feed recording, that
+    // individual feed would rot silently — the exact failure mode feed_health
+    // exists to catch. Each registry feed id is its own feed_health source key.
     for (const [src, r] of Object.entries(results)) {
       if (r.error) {
         summary.errors.push(`threat_intel_rss[${src}]: ${r.error}`);
+        await recordFeedFailure(src, r.error);
         logger.warn({ event: "scheduler_threat_rss_source_failed", src, error: r.error }, "Threat intel RSS source failed");
       } else {
+        await recordFeedSuccess(src, r.mapped);
         logger.info({ event: "scheduler_threat_rss_source_fetched", src, total: r.total, mapped: r.mapped }, "Threat intel RSS source fetched");
       }
     }
@@ -686,11 +693,17 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     regulatorySignals = signals;
     summary.signals_fetched.regulatory = signals.length;
     await recordFeedSuccess("regulatory", signals.length);
+    // Record per-feed health (in ADDITION to the aggregate "regulatory" row):
+    // see the threat_intel_rss loop above — a single dead registry feed (e.g.
+    // ftc_news) must accrue its own consecutive_failures so feed_source_down
+    // fires for it, instead of being masked by the aggregate's success.
     for (const [src, r] of Object.entries(results)) {
       if (r.error) {
         summary.errors.push(`regulatory[${src}]: ${r.error}`);
+        await recordFeedFailure(src, r.error);
         logger.warn({ event: "scheduler_regulatory_source_failed", src, error: r.error }, "Regulatory feed source failed");
       } else {
+        await recordFeedSuccess(src, r.mapped);
         logger.info({ event: "scheduler_regulatory_source_fetched", src, total: r.total, mapped: r.mapped }, "Regulatory feed source fetched");
       }
     }

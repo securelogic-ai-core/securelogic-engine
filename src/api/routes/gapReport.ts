@@ -12,7 +12,7 @@
 import { Router } from "express";
 import type { Response } from "express";
 import PDFDocument from "pdfkit";
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -163,20 +163,21 @@ async function assembleGapReport(
   // 3. Control mappings + open findings (parallel)
   const reqIds = requirements.map((r) => r.id);
 
-  const [mappingsResult, findingsResult] = await Promise.all([
-    reqIds.length > 0
-      ? pg.query<{ requirement_id: string; control_id: string; control_name: string }>(
-          `SELECT cm.requirement_id, cm.control_id, c.name AS control_name
+  // Serialized reads (single tenant client under withTenant; see
+  // docs/investigation/rls-aggregator-track-determination-2026-06-24.md).
+  const mappingsResult = reqIds.length > 0
+    ? await pg.query<{ requirement_id: string; control_id: string; control_name: string }>(
+        `SELECT cm.requirement_id, cm.control_id, c.name AS control_name
            FROM control_mappings cm
            JOIN controls c ON c.id = cm.control_id
            WHERE cm.requirement_id = ANY($1::uuid[])
              AND c.organization_id = $2`,
-          [reqIds, organizationId]
-        )
-      : Promise.resolve({ rows: [] as Array<{ requirement_id: string; control_id: string; control_name: string }> }),
+        [reqIds, organizationId]
+      )
+    : { rows: [] as Array<{ requirement_id: string; control_id: string; control_name: string }> };
 
-    pg.query<{ severity: string; count: string }>(
-      `SELECT severity, COUNT(*)::text AS count
+  const findingsResult = await pg.query<{ severity: string; count: string }>(
+    `SELECT severity, COUNT(*)::text AS count
        FROM findings
        WHERE organization_id = $1
          AND status IN ('open', 'in_progress')
@@ -185,9 +186,8 @@ async function assembleGapReport(
          WHEN 'Critical' THEN 1 WHEN 'High'     THEN 2
          WHEN 'Moderate' THEN 3 WHEN 'Low'      THEN 4
          ELSE 5 END`,
-      [organizationId]
-    ),
-  ]);
+    [organizationId]
+  );
 
   // Build requirement → controls map
   const mappingsByReq = new Map<string, Array<{ control_id: string; control_name: string }>>();
@@ -204,18 +204,17 @@ async function assembleGapReport(
   const overdueByControl      = new Map<string, boolean>();
 
   if (allControlIds.length > 0) {
-    const [assessmentsResult, controlsResult] = await Promise.all([
-      pg.query<{ control_id: string; latest_status: string }>(
-        `SELECT DISTINCT ON (ca.control_id)
+    const assessmentsResult = await pg.query<{ control_id: string; latest_status: string }>(
+      `SELECT DISTINCT ON (ca.control_id)
            ca.control_id, ca.status AS latest_status
          FROM control_assessments ca
          WHERE ca.control_id = ANY($1::uuid[])
            AND ca.organization_id = $2
          ORDER BY ca.control_id, ca.created_at DESC, ca.id DESC`,
-        [allControlIds, organizationId]
-      ),
-      pg.query<{ id: string; is_overdue: boolean }>(
-        `SELECT id,
+      [allControlIds, organizationId]
+    );
+    const controlsResult = await pg.query<{ id: string; is_overdue: boolean }>(
+      `SELECT id,
            (next_test_due IS NOT NULL
             AND next_test_due < CURRENT_DATE
             AND testing_frequency IS NOT NULL
@@ -224,9 +223,8 @@ async function assembleGapReport(
          FROM controls
          WHERE id = ANY($1::uuid[])
            AND organization_id = $2`,
-        [allControlIds, organizationId]
-      ),
-    ]);
+      [allControlIds, organizationId]
+    );
 
     for (const row of assessmentsResult.rows) {
       latestStatusByControl.set(row.control_id, row.latest_status);
@@ -949,7 +947,7 @@ router.get(
 
     let data: GapReportData | null;
     try {
-      data = await assembleGapReport(organizationId, frameworkId);
+      data = await withTenant(organizationId, () => assembleGapReport(organizationId, frameworkId));
     } catch (err) {
       logger.error({ event: "gap_report_assembly_failed", err }, "gap report assembly failed");
       res.status(500).json({ error: "gap_report_failed" });

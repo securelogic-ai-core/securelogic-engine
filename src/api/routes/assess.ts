@@ -3,7 +3,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { logger } from "../infra/logger.js";
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { RunnerEngine } from "../../engine/RunnerEngine.js";
 import type { EngineInput } from "../../engine/contracts/EngineInput.js";
 import { severityToPriority } from "../lib/postureComputation.js";
@@ -128,6 +128,12 @@ function validateAssessmentInput(body: unknown): { input: EngineInput } | { erro
 /**
  * Persist the completed assessment, its findings, and its report
  * to Postgres in a single transaction.
+ *
+ * Called inside withTenant(orgId) (A04-G1): the pg.connect() below returns a
+ * savepoint client on the tenant connection, so BEGIN/COMMIT nest as
+ * SAVEPOINT/RELEASE inside the request transaction and client.release() is a
+ * no-op. All three INSERTs stamp organization_id explicitly and run under the
+ * app.current_org_id GUC, satisfying RLS WITH CHECK after the flip.
  *
  * Returns the DB-generated assessment UUID.
  */
@@ -295,10 +301,23 @@ router.post(
       const approvalStatus = severityToApprovalStatus(severity);
       const dominantDomains: string[] = [...new Set(drivers)].slice(0, 5);
 
-      // Persist to DB — returns the canonical DB assessment UUID
+      // Persist to DB — returns the canonical DB assessment UUID.
+      //
+      // A04-G1: scope ONLY the persist step in withTenant(orgId), not the whole
+      // handler. engine.run() above is pure compute (DB-free), so wrapping the
+      // route with asTenant would needlessly hold a tenant transaction + pooled
+      // connection open across the engine run. withTenant opens one tx, sets the
+      // app.current_org_id GUC, and runs persistAssessment inside the scope so
+      // its pg.connect() returns a savepoint client on the tenant connection —
+      // the assessments/findings/reports writes then satisfy RLS WITH CHECK at
+      // the owner->app_request flip. (findings already has RLS enabled, so this
+      // also closes a latent pre-flip break on the findings INSERT below.)
+      // Commit-before-respond holds: withTenant COMMITs before res.json() runs.
       let assessmentId: string;
       try {
-        assessmentId = await persistAssessment(organizationId, input, result, severity, framework);
+        assessmentId = await withTenant(organizationId, () =>
+          persistAssessment(organizationId, input, result, severity, framework)
+        );
       } catch (dbErr) {
         logger.error(
           { event: "assessment_persist_failed", dbErr },

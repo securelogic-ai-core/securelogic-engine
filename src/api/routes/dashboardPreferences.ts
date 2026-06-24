@@ -5,6 +5,7 @@ import { writeAuditEvent } from "../lib/auditLog.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 
 const router = Router();
 
@@ -114,7 +115,7 @@ router.get(
   "/dashboard/preferences",
   requireApiKey,
   attachOrganizationContext,
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const userId = req.userId;
       const organizationId = (req as any).organizationContext?.organizationId as string | undefined;
@@ -133,7 +134,7 @@ router.get(
       logger.error({ event: "dashboard_prefs_get_failed", err }, "GET /api/dashboard/preferences failed");
       res.status(500).json({ error: "dashboard_prefs_get_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -146,7 +147,7 @@ router.put(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const userId = req.userId;
       const organizationId = (req as any).organizationContext?.organizationId as string | undefined;
@@ -191,7 +192,7 @@ router.put(
       logger.error({ event: "dashboard_prefs_put_failed", err }, "PUT /api/dashboard/preferences failed");
       res.status(500).json({ error: "dashboard_prefs_put_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -205,7 +206,7 @@ router.delete(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const userId = req.userId;
       const organizationId = (req as any).organizationContext?.organizationId as string | undefined;
@@ -240,7 +241,7 @@ router.delete(
       logger.error({ event: "dashboard_prefs_delete_failed", err }, "DELETE /api/dashboard/preferences failed");
       res.status(500).json({ error: "dashboard_prefs_delete_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -254,7 +255,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       if (req.userRole !== "admin") {
         res.status(403).json({ error: "admin_required" });
@@ -283,7 +284,7 @@ router.get(
       logger.error({ event: "dashboard_org_prefs_get_failed", err }, "GET /api/dashboard/preferences/org failed");
       res.status(500).json({ error: "dashboard_org_prefs_get_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -296,7 +297,7 @@ router.put(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       if (req.userRole !== "admin") {
         res.status(403).json({ error: "admin_required" });
@@ -345,7 +346,7 @@ router.put(
       logger.error({ event: "dashboard_org_prefs_put_failed", err }, "PUT /api/dashboard/preferences/org failed");
       res.status(500).json({ error: "dashboard_org_prefs_put_failed" });
     }
-  }
+  })
 );
 
 export default router;

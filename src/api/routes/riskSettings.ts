@@ -30,6 +30,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { DEFAULT_CADENCE_BY_RATING, VALID_RATINGS } from "../lib/riskCadence.js";
 import { validateRiskSettingsPut } from "../lib/riskSettingsValidation.js";
@@ -249,7 +250,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  getRiskSettings
+  asTenant(getRiskSettings)
 );
 
 router.put(
@@ -257,7 +258,7 @@ router.put(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  putRiskSettings
+  asTenant(putRiskSettings)
 );
 
 export default router;

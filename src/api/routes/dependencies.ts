@@ -23,6 +23,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import {
   validateDependencyCreate,
   validateDependencyUpdate,
@@ -125,7 +126,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -221,7 +222,7 @@ router.post(
     } finally {
       client.release();
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -236,7 +237,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -312,7 +313,7 @@ router.get(
       );
       res.status(500).json({ error: "dependency_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -328,7 +329,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -338,37 +339,36 @@ router.get(
     }
 
     try {
-      const [byCriticalityResult, byStatusResult, byTypeResult] =
-        await Promise.all([
-          pg.query<{ criticality: string; count: string }>(
-            `
-            SELECT criticality, COUNT(*)::text AS count
-            FROM dependencies
-            WHERE organization_id = $1
-            GROUP BY criticality
-            `,
-            [organizationId]
-          ),
-          pg.query<{ status: string; count: string }>(
-            `
-            SELECT status, COUNT(*)::text AS count
-            FROM dependencies
-            WHERE organization_id = $1
-            GROUP BY status
-            `,
-            [organizationId]
-          ),
-          pg.query<{ dependency_type: string; count: string }>(
-            `
-            SELECT dependency_type, COUNT(*)::text AS count
-            FROM dependencies
-            WHERE organization_id = $1
-            GROUP BY dependency_type
-            ORDER BY count DESC, dependency_type ASC
-            `,
-            [organizationId]
-          )
-        ]);
+      // Serialized reads (single tenant client under asTenant; concurrent
+      // pg.query on one client is unsafe — pg@8 serializes+warns, pg@9 throws).
+      const byCriticalityResult = await pg.query<{ criticality: string; count: string }>(
+        `
+        SELECT criticality, COUNT(*)::text AS count
+        FROM dependencies
+        WHERE organization_id = $1
+        GROUP BY criticality
+        `,
+        [organizationId]
+      );
+      const byStatusResult = await pg.query<{ status: string; count: string }>(
+        `
+        SELECT status, COUNT(*)::text AS count
+        FROM dependencies
+        WHERE organization_id = $1
+        GROUP BY status
+        `,
+        [organizationId]
+      );
+      const byTypeResult = await pg.query<{ dependency_type: string; count: string }>(
+        `
+        SELECT dependency_type, COUNT(*)::text AS count
+        FROM dependencies
+        WHERE organization_id = $1
+        GROUP BY dependency_type
+        ORDER BY count DESC, dependency_type ASC
+        `,
+        [organizationId]
+      );
 
       const summary = buildDependencySummary(
         byCriticalityResult.rows,
@@ -384,7 +384,7 @@ router.get(
       );
       res.status(500).json({ error: "dependency_summary_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -398,7 +398,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -441,7 +441,7 @@ router.get(
       );
       res.status(500).json({ error: "dependency_get_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -456,7 +456,7 @@ router.patch(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -575,7 +575,7 @@ router.patch(
     } finally {
       client.release();
     }
-  }
+  })
 );
 
 export default router;
