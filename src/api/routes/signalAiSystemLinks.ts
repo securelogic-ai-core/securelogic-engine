@@ -40,6 +40,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import {
   validateSignalAiSystemLinkCreate,
@@ -454,12 +455,17 @@ export async function listAiSystemsForSignal(req: Request, res: Response): Promi
    direct invocation in targeted behavioral tests.
    ========================================================= */
 
+// All four handlers are asTenant()-wrapped (A04-G1 phase-3) — same posture as
+// the other signal-link tables: single status().json() terminals (DELETE 200
+// json), sequential awaits, writeAuditEvent on its own pgElevated pool, and the
+// table is written only by these routes → full coverage for the RLS policy in
+// 20260702_signal_ai_system_links_rls at the DATABASE_URL flip.
 router.post(
   "/signal-ai-system-links",
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  createSignalAiSystemLink
+  asTenant(createSignalAiSystemLink)
 );
 
 router.delete(
@@ -467,7 +473,7 @@ router.delete(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  deleteSignalAiSystemLink
+  asTenant(deleteSignalAiSystemLink)
 );
 
 router.get(
@@ -475,7 +481,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  listSignalsForAiSystem
+  asTenant(listSignalsForAiSystem)
 );
 
 router.get(
@@ -483,7 +489,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  listAiSystemsForSignal
+  asTenant(listAiSystemsForSignal)
 );
 
 export default router;
