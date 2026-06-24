@@ -441,7 +441,9 @@ services:
       - key: APP_BASE_URL
         sync: false
 
-      # Currently unused by the worker; reserved for future Path 4 enrichment paths.
+      # Consumed by the LLM control matcher (PR #345) on the signal-ingestion
+      # fan-out when SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED=true. Must be set in
+      # the dashboard or the matcher no-ops (llm_unavailable).
       - key: ANTHROPIC_API_KEY
         sync: false
 
