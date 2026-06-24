@@ -18,7 +18,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { instrumentAnthropicClient } from "../infra/providerQuotaAlert.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
@@ -137,7 +137,7 @@ router.post(
       // -----------------------------------------------------------------------
       // Fetch all context data in parallel — 8 queries (+ risk scale)
       // -----------------------------------------------------------------------
-      const [
+      const {
         postureResult,
         domainResult,
         findingsSummaryResult,
@@ -147,9 +147,12 @@ router.post(
         actionsSummaryResult,
         criticalFindingsResult,
         riskScaleResult,
-      ] = await Promise.all([
+      } = await withTenant(organizationId, async () => {
+        // Serialized reads on the single tenant client (commit-then-compute):
+        // the Claude call below runs AFTER this tenant tx COMMITs, so the DB
+        // connection is never held open across the multi-second LLM round-trip.
         // 1. Latest posture snapshot
-        pg.query<{
+        const postureResult = await pg.query<{
           overall_score: number | null;
           overall_severity: string | null;
           open_finding_count: number;
@@ -166,10 +169,10 @@ router.post(
            ORDER BY snapshot_date DESC
            LIMIT 1`,
           [organizationId]
-        ),
+        );
 
         // 2. Domain scores from latest snapshot
-        pg.query<{
+        const domainResult = await pg.query<{
           domain: string;
           score: number | null;
           severity: string | null;
@@ -185,10 +188,10 @@ router.post(
            ORDER BY p.snapshot_date DESC, d.score ASC
            LIMIT 20`,
           [organizationId]
-        ),
+        );
 
         // 3. Findings summary
-        pg.query<{
+        const findingsSummaryResult = await pg.query<{
           open_count: string;
           critical_open: string;
           high_open: string;
@@ -212,10 +215,10 @@ router.post(
            FROM findings
            WHERE organization_id = $1`,
           [organizationId]
-        ),
+        );
 
         // 4. Top open risks ordered by severity
-        pg.query<{
+        const topRisksResult = await pg.query<{
           id: string;
           title: string;
           domain: string;
@@ -248,19 +251,19 @@ router.post(
              END ASC
            LIMIT 20`,
           [organizationId]
-        ),
+        );
 
         // 5a. Active vendor count
-        pg.query<{ total: string }>(
+        const vendorCountResult = await pg.query<{ total: string }>(
           `SELECT COUNT(*) AS total
            FROM vendors
            WHERE organization_id = $1
              AND status != 'inactive'`,
           [organizationId]
-        ),
+        );
 
         // 5b. All active vendors ordered by criticality then risk score
-        pg.query<{
+        const vendorsResult = await pg.query<{
           id: string;
           name: string;
           criticality: string | null;
@@ -281,10 +284,10 @@ router.post(
              END,
              current_risk_score DESC NULLS LAST`,
           [organizationId]
-        ),
+        );
 
         // 6. Actions summary
-        pg.query<{
+        const actionsSummaryResult = await pg.query<{
           open_count: string;
           blocked_count: string;
           overdue_count: string;
@@ -300,10 +303,10 @@ router.post(
            FROM actions
            WHERE organization_id = $1`,
           [organizationId]
-        ),
+        );
 
         // 7. Recent high/critical open findings
-        pg.query<{
+        const criticalFindingsResult = await pg.query<{
           title: string;
           severity: string;
           status: string;
@@ -322,10 +325,10 @@ router.post(
              created_at DESC
            LIMIT 15`,
           [organizationId]
-        ),
+        );
 
         // 8. Org risk scale
-        pg.query<{
+        const riskScaleResult = await pg.query<{
           preset_name: string;
           custom_levels: Array<{ value: string; label: string; color: string; rank: number }> | null;
           preset_levels: Array<{ value: string; label: string; color: string; rank: number }>;
@@ -345,8 +348,19 @@ router.post(
              'standard'
            )`,
           [organizationId]
-        ),
-      ]);
+        );
+        return {
+          postureResult,
+          domainResult,
+          findingsSummaryResult,
+          topRisksResult,
+          vendorCountResult,
+          vendorsResult,
+          actionsSummaryResult,
+          criticalFindingsResult,
+          riskScaleResult,
+        };
+      });
 
       // -----------------------------------------------------------------------
       // Assemble context object
