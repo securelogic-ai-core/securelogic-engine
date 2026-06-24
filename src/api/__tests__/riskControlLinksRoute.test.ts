@@ -386,7 +386,10 @@ describe("deleteRiskControlLink", () => {
     const res = makeRes();
     await deleteRiskControlLink(req, res as any);
 
-    expect(res.status).toHaveBeenCalledWith(204);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ deleted: true, linkId: LINK_UUID })
+    );
     expect(mockWriteAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         eventType: "risk_control_link.deleted",
