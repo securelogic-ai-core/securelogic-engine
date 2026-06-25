@@ -7,12 +7,18 @@ const h = vi.hoisted(() => ({
   isDuplicate: vi.fn(),
   recordSend: vi.fn(),
   selectRecipients: vi.fn(),
+  loggerInfo: vi.fn(),
+  loggerWarn: vi.fn(),
 }));
 
 vi.mock("../infra/postgres.js", () => ({
   pg: { query: vi.fn() },
   // passthrough: run the recipient-select callback directly
   withTenant: (_orgId: string, fn: () => Promise<unknown>) => fn(),
+}));
+
+vi.mock("../infra/logger.js", () => ({
+  logger: { info: h.loggerInfo, warn: h.loggerWarn, error: vi.fn() },
 }));
 
 vi.mock("../lib/alerting/alertPrimitives.js", () => ({
@@ -108,12 +114,26 @@ describe("createAlertBatcher — skips", () => {
     expect(r.orgsProcessed).toBe(0);
   });
 
-  it("zero items added → no send, empty result", async () => {
-    const b = createAlertBatcher();
+  it("zero items added → no send, empty result, but heartbeat IS logged", async () => {
+    const b = createAlertBatcher("critical_finding", "test");
     const r = await b.flush();
     expect(h.send).not.toHaveBeenCalled();
     expect(r.emailsSent).toBe(0);
     expect(r.orgsProcessed).toBe(0);
+    // No work on an empty batch — recipient selection never runs...
+    expect(h.selectRecipients).not.toHaveBeenCalled();
+    // ...but the per-cycle heartbeat MUST still fire with all-zero counts.
+    expect(h.loggerInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "alert_batch_flush_complete",
+        itemsAdded: 0,
+        emailsSent: 0,
+        orgsProcessed: 0,
+        recipientsSuppressed: 0,
+        orgsSkippedNoRecipients: 0,
+      }),
+      expect.any(String)
+    );
   });
 });
 
@@ -128,6 +148,12 @@ describe("createAlertBatcher — double-flush guard", () => {
     const second = await b.flush();
     expect(h.send).toHaveBeenCalledTimes(1); // unchanged
     expect(second.emailsSent).toBe(0);
+
+    // Guard stays first: the second flush must NOT emit a second heartbeat.
+    const heartbeats = h.loggerInfo.mock.calls.filter(
+      (c) => (c[0] as { event?: string })?.event === "alert_batch_flush_complete"
+    );
+    expect(heartbeats).toHaveLength(1);
   });
 });
 

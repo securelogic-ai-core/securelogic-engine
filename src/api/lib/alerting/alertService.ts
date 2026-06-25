@@ -119,8 +119,13 @@ export function createAlertBatcher(
     flushed = true;
 
     const result: AlertFlushResult = { ...EMPTY_RESULT, itemsAdded };
-    if (batch.size === 0) return result;
 
+    // No early return on an empty batch. The for-loop below is a no-op when the
+    // batch is empty, so execution falls through to the single
+    // alert_batch_flush_complete log at the end — making that line a per-cycle
+    // HEARTBEAT. Every flag-on cycle emits it (itemsAdded:0 / emailsSent:0 when
+    // there was nothing to alert), so "working, nothing to alert" is
+    // distinguishable from "silently broken" (no log at all) in prod.
     for (const [orgId, items] of batch) {
       // 1. Recipient selection (tenant-scoped read only — no email I/O here).
       const severities = [...new Set(items.map((i) => i.severity))];
