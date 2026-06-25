@@ -113,14 +113,18 @@ export default function PlatformPage() {
           <div id="vendor-risk" className="grid md:grid-cols-2 gap-10 items-center">
             <div className="md:order-2">
               <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-500">
-                  In development
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-teal-50 text-teal-700 border border-teal-200">
+                  Available now
+                </span>
+                <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-slate-100 text-slate-500">
+                  Platform Professional
                 </span>
               </div>
               <h2 className="text-2xl font-bold text-slate-900 mb-4">Vendor Risk</h2>
               <p className="text-slate-500 leading-relaxed mb-5">
-                Continuous third-party risk monitoring, assessment, and scoring. Onboard vendors,
-                track risk posture, and get alerted when your supply chain exposure changes.
+                Enter and assess your third-party vendors, ingest their assurance documents
+                (SOC 2, ISO 27001), score risk, and map findings to your risk register — so you
+                can see where vendors fall short.
               </p>
               <ul className="space-y-2 text-sm text-slate-600">
                 {[
@@ -128,7 +132,7 @@ export default function PlatformPage() {
                   "Risk scoring and trending",
                   "Assessment intake and findings",
                   "Document ingestion (SOC 2, ISO 27001)",
-                  "Continuous monitoring and alerts",
+                  "Vendor findings mapped to your risk register",
                 ].map((f) => (
                   <li key={f} className="flex items-center gap-2">
                     <span className="w-1.5 h-1.5 rounded-full bg-slate-300 flex-shrink-0" />
@@ -138,15 +142,15 @@ export default function PlatformPage() {
               </ul>
             </div>
             <div className="md:order-1 bg-slate-50 rounded-xl border border-slate-200 p-8 text-center">
-              <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto mb-4 text-slate-500">
+              <div className="w-12 h-12 rounded-xl bg-teal-50 flex items-center justify-center mx-auto mb-4 text-teal-600">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
                 </svg>
               </div>
               <p className="text-sm font-medium text-slate-700 mb-2">Vendor Risk module</p>
-              <p className="text-xs text-slate-400 mb-4">In active development. Enterprise early access available.</p>
-              <a href="mailto:hello@securelogicai.com" className="text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors">
-                Request early access →
+              <p className="text-xs text-slate-500 mb-4">Included in Platform Professional.</p>
+              <a href={`${APP_URL}/signup?plan=professional`} className="text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors">
+                Start Free Trial →
               </a>
             </div>
           </div>
@@ -157,8 +161,11 @@ export default function PlatformPage() {
           <div id="ai-governance" className="grid md:grid-cols-2 gap-10 items-center">
             <div>
               <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-500">
-                  In development
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-teal-50 text-teal-700 border border-teal-200">
+                  Available now
+                </span>
+                <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-slate-100 text-slate-500">
+                  Platform Professional
                 </span>
               </div>
               <h2 className="text-2xl font-bold text-slate-900 mb-4">AI Governance</h2>
@@ -182,15 +189,15 @@ export default function PlatformPage() {
               </ul>
             </div>
             <div className="bg-slate-50 rounded-xl border border-slate-200 p-8 text-center">
-              <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto mb-4 text-slate-500">
+              <div className="w-12 h-12 rounded-xl bg-teal-50 flex items-center justify-center mx-auto mb-4 text-teal-600">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 3H7a2 2 0 00-2 2v2m4-4h6m-6 0V1m6 2h2a2 2 0 012 2v2m0 0V9m0-2h2M21 9v6m0 0v2a2 2 0 01-2 2h-2m0 0H9m6 0v2m-6-2H7a2 2 0 01-2-2v-2m0 0V9m0 6H3M3 9V7a2 2 0 012-2h2m2 4h6v6H9V9z" />
                 </svg>
               </div>
               <p className="text-sm font-medium text-slate-700 mb-2">AI Governance module</p>
-              <p className="text-xs text-slate-400 mb-4">In active development. Enterprise early access available.</p>
-              <a href="mailto:hello@securelogicai.com" className="text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors">
-                Request early access →
+              <p className="text-xs text-slate-500 mb-4">Included in Platform Professional.</p>
+              <a href={`${APP_URL}/signup?plan=professional`} className="text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors">
+                Start Free Trial →
               </a>
             </div>
           </div>
@@ -201,8 +208,11 @@ export default function PlatformPage() {
           <div id="compliance" className="grid md:grid-cols-2 gap-10 items-center">
             <div className="md:order-2">
               <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-500">
-                  In development
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-teal-50 text-teal-700 border border-teal-200">
+                  Available now
+                </span>
+                <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-slate-100 text-slate-500">
+                  Platform Professional
                 </span>
               </div>
               <h2 className="text-2xl font-bold text-slate-900 mb-4">Compliance</h2>
@@ -226,15 +236,15 @@ export default function PlatformPage() {
               </ul>
             </div>
             <div className="md:order-1 bg-slate-50 rounded-xl border border-slate-200 p-8 text-center">
-              <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto mb-4 text-slate-500">
+              <div className="w-12 h-12 rounded-xl bg-teal-50 flex items-center justify-center mx-auto mb-4 text-teal-600">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                 </svg>
               </div>
               <p className="text-sm font-medium text-slate-700 mb-2">Compliance module</p>
-              <p className="text-xs text-slate-400 mb-4">In active development. Enterprise early access available.</p>
-              <a href="mailto:hello@securelogicai.com" className="text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors">
-                Request early access →
+              <p className="text-xs text-slate-500 mb-4">Included in Platform Professional.</p>
+              <a href={`${APP_URL}/signup?plan=professional`} className="text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors">
+                Start Free Trial →
               </a>
             </div>
           </div>
