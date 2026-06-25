@@ -206,7 +206,7 @@ mandatory.
 Full detail in `source-ingestion.md`. The flow:
 
 ```
-public feeds (RSS + KEV + NVD + reg feeds)         src/api/lib/feedAdapter/* (8 registered feeds)
+public feeds (RSS + KEV + NVD + reg feeds)         feedAdapter/* (6 RSS feeds) + 7 direct adapters
         │  fetch + map (pure helpers)
         ▼
 cyber_signals  (GLOBAL rows, organization_id = NULL, dedup via ON CONFLICT)

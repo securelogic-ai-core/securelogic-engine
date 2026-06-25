@@ -6,7 +6,8 @@ File-by-file map. **VERIFIED** unless tagged. Companion: the architect skill's
 ## 1. Sources & ingestion
 | Concern | File(s) | Notes |
 |---|---|---|
-| Source registry | `src/api/lib/feedAdapter/registry.ts` | 8 feeds (3 threat-intel + 5 regulatory RSS). CMS omitted by design. |
+| Source registry | `src/api/lib/feedAdapter/registry.ts` | **6 RSS feeds** (3 Tier-2 threat-intel + 3 Tier-1 regulatory). CMS omitted by design. |
+| Direct-source adapters | `briefScheduler.ts` imports | **7 adapters** (CISA KEV, NVD, SEC EDGAR, Federal Register, CISA alerts, MITRE ATT&CK, MITRE ATLAS) — outside the RSS registry. |
 | Aggregator | `src/api/lib/feedAdapter/index.ts` | `fetchAllFeeds({ ids? })`, per-feed error isolation, `{ signals, results }`. |
 | Mappers (pure) | `threatIntelHelpers.ts`, `regulatoryHelpers.ts` | raw item → `CyberSignalIngestInput`. |
 | Extra daily sources | `src/api/lib/briefScheduler.ts` | CISA KEV, NVD (7d), SEC EDGAR, Federal Register, CISA alerts, MITRE ATT&CK/ATLAS. |

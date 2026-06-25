@@ -1,7 +1,8 @@
 # Example: add an intelligence source (end-to-end)
 
 A new feed is a **discrete package**. The mechanism is verified in
-`src/api/lib/feedAdapter/`. Steps mirror the existing 8 registered feeds.
+`src/api/lib/feedAdapter/`. Steps mirror the existing **6 RSS-registry feeds** (a direct-source
+adapter à la the 7 in `briefScheduler.ts` — KEV/NVD/SEC/etc. — is a different shape; see `reference.md`).
 
 ## 1. Live-verify the URL first (non-negotiable)
 ```bash

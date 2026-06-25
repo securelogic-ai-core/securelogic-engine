@@ -122,9 +122,11 @@ Two distinct source surfaces feed `cyber_signals`:
   returns `{ signals, results: { [feedId]: { total, mapped, skipped, error? } } }`. Pure mappers:
   `threatIntelHelpers.ts`, `regulatoryHelpers.ts`.
 
-> **Reconcile note (INFERRED):** the `securelogic-intelligence-pipeline-engineer` skill currently
-> says "8 registered feeds"; the VERIFIED count in `registry.ts` is **6** (+ a `sourceTier` field).
-> Flag to correct the skill in a later docs pass — not changed here (this package is the design doc).
+> **Reconcile note — RESOLVED (2026-06-25, prerequisite #7):** the skill suite previously said
+> "8 registered feeds"; the VERIFIED count in `registry.ts` is **6 RSS feeds** (3 Tier-2 threat-intel
+> + 3 Tier-1 regulatory, each with a `sourceTier` field), plus **7 direct-source adapters** wired in
+> `briefScheduler.ts`. The skills have been corrected to **6 RSS feeds + 7 direct-source adapters**
+> (see §12 #7). No application code changed.
 
 **(b) Direct-source adapters** invoked by `briefScheduler.ts` (VERIFIED imports): `cisaKevAdapter`
 (KEV full catalog), `nvdAdapter` (NVD, 7-day window), `secEdgarAdapter`, `federalRegisterAdapter`,
@@ -380,7 +382,7 @@ Status after the **2026-06-25 decision review** (§10):
 4. **Clustering identity key (T4 / D2) — RESOLVED:** CVE-primary `cluster_key` beside `dedup_hash`.
    Remaining: validate the CVE-less fingerprint against real data in P4.
 
-**Gating prerequisites — status:** #5 and #7 **OPEN**; #6 **✅ SATISFIED (2026-06-25)** (kept in sync with `BUILD_SEQUENCE.md`).
+**Gating prerequisites — status:** #5 **OPEN**; #6 and #7 **✅ SATISFIED (2026-06-25)** (kept in sync with `BUILD_SEQUENCE.md`).
 5. **A real-Postgres integration lane** for ingestion + a **cross-org isolation test** closing R5
    (worker→brief per-org filtering) — Priority-4 changes per-org fan-out, so this is a gating prerequisite. **OPEN.**
 6. **`main→develop` reconciliation — ✅ SATISFIED (2026-06-25).** `main` was back-merged into `develop`
@@ -390,8 +392,13 @@ Status after the **2026-06-25 decision review** (§10):
    `origin/main..origin/develop`, absent from `main`); **`origin/main` unchanged at `cbd3504b`**;
    **pushed only to `origin/develop`** (`5ea12f70..56992b3b`, fast-forward). The merge commit changed
    **zero files** (tree-identical) — no application code changed; `app/src/app/page.tsx` untouched.
-7. **Skill correction:** reconcile the "8 feeds" → **6 RSS feeds + 7 direct adapters** count in
-   `securelogic-intelligence-pipeline-engineer` (housekeeping, do alongside Priority-4 kickoff). **OPEN.**
+7. **Skill correction — ✅ SATISFIED (2026-06-25).** The stale "8 feeds" count was corrected to
+   **6 RSS-registry feeds + 7 direct-source adapters** across the skill suite (6 occurrences in 5
+   files: `securelogic-intelligence-pipeline-engineer` SKILL.md/reference.md/examples + the
+   `securelogic-enterprise-architect` ingestion/architecture/example mirrors). **Evidence (VERIFIED,
+   matches `BUILD_SEQUENCE.md`):** `registry.ts` has 6 feed ids; `briefScheduler.ts` imports 7
+   direct-source adapters (CISA KEV, NVD, SEC EDGAR, Federal Register, CISA alerts, MITRE ATT&CK,
+   MITRE ATLAS). Skill/docs only — no application code changed.
 
 ---
 
