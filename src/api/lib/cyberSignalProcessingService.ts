@@ -125,6 +125,8 @@ export type MatcherResult = {
   matched_branch: "vendor_name_ilike" | "ai_system_name_ilike" | "no_match";
   /** IDs of signal_match_suggestions written by the obligation branch (target_type 'obligation'). Empty when the branch did not fire or wrote nothing (below threshold / all deduped). */
   obligation_suggestion_ids: string[];
+  /** Number of open risk rows this run set exposure_flagged=TRUE on (phase 5, org-scoped). 0 when no open risk in the signal's domain needed flagging. */
+  risks_flagged: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -285,6 +287,18 @@ export async function runMatcherForSignal(
 ): Promise<MatcherResult> {
   const { id: signalId, signal_type: signalType, severity } = signal;
 
+  // Phase-5 invariant: risk-exposure flagging (below) is org-scoped
+  // (WHERE organization_id = $org). runMatcherForSignal must never be called for
+  // a global row — the worker fans global signals out per concrete org, and
+  // processSignal short-circuits org_id IS NULL before reaching here. Assert it so
+  // a future global caller fails loudly rather than silently flagging the wrong
+  // (or every) org's risks.
+  if (!orgId) {
+    throw new Error(
+      "runMatcherForSignal: non-null orgId required (org-scoped phases incl. phase-5 risk-exposure flagging); global signals must fan out per-org"
+    );
+  }
+
   const ownsTransaction = externalClient === undefined;
   const client: PoolClient = externalClient ?? (await pgElevated.connect());
 
@@ -302,6 +316,9 @@ export async function runMatcherForSignal(
   // GAP-1 accumulator — obligation suggestion IDs (target_type 'obligation').
   // Independent of the vendor/AI branch above.
   const obligationSuggestionIds: string[] = [];
+
+  // Phase-5 accumulator — count of risks this run set exposure_flagged=TRUE on.
+  let risksFlagged = 0;
 
   try {
     if (ownsTransaction) await client.query("BEGIN");
@@ -779,6 +796,65 @@ export async function runMatcherForSignal(
       }
     }
 
+    // ---------------------------------------------------------------
+    // 5. Risk exposure flagging (org-scoped; runs unconditionally, like
+    //    finding/suggestion creation above — only the action it spawns is
+    //    flag-gated). Flag open risks in the matched domain that are not
+    //    already exposure-flagged. Only touches risks that need updating.
+    //    Lifted here from processSignal so the worker fan-out (which calls
+    //    runMatcherForSignal directly) gets risk-exposure flagging + the
+    //    risk→action generator natively, inside this same transaction.
+    // ---------------------------------------------------------------
+
+    const riskExposureResult = await client.query<{ id: string }>(
+      `
+      UPDATE risks
+      SET exposure_flagged   = TRUE,
+          exposure_signal_id = $1::uuid,
+          updated_at         = NOW()
+      WHERE organization_id    = $2
+        AND status             = 'open'
+        AND domain             = $3
+        AND exposure_flagged   = FALSE
+      RETURNING id
+      `,
+      [signalId, orgId, domain]
+    );
+
+    risksFlagged = riskExposureResult.rowCount ?? 0;
+
+    // GAP-3 increment 2: action recommendation for newly exposure-flagged risks.
+    // One "review exposed risk" action per risk just flagged by THIS signal.
+    // Flag-gated (OFF by default) + idempotent via idx_actions_generated_risk
+    // (partial on the 'auto_risk_exposure' marker) so re-processing / a manual
+    // risk-action never collides. Same posture as the finding→action generator.
+    if (actionEngineEnabled() && riskExposureResult.rows.length > 0) {
+      for (const flaggedRisk of riskExposureResult.rows) {
+        const riskActionDraft = buildRiskActionDraft(flaggedRisk.id, domain);
+        await client.query(
+          `
+          INSERT INTO actions (
+            organization_id, title, description, action_type,
+            source_type, source_id, priority, status
+          )
+          VALUES ($1, $2, $3, $4, $5, $6::uuid, $7, 'open')
+          ON CONFLICT (organization_id, source_type, source_id)
+            WHERE action_type = 'auto_risk_exposure'
+            DO NOTHING
+          `,
+          [
+            orgId,
+            riskActionDraft.title,
+            riskActionDraft.description,
+            riskActionDraft.action_type,
+            riskActionDraft.source_type,
+            riskActionDraft.source_id,
+            riskActionDraft.priority
+          ]
+        );
+      }
+    }
+
     if (ownsTransaction) await client.query("COMMIT");
 
     logger.info(
@@ -805,7 +881,8 @@ export async function runMatcherForSignal(
       match_score: matchScore,
       domain,
       matched_branch: matchedBranch,
-      obligation_suggestion_ids: obligationSuggestionIds
+      obligation_suggestion_ids: obligationSuggestionIds,
+      risks_flagged: risksFlagged
     };
   } catch (err) {
     if (ownsTransaction) {
@@ -831,9 +908,10 @@ export async function runMatcherForSignal(
  * Run the full processing pipeline for a newly ingested (unprocessed) signal.
  *
  * Calls runMatcherForSignal for phases 1-3 (matcher + dual-write of finding
- * and suggestion), then layers phases 4-5 (signal-row update, risk exposure
- * flagging) inside the same transaction. Phase 6 (posture snapshot) runs
- * in a separate tx after the main one commits and is non-fatal.
+ * and suggestion) and phase 5 (risk-exposure flagging + risk→action), then
+ * layers phase 4 (signal-row update) inside the same transaction. Phase 6
+ * (posture snapshot) runs in a separate tx after the main one commits and is
+ * non-fatal.
  *
  * GLOBAL-SIGNAL EDGE CASE
  * -----------------------
@@ -882,8 +960,9 @@ export async function processSignal(
   try {
     await client.query("BEGIN");
 
-    // Phases 1-3: matcher + finding + suggestion. Shared client so
-    // the writes are atomic with phases 4-5 below.
+    // Phases 1-3 + phase 5 (risk-exposure flagging + risk→action) run inside
+    // runMatcherForSignal. Shared client so those writes are atomic with the
+    // phase-4 signal-row update below.
     matcherResult = await runMatcherForSignal(signal, orgId, client);
 
     const createdFinding = matcherResult.finding;
@@ -920,60 +999,11 @@ export async function processSignal(
       ]
     );
 
-    // ---------------------------------------------------------------
-    // 5. Risk exposure flagging
-    //    Flag open risks in the matched domain that are not already
-    //    exposure-flagged. Only touches risks that need updating.
-    // ---------------------------------------------------------------
-
-    const riskUpdateResult = await client.query<{ id: string }>(
-      `
-      UPDATE risks
-      SET exposure_flagged   = TRUE,
-          exposure_signal_id = $1::uuid,
-          updated_at         = NOW()
-      WHERE organization_id    = $2
-        AND status             = 'open'
-        AND domain             = $3
-        AND exposure_flagged   = FALSE
-      RETURNING id
-      `,
-      [signalId, orgId, domain]
-    );
-
-    risksUpdated = riskUpdateResult.rowCount ?? 0;
-
-    // GAP-3 increment 2: action recommendation for newly exposure-flagged risks.
-    // One "review exposed risk" action per risk just flagged by THIS signal.
-    // Flag-gated (OFF by default) + idempotent via idx_actions_generated_risk
-    // (partial on the 'auto_risk_exposure' marker) so re-processing / a manual
-    // risk-action never collides. Same posture as the finding→action generator.
-    if (actionEngineEnabled() && riskUpdateResult.rows.length > 0) {
-      for (const flaggedRisk of riskUpdateResult.rows) {
-        const riskActionDraft = buildRiskActionDraft(flaggedRisk.id, domain);
-        await client.query(
-          `
-          INSERT INTO actions (
-            organization_id, title, description, action_type,
-            source_type, source_id, priority, status
-          )
-          VALUES ($1, $2, $3, $4, $5, $6::uuid, $7, 'open')
-          ON CONFLICT (organization_id, source_type, source_id)
-            WHERE action_type = 'auto_risk_exposure'
-            DO NOTHING
-          `,
-          [
-            orgId,
-            riskActionDraft.title,
-            riskActionDraft.description,
-            riskActionDraft.action_type,
-            riskActionDraft.source_type,
-            riskActionDraft.source_id,
-            riskActionDraft.priority
-          ]
-        );
-      }
-    }
+    // Phase 5 (risk-exposure flagging) + the risk→action generator now run
+    // INSIDE runMatcherForSignal (above), atomically on this same shared client,
+    // so the worker fan-out gets them natively. The count is surfaced on the
+    // MatcherResult; no separate UPDATE risks here.
+    risksUpdated = matcherResult.risks_flagged;
 
     await client.query("COMMIT");
 
