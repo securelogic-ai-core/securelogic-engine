@@ -32,7 +32,10 @@ const FEEDS = [
     source: "security_news_krebs"
   },
   {
-    url: "https://www.theregister.com/security/headlines.atom",
+    // The legacy /security/headlines.atom now 302-redirects cross-host to the
+    // api.theregister.com RSS endpoint, which rss-parser doesn't follow cleanly
+    // (parse error). Point directly at the resolved RSS 2.0 feed.
+    url: "https://api.theregister.com/api/v1/article?orderBy=published&site_id=2&remapper=rss&query=tag:security",
     source: "security_news_theregister"
   }
 ];
