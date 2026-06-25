@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { getPricingTiers } from "@/lib/pricing";
 
 export const metadata: Metadata = {
   title: "Intelligence Brief",
@@ -9,6 +10,9 @@ export const metadata: Metadata = {
 
 export default function IntelligenceBriefPage() {
   const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.securelogicai.com";
+  // Price + features sourced from the shared pricing model so this page can
+  // never drift from the rebuilt home/pricing pages.
+  const briefPro = getPricingTiers(APP_URL).find((t) => t.id === "brief-pro")!;
 
   return (
     <>
@@ -34,17 +38,17 @@ export default function IntelligenceBriefPage() {
             security, regulatory, vendor risk, and AI governance sources.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <a
-              href={`${APP_URL}/register?plan=professional`}
+            <Link
+              href="/#brief-signup"
               className="inline-flex items-center justify-center px-6 py-3 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-500 transition-colors text-sm"
             >
-              Get full brief access
-            </a>
+              Get the Free Brief
+            </Link>
             <a
-              href={`${APP_URL}/register`}
+              href={`${APP_URL}/signup?plan=brief-pro`}
               className="inline-flex items-center justify-center px-6 py-3 rounded-lg border border-slate-600 text-slate-200 font-semibold hover:border-slate-400 hover:text-white transition-colors text-sm"
             >
-              Start for free
+              Start Brief Pro
             </a>
           </div>
         </div>
@@ -182,7 +186,7 @@ export default function IntelligenceBriefPage() {
                   + 29 more signals this issue — available to subscribers
                 </p>
                 <a
-                  href={`${APP_URL}/register?plan=professional`}
+                  href={`${APP_URL}/signup?plan=brief-pro`}
                   className="mt-3 inline-flex items-center px-4 py-2 rounded-lg bg-teal-600 text-white text-xs font-semibold hover:bg-teal-500 transition-colors"
                 >
                   Subscribe to read full brief
@@ -202,19 +206,16 @@ export default function IntelligenceBriefPage() {
             Cancel any time.
           </p>
           <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-8 mb-6">
-            <p className="text-xs text-slate-400 uppercase tracking-wider font-medium mb-1">Professional</p>
-            <p className="text-4xl font-bold text-slate-900 mb-1">$39</p>
-            <p className="text-sm text-slate-500 mb-6">per month, billed monthly</p>
+            <p className="text-xs text-slate-400 uppercase tracking-wider font-medium mb-1">{briefPro.name}</p>
+            <div className="flex items-baseline justify-center gap-1.5 mb-1">
+              <p className="text-4xl font-bold text-slate-900">{briefPro.price}</p>
+              <span className="text-sm text-slate-500">per month</span>
+            </div>
+            <p className="text-sm text-slate-500 mb-6">{briefPro.tagline}</p>
             <ul className="text-sm text-slate-600 space-y-2.5 text-left mb-8">
-              {[
-                "Full weekly Intelligence Brief",
-                "All signal categories: security, regulatory, vendor risk, AI",
-                "Risk-scored findings with recommended actions",
-                "Executive synthesis for leadership distribution",
-                "Searchable archive access",
-              ].map((f) => (
-                <li key={f} className="flex items-center gap-2.5">
-                  <span className="w-4 h-4 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center flex-shrink-0">
+              {briefPro.features.map((f) => (
+                <li key={f} className="flex items-start gap-2.5">
+                  <span className="mt-0.5 w-4 h-4 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center flex-shrink-0">
                     <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                     </svg>
@@ -224,17 +225,23 @@ export default function IntelligenceBriefPage() {
               ))}
             </ul>
             <a
-              href={`${APP_URL}/register?plan=professional`}
+              href={`${APP_URL}/signup?plan=brief-pro`}
               className="block w-full text-center py-3 px-6 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-500 transition-colors"
             >
-              Subscribe now
+              Start Brief Pro
             </a>
           </div>
-          <p className="text-xs text-slate-400">
-            Free tier available for preview access.{" "}
-            <a href={`${APP_URL}/register`} className="text-teal-600 hover:underline">
-              Create a free account
-            </a>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Prefer to start free? The weekly{" "}
+            <Link href="/#brief-signup" className="text-teal-600 hover:underline">
+              Intelligence Brief is free
+            </Link>{" "}
+            — no credit card. Need team distribution or the full risk platform? Compare
+            Brief-Team and Platform Professional on the{" "}
+            <Link href="/pricing/" className="text-teal-600 hover:underline">
+              pricing page
+            </Link>
+            .
           </p>
         </div>
       </section>
