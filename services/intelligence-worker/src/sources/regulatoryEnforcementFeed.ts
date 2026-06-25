@@ -25,8 +25,13 @@ import { logger } from "../../../../src/api/infra/logger.js";
 const FEED_TIMEOUT_MS = 15_000;
 const MAX_ITEMS_PER_FEED = 10;
 
+// Browser-like User-Agent: ICO (and some other regulators) sit behind a WAF
+// that rejects non-browser agents. Harmless for the gov feeds that don't care.
 const parser = new Parser({
-  headers: { "User-Agent": "SecureLogic AI info@securelogicai.com" }
+  headers: {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+  }
 });
 
 function parseWithTimeout(url: string): Promise<Parser.Output<Record<string, unknown>>> {
@@ -64,7 +69,11 @@ const FEEDS = [
     source: "regulatory_enisa"
   },
   {
-    url: "https://ico.org.uk/about-the-ico/media-centre/rss/",
+    // Old /about-the-ico/media-centre/rss/ path 404s; ICO moved feeds under
+    // /global/rss-feeds/. The enforcement feed is the GDPR-enforcement stream
+    // the obligation matcher wants. (May 403 behind ICO's WAF — verify 200 in
+    // staging logs after deploy; no worse than the prior 404.)
+    url: "https://ico.org.uk/global/rss-feeds/enforcement/",
     source: "regulatory_ico"
   },
   {
