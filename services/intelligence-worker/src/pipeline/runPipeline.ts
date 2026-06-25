@@ -1,5 +1,3 @@
-import crypto from "crypto";
-
 // rssCollector.ts retired — CISA coverage handled by regulatoryFeed.ts
 // import { collectRssSignals } from "../collectors/rssCollector.js";
 
@@ -29,12 +27,20 @@ import {
   promoteIssueToQueued
 } from "../storage/postgresIssueStore.js";
 import { sendNewsletter } from "../delivery/sendNewsletter.js";
+import { legacyNewsletterEnabled } from "../../../../src/api/lib/legacyNewsletterFeatureFlag.js";
 import { logger } from "../../../../src/api/infra/logger.js";
 import { pgElevated } from "../../../../src/api/infra/postgres.js";
 import {
   runMatcherForSignal,
   type CyberSignalRecord
 } from "../../../../src/api/lib/cyberSignalProcessingService.js";
+// Post-matcher sibling on the worker fan-out. Imported from llmControlMatcher.js
+// directly (cyberSignalProcessingService re-exports nothing here — confirmed).
+// Mirrors processSignal phase 7, which runs the control matcher AFTER its commit.
+import { runLlmControlMatcherForSignal } from "../../../../src/api/lib/llmControlMatcher.js";
+import { buildDedupHash } from "../../../../src/api/lib/cyberSignalNormalizer.js";
+import { createAlertBatcher } from "../../../../src/api/lib/alerting/alertService.js";
+import { matcherAlertsEnabled } from "../../../../src/api/lib/alerting/matcherAlertsFeatureFlag.js";
 
 export type PipelineResult = {
   signals: number;
@@ -81,6 +87,7 @@ type BridgeableSignal = {
   category: string;
   title: string;
   summary: string;
+  url: string | null;
   affectedCve: string | null;
   affectedVendor: string | null;
   impactScore: number;
@@ -97,9 +104,23 @@ async function bridgeSignalsToCyberSignals(
     const signalType = mapCategoryToSignalType(signal.category);
     const severity = mapImpactToSeverity(signal.impactScore);
 
-    const dedupInput =
-      `${signal.source}|${signalType}|${signal.affectedCve ?? ""}|${signal.affectedVendor ?? ""}`.toLowerCase();
-    const dedupHash = crypto.createHash("sha256").update(dedupInput).digest("hex");
+    // Per-item dedup discriminator. The vendorless/CVE-less feeds (every
+    // regulatory/news/AI/vendor RSS source) carry no affected_cve and no
+    // affected_vendor, so the legacy source|signal_type|cve|vendor key
+    // collapsed every item to ONE row per (source, signal_type), starving
+    // the matcher fan-out. We feed the RSS item URL (the guid/link) as the
+    // external_id discriminator — falling back to the title so a url-less
+    // item still does not collapse against its siblings. Reuses the canonical
+    // buildDedupHash (same call shape as the normalizer / kevPoller path);
+    // no second hash implementation.
+    const externalId = signal.url ?? signal.title;
+    const dedupHash = buildDedupHash(
+      signal.source,
+      signalType,
+      signal.affectedCve,
+      signal.affectedVendor,
+      externalId
+    );
 
     const normalizedSummary = signal.summary.slice(0, 2000) || signal.title;
 
@@ -114,13 +135,14 @@ async function bridgeSignalsToCyberSignals(
           normalized_summary,
           affected_vendor,
           affected_cve,
+          external_id,
           dedup_hash,
           processed
         ) VALUES (
           NULL, $1, $2, $3,
           $4::jsonb, $5,
           $6, $7,
-          $8, FALSE
+          $8, $9, FALSE
         )
         ON CONFLICT (dedup_hash) WHERE organization_id IS NULL DO NOTHING
         RETURNING id`,
@@ -132,6 +154,7 @@ async function bridgeSignalsToCyberSignals(
           normalizedSummary,
           signal.affectedVendor,
           signal.affectedCve,
+          externalId,
           dedupHash
         ]
       );
@@ -199,6 +222,8 @@ async function fanOutMatcherToActiveOrgs(
   pairsSucceeded: number;
   pairsFailed: number;
   matchesProduced: number;
+  controlMatcherCalls: number;
+  controlSuggestionsWritten: number;
   elapsedMs: number;
 }> {
   const start = Date.now();
@@ -206,6 +231,11 @@ async function fanOutMatcherToActiveOrgs(
   let pairsSucceeded = 0;
   let pairsFailed = 0;
   let matchesProduced = 0;
+  // Observability: how many (signal, org) pairs reached the LLM control matcher
+  // this cycle, and how many control suggestions it wrote. Surfaced so LLM call
+  // volume is visible BEFORE it scales with active-org count.
+  let controlMatcherCalls = 0;
+  let controlSuggestionsWritten = 0;
 
   if (signals.length === 0) {
     return {
@@ -213,6 +243,8 @@ async function fanOutMatcherToActiveOrgs(
       pairsSucceeded: 0,
       pairsFailed: 0,
       matchesProduced: 0,
+      controlMatcherCalls: 0,
+      controlSuggestionsWritten: 0,
       elapsedMs: 0
     };
   }
@@ -233,6 +265,8 @@ async function fanOutMatcherToActiveOrgs(
       pairsSucceeded: 0,
       pairsFailed: 0,
       matchesProduced: 0,
+      controlMatcherCalls: 0,
+      controlSuggestionsWritten: 0,
       elapsedMs: Date.now() - start
     };
   }
@@ -247,9 +281,19 @@ async function fanOutMatcherToActiveOrgs(
       pairsSucceeded: 0,
       pairsFailed: 0,
       matchesProduced: 0,
+      controlMatcherCalls: 0,
+      controlSuggestionsWritten: 0,
       elapsedMs: Date.now() - start
     };
   }
+
+  // Real-time critical-alert coalescing (flag-gated, OFF by default). Collect
+  // this cycle's new Critical/High findings per org; flush ONE email per org
+  // after the fan-out completes. runMatcherForSignal commits before returning
+  // result.finding, so collection here is inherently post-commit.
+  const alertBatcher = matcherAlertsEnabled()
+    ? createAlertBatcher("critical_finding", "pipeline")
+    : null;
 
   for (const signal of signals) {
     for (const org of activeOrgs) {
@@ -260,6 +304,29 @@ async function fanOutMatcherToActiveOrgs(
         if (result.matched_branch !== "no_match") {
           matchesProduced++;
         }
+
+        if (alertBatcher && result.finding) {
+          const sev = result.finding.severity as string;
+          if (sev === "Critical" || sev === "High") {
+            alertBatcher.add(org.id, {
+              findingId: result.finding.id as string,
+              title: (result.finding.title as string) ?? "",
+              severity: sev,
+              domain: (result.finding.domain as string | null) ?? null
+            });
+          }
+        }
+
+        // Post-matcher sibling — LLM control matcher (suggest-only, self-gated,
+        // never throws). Runs AFTER the base matcher per (signal, org), mirroring
+        // processSignal phase 7 which runs it after its commit. NOT placed inside
+        // runMatcherForSignal: that function is shared with processSignal (which
+        // already calls the control matcher), so nesting it there would double-fire
+        // on the web path and run an LLM call inside the matcher transaction.
+        // signal carries normalized_summary (set at the bridge push site), which
+        // is the field the control-matcher prompt consumes.
+        controlMatcherCalls++;
+        controlSuggestionsWritten += await runLlmControlMatcherForSignal(signal, org.id);
       } catch (err) {
         pairsFailed++;
         logger.warn(
@@ -275,6 +342,19 @@ async function fanOutMatcherToActiveOrgs(
     }
   }
 
+  // Flush coalesced alerts — one email per org for this cycle's criticals.
+  // Non-fatal: an alert failure must never break the ingestion cycle.
+  if (alertBatcher) {
+    try {
+      await alertBatcher.flush();
+    } catch (err) {
+      logger.warn(
+        { event: "matcher_fanout_alert_flush_failed", err },
+        "Matcher alert flush failed (non-fatal)"
+      );
+    }
+  }
+
   const elapsedMs = Date.now() - start;
   logger.info(
     {
@@ -285,9 +365,11 @@ async function fanOutMatcherToActiveOrgs(
       pairsSucceeded,
       pairsFailed,
       matchesProduced,
+      controlMatcherCalls,
+      controlSuggestionsWritten,
       elapsedMs
     },
-    `Matcher fan-out complete — ${pairsSucceeded}/${pairsAttempted} pairs succeeded, ${matchesProduced} matches produced in ${elapsedMs}ms`
+    `Matcher fan-out complete — ${pairsSucceeded}/${pairsAttempted} pairs succeeded, ${matchesProduced} matches produced, ${controlMatcherCalls} control-matcher calls (${controlSuggestionsWritten} suggestions) in ${elapsedMs}ms`
   );
 
   return {
@@ -295,6 +377,8 @@ async function fanOutMatcherToActiveOrgs(
     pairsSucceeded,
     pairsFailed,
     matchesProduced,
+    controlMatcherCalls,
+    controlSuggestionsWritten,
     elapsedMs
   };
 }
@@ -376,6 +460,7 @@ export async function runPipeline(): Promise<PipelineResult> {
           category: signal.category ?? "GENERAL",
           title: signal.title ?? "",
           summary: signal.summary ?? "",
+          url: signal.url ?? null,
           affectedCve: signal.affectedCve ?? null,
           affectedVendor: signal.affectedVendor ?? null,
           impactScore: scores.impactScore
@@ -437,7 +522,19 @@ export async function runPipeline(): Promise<PipelineResult> {
   const BRIEF_SEND_HOUR = 8;
   const currentHour = new Date().getUTCHours();
 
-  if (currentHour === BRIEF_SEND_HOUR) {
+  if (currentHour === BRIEF_SEND_HOUR && !legacyNewsletterEnabled()) {
+    // Legacy worker Newsletter is retired: the Intelligence Brief (engine
+    // briefScheduler → briefEmailSender) is the sole daily customer email. This
+    // worker path duplicated it (different signal table + subscriber list) and
+    // a Stripe-enrolled customer sits in both lists, so leaving it live risked
+    // two daily emails an hour apart. Gated OFF by default; flip
+    // SECURELOGIC_LEGACY_NEWSLETTER_ENABLED=true to restore. See
+    // src/api/lib/legacyNewsletterFeatureFlag.ts.
+    logger.info(
+      { event: "legacy_newsletter_disabled", sendHour: BRIEF_SEND_HOUR },
+      "Legacy Newsletter send path disabled (SECURELOGIC_LEGACY_NEWSLETTER_ENABLED!=true); Intelligence Brief is the sole daily customer email"
+    );
+  } else if (currentHour === BRIEF_SEND_HOUR) {
     try {
       newslettersCreated = await generateNewsletter();
     } catch (err) {

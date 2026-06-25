@@ -1,8 +1,21 @@
 import { pg, pgElevated, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { sendDailyDigest } from "./alertEmailService.js";
+import { dailyDigestEnabled } from "./dailyDigestFeatureFlag.js";
 
 export async function runDailyDigest(): Promise<{ orgsProcessed: number; emailsSent: number }> {
+  // OFF by default: the Intelligence Brief is the single weekly customer email.
+  // Findings stay in-app; Critical/High vendor hits go out via real-time alerts
+  // (alertEmailService.sendCriticalFindingAlert), not this digest. Flip
+  // SECURELOGIC_DAILY_DIGEST_ENABLED=true to restore the digest.
+  if (!dailyDigestEnabled()) {
+    logger.info(
+      { event: "daily_digest_disabled" },
+      "Daily digest disabled (SECURELOGIC_DAILY_DIGEST_ENABLED!=true); Intelligence Brief is the sole customer email"
+    );
+    return { orgsProcessed: 0, emailsSent: 0 };
+  }
+
   logger.info({ event: "daily_digest_start" }, "Daily digest run started");
 
   const orgsResult = await pgElevated.query<{ organization_id: string; organization_name: string }>(
