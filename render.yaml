@@ -846,3 +846,26 @@ services:
       # e.g. https://app.securelogicai.com
       - key: NEXT_PUBLIC_APP_URL
         sync: false
+
+  # Staging mirror of securelogic-website — tracks develop so the rebuilt
+  # marketing site can be previewed before it is promoted to main. No custom
+  # domains: it stays on its Render-assigned URL
+  # (securelogic-website-staging.onrender.com).
+  - type: web
+    name: securelogic-website-staging
+    region: oregon
+    env: node
+    plan: starter
+    branch: develop
+    buildCommand: cd website && npm ci --include=dev && npm run build
+    startCommand: cd website && npx serve@latest out -l $PORT
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Public URL of the securelogic-app service.
+      # Used by the Nav and Footer to build login/register CTAs.
+      # e.g. https://app.securelogicai.com
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
