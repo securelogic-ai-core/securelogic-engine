@@ -25,6 +25,9 @@ import { logger } from "../../../../src/api/infra/logger.js";
 const FEED_TIMEOUT_MS = 15_000;
 const MAX_ITEMS_PER_FEED = 10;
 
+// Contact-info User-Agent: SEC EDGAR's fair-access policy REQUIRES a
+// descriptive UA with contact info and 403s generic browser agents — so this
+// must stay an identifying string, not a browser UA.
 const parser = new Parser({
   headers: { "User-Agent": "SecureLogic AI info@securelogicai.com" }
 });
@@ -63,10 +66,9 @@ const FEEDS = [
     url: "https://www.enisa.europa.eu/publications/rss",
     source: "regulatory_enisa"
   },
-  {
-    url: "https://ico.org.uk/about-the-ico/media-centre/rss/",
-    source: "regulatory_ico"
-  },
+  // regulatory_ico removed: ICO retired its old RSS (404) and the new
+  // /global/rss-feeds/enforcement/ URL returns a non-RSS body that rss-parser
+  // can't parse. No usable RSS endpoint — backlogged alongside ENISA/NYDFS.
   {
     url: "https://www.fsb.org/feed/",
     source: "regulatory_fsb"

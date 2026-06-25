@@ -7,7 +7,10 @@
  *
  * Sources:
  *   - SecurityWeek (covers vendor and supply chain incidents)
- *   - Dark Reading (covers third-party and vendor breach coverage)
+ *
+ * Dark Reading was retired: its feed is behind a WAF that 403s automated
+ * fetchers (not just our UA — a browser UA is also blocked), and its content is
+ * heavily duplicated by SecurityWeek and BleepingComputer.
  */
 
 import Parser from "rss-parser";
@@ -39,10 +42,6 @@ const FEEDS = [
   {
     url: "https://feeds.feedburner.com/securityweek",
     source: "vendor_risk_securityweek"
-  },
-  {
-    url: "https://www.darkreading.com/rss/all.xml",
-    source: "vendor_risk_darkreading"
   }
 ];
 
