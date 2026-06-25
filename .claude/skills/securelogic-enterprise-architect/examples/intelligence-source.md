@@ -9,7 +9,7 @@ Read `source-ingestion.md` first.
 
 ```
 src/api/lib/feedAdapter/
-├── registry.ts            ← the 8 registered feeds (id, url, tier, mapper)
+├── registry.ts            ← the 6 RSS feeds (id, url, tier, mapper); +7 direct adapters in briefScheduler.ts
 ├── index.ts               ← fetchAllFeeds({ ids? }) with per-feed error isolation
 ├── threatIntelHelpers.ts  ← pure RSS-item → CyberSignalIngestInput mapper
 └── regulatoryHelpers.ts   ← pure regulatory-item mapper

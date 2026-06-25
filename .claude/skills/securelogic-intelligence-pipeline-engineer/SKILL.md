@@ -54,10 +54,12 @@ public sources → feed adapters → cyber_signals (GLOBAL, org_id NULL, deduped
 
 ## Pipeline stages (VERIFIED files)
 
-- **Source registry:** `src/api/lib/feedAdapter/registry.ts` — **8 registered feeds** (3
-  threat-intel RSS: BleepingComputer, KrebsOnSecurity, SANS ISC; 5 regulatory RSS incl. NIST,
-  FTC, ONC HealthIT). CMS deliberately omitted (no discoverable feed). All URLs live-verified
-  before landing.
+- **Sources (VERIFIED):** **6 RSS-registry feeds + 7 direct-source adapters.** The RSS registry
+  (`src/api/lib/feedAdapter/registry.ts`) holds **6 feeds** — 3 Tier-2 threat-intel
+  (BleepingComputer, KrebsOnSecurity, SANS ISC) + 3 Tier-1 regulatory (NIST, FTC, ONC HealthIT);
+  CMS deliberately omitted (no discoverable feed). The daily scheduler (`briefScheduler.ts`) adds
+  **7 direct-source adapters**: CISA KEV, NVD, SEC EDGAR, Federal Register, CISA alerts, MITRE
+  ATT&CK, MITRE ATLAS. All URLs live-verified before landing.
 - **Aggregator:** `feedAdapter/index.ts` `fetchAllFeeds({ ids? })` — per-feed error isolation,
   returns `{ signals, results }`. `feed_health` records per-feed success/failure.
 - **Mappers (pure):** `threatIntelHelpers.ts`, `regulatoryHelpers.ts` → `CyberSignalIngestInput`.

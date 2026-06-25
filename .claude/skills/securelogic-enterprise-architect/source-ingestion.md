@@ -40,10 +40,11 @@ behavior, change it once and verify all three call sites.**
 
 ### A3. Feed adapters & the source registry
 
-- Registry: `src/api/lib/feedAdapter/registry.ts` — currently **8 registered feeds**: 3
-  threat-intel RSS (BleepingComputer, KrebsOnSecurity, SANS ISC) + 5 regulatory RSS (NIST
-  news, FTC news, ONC HealthIT, …). CMS is deliberately omitted (no discoverable RSS —
-  would fail perpetually). All source URLs in the registry have been live-verified before
+- Registry: `src/api/lib/feedAdapter/registry.ts` — currently **6 registered RSS feeds**: 3
+  Tier-2 threat-intel (BleepingComputer, KrebsOnSecurity, SANS ISC) + 3 Tier-1 regulatory (NIST
+  news, FTC news, ONC HealthIT). CMS is deliberately omitted (no discoverable RSS —
+  would fail perpetually). (The daily scheduler adds 7 direct-source adapters — see §A3 below.)
+  All source URLs in the registry have been live-verified before
   landing.
 - Aggregator: `feedAdapter/index.ts` `fetchAllFeeds({ ids? })` iterates the registry with
   **per-feed error isolation** (one feed failing doesn't block others) and returns
