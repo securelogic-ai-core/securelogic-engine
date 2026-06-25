@@ -58,9 +58,9 @@ The architecture for this work is **ratified** — see `docs/roadmap/external-si
 
 **Current status:** Blocked. No implementation milestone may be opened or marked complete while this package is BLOCKED.
 
-**Blocking prerequisites** (from `external-signal-architecture.md` §12 — all three OPEN):
+**Blocking prerequisites** (from `external-signal-architecture.md` §12 — #5 and #7 OPEN; **#6 SATISFIED 2026-06-25**):
 - **#5 — cross-org isolation lane (the hard gate).** Stand up a real-Postgres integration lane for ingestion + a cross-org isolation test closing **R5** (worker→brief per-org filtering, flagged unverified in `TENANT_ISOLATION_STANDARD.md`). Priority 4 changes per-org fan-out, so this must prove no cross-tenant leak **before** any fan-out code changes. **VERIFIED open** (R5 is an open risk in the standard).
-- **#6 — branch reconciliation.** Confirm the `main→develop` reconciliation (back-merge of promote nodes #350 `c9b67288` / #353 `cbd3504b`; #354/#355 matcher work single-tracked) so ingestion changes do not build on divergent branches. **VERIFIED open** (`origin/develop..origin/main` non-empty as of 2026-06-25).
+- **#6 — branch reconciliation. ✅ SATISFIED (2026-06-25).** `main` was back-merged into `develop` via a **true merge commit `56992b3b`** (`--no-ff`, not squashed; parents `[7e7eaebc doc commit, cbd3504b origin/main]`). **Evidence (VERIFIED):** `origin/develop..origin/main` count = **0** (main fully contained in develop); **#354–#360 remain develop/staging-only** (present in `origin/main..origin/develop`, absent from `main`); **`origin/main` unchanged at `cbd3504b`**; **pushed only to `origin/develop`** (`5ea12f70..56992b3b`, fast-forward). The merge commit changed **zero files** (tree-identical) — no application code changed; `app/src/app/page.tsx` untouched.
 - **#7 — skill housekeeping.** Correct the "8 feeds" → **6 RSS feeds + 7 direct adapters** count in the `securelogic-intelligence-pipeline-engineer` skill. **VERIFIED** (`src/api/lib/feedAdapter/registry.ts` has 6 feeds). Low-risk; do alongside kickoff.
 
 **Responsible skills / agents:**
@@ -71,7 +71,7 @@ The architecture for this work is **ratified** — see `docs/roadmap/external-si
 
 **Exit criteria for unblocking (ALL must hold):**
 1. **#5 satisfied** — the real-Postgres lane exists and a cross-org isolation test for the worker→brief fan-out is **green in CI** (R5 closed).
-2. **#6 satisfied** — `origin/develop..origin/main` is empty (or the back-merge is recorded) and #354/#355 are single-tracked.
+2. **#6 satisfied ✅ (2026-06-25)** — back-merge `56992b3b`; `origin/develop..origin/main` = **0**; #354/#355 single-tracked on develop; `origin/main` unchanged.
 3. **#7 satisfied** — the skill feed-count is corrected.
 4. **Build scope authorized** — a Priority-4 build scope is drafted (RECOMMENDED → ratified) from the `external-signal-architecture.md` target model (decisions D1–D5) and **separately authorized by the operator** as a new active build package.
 
