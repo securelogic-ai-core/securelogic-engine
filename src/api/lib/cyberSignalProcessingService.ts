@@ -831,7 +831,7 @@ export async function runMatcherForSignal(
     if (actionEngineEnabled() && riskExposureResult.rows.length > 0) {
       for (const flaggedRisk of riskExposureResult.rows) {
         const riskActionDraft = buildRiskActionDraft(flaggedRisk.id, domain);
-        await client.query(
+        const riskActionInsert = await client.query(
           `
           INSERT INTO actions (
             organization_id, title, description, action_type,
@@ -852,6 +852,21 @@ export async function runMatcherForSignal(
             riskActionDraft.priority
           ]
         );
+
+        // Telemetry only: fire ONLY when a row was actually written (rowCount 0
+        // means ON CONFLICT DO NOTHING skipped an existing action). No control-
+        // flow effect — the INSERT/gating/dedup are unchanged.
+        if ((riskActionInsert.rowCount ?? 0) > 0) {
+          logger.info(
+            {
+              event: "risk_exposure_action_generated",
+              orgId,
+              riskId: flaggedRisk.id,
+              domain
+            },
+            "Generated auto_risk_exposure action for exposure-flagged risk"
+          );
+        }
       }
     }
 
@@ -868,7 +883,8 @@ export async function runMatcherForSignal(
         findingId: createdFinding !== null ? (createdFinding.id as string) : null,
         suggestionId,
         matchScore,
-        domain
+        domain,
+        risksFlagged
       },
       "Matcher run for signal"
     );
