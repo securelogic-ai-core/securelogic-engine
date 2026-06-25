@@ -25,13 +25,11 @@ import { logger } from "../../../../src/api/infra/logger.js";
 const FEED_TIMEOUT_MS = 15_000;
 const MAX_ITEMS_PER_FEED = 10;
 
-// Browser-like User-Agent: ICO (and some other regulators) sit behind a WAF
-// that rejects non-browser agents. Harmless for the gov feeds that don't care.
+// Contact-info User-Agent: SEC EDGAR's fair-access policy REQUIRES a
+// descriptive UA with contact info and 403s generic browser agents — so this
+// must stay an identifying string, not a browser UA.
 const parser = new Parser({
-  headers: {
-    "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-  }
+  headers: { "User-Agent": "SecureLogic AI info@securelogicai.com" }
 });
 
 function parseWithTimeout(url: string): Promise<Parser.Output<Record<string, unknown>>> {
@@ -68,14 +66,9 @@ const FEEDS = [
     url: "https://www.enisa.europa.eu/publications/rss",
     source: "regulatory_enisa"
   },
-  {
-    // Old /about-the-ico/media-centre/rss/ path 404s; ICO moved feeds under
-    // /global/rss-feeds/. The enforcement feed is the GDPR-enforcement stream
-    // the obligation matcher wants. (May 403 behind ICO's WAF — verify 200 in
-    // staging logs after deploy; no worse than the prior 404.)
-    url: "https://ico.org.uk/global/rss-feeds/enforcement/",
-    source: "regulatory_ico"
-  },
+  // regulatory_ico removed: ICO retired its old RSS (404) and the new
+  // /global/rss-feeds/enforcement/ URL returns a non-RSS body that rss-parser
+  // can't parse. No usable RSS endpoint — backlogged alongside ENISA/NYDFS.
   {
     url: "https://www.fsb.org/feed/",
     source: "regulatory_fsb"

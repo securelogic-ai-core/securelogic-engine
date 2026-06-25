@@ -41,16 +41,20 @@ describe("vendorRiskFeed.ts — Dark Reading retired", () => {
   });
 });
 
-describe("regulatoryEnforcementFeed.ts — ICO re-point + browser UA", () => {
+describe("regulatoryEnforcementFeed.ts — ICO backed out, SEC-8K UA reverted", () => {
   const src = read("regulatoryEnforcementFeed.ts");
-  it("points ICO at the new /global/rss-feeds/enforcement/ feed", () => {
-    expect(src).toMatch(/url:\s*"https:\/\/ico\.org\.uk\/global\/rss-feeds\/enforcement\/"/);
+  it("uses the contact-info User-Agent (SEC EDGAR requires it; browser UA 403s)", () => {
+    expect(src).toMatch(/"User-Agent":\s*"SecureLogic AI info@securelogicai\.com"/);
   });
-  it("no longer uses the retired media-centre ICO path", () => {
-    expect(src).not.toMatch(/ico\.org\.uk\/about-the-ico\/media-centre\/rss/);
+  it("no longer uses a browser User-Agent (the regression that broke SEC 8-K)", () => {
+    expect(src).not.toMatch(/Mozilla\/5\.0/);
   });
-  it("uses a browser-like User-Agent on the parser", () => {
-    expect(src).toMatch(/User-Agent[\s\S]*?Mozilla\/5\.0[\s\S]*?Chrome\/[\d.]+ Safari/);
+  it("removed the regulatory_ico entry entirely (no usable RSS endpoint)", () => {
+    expect(src).not.toMatch(/source:\s*"regulatory_ico"/);
+    expect(src).not.toMatch(/ico\.org\.uk/);
+  });
+  it("keeps SEC 8-K (the feed the UA regression had broken)", () => {
+    expect(src).toMatch(/source:\s*"regulatory_sec_8k"/);
   });
   it("leaves ENISA and NYDFS untouched (backlog — scope guard)", () => {
     expect(src).toMatch(/url:\s*"https:\/\/www\.enisa\.europa\.eu\/publications\/rss"/);
