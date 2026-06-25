@@ -226,7 +226,7 @@ export function Header({
       <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
 
         {/* Wordmark */}
-        <Link href={isAuthenticated ? "/dashboard" : "/"} className="flex items-center gap-3">
+        <Link href={isAuthenticated ? "/dashboard" : "https://www.securelogicai.com"} className="flex items-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/branding/securelogic-ai-logo.png"
