@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { getPricingTiers } from "@/lib/pricing";
 
 export const metadata: Metadata = {
   title: "Platform",
@@ -8,6 +9,10 @@ export const metadata: Metadata = {
 };
 
 export default function PlatformPage() {
+  const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.securelogicai.com";
+  // Founding pricing sourced from the shared model — no hard-coded figures.
+  const platformPro = getPricingTiers(APP_URL).find((t) => t.id === "platform-professional")!;
+
   return (
     <>
       {/* Header */}
@@ -236,20 +241,45 @@ export default function PlatformPage() {
         </div>
       </section>
 
-      {/* Enterprise CTA */}
+      {/* Plans CTA */}
       <section className="bg-slate-900 py-16 px-4 text-white text-center">
         <div className="max-w-xl mx-auto">
-          <h2 className="text-2xl font-bold mb-3">Interested in enterprise access?</h2>
-          <p className="text-slate-400 mb-7 text-sm leading-relaxed">
-            Get early access to platform modules as they launch. We work directly with enterprise
-            teams on requirements and onboarding.
+          <p className="text-xs font-bold text-teal-400 uppercase tracking-widest mb-3">
+            Platform Professional
           </p>
-          <a
-            href="mailto:hello@securelogicai.com"
-            className="inline-flex items-center px-7 py-3 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-500 transition-colors text-sm"
-          >
-            Contact us about enterprise
-          </a>
+          <h2 className="text-2xl font-bold mb-3">The full risk platform</h2>
+          <p className="text-teal-300 text-sm font-semibold mb-4">{platformPro.urgency}</p>
+
+          <div className="flex items-baseline justify-center gap-1.5">
+            <span className="text-4xl font-bold">{platformPro.price}</span>
+            <span className="text-sm text-slate-400">{platformPro.priceNote}</span>
+          </div>
+          <p className="text-sm text-slate-400 mt-1">{platformPro.priceDetails?.join(" · ")}</p>
+          <p className="text-xs text-slate-500 mt-2">{platformPro.lockNote}</p>
+          <p className="text-xs text-teal-300/90 font-medium mt-3 mb-7">{platformPro.allowance}</p>
+
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <a
+              href={`${APP_URL}/signup?plan=professional`}
+              className="inline-flex items-center justify-center px-7 py-3 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-500 transition-colors text-sm"
+            >
+              Start Free Trial
+            </a>
+            <Link
+              href="/contact/"
+              className="inline-flex items-center justify-center px-7 py-3 rounded-lg border border-slate-600 text-slate-200 font-semibold hover:border-slate-400 hover:text-white transition-colors text-sm"
+            >
+              Talk to Sales
+            </Link>
+          </div>
+
+          <p className="mt-6 text-xs text-slate-500">
+            Need more than 10 seats or 50 entities, SSO/SAML, or white-labeling? That&apos;s
+            Enterprise.{" "}
+            <Link href="/pricing/" className="text-teal-400 hover:underline">
+              See full pricing and plans →
+            </Link>
+          </p>
         </div>
       </section>
     </>
