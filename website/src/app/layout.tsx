@@ -8,15 +8,18 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.securelogicai.
 
 export const metadata: Metadata = {
   title: {
-    default: "SecureLogic AI — Unified Risk Intelligence Platform",
+    default: "SecureLogic AI — Cyber Risk Intelligence. Delivered Weekly.",
     template: "%s | SecureLogic AI",
   },
   description:
-    "SecureLogic AI is a Unified Risk Intelligence Platform that helps organizations see, understand, and act on their total risk exposure across vendors, controls, compliance frameworks, and AI systems.",
+    "SecureLogic AI helps security teams turn cyber, vendor, AI governance, and compliance signals into clear, prioritized action.",
   metadataBase: new URL(SITE_URL),
   openGraph: {
     siteName: "SecureLogic AI",
     type: "website",
+    title: "SecureLogic AI — Cyber Risk Intelligence. Delivered Weekly.",
+    description:
+      "SecureLogic AI helps security teams turn cyber, vendor, AI governance, and compliance signals into clear, prioritized action.",
   },
 };
 
