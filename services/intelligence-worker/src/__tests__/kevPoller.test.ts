@@ -52,7 +52,8 @@ vi.mock("../../../../src/api/lib/cyberSignalProcessingService.js", () => ({
     match_score: null,
     domain: "Vulnerability",
     matched_branch: "no_match",
-    obligation_suggestion_ids: []
+    obligation_suggestion_ids: [],
+    risks_flagged: 0
   })
 }));
 
@@ -221,7 +222,8 @@ describe("runKevPoll — behaviour", () => {
       match_score: null,
       domain: "Vulnerability",
       matched_branch: "no_match",
-      obligation_suggestion_ids: []
+      obligation_suggestion_ids: [],
+      risks_flagged: 0
     });
   });
 
@@ -372,7 +374,8 @@ describe("runKevPoll — matcher fan-out", () => {
       match_score: null,
       domain: "Vulnerability",
       matched_branch: "no_match",
-      obligation_suggestion_ids: []
+      obligation_suggestion_ids: [],
+      risks_flagged: 0
     });
   });
 
@@ -562,7 +565,8 @@ describe("runKevPoll — LLM control matcher fan-out", () => {
       match_score: null,
       domain: "Vulnerability",
       matched_branch: "no_match",
-      obligation_suggestion_ids: []
+      obligation_suggestion_ids: [],
+      risks_flagged: 0
     });
   });
 
