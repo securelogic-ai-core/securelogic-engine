@@ -380,13 +380,18 @@ Status after the **2026-06-25 decision review** (§10):
 4. **Clustering identity key (T4 / D2) — RESOLVED:** CVE-primary `cluster_key` beside `dedup_hash`.
    Remaining: validate the CVE-less fingerprint against real data in P4.
 
-**STILL OPEN (gating — not yet resolved):**
+**Gating prerequisites — status:** #5 and #7 **OPEN**; #6 **✅ SATISFIED (2026-06-25)** (kept in sync with `BUILD_SEQUENCE.md`).
 5. **A real-Postgres integration lane** for ingestion + a **cross-org isolation test** closing R5
-   (worker→brief per-org filtering) — Priority-4 changes per-org fan-out, so this is a gating prerequisite.
-6. **Confirmation of the `main→develop` reconciliation** (2026-06-25 doc-sync) so #354/#355 matcher work
-   is on a single track before ingestion changes build on it.
+   (worker→brief per-org filtering) — Priority-4 changes per-org fan-out, so this is a gating prerequisite. **OPEN.**
+6. **`main→develop` reconciliation — ✅ SATISFIED (2026-06-25).** `main` was back-merged into `develop`
+   via a **true merge commit `56992b3b`** (`--no-ff`, not squashed; parents `[7e7eaebc doc commit,
+   cbd3504b origin/main]`). **Evidence (VERIFIED — matches `BUILD_SEQUENCE.md`):** `origin/develop..origin/main`
+   count = **0** (main fully contained in develop); **#354–#360 remain develop/staging-only** (present in
+   `origin/main..origin/develop`, absent from `main`); **`origin/main` unchanged at `cbd3504b`**;
+   **pushed only to `origin/develop`** (`5ea12f70..56992b3b`, fast-forward). The merge commit changed
+   **zero files** (tree-identical) — no application code changed; `app/src/app/page.tsx` untouched.
 7. **Skill correction:** reconcile the "8 feeds" → **6 RSS feeds + 7 direct adapters** count in
-   `securelogic-intelligence-pipeline-engineer` (housekeeping, do alongside Priority-4 kickoff).
+   `securelogic-intelligence-pipeline-engineer` (housekeeping, do alongside Priority-4 kickoff). **OPEN.**
 
 ---
 
