@@ -233,20 +233,42 @@ uses deterministic stubs (LLM/Resend keys unset), and adds **negative-path** tes
 - `render.yaml` / `.env.example` — only new feature-flag keys (config, at enable time — separate operator step).
 - `docs/roadmap/` + `BUILD_SEQUENCE.md` + `TENANT_ISOLATION_STANDARD.md` — doc-sync per phase.
 
-## 10. Unknowns — **REQUIRE OPERATOR APPROVAL BEFORE IMPLEMENTATION**
+## 10. Decisions (RESOLVED — operator-approved 2026-06-26)
 
-These design decisions are **open** and must be settled by the operator before (or at the start of) the
-relevant phase. None may be silently decided during implementation.
+The seven §10 unknowns were resolved by the operator on 2026-06-26. Each final decision is recorded
+below and is binding for implementation; none may be silently re-decided during coding. (No code,
+migration, or config is authorized by this resolution — implementation still requires authorization of
+the first PR.)
 
-1. **D3 storage location:** extend `feed_health` vs a new `sources` table. *(Recommendation: a small
-   `sources` table keyed by source id; decide before 4B.)* — **operator approval required.**
-2. **D2 CVE-less fingerprint:** exact entity+type+day-bucket definition + over-merge threshold — needs
-   validation against real signal data. — **operator approval required.**
-3. **T1 contract field set:** the concrete fields of each of the four stage types. — **operator approval required.**
-4. **D5 timing & shape:** provenance in P4 vs P5; refs-columns vs a `signal_provenance` edge table. — **operator approval required.**
-5. **Feature-flag names** and whether each phase ships dark-by-default (recommendation: yes). — **operator approval required.**
-6. **A4 fan-out unification** — do it now (reduces drift) or defer (smaller blast radius)? — **operator approval required.**
-7. **Pre-work docs-sync:** fix the stale design-doc §12 #5 status before 4A. — **operator approval required.**
+1. **D3 storage location — RESOLVED:** **a new small `sources` table** keyed by source id holds static
+   authority/tier; reliability is computed from `feed_health` and cached there. Platform/global data
+   (not org-scoped → no RLS, verify at build). Decided before 4B. *(Phase 4B; not a first-PR blocker.)*
+2. **D2 CVE-less fingerprint — RESOLVED:** **CVE-primary always.** For CVE-less signals, cluster only
+   when `canonical(affected_vendor)` is non-null and identical, `signal_type` matches, and the UTC
+   calendar-day matches (errs toward *under*-merging — never falsely conflates). Soft grouping (nullable
+   `cluster_key`, no unique constraint). **Validate against real historical signals in a 4C spike before
+   wiring into brief generation.** *(Phase 4C; not a first-PR blocker.)*
+3. **T1 contract field set — RESOLVED:** **anchor each stage type to a shape that already exists** —
+   `NormalizedSignal` = the existing `CyberSignalIngestInput`/`cyber_signals` shape; `RawSourceItem` =
+   adapter raw item + source id + fetch timestamp; `EnrichedSignal` = a typed *projection* (D1);
+   `BriefItem` = the existing `intelligenceBriefGenerator` shape. Each carries `schema_version`. **The
+   first PR ships only the `RawSourceItem`/`NormalizedSignal` stubs + `SourceKind`/`SourceDescriptor`;
+   `EnrichedSignal`/`BriefItem` are formalized incrementally in 4B/4C** — fields are not finalized up
+   front. *(Phase 4A; unblocks the first PR.)*
+4. **D5 provenance timing & shape — RESOLVED:** **stays in Priority 4 as Phase 4D (last phase)**, shaped
+   as a small dedicated **`signal_provenance` edge table** (org-scoped, RLS) for many-to-many lineage;
+   additive, easy to roll back. **Confirm cardinality against `intelligenceBriefGenerator` before
+   finalizing.** *(Phase 4D; not a first-PR blocker.)*
+5. **Feature flags — RESOLVED: dark-by-default = YES** for every behavior-changing phase. Names:
+   `SECURELOGIC_SOURCE_QUALIFICATION_ENABLED` (4B), `SECURELOGIC_SIGNAL_CLUSTERING_ENABLED` (4C),
+   `SECURELOGIC_SIGNAL_PROVENANCE_ENABLED` (4D). **4A has no flag** (additive, no behavior change).
+   *(Phases 4B/4C/4D; config at enable time — separate operator step.)*
+6. **A4 fan-out unification — RESOLVED: DEFER.** Not in the first PR or 4A.1. Keep 4A additive (registry
+   + contract only). A4 is an optional, separately-scoped later PR — only if the registry work surfaces a
+   concrete need — and must carry its own cross-org isolation test. *(Phase 4A; not a first-PR blocker.)*
+7. **Pre-work docs-sync — RESOLVED: YES.** The stale `external-signal-architecture.md` §12/header (which
+   said #5 OPEN) is corrected to **#5 SATISFIED** in this same PR, before any implementation PR.
+   *(Pre-4A governance; no code; done in this PR.)*
 
 ## Execution strategy
 
