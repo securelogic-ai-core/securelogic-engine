@@ -293,6 +293,8 @@ the first PR.)
   enabled in staging first.
 
 ### The first implementation PR only (smallest safe vertical slice)
+> **Execution record (2026-06-26, docs-only):** slice 4A.1 shipped as **two** additive PRs rather than one. PR #371 `feat/p4a-registry-kind` (`650d478d`) landed the registry `kind` discriminator; PR #373 `feat/p4b-signal-contracts` (`483d83ff`) landed the four-stage contract stubs. The contract stubs were **promoted to production** via PR #374 (→ `main` `959951b9`) and `develop` reconciled via PR #375 (→ `develop` `e34ede8b`). **Naming note:** the branch `feat/p4b-signal-contracts` is a misnomer — its content is Phase **4A** (slice 4A.1), **not** Phase 4B (source qualification). See `BUILD_SEQUENCE.md` for the full record. The original first-PR sketch (single combined PR) is preserved below unchanged.
+
 **PR `feat/p4a-registry-kind` — "4A.1: typed source-descriptor contract + `kind` discriminator on the RSS
 registry (additive, no behavior change)."**
 - **What:** add `src/api/lib/signals/contracts.ts` (the `SourceKind`/`SourceDescriptor` types + the four
