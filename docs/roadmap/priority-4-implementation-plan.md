@@ -1,13 +1,18 @@
 # Priority 4 — Signal Ingestion Hardening: Implementation Plan
 
-> **Status: Planning complete; implementation not authorized.**
+> **Status: Planning complete; implementation AUTHORIZED 2026-06-26 and UNDERWAY.**
 >
-> This is a **planning deliverable only** — no production code, migrations, or configuration
-> are produced or authorized by this document. It is the reviewable implementation package for
-> Priority 4, grounded in the ratified D1–D5 design (`docs/roadmap/external-signal-architecture.md`,
-> status *Architecture Ratified – Implementation Pending*) and verified repository facts.
-> Implementation begins only after the operator explicitly authorizes the Priority-4 build scope
-> (exit criterion #4 in `BUILD_SEQUENCE.md`) and approves the first PR. *Active ≠ Implementation Authorized.*
+> **Update (2026-06-26):** the operator authorized the Priority-4 build scope (exit criterion #4 in
+> `BUILD_SEQUENCE.md`) and the §10 decisions D1–D7 were operator-approved (PR #370). The first slice —
+> **4A.1** (RSS-registry `kind` discriminator) — is implemented and **merged to `develop`** (PR #371
+> `feat/p4a-registry-kind`, commit `650d478d`), CI 7/7 green. This document remains the controlling plan;
+> the text below is the plan as authored and still governs the remaining slices (4A rest → 4B → 4C → 4D).
+>
+> This was a **planning deliverable** — no production code, migrations, or configuration were produced or
+> authorized by this document itself. It is the reviewable implementation package for Priority 4, grounded
+> in the ratified D1–D5 design (`docs/roadmap/external-signal-architecture.md`, status
+> *Architecture Ratified – Implementation Pending*) and verified repository facts. Implementation began
+> after the operator explicitly authorized the Priority-4 build scope and approved the first PR.
 >
 > **Authored:** 2026-06-26. **Baseline:** `develop` (contains the matcher-R5 + #356–#360 releases).
 > **Authoring skills:** `securelogic-intelligence-pipeline-engineer` (lead) + `securelogic-enterprise-architect` (layering) + `securelogic-security-reviewer` + `securelogic-program-manager`.
@@ -308,6 +313,7 @@ registry (additive, no behavior change)."**
 
 ---
 
-> **This document is a planning deliverable. No code, migration, or configuration has been produced, and
-> Priority 4 implementation has NOT begun. It awaits operator review and explicit authorization of the
-> build scope and the first PR before any code is written.**
+> **This document was a planning deliverable. Priority 4 implementation has since been authorized by the
+> operator (2026-06-26) and is UNDERWAY: slice 4A.1 is merged to `develop` (PR #371). The plan above
+> continues to govern the remaining slices, which ship as small, additive, flag-gated PRs validated in
+> staging before any promotion to `main`.**
