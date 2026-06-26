@@ -87,7 +87,7 @@ Now live in **production (`main`)** — shipped as two reviewed releases:
    - **App logged-out root → `/login`** — the standalone app landing page is retired (`app/src/app/page.tsx`, `app/src/components/Header.tsx`).
    - **New Render service `securelogic-website-staging`** (`render.yaml`, `branch: develop`) — a develop-tracking marketing-site preview, now provisioned by IaC.
 
-Sequencing: **Priority 4 (Signal Ingestion Hardening) remains BLOCKED** pending operator authorization of the build scope. All three technical prerequisites (#5/#6/#7) are satisfied; clearing them makes the package ready to authorize, not authorized — Active ≠ Implementation Authorized.
+Sequencing: **Priority 4 (Signal Ingestion Hardening) is now ACTIVE.** All three technical prerequisites (#5/#6/#7) were satisfied and the operator authorized the build scope on 2026-06-26 (plan PR #369, decisions PR #370). Implementation has begun in small additive slices: the first slice **4A.1** — the RSS-registry `kind` discriminator (PR #371) — is implemented, passed the full CI gate (7/7), and is merged to `develop` (develop/staging only; not yet promoted to `main`).
 
 ## Current product areas
 ### 1. Primitive platform domains
