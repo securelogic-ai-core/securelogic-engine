@@ -266,7 +266,7 @@ Risks the standard surfaces but does not itself fix. These are inputs to follow-
 | R2 | 26 of 100 route files do not reference `organization_id`. Mostly health/public/auth/admin. Needs an explicit sweep to confirm each one is genuinely tenant-irrelevant. | `src/api/routes/` | Medium — likely benign but unverified |
 | R3 | JWT bridge swaps to the org's most recent active API key. Multiple active keys per org collapse all JWT actions onto the same canonical key in audit logs — actor attribution loss. | `src/api/middleware/requireApiKey.ts:95–104` | Medium |
 | R4 | Three-vocabulary entitlement collision (Stripe key / `entitlement_level` / `requireEntitlement` rank). Easy to gate a feature at the wrong tier. Mapping is now codified in §9 but the code itself is unchanged. | `requireEntitlement.ts`, `stripeWebhook.ts`, `billing.ts` | Medium |
-| R5 | Intelligence worker is global; per-org fan-out occurs at brief generation. Not yet verified that the fan-out path enforces org filtering on signal-to-org linkage. Needs a one-pass inspection in the enforcement package. | `services/intelligence-worker/...`, `briefScheduler.ts`, `intelligenceBriefGenerator.ts` | Unknown — verify in enforcement package |
+| R5 | Intelligence worker is global; per-org fan-out occurs at brief generation. **RESOLVED 2026-06-26** — the fan-out path is now verified to enforce org filtering at consumption time: a real-Postgres cross-org test drives the matcher core (`runMatcherForSignal`) and the literal brief-generation SELECT and asserts per-org containment of findings, `signal_match_suggestions`, risk-exposure flags, `actions`, and brief inputs (the `pgElevated` path has no RLS backstop). | `services/intelligence-worker/...`, `briefScheduler.ts`, `cyberSignalProcessingService.ts`, `test/isolation/r5PipelineIsolation.test.ts` | **RESOLVED** — `test/isolation/r5PipelineIsolation.test.ts` (Priority 4 prereq #5) |
 | R6 | LLM prompt construction is not yet audited for cross-tenant text bleed. If any future call batches multiple orgs' inputs, one org's text could appear in another org's output. | `claudeAssessmentAnalyzer.ts`, `briefSynthesizer.ts`, `intelligenceBriefGenerator.ts` | Medium |
 | R7 | Audit-log coverage is partial. Some mutations write events; some do not. The standard now requires it but the code is uneven. | `src/api/routes/*.ts` | Medium |
 | R8 | No Postgres RLS. A single missed `WHERE organization_id = $1` leaks. Defense-in-depth is absent. Out of scope for this package; flagged for a future package. | DB layer | High (deferred) |
@@ -282,7 +282,7 @@ This package writes the standard. It does not change code, schema, or config. Th
 
 - Postgres RLS rollout (defense-in-depth for §4).
 - Sweep of the 26 routes that do not reference `organization_id` (R2).
-- Verification of intelligence-worker → brief-generation per-org filtering (R5).
+- Verification of intelligence-worker → brief-generation per-org filtering (R5). — **DONE 2026-06-26** (`test/isolation/r5PipelineIsolation.test.ts`).
 - LLM prompt-batching audit (R6).
 - Entitlement vocabulary consolidation (R4) — mapping is codified here; renaming is a separate package.
 - Per-API-key role scoping (R9).
@@ -296,7 +296,7 @@ This package writes the standard. It does not change code, schema, or config. Th
 `tenant-isolation-enforcement` — a focused engineering pass driven by R1–R11. Scope outline:
 
 1. Sweep the 26 non-org-referencing routes; classify each as "tenant-irrelevant" or "leak risk" with evidence (R2).
-2. Verify the intelligence-worker → brief-generation path enforces per-org filtering at consumption time (R5).
+2. Verify the intelligence-worker → brief-generation path enforces per-org filtering at consumption time (R5). — **DONE 2026-06-26** (`test/isolation/r5PipelineIsolation.test.ts`, Priority 4 prereq #5).
 3. Add a PR-time check (lint rule or test) that customer-data SQL strings include `organization_id` filtering (R1).
 4. Audit LLM prompt construction sites for cross-tenant batching (R6).
 
