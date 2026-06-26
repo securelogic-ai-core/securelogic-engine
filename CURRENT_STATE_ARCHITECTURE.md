@@ -69,17 +69,23 @@ Operating rule:
 - Demo is for presentation.
 - Production is for clients.
 
-## Release state (2026-06-26 — matcher-R5 release)
+## Release state (2026-06-26)
 
 Current branch heads:
-- **Production (`main`)** is at `a1ab67f4` (the curated "matcher-R5" release, PR #363).
-- **Staging (`develop`)** is at `12f7a77c` and **fully contains `main`** (`origin/develop..origin/main` = 0).
+- **Production (`main`)** is at `86cb4f4a`.
+- **Staging (`develop`)** is at `b789b285` and **fully contains `main`** (`origin/develop..origin/main` = 0); there is no SHA drift between the branches.
 
-Now live in **production (`main`)**:
-- **Matcher GAP-3 worker reachability (#354 / #355).** Phase-5 risk-exposure flagging and the risk→action generator are lifted into `runMatcherForSignal` (`src/api/lib/cyberSignalProcessingService.ts`) so the worker fan-out path reaches them; risk-action telemetry is included.
-- **R5 closed.** The worker→brief per-org fan-out is verified org-isolated against a real Postgres by `test/isolation/r5PipelineIsolation.test.ts` (the `cross-org-isolation` CI lane). This resolves risk **R5** in `TENANT_ISOLATION_STANDARD.md` §11 and satisfies Priority-4 prerequisite **#5** in `BUILD_SEQUENCE.md`. Note: this proves the *route/worker `WHERE organization_id` discipline*; Postgres RLS remains inert pre-flip (defense-in-depth, separate A04-G1 track).
+Now live in **production (`main`)** — shipped as two reviewed releases:
 
-`develop`/staging-only — **NOT in production** (#356–#360): the marketing-website rebuild, pricing-model reconcile, `/platform` module availability, the website-staging service, and the app-landing retire (`app/src/app/page.tsx` → `/login`). These await their own marketing-release decision and have **not** been promoted to `main`.
+1. **matcher-R5 release (PR #363).**
+   - **Matcher GAP-3 worker reachability (#354 / #355):** phase-5 risk-exposure flagging and the risk→action generator are lifted into `runMatcherForSignal` (`src/api/lib/cyberSignalProcessingService.ts`) so the worker fan-out path reaches them; risk-action telemetry is included.
+   - **R5 closed:** the worker→brief per-org fan-out is verified org-isolated against a real Postgres by `test/isolation/r5PipelineIsolation.test.ts` (the `cross-org-isolation` CI lane). This resolves risk **R5** in `TENANT_ISOLATION_STANDARD.md` §11 and satisfies Priority-4 prerequisite **#5** in `BUILD_SEQUENCE.md`. Note: this proves the *route/worker `WHERE organization_id` discipline*; Postgres RLS remains inert pre-flip (defense-in-depth, separate A04-G1 track).
+
+2. **website release (#356–#360, PR #366) — now production-released** (no longer develop/staging-only):
+   - **Marketing-website rebuild** (`website/**`) — one enterprise system on shared assets.
+   - **Pricing-model and `/platform` page updates** — corrected pricing model; Vendor Risk, AI Governance, and Compliance marked available.
+   - **App logged-out root → `/login`** — the standalone app landing page is retired (`app/src/app/page.tsx`, `app/src/components/Header.tsx`).
+   - **New Render service `securelogic-website-staging`** (`render.yaml`, `branch: develop`) — a develop-tracking marketing-site preview, now provisioned by IaC.
 
 Sequencing: **Priority 4 (Signal Ingestion Hardening) remains BLOCKED** pending operator authorization of the build scope. All three technical prerequisites (#5/#6/#7) are satisfied; clearing them makes the package ready to authorize, not authorized — Active ≠ Implementation Authorized.
 
