@@ -220,9 +220,9 @@ export async function loadTemplate(
         const result = await client.query(
           `INSERT INTO obligations (
              organization_id, title, description, jurisdiction,
-             priority, template_source
+             priority, template_source, source_regulation
            )
-           VALUES ($1, $2, $3, $4, $5, $6)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (organization_id, title) DO NOTHING
            RETURNING id`,
           [
@@ -232,6 +232,15 @@ export async function loadTemplate(
             o.jurisdiction,
             o.priority,
             industryId,
+            // source_regulation := regulation_name. The matcher
+            // (signalTargetMatching.scoreObligationMatch) keys regulation-family
+            // identity off source_regulation, NOT title — so template-created
+            // obligations were scoring 0 with this column left NULL. The
+            // regulation_name is already clean family-style text ("HIPAA Privacy
+            // Rule", "GDPR …"); reuse it verbatim. Obligations whose family is
+            // outside REGULATION_FAMILIES still score 0 — that is the known
+            // vocab-coverage limit, not this column being unset.
+            o.regulation_name,
           ]
         );
         if ((result.rowCount ?? 0) > 0) inserted.obligations += 1;
