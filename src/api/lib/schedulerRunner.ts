@@ -1,11 +1,16 @@
 /**
  * schedulerRunner.ts — node-cron wrapper for the Intelligence Brief scheduler.
  *
- * Schedules briefScheduler.runScheduler() to run weekly on Mondays at 7:00 AM
- * UTC. The Brief is the single weekly customer email; the per-finding Daily
+ * Schedules briefScheduler.runScheduler() to run every weekday (Mon-Fri) at
+ * 7:00 AM UTC. The Brief is the single customer email; the per-finding Daily
  * Digest is disabled (see digestScheduler / dailyDigestFeatureFlag). The brief
- * already covers a trailing 7-day window (briefScheduler WINDOW_DAYS = 7), so a
- * weekly cadence yields non-overlapping weekly editions.
+ * covers a trailing 7-day window (briefScheduler WINDOW_DAYS = 7), so weekday
+ * editions overlap by design — each edition is a current rolling-7-day view.
+ *
+ * Generation AND email send run Mon-Fri; weekends are excluded at the cron
+ * level (no Sat/Sun run = no weekend LLM spend). briefScheduler additionally
+ * guards the email SEND with isBriefSendDay() as defense-in-depth, so manual
+ * runs (POST /api/admin/briefs/run-scheduler) never email on a weekend either.
  *
  * OVERLAP PREVENTION
  * ------------------
@@ -17,7 +22,7 @@
  * -------
  * Call startScheduler() once during server boot, after connectDatabase().
  * The cron job does not run immediately on startup — the first execution
- * is the next Monday 7:00 AM UTC after startup.
+ * is the next weekday (Mon-Fri) 7:00 AM UTC after startup.
  *
  * TIMEZONE
  * --------
@@ -26,8 +31,8 @@
  *
  * CRON EXPRESSION
  * ---------------
- *   "0 7 * * 1"
- *    │ │ │ │ └── day-of-week: 1 (Monday)
+ *   "0 7 * * 1-5"
+ *    │ │ │ │ └── day-of-week: 1-5 (Monday through Friday)
  *    │ │ │ └──── month: * (every month)
  *    │ │ └────── day-of-month: * (every day)
  *    │ └──────── hour: 7
@@ -55,7 +60,7 @@ let isScanningAuthAnomalies = false;
  */
 export function startScheduler(): void {
   schedule(
-    "0 7 * * 1",
+    "0 7 * * 1-5",
     async () => {
       if (isRunning) {
         logger.warn(
@@ -99,7 +104,7 @@ export function startScheduler(): void {
   );
 
   logger.info(
-    { event: "scheduler_registered", schedule: "0 7 * * 1 (UTC)", description: "Every Monday 7:00 AM UTC" },
+    { event: "scheduler_registered", schedule: "0 7 * * 1-5 (UTC)", description: "Every weekday (Mon-Fri) 7:00 AM UTC" },
     "Intelligence Brief scheduler registered"
   );
 

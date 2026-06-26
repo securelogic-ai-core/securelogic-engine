@@ -67,6 +67,7 @@ import {
   fetchPriorBriefContext
 } from "./briefSynthesizer.js";
 import { sendBrief } from "./briefEmailSender.js";
+import { isBriefSendDay } from "./briefSendWindow.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -96,6 +97,8 @@ export type SchedulerRunSummary = {
   briefs_generated: number;
   emails_sent: number;
   emails_failed: number;
+  /** Orgs whose brief was generated but NOT emailed because the run fell on a weekend (Sat/Sun UTC). */
+  emails_skipped_weekend: number;
   errors: string[];
 };
 
@@ -487,10 +490,17 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     briefs_generated: 0,
     emails_sent: 0,
     emails_failed: 0,
+    emails_skipped_weekend: 0,
     errors: []
   };
 
-  logger.info({ event: "scheduler_run_start" }, "Brief scheduler run started");
+  // Email delivery is restricted to weekdays (Mon-Fri UTC). The cron only
+  // fires Mon-Fri, but this in-code gate also covers manual runs
+  // (POST /api/admin/briefs/run-scheduler) and any future cron change.
+  // Briefs are still generated on a weekend run; only the send is skipped.
+  const isSendDay = isBriefSendDay(new Date());
+
+  logger.info({ event: "scheduler_run_start", isSendDay }, "Brief scheduler run started");
 
   // ── Step 1: Find all orgs with active subscribers ───────────────────────
 
@@ -964,7 +974,21 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
       continue;
     }
 
-    // Send brief to all active subscribers for this org
+    // Send brief to all active subscribers for this org — weekdays only.
+    // On a weekend run the brief is generated and stored (above) but NOT
+    // emailed; this is the defense-in-depth guard for manual/off-schedule runs.
+    if (!isSendDay) {
+      summary.emails_skipped_weekend++;
+      logger.info(
+        { event: "scheduler_brief_send_skipped_weekend", orgId, briefId, weekday: new Date().getUTCDay() },
+        "Brief generated but email send skipped — weekend (Sat/Sun UTC), no Intelligence Brief emails on weekends"
+      );
+      if (!orgFailed) {
+        summary.orgs_processed++;
+      }
+      continue;
+    }
+
     try {
       const sendResult = await sendBrief(briefId, orgId);
       summary.emails_sent += sendResult.sent;
@@ -999,6 +1023,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
       briefs_generated: summary.briefs_generated,
       emails_sent: summary.emails_sent,
       emails_failed: summary.emails_failed,
+      emails_skipped_weekend: summary.emails_skipped_weekend,
       error_count: summary.errors.length
     },
     "Brief scheduler run completed"
