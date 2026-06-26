@@ -326,6 +326,55 @@ export async function seedUser(
 }
 
 /**
+ * Seed one `cyber_signals` row and return its id. Used by the R5 worker→brief
+ * cross-org isolation test (test/isolation/r5PipelineIsolation.test.ts).
+ *
+ * `orgId` is nullable BY DESIGN: pass `null` for a GLOBAL signal (the
+ * public-source rows the worker fans out per-org); pass an org id for a
+ * per-org signal. Only the NOT-NULL-without-default columns are required:
+ * organization_id (nullable), source, signal_type, severity,
+ * normalized_summary, dedup_hash. `signal_type` must satisfy the
+ * cyber_signals_signal_type_check CHECK (e.g. 'breach', 'cve'); `severity`
+ * the cyber_signals_severity_check ('Critical'/'High'/'Moderate'/'Low').
+ * `dedup_hash` is UNIQUE per (organization_id) and globally per (dedup_hash)
+ * WHERE organization_id IS NULL, so each call must pass a distinct value.
+ * Seeded as the owner connection (RLS bypassed for setup). The caller owns
+ * the pool.
+ */
+export async function seedCyberSignal(
+  pool: Pool,
+  opts: {
+    orgId?: string | null;
+    vendor?: string | null;
+    cve?: string | null;
+    signalType?: string;
+    severity?: string;
+    summary?: string;
+    source?: string;
+    dedup: string;
+  },
+): Promise<string> {
+  const res = await pool.query<{ id: string }>(
+    `INSERT INTO cyber_signals
+       (organization_id, source, signal_type, severity, normalized_summary,
+        affected_vendor, affected_cve, dedup_hash)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id`,
+    [
+      opts.orgId ?? null,
+      opts.source ?? "harness",
+      opts.signalType ?? "breach",
+      opts.severity ?? "High",
+      opts.summary ?? "R5 harness cyber signal",
+      opts.vendor ?? null,
+      opts.cve ?? null,
+      opts.dedup,
+    ],
+  );
+  return res.rows[0].id;
+}
+
+/**
  * Drop, migrate and seed the test database. Returns the two seeded orgs.
  * The caller owns no pool — this opens and closes its own.
  */
