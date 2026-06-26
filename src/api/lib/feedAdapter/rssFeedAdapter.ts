@@ -104,6 +104,7 @@ export function makeRssFeed(config: RssFeedConfig): FeedAdapter<RssFeedItem> {
   const userAgent = config.userAgent ?? DEFAULT_USER_AGENT;
 
   const adapter: FeedAdapter<RssFeedItem> = {
+    kind: "rss",
     id: config.id,
     sourceTier: config.sourceTier,
     signalType: config.signalType,
