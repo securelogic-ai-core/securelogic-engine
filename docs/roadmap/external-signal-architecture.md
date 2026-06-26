@@ -3,7 +3,7 @@
 > **Status:** **Architecture Ratified – Implementation Pending** (operator-ratified 2026-06-25). This is the
 > approved architectural baseline for SecureLogic AI external-signal work. It ratifies architecture and
 > design decisions **only** — it is **NOT** authorization to implement. Priority 4 (Signal Ingestion
-> Hardening) remains **BLOCKED** until the §12 prerequisites are satisfied (#5/#6/#7 still OPEN).
+> Hardening) remains **BLOCKED**; the §12 prerequisites **#5/#6/#7 are all SATISFIED** (#5 2026-06-26; #6/#7 2026-06-25), so the package now awaits only operator authorization of the build scope.
 > **Scope:** documentation only. No application code is changed by this package's design phase.
 > **Date started:** 2026-06-25. **Ratified:** 2026-06-25.
 > **Authoring skill:** `securelogic-intelligence-pipeline-engineer` (+ `securelogic-enterprise-architect` for layering, `securelogic-program-manager` for sequencing).
@@ -382,9 +382,9 @@ Status after the **2026-06-25 decision review** (§10):
 4. **Clustering identity key (T4 / D2) — RESOLVED:** CVE-primary `cluster_key` beside `dedup_hash`.
    Remaining: validate the CVE-less fingerprint against real data in P4.
 
-**Gating prerequisites — status:** #5 **OPEN**; #6 and #7 **✅ SATISFIED (2026-06-25)** (kept in sync with `BUILD_SEQUENCE.md`).
+**Gating prerequisites — status:** **#5, #6, #7 all ✅ SATISFIED** (#5 2026-06-26; #6/#7 2026-06-25) (kept in sync with `BUILD_SEQUENCE.md`).
 5. **A real-Postgres integration lane** for ingestion + a **cross-org isolation test** closing R5
-   (worker→brief per-org filtering) — Priority-4 changes per-org fan-out, so this is a gating prerequisite. **OPEN.**
+   (worker→brief per-org filtering) — Priority-4 changes per-org fan-out, so this is a gating prerequisite. **✅ SATISFIED (2026-06-26)** — `test/isolation/r5PipelineIsolation.test.ts` green in the `cross-org-isolation` lane; R5 RESOLVED in `TENANT_ISOLATION_STANDARD.md`.
 6. **`main→develop` reconciliation — ✅ SATISFIED (2026-06-25).** `main` was back-merged into `develop`
    via a **true merge commit `56992b3b`** (`--no-ff`, not squashed; parents `[7e7eaebc doc commit,
    cbd3504b origin/main]`). **Evidence (VERIFIED — matches `BUILD_SEQUENCE.md`):** `origin/develop..origin/main`
