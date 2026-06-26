@@ -69,6 +69,20 @@ Operating rule:
 - Demo is for presentation.
 - Production is for clients.
 
+## Release state (2026-06-26 — matcher-R5 release)
+
+Current branch heads:
+- **Production (`main`)** is at `a1ab67f4` (the curated "matcher-R5" release, PR #363).
+- **Staging (`develop`)** is at `12f7a77c` and **fully contains `main`** (`origin/develop..origin/main` = 0).
+
+Now live in **production (`main`)**:
+- **Matcher GAP-3 worker reachability (#354 / #355).** Phase-5 risk-exposure flagging and the risk→action generator are lifted into `runMatcherForSignal` (`src/api/lib/cyberSignalProcessingService.ts`) so the worker fan-out path reaches them; risk-action telemetry is included.
+- **R5 closed.** The worker→brief per-org fan-out is verified org-isolated against a real Postgres by `test/isolation/r5PipelineIsolation.test.ts` (the `cross-org-isolation` CI lane). This resolves risk **R5** in `TENANT_ISOLATION_STANDARD.md` §11 and satisfies Priority-4 prerequisite **#5** in `BUILD_SEQUENCE.md`. Note: this proves the *route/worker `WHERE organization_id` discipline*; Postgres RLS remains inert pre-flip (defense-in-depth, separate A04-G1 track).
+
+`develop`/staging-only — **NOT in production** (#356–#360): the marketing-website rebuild, pricing-model reconcile, `/platform` module availability, the website-staging service, and the app-landing retire (`app/src/app/page.tsx` → `/login`). These await their own marketing-release decision and have **not** been promoted to `main`.
+
+Sequencing: **Priority 4 (Signal Ingestion Hardening) remains BLOCKED** pending operator authorization of the build scope. All three technical prerequisites (#5/#6/#7) are satisfied; clearing them makes the package ready to authorize, not authorized — Active ≠ Implementation Authorized.
+
 ## Current product areas
 ### 1. Primitive platform domains
 Implemented or materially present:
