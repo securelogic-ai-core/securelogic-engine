@@ -67,6 +67,7 @@ const VENDOR_ID = "44444444-4444-4444-8444-444444444444";
 const AI_SYSTEM_ID = "55555555-5555-4555-8555-555555555555";
 const FINDING_ID = "66666666-6666-4666-8666-666666666666";
 const SUGGESTION_ID = "77777777-7777-4777-8777-777777777777";
+const RISK_ID = "88888888-8888-4888-8888-888888888888";
 
 const EMPTY = { rowCount: 0, rows: [] };
 
@@ -157,8 +158,8 @@ describe("runMatcherForSignal — vendor match", () => {
     });
     expect(suggestionParams[5]).toBe(56);
 
-    // BEGIN + 4 work queries + COMMIT = 6 client.query calls.
-    expect(mockClientQuery).toHaveBeenCalledTimes(6);
+    // BEGIN + 4 work queries + phase-5 risks UPDATE + COMMIT = 7 client.query calls.
+    expect(mockClientQuery).toHaveBeenCalledTimes(7);
     expect(mockClientRelease).toHaveBeenCalledTimes(1);
   });
 
@@ -168,7 +169,8 @@ describe("runMatcherForSignal — vendor match", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })       // vendor SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })            // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                            // weights SELECT
-      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] }); // suggestion INSERT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] }) // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY);                                           // phase 5: risks UPDATE (no open risks)
 
     const result = await runMatcherForSignal(
       makeSignal(),
@@ -274,8 +276,8 @@ describe("runMatcherForSignal — no match", () => {
     expect(result.suggestion_id).toBeNull();
     expect(result.match_score).toBeNull();
     expect(result.obligation_suggestion_ids).toEqual([]);
-    // BEGIN, vendor, ai_system, COMMIT = 4 ('cve' fires no obligation branch).
-    expect(mockClientQuery).toHaveBeenCalledTimes(4);
+    // BEGIN, vendor, ai_system, phase-5 risks UPDATE, COMMIT = 5 ('cve' fires no obligation branch).
+    expect(mockClientQuery).toHaveBeenCalledTimes(5);
   });
 
   it("affected_vendor null short-circuits matching entirely (cve fires no obligation branch)", async () => {
@@ -291,8 +293,8 @@ describe("runMatcherForSignal — no match", () => {
     expect(result.matched_branch).toBe("no_match");
     expect(result.finding).toBeNull();
     expect(result.suggestion_id).toBeNull();
-    // BEGIN + COMMIT only.
-    expect(mockClientQuery).toHaveBeenCalledTimes(2);
+    // BEGIN + phase-5 risks UPDATE + COMMIT (no match → still flags domain risks).
+    expect(mockClientQuery).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -560,7 +562,7 @@ describe("runMatcherForSignal — GAP-1 obligation branch", () => {
     expect(sql).toMatch(/DO NOTHING/);
   });
 
-  it("NO findings INSERT and NO risk flagging on an obligation-only match (suggest-only)", async () => {
+  it("NO findings INSERT and NO risk ACTION on an obligation-only match (suggest-only)", async () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [obligationRow("o1", "GDPR Art. 32", "Privacy")] })
@@ -573,7 +575,12 @@ describe("runMatcherForSignal — GAP-1 obligation branch", () => {
 
     const sqls = mockClientQuery.mock.calls.map((c) => c[0] as string);
     expect(sqls.some((s) => /INSERT INTO findings/.test(s))).toBe(false);
-    expect(sqls.some((s) => /UPDATE risks/.test(s))).toBe(false);
+    // Phase 5 now lives in runMatcherForSignal: the risks UPDATE is issued
+    // unconditionally (mirrors finding/suggestion creation — only the action it
+    // spawns is flag-gated). With no open risk in scope it flags nothing, and
+    // with the action flag OFF it spawns no action.
+    expect(sqls.some((s) => /UPDATE risks/.test(s))).toBe(true);
+    expect(sqls.some((s) => /INSERT INTO actions/.test(s))).toBe(false);
   });
 
   it("non-regulatory signal_type does not run the obligation branch", async () => {
@@ -587,7 +594,8 @@ describe("runMatcherForSignal — GAP-1 obligation branch", () => {
     );
 
     expect(result.obligation_suggestion_ids).toEqual([]);
-    expect(mockClientQuery).toHaveBeenCalledTimes(2);
+    // BEGIN + phase-5 risks UPDATE + COMMIT (no obligation branch for 'breach').
+    expect(mockClientQuery).toHaveBeenCalledTimes(3);
     const sqls = mockClientQuery.mock.calls.map((c) => c[0] as string);
     expect(sqls.some((s) => /FROM obligations/.test(s))).toBe(false);
   });
@@ -678,8 +686,8 @@ describe("processSignal — org-scoped signal", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings
       .mockResolvedValueOnce(EMPTY)                                              // weights
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion
+      .mockResolvedValueOnce(EMPTY)                                              // phase 5: risks UPDATE (inside matcher)
       .mockResolvedValueOnce(EMPTY)                                              // phase 4: signal UPDATE
-      .mockResolvedValueOnce(EMPTY)                                              // phase 5: risks UPDATE
       .mockResolvedValueOnce(EMPTY);                                            // COMMIT
 
     mockPgQuery.mockResolvedValue({ rowCount: 0, rows: [] });
@@ -689,12 +697,13 @@ describe("processSignal — org-scoped signal", () => {
     expect(result.matched_vendor_id).toBe(VENDOR_ID);
     expect(result.finding).toEqual(findingRow());
 
-    // 'cve' fires no obligation branch, so phase 4 is at index 5 (as before GAP-1).
-    const phase4Sql = mockClientQuery.mock.calls[5]![0] as string;
+    // Phase 5 (risks UPDATE) now runs inside runMatcherForSignal, so phase 4
+    // (cyber_signals UPDATE) follows it — index 6 for this 'cve' signal.
+    const phase4Sql = mockClientQuery.mock.calls[6]![0] as string;
     expect(phase4Sql).toMatch(/UPDATE cyber_signals/);
     expect(phase4Sql).toMatch(/SET processed\s+= TRUE/);
     expect(phase4Sql).toMatch(/linked_finding_id = \$1/);
-    expect((mockClientQuery.mock.calls[5]![1] as unknown[])[0]).toBe(FINDING_ID);
+    expect((mockClientQuery.mock.calls[6]![1] as unknown[])[0]).toBe(FINDING_ID);
   });
 });
 
@@ -1018,5 +1027,115 @@ describe("runMatcherForSignal — action recommendation (GAP-3)", () => {
 
     await runMatcherForSignal(makeSignal({ severity: "Moderate" }), ORG_A);
     expect(actionInserts()).toHaveLength(0);
+  });
+});
+
+// =====================================================================
+// runMatcherForSignal — phase 5: risk-exposure flagging + risk→action (GAP-3)
+//
+// Phase 5 was lifted from processSignal into runMatcherForSignal so the worker
+// fan-out (which calls runMatcherForSignal directly) gets risk-exposure flagging
+// and the risk→action generator natively. A no-match 'cve' signal isolates the
+// risk path: no finding (so no finding-action), but phase 5 still flags any open
+// risk in the signal's domain. Mocks return one flagged risk (RISK_ID).
+// =====================================================================
+
+describe("runMatcherForSignal — risk-exposure flagging + risk→action (phase 5)", () => {
+  const FLAG = "SECURELOGIC_ACTION_ENGINE_ENABLED";
+  afterEach(() => { delete process.env[FLAG]; });
+
+  // INSERT INTO actions calls whose action_type marker is the risk-exposure one.
+  const riskActionCalls = () =>
+    mockClientQuery.mock.calls.filter(
+      (c) =>
+        /INSERT INTO actions/.test(c[0] as string) &&
+        (c[1] as unknown[])[3] === "auto_risk_exposure"
+    );
+
+  it("flag ON + an open risk in the signal's domain → exposure UPDATE flags it AND an auto_risk_exposure action is written", async () => {
+    process.env[FLAG] = "true";
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                   // BEGIN
+      .mockResolvedValueOnce(EMPTY)                                   // vendor SELECT (no match)
+      .mockResolvedValueOnce(EMPTY)                                   // ai_system SELECT (no match)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: RISK_ID }] }) // phase 5: risks UPDATE flags one
+      .mockResolvedValueOnce(EMPTY)                                   // risk-action INSERT (ON CONFLICT)
+      .mockResolvedValueOnce(EMPTY);                                  // COMMIT
+
+    const result = await runMatcherForSignal(makeSignal(), ORG_A);
+
+    expect(result.matched_branch).toBe("no_match"); // no finding-action noise
+    expect(result.risks_flagged).toBe(1);
+
+    const risk = riskActionCalls();
+    expect(risk).toHaveLength(1);
+    const params = risk[0]![1] as unknown[];
+    expect(params[0]).toBe(ORG_A);              // organization_id
+    expect(params[3]).toBe("auto_risk_exposure"); // action_type marker
+    expect(params[4]).toBe("risk");             // source_type
+    expect(params[5]).toBe(RISK_ID);            // source_id = flagged risk id
+    expect(params[6]).toBe("near_term");        // priority
+  });
+
+  it("flag OFF (default): the risk is STILL exposure-flagged (core behavior) but NO action is written", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                   // BEGIN
+      .mockResolvedValueOnce(EMPTY)                                   // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                   // ai_system SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: RISK_ID }] }) // phase 5: risks UPDATE flags one
+      .mockResolvedValueOnce(EMPTY);                                  // COMMIT (no risk-action INSERT)
+
+    const result = await runMatcherForSignal(makeSignal(), ORG_A);
+
+    // Exposure flagging is unconditional (it is core matcher behavior, like
+    // finding/suggestion creation); only the auto_risk_exposure ACTION is gated.
+    expect(result.risks_flagged).toBe(1);
+    const sqls = mockClientQuery.mock.calls.map((c) => c[0] as string);
+    expect(sqls.some((s) => /UPDATE risks/.test(s))).toBe(true);
+    expect(riskActionCalls()).toHaveLength(0);
+  });
+
+  it("risk-action INSERT uses the partial-unique ON CONFLICT predicate (index-level dedup across worker + API paths)", async () => {
+    process.env[FLAG] = "true";
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                   // BEGIN
+      .mockResolvedValueOnce(EMPTY)                                   // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                   // ai_system SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: RISK_ID }] }) // phase 5: risks UPDATE
+      .mockResolvedValueOnce(EMPTY)                                   // risk-action INSERT
+      .mockResolvedValueOnce(EMPTY);                                  // COMMIT
+
+    await runMatcherForSignal(makeSignal(), ORG_A);
+
+    const sql = riskActionCalls()[0]![0] as string;
+    expect(sql).toMatch(/ON CONFLICT \(organization_id, source_type, source_id\)/);
+    expect(sql).toMatch(/WHERE action_type = 'auto_risk_exposure'/);
+    expect(sql).toMatch(/DO NOTHING/);
+  });
+
+  it("re-run is idempotent: a risk already exposure_flagged is excluded by WHERE exposure_flagged=FALSE → no second action", async () => {
+    process.env[FLAG] = "true";
+    mockClientQuery
+      // Run 1 — risk newly flagged → one action written.
+      .mockResolvedValueOnce(EMPTY)                                   // BEGIN
+      .mockResolvedValueOnce(EMPTY)                                   // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                   // ai_system SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: RISK_ID }] }) // risks UPDATE flags one
+      .mockResolvedValueOnce(EMPTY)                                   // risk-action INSERT
+      .mockResolvedValueOnce(EMPTY)                                   // COMMIT
+      // Run 2 — same risk already flagged → UPDATE matches 0 rows → no action.
+      .mockResolvedValueOnce(EMPTY)                                   // BEGIN
+      .mockResolvedValueOnce(EMPTY)                                   // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                   // ai_system SELECT
+      .mockResolvedValueOnce(EMPTY)                                   // risks UPDATE flags 0 (already flagged)
+      .mockResolvedValueOnce(EMPTY);                                  // COMMIT
+
+    await runMatcherForSignal(makeSignal(), ORG_A);
+    await runMatcherForSignal(makeSignal(), ORG_A);
+
+    // One action total: the exposure_flagged=FALSE guard makes the second run a
+    // no-op; the ON CONFLICT index is the second line of defense for the
+    // cross-path (worker + API both processing the same signal/org) case.
+    expect(riskActionCalls()).toHaveLength(1);
   });
 });
