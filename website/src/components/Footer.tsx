@@ -5,84 +5,109 @@ interface FooterProps {
   appUrl: string;
 }
 
+// Internal anchors and external links kept here so all four pages share one
+// footer. Every href resolves to a real destination — no href="#" placeholders.
+const PRODUCT_LINKS = [
+  { label: "Intelligence Brief", href: "/intelligence-brief/" },
+  { label: "Brief Pro", href: "/pricing/" },
+  { label: "Brief-Team", href: "/pricing/" },
+  { label: "Platform", href: "/platform/" },
+  { label: "Pricing", href: "/pricing/" },
+  { label: "API", href: "/pricing/" },
+];
+
+const COMPANY_LINKS = [
+  { label: "About", href: "/about/" },
+  { label: "Contact", href: "/contact/" },
+  { label: "Privacy Policy", href: "/privacy/" },
+  { label: "Terms of Service", href: "/terms/" },
+];
+
 export function Footer({ appUrl }: FooterProps) {
+  // appUrl is reserved for future account links; kept in the shared signature.
+  void appUrl;
+
   return (
-    <footer className="bg-navy-900 text-slate-400">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-14">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-10">
-          {/* Brand column */}
-          <div className="md:col-span-1">
+    <footer className="bg-bg border-t border-hairline text-text-muted">
+      <div className="container-site py-14">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-10">
+          {/* Col 1 — Brand */}
+          <div className="col-span-2 md:col-span-1">
             <Link href="/" className="flex items-center gap-2.5 mb-4">
               <Image
                 src="/branding/securelogic-ai-logo.png"
                 alt="SecureLogic AI"
-                width={28}
-                height={28}
-                className="rounded-lg"
+                width={36}
+                height={36}
+                className="h-9 w-9 rounded-lg"
               />
-              <span className="font-semibold text-white text-sm">SecureLogic AI</span>
+              <span className="font-semibold text-text text-sm">SecureLogic AI</span>
             </Link>
-            <p className="text-sm leading-relaxed">
-              Unified Risk Intelligence Platform for vendors, controls, compliance, and AI systems.
+            <p className="text-sm leading-relaxed max-w-xs">
+              Cyber risk intelligence for security teams that refuse to be reactive.
             </p>
+            <p className="text-xs text-text-muted/70 mt-5">© 2026 SecureLogic AI</p>
           </div>
 
-          {/* Platform */}
+          {/* Col 2 — Product */}
           <div>
-            <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-4">
-              Platform
-            </h3>
+            <h2 className="pill-mono text-text-muted mb-4">Product</h2>
             <ul className="space-y-2.5 text-sm">
-              <li><Link href="/platform/" className="hover:text-white transition-colors">Overview</Link></li>
-              <li><Link href="/platform/#vendor-risk" className="hover:text-white transition-colors">Vendor Risk</Link></li>
-              <li><Link href="/platform/#ai-governance" className="hover:text-white transition-colors">AI Governance</Link></li>
-              <li><Link href="/platform/#compliance" className="hover:text-white transition-colors">Compliance</Link></li>
+              {PRODUCT_LINKS.map((link) => (
+                <li key={link.label}>
+                  <Link href={link.href} className="hover:text-text transition-colors">
+                    {link.label}
+                  </Link>
+                </li>
+              ))}
             </ul>
           </div>
 
-          {/* Intelligence */}
+          {/* Col 3 — Company */}
           <div>
-            <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-4">
-              Intelligence
-            </h3>
+            <h2 className="pill-mono text-text-muted mb-4">Company</h2>
             <ul className="space-y-2.5 text-sm">
-              <li><Link href="/intelligence-brief/" className="hover:text-white transition-colors">Intelligence Brief</Link></li>
-              <li><Link href="/pricing/" className="hover:text-white transition-colors">Pricing</Link></li>
-              <li>
-                <a href={`${appUrl}/register`} className="hover:text-white transition-colors">
-                  Get access
-                </a>
-              </li>
+              {COMPANY_LINKS.map((link) => (
+                <li key={link.label}>
+                  <Link href={link.href} className="hover:text-text transition-colors">
+                    {link.label}
+                  </Link>
+                </li>
+              ))}
             </ul>
           </div>
 
-          {/* Account */}
+          {/* Col 4 — Connect */}
           <div>
-            <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-4">
-              Account
-            </h3>
+            <h2 className="pill-mono text-text-muted mb-4">Connect</h2>
             <ul className="space-y-2.5 text-sm">
               <li>
-                <a href={`${appUrl}/login`} className="hover:text-white transition-colors">
-                  Log in
+                <a href="mailto:hello@securelogicai.com" className="hover:text-text transition-colors">
+                  hello@securelogicai.com
+                </a>
+              </li>
+              {/* TODO(brand): confirm official LinkedIn / X handles before launch. */}
+              <li>
+                <a
+                  href="https://www.linkedin.com/company/securelogic-ai/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-text transition-colors"
+                >
+                  LinkedIn
                 </a>
               </li>
               <li>
-                <a href={`${appUrl}/register`} className="hover:text-white transition-colors">
-                  Create account
+                <a
+                  href="https://x.com/securelogicai"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-text transition-colors"
+                >
+                  Twitter / X
                 </a>
               </li>
             </ul>
-          </div>
-        </div>
-
-        <div className="mt-12 pt-8 border-t border-slate-800 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs">
-          <p>&copy; {new Date().getFullYear()} SecureLogic AI. All rights reserved.</p>
-          <div className="flex gap-6">
-            <Link href="/privacy/" className="hover:text-white transition-colors">Privacy Policy</Link>
-            <Link href="/terms/" className="hover:text-white transition-colors">Terms of Service</Link>
-            <Link href="/ai-policy/" className="hover:text-white transition-colors">AI Policy</Link>
-            <Link href="/security/" className="hover:text-white transition-colors">Security</Link>
           </div>
         </div>
       </div>
