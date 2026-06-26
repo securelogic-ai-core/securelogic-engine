@@ -52,6 +52,17 @@ export type SignalType =
 export type SourceTier = 1 | 2 | 3;
 
 /**
+ * Registry-entry kind discriminator.
+ *
+ * Identifies which adapter family produced a registry entry so future
+ * consumers can branch on `feed.kind` (a discriminated union) rather than
+ * inferring format. Only `"rss"` is implemented in the Priority 4 slice 4A;
+ * `"json"` / `"html"` will extend this union once those stub factories
+ * (jsonFeedAdapter / htmlScrapedFeedAdapter) are wired into the registry.
+ */
+export type RegistryKind = "rss";
+
+/**
  * Format-agnostic feed contract.
  *
  * `fetch()` performs whatever I/O is appropriate for the source format
@@ -65,6 +76,14 @@ export type SourceTier = 1 | 2 | 3;
  * freely; the orchestrator isolates failures.
  */
 export interface FeedAdapter<TItem = unknown> {
+  /**
+   * Adapter-family discriminator. Stamped by the concrete factory
+   * (`makeRssFeed` → `"rss"`). Optional during the additive 4A slice so the
+   * not-yet-wired stub factories (jsonFeedAdapter / htmlScrapedFeedAdapter)
+   * remain valid; tightened to required once every kind is stamped.
+   */
+  kind?: RegistryKind;
+
   /** Stable identifier — also used as the `source` field on emitted signals. */
   id: string;
 
