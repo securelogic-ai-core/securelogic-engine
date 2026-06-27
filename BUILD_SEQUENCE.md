@@ -23,6 +23,17 @@ Release rules:
 - no production release decision should be based solely on Demo behavior
 - seeded demo data belongs in Demo unless a non-production seed package explicitly targets another environment
 
+Release gates (must be cleared before any `develop → main` promotion):
+- **F-1 — migration `20260706_risk_numeric_score.sql` not previously applied.**
+  The migration runner is filename-keyed (`scripts/runMigrations.ts`): a
+  reshaped migration whose filename already exists in `schema_migrations` is
+  silently skipped. PR #382 (merged to `develop` as `4d0d984e`) reshaped this
+  same migration after its first commit. Before promoting, confirm
+  `SELECT count(*) FROM schema_migrations WHERE filename='20260706_risk_numeric_score.sql'`
+  returns 0 in **staging** and **prod**. Non-zero ⇒ do not promote as-is;
+  add a follow-up re-stamp migration or re-apply in a controlled way.
+  Owner: operator (DB credentials required; not runnable from CI/dev shell).
+
 ## Current strategic phase
 Phase: Product hardening from strong foundations into enterprise-ready intelligence operations
 
