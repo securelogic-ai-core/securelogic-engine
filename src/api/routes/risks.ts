@@ -33,6 +33,7 @@ import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { resolveOwnerUserSameOrg } from "../lib/ownerUserResolver.js";
 import { resolveCadenceDays } from "../lib/riskCadence.js";
+import { computeRiskScore } from "../lib/riskScore.js";
 
 const router = Router();
 
@@ -178,6 +179,9 @@ const RISK_SELECT = `
   last_reviewed_at,
   next_review_due,
   review_cadence_days,
+  residual_score,
+  inherent_score,
+  score_basis,
   (
     next_review_due IS NOT NULL
     AND next_review_due < CURRENT_DATE
@@ -292,6 +296,20 @@ router.post(
       // not from input.residual_* — keeping them independent allows a
       // caller to send legacy = inherent if they have a reason to,
       // though the documented intent is legacy = residual.
+      //
+      // Numeric scores (0–100) are derived deterministically from the
+      // residual/inherent likelihood × impact axes (riskScore.ts). The
+      // validator guarantees both axes are present on create, so both
+      // scores resolve here.
+      const residualScoreOnCreate = computeRiskScore(
+        input.residual_likelihood,
+        input.residual_impact
+      );
+      const inherentScoreOnCreate = computeRiskScore(
+        input.inherent_likelihood,
+        input.inherent_impact
+      );
+
       const result = await pg.query(
         `
         INSERT INTO risks (
@@ -314,11 +332,15 @@ router.post(
           owner_user_id,
           due_date,
           source_type,
-          source_id
+          source_id,
+          residual_score,
+          inherent_score,
+          score_basis
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-          $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+          $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+          $21, $22, $23
         )
         RETURNING ${RISK_SELECT}
         `,
@@ -342,7 +364,10 @@ router.post(
           input.owner_user_id ?? null,
           input.due_date ?? null,
           input.source_type ?? null,
-          input.source_id ?? null
+          input.source_id ?? null,
+          residualScoreOnCreate?.score ?? null,
+          inherentScoreOnCreate?.score ?? null,
+          residualScoreOnCreate ? JSON.stringify(residualScoreOnCreate.basis) : null
         ]
       );
 
@@ -1258,6 +1283,10 @@ router.patch(
         id: string;
         inherent_rating: string | null;
         residual_rating: string | null;
+        residual_likelihood: string | null;
+        residual_impact: string | null;
+        inherent_likelihood: string | null;
+        inherent_impact: string | null;
       }>(
         `SELECT ${RISK_SELECT}
          FROM risks WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
@@ -1292,6 +1321,24 @@ router.patch(
       if (input.residual_likelihood !== undefined) addField("residual_likelihood", input.residual_likelihood);
       if (input.residual_impact     !== undefined) addField("residual_impact",     input.residual_impact);
       if (input.residual_rating     !== undefined) addField("residual_rating",     input.residual_rating);
+
+      // Recompute numeric scores when either axis of a pair changes. Effective
+      // values merge the patch with the existing row, so updating one axis
+      // (e.g. impact only) still yields a correct score. computeRiskScore
+      // returns null when an axis is absent → the score column clears to NULL.
+      if (input.residual_likelihood !== undefined || input.residual_impact !== undefined) {
+        const rl = input.residual_likelihood ?? before.residual_likelihood;
+        const ri = input.residual_impact ?? before.residual_impact;
+        const rs = computeRiskScore(rl, ri);
+        addField("residual_score", rs?.score ?? null);
+        addField("score_basis", rs ? JSON.stringify(rs.basis) : null);
+      }
+      if (input.inherent_likelihood !== undefined || input.inherent_impact !== undefined) {
+        const il = input.inherent_likelihood ?? before.inherent_likelihood;
+        const ii = input.inherent_impact ?? before.inherent_impact;
+        const isr = computeRiskScore(il, ii);
+        addField("inherent_score", isr?.score ?? null);
+      }
 
       // Legacy column sync — Decision §5. When the caller PATCHes any
       // residual_* field (and didn't ALSO supply the matching legacy
