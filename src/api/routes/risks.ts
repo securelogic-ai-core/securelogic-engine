@@ -307,7 +307,8 @@ router.post(
       );
       const inherentScoreOnCreate = computeRiskScore(
         input.inherent_likelihood,
-        input.inherent_impact
+        input.inherent_impact,
+        "inherent"
       );
 
       const result = await pg.query(
@@ -1322,10 +1323,13 @@ router.patch(
       if (input.residual_impact     !== undefined) addField("residual_impact",     input.residual_impact);
       if (input.residual_rating     !== undefined) addField("residual_rating",     input.residual_rating);
 
-      // Recompute numeric scores when either axis of a pair changes. Effective
-      // values merge the patch with the existing row, so updating one axis
-      // (e.g. impact only) still yields a correct score. computeRiskScore
-      // returns null when an axis is absent → the score column clears to NULL.
+      // Recompute the DERIVED numeric scores when either axis of a pair
+      // changes. Effective values merge the patch with the existing row, so
+      // updating one axis (e.g. impact only) still yields a correct score.
+      // computeRiskScore returns null when an axis is absent → the score column
+      // clears to NULL. Note: residual_score is a projection of the residual
+      // axes only; it does NOT touch residual_rating, which stays the
+      // authoritative analyst-set severity (see riskScore.ts).
       if (input.residual_likelihood !== undefined || input.residual_impact !== undefined) {
         const rl = input.residual_likelihood ?? before.residual_likelihood;
         const ri = input.residual_impact ?? before.residual_impact;
@@ -1336,7 +1340,7 @@ router.patch(
       if (input.inherent_likelihood !== undefined || input.inherent_impact !== undefined) {
         const il = input.inherent_likelihood ?? before.inherent_likelihood;
         const ii = input.inherent_impact ?? before.inherent_impact;
-        const isr = computeRiskScore(il, ii);
+        const isr = computeRiskScore(il, ii, "inherent");
         addField("inherent_score", isr?.score ?? null);
       }
 

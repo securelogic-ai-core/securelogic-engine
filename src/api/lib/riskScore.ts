@@ -15,6 +15,15 @@
  * headline number is fully explainable; inherent_score is persisted without a
  * basis (the residual axis pair is what drives ordering).
  *
+ * SEVERITY AUTHORITY (ratified): `risks.residual_rating` (the analyst-set
+ * string) remains the AUTHORITATIVE severity for a risk — it can reflect a
+ * post-controls judgment that intentionally differs from raw arithmetic.
+ * `residual_score` is a DERIVED PROJECTION of the residual axes, used only for
+ * magnitude / intra-band ordering / heatmap intensity / tie-breaking. It must
+ * never be used to reorder a risk ACROSS what its rating asserts. `scoreBand()`
+ * exists so callers can detect (and surface) rating↔score divergence; it does
+ * not override the rating.
+ *
  * Pure: no I/O, no DB. Fully unit-testable.
  */
 
@@ -42,9 +51,29 @@ export const IMPACT_WEIGHTS: Record<string, number> = {
 /** Band thresholds on the 0–100 score, mapped to the existing rating strings. */
 export type ScoreBand = "Critical" | "High" | "Moderate" | "Low";
 
-export type RiskScoreBasis = {
+/** The raw weighted inputs that produced a score. */
+export type RiskScoreInputs = {
   likelihood_weight: number;
   impact_weight: number;
+};
+
+/**
+ * Versioned explainability envelope persisted in `risks.score_basis`.
+ *
+ * The `method`/`version` tag is the forward seam: a future score producer
+ * (e.g. an AI-drafted risk carrying model + confidence + rationale) extends
+ * this shape by adding a new method tag and fields, with NO JSONB reshape or
+ * backfill of existing rows. `score` records WHICH axis pair the basis
+ * explains — residual is the ranking key; inherent is carried for symmetry.
+ *
+ * NOTE: anything a future producer adds here (e.g. an AI `rationale`) must be
+ * sanitized before persistence — `score_basis` is tenant-visible.
+ */
+export type RiskScoreBasis = {
+  method: "likelihood_impact_v1";
+  version: 1;
+  score: "residual" | "inherent";
+  inputs: RiskScoreInputs;
 };
 
 export type RiskScoreResult = {
@@ -55,14 +84,17 @@ export type RiskScoreResult = {
 /**
  * Compute the numeric score for a (likelihood, impact) pair.
  *
- * Returns null when either axis is absent or not a recognized value — callers
- * treat null as "no score" (column stays NULL) rather than guessing. This is
- * why a partially-rated risk (e.g. impact set, likelihood not yet) carries no
- * score until both axes exist.
+ * `axis` tags the returned basis ("residual" default; "inherent" for the
+ * inherent pair) so a persisted envelope is self-describing. Returns null when
+ * either axis value is absent or not recognized — callers treat null as "no
+ * score" (column stays NULL) rather than guessing. This is why a partially
+ * rated risk (e.g. impact set, likelihood not yet) carries no score until both
+ * axes exist.
  */
 export function computeRiskScore(
   likelihood: string | null | undefined,
-  impact: string | null | undefined
+  impact: string | null | undefined,
+  axis: "residual" | "inherent" = "residual"
 ): RiskScoreResult | null {
   if (!likelihood || !impact) return null;
 
@@ -72,7 +104,12 @@ export function computeRiskScore(
 
   return {
     score: Math.round(lw * iw * 100),
-    basis: { likelihood_weight: lw, impact_weight: iw }
+    basis: {
+      method: "likelihood_impact_v1",
+      version: 1,
+      score: axis,
+      inputs: { likelihood_weight: lw, impact_weight: iw }
+    }
   };
 }
 

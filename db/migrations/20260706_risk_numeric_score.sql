@@ -11,6 +11,12 @@
 --   impact:     Critical 1.0,    High 0.75,  Moderate 0.5,  Low 0.25
 --   bands:      Critical ≥75, High ≥50, Moderate ≥25, Low <25
 --
+-- Severity authority (ratified): residual_rating stays the AUTHORITATIVE
+-- analyst-set severity. residual_score is a DERIVED projection of the residual
+-- axes for magnitude / intra-band ordering / heatmap intensity only — it never
+-- reorders a risk across what its rating asserts. See riskScore.ts and
+-- docs/scoring-vocabulary.md.
+--
 -- All columns nullable; backfill is computed from existing ratings. A risk
 -- with an incomplete axis pair carries a NULL score until both axes exist.
 -- Additive + idempotent (IF NOT EXISTS); safe to re-run.
@@ -51,14 +57,21 @@ SET residual_score = ROUND(
          WHEN 'Moderate' THEN 0.5 WHEN 'Low' THEN 0.25 END)
     * 100
     ),
+    -- Versioned explainability envelope — must match RiskScoreBasis in
+    -- riskScore.ts: { method, version, score, inputs:{ … } }.
     score_basis = jsonb_build_object(
-      'likelihood_weight', (CASE residual_likelihood
-         WHEN 'very_likely' THEN 1.0 WHEN 'likely' THEN 0.8
-         WHEN 'possible' THEN 0.6 WHEN 'unlikely' THEN 0.4
-         WHEN 'rare' THEN 0.2 END),
-      'impact_weight', (CASE residual_impact
-         WHEN 'Critical' THEN 1.0 WHEN 'High' THEN 0.75
-         WHEN 'Moderate' THEN 0.5 WHEN 'Low' THEN 0.25 END)
+      'method', 'likelihood_impact_v1',
+      'version', 1,
+      'score', 'residual',
+      'inputs', jsonb_build_object(
+        'likelihood_weight', (CASE residual_likelihood
+           WHEN 'very_likely' THEN 1.0 WHEN 'likely' THEN 0.8
+           WHEN 'possible' THEN 0.6 WHEN 'unlikely' THEN 0.4
+           WHEN 'rare' THEN 0.2 END),
+        'impact_weight', (CASE residual_impact
+           WHEN 'Critical' THEN 1.0 WHEN 'High' THEN 0.75
+           WHEN 'Moderate' THEN 0.5 WHEN 'Low' THEN 0.25 END)
+      )
     )
 -- IN-list guards (not merely IS NOT NULL) so an off-vocabulary legacy axis is
 -- skipped entirely — leaving residual_score AND score_basis NULL, exactly as
