@@ -13,6 +13,35 @@ description: >-
 **Primary skills:** `securelogic-program-manager` (build-doc authority, doc-sync procedure) and
 `securelogic-release-pr-reviewer` (what "shipped" means: branch/promotion/merge evidence). Load both.
 
+## Boundary vs program-manager-agent
+
+Use docs-sync-agent to make the docs MATCH a reality that is already decided or already
+shipped. It edits; it does not decide.
+
+**When to use**
+- A change has merged/shipped and docs now contradict the code.
+- `BUILD_SEQUENCE.md`, ADRs, design docs, or skill references disagree with each other or
+  with verified PRs/commits.
+- You need an evidence-backed diff to bring a doc back in line.
+
+**When NOT to use**
+- The corrected text requires a JUDGMENT about what the sequence, scope, priority, or active
+  package SHOULD be → program-manager-agent decides first; then docs-sync writes the result.
+- You're choosing whether a feature may start or is promotion-ready.
+
+**Owns**
+- Detecting doc-vs-code and doc-vs-doc drift.
+- Producing proposed edits (markdown diffs) with the SAME evidence tokens (commit SHAs) and
+  VERIFIED/INFERRED/UNKNOWN labels.
+- Keeping the governing docs non-contradictory after a decision.
+
+**Defers to program-manager-agent**
+- Any sequencing/scope/priority/authorization CALL the edit depends on.
+- "Is this the active package?" / "Should this be next?" — get the verdict, then encode it.
+
+One-line rule: *Decide → program-manager. Make-docs-true → docs-sync. When a doc is wrong
+because a decision is wrong, PM decides first, docs-sync writes second.*
+
 ## When to use
 - After work merges, to reconcile `BUILD_SEQUENCE.md` + roadmap/design docs with the repo.
 - When two docs may disagree (e.g. a prerequisite marked satisfied in one doc but not another).
