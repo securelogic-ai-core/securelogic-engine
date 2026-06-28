@@ -70,6 +70,7 @@ import {
 } from "./signals/sourceQualification.js";
 import { recomputeSourceReliability } from "./signals/sourceReliability.js";
 import { signalClusteringEnabled } from "./signals/signalClustering.js";
+import { briefProvenanceEnabled, buildProvenanceRows } from "./signals/briefProvenance.js";
 import {
   runSynthesisSafely,
   fetchPriorBriefContext
@@ -272,7 +273,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
     priorityOf = makeQualificationPriority(await loadSourceQualification(pg), sourcePriority);
   }
 
-  const { briefId, base } = await withTenant(orgId, async () => {
+  const { briefId, base, signalMeta } = await withTenant(orgId, async () => {
     const client = createSavepointClient(requireTenantContext());
     try {
       await client.query("BEGIN");
@@ -307,8 +308,14 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
         clusteringEnabled: signalClusteringEnabled()
       });
 
+      // D2: per-signal source + cluster_key, so the persist phase can denormalise
+      // them onto provenance edges (incl. corroborating signals not on the item).
+      const newSignalMeta = new Map<string, { source: string; cluster_key: string | null }>(
+        signalsResult.rows.map((s) => [s.id, { source: s.source, cluster_key: s.cluster_key ?? null }])
+      );
+
       await client.query("COMMIT");
-      return { briefId: newBriefId, base: newBase };
+      return { briefId: newBriefId, base: newBase, signalMeta: newSignalMeta };
     } catch (err) {
       await client.query("ROLLBACK").catch(() => {});
       throw err;
@@ -434,16 +441,44 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
             );
           });
 
-          await client.query(
+          const insertedItems = await client.query<{ id: string; sort_order: number }>(
             `INSERT INTO intelligence_brief_items
                (organization_id, brief_id, cyber_signal_id, category, relevance,
                 title, summary, affected_cve, affected_vendor, source_slug,
                 signal_type, severity, sort_order,
                 why_it_matters, recommended_actions, analyst_notes,
                 urgency)
-             VALUES ${itemPlaceholders.join(", ")}`,
+             VALUES ${itemPlaceholders.join(", ")}
+             RETURNING id, sort_order`,
             itemValues
           );
+
+          // D2 (flag-gated): write lineage edges (canonical + corroborating) for
+          // each persisted item, in THIS tenant transaction so the RLS policy is
+          // satisfied and the edges are atomic with the items.
+          if (briefProvenanceEnabled()) {
+            const idBySortOrder = new Map<number, string>(
+              insertedItems.rows.map((r) => [r.sort_order, r.id])
+            );
+            const sourceById = new Map<string, string | null>(
+              [...signalMeta].map(([sid, m]) => [sid, m.source])
+            );
+            for (const item of finalized.items as BriefItem[]) {
+              const briefItemId = idBySortOrder.get(item.sort_order);
+              if (!briefItemId) continue;
+              const clusterKey = signalMeta.get(item.cyber_signal_id)?.cluster_key ?? null;
+              const rows = buildProvenanceRows(item, briefItemId, orgId, clusterKey, sourceById);
+              for (const row of rows) {
+                await client.query(
+                  `INSERT INTO intelligence_brief_item_provenance
+                     (organization_id, brief_item_id, cyber_signal_id, source_slug, cluster_key, relation)
+                   VALUES ($1, $2, $3, $4, $5, $6)
+                   ON CONFLICT (brief_item_id, cyber_signal_id) DO NOTHING`,
+                  [row.organization_id, row.brief_item_id, row.cyber_signal_id, row.source_slug, row.cluster_key, row.relation]
+                );
+              }
+            }
+          }
         }
 
         // Explicitly set status to 'published' before this function returns so

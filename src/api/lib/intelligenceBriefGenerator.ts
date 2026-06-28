@@ -142,6 +142,14 @@ export type BriefItem = {
    * Flag-off ⇒ undefined ⇒ omitted from content_json (byte-identical).
    */
   corroborating_source_count?: number;
+  /**
+   * D2 (P4/4D): the cyber_signal_ids that contributed to this item — the
+   * canonical signal plus every signal a cluster collapsed into it. Used ONLY by
+   * the persist layer to write intelligence_brief_item_provenance edges; it is
+   * INTERNAL and stripped from content_json by buildContentJson, so it never
+   * changes brief output (output-inert).
+   */
+  contributing_signal_ids?: string[];
 };
 
 export type BriefCategoryGroup = {
@@ -395,10 +403,13 @@ function mergeBriefItemsByCve(
       }
     }
 
+    // D2: full lineage = canonical + every collapsed signal (even same-source
+    // ones, which corroborating_sources dedupes away). Internal-only.
+    const contributing = [canonical.cyber_signal_id, ...others.map((o) => o.cyber_signal_id)];
     merged.push(
       corroborating.length > 0
-        ? { ...canonical, corroborating_sources: corroborating }
-        : canonical
+        ? { ...canonical, corroborating_sources: corroborating, contributing_signal_ids: contributing }
+        : { ...canonical, contributing_signal_ids: contributing }
     );
   }
 
@@ -465,14 +476,17 @@ function mergeByFingerprintCluster(
       }
     }
 
+    // D2: full lineage for the fp cluster (overrides the per-signal default).
+    const contributing = [canonical.cyber_signal_id, ...sorted.slice(1).map((o) => o.cyber_signal_id)];
     out.push(
       corroborating.length > 0
         ? {
             ...canonical,
             corroborating_sources: corroborating,
-            corroborating_source_count: corroborating.length
+            corroborating_source_count: corroborating.length,
+            contributing_signal_ids: contributing
           }
-        : canonical
+        : { ...canonical, contributing_signal_ids: contributing }
     );
   }
 
@@ -676,6 +690,9 @@ export function buildBriefItems(
     signal_type: s.signal_type,
     severity: s.severity,
     ingestion_timestamp: new Date(s.ingestion_timestamp).toISOString(),
+    // D2: default lineage = just this signal; merges override the canonical with
+    // the full contributing set. Internal (stripped from content_json).
+    contributing_signal_ids: [s.id],
     sort_order: 0 // assigned below
   }));
 
@@ -772,6 +789,17 @@ function buildItemTitle(signal: CyberSignalForBrief): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Return a copy of a BriefItem without the internal D2 lineage field, so it can
+ * be serialized into content_json without changing brief output. Operates on a
+ * copy — the original retains contributing_signal_ids for provenance writes.
+ */
+function stripInternalBriefItemFields(item: BriefItem): BriefItem {
+  const copy = { ...item };
+  delete copy.contributing_signal_ids;
+  return copy;
+}
+
+/**
  * Build the structured JSON content for a brief.
  *
  * Groups items by category in canonical order. Empty categories are omitted.
@@ -796,7 +824,9 @@ export function buildContentJson(
       categories.push({
         category: cat,
         label: CATEGORY_LABELS[cat],
-        items: catItems
+        // Strip the internal D2 lineage field (on a copy) so content_json is
+        // byte-identical to pre-D2; the originals keep it for provenance.
+        items: catItems.map(stripInternalBriefItemFields)
       });
     }
   }
