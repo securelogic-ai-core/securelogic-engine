@@ -129,8 +129,8 @@ describe("recomputeSourceReliability — writer (B3)", () => {
   });
 });
 
-describe("source reliability — inertness (B3)", () => {
-  it("is imported by no app-runtime module (consumed only by B4 later + the on-demand script)", () => {
+describe("source reliability — consumers (B3 → B4)", () => {
+  it("is imported only by the B4 brief-cycle recompute wiring (+ the on-demand script, excluded)", () => {
     const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
     const selfRel = "src/api/lib/signals/sourceReliability.ts";
 
@@ -152,6 +152,11 @@ describe("source reliability — inertness (B3)", () => {
       return /sourceReliability/.test(readFileSync(f, "utf8"));
     });
 
-    expect(importers).toEqual([]); // scripts/ (on-demand operator entrypoint) is intentionally excluded
+    // B4 wires the recompute into the engine brief cycle (briefScheduler,
+    // per-brief-cycle, flag-gated). That is the ONLY sanctioned app-runtime
+    // consumer; scripts/ (on-demand entrypoint) is excluded above. Any OTHER
+    // importer is an unexpected/early consumer.
+    const rels = importers.map((f) => path.relative(repoRoot, f)).sort();
+    expect(rels).toEqual(["src/api/lib/briefScheduler.ts"]);
   });
 });
