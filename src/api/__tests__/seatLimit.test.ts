@@ -29,15 +29,15 @@ describe("enforceSeatLimit — active-member count vs cap", () => {
   });
 
   it("at limit (count == cap) → exceeded (drives the rejection)", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ used: "10", cap: 10 }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ used: "6", cap: 6 }] });
     const r = await enforceSeatLimit(ORG);
-    expect(r).toEqual({ exceeded: true, used: 10, cap: 10 });
+    expect(r).toEqual({ exceeded: true, used: 6, cap: 6 });
   });
 
   it("under limit → not exceeded (provisioning proceeds)", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ used: "9", cap: 10 }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ used: "5", cap: 6 }] });
     const r = await enforceSeatLimit(ORG);
-    expect(r).toEqual({ exceeded: false, used: 9, cap: 10 });
+    expect(r).toEqual({ exceeded: false, used: 5, cap: 6 });
   });
 
   it("counts only status='active' users against max_members", async () => {
@@ -58,13 +58,13 @@ describe("enforceSeatLimit — active-member count vs cap", () => {
     expect(r).toEqual({ exceeded: false, used: 10, cap: 50 });
   });
 
-  it("missing org row → defaults to cap 10, used 0, not exceeded", async () => {
+  it("missing org row → defaults to cap 6, used 0, not exceeded", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
     const r = await enforceSeatLimit(ORG);
     expect(r).toEqual({ exceeded: false, used: 0, cap: DEFAULT_MAX_SEATS });
   });
 
-  it("null cap (legacy row) → defaults to 10", async () => {
+  it("null cap (legacy row) → defaults to 6", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ used: "3", cap: null }] });
     const r = await enforceSeatLimit(ORG);
     expect(r).toEqual({ exceeded: false, used: 3, cap: DEFAULT_MAX_SEATS });
@@ -123,7 +123,7 @@ describe("adminOrganizations — operator can set max_members", () => {
     expect(ADMIN_SRC).toMatch(/RETURNING[\s\S]{0,200}max_members/);
   });
 
-  it("does NOT auto-raise max_members in the Stripe webhook (no self-serve tier exceeds 10 seats)", () => {
+  it("does NOT auto-raise max_members in the Stripe webhook (no self-serve tier exceeds 6 seats)", () => {
     const WEBHOOK_SRC = readFileSync(resolve(__dirname, "../webhooks/stripeWebhook.ts"), "utf8");
     expect(WEBHOOK_SRC).not.toMatch(/max_members\s*=/);
   });

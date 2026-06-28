@@ -189,7 +189,7 @@ router.post(
       );
 
       const usedSeats = parseInt(countResult.rows[0]?.count ?? "0", 10);
-      const maxSeats  = orgResult.rows[0]?.max_members ?? 10;
+      const maxSeats  = orgResult.rows[0]?.max_members ?? 6;
       const orgName   = orgResult.rows[0]?.name ?? "Your Organisation";
 
       if (usedSeats >= maxSeats) {
@@ -324,7 +324,7 @@ router.get(
 
       const members       = membersResult.rows;
       const pendingInvites = invitesResult.rows;
-      const maxSeats      = orgResult.rows[0]?.max_members ?? 10;
+      const maxSeats      = orgResult.rows[0]?.max_members ?? 6;
       const activeCount   = members.filter(m => m.status === "active").length;
 
       res.status(200).json({
