@@ -37,6 +37,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { instrumentAnthropicClient } from "../infra/providerQuotaAlert.js";
 import { z } from "zod";
 import { logger } from "../infra/logger.js";
+import { CLUSTER_KEY_FP_PREFIX } from "./signals/clusterKey.js";
 import type { BriefSynthesis } from "./briefSynthesizer.js";
 
 function getClient(): Anthropic | null {
@@ -134,6 +135,13 @@ export type BriefItem = {
    * off the content_json blob to render a "seen in N sources" indicator.
    */
   corroborating_sources?: string[];
+  /**
+   * C3b (P4/4C): number of distinct corroborating sources (= corroborating_
+   * sources.length). Set ONLY when SECURELOGIC_SIGNAL_CLUSTERING_ENABLED is on —
+   * for both fingerprint (fp:) clusters and (derived) the existing CVE clusters.
+   * Flag-off ⇒ undefined ⇒ omitted from content_json (byte-identical).
+   */
+  corroborating_source_count?: number;
 };
 
 export type BriefCategoryGroup = {
@@ -398,6 +406,80 @@ function mergeBriefItemsByCve(
 }
 
 // ---------------------------------------------------------------------------
+// mergeByFingerprintCluster  (pure) — Priority 4 / Phase 4C / C3b
+// ---------------------------------------------------------------------------
+//
+// Soft corroboration for CVE-LESS signals, beside (never overlapping) the CVE
+// merge above. Collapses items whose persisted cluster_key starts with "fp:"
+// into one deterministic canonical + corroboration metadata. Items with a "cve:"
+// key (owned by mergeBriefItemsByCve) or a null key (singleton) pass through
+// untouched — the cve:/fp: partition is disjoint by construction, so nothing is
+// merged twice. Presentation-only: no signal is dropped; cyber_signals is never
+// touched.
+//
+// cluster_key is read from `keyById` (keyed by cyber_signal_id, built from the
+// brief input rows) — deliberately NOT a BriefItem field, so it can never reach
+// content_json. O(n) partition + per-group sort ⇒ O(n log n).
+function mergeByFingerprintCluster(
+  items: ReadonlyArray<BriefItem>,
+  keyById: ReadonlyMap<string, string | null>,
+  priorityOf: (source: string) => number = sourcePriority
+): BriefItem[] {
+  const groups = new Map<string, BriefItem[]>();
+  const passthrough: BriefItem[] = [];
+
+  for (const item of items) {
+    const key = keyById.get(item.cyber_signal_id) ?? null;
+    if (key !== null && key.startsWith(CLUSTER_KEY_FP_PREFIX)) {
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(item);
+      else groups.set(key, [item]);
+    } else {
+      passthrough.push(item); // cve: (CVE-merged) or null (singleton)
+    }
+  }
+
+  const out: BriefItem[] = [...passthrough];
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      out.push(group[0]!);
+      continue;
+    }
+    // Deterministic canonical: priorityOf (B4 qualification) → recency desc →
+    // cyber_signal_id asc (stable, unique final tie-break).
+    const sorted = [...group].sort((a, b) => {
+      const pDiff = priorityOf(a.source_slug) - priorityOf(b.source_slug);
+      if (pDiff !== 0) return pDiff;
+      const tDiff = b.ingestion_timestamp.localeCompare(a.ingestion_timestamp);
+      if (tDiff !== 0) return tDiff;
+      return a.cyber_signal_id.localeCompare(b.cyber_signal_id);
+    });
+
+    const canonical = sorted[0]!;
+    const seen = new Set<string>([canonical.source_slug]);
+    const corroborating: string[] = [];
+    for (const other of sorted.slice(1)) {
+      if (!seen.has(other.source_slug)) {
+        seen.add(other.source_slug);
+        corroborating.push(other.source_slug);
+      }
+    }
+
+    out.push(
+      corroborating.length > 0
+        ? {
+            ...canonical,
+            corroborating_sources: corroborating,
+            corroborating_source_count: corroborating.length
+          }
+        : canonical
+    );
+  }
+
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Composite ranking key (pre- and post-enrichment)
 // ---------------------------------------------------------------------------
 
@@ -575,7 +657,10 @@ export function capByUrgencyBuckets(
  */
 export function buildBriefItems(
   signals: ReadonlyArray<CyberSignalForBrief>,
-  priorityOf: (source: string) => number = sourcePriority
+  priorityOf: (source: string) => number = sourcePriority,
+  // C3b: when true, collapse CVE-less fingerprint (fp:) clusters and surface
+  // corroboration counts. Default false ⇒ byte-identical to pre-C3b.
+  clusteringEnabled = false
 ): BriefItem[] {
   const RELEVANCE_RANK: Record<BriefRelevance, number> = { high: 0, medium: 1, low: 2 };
 
@@ -594,7 +679,24 @@ export function buildBriefItems(
     sort_order: 0 // assigned below
   }));
 
-  const items = mergeBriefItemsByCve(rawItems, priorityOf);
+  let items = mergeBriefItemsByCve(rawItems, priorityOf);
+
+  // C3b (flag-gated): collapse CVE-less fp: clusters, then surface a corroboration
+  // count for EVERY cluster (fp + the existing CVE ones). The fp pass sets the
+  // count on its canonicals; here we derive it for CVE clusters from the sources
+  // mergeBriefItemsByCve already attached — without modifying that pass. Flag-off
+  // ⇒ this whole block is skipped ⇒ no count field ⇒ content_json unchanged.
+  if (clusteringEnabled) {
+    const keyById = new Map<string, string | null>(
+      signals.map((s) => [s.id, s.cluster_key ?? null])
+    );
+    items = mergeByFingerprintCluster(items, keyById, priorityOf);
+    for (const item of items) {
+      if (item.corroborating_sources && item.corroborating_source_count === undefined) {
+        item.corroborating_source_count = item.corroborating_sources.length;
+      }
+    }
+  }
 
   items.sort((a, b) => {
     const rankDiff = RELEVANCE_RANK[a.relevance] - RELEVANCE_RANK[b.relevance];
@@ -1115,14 +1217,14 @@ export async function enrichBriefItems(
  */
 export function generateBrief(
   signals: ReadonlyArray<CyberSignalForBrief>,
-  opts?: { priorityOf?: (source: string) => number }
+  opts?: { priorityOf?: (source: string) => number; clusteringEnabled?: boolean }
 ): {
   shortlist: BriefItem[];
   signal_count: number;
 } {
   // Default = legacy sourcePriority ⇒ omitting opts is byte-identical to pre-B4.
   const priorityOf = opts?.priorityOf ?? sourcePriority;
-  const items = buildBriefItems(signals, priorityOf);
+  const items = buildBriefItems(signals, priorityOf, opts?.clusteringEnabled ?? false);
   const shortlist = shortlistTopK(items, ENRICHMENT_SHORTLIST, priorityOf);
 
   return {
