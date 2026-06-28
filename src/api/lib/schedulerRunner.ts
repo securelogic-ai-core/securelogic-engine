@@ -1,16 +1,17 @@
 /**
  * schedulerRunner.ts — node-cron wrapper for the Intelligence Brief scheduler.
  *
- * Schedules briefScheduler.runScheduler() to run every weekday (Mon-Fri) at
+ * Schedules briefScheduler.runScheduler() to run once a week on Tuesday at
  * 7:00 AM UTC. The Brief is the single customer email; the per-finding Daily
  * Digest is disabled (see digestScheduler / dailyDigestFeatureFlag). The brief
- * covers a trailing 7-day window (briefScheduler WINDOW_DAYS = 7), so weekday
- * editions overlap by design — each edition is a current rolling-7-day view.
+ * covers a trailing 7-day window (briefScheduler WINDOW_DAYS = 7), so weekly
+ * editions tile the calendar — each edition is a fresh rolling-7-day view.
  *
- * Generation AND email send run Mon-Fri; weekends are excluded at the cron
- * level (no Sat/Sun run = no weekend LLM spend). briefScheduler additionally
- * guards the email SEND with isBriefSendDay() as defense-in-depth, so manual
- * runs (POST /api/admin/briefs/run-scheduler) never email on a weekend either.
+ * Generation AND email send run weekly on Tuesday; every other day is excluded
+ * at the cron level (one run per week = minimal LLM spend). briefScheduler
+ * additionally guards the email SEND with isBriefSendDay() as defense-in-depth,
+ * so manual runs (POST /api/admin/briefs/run-scheduler) never email on a
+ * non-send day either.
  *
  * OVERLAP PREVENTION
  * ------------------
@@ -22,7 +23,7 @@
  * -------
  * Call startScheduler() once during server boot, after connectDatabase().
  * The cron job does not run immediately on startup — the first execution
- * is the next weekday (Mon-Fri) 7:00 AM UTC after startup.
+ * is the next Tuesday 7:00 AM UTC after startup.
  *
  * TIMEZONE
  * --------
@@ -31,8 +32,8 @@
  *
  * CRON EXPRESSION
  * ---------------
- *   "0 7 * * 1-5"
- *    │ │ │ │ └── day-of-week: 1-5 (Monday through Friday)
+ *   "0 7 * * 2"
+ *    │ │ │ │ └── day-of-week: 2 (Tuesday)
  *    │ │ │ └──── month: * (every month)
  *    │ │ └────── day-of-month: * (every day)
  *    │ └──────── hour: 7
@@ -53,14 +54,14 @@ let isRunning = false;
 let isScanningAuthAnomalies = false;
 
 /**
- * Register the daily cron job.
+ * Register the weekly cron job.
  *
  * Safe to call multiple times — node-cron deduplicates by the task handle,
  * but callers should call this only once (from server.ts boot).
  */
 export function startScheduler(): void {
   schedule(
-    "0 7 * * 1-5",
+    "0 7 * * 2",
     async () => {
       if (isRunning) {
         logger.warn(
@@ -104,7 +105,7 @@ export function startScheduler(): void {
   );
 
   logger.info(
-    { event: "scheduler_registered", schedule: "0 7 * * 1-5 (UTC)", description: "Every weekday (Mon-Fri) 7:00 AM UTC" },
+    { event: "scheduler_registered", schedule: "0 7 * * 2 (UTC)", description: "Every Tuesday 7:00 AM UTC" },
     "Intelligence Brief scheduler registered"
   );
 
