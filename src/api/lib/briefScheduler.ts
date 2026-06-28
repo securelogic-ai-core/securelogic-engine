@@ -69,6 +69,7 @@ import {
   makeQualificationPriority
 } from "./signals/sourceQualification.js";
 import { recomputeSourceReliability } from "./signals/sourceReliability.js";
+import { signalClusteringEnabled } from "./signals/signalClustering.js";
 import {
   runSynthesisSafely,
   fetchPriorBriefContext
@@ -301,7 +302,10 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
       // Returns the pre-enrichment shortlist (top ENRICHMENT_SHORTLIST items
       // by composite ranking key); enrichment runs on the shortlist, then
       // capByUrgencyBuckets reduces to BRIEF_MAX_ITEMS.
-      const newBase = generateBrief(signalsResult.rows, { priorityOf });
+      const newBase = generateBrief(signalsResult.rows, {
+        priorityOf,
+        clusteringEnabled: signalClusteringEnabled()
+      });
 
       await client.query("COMMIT");
       return { briefId: newBriefId, base: newBase };
