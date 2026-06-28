@@ -59,9 +59,16 @@ import {
   enrichBriefItems,
   capByUrgencyBuckets,
   finalizeBrief,
+  sourcePriority,
   type CyberSignalForBrief,
   type BriefItem
 } from "./intelligenceBriefGenerator.js";
+import {
+  sourceQualificationEnabled,
+  loadSourceQualification,
+  makeQualificationPriority
+} from "./signals/sourceQualification.js";
+import { recomputeSourceReliability } from "./signals/sourceReliability.js";
 import {
   runSynthesisSafely,
   fetchPriorBriefContext
@@ -241,6 +248,29 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
   // briefId/base come back as the scope's return value so the rest of the
   // function (and the mark-failed handlers) can address the committed row.
 
+  // B4: choose the source-credibility ordinal for brief ranking. Flag OFF (the
+  // default) ⇒ legacy `sourcePriority`, so the pipeline below is byte-identical
+  // to pre-B4. Flag ON ⇒ a qualification-derived priority (authority_tier ×
+  // reliability) read from the GLOBAL `sources` table — loaded once here, before
+  // the tenant transaction (sources has no org scope / RLS). `sourcePriority` is
+  // the fallback for any source absent from the qualification map.
+  let priorityOf = sourcePriority;
+  if (sourceQualificationEnabled()) {
+    // Per-brief-cycle, flag-gated, non-fatal: refresh B3 reliability from the
+    // current feed_health snapshot so ranking reads fresh values. A recompute
+    // failure must NOT block the brief — fall through to whatever values the
+    // `sources` table already holds. No worker/cron involved (engine-only).
+    try {
+      await recomputeSourceReliability(pgElevated);
+    } catch (err) {
+      logger.error(
+        { event: "source_reliability_recompute_failed", orgId, err },
+        "Source reliability recompute failed (non-fatal) — using existing sources.reliability"
+      );
+    }
+    priorityOf = makeQualificationPriority(await loadSourceQualification(pg), sourcePriority);
+  }
+
   const { briefId, base } = await withTenant(orgId, async () => {
     const client = createSavepointClient(requireTenantContext());
     try {
@@ -271,7 +301,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
       // Returns the pre-enrichment shortlist (top ENRICHMENT_SHORTLIST items
       // by composite ranking key); enrichment runs on the shortlist, then
       // capByUrgencyBuckets reduces to BRIEF_MAX_ITEMS.
-      const newBase = generateBrief(signalsResult.rows);
+      const newBase = generateBrief(signalsResult.rows, { priorityOf });
 
       await client.query("COMMIT");
       return { briefId: newBriefId, base: newBase };
@@ -310,7 +340,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
   // Apply the urgency-bucket cap. After this, cappedItems.length is bounded
   // by BRIEF_MAX_ITEMS — this is what gets persisted and synthesized.
   const { items: cappedItems, counts: urgencyCounts } =
-    capByUrgencyBuckets(enrichedItems);
+    capByUrgencyBuckets(enrichedItems, priorityOf);
 
   logger.info(
     {

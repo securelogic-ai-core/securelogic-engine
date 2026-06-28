@@ -301,7 +301,7 @@ export function scoreRelevance(severity: string, affectedCve: string | null): Br
  *
  * Spec: docs/brief-content-audit.md §2 (Bug 2 fix scope).
  */
-function sourcePriority(source: string): number {
+export function sourcePriority(source: string): number {
   const s = source.toLowerCase().trim();
   if (s === "cisa_kev") return 0;
   if (s === "nvd") return 1;
@@ -333,7 +333,10 @@ function sourcePriority(source: string): number {
  *
  * Order of returned items is not guaranteed; the caller re-sorts.
  */
-function mergeBriefItemsByCve(items: ReadonlyArray<BriefItem>): BriefItem[] {
+function mergeBriefItemsByCve(
+  items: ReadonlyArray<BriefItem>,
+  priorityOf: (source: string) => number = sourcePriority
+): BriefItem[] {
   const noCveItems: BriefItem[] = [];
   const groups = new Map<string, BriefItem[]>();
 
@@ -360,7 +363,7 @@ function mergeBriefItemsByCve(items: ReadonlyArray<BriefItem>): BriefItem[] {
     }
 
     const sorted = [...group].sort((a, b) => {
-      const pDiff = sourcePriority(a.source_slug) - sourcePriority(b.source_slug);
+      const pDiff = priorityOf(a.source_slug) - priorityOf(b.source_slug);
       if (pDiff !== 0) return pDiff;
       return b.ingestion_timestamp.localeCompare(a.ingestion_timestamp);
     });
@@ -418,22 +421,30 @@ function severityRank(severity: string): number {
  *                         tied at step 1; this disambiguates the rest.
  *   5. recency     — newer ingestion_timestamp first
  */
-function compareBriefItemsForRanking(a: BriefItem, b: BriefItem): number {
-  const aKev = a.source_slug === "cisa_kev" ? 1 : 0;
-  const bKev = b.source_slug === "cisa_kev" ? 1 : 0;
-  if (aKev !== bKev) return bKev - aKev;
+// Factory: the comparator is identical to before except its factor-4 source
+// credibility ordinal is injectable. The default `sourcePriority` reproduces the
+// pre-B4 behavior byte-for-byte; B4 passes a qualification-derived priority
+// (flag-gated) — factors 1/2/3/5 are untouched.
+function makeRankingComparator(
+  priorityOf: (source: string) => number = sourcePriority
+): (a: BriefItem, b: BriefItem) => number {
+  return (a, b) => {
+    const aKev = a.source_slug === "cisa_kev" ? 1 : 0;
+    const bKev = b.source_slug === "cisa_kev" ? 1 : 0;
+    if (aKev !== bKev) return bKev - aKev;
 
-  const sevDiff = severityRank(a.severity) - severityRank(b.severity);
-  if (sevDiff !== 0) return sevDiff;
+    const sevDiff = severityRank(a.severity) - severityRank(b.severity);
+    if (sevDiff !== 0) return sevDiff;
 
-  const aCve = a.affected_cve && a.affected_cve.trim().length > 0 ? 1 : 0;
-  const bCve = b.affected_cve && b.affected_cve.trim().length > 0 ? 1 : 0;
-  if (aCve !== bCve) return bCve - aCve;
+    const aCve = a.affected_cve && a.affected_cve.trim().length > 0 ? 1 : 0;
+    const bCve = b.affected_cve && b.affected_cve.trim().length > 0 ? 1 : 0;
+    if (aCve !== bCve) return bCve - aCve;
 
-  const spDiff = sourcePriority(a.source_slug) - sourcePriority(b.source_slug);
-  if (spDiff !== 0) return spDiff;
+    const spDiff = priorityOf(a.source_slug) - priorityOf(b.source_slug);
+    if (spDiff !== 0) return spDiff;
 
-  return b.ingestion_timestamp.localeCompare(a.ingestion_timestamp);
+    return b.ingestion_timestamp.localeCompare(a.ingestion_timestamp);
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -450,10 +461,11 @@ function compareBriefItemsForRanking(a: BriefItem, b: BriefItem): number {
  */
 export function shortlistTopK(
   items: ReadonlyArray<BriefItem>,
-  k: number
+  k: number,
+  priorityOf: (source: string) => number = sourcePriority
 ): BriefItem[] {
   if (k <= 0) return [];
-  const sorted = [...items].sort(compareBriefItemsForRanking);
+  const sorted = [...items].sort(makeRankingComparator(priorityOf));
   return sorted.length <= k ? sorted : sorted.slice(0, k);
 }
 
@@ -482,7 +494,8 @@ export function shortlistTopK(
  * sort_order reassigned 0..N-1. Input items are not mutated.
  */
 export function capByUrgencyBuckets(
-  enriched: ReadonlyArray<BriefItem>
+  enriched: ReadonlyArray<BriefItem>,
+  priorityOf: (source: string) => number = sourcePriority
 ): {
   items: BriefItem[];
   counts: Record<BriefUrgency, number>;
@@ -498,7 +511,7 @@ export function capByUrgencyBuckets(
   }
 
   for (const key of Object.keys(groups) as BriefUrgency[]) {
-    groups[key].sort(compareBriefItemsForRanking);
+    groups[key].sort(makeRankingComparator(priorityOf));
   }
 
   const T = URGENCY_BUCKET_TARGETS;
@@ -553,7 +566,10 @@ export function capByUrgencyBuckets(
  *   3. Sort by relevance (high→medium→low) then ingestion_timestamp DESC.
  *   4. Assign 0-based sort_order.
  */
-export function buildBriefItems(signals: ReadonlyArray<CyberSignalForBrief>): BriefItem[] {
+export function buildBriefItems(
+  signals: ReadonlyArray<CyberSignalForBrief>,
+  priorityOf: (source: string) => number = sourcePriority
+): BriefItem[] {
   const RELEVANCE_RANK: Record<BriefRelevance, number> = { high: 0, medium: 1, low: 2 };
 
   const rawItems: BriefItem[] = signals.map((s) => ({
@@ -571,7 +587,7 @@ export function buildBriefItems(signals: ReadonlyArray<CyberSignalForBrief>): Br
     sort_order: 0 // assigned below
   }));
 
-  const items = mergeBriefItemsByCve(rawItems);
+  const items = mergeBriefItemsByCve(rawItems, priorityOf);
 
   items.sort((a, b) => {
     const rankDiff = RELEVANCE_RANK[a.relevance] - RELEVANCE_RANK[b.relevance];
@@ -1091,13 +1107,16 @@ export async function enrichBriefItems(
  * produce this brief" reporting.
  */
 export function generateBrief(
-  signals: ReadonlyArray<CyberSignalForBrief>
+  signals: ReadonlyArray<CyberSignalForBrief>,
+  opts?: { priorityOf?: (source: string) => number }
 ): {
   shortlist: BriefItem[];
   signal_count: number;
 } {
-  const items = buildBriefItems(signals);
-  const shortlist = shortlistTopK(items, ENRICHMENT_SHORTLIST);
+  // Default = legacy sourcePriority ⇒ omitting opts is byte-identical to pre-B4.
+  const priorityOf = opts?.priorityOf ?? sourcePriority;
+  const items = buildBriefItems(signals, priorityOf);
+  const shortlist = shortlistTopK(items, ENRICHMENT_SHORTLIST, priorityOf);
 
   return {
     shortlist,
