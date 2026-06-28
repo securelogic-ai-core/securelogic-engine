@@ -565,7 +565,7 @@ function renderUpgradeBanner(data: BriefEmailData): string {
                         font-size:13px;font-weight:700;font-family:Arial,Helvetica,sans-serif;
                         padding:10px 22px;border-radius:5px;text-decoration:none;
                         letter-spacing:0.02em;">
-                Upgrade to Professional &mdash; $29/mo &rarr;
+                Upgrade to Brief Pro &mdash; $49/mo &rarr;
               </a>
             </td>
           </tr>
@@ -701,7 +701,7 @@ export function renderBriefEmailText(data: BriefEmailData, orgName: string): str
     if (data.hidden_count && data.hidden_count > 0) {
       lines.push(`+ ${data.hidden_count} more signal${data.hidden_count !== 1 ? "s" : ""} in the full brief`);
     }
-    lines.push("Upgrade to Professional — $29/mo: https://app.securelogicai.com/signup", "");
+    lines.push("Upgrade to Brief Pro — $49/mo: https://app.securelogicai.com/signup", "");
   }
 
   lines.push(

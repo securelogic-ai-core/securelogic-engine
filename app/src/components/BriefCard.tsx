@@ -159,7 +159,7 @@ function LockedCard({ issue }: { issue: NewsletterIssue }) {
           href="/account"
           className="text-brand-teal hover:text-teal-300 text-sm font-semibold transition-colors flex-shrink-0 ml-3"
         >
-          Upgrade to Professional — $29/mo →
+          Upgrade to Brief Pro — $49/mo →
         </Link>
       </div>
     </div>

@@ -56,7 +56,7 @@ export function UpgradeCard({ entitlementLevel = "free" }: UpgradeCardProps) {
             disabled={loading !== null}
             className="w-full bg-brand-teal hover:bg-teal-400 disabled:opacity-60 text-white font-semibold text-sm py-2 rounded-lg transition-colors"
           >
-            {loading === "briefpro" ? "Redirecting…" : "Brief Pro — $29/mo"}
+            {loading === "briefpro" ? "Redirecting…" : "Brief Pro — $49/mo"}
           </button>
         )}
 
@@ -69,7 +69,7 @@ export function UpgradeCard({ entitlementLevel = "free" }: UpgradeCardProps) {
               : "bg-white/10 hover:bg-white/20 text-slate-100 border-white/20"
           }`}
         >
-          {loading === "platform" ? "Redirecting…" : "Platform Professional — $1,099/mo"}
+          {loading === "platform" ? "Redirecting…" : "Platform Professional — $800/mo"}
         </button>
 
         <button
@@ -81,7 +81,7 @@ export function UpgradeCard({ entitlementLevel = "free" }: UpgradeCardProps) {
               : "bg-white/10 hover:bg-white/20 text-slate-100 border-white/20"
           }`}
         >
-          {loading === "platform_annual" ? "Redirecting…" : "Platform Annual — $12,000/yr"}
+          {loading === "platform_annual" ? "Redirecting…" : "Platform Annual — $600/mo billed annually"}
         </button>
 
         <button
@@ -89,7 +89,7 @@ export function UpgradeCard({ entitlementLevel = "free" }: UpgradeCardProps) {
           disabled={loading !== null}
           className="w-full bg-white/10 hover:bg-white/20 disabled:opacity-60 text-slate-100 font-semibold text-sm py-2 rounded-lg transition-colors border border-white/20"
         >
-          {loading === "teams" ? "Redirecting…" : "Team Professional — $189/mo"}
+          {loading === "teams" ? "Redirecting…" : "Team Professional — $199/mo"}
         </button>
       </div>
     </div>
