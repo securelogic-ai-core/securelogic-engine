@@ -68,10 +68,10 @@ async function resolveStripeCustomer(
 
    Five tiers (one free, four paid):
      starter          →  (no Stripe — default free plan)
-     professional     →  STRIPE_PRICE_ID_PROFESSIONAL      ($29/mo)
-     teams            →  STRIPE_PRICE_ID_TEAMS             ($189/mo, up to 10 seats)
-     platform         →  STRIPE_PRICE_ID_PLATFORM          ($1,099/mo)
-     platform_annual  →  STRIPE_PRICE_ID_PLATFORM_ANNUAL   ($12,000/yr)
+     professional     →  STRIPE_PRICE_ID_PROFESSIONAL      ($49/mo)
+     teams            →  STRIPE_PRICE_ID_TEAMS             ($199/mo, up to 10 seats)
+     platform         →  STRIPE_PRICE_ID_PLATFORM          ($800/mo)
+     platform_annual  →  STRIPE_PRICE_ID_PLATFORM_ANNUAL   ($7,200/yr = $600/mo billed annually)
 
    Entitlement mapping:
      professional, teams                 → entitlement_level="professional" (Brief access)

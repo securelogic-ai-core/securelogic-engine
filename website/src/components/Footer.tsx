@@ -10,7 +10,7 @@ interface FooterProps {
 const PRODUCT_LINKS = [
   { label: "Intelligence Brief", href: "/intelligence-brief/" },
   { label: "Brief Pro", href: "/pricing/" },
-  { label: "Brief-Team", href: "/pricing/" },
+  { label: "Team Professional", href: "/pricing/" },
   { label: "Platform", href: "/platform/" },
   { label: "Pricing", href: "/pricing/" },
   { label: "API", href: "/pricing/" },

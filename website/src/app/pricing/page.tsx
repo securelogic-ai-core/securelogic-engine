@@ -37,7 +37,7 @@ const PLATFORM_HIGHLIGHTS = [
 ];
 
 const DETAILS = [
-  "Brief-Team includes up to 6 seats.",
+  "Team Professional includes up to 6 seats.",
   "Need more than 6 seats on the brief? Move to Platform.",
   "Platform Professional includes up to 10 seats / 50 monitored entities.",
   "Need more than 10 seats or 50 entities, white-labeling, SSO/SAML, or multi-org? Talk to us about Enterprise.",
@@ -65,7 +65,7 @@ const FAQ = [
   },
   {
     q: "Can I start with the brief and upgrade later?",
-    a: "Absolutely — that's the intended path. Start free, move to Brief Pro or Brief-Team, then upgrade to the Platform when you're ready. Brief-Team spend is credited toward Platform when you upgrade.",
+    a: "Absolutely — that's the intended path. Start free, move to Brief Pro or Team Professional, then upgrade to the Platform when you're ready. Team Professional spend is credited toward Platform when you upgrade.",
   },
 ];
 

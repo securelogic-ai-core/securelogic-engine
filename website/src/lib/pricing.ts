@@ -2,7 +2,7 @@
  * Shared pricing model — single source of truth for the homepage and the
  * pricing page so the two never drift. Reflects the official commercial model
  * for this build:
- *   Intelligence Brief (Free) · Brief Pro · Brief-Team · Platform Professional · Enterprise
+ *   Intelligence Brief (Free) · Brief Pro · Team Professional · Platform Professional · Enterprise
  *
  * Platform Professional uses the revised founding-annual + month-to-month
  * structure (overrides any older $799 / $7,990 figures).
@@ -74,7 +74,7 @@ export function getPricingTiers(appUrl: string): PricingTier[] {
     },
     {
       id: "brief-team",
-      name: "Brief-Team",
+      name: "Team Professional",
       price: "$199",
       priceNote: "/ month",
       group: "brief",
@@ -88,7 +88,7 @@ export function getPricingTiers(appUrl: string): PricingTier[] {
         "Brief-only (no platform workflows)",
         "Past 6 members → move to Platform",
       ],
-      cta: "Start Brief-Team",
+      cta: "Start Team Professional",
       ctaHref: `${appUrl}/signup?plan=brief-team`,
     },
     {

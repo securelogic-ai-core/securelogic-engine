@@ -9,15 +9,15 @@ const PLANS = [
     features: [
       "Brief archive access",
       "Issue titles and summaries",
-      "Weekly email digest",
+      "Weekly Intelligence Brief",
     ],
     cta: "Get Started",
     href: "/signup",
     style: "default" as const,
   },
   {
-    name: "Professional",
-    price: "$39",
+    name: "Brief Pro",
+    price: "$49",
     period: "/ mo",
     description: "Full brief content for the individual practitioner who needs depth.",
     features: [
@@ -31,13 +31,13 @@ const PLANS = [
     style: "outline" as const,
   },
   {
-    name: "Team",
-    price: "$209",
+    name: "Team Professional",
+    price: "$199",
     period: "/ mo",
     description: "For security and risk teams that need shared access and priority support.",
     features: [
-      "Everything in Professional",
-      "Up to 10 seats",
+      "Everything in Brief Pro",
+      "Up to 6 seats",
       "Priority support",
       "Early access to new modules",
     ],
@@ -52,7 +52,7 @@ const PLANS = [
     period: "",
     description: "Tailored for large organizations with compliance, procurement, and SLA requirements.",
     features: [
-      "Everything in Team",
+      "Everything in Team Professional",
       "Unlimited seats",
       "Custom SLA",
       "Dedicated onboarding",
@@ -99,7 +99,7 @@ export default function PricingPage() {
             },
             {
               q: "What counts as a seat on the Team plan?",
-              a: "Each registered organization account counts as one seat. Team accounts can have up to 10 users sharing access to the Intelligence Brief.",
+              a: "Each registered organization account counts as one seat. Team accounts can have up to 6 users sharing access to the Intelligence Brief.",
             },
             {
               q: "What is included in Enterprise?",

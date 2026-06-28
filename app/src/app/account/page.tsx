@@ -289,7 +289,7 @@ export default async function AccountPage({
                       type="submit"
                       className="w-full border border-teal-600 text-teal-600 hover:bg-teal-50 text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                     >
-                      Professional — $29/mo
+                      Brief Pro — $49/mo
                     </button>
                   </form>
                   <form action="/api/billing/checkout" method="POST">
@@ -298,7 +298,7 @@ export default async function AccountPage({
                       type="submit"
                       className="w-full border border-teal-600 text-teal-600 hover:bg-teal-50 text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                     >
-                      Team Professional — $189/mo
+                      Team Professional — $199/mo
                     </button>
                   </form>
                   <form action="/api/billing/checkout" method="POST">
@@ -307,7 +307,7 @@ export default async function AccountPage({
                       type="submit"
                       className="w-full bg-teal-600 hover:bg-teal-500 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                     >
-                      Platform Professional — $1,099/mo
+                      Platform Professional — $800/mo
                     </button>
                   </form>
                   <form action="/api/billing/checkout" method="POST">
@@ -316,7 +316,7 @@ export default async function AccountPage({
                       type="submit"
                       className="w-full bg-teal-600 hover:bg-teal-500 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                     >
-                      Platform Annual — $12,000/yr
+                      Platform Annual — $600/mo billed annually
                     </button>
                   </form>
                   <p className="text-xs text-slate-500 pt-1">
