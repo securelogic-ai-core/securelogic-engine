@@ -78,6 +78,13 @@ export type CyberSignalForBrief = {
   source: string;
   ingestion_timestamp: string;
   /**
+   * C3a (P4/4C): persisted cyber_signals.cluster_key (C2). Carried through the
+   * brief pipeline so the C3b cluster-aware bucketing pass (flag-gated) can read
+   * it. Optional — tests construct fixtures inline and pre-backfill rows are
+   * NULL. C3a only plumbs it; nothing consumes it yet.
+   */
+  cluster_key?: string | null;
+  /**
    * Source-feed payload as stored in cyber_signals.raw_payload (jsonb).
    * The worker bridge writes { title, summary } here; engine adapters
    * write source-specific shapes that may or may not include `title`.

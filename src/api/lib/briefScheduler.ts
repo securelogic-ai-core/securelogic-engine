@@ -288,7 +288,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
       const signalsResult = await client.query<CyberSignalForBrief>(
         `SELECT id, signal_type, severity, normalized_summary,
                 affected_cve, affected_vendor, source, ingestion_timestamp,
-                raw_payload
+                cluster_key, raw_payload
          FROM cyber_signals
          WHERE (organization_id = $1 OR organization_id IS NULL)
            AND ingestion_timestamp >= $2
