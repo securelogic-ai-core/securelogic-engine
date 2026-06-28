@@ -16,6 +16,7 @@
     "seed:demo:reset": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx scripts/seed-demo.ts --reset'",
     "seed:staging": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx scripts/seed-staging.ts \"$@\"' --",
     "reliability:recompute": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx scripts/recompute-source-reliability.ts'",
+    "cluster-key:backfill": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx scripts/backfill-cluster-key.ts'",
     "test:matcher-staging": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx scripts/test-matcher-staging.ts \"$@\"' --",
     "clean": "rm -rf dist",
     "build": "rm -rf dist && tsc -p tsconfig.prod.json && cp -r src/api/public dist/api/public",

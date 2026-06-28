@@ -36,6 +36,7 @@
 
 import { createHash } from "crypto";
 import type { CyberSignalIngestInput } from "./cyberSignalValidation.js";
+import { clusterKey } from "./signals/clusterKey.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -51,6 +52,14 @@ export type NormalizedCyberSignal = {
   affected_cve: string | null;
   external_id: string | null;
   dedup_hash: string;
+  /**
+   * C2 (P4/4C): soft corroboration grouping from clusterKey() — BESIDE
+   * dedup_hash, never part of it. null ⇒ singleton. Computed here as the single
+   * source of truth; persistence to cyber_signals.cluster_key is handled by the
+   * backfill script (the 13 INSERT sites are intentionally not modified in C2),
+   * so the column is NULL on fresh rows until a backfill pass stamps it.
+   */
+  cluster_key: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -157,7 +166,12 @@ export function deriveSummaryFromPayload(
  * - Computes the dedup_hash.
  * - All other fields pass through from the validated input.
  */
-export function normalizeSignal(input: CyberSignalIngestInput): NormalizedCyberSignal {
+export function normalizeSignal(
+  input: CyberSignalIngestInput,
+  // Ingestion moment for clusterKey()'s CVE-less day-bucket. Injectable for
+  // determinism in tests; defaults to now (≈ the INSERT's ingestion_timestamp).
+  at: Date = new Date()
+): NormalizedCyberSignal {
   const normalizedSummary =
     input.normalized_summary !== null
       ? input.normalized_summary
@@ -181,6 +195,16 @@ export function normalizeSignal(input: CyberSignalIngestInput): NormalizedCyberS
     externalId
   );
 
+  // C2: soft cluster grouping (single source of truth = clusterKey()). Computed
+  // beside dedup_hash; never part of it. Not persisted by the INSERT sites in
+  // C2 — the backfill script stamps cyber_signals.cluster_key.
+  const clusterKeyValue = clusterKey({
+    affected_cve: input.affected_cve,
+    affected_vendor: input.affected_vendor,
+    signal_type: input.signal_type,
+    ingestion_timestamp: at
+  });
+
   return {
     source: input.source,
     signal_type: input.signal_type,
@@ -190,6 +214,7 @@ export function normalizeSignal(input: CyberSignalIngestInput): NormalizedCyberS
     affected_vendor: input.affected_vendor,
     affected_cve: input.affected_cve,
     external_id: externalId,
-    dedup_hash: dedupHash
+    dedup_hash: dedupHash,
+    cluster_key: clusterKeyValue
   };
 }
