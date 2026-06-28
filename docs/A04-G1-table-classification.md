@@ -74,6 +74,7 @@ Five overlapping passes; explicit residual-risk acknowledgement at the end of §
 | `governance_reviews` | yes, NOT NULL | CUSTOMER-DATA | `20260414_ai_system_governance_primitives.sql` |
 | `insights` | yes, **NULLABLE** | HYBRID | added by `20260405_add_organization_id_to_insights_trends.sql`; migration comment: "Nullable so existing rows are preserved". Per-org insights + legacy null-org rows |
 | `intelligence_brief_items` | yes, NOT NULL | CUSTOMER-DATA | `20260501_intelligence_brief_pipeline.sql` |
+| `intelligence_brief_item_provenance` | yes, NOT NULL | CUSTOMER-DATA | `20260710_brief_item_signal_provenance.sql` (P4/4D/D1). Lineage edge brief_item→cyber_signal (canonical+corroborating)+cluster_key. RLS enabled at creation (NOT FORCE, inert until flip). Signal FK ON DELETE SET NULL + denormalised `source_slug`. Inert in D1 |
 | `intelligence_briefs` | yes, NOT NULL | CUSTOMER-DATA | `20260501_intelligence_brief_pipeline.sql` |
 | `intelligence_brief_sends` | no | INDIRECT | FKs `brief_id → intelligence_briefs.organization_id` and `subscriber_id → intelligence_brief_subscribers.organization_id` |
 | `intelligence_brief_sources` | no | SHARED-REF | catalog of source publishers (CISA, NIST, etc.). `slug UNIQUE`. Global |

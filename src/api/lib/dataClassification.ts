@@ -182,6 +182,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   sources: { category: "E", piiRisk: "none", rlsStatus: "none", specialHandling: "GLOBAL source-qualification registry (P4/4B/B1). PK `source` == feed_health.source == registry SourceDescriptor.id. SHARED-REF: not org-scoped, no PII, no RLS. Seeds id+kind only; qualification columns populated by a later 4B story." },
   intelligence_briefs: { category: "E", piiRisk: "low", rlsStatus: "pending" },
   intelligence_brief_items: { category: "E", piiRisk: "low", rlsStatus: "pending" },
+  intelligence_brief_item_provenance: { category: "E", piiRisk: "none", rlsStatus: "enabled", specialHandling: "P4/4D/D1 lineage edge: brief_item -> contributing cyber_signal (canonical + corroborating), with cluster_key. Org-owned (organization_id NOT NULL); RLS enabled from creation (NOT FORCE, inert until app_request flip). Signal FK ON DELETE SET NULL + denormalised source_slug so lineage survives signal purge. No PII. Inert in D1 — populated in D2." },
   intelligence_brief_sends: { category: "E", piiRisk: "low", rlsStatus: "pending", specialHandling: "Delivery audit trail; subscriber_id FK. Retained for deliverability/audit." },
   intelligence_brief_sources: { category: "E", piiRisk: "none", rlsStatus: "none", specialHandling: "SHARED-REF source catalog (Tier C, SELECT-only)." },
   newsletter_issues: { category: "E", piiRisk: "low", rlsStatus: "pending" },
