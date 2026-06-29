@@ -7,7 +7,8 @@ export default defineConfig({
       "src/**/tests/**/*.test.ts",
       "src/_frozen_prod/__tests__/**/*.test.ts",
       "packages/**/__tests__/**/*.test.ts",
-      "services/**/__tests__/**/*.test.ts"
+      "services/**/__tests__/**/*.test.ts",
+      "app/src/**/__tests__/**/*.test.ts"
     ],
     exclude: [
       "**/node_modules/**",
