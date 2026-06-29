@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getMe, getAuthMe, planDisplayName } from "@/lib/api";
+import { BillingPortalForm } from "@/components/BillingPortalForm";
 import MfaSection from "./security/MfaSection";
 import ChangePasswordSection from "./security/ChangePasswordSection";
 
@@ -86,14 +87,11 @@ export default async function AccountPage({
             </p>
           </div>
           {isAdmin && (
-            <form action="/api/billing/portal" method="POST" className="flex-shrink-0">
-              <button
-                type="submit"
-                className="text-sm font-semibold text-red-700 border border-red-300 hover:border-red-500 px-4 py-1.5 rounded-lg transition-colors whitespace-nowrap"
-              >
-                Update Billing
-              </button>
-            </form>
+            <BillingPortalForm
+              label="Update Billing"
+              formClassName="flex-shrink-0"
+              buttonClassName="text-sm font-semibold text-red-700 border border-red-300 hover:border-red-500 px-4 py-1.5 rounded-lg transition-colors whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed"
+            />
           )}
         </div>
       )}
@@ -263,14 +261,10 @@ export default async function AccountPage({
                 Active subscription. Full access to all Intelligence Brief content.
               </p>
               {isAdmin && (
-                <form action="/api/billing/portal" method="POST">
-                  <button
-                    type="submit"
-                    className="border border-slate-300 hover:border-slate-400 text-slate-700 hover:text-slate-900 text-sm font-medium px-5 py-2 rounded-lg transition-colors"
-                  >
-                    Manage Billing
-                  </button>
-                </form>
+                <BillingPortalForm
+                  label="Manage Billing"
+                  buttonClassName="border border-slate-300 hover:border-slate-400 text-slate-700 hover:text-slate-900 text-sm font-medium px-5 py-2 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                />
               )}
               {!isAdmin && (
                 <p className="text-xs text-slate-400">Only admins can manage billing.</p>
