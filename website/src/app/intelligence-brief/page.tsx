@@ -45,7 +45,7 @@ export default function IntelligenceBriefPage() {
               Get the Free Brief
             </Link>
             <a
-              href={`${APP_URL}/signup?plan=brief-pro`}
+              href={`${APP_URL}/signup?plan=professional`}
               className="inline-flex items-center justify-center px-6 py-3 rounded-lg border border-slate-600 text-slate-200 font-semibold hover:border-slate-400 hover:text-white transition-colors text-sm"
             >
               Start Brief Pro
@@ -186,7 +186,7 @@ export default function IntelligenceBriefPage() {
                   + 29 more signals this issue — available to subscribers
                 </p>
                 <a
-                  href={`${APP_URL}/signup?plan=brief-pro`}
+                  href={`${APP_URL}/signup?plan=professional`}
                   className="mt-3 inline-flex items-center px-4 py-2 rounded-lg bg-teal-600 text-white text-xs font-semibold hover:bg-teal-500 transition-colors"
                 >
                   Subscribe to read full brief
@@ -225,7 +225,7 @@ export default function IntelligenceBriefPage() {
               ))}
             </ul>
             <a
-              href={`${APP_URL}/signup?plan=brief-pro`}
+              href={`${APP_URL}/signup?plan=professional`}
               className="block w-full text-center py-3 px-6 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-500 transition-colors"
             >
               Start Brief Pro

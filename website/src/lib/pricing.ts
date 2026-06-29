@@ -70,7 +70,7 @@ export function getPricingTiers(appUrl: string): PricingTier[] {
         "Priority delivery every Monday",
       ],
       cta: "Start Brief Pro",
-      ctaHref: `${appUrl}/signup?plan=brief-pro`,
+      ctaHref: `${appUrl}/signup?plan=professional`,
     },
     {
       id: "brief-team",
@@ -89,7 +89,7 @@ export function getPricingTiers(appUrl: string): PricingTier[] {
         "Past 6 members → move to Platform",
       ],
       cta: "Start Team Professional",
-      ctaHref: `${appUrl}/signup?plan=brief-team`,
+      ctaHref: `${appUrl}/signup?plan=teams`,
     },
     {
       id: "platform-professional",
@@ -117,7 +117,7 @@ export function getPricingTiers(appUrl: string): PricingTier[] {
         "API access + audit log",
       ],
       cta: "Start Free Trial",
-      ctaHref: `${appUrl}/signup?plan=professional`,
+      ctaHref: `${appUrl}/signup?plan=platform_annual`,
     },
     {
       id: "enterprise",

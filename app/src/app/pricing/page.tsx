@@ -42,7 +42,7 @@ const PLANS = [
       "Early access to new modules",
     ],
     cta: "Get Started",
-    href: "/signup?plan=team",
+    href: "/signup?plan=teams",
     style: "primary" as const,
     badge: "Most Popular",
   },

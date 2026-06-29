@@ -149,7 +149,7 @@ export default function PlatformPage() {
               </div>
               <p className="text-sm font-medium text-slate-700 mb-2">Vendor Risk module</p>
               <p className="text-xs text-slate-500 mb-4">Included in Platform Professional.</p>
-              <a href={`${APP_URL}/signup?plan=professional`} className="text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors">
+              <a href={`${APP_URL}/signup?plan=platform_annual`} className="text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors">
                 Start Free Trial →
               </a>
             </div>
@@ -196,7 +196,7 @@ export default function PlatformPage() {
               </div>
               <p className="text-sm font-medium text-slate-700 mb-2">AI Governance module</p>
               <p className="text-xs text-slate-500 mb-4">Included in Platform Professional.</p>
-              <a href={`${APP_URL}/signup?plan=professional`} className="text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors">
+              <a href={`${APP_URL}/signup?plan=platform_annual`} className="text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors">
                 Start Free Trial →
               </a>
             </div>
@@ -243,7 +243,7 @@ export default function PlatformPage() {
               </div>
               <p className="text-sm font-medium text-slate-700 mb-2">Compliance module</p>
               <p className="text-xs text-slate-500 mb-4">Included in Platform Professional.</p>
-              <a href={`${APP_URL}/signup?plan=professional`} className="text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors">
+              <a href={`${APP_URL}/signup?plan=platform_annual`} className="text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors">
                 Start Free Trial →
               </a>
             </div>
@@ -270,7 +270,7 @@ export default function PlatformPage() {
 
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <a
-              href={`${APP_URL}/signup?plan=professional`}
+              href={`${APP_URL}/signup?plan=platform_annual`}
               className="inline-flex items-center justify-center px-7 py-3 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-500 transition-colors text-sm"
             >
               Start Free Trial
