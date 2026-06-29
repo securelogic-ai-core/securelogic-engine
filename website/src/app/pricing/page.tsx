@@ -145,7 +145,7 @@ export default function PricingPage() {
                   Locked in for as long as you remain an active customer.
                 </p>
                 <div className="mt-6">
-                  <Link href={`${APP_URL}/signup?plan=professional`} className="btn-primary">
+                  <Link href={`${APP_URL}/signup?plan=platform_annual`} className="btn-primary">
                     Start Free Trial
                   </Link>
                 </div>
@@ -222,7 +222,7 @@ export default function PricingPage() {
           </h2>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <Link href="/#brief-signup" className="btn-primary">Get the Free Brief</Link>
-            <Link href={`${APP_URL}/signup?plan=professional`} className="btn-outline">Start Free Trial</Link>
+            <Link href={`${APP_URL}/signup?plan=platform_annual`} className="btn-outline">Start Free Trial</Link>
             <Link href="/contact/" className="btn-outline">Talk to Sales</Link>
           </div>
         </div>

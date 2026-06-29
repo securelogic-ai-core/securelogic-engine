@@ -17,7 +17,7 @@ export const metadata: Metadata = {
 };
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.securelogicai.com";
-const TRIAL_HREF = `${APP_URL}/signup?plan=professional`;
+const TRIAL_HREF = `${APP_URL}/signup?plan=platform_annual`;
 
 // ── Pillar icons ───────────────────────────────────────────────────────
 function IconVendor() {
