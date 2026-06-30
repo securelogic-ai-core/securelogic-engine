@@ -23,7 +23,7 @@ The launch is **not** a new build. It is the **promotion of already-built, stagi
 | Intelligence Brief — Free | `free` | none |
 | Brief Pro | `professional` | $49 / mo |
 | Team Professional | `teams` | $199 / mo |
-| Platform Professional | `platform` | $800 / mo (Billing-Portal only, no primary CTA) |
+| Platform Professional | `platform` | $800 / mo (self-serve checkout) |
 | Platform Professional — Annual | `platform_annual` | $7,200 / yr |
 | Enterprise | (no Stripe key — custom contract) | custom |
 

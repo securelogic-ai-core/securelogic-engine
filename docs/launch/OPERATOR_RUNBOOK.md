@@ -31,10 +31,10 @@ Engine `resolvePriceId()` — `src/api/routes/billing.ts:89-98`; entitlement map
 
 > All four Price-ID vars are declared `sync: false` in `render.yaml` on **both** services — i.e. operator-set secrets, never in the repo. They are **required at engine boot** in production (`src/api/startup/validateEnv.ts:15-18`); a missing one fails checkout with `503 billing_not_configured`.
 
-### 0.3 ⚠️ Three pre-launch findings to resolve (surfaced from a code audit, not yet decided)
-These are **decisions/verifications**, not part of the mechanical pass. Read them before Gate 3/4 — two contradict the written commercial model.
+### 0.3 Commercial-model notes (read before Gate 3/4)
+One resolved decision and two webhook behaviours to keep in mind. None require a code change.
 
-- **D-1 (Gate 3) — `platform` monthly is currently a *checkout* line, not portal-only.** `SPRINT_1.md` and `LAUNCH_MASTER_PLAN.md` state Platform monthly ($800) is **Billing-Portal-only**. The code does **not** enforce that: `VALID_TIERS` includes `platform` (`billing.ts:87`) and the app renders a "Platform Professional — $800/mo" checkout button (`app/src/components/UpgradeCard.tsx:64,72`; also `account/page.tsx:304`, `dashboard/page.tsx:388`; `verify-email` auto-posts it). **Decision required:** either (a) accept self-serve `platform` monthly checkout (update the docs), or (b) before launch remove the `platform` checkout button + drop `platform` from `VALID_TIERS` (code change — **out of this runbook's scope**, raise as a Sprint item). Until decided, Gate 3 cannot honestly claim "platform is portal-only."
+- **D-1 (Gate 3) — RESOLVED: Platform Monthly ($800/mo) is intentionally self-serve checkout.** The commercial model is: **Free, Brief Pro, Team, Platform Annual, and Platform Monthly are all self-service checkout; only Enterprise is sales-led.** The code already implements this — `VALID_TIERS` includes `platform` (`billing.ts:87`), `resolvePriceId` maps it to `STRIPE_PRICE_ID_PLATFORM` (`billing.ts:93`), and the app renders a "Platform Professional — $800/mo" checkout button (`app/src/components/UpgradeCard.tsx:64,72`; also `account/page.tsx:304`, `dashboard/page.tsx:388`; `verify-email` auto-posts it). No code change was required; the launch docs were corrected to drop the prior "Billing-Portal-only" wording. (Note: the *public* `/pricing` marketing page currently lists only Free/Brief Pro/Team/Enterprise and omits both Platform tiers — surfacing them there is an optional marketing/UX follow-up, not a launch gate.)
 - **D-2 (Gate 4) — Enterprise (`admin`) entitlement is not produced by the Stripe webhook.** The app maps `admin → Enterprise` (`api.ts:50`), but the webhook collapses legacy `admin → premium` and never writes `admin` (`stripeWebhook.ts:281-287`). Enterprise must be granted by another path. **Not a launch blocker** unless Enterprise is sold self-serve at launch (it is not — Enterprise is "Custom"). Note it so no one expects Stripe to grant Enterprise.
 - **D-3 (Gate 4) — member seats (`max_members`) are not metered by the webhook.** The webhook raises only the *entity* cap (`max_monitored_entities`, `GREATEST(…,50)`, `stripeWebhook.ts:381`); it never writes `max_members`. Seat caps come from the seat-cap migration (Gate 5) + app default `DEFAULT_MAX_SEATS = 6` (`src/api/lib/seatLimit.ts:33`). So a Team→Platform upgrade does **not** auto-raise seats via Stripe. Confirm this matches intent before validating Gate 4 "entitlement correct."
 
@@ -155,14 +155,14 @@ Checkout sends only `{ price: priceId, quantity: 1 }` (`billing.ts:165`) — the
 ### What the evidence is / where it comes from
 - Route `POST /api/billing/checkout` (`billing.ts:104-191`); tier→price map (`billing.ts:89-98`); allow-list `VALID_TIERS` (`billing.ts:87`) → invalid → `400 invalid_tier` (`billing.ts:117-122`).
 - Displayed labels are **hardcoded** in the app (drift risk) — e.g. `verify-email/page.tsx:29-32`, `signup/SignupForm.tsx:32-35`, `UpgradeCard.tsx`, `account/page.tsx:286-313`, `pricing/page.tsx`. The **authoritative** amount is the Stripe Price, not these labels.
-- **Read §0.3 D-1 first** — decide `platform` monthly's checkout-vs-portal status before this gate.
+- All four paid plans (`professional`, `teams`, `platform`, `platform_annual`) are self-serve checkout (§0.3 D-1). Free needs no checkout. Enterprise is sales-led (no checkout token).
 
 ### Step-by-step operator instructions
 For each plan, on **staging**, start checkout and read the Stripe-hosted page total (use a Stripe test card `4242 4242 4242 4242`):
 1. **Brief Pro** — `…/signup?plan=professional` → verify email → auto-redirect to checkout (or **Briefs → upgrade**). Expect **$49.00 / month**.
 2. **Team Professional** — `plan=teams`. Expect **$199.00 / month**.
 3. **Platform Annual** — `plan=platform_annual`. Expect **$7,200.00 / year** (Stripe may show "$600.00/month billed annually" depending on the Price's interval config — confirm the **annual total is $7,200**).
-4. **Platform monthly** — per D-1: if kept self-serve, `plan=platform` → expect **$800.00 / month**; if it is to be portal-only, confirm the checkout button is removed (else this is a FAIL against the stated model).
+4. **Platform monthly** — `plan=platform` → expect **$800.00 / month** (self-serve, per §0.3 D-1).
 5. Cross-check each Stripe **Price** object's `unit_amount` × interval in the Stripe dashboard equals the above.
 6. Confirm an unknown tier (e.g. `plan=bogus`) is rejected (`invalid_tier`) and never reaches Stripe.
 
@@ -172,15 +172,13 @@ For each plan, on **staging**, start checkout and read the Stripe-hosted page to
 ### Evidence required
 - One screenshot per plan of the Stripe checkout page (amount + interval).
 - Screenshot of each Stripe Price `unit_amount`/interval.
-- Note the D-1 decision (platform monthly: self-serve vs portal-only).
 
 ### PASS criteria
-- professional $49/mo, teams $199/mo, platform_annual $7,200/yr all correct; platform monthly $800/mo correct **or** intentionally not offered per D-1; invalid tier rejected.
+- professional $49/mo, teams $199/mo, platform $800/mo, platform_annual $7,200/yr all correct (all four self-serve); invalid tier rejected.
 
 ### FAIL criteria
 - Any amount/interval mismatch → wrong Price in the env var, or wrong amount on the Stripe Price.
 - `503 billing_not_configured` at checkout → that plan's `STRIPE_PRICE_ID_*` env var is unset on the engine.
-- platform monthly offered as checkout while the model says portal-only, with no D-1 decision recorded.
 
 ### Common mistakes
 - Trusting the **hardcoded UI label** instead of the Stripe page / Price object (labels can drift from Stripe).
