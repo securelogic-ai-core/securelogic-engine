@@ -53,17 +53,70 @@ At launch, several systems ship deliberately **inert** (flag-gated or unwired) a
 
 ## Ask SecureLogic & Voice reliability (operator-directed addendum)
 
-> Added after the original 2.1–2.5 scope at operator direction. This workstream hardens the existing **Ask SecureLogic** assistant (`/ask`) and its voice input ahead of launch. It is **product-knowledge + UX reliability only** — it touches no billing, Stripe, checkout, pricing, migrations, `render.yaml`, feature flags, `main`, or production. Items land as two scoped PRs to `develop`: voice reliability (A-2, PR #418) first, then Ask product-knowledge (A-1, PR #419).
+> Added after the original 2.1–2.5 scope at operator direction. This workstream hardens the existing **Ask SecureLogic** assistant (`/ask`) and its voice input ahead of launch. It is **product-knowledge + UX reliability only** — it touches no billing, Stripe, checkout, pricing, migrations, `render.yaml`, feature flags, `main`, or production. Shipped to `develop` as scoped PRs: Ask product-knowledge (A-1, PR #419) and the iPad voice gate (A-2, PR #418), then voice **diagnostics** (A-3, PR #420).
+>
+> **Voice is NOT resolved.** A-1 (product-knowledge) is done. The iPad/iOS voice failure is **still undiagnosed** — the blanket iOS gate (A-2) is a **temporary** safe default, not a fix, and a **Voice Diagnostic Workstream** (A-3, below) must produce evidence before the final launch decision on voice.
 
 ### A-1 — Ask product-knowledge (so Ask can answer "How do I add a vendor?")
 **Problem:** Ask was a data-only assistant — its prompt answered strictly from the org's live posture snapshot (8 DB queries) and had **no** product documentation, route metadata, feature metadata, or workflow guidance. Platform how-to questions ("How do I add a vendor?", "Where's my Intelligence Brief?") returned "no data available" because the prompt forbids inventing facts not in the context.
 **Fix (shipped):** added a curated, static **product-knowledge source** (`src/api/lib/productKnowledge.ts`) grounded in the real UI navigation and engine routes, injected into the Ask system prompt, plus guardrails that (a) answer product/how-to questions from product knowledge first, (b) forbid claiming "no access" when the product-knowledge answer exists, and (c) re-scope the no-invented-data rule to organization data only — while still grounding *data* questions in the org context.
 **Done when:** Ask answers core platform how-to questions accurately; tests assert the knowledge content and prompt assembly. Verified on staging.
 
-### A-2 — Voice input reliability on iPad
-**Problem:** voice transcription fails on iPad/iOS (WebKit MediaRecorder limits + unvalidated Whisper path).
-**Fix (shipped):** capability + iPadOS detection (`app/src/app/ask/voiceSupport.ts`) that hides the mic button on unsupported browsers and shows "Voice input is not yet supported on this browser. Please type your question instead." See `KNOWN_ISSUES.md` D-10.
-**Done when:** voice is offered only where reliable; iPad shows the clear fallback; text Ask unaffected everywhere. Verified on staging.
+### A-2 — Temporary iPad/iOS voice gate (NOT a fix)
+**Problem:** voice transcription was reported failing on iPad. The cause was **not** diagnosed.
+**Action (shipped):** a **precautionary** capability + iPadOS detector (`app/src/app/ask/voiceSupport.ts`) hides the mic button on production iPad/iOS and shows "Voice input is not yet supported on this browser. Please type your question instead." This is a **temporary safe default**, not a resolution — it does not explain or fix the failure. See `KNOWN_ISSUES.md` D-10 and A-3 below.
+**Status:** open. The gate stays until A-3 produces evidence.
+
+### A-3 — Voice Diagnostic Workstream (shipped instrumentation; evidence pending)
+
+**Objective.** Determine the **actual** root cause of iPad/iOS voice failure from one real attempt, so we can make an evidence-based launch decision — fix our code, accept a platform limit, or defer to a different approach. Replace assumption with data.
+
+**Current known facts.**
+- The earlier "WebM-only / iOS mp4 unsupported" explanation was **not evidence-based** and is withdrawn: the client already falls back to `audio/mp4`, the engine allow-lists `audio/mp4`/`audio/x-m4a`/`.mp4`/`.m4a`, and Whisper accepts AAC-in-MP4. A simple format mismatch is **not** a proven cause.
+- Staging engine **has** an OpenAI key (`GET /api/ask/transcribe/status` → `{"configured":true}`), so a missing-key config is **not** the cause on staging.
+- Candidate causes remain open: **A** platform/browser capability · **B** our MIME/blob/filename handling · **C** empty/short capture · **D** transcription-endpoint rejection · **E** mic permission · **F** OpenAI/Whisper rejection.
+
+**What the diagnostic captures (PR #420, non-sensitive — no audio, secrets, or PII).**
+- Client (`app/src/app/ask/voiceDiagnostics.ts`): per-attempt capability result, selected mimeType, `MediaRecorder.mimeType`, `blob.type`/`size`, filename extension, upload HTTP status, error stage + code. Surfaced in-UI as a `VOICE-DIAG …` line and `console.error`'d.
+- Correlation id (`x-voice-diagnostic-id`) threaded **browser → app proxy → engine**.
+- Engine (`src/api/lib/voiceTranscribeDiagnostics.ts`, `routes/transcribe.ts`): classifies the outcome, captures multer format/size rejects that previously bubbled to an opaque 500, detects 0-byte audio, and emits one `voice_transcribe_diagnostic` log line with the same correlation id.
+- **Staging/local only**, the iOS gate is bypassed (diagnostic mode, `isStagingHost`) so an iPad can attempt voice and surface the failure. **Production keeps the gate.** No env/flag/`render.yaml` change.
+
+**Operator testing steps.**
+1. On an **iPad**, open `https://securelogic-app-staging.onrender.com/ask` in Safari and sign in with a **Platform/premium** account (Ask + transcribe require `premium`).
+2. The **Voice** mic button appears (staging diagnostic mode). Tap it, allow the mic, speak ~3s, tap **Stop**.
+3. On failure, expand **"Diagnostic details (share with support)"** and screenshot the `VOICE-DIAG …` line; note the `cid=`.
+4. In Render → **`securelogic-engine-staging`** → **Logs**, filter for `voice_transcribe_diagnostic` (or the `cid`) and capture the matching JSON line.
+
+**Required evidence (both, sharing one correlation id).**
+- One **`VOICE-DIAG` browser line** (from the iPad).
+- The **matching engine `voice_transcribe_diagnostic` log line** with the **same `cid`**.
+
+**Interpretation table.**
+
+| Code / outcome | HTTP | Meaning | Candidate cause |
+|---|---|---|---|
+| `voice_unsupported` (stage `capability`) | — | MediaRecorder/getUserMedia unavailable or constructor threw | **A** real platform limit |
+| `microphone_denied` (stage `permission`) | — | user denied mic access | **E** permission |
+| `no_audio` (stage `capture`, `blob=…/0B`) | 400 | recording produced 0 bytes | **C** empty/short capture |
+| `unsupported_audio_type` | 415 | engine rejected the format/extension | **B/D** (note: allow-list already includes mp4/m4a) |
+| `empty_audio` | 400 | file reached engine but 0 bytes | **C** |
+| `file_too_large` | 413 | recording > 10 MB | **C** oversized |
+| `openai_error` | 500 | Whisper rejected the iOS file | **F** OpenAI/Whisper |
+| `ok` | 200 | transcription succeeded | none — gate is over-cautious |
+
+**Decision rule (apply once evidence is in).**
+- **Valid audio + transcription succeeds (`ok`)** → re-enable voice on capable iOS browsers (narrow the gate to genuinely incapable ones).
+- **Failure is MIME/blob/filename handling (B)** → fix our implementation, then re-enable.
+- **Failure is OpenAI/Whisper rejection (F)** → document it and decide whether to support iOS voice later via the **Realtime API** (out of scope now).
+- **Real browser capability limit (A)** → keep the fallback gate.
+
+**Launch rule.**
+- **Text Ask remains launch-critical** and is unaffected by any of this.
+- **Voice is launch-optional** unless we advertise it as supported.
+- If voice is **not fully validated** by launch, it must be labelled **Beta** or hidden behind capability detection (the current production behavior).
+
+**Done when:** an iPad `VOICE-DIAG` line + matching engine log are captured, the cause is classified per the table, and the decision rule is applied (re-enable / fix / defer / keep gate). Until then this item stays **open**.
 
 ---
 
