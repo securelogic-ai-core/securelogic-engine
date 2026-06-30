@@ -20,7 +20,7 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 | # | Issue | Status | Merge |
 |---|---|---|---|
 | A1 | Manage Billing single-click bug | ✅ **DONE** | `develop` ← PR #409 (`0614429a`) |
-| A2 | Add Confirm Password to signup | ⬜ Pending | — |
+| A2 | Add Confirm Password to signup | ✅ **DONE** | `develop` ← PR #411 |
 | A3 | Onboarding flow — smallest correct UX improvement | ⬜ Pending | — |
 | A4 | Return to Dashboard / Return to Account nav on auth pages | ⬜ Pending | — |
 | A5 | Complete onboarding QA | ⬜ Pending | — |
@@ -33,7 +33,15 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 - **Validation:** app `tsc` clean; billing+component tests 12/12. Staging auto-deploys from `develop` (browser-level confirm is operator-observable).
 - **Rollback:** revert merge commit `0614429a`; no migration/config/flag involved.
 
-### A2–A5
+### A2 — Add Confirm Password to signup ✅ DONE
+- **Root cause:** the signup form (`SignupForm.tsx`) had a single password field — a mistyped password silently created an account the user could not sign into (recoverable only via password reset). The confirm-password idiom already existed in `reset-password` / `accept-invite` but not in signup.
+- **Fix:** add a `Confirm Password` `AuthInput` + `confirm` state; validate exact match (`Passwords do not match.`) in `handleSubmit` after the strength check. Extracted both client validators into a pure module `signupValidation.ts` (testable; mirrors the server's authoritative checks).
+- **Files:** `app/src/app/signup/SignupForm.tsx`, `app/src/app/signup/signupValidation.ts` (new), `app/src/app/signup/__tests__/signupValidation.test.ts` (new).
+- **Tests:** 7 cases — strength (length + each character class) and match (identical, mismatch, empty-confirm, case/whitespace sensitivity).
+- **Validation:** app `tsc` clean; tests 7/7; CI green on PR #411. Staging auto-deploys from `develop`.
+- **Rollback:** revert the PR #411 merge; no migration/config/flag.
+
+### A3–A5
 Defined by the operator directive; each will be filled in on completion with root cause, files, tests, validation, rollback.
 
 ---
@@ -84,3 +92,6 @@ Full procedure: `RELEASE_CHECKLIST.md`.
 
 ## Explicitly out of scope for Sprint 1
 Export-delivery email (PR #4), in-app price-label reconciliation, vendor-assurance prod enablement + rank-2 gate flip, brand-asset swap → **Sprint 2**. A04-G1 RLS flip, GDPR deletion reaper, Priority-4 4B/4C/4D → **Sprint 3**.
+
+
+
