@@ -53,7 +53,12 @@ At launch, several systems ship deliberately **inert** (flag-gated or unwired) a
 
 ## Ask SecureLogic & Voice reliability (operator-directed addendum)
 
-> Added after the original 2.1–2.5 scope at operator direction. This workstream hardens the existing **Ask SecureLogic** assistant (`/ask`) and its voice input ahead of launch. It is **product-knowledge + UX reliability only** — it touches no billing, Stripe, checkout, pricing, migrations, `render.yaml`, feature flags, `main`, or production. Items land as two scoped PRs to `develop`: voice reliability (A-2) first, then Ask product-knowledge (A-1).
+> Added after the original 2.1–2.5 scope at operator direction. This workstream hardens the existing **Ask SecureLogic** assistant (`/ask`) and its voice input ahead of launch. It is **product-knowledge + UX reliability only** — it touches no billing, Stripe, checkout, pricing, migrations, `render.yaml`, feature flags, `main`, or production. Items land as two scoped PRs to `develop`: voice reliability (A-2, PR #418) first, then Ask product-knowledge (A-1, PR #419).
+
+### A-1 — Ask product-knowledge (so Ask can answer "How do I add a vendor?")
+**Problem:** Ask was a data-only assistant — its prompt answered strictly from the org's live posture snapshot (8 DB queries) and had **no** product documentation, route metadata, feature metadata, or workflow guidance. Platform how-to questions ("How do I add a vendor?", "Where's my Intelligence Brief?") returned "no data available" because the prompt forbids inventing facts not in the context.
+**Fix (shipped):** added a curated, static **product-knowledge source** (`src/api/lib/productKnowledge.ts`) grounded in the real UI navigation and engine routes, injected into the Ask system prompt, plus guardrails that (a) answer product/how-to questions from product knowledge first, (b) forbid claiming "no access" when the product-knowledge answer exists, and (c) re-scope the no-invented-data rule to organization data only — while still grounding *data* questions in the org context.
+**Done when:** Ask answers core platform how-to questions accurately; tests assert the knowledge content and prompt assembly. Verified on staging.
 
 ### A-2 — Voice input reliability on iPad
 **Problem:** voice transcription fails on iPad/iOS (WebKit MediaRecorder limits + unvalidated Whisper path).
