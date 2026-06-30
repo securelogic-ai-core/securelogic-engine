@@ -20,6 +20,9 @@ export interface PricingTier {
   features: string[];
   cta: string;
   ctaHref: string;
+  /** Optional second self-service CTA — Platform Professional offers monthly alongside annual. */
+  secondaryCta?: string;
+  secondaryCtaHref?: string;
   /** Visual grouping — the three Brief tiers vs. the Platform/Enterprise class. */
   group: "brief" | "platform";
   badge?: string;
@@ -100,7 +103,7 @@ export function getPricingTiers(appUrl: string): PricingTier[] {
       featured: true,
       badge: "Most Popular",
       urgency: "Founding rate · through Dec 2026",
-      priceDetails: ["$7,200 / year total", "$800 month-to-month"],
+      priceDetails: ["$7,200 / year total"],
       lockNote: "Locked in for as long as you remain an active customer.",
       allowance: "Up to 10 seats / 50 monitored entities",
       tagline:
@@ -116,8 +119,10 @@ export function getPricingTiers(appUrl: string): PricingTier[] {
         "Leadership intelligence dashboard",
         "API access + audit log",
       ],
-      cta: "Start Free Trial",
+      cta: "Start annual — $600/mo",
       ctaHref: `${appUrl}/signup?plan=platform_annual`,
+      secondaryCta: "Start monthly — $800/mo",
+      secondaryCtaHref: `${appUrl}/signup?plan=platform`,
     },
     {
       id: "enterprise",
