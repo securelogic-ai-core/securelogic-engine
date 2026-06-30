@@ -131,7 +131,7 @@ At launch, several systems ship deliberately **inert** (flag-gated or unwired) a
 - `src/api/tests/contentTypeAllowlist.test.ts` — every multipart endpoint is exempt; **`/api/ask/transcribe` multipart is never 415'd** (regression lock); non-exempt non-JSON still 415s.
 - `app/src/app/ask/__tests__/voiceSupport.test.ts` — a **capable iPad/iPhone is offered voice** (no name blacklist); voice hides only on real capability gaps.
 
-**Remaining (operator — REQUIRED before promoting voice to `main`/prod).** Run the live browser matrix on staging and capture, for each, a `VOICE-DIAG` line (+ matching engine `voice_transcribe_diagnostic` log, same `cid`):
+**Remaining (operator — REQUIRED before promoting voice to `main`/prod).** Run the live browser matrix on staging and record results in the canonical evidence document **`VOICE_VALIDATION.md`** (the authoritative voice validation record — Browser Matrix, Successful Run Evidence, Failure Evidence, Supported Browser Matrix, Launch Exit Criteria, Regression History). For each browser capture a `VOICE-DIAG` line on failure (+ matching engine `voice_transcribe_diagnostic` log, same `cid`), or the `outcome:"ok"` engine log on success:
 
 | Browser | Expected |
 |---|---|
