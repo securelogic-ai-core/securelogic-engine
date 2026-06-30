@@ -73,6 +73,9 @@ These are the only items that hold the **NO-GO**. All are operator-only gates; n
 ### D-10 — Ask voice input gated off on iPad/iOS
 - The "Voice" mic button on `/ask` depends on browser `MediaRecorder` + `getUserMedia` and an OpenAI Whisper round-trip. On iPad/iOS Safari (all iOS browsers are WebKit) `MediaRecorder` support is version-dependent, `audio/webm` is unsupported, and iOS-produced `mp4` is not validated end-to-end against Whisper on real hardware. **Mitigation (shipped):** `app/src/app/ask/voiceSupport.ts` detects iPad/iOS (and any browser lacking `MediaRecorder`/`getUserMedia`) and hides the mic button, showing "Voice input is not yet supported on this browser. Please type your question instead." Voice remains fully available on supported desktop browsers; text Ask is unaffected on every platform. → re-enable iOS once the Whisper path is validated on real hardware (post-launch).
 
+### D-11 — Ask product knowledge is curated and static (drift risk)
+- Ask SecureLogic now answers platform how-to questions from a curated, **static** product-knowledge source (`src/api/lib/productKnowledge.ts`) grounded in the real UI navigation and engine routes. It is not auto-derived from the routing table, so if a navigation label or workflow path changes, the knowledge can drift until the file is updated. **Mitigation:** the module carries a maintenance contract, the content is unit-tested for path/label grounding, and it only describes verified features (no aspirational UIs). → keep in sync when product navigation changes; consider deriving from route metadata post-launch.
+
 ---
 
 ## 🟢 Cosmetic / orientation
