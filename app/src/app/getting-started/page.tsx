@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getSession } from "@/lib/session";
 import { getDashboardSummary } from "@/lib/api";
 import { completeOnboardingAction } from "./actions";
+import { getOnboardingStepCompletion } from "./onboardingProgress";
 
 // ─────────────────────────────────────────────────────────────
 // Step definitions
@@ -48,25 +49,7 @@ const STEPS: Step[] = [
   },
 ];
 
-// ─────────────────────────────────────────────────────────────
-// Step completion logic
-// ─────────────────────────────────────────────────────────────
-
-function getCompletedSteps(inventory: {
-  frameworks: number;
-  vendors: number;
-  controls: number;
-  control_assessments: number;
-}): boolean[] {
-  const assessmentsDone = inventory.control_assessments > 0;
-  return [
-    inventory.frameworks > 0,
-    inventory.vendors > 0,
-    inventory.controls > 0,
-    assessmentsDone,
-    assessmentsDone,
-  ];
-}
+// Step-completion logic lives in ./onboardingProgress (pure + unit-tested).
 
 // ─────────────────────────────────────────────────────────────
 // Page
@@ -91,8 +74,12 @@ export default async function GettingStartedPage() {
     control_assessments: 0,
     governance_reviews: 0,
   };
+  const posture = summary?.posture ?? {
+    overall_score: null,
+    snapshot_date: null,
+  };
 
-  const completed = getCompletedSteps(inventory);
+  const completed = getOnboardingStepCompletion(inventory, posture);
   const completedCount = completed.filter(Boolean).length;
   const allDone = completedCount === STEPS.length;
   const progressPct = (completedCount / STEPS.length) * 100;
