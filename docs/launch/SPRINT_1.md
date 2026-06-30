@@ -1,6 +1,6 @@
 # Sprint 1 — Production Go-Live (Launch-Blocking Only)
 
-> **Status:** ACTIVE — **NO-GO** (promotion still gated; app-hardening in progress).
+> **Status:** ACTIVE — **NO-GO** (promotion still gated). **Part A app-hardening COMPLETE (A1–A5 on `develop`); Part B operator gates 1–5 outstanding.**
 > **Goal:** Get the staged `develop` release ready for, and then promote it to, production `main`.
 > **Scope discipline:** This sprint contains **ONLY** launch-blocking work. No Sprint 2 / Sprint 3 items.
 
@@ -23,7 +23,7 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 | A2 | Add Confirm Password to signup | ✅ **DONE** | `develop` ← PR #411 |
 | A3 | Onboarding flow — smallest correct UX improvement | ✅ **DONE** | `develop` ← PR #412 |
 | A4 | Return to Dashboard / Return to Account nav on auth pages | ✅ **DONE** | `develop` ← PR #413 |
-| A5 | Complete onboarding QA | ⬜ Pending | — |
+| A5 | Complete onboarding QA | ✅ **DONE** | `develop` ← PR #PENDING |
 
 ### A1 — Manage Billing single-click bug ✅ DONE
 - **Root cause:** `BillingPortalForm` is a native `<form method="POST">` whose `onSubmit` synchronously set the submit button to `disabled={pending}`. Disabling a submit button within the same synchronous submit dispatch can suppress the browser's native form submission (browser-timing-dependent React + native-form race) — the first click flips the button to "Opening billing…" but the POST may not navigate, so users click again.
@@ -59,8 +59,13 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 - **Validation:** root `tsc -p tsconfig.ci.json` clean; full root `vitest` 4652/4652 (incl. the new 6); app `next build` exit 0. Staging auto-deploys from `develop`.
 - **Rollback:** revert the PR #413 merge; no migration/config/flag (presentation-only, additive files).
 
-### A5
-Defined by the operator directive; will be filled in on completion with root cause, files, tests, validation, rollback.
+### A5 — Complete onboarding QA ✅ DONE
+- **Root cause:** N/A — this is a verification pass, not a defect fix. The end-to-end new-customer onboarding flow (signup → verify-email → routing → `/getting-started` checklist → complete/skip → dashboard, plus the A2/A3/A4 fixes) was traced against verified code and exercised via the onboarding/auth-flow unit tests.
+- **Result:** ✅ **PASS** — no launch-blocking defects. 13 checkpoints verified (C1–C13). Three **non-blocking** findings documented and explicitly deferred (scope is launch-blocking only): F1 `completeOnboardingAction` keys on `jwtToken` only — no impact since onboarding signups are always JWT; F2 "Skip setup for now" permanently completes onboarding (copy-only nit); F3 `/getting-started` has no entitlement guard for direct nav (natural entry already gates by `premium`). Routing confirmed correct: only `premium` = Platform Professional reaches `/getting-started`; other tiers go to `/dashboard`.
+- **Files:** `docs/launch/ONBOARDING_QA.md` (new — full checkpoint table + findings + evidence). No application code changed (nothing launch-blocking found).
+- **Tests:** none added (QA pass). Re-ran the onboarding/auth-flow suite as validation: 23/23 — `onboardingProgress` (6), `signupValidation` (7), `authReturnLink` (6), `billingPortalSubmit` (4).
+- **Validation:** 23/23 onboarding/auth unit tests green; all 5 step-CTA routes confirmed present; root typecheck clean.
+- **Rollback:** revert the PR #PENDING merge (documentation-only; no code/migration/config/flag).
 
 ---
 
