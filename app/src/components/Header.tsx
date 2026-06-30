@@ -227,13 +227,17 @@ export function Header({
 
         {/* Wordmark */}
         <Link href={isAuthenticated ? "/dashboard" : "https://www.securelogicai.com"} className="flex items-center gap-3">
+          {/* Icon-only mark; the adjacent text is the single wordmark, so the
+              image is decorative (alt="" + aria-hidden) to avoid a redundant
+              accessible name. Matches the AuthCard branding. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/branding/securelogic-ai-logo.png"
-            alt="SecureLogic AI"
+            src="/branding/securelogic-ai-icon.png"
+            alt=""
+            aria-hidden="true"
             width={28}
             height={28}
-            className="rounded"
+            className="rounded-md"
           />
           <div className="flex flex-col leading-none">
             <span className="text-white font-semibold text-sm tracking-wide">
