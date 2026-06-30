@@ -23,9 +23,20 @@
  * Every entry here must map to a real UI path and/or engine route. If a
  * workflow changes, update the matching entry. Do NOT add aspirational
  * features — an assistant that confidently describes a button that does not
- * exist is worse than one that says "I'm not sure". Keep navigation labels in
- * sync with app/src/components/Header.tsx.
+ * exist is worse than one that says "I'm not sure".
+ *
+ * NAVIGATION IS NOT HAND-WRITTEN. The platform navigation (menus, dropdowns,
+ * labels, routes, page titles, and per-item permissions) is rendered from the
+ * machine-generated Application Knowledge Index
+ * (`applicationKnowledgeIndex.generated.ts`), which is derived from the live
+ * app menu + route tree. The only curated content here is the WORKFLOWS prose
+ * (the semantic intent→action mapping), and every route it cites is verified
+ * against the index by `applicationKnowledgeIndex.test.ts`. So navigation
+ * answers cannot drift from the real UI.
  */
+
+import { APPLICATION_KNOWLEDGE_INDEX } from "./applicationKnowledgeIndex.generated.js";
+import type { ApplicationKnowledgeIndex, NavAccess } from "./applicationKnowledgeIndex.js";
 
 export type ProductWorkflow = {
   /** Stable id for tests/links. */
@@ -47,30 +58,41 @@ export const PLATFORM_OVERVIEW = `
 SecureLogic AI is a holistic cyber, GRC, AI-governance, and third-party-risk posture platform. Organizations use it to understand their current security and governance posture, assess vendors / AI systems / controls / regulatory obligations, monitor risk over time, prioritize action, and produce executive reporting. The Intelligence Brief is one premium output of the platform — a curated executive read on external risk signals — not the center of the product.
 `.trim();
 
+/** The live Application Knowledge Index this module renders navigation from. */
+export const KNOWLEDGE_INDEX: ApplicationKnowledgeIndex = APPLICATION_KNOWLEDGE_INDEX;
+
+function accessNote(access: NavAccess): string {
+  switch (access) {
+    case "platform":
+      return " [Platform tier]";
+    case "premium":
+      return " [paid tier]";
+    case "admin":
+      return " [admin only]";
+    case "all":
+      return "";
+  }
+}
+
 /**
- * Top navigation map (from app/src/components/Header.tsx). Used so the
- * assistant can tell a user exactly where to click. Labels are grouped under
- * dropdowns in the real header; we flatten them here with their destination
- * paths. Account/settings items live under the user menu, not the top nav.
+ * Render the platform navigation entirely from the Application Knowledge Index —
+ * top-level links, dropdown groups + their items, destination paths, and the
+ * entitlement required to see each. 100% machine-derived from the live menu; no
+ * hand-written navigation text.
  */
-export const NAVIGATION: ReadonlyArray<{ label: string; path: string; note?: string }> = [
-  { label: "Dashboard", path: "/dashboard", note: "posture summary and trend, your landing view" },
-  { label: "Getting Started", path: "/getting-started", note: "guided onboarding checklist for new orgs" },
-  { label: "Vendors", path: "/vendors", note: "third-party / vendor inventory and risk" },
-  { label: "AI Systems", path: "/ai-systems", note: "AI system inventory and governance" },
-  { label: "Risk Register", path: "/risks", note: "risk register (inherent + residual ratings)" },
-  { label: "Findings", path: "/findings" },
-  { label: "Actions", path: "/actions", note: "remediation actions and their due dates" },
-  { label: "Obligations", path: "/obligations", note: "regulatory / compliance obligations" },
-  { label: "Controls", path: "/controls", note: "control library and assessments" },
-  { label: "Frameworks", path: "/frameworks", note: "framework activation (NIST, ISO, SOC 2, …)" },
-  { label: "Compliance", path: "/frameworks", note: "framework readiness and gap views" },
-  { label: "Briefs", path: "/briefs", note: "your Intelligence Briefs" },
-  { label: "Policies", path: "/policies" },
-  { label: "Posture", path: "/posture", note: "posture score detail (read-only, derived)" },
-  { label: "Ask", path: "/ask", note: "this assistant" },
-  { label: "Audit Log", path: "/audit-log" },
-];
+function renderNavigation(index: ApplicationKnowledgeIndex): string {
+  return index.navigation
+    .map((item) => {
+      if (item.type === "group") {
+        const children = item.children
+          .map((c) => `    - ${c.label} → ${c.href}`)
+          .join("\n");
+        return `- ${item.label}${accessNote(item.access)} (dropdown menu):\n${children}`;
+      }
+      return `- ${item.label} → ${item.href}${accessNote(item.access)}`;
+    })
+    .join("\n");
+}
 
 /**
  * Core how-to workflows. Each is grounded in a verified UI action. Keep the
@@ -172,7 +194,7 @@ export const WORKFLOWS: ReadonlyArray<ProductWorkflow> = [
     id: "invite-team",
     intent: "How do I invite a teammate?",
     answer:
-      "Open your account/team settings from the user menu (Team, at /account/team) to invite teammates to your organization. Invited users join your org and share its data per their role.",
+      "Open your team settings from the user menu (Team, at /account/team) to invite teammates to your organization. Invited users join your org and share its data per their role.",
     keywords: ["invite", "add user", "add teammate", "team member", "invite colleague", "add member"],
   },
   {
@@ -200,9 +222,7 @@ export const NOT_USER_ACTIONS: ReadonlyArray<string> = [
  * Deterministic ordering so prompt caching and tests are stable.
  */
 export function renderProductKnowledge(): string {
-  const nav = NAVIGATION.map(
-    (n) => `- ${n.label} (${n.path})${n.note ? ` — ${n.note}` : ""}`
-  ).join("\n");
+  const nav = renderNavigation(KNOWLEDGE_INDEX);
 
   const flows = WORKFLOWS.map(
     (w) => `Q: ${w.intent}\nA: ${w.answer}`
@@ -216,7 +236,7 @@ export function renderProductKnowledge(): string {
     "What the platform is:",
     PLATFORM_OVERVIEW,
     "",
-    "Top navigation (where to click):",
+    "Top navigation, menus, and who can see each (auto-generated from the live app menu — always current):",
     nav,
     "",
     "Common workflows:",
@@ -225,4 +245,29 @@ export function renderProductKnowledge(): string {
     "Important limits (do not claim these UIs exist):",
     limits,
   ].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Validation surface for tests: every route a workflow tells a user to visit
+// must be a real route in the Application Knowledge Index. This is what makes
+// "every navigation instruction matches the actual UI hierarchy" enforceable.
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the in-app paths referenced by a workflow answer (e.g. "/vendors",
+ * "/vendors/[id]/assess"). Matches a leading-slash path of lowercase segments,
+ * dynamic `[id]` segments allowed; trailing punctuation is trimmed.
+ */
+export function extractReferencedPaths(text: string): string[] {
+  const matches = text.match(/\/[a-z0-9[\]-]+(?:\/[a-z0-9[\]-]+)*/g) ?? [];
+  return Array.from(new Set(matches));
+}
+
+/** Every distinct path cited across all curated workflows. */
+export function workflowReferencedPaths(): string[] {
+  const all = new Set<string>();
+  for (const w of WORKFLOWS) {
+    for (const p of extractReferencedPaths(w.answer)) all.add(p);
+  }
+  return Array.from(all).sort();
 }

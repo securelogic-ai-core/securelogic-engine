@@ -14,7 +14,7 @@ vi.mock("../infra/postgres.js", () => ({
 
 import {
   WORKFLOWS,
-  NAVIGATION,
+  KNOWLEDGE_INDEX,
   NOT_USER_ACTIONS,
   PLATFORM_OVERVIEW,
   renderProductKnowledge,
@@ -54,7 +54,7 @@ describe("product knowledge content", () => {
   });
 
   it("every workflow answer references a real in-app path or a navigation label", () => {
-    const labels = NAVIGATION.map((n) => n.label.toLowerCase());
+    const labels = KNOWLEDGE_INDEX.destinations.map((d) => d.label.toLowerCase());
     for (const w of WORKFLOWS) {
       const mentionsPath = /\/[a-z]/.test(w.answer);
       const mentionsLabel = labels.some((l) => w.answer.toLowerCase().includes(l));

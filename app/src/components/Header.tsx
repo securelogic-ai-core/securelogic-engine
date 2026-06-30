@@ -5,58 +5,15 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LogoutButton } from "./LogoutButton";
 import UserMenu from "./UserMenu";
+import { NAV_ITEMS, filterNav, type NavItem } from "@/lib/navigation";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.securelogicai.com";
 
 // ─── Nav config ───────────────────────────────────────────────────────────────
 
-type NavItem =
-  | { type: "link";  label: string; href: string; platform?: boolean; premium?: boolean; admin?: boolean }
-  | { type: "group"; label: string; platform?: boolean; premium?: boolean; admin?: boolean;
-      items: Array<{ label: string; href: string }> };
-
-const NAV_ITEMS: NavItem[] = [
-  { type: "link",  label: "Dashboard", href: "/dashboard" },
-  { type: "link",  label: "Briefs",    href: "/briefs" },
-  { type: "link",  label: "Ask",       href: "/ask",       platform: true },
-  { type: "link",  label: "Queue",     href: "/queue",     platform: true },
-  { type: "group", label: "Assets",    platform: true,
-    items: [
-      { label: "Vendors",    href: "/vendors" },
-      { label: "AI Systems", href: "/ai-systems" },
-    ],
-  },
-  { type: "group", label: "Compliance", platform: true,
-    items: [
-      { label: "Controls",    href: "/controls" },
-      { label: "Frameworks",  href: "/frameworks" },
-      { label: "Policies",    href: "/policies" },
-      { label: "Obligations", href: "/obligations" },
-    ],
-  },
-  { type: "group", label: "Risk", platform: true,
-    items: [
-      { label: "Findings",      href: "/findings" },
-      { label: "Actions",       href: "/actions" },
-      { label: "Risk Register", href: "/risks" },
-    ],
-  },
-  { type: "link", label: "Audit Log", href: "/audit-log", admin: true },
-];
-
-function filterNav(
-  items: NavItem[],
-  isPlatformUser: boolean,
-  isPremiumUser: boolean,
-  isAdminUser: boolean,
-): NavItem[] {
-  return items.filter(item => {
-    if (item.platform && !isPlatformUser) return false;
-    if (item.premium  && !isPremiumUser)  return false;
-    if (item.admin    && !isAdminUser)    return false;
-    return true;
-  });
-}
+// NAV_ITEMS, filterNav, and the NavItem type are imported from
+// `@/lib/navigation` (the single source of truth shared with the Application
+// Knowledge Index generator).
 
 // ─── Inline chevron (no icon-lib dependency) ──────────────────────────────────
 

@@ -12,6 +12,7 @@
     "portal": "tsx src/portal/server.ts",
     "intelligence-api": "tsx services/intelligence-worker/src/api/server.ts",
     "migrate": "tsx scripts/runMigrations.ts",
+    "generate:knowledge-index": "tsx scripts/generate-app-knowledge-index.ts",
     "seed:demo": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx scripts/seed-demo.ts'",
     "seed:demo:reset": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx scripts/seed-demo.ts --reset'",
     "seed:staging": "bash -c 'set -a && [ -f .env.local ] && source .env.local && set +a && tsx scripts/seed-staging.ts \"$@\"' --",
