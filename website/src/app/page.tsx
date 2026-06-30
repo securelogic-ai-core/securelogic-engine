@@ -4,6 +4,7 @@ import Link from "next/link";
 import { BriefSignupForm } from "@/components/BriefSignupForm";
 import { PricingCards } from "@/components/PricingCards";
 import { SOURCES } from "@/lib/pricing";
+import { CURRENTLY_IN_PLACE } from "@/lib/trust";
 
 export const metadata: Metadata = {
   title: "SecureLogic AI — Cyber Risk Intelligence. Delivered Weekly.",
@@ -49,25 +50,38 @@ function IconIntel() {
   );
 }
 
+// Small reusable checkmark for trust rows / outcome lists.
+function Check({ className = "w-3.5 h-3.5" }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+    </svg>
+  );
+}
+
 const PILLARS = [
   {
     title: "Vendor Risk",
     Icon: IconVendor,
+    href: "/platform/#vendor-risk",
     copy: "Assess vendors, monitor changes, track concerns, and tie external cyber developments back to risk automatically.",
   },
   {
     title: "AI Governance",
     Icon: IconAI,
+    href: "/platform/#ai-governance",
     copy: "Evaluate AI systems, document governance controls, and track AI-related risks in a structured workflow.",
   },
   {
     title: "Compliance",
     Icon: IconCompliance,
+    href: "/platform/#compliance",
     copy: "Manage obligations and assessments across SOC 2, ISO 27001, GDPR, HIPAA, and NIST CSF in one system.",
   },
   {
     title: "Cyber Intelligence",
     Icon: IconIntel,
+    href: "/platform/#intelligence",
     copy: "Turn external signals into prioritized findings, domain scores, and recommended actions for leadership.",
   },
 ];
@@ -76,17 +90,88 @@ const STEPS = [
   {
     n: "01",
     title: "Ingest signals",
-    copy: "Collect critical threat signals and vulnerability data from 9 live sources.",
+    copy: "Collect critical threat, vulnerability, regulatory, and AI-risk signals from 9 live sources.",
   },
   {
     n: "02",
     title: "Connect to your posture",
-    copy: "Map the intelligence to your vendors, AI systems, and controls.",
+    copy: "Map each signal to your vendors, AI systems, controls, and obligations.",
   },
   {
     n: "03",
+    title: "Score & prioritize",
+    copy: "The SecureLogic Engine scores severity and relevance so the noise falls away.",
+  },
+  {
+    n: "04",
     title: "Drive action",
-    copy: "Act on clear, prioritized recommendations delivered weekly.",
+    copy: "Act on clear, prioritized recommendations with owners and next steps.",
+  },
+  {
+    n: "05",
+    title: "Report to leadership",
+    copy: "Roll posture, risk, and action into board-ready executive reporting.",
+  },
+];
+
+// Who the platform is built for — honest positioning, not customer logos.
+const PERSONAS = [
+  "CISOs & Security Leaders",
+  "GRC & Risk Teams",
+  "Compliance Officers",
+  "IT Directors",
+  "Procurement & TPRM",
+];
+
+// Honest trust signals — every claim is verifiable; SOC 2 is stated as planned.
+const TRUST_BADGES = [
+  "GDPR & CCPA aligned",
+  "NIST AI RMF aligned",
+  "No AI training on your data",
+  "SOC 2 Type II — planned",
+];
+
+// Why SecureLogic AI is different (not feature lists — differentiators).
+const DIFFERENTIATORS = [
+  {
+    title: "One operating picture",
+    copy: "Vendor risk, AI governance, compliance, and threat intelligence in a single connected model — not four disconnected tools.",
+  },
+  {
+    title: "Explainable scoring",
+    copy: "Every score and recommendation traces back to the underlying signal and rule. No black-box risk numbers.",
+  },
+  {
+    title: "Responsible AI by design",
+    copy: "Your content is never used to train models — ours or our providers'. AI assists; people decide.",
+  },
+  {
+    title: "Built by security & GRC",
+    copy: "Designed around real posture, assessment, and reporting workflows — by a team that does this work.",
+  },
+];
+
+// What leaders get — outcome framing (qualitative, no invented metrics).
+const OUTCOMES = [
+  {
+    stat: "Board-ready",
+    label: "Executive reporting",
+    copy: "Posture, top risks, and recommended actions in language leadership acts on.",
+  },
+  {
+    stat: "One view",
+    label: "Unified risk picture",
+    copy: "Cyber, vendor, AI, and compliance exposure in one prioritized operating picture.",
+  },
+  {
+    stat: "Audit-ready",
+    label: "Continuous compliance",
+    copy: "Controls, evidence, and gaps tracked across SOC 2, ISO 27001, NIST CSF, and more.",
+  },
+  {
+    stat: "Fewer blind spots",
+    label: "Third-party visibility",
+    copy: "Vendor and AI-system exposure surfaced and tied back to your risk register.",
   },
 ];
 
@@ -117,18 +202,35 @@ export default function HomePage() {
                 <br />
                 <span className="text-accent">Delivered Weekly.</span>
               </h1>
-              <p className="text-lg text-text-body leading-relaxed max-w-xl mb-8">
+              <p className="text-lg text-text-body leading-relaxed max-w-xl mb-5">
                 Security teams are drowning in alerts with no context, no prioritization,
                 and no clear action.
+              </p>
+              <p className="text-base text-text-muted leading-relaxed max-w-xl mb-8">
+                SecureLogic AI is the risk intelligence platform for security and GRC leaders —
+                unifying cyber, vendor, AI governance, and compliance signals into one prioritized
+                operating picture. Start with the weekly executive brief; grow into the full platform.
               </p>
 
               <BriefSignupForm />
 
               <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
                 <Link href={TRIAL_HREF} className="text-accent font-semibold hover:text-accent-hover transition-colors">
-                  Or start a free platform trial →
+                  Start a free platform trial →
+                </Link>
+                <Link href="/contact/" className="text-text-muted font-semibold hover:text-text transition-colors">
+                  Book a demo →
                 </Link>
               </div>
+
+              <ul className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-text-muted">
+                {["No credit card to start", "SSO / SAML available", "No AI training on your data"].map((t) => (
+                  <li key={t} className="flex items-center gap-1.5">
+                    <span className="text-accent"><Check className="w-3 h-3" /></span>
+                    {t}
+                  </li>
+                ))}
+              </ul>
             </div>
 
             {/* Right — product-style brief card */}
@@ -201,6 +303,41 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* ─── B2. Built for / trust signals ───────────────────────────────── */}
+      <section className="bg-bg border-b border-hairline">
+        <div className="container-site py-12">
+          <div className="grid lg:grid-cols-2 gap-10 items-center">
+            <div>
+              <p className="pill-mono text-text-muted mb-4">Built for security &amp; GRC leaders</p>
+              <ul className="flex flex-wrap gap-2.5">
+                {PERSONAS.map((p) => (
+                  <li
+                    key={p}
+                    className="px-3 py-1.5 rounded-full border border-hairline bg-bg-elevated text-sm text-text-body"
+                  >
+                    {p}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="lg:justify-self-end">
+              <p className="pill-mono text-text-muted mb-4 lg:text-right">Security &amp; trust posture</p>
+              <ul className="flex flex-wrap gap-2.5 lg:justify-end">
+                {TRUST_BADGES.map((b) => (
+                  <li
+                    key={b}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-accent/25 bg-accent/5 text-sm text-text-body"
+                  >
+                    <span className="text-accent"><Check className="w-3 h-3" /></span>
+                    {b}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ─── C. Problem statement ────────────────────────────────────────── */}
       <section className="bg-bg">
         <div className="container-site py-20 lg:py-[100px]">
@@ -217,14 +354,41 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ─── D. Four pillars ─────────────────────────────────────────────── */}
-      <section id="features" className="bg-bg-elevated border-t border-hairline">
+      {/* ─── C2. Why SecureLogic AI ──────────────────────────────────────── */}
+      <section className="bg-bg-elevated border-t border-hairline">
         <div className="container-site py-20 lg:py-[100px]">
           <div className="max-w-2xl mb-12">
-            <p className="eyebrow mb-4">Platform</p>
+            <p className="eyebrow mb-4">Why SecureLogic AI</p>
             <h2 className="text-3xl sm:text-4xl font-extrabold text-text leading-tight">
-              Four pillars. One operating picture.
+              A platform, not another point tool.
             </h2>
+          </div>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            {DIFFERENTIATORS.map((d) => (
+              <div key={d.title} className="card p-7">
+                <span className="w-9 h-9 rounded-lg bg-accent/15 text-accent flex items-center justify-center mb-5">
+                  <Check className="w-4 h-4" />
+                </span>
+                <h3 className="text-text font-bold text-base mb-2">{d.title}</h3>
+                <p className="text-sm text-text-muted leading-relaxed">{d.copy}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ─── D. Platform overview (four pillars) ─────────────────────────── */}
+      <section id="features" className="bg-bg border-t border-hairline">
+        <div className="container-site py-20 lg:py-[100px]">
+          <div className="max-w-2xl mb-12">
+            <p className="eyebrow mb-4">Platform overview</p>
+            <h2 className="text-3xl sm:text-4xl font-extrabold text-text leading-tight mb-4">
+              Four connected domains. One operating picture.
+            </h2>
+            <p className="text-text-muted leading-relaxed">
+              Each domain runs on the same SecureLogic Engine, so a signal that touches a vendor,
+              an AI system, or a control flows into one shared risk model — not four silos.
+            </p>
           </div>
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
             {PILLARS.map((p) => (
@@ -234,27 +398,35 @@ export default function HomePage() {
                 </span>
                 <h3 className="text-text font-bold text-lg mb-2">{p.title}</h3>
                 <p className="text-sm text-text-muted leading-relaxed mb-6 flex-1">{p.copy}</p>
-                <Link href={TRIAL_HREF} className="btn-outline w-full">Start Free Trial</Link>
+                <Link href={p.href} className="text-sm font-semibold text-accent hover:text-accent-hover transition-colors">
+                  Explore {p.title} →
+                </Link>
               </div>
             ))}
+          </div>
+          <div className="mt-10">
+            <Link href="/platform/" className="btn-outline">See the full platform</Link>
           </div>
         </div>
       </section>
 
       {/* ─── E. How it works ─────────────────────────────────────────────── */}
-      <section className="bg-bg">
+      <section className="bg-bg-elevated border-t border-hairline">
         <div className="container-site py-20 lg:py-[100px]">
           <div className="max-w-2xl mb-12">
             <p className="eyebrow mb-4">How it works</p>
-            <h2 className="text-3xl sm:text-4xl font-extrabold text-text leading-tight">
-              How SecureLogic AI Works
+            <h2 className="text-3xl sm:text-4xl font-extrabold text-text leading-tight mb-4">
+              From raw signal to leadership-ready action.
             </h2>
+            <p className="text-text-muted leading-relaxed">
+              A repeatable, five-step workflow — the same engine behind every module.
+            </p>
           </div>
-          <div className="grid md:grid-cols-3 gap-5">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-4">
             {STEPS.map((s) => (
-              <div key={s.n} className="card p-7">
+              <div key={s.n} className="card p-6">
                 <p className="font-mono text-2xl font-semibold text-accent mb-4">{s.n}</p>
-                <h3 className="text-text font-bold text-lg mb-2">{s.title}</h3>
+                <h3 className="text-text font-bold text-base mb-2">{s.title}</h3>
                 <p className="text-sm text-text-muted leading-relaxed">{s.copy}</p>
               </div>
             ))}
@@ -263,7 +435,7 @@ export default function HomePage() {
       </section>
 
       {/* ─── F. Intelligence Brief spotlight ─────────────────────────────── */}
-      <section className="bg-bg-elevated border-t border-hairline">
+      <section className="bg-bg border-t border-hairline">
         <div className="container-site py-20 lg:py-[100px]">
           <div className="grid lg:grid-cols-2 gap-14 items-center">
             {/* Brief preview card */}
@@ -333,8 +505,64 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ─── G. Pricing ──────────────────────────────────────────────────── */}
+      {/* ─── F2. Executive outcomes ──────────────────────────────────────── */}
+      <section className="bg-bg-elevated border-t border-hairline">
+        <div className="container-site py-20 lg:py-[100px]">
+          <div className="max-w-2xl mb-12">
+            <p className="eyebrow mb-4">Executive outcomes</p>
+            <h2 className="text-3xl sm:text-4xl font-extrabold text-text leading-tight mb-4">
+              What leadership actually gets.
+            </h2>
+            <p className="text-text-muted leading-relaxed">
+              SecureLogic AI exists to turn scattered risk signals into decisions a board can stand behind.
+            </p>
+          </div>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            {OUTCOMES.map((o) => (
+              <div key={o.label} className="card p-7">
+                <p className="text-accent font-extrabold text-2xl leading-tight mb-1">{o.stat}</p>
+                <p className="pill-mono text-text-muted mb-3">{o.label}</p>
+                <p className="text-sm text-text-muted leading-relaxed">{o.copy}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ─── F3. Security & trust preview ────────────────────────────────── */}
       <section className="bg-bg border-t border-hairline">
+        <div className="container-site py-20 lg:py-[100px]">
+          <div className="grid lg:grid-cols-2 gap-14 items-center">
+            <div>
+              <p className="eyebrow mb-4">Security &amp; trust</p>
+              <h2 className="text-3xl sm:text-4xl font-extrabold text-text leading-tight mb-6">
+                We hold ourselves to the standards we help you meet.
+              </h2>
+              <p className="text-text-body leading-relaxed mb-8">
+                We&apos;re a security and GRC platform, so trust is the product. Here&apos;s what&apos;s
+                in place today — and we&apos;re transparent about what&apos;s still on the roadmap.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Link href="/trust/" className="btn-primary">Visit the Trust Center</Link>
+                <Link href="/security/" className="btn-outline">Read the security detail</Link>
+              </div>
+            </div>
+            <ul className="grid sm:grid-cols-2 gap-x-6 gap-y-3.5">
+              {CURRENTLY_IN_PLACE.map((item) => (
+                <li key={item} className="flex items-start gap-2.5 text-sm text-text-body leading-relaxed">
+                  <span className="mt-0.5 flex-shrink-0 w-5 h-5 rounded-full bg-accent/15 text-accent flex items-center justify-center">
+                    <Check className="w-3 h-3" />
+                  </span>
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      {/* ─── G. Pricing ──────────────────────────────────────────────────── */}
+      <section className="bg-bg-elevated border-t border-hairline">
         <div className="container-site py-20 lg:py-[100px]">
           <div className="max-w-2xl mb-12">
             <p className="eyebrow mb-4">Pricing</p>
@@ -356,7 +584,7 @@ export default function HomePage() {
       </section>
 
       {/* ─── H. Final CTA ────────────────────────────────────────────────── */}
-      <section className="relative overflow-hidden bg-bg-elevated border-t border-hairline">
+      <section className="relative overflow-hidden bg-bg border-t border-hairline">
         <div
           className="absolute inset-0 pointer-events-none"
           aria-hidden="true"
@@ -366,12 +594,17 @@ export default function HomePage() {
           <div className="flex justify-center mb-7">
             <Image src="/branding/securelogic-ai-logo.png" alt="SecureLogic AI" width={48} height={48} className="rounded-xl" />
           </div>
-          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-text leading-tight mb-8">
+          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-text leading-tight mb-4">
             Start with the brief. Stay for the platform.
           </h2>
+          <p className="text-text-muted leading-relaxed max-w-xl mx-auto mb-8">
+            Pick the path that fits — read the free brief, trial the platform, or have us walk
+            your team through it.
+          </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <Link href="/#brief-signup" className="btn-primary">Get the Free Brief</Link>
             <Link href={TRIAL_HREF} className="btn-outline">Start Free Trial</Link>
+            <Link href="/contact/" className="btn-outline">Book a Demo</Link>
           </div>
         </div>
       </section>

@@ -5,13 +5,166 @@ import { getPricingTiers } from "@/lib/pricing";
 export const metadata: Metadata = {
   title: "Platform",
   description:
-    "The SecureLogic AI platform — Vendor Risk, AI Governance, Compliance, and Intelligence modules for unified risk coverage.",
+    "The SecureLogic AI platform — Intelligence, Vendor Risk, AI Governance, Compliance, and Executive Reporting modules for unified risk coverage.",
 };
+
+interface PlatformModule {
+  id: string;
+  name: string;
+  badges: string[];
+  problem: string;
+  inputs: string[];
+  automation: string[];
+  outputs: string[];
+  deliverables: string[];
+  outcome: string;
+  cta: { label: string; href: string; app?: boolean };
+}
+
+// Product-oriented module model: every capability states the Problem, the
+// Inputs → Automation → Outputs workflow, the concrete Deliverables, and the
+// Business outcome. Anchors (#intelligence, #vendor-risk, #ai-governance,
+// #compliance) match the global nav; #executive-reporting is page-only.
+function getPlatformModules(appUrl: string): PlatformModule[] {
+  const trial = `${appUrl}/signup?plan=platform_annual`;
+  return [
+    {
+      id: "intelligence",
+      name: "Intelligence",
+      badges: ["Available now"],
+      problem:
+        "Security leaders can't read every advisory, regulation, and breach report — and most feeds bury the few that actually touch their organization.",
+      inputs: [
+        "9 live threat, vulnerability & regulatory sources",
+        "Your registered vendors and AI systems",
+        "Your frameworks and obligations",
+      ],
+      automation: [
+        "Deduplicate, normalize and qualify each signal",
+        "Score severity and relevance to your org",
+        "Synthesize an executive narrative with actions",
+      ],
+      outputs: [
+        "Weekly executive Intelligence Brief",
+        "Prioritized, scored signal list",
+        "Why-it-matters + recommended action per item",
+      ],
+      deliverables: ["Weekly brief", "Signal archive & search", "Severity filtering"],
+      outcome:
+        "Leaders spend minutes, not hours — and act on the signals that actually touch their environment.",
+      cta: { label: "Learn more about the Intelligence Brief", href: "/intelligence-brief/" },
+    },
+    {
+      id: "vendor-risk",
+      name: "Vendor Risk",
+      badges: ["Available now", "Platform Professional"],
+      problem:
+        "Third-party and AI-vendor exposure is the fastest-growing attack surface, yet most teams track vendors in spreadsheets disconnected from real risk.",
+      inputs: [
+        "Vendor inventory and onboarding intake",
+        "Assurance documents (SOC 2, ISO 27001)",
+        "External signals touching each vendor",
+      ],
+      automation: [
+        "Extract and assess assurance evidence",
+        "Score inherent and residual risk",
+        "Map findings to your risk register",
+      ],
+      outputs: [
+        "Scored vendor register",
+        "Assessment findings and gaps",
+        "Risk-register entries with treatment",
+      ],
+      deliverables: ["Vendor inventory & onboarding", "Risk scoring & trending", "Document ingestion"],
+      outcome:
+        "See exactly where vendors fall short — and tie every finding to an owner and a treatment plan.",
+      cta: { label: "Start free trial", href: trial, app: true },
+    },
+    {
+      id: "ai-governance",
+      name: "AI Governance",
+      badges: ["Available now", "Platform Professional"],
+      problem:
+        "AI is being adopted faster than it's being governed, and regulators (EU AI Act, ISO 42001) now expect a defensible inventory and assessment trail.",
+      inputs: [
+        "AI system inventory",
+        "Model and use-case metadata",
+        "Internal AI policies and frameworks",
+      ],
+      automation: [
+        "Classify model risk",
+        "Assess against ISO 42001 and the EU AI Act",
+        "Track policy compliance and approvals",
+      ],
+      outputs: [
+        "Governed AI system register",
+        "Assessment and risk classification",
+        "Audit-ready governance evidence",
+      ],
+      deliverables: ["AI system inventory", "Governance assessments", "EU AI Act / ISO 42001 mapping"],
+      outcome:
+        "A defensible, current record of every AI system and how it's governed — ready for auditors and boards.",
+      cta: { label: "Start free trial", href: trial, app: true },
+    },
+    {
+      id: "compliance",
+      name: "Compliance",
+      badges: ["Available now", "Platform Professional"],
+      problem:
+        "Compliance lives in disconnected spreadsheets and screenshots, so audits become fire drills and gaps surface far too late.",
+      inputs: [
+        "Framework selection (SOC 2, ISO 27001, NIST CSF…)",
+        "Controls and evidence",
+        "Signals affecting control status",
+      ],
+      automation: [
+        "Map controls across frameworks",
+        "Detect gaps and overlaps",
+        "Track evidence freshness continuously",
+      ],
+      outputs: [
+        "Control and framework registry",
+        "Gap analysis",
+        "Audit-ready reports",
+      ],
+      deliverables: ["Framework registry", "Control mapping & gap analysis", "Evidence tracking"],
+      outcome: "Continuous, audit-ready compliance — not a once-a-year scramble.",
+      cta: { label: "Start free trial", href: trial, app: true },
+    },
+    {
+      id: "executive-reporting",
+      name: "Executive Reporting",
+      badges: ["Available now", "Platform Professional"],
+      problem:
+        "Boards ask “are we secure?” and security leaders struggle to answer in business terms backed by current, defensible data.",
+      inputs: [
+        "Posture scores across all domains",
+        "Top risks and open actions",
+        "Vendor, AI and compliance status",
+      ],
+      automation: [
+        "Roll domain posture into one score",
+        "Surface the risks that moved this period",
+        "Generate a leadership-ready narrative",
+      ],
+      outputs: [
+        "Executive posture dashboard",
+        "Board-ready risk summary",
+        "Prioritized action plan",
+      ],
+      deliverables: ["Leadership dashboard", "Posture scoring across 4 domains", "Exportable reporting"],
+      outcome:
+        "Walk into the board meeting with a clear, current, defensible picture of risk — and what's being done about it.",
+      cta: { label: "See pricing & plans", href: "/pricing/" },
+    },
+  ];
+}
 
 export default function PlatformPage() {
   const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.securelogicai.com";
   // Founding pricing sourced from the shared model — no hard-coded figures.
   const platformPro = getPricingTiers(APP_URL).find((t) => t.id === "platform-professional")!;
+  const modules = getPlatformModules(APP_URL);
 
   return (
     <>
@@ -30,9 +183,15 @@ export default function PlatformPage() {
             One platform for<br />total risk coverage
           </h1>
           <p className="text-lg text-text-body leading-relaxed max-w-2xl mx-auto">
-            SecureLogic AI brings vendor risk, AI governance, compliance, and threat intelligence
-            into a single analytical platform — powered by the SecureLogic Engine.
+            SecureLogic AI brings vendor risk, AI governance, compliance, threat intelligence, and
+            executive reporting into a single analytical platform — powered by the SecureLogic Engine.
           </p>
+          <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
+            <a href={`${APP_URL}/signup?plan=platform_annual`} className="btn-primary">
+              Start Free Trial
+            </a>
+            <Link href="/contact/" className="btn-outline">Book a Demo</Link>
+          </div>
         </div>
       </section>
 
@@ -57,196 +216,108 @@ export default function PlatformPage() {
 
       {/* Modules */}
       <section className="py-20 px-4">
-        <div className="max-w-5xl mx-auto space-y-12">
-          {/* Intelligence — Available */}
-          <div id="intelligence" className="grid md:grid-cols-2 gap-10 items-center">
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-accent/10 text-accent border border-accent/30">
-                  Available now
-                </span>
-              </div>
-              <h2 className="text-2xl font-bold text-text mb-4">Intelligence</h2>
-              <p className="text-text-muted leading-relaxed mb-5">
-                Continuous external signal monitoring across security, regulatory, vendor risk, and
-                AI governance sources — synthesized into the weekly Intelligence Brief.
-              </p>
-              <ul className="space-y-2 text-sm text-text-body mb-6">
-                {[
-                  "Weekly Intelligence Brief delivery",
-                  "Risk-scored signals by category",
-                  "Executive synthesis and recommendations",
-                  "Vendor risk, security, regulatory, and AI feeds",
-                ].map((f) => (
-                  <li key={f} className="flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0" />
-                    {f}
-                  </li>
-                ))}
-              </ul>
-              <Link
-                href="/intelligence-brief/"
-                className="inline-flex items-center px-5 py-2.5 rounded-lg bg-accent text-[#04201d] text-sm font-semibold hover:bg-accent-hover transition-colors"
-              >
-                Learn more about the Intelligence Brief
-              </Link>
-            </div>
-            <div className="bg-bg rounded-xl p-6 text-text">
-              <p className="text-xs text-accent font-semibold uppercase tracking-wider mb-3">
-                Intelligence Brief
-              </p>
-              <div className="flex gap-2 mb-5">
-                <span className="px-2.5 py-1 bg-danger/15 text-danger text-xs font-semibold rounded-full border border-danger/30">3 Critical</span>
-                <span className="px-2.5 py-1 bg-warning/15 text-warning text-xs font-semibold rounded-full border border-warning/30">7 High</span>
-              </div>
-              <div className="space-y-2">
-                {["Security advisory — CVE-2026-XXXX", "Regulatory — EU AI Act update", "Vendor risk — Supply chain incident"].map((s) => (
-                  <div key={s} className="text-xs text-text-muted bg-bg-elevated rounded-lg px-3 py-2">{s}</div>
-                ))}
-              </div>
+        <div className="max-w-5xl mx-auto">
+          <div className="max-w-2xl mb-12">
+            <h2 className="text-3xl sm:text-4xl font-extrabold text-text leading-tight mb-4">
+              Five modules. One connected risk model.
+            </h2>
+            <p className="text-text-muted leading-relaxed">
+              Every module reads from and writes to the same shared entities — so vendors, AI
+              systems, controls, signals, risks, and actions stay connected end to end.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-2.5">
+              {modules.map((m) => (
+                <a
+                  key={m.id}
+                  href={`#${m.id}`}
+                  className="px-3 py-1.5 rounded-full border border-hairline bg-bg-elevated text-sm text-text-body hover:border-accent hover:text-text transition-colors"
+                >
+                  {m.name}
+                </a>
+              ))}
             </div>
           </div>
 
-          <div className="border-t border-hairline" />
+          <div className="space-y-12">
+            {modules.map((m, i) => (
+              <div key={m.id} id={m.id} className="scroll-mt-24">
+                {i > 0 && <div className="border-t border-hairline mb-12" />}
 
-          {/* Vendor Risk */}
-          <div id="vendor-risk" className="grid md:grid-cols-2 gap-10 items-center">
-            <div className="md:order-2">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-accent/10 text-accent border border-accent/30">
-                  Available now
-                </span>
-                <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-bg-elevated-2 text-text-muted">
-                  Platform Professional
-                </span>
-              </div>
-              <h2 className="text-2xl font-bold text-text mb-4">Vendor Risk</h2>
-              <p className="text-text-muted leading-relaxed mb-5">
-                Enter and assess your third-party vendors, ingest their assurance documents
-                (SOC 2, ISO 27001), score risk, and map findings to your risk register — so you
-                can see where vendors fall short.
-              </p>
-              <ul className="space-y-2 text-sm text-text-body">
-                {[
-                  "Vendor inventory and onboarding",
-                  "Risk scoring and trending",
-                  "Assessment intake and findings",
-                  "Document ingestion (SOC 2, ISO 27001)",
-                  "Vendor findings mapped to your risk register",
-                ].map((f) => (
-                  <li key={f} className="flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-text-muted/50 flex-shrink-0" />
-                    {f}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="md:order-1 bg-bg-elevated rounded-xl border border-hairline p-8 text-center">
-              <div className="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center mx-auto mb-4 text-accent">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-                </svg>
-              </div>
-              <p className="text-sm font-medium text-text-body mb-2">Vendor Risk module</p>
-              <p className="text-xs text-text-muted mb-4">Included in Platform Professional.</p>
-              <a href={`${APP_URL}/signup?plan=platform_annual`} className="text-xs font-semibold text-accent hover:text-accent-hover transition-colors">
-                Start Free Trial →
-              </a>
-            </div>
-          </div>
+                {/* Header: badges, name, problem */}
+                <div className="flex flex-wrap items-center gap-2 mb-3">
+                  {m.badges.map((b, bi) => (
+                    <span
+                      key={b}
+                      className={
+                        bi === 0
+                          ? "text-xs font-semibold px-2.5 py-1 rounded-full bg-accent/10 text-accent border border-accent/30"
+                          : "text-xs font-medium px-2.5 py-1 rounded-full bg-bg-elevated-2 text-text-muted"
+                      }
+                    >
+                      {b}
+                    </span>
+                  ))}
+                </div>
+                <h3 className="text-2xl sm:text-3xl font-bold text-text mb-3">{m.name}</h3>
+                <p className="text-text-muted leading-relaxed max-w-3xl mb-8">{m.problem}</p>
 
-          <div className="border-t border-hairline" />
+                {/* Workflow: Inputs → Automation → Outputs */}
+                <div className="grid md:grid-cols-3 gap-5 mb-6">
+                  {([
+                    ["Inputs", m.inputs],
+                    ["Automation", m.automation],
+                    ["Outputs", m.outputs],
+                  ] as const).map(([label, items]) => (
+                    <div key={label} className="card p-6">
+                      <p className="pill-mono text-accent mb-4">{label}</p>
+                      <ul className="space-y-2.5">
+                        {items.map((it) => (
+                          <li key={it} className="flex items-start gap-2.5 text-sm text-text-body leading-relaxed">
+                            <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-accent/70 flex-shrink-0" />
+                            {it}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
 
-          {/* AI Governance */}
-          <div id="ai-governance" className="grid md:grid-cols-2 gap-10 items-center">
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-accent/10 text-accent border border-accent/30">
-                  Available now
-                </span>
-                <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-bg-elevated-2 text-text-muted">
-                  Platform Professional
-                </span>
-              </div>
-              <h2 className="text-2xl font-bold text-text mb-4">AI Governance</h2>
-              <p className="text-text-muted leading-relaxed mb-5">
-                Inventory, assess, and govern AI systems across your organization against ISO 42001,
-                EU AI Act, and internal policy frameworks.
-              </p>
-              <ul className="space-y-2 text-sm text-text-body">
-                {[
-                  "AI system inventory",
-                  "Governance assessment framework",
-                  "ISO 42001 and EU AI Act mapping",
-                  "Model risk classification",
-                  "Policy compliance tracking",
-                ].map((f) => (
-                  <li key={f} className="flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-text-muted/50 flex-shrink-0" />
-                    {f}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="bg-bg-elevated rounded-xl border border-hairline p-8 text-center">
-              <div className="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center mx-auto mb-4 text-accent">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 3H7a2 2 0 00-2 2v2m4-4h6m-6 0V1m6 2h2a2 2 0 012 2v2m0 0V9m0-2h2M21 9v6m0 0v2a2 2 0 01-2 2h-2m0 0H9m6 0v2m-6-2H7a2 2 0 01-2-2v-2m0 0V9m0 6H3M3 9V7a2 2 0 012-2h2m2 4h6v6H9V9z" />
-                </svg>
-              </div>
-              <p className="text-sm font-medium text-text-body mb-2">AI Governance module</p>
-              <p className="text-xs text-text-muted mb-4">Included in Platform Professional.</p>
-              <a href={`${APP_URL}/signup?plan=platform_annual`} className="text-xs font-semibold text-accent hover:text-accent-hover transition-colors">
-                Start Free Trial →
-              </a>
-            </div>
-          </div>
+                {/* Deliverables */}
+                <div className="flex flex-wrap items-center gap-2 mb-5">
+                  <span className="pill-mono text-text-muted mr-1">What you get</span>
+                  {m.deliverables.map((d) => (
+                    <span
+                      key={d}
+                      className="px-2.5 py-1 rounded-full border border-hairline bg-bg-elevated text-xs text-text-body"
+                    >
+                      {d}
+                    </span>
+                  ))}
+                </div>
 
-          <div className="border-t border-hairline" />
+                {/* Business outcome */}
+                <div className="rounded-xl border border-accent/25 bg-accent/5 px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-3 mb-5">
+                  <span className="pill-mono text-accent flex-shrink-0">Business outcome</span>
+                  <p className="text-sm text-text-body leading-relaxed">{m.outcome}</p>
+                </div>
 
-          {/* Compliance */}
-          <div id="compliance" className="grid md:grid-cols-2 gap-10 items-center">
-            <div className="md:order-2">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-accent/10 text-accent border border-accent/30">
-                  Available now
-                </span>
-                <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-bg-elevated-2 text-text-muted">
-                  Platform Professional
-                </span>
+                {m.cta.app ? (
+                  <a
+                    href={m.cta.href}
+                    className="inline-flex items-center text-sm font-semibold text-accent hover:text-accent-hover transition-colors"
+                  >
+                    {m.cta.label} →
+                  </a>
+                ) : (
+                  <Link
+                    href={m.cta.href}
+                    className="inline-flex items-center text-sm font-semibold text-accent hover:text-accent-hover transition-colors"
+                  >
+                    {m.cta.label} →
+                  </Link>
+                )}
               </div>
-              <h2 className="text-2xl font-bold text-text mb-4">Compliance</h2>
-              <p className="text-text-muted leading-relaxed mb-5">
-                Map controls to SOC 2, NIST CSF, ISO 27001, and more. Track gaps, manage evidence,
-                and produce audit-ready reports continuously.
-              </p>
-              <ul className="space-y-2 text-sm text-text-body">
-                {[
-                  "Framework registry (SOC 2, NIST, ISO)",
-                  "Control mapping and gap analysis",
-                  "Evidence tracking",
-                  "Continuous compliance monitoring",
-                  "Audit-ready reporting",
-                ].map((f) => (
-                  <li key={f} className="flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-text-muted/50 flex-shrink-0" />
-                    {f}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="md:order-1 bg-bg-elevated rounded-xl border border-hairline p-8 text-center">
-              <div className="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center mx-auto mb-4 text-accent">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-              </div>
-              <p className="text-sm font-medium text-text-body mb-2">Compliance module</p>
-              <p className="text-xs text-text-muted mb-4">Included in Platform Professional.</p>
-              <a href={`${APP_URL}/signup?plan=platform_annual`} className="text-xs font-semibold text-accent hover:text-accent-hover transition-colors">
-                Start Free Trial →
-              </a>
-            </div>
+            ))}
           </div>
         </div>
       </section>
