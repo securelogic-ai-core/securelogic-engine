@@ -10,7 +10,7 @@
  * (e.g. "June 30, 2026"). This is the ONLY edit required to date all three
  * legal documents.
  */
-export const LAUNCH_DATE = "TBD — Public Launch Date";
+export const LAUNCH_DATE = "July 1, 2026";
 
 export const LEGAL_EFFECTIVE_DATE = LAUNCH_DATE;
 export const LEGAL_LAST_UPDATED = LAUNCH_DATE;
