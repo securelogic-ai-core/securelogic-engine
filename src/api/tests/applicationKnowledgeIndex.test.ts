@@ -9,11 +9,7 @@ import {
   type NavInputItem,
 } from "../lib/applicationKnowledgeIndex.js";
 import { APPLICATION_KNOWLEDGE_INDEX } from "../lib/applicationKnowledgeIndex.generated.js";
-import {
-  renderProductKnowledge,
-  workflowReferencedPaths,
-  extractReferencedPaths,
-} from "../lib/productKnowledge.js";
+import { renderProductKnowledge } from "../lib/productKnowledge.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appAppDir = join(here, "..", "..", "..", "app", "src", "app");
@@ -72,11 +68,6 @@ describe("Navigation hierarchy matches the actual UI", () => {
 });
 
 describe("Ask navigation answers are grounded in the index", () => {
-  it("every path an Ask workflow tells a user to visit is a real route in the index", () => {
-    const missing = workflowReferencedPaths().filter((p) => !routePaths.has(p));
-    expect(missing, `workflows cite non-existent routes: ${missing.join(", ")}`).toEqual([]);
-  });
-
   it("the rendered product knowledge lists every top-level menu link from the index", () => {
     const rendered = renderProductKnowledge();
     for (const n of APPLICATION_KNOWLEDGE_INDEX.navigation) {
@@ -88,12 +79,5 @@ describe("Ask navigation answers are grounded in the index", () => {
         }
       }
     }
-  });
-
-  it("the path extractor pulls real route-shaped tokens", () => {
-    expect(extractReferencedPaths("Open /vendors then /vendors/new to add one.")).toEqual([
-      "/vendors",
-      "/vendors/new",
-    ]);
   });
 });

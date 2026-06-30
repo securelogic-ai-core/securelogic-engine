@@ -1,0 +1,16 @@
+id: view_brief
+title: 'Read your Intelligence Brief'
+goal: 'Find and read your executive Intelligence Brief.'
+permissions: all
+navigation:
+  - Briefs
+routes:
+  - /briefs
+ordered_steps:
+  - 'Open Briefs in the top navigation (or go to /briefs).'
+  - 'Open a brief to read its items; drill into an individual signal for detail.'
+expected_result: 'You can read the latest Intelligence Brief and its underlying signals.'
+common_mistakes:
+  - 'Expecting to author a brief in-app — briefs are generated for you on a schedule and read here.'
+related_workflows:
+  - view_dashboard

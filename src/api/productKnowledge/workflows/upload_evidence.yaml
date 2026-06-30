@@ -1,0 +1,20 @@
+id: upload_evidence
+title: 'Add or link evidence'
+goal: 'Attach evidence to a control (or obligation / AI system) to support an assessment and the audit trail.'
+permissions: platform
+navigation:
+  - Compliance
+  - Controls
+routes:
+  - /controls
+  - /controls/[id]/evidence/new
+ordered_steps:
+  - 'Open Compliance → Controls and select the control to open its detail page.'
+  - 'Click "Add Evidence" (/controls/[id]/evidence/new).'
+  - 'Upload or link the evidence and save. The same pattern exists on obligations and AI systems.'
+expected_result: 'The evidence is attached to the item and available to its assessments and audit package.'
+common_mistakes:
+  - 'Trying to add evidence from a global page — evidence is always attached to a specific control, obligation, or AI system.'
+related_workflows:
+  - assess_control
+  - add_control

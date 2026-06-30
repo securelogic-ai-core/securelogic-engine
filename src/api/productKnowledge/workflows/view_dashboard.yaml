@@ -1,0 +1,18 @@
+id: view_dashboard
+title: 'Review your security posture'
+goal: 'See your overall posture score and trend, and what is driving it.'
+permissions: all
+navigation:
+  - Dashboard
+routes:
+  - /dashboard
+ordered_steps:
+  - 'Open Dashboard in the top navigation (or go to /dashboard).'
+  - 'Review the overall posture score, the trend over time, and the top contributing domains.'
+  - 'To improve the score, add and assess controls, close high-severity findings, and clear overdue actions.'
+expected_result: 'You understand your current posture, its trend, and the levers that move it.'
+common_mistakes:
+  - 'Looking for a way to set the posture score manually — it is computed from controls, findings, and actions.'
+related_workflows:
+  - assess_control
+  - manage_actions
