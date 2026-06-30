@@ -1,12 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   detectVoiceSupport,
-  isIOS,
   VOICE_UNSUPPORTED_MESSAGE,
   type VoiceEnv,
 } from "../voiceSupport";
 
-// A fully-capable desktop browser (e.g. Chrome on Windows/Linux).
+// A fully-capable browser.
 const CAPABLE: VoiceEnv = {
   hasMediaDevices: true,
   hasMediaRecorder: true,
@@ -19,111 +18,73 @@ const CAPABLE: VoiceEnv = {
   maxTouchPoints: 0,
 };
 
-describe("isIOS", () => {
-  it("detects an iPhone by userAgent", () => {
-    expect(
-      isIOS({
-        userAgent:
-          "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
-        platform: "iPhone",
-        maxTouchPoints: 5,
-      })
-    ).toBe(true);
-  });
+const IPAD_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
+const IPHONE_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15";
 
-  it("detects a legacy iPad by userAgent", () => {
-    expect(
-      isIOS({
-        userAgent:
-          "Mozilla/5.0 (iPad; CPU OS 12_0 like Mac OS X) AppleWebKit/605.1.15",
-        platform: "iPad",
-        maxTouchPoints: 5,
-      })
-    ).toBe(true);
-  });
-
-  it("detects iPadOS 13+ masquerading as desktop Safari (MacIntel + touch)", () => {
-    expect(
-      isIOS({
-        userAgent:
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-        platform: "MacIntel",
-        maxTouchPoints: 5,
-      })
-    ).toBe(true);
-  });
-
-  it("does NOT classify a real Mac (MacIntel, no touch) as iOS", () => {
-    expect(
-      isIOS({
-        userAgent:
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-        platform: "MacIntel",
-        maxTouchPoints: 0,
-      })
-    ).toBe(false);
-  });
-});
-
-describe("detectVoiceSupport", () => {
-  it("supports a fully-capable desktop browser", () => {
+describe("detectVoiceSupport — capability only, no browser/device name gating", () => {
+  it("offers voice on a fully-capable desktop browser", () => {
     expect(detectVoiceSupport(CAPABLE)).toEqual({ supported: true });
   });
 
-  it("supports a browser that only supports mp4 (no webm)", () => {
+  it("offers voice when only mp4 is supported (no webm)", () => {
     expect(
       detectVoiceSupport({ ...CAPABLE, supportsWebm: false, supportsMp4: true })
     ).toEqual({ supported: true });
   });
 
-  it("gates iPadOS off even when every capability flag is true", () => {
-    // The iPad case: getUserMedia + MediaRecorder + mp4 all present, but we
-    // deliberately treat iOS as unsupported until the Whisper path is proven.
+  it("offers voice on a CAPABLE iPad — never blacklisted by name", () => {
+    // iPadOS 13+ masquerades as MacIntel + touch; with the APIs present it is
+    // fully supported. This is the re-enable: capability, not device name.
     const ipad: VoiceEnv = {
       ...CAPABLE,
-      supportsWebm: false,
-      userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 Version/17.0 Safari/605.1.15",
+      supportsMp4: true,
+      userAgent: IPAD_UA,
       platform: "MacIntel",
       maxTouchPoints: 5,
     };
-    expect(detectVoiceSupport(ipad)).toEqual({ supported: false, reason: "ios" });
+    expect(detectVoiceSupport(ipad)).toEqual({ supported: true });
   });
 
-  it("gates an iPhone off", () => {
+  it("offers voice on a CAPABLE iPhone — never blacklisted by name", () => {
     expect(
       detectVoiceSupport({
         ...CAPABLE,
-        userAgent:
-          "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+        userAgent: IPHONE_UA,
         platform: "iPhone",
         maxTouchPoints: 5,
       })
-    ).toEqual({ supported: false, reason: "ios" });
+    ).toEqual({ supported: true });
   });
 
-  it("reports missing getUserMedia", () => {
+  it("hides voice only on a genuine capability gap — missing getUserMedia", () => {
     expect(detectVoiceSupport({ ...CAPABLE, hasMediaDevices: false })).toEqual({
       supported: false,
       reason: "no_media_devices",
     });
   });
 
-  it("reports missing MediaRecorder", () => {
-    expect(detectVoiceSupport({ ...CAPABLE, hasMediaRecorder: false })).toEqual({
-      supported: false,
-      reason: "no_media_recorder",
-    });
+  it("hides voice when MediaRecorder is missing — even on an iPad UA", () => {
+    expect(
+      detectVoiceSupport({
+        ...CAPABLE,
+        hasMediaRecorder: false,
+        userAgent: IPAD_UA,
+        platform: "MacIntel",
+        maxTouchPoints: 5,
+      })
+    ).toEqual({ supported: false, reason: "no_media_recorder" });
   });
 
-  it("reports MediaRecorder present but isTypeSupported missing", () => {
+  it("hides voice when isTypeSupported is unavailable", () => {
     expect(detectVoiceSupport({ ...CAPABLE, canCheckTypes: false })).toEqual({
       supported: false,
       reason: "no_media_recorder",
     });
   });
 
-  it("reports no supported mime when neither webm nor mp4 is available", () => {
+  it("hides voice when neither webm nor mp4 is supported", () => {
     expect(
       detectVoiceSupport({ ...CAPABLE, supportsWebm: false, supportsMp4: false })
     ).toEqual({ supported: false, reason: "no_supported_mime" });
@@ -131,7 +92,7 @@ describe("detectVoiceSupport", () => {
 });
 
 describe("VOICE_UNSUPPORTED_MESSAGE", () => {
-  it("is the clear, agreed launch copy", () => {
+  it("is the clear fallback copy", () => {
     expect(VOICE_UNSUPPORTED_MESSAGE).toContain(
       "Voice input is not yet supported on this browser"
     );

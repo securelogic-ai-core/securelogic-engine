@@ -12,7 +12,6 @@ import {
   VOICE_DIAGNOSTIC_HEADER,
   buildDiagnosticCode,
   emptyDiagnostic,
-  isStagingHost,
   newCorrelationId,
   type VoiceDiagnostic,
 } from "./voiceDiagnostics";
@@ -140,24 +139,18 @@ export function AskClient() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef   = useRef<Blob[]>([]);
 
-  // Voice capability detection. Starts null so the server render and the first
-  // client render agree (no hydration mismatch); the real decision is made in
-  // a mount effect once `navigator`/`MediaRecorder` are available. While null,
-  // neither the mic button nor the unsupported note renders. iPad/iOS and
-  // browsers lacking MediaRecorder resolve to `supported: false`. See
-  // voiceSupport.ts for why iOS is gated off pre-launch.
+  // Voice capability detection (capability only — no browser/device name
+  // gating). Starts null so the server render and the first client render agree
+  // (no hydration mismatch); the real decision is made in a mount effect once
+  // `navigator`/`MediaRecorder` are available. While null, neither the mic
+  // button nor the unsupported note renders. The mic shows whenever the browser
+  // is genuinely capable (incl. iPad/iPhone); it hides only on a real
+  // capability gap. See voiceSupport.ts.
   const [voiceSupport, setVoiceSupport] = useState<VoiceSupport | null>(null);
-  // Staging/local run in diagnostic mode: the blanket iOS gate is bypassed so we
-  // can capture a real iPad failure. Production keeps the gate (see
-  // voiceDiagnostics.isStagingHost). Resolved on mount to avoid hydration drift.
-  const [diagnosticMode, setDiagnosticMode] = useState(false);
   // Last voice diagnostic (non-sensitive) to surface on failure.
   const [diagnostic, setDiagnostic] = useState<VoiceDiagnostic | null>(null);
   useEffect(() => {
     setVoiceSupport(detectVoiceSupport(readVoiceEnv()));
-    setDiagnosticMode(
-      typeof window !== "undefined" && isStagingHost(window.location.hostname)
-    );
   }, []);
 
   // Auto-resize textarea
@@ -224,7 +217,6 @@ export function AskClient() {
     // Build a non-sensitive diagnostic across the whole attempt so one failure
     // (especially on iPad) yields an unambiguous cause. Never holds audio.
     const diag: VoiceDiagnostic = emptyDiagnostic(newCorrelationId());
-    diag.diagnosticMode = diagnosticMode;
     diag.capability = voiceSupport
       ? voiceSupport.supported
         ? "supported"
@@ -354,7 +346,7 @@ export function AskClient() {
         );
       }
     }
-  }, [isRecording, submitQuery, diagnosticMode, voiceSupport]);
+  }, [isRecording, submitQuery, voiceSupport]);
 
   return (
     <div style={{ maxWidth: "720px", margin: "0 auto", padding: "48px 24px" }}>
@@ -466,11 +458,10 @@ export function AskClient() {
 
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             {/* ── Microphone button ──
-                 Rendered when the browser can reliably support voice input, OR
-                 in staging diagnostic mode (where the iOS gate is bypassed so we
-                 can capture a real iPad failure). On production iPad/iOS the
-                 button is omitted and an explanatory note is shown below. */}
-            {(voiceSupport?.supported || diagnosticMode) && (
+                 Rendered whenever the browser is genuinely capable of voice
+                 input (capability detection only — incl. iPad/iPhone). Hidden
+                 only on a real capability gap, where the note below explains. */}
+            {voiceSupport?.supported && (
             <button
               onClick={toggleRecording}
               disabled={isTranscribing || isPending}
@@ -550,12 +541,11 @@ export function AskClient() {
         </div>
 
         {/* ── Voice-unsupported note ──
-             Shown in place of the mic button on iPad/iOS and browsers that
-             lack reliable MediaRecorder support, so users understand why
-             voice is absent instead of seeing a silently broken button.
-             Suppressed in diagnostic mode, where we deliberately let the
-             attempt run to capture the real failure. */}
-        {voiceSupport && !voiceSupport.supported && !diagnosticMode && (
+             Shown in place of the mic button only when capability detection
+             genuinely fails (no getUserMedia/MediaRecorder/supported format),
+             so users understand why voice is absent instead of seeing a
+             silently broken button. */}
+        {voiceSupport && !voiceSupport.supported && (
           <p
             style={{
               margin: "12px 0 0",
