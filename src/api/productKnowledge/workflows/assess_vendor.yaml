@@ -1,0 +1,23 @@
+id: assess_vendor
+title: 'Assess or review a vendor'
+goal: 'Evaluate a vendor''s risk with a point-in-time assessment or an ongoing review cycle.'
+permissions: platform
+navigation:
+  - Assets
+  - Vendors
+routes:
+  - /vendors
+  - /vendors/[id]/assess
+  - /vendors/[id]/review
+ordered_steps:
+  - 'Open Assets → Vendors and select the vendor to open its detail page.'
+  - 'For a point-in-time assessment, click "New Assessment" (/vendors/[id]/assess).'
+  - 'For an ongoing cycle, click "New Review Cycle" (/vendors/[id]/review).'
+  - 'Complete the questionnaire and save to update the vendor''s inherent and residual risk.'
+expected_result: 'The vendor''s risk score and review history are updated from the assessment.'
+common_mistakes:
+  - 'Assessing a vendor that has not been added yet — add the vendor first.'
+  - 'Confusing a one-off assessment with a recurring review cycle.'
+related_workflows:
+  - add_vendor
+  - review_findings

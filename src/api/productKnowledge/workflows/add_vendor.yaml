@@ -1,0 +1,22 @@
+id: add_vendor
+title: 'Add a vendor'
+goal: 'Add a third-party vendor to your inventory so it can be assessed and monitored.'
+permissions: platform
+navigation:
+  - Assets
+  - Vendors
+routes:
+  - /vendors
+  - /vendors/new
+  - /vendors/import
+ordered_steps:
+  - 'Open Assets → Vendors in the top navigation (or go to /vendors).'
+  - 'Click "+ Add Vendor" to open the new-vendor form at /vendors/new.'
+  - 'Fill in the vendor details and save. To add many at once, use bulk import at /vendors/import.'
+expected_result: 'The vendor appears in your vendor inventory, ready to assess, review, or monitor.'
+common_mistakes:
+  - 'Trying to log a finding before the vendor exists — create the vendor first.'
+  - 'Adding a duplicate of a vendor that is already in the inventory.'
+related_workflows:
+  - assess_vendor
+  - review_findings

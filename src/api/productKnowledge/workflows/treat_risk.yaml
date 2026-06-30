@@ -1,0 +1,21 @@
+id: treat_risk
+title: 'Treat or mitigate a risk'
+goal: 'Record how a risk is being mitigated, accepted, transferred, or avoided.'
+permissions: platform
+navigation:
+  - Risk
+  - Risk Register
+routes:
+  - /risks
+  - /risks/[id]/treatments/new
+ordered_steps:
+  - 'Open Risk → Risk Register and select the risk to open its detail page.'
+  - 'Click "+ Add Treatment" (/risks/[id]/treatments/new).'
+  - 'Choose the treatment type (mitigate, accept, transfer, avoid), describe it, and save.'
+expected_result: 'The treatment is recorded and moves the risk from its inherent toward its residual rating.'
+common_mistakes:
+  - 'Accepting a risk without recording a rationale or owner.'
+  - 'Expecting the residual rating to change without any treatment or control in place.'
+related_workflows:
+  - add_risk
+  - manage_actions
