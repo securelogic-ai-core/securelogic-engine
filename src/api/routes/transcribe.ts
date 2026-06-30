@@ -47,7 +47,11 @@ const upload = multer({
       "audio/mp3",
     ];
     const allowedExt = /\.(webm|ogg|mp4|mp3|wav|m4a)$/i;
-    if (allowed.includes(file.mimetype) || allowedExt.test(file.originalname)) {
+    // Browsers send parameterised types like "audio/webm; codecs=opus" — match
+    // on the base MIME (before the first ";") so the allow-list works without
+    // relying solely on the filename extension.
+    const baseMime = (file.mimetype || "").split(";")[0]?.trim().toLowerCase() ?? "";
+    if (allowed.includes(baseMime) || allowedExt.test(file.originalname)) {
       cb(null, true);
     } else {
       cb(new Error("unsupported_audio_type"));
