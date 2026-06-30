@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
 import { MarkdownPage } from "@/components/MarkdownPage";
+import { LEGAL_EFFECTIVE_DATE, LEGAL_LAST_UPDATED } from "@/lib/legal";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
@@ -13,15 +14,15 @@ export const metadata: Metadata = {
 export default function TermsPage() {
   const filePath = path.join(process.cwd(), "src/content/legal/terms.md");
   const raw = fs.readFileSync(filePath, "utf8");
-  const { content, data } = matter(raw);
+  const { content } = matter(raw);
 
   return (
     <MarkdownPage
       title="Terms of Service"
       eyebrow="Legal"
       content={content}
-      effectiveDate={data.effectiveDate}
-      lastUpdated={data.lastUpdated}
+      effectiveDate={LEGAL_EFFECTIVE_DATE}
+      lastUpdated={LEGAL_LAST_UPDATED}
     />
   );
 }
