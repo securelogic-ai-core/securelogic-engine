@@ -2,6 +2,12 @@
 
 import { useState, useRef, useCallback, useEffect, useTransition } from "react";
 import { askAction } from "./actions";
+import {
+  detectVoiceSupport,
+  readVoiceEnv,
+  VOICE_UNSUPPORTED_MESSAGE,
+  type VoiceSupport,
+} from "./voiceSupport";
 import type { AskResponse } from "@/lib/api";
 
 // ─────────────────────────────────────────────────────────────
@@ -125,6 +131,17 @@ export function AskClient() {
   const [recordingError, setRecordingError] = useState<StructuredError | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef   = useRef<Blob[]>([]);
+
+  // Voice capability detection. Starts null so the server render and the first
+  // client render agree (no hydration mismatch); the real decision is made in
+  // a mount effect once `navigator`/`MediaRecorder` are available. While null,
+  // neither the mic button nor the unsupported note renders. iPad/iOS and
+  // browsers lacking MediaRecorder resolve to `supported: false`. See
+  // voiceSupport.ts for why iOS is gated off pre-launch.
+  const [voiceSupport, setVoiceSupport] = useState<VoiceSupport | null>(null);
+  useEffect(() => {
+    setVoiceSupport(detectVoiceSupport(readVoiceEnv()));
+  }, []);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -390,7 +407,11 @@ export function AskClient() {
           </span>
 
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-            {/* ── Microphone button ── */}
+            {/* ── Microphone button ──
+                 Only rendered when the browser can reliably support voice
+                 input. On iPad/iOS and browsers without MediaRecorder the
+                 button is omitted and an explanatory note is shown below. */}
+            {voiceSupport?.supported && (
             <button
               onClick={toggleRecording}
               disabled={isTranscribing || isPending}
@@ -446,6 +467,7 @@ export function AskClient() {
                 </>
               )}
             </button>
+            )}
 
             {/* ── Ask button ── */}
             <button
@@ -467,6 +489,28 @@ export function AskClient() {
             </button>
           </div>
         </div>
+
+        {/* ── Voice-unsupported note ──
+             Shown in place of the mic button on iPad/iOS and browsers that
+             lack reliable MediaRecorder support, so users understand why
+             voice is absent instead of seeing a silently broken button. */}
+        {voiceSupport && !voiceSupport.supported && (
+          <p
+            style={{
+              margin: "12px 0 0",
+              fontSize: "12px",
+              color: "#64748b",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+            }}
+          >
+            <span aria-hidden="true" style={{ opacity: 0.7 }}>
+              <MicIcon />
+            </span>
+            {VOICE_UNSUPPORTED_MESSAGE}
+          </p>
+        )}
       </div>
 
       {/* ── Recording error ──

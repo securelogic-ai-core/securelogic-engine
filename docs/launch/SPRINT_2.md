@@ -51,6 +51,17 @@ At launch, several systems ship deliberately **inert** (flag-gated or unwired) a
 
 ---
 
+## Ask SecureLogic & Voice reliability (operator-directed addendum)
+
+> Added after the original 2.1–2.5 scope at operator direction. This workstream hardens the existing **Ask SecureLogic** assistant (`/ask`) and its voice input ahead of launch. It is **product-knowledge + UX reliability only** — it touches no billing, Stripe, checkout, pricing, migrations, `render.yaml`, feature flags, `main`, or production. Items land as two scoped PRs to `develop`: voice reliability (A-2) first, then Ask product-knowledge (A-1).
+
+### A-2 — Voice input reliability on iPad
+**Problem:** voice transcription fails on iPad/iOS (WebKit MediaRecorder limits + unvalidated Whisper path).
+**Fix (shipped):** capability + iPadOS detection (`app/src/app/ask/voiceSupport.ts`) that hides the mic button on unsupported browsers and shows "Voice input is not yet supported on this browser. Please type your question instead." See `KNOWN_ISSUES.md` D-10.
+**Done when:** voice is offered only where reliable; iPad shows the clear fallback; text Ask unaffected everywhere. Verified on staging.
+
+---
+
 ## Out of scope for Sprint 2 (→ Sprint 3)
 
 - A04-G1 `app_request` RLS flip (cross-cutting infrastructure, high blast radius).

@@ -70,6 +70,9 @@ These are the only items that hold the **NO-GO**. All are operator-only gates; n
 ### D-9 — Migration runner filename-key skip risk (F-1)
 - The runner is filename-keyed; a reshaped migration reusing a filename is silently skipped. Mitigated per-release by the F-1 check in `RELEASE_CHECKLIST.md`, but the runner itself is a latent foot-gun. → tooling backlog.
 
+### D-10 — Ask voice input gated off on iPad/iOS
+- The "Voice" mic button on `/ask` depends on browser `MediaRecorder` + `getUserMedia` and an OpenAI Whisper round-trip. On iPad/iOS Safari (all iOS browsers are WebKit) `MediaRecorder` support is version-dependent, `audio/webm` is unsupported, and iOS-produced `mp4` is not validated end-to-end against Whisper on real hardware. **Mitigation (shipped):** `app/src/app/ask/voiceSupport.ts` detects iPad/iOS (and any browser lacking `MediaRecorder`/`getUserMedia`) and hides the mic button, showing "Voice input is not yet supported on this browser. Please type your question instead." Voice remains fully available on supported desktop browsers; text Ask is unaffected on every platform. → re-enable iOS once the Whisper path is validated on real hardware (post-launch).
+
 ---
 
 ## 🟢 Cosmetic / orientation
