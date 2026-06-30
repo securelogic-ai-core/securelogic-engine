@@ -98,8 +98,19 @@ function PlatformCard({ tier }: { tier: PricingTier }) {
 
       <p className="text-sm text-text-body leading-relaxed mt-4 mb-6">{tier.tagline}</p>
       <FeatureList features={tier.features} />
-      <div className="mt-7 pt-2">
+      <div className="mt-7 pt-2 space-y-2.5">
         <CtaButton tier={tier} />
+        {tier.secondaryCta &&
+          tier.secondaryCtaHref &&
+          (tier.secondaryCtaHref.startsWith("http") ? (
+            <a href={tier.secondaryCtaHref} className="btn-outline w-full">
+              {tier.secondaryCta}
+            </a>
+          ) : (
+            <Link href={tier.secondaryCtaHref} className="btn-outline w-full">
+              {tier.secondaryCta}
+            </Link>
+          ))}
       </div>
     </div>
   );
