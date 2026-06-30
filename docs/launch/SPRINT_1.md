@@ -23,7 +23,7 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 | A2 | Add Confirm Password to signup | ✅ **DONE** | `develop` ← PR #411 |
 | A3 | Onboarding flow — smallest correct UX improvement | ✅ **DONE** | `develop` ← PR #412 |
 | A4 | Return to Dashboard / Return to Account nav on auth pages | ✅ **DONE** | `develop` ← PR #413 |
-| A5 | Complete onboarding QA | ✅ **DONE** | `develop` ← PR #PENDING |
+| A5 | Complete onboarding QA | ✅ **DONE** | `develop` ← PR #414 |
 
 ### A1 — Manage Billing single-click bug ✅ DONE
 - **Root cause:** `BillingPortalForm` is a native `<form method="POST">` whose `onSubmit` synchronously set the submit button to `disabled={pending}`. Disabling a submit button within the same synchronous submit dispatch can suppress the browser's native form submission (browser-timing-dependent React + native-form race) — the first click flips the button to "Opening billing…" but the POST may not navigate, so users click again.
@@ -65,7 +65,7 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 - **Files:** `docs/launch/ONBOARDING_QA.md` (new — full checkpoint table + findings + evidence). No application code changed (nothing launch-blocking found).
 - **Tests:** none added (QA pass). Re-ran the onboarding/auth-flow suite as validation: 23/23 — `onboardingProgress` (6), `signupValidation` (7), `authReturnLink` (6), `billingPortalSubmit` (4).
 - **Validation:** 23/23 onboarding/auth unit tests green; all 5 step-CTA routes confirmed present; root typecheck clean.
-- **Rollback:** revert the PR #PENDING merge (documentation-only; no code/migration/config/flag).
+- **Rollback:** revert the PR #414 merge (documentation-only; no code/migration/config/flag).
 
 ---
 
