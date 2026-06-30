@@ -6,6 +6,8 @@ import {
   SUBPROCESSORS,
   CURRENTLY_IN_PLACE,
   PLANNED_MILESTONES,
+  DATA_PROTECTION_ROWS,
+  DISCLOSURE_COMMITMENTS,
 } from "@/lib/trust";
 
 export const metadata: Metadata = {
@@ -47,6 +49,34 @@ const LEGAL_DOCS: { label: string; href: string; external?: boolean }[] = [
   { label: "Security Overview (PDF)", href: SECURITY_OVERVIEW_PDF, external: true },
 ];
 
+// Trust-portal directory — every topic an enterprise reviewer expects, each
+// anchoring to a section on this page or a dedicated document.
+const TRUST_TOPICS: { title: string; desc: string; href: string }[] = [
+  { title: "Security", desc: "Encryption, isolation, MFA/SSO, monitoring.", href: "/security/" },
+  { title: "Privacy", desc: "Data rights, no sale of personal data.", href: "/privacy/" },
+  { title: "Responsible AI", desc: "No training on your content; human oversight.", href: "/ai-policy/" },
+  { title: "Compliance", desc: "Current posture and certification roadmap.", href: "#compliance" },
+  { title: "Data handling & encryption", desc: "How data is protected at every layer.", href: "#data-handling" },
+  { title: "Availability & resilience", desc: "Hosting, redundancy, and roadmap.", href: "#availability" },
+  { title: "Vendor security", desc: "The subprocessors behind the platform.", href: "#subprocessors" },
+  { title: "Incident & disclosure", desc: "Reporting and responsible disclosure.", href: "#incident" },
+  { title: "Security contact", desc: SECURITY_EMAIL, href: "#incident" },
+];
+
+// Availability posture — honest: foundation is in place, formal commitments are
+// roadmap. Never imply an SLA or status page we don't yet publish.
+const AVAILABILITY_NOW: string[] = [
+  "Hosted on Render with managed, backed-up Postgres databases",
+  "Cloudflare for content delivery, DDoS protection, and object storage",
+  "Automated database backups retained by our infrastructure providers",
+  "Application error and performance monitoring via Sentry",
+];
+const AVAILABILITY_PLANNED: string[] = [
+  "Published uptime / status page",
+  "Formal availability SLA for Platform and Enterprise plans",
+  "Documented Business Continuity and Disaster Recovery objectives",
+];
+
 export default function TrustCenterPage() {
   return (
     <>
@@ -83,6 +113,28 @@ export default function TrustCenterPage() {
         </div>
       </section>
 
+      {/* Trust portal index */}
+      <section className="bg-bg border-b border-hairline">
+        <div className="container-site py-12">
+          <p className="pill-mono text-text-muted mb-5">Explore the Trust Center</p>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {TRUST_TOPICS.map((t) =>
+              t.href.startsWith("#") ? (
+                <a key={t.title} href={t.href} className="card p-4 block hover:border-accent transition-colors">
+                  <span className="block text-text font-semibold text-sm mb-0.5">{t.title}</span>
+                  <span className="block text-xs text-text-muted leading-relaxed">{t.desc}</span>
+                </a>
+              ) : (
+                <Link key={t.title} href={t.href} className="card p-4 block hover:border-accent transition-colors">
+                  <span className="block text-text font-semibold text-sm mb-0.5">{t.title}</span>
+                  <span className="block text-xs text-text-muted leading-relaxed">{t.desc}</span>
+                </Link>
+              )
+            )}
+          </div>
+        </div>
+      </section>
+
       {/* Three pillars */}
       <section className="bg-bg-elevated border-b border-hairline">
         <div className="container-site py-20 lg:py-[100px]">
@@ -101,7 +153,7 @@ export default function TrustCenterPage() {
       </section>
 
       {/* Compliance posture — honest */}
-      <section className="bg-bg">
+      <section id="compliance" className="bg-bg scroll-mt-20">
         <div className="container-site py-20 lg:py-[100px]">
           <div className="max-w-2xl mb-12">
             <p className="eyebrow mb-4">Compliance posture</p>
@@ -145,14 +197,105 @@ export default function TrustCenterPage() {
         </div>
       </section>
 
-      {/* Subprocessors */}
-      <section className="bg-bg-elevated border-y border-hairline">
+      {/* Data handling & encryption */}
+      <section id="data-handling" className="bg-bg-elevated border-t border-hairline scroll-mt-20">
         <div className="container-site py-20 lg:py-[100px]">
           <div className="max-w-2xl mb-10">
-            <p className="eyebrow mb-4">Subprocessors</p>
-            <h2 className="text-3xl sm:text-4xl font-extrabold text-text leading-tight">
+            <p className="eyebrow mb-4">Data handling &amp; encryption</p>
+            <h2 className="text-3xl sm:text-4xl font-extrabold text-text leading-tight mb-4">
+              Protected at every layer.
+            </h2>
+            <p className="text-text-muted leading-relaxed">
+              How customer data is encrypted and handled across the platform. Your content is never
+              used to train AI models — ours or our providers&apos;.
+            </p>
+          </div>
+          <div className="card overflow-hidden max-w-3xl">
+            <table className="w-full border-collapse text-left">
+              <caption className="sr-only">Data protection controls by layer</caption>
+              <tbody>
+                {DATA_PROTECTION_ROWS.map(([layer, detail]) => (
+                  <tr key={layer} className="border-t border-hairline first:border-t-0">
+                    <th scope="row" className="px-5 py-4 align-top text-sm font-semibold text-text w-[34%]">
+                      {layer}
+                    </th>
+                    <td className="px-5 py-4 align-top text-sm text-text-body leading-relaxed border-l border-hairline">
+                      {detail}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-sm text-text-muted mt-6">
+            Full detail, including authentication and monitoring controls, is in the{" "}
+            <Link href="/security/" className="text-accent hover:text-accent-hover underline">
+              Security overview
+            </Link>
+            .
+          </p>
+        </div>
+      </section>
+
+      {/* Availability & resilience — honest roadmap */}
+      <section id="availability" className="bg-bg border-t border-hairline scroll-mt-20">
+        <div className="container-site py-20 lg:py-[100px]">
+          <div className="max-w-2xl mb-12">
+            <p className="eyebrow mb-4">Availability &amp; resilience</p>
+            <h2 className="text-3xl sm:text-4xl font-extrabold text-text leading-tight mb-4">
+              Running on resilient infrastructure — formalizing commitments next.
+            </h2>
+            <p className="text-text-muted leading-relaxed">
+              The platform runs on managed, redundant infrastructure today. We&apos;re transparent
+              that formal published commitments are still on our roadmap.
+            </p>
+          </div>
+          <div className="grid md:grid-cols-2 gap-5">
+            <div className="card p-8">
+              <h3 className="text-text font-bold text-lg mb-5">In place today</h3>
+              <ul className="space-y-3">
+                {AVAILABILITY_NOW.map((item) => (
+                  <li key={item} className="flex items-start gap-2.5 text-sm text-text-body leading-relaxed">
+                    <span className="mt-0.5 w-4 h-4 rounded-full bg-accent/15 text-accent flex items-center justify-center flex-shrink-0">
+                      <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                    </span>
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="card p-8">
+              <div className="flex items-center gap-2 mb-5">
+                <h3 className="text-text font-bold text-lg">Planned</h3>
+                <span className="pill-mono text-text-muted px-2 py-0.5 rounded-full border border-hairline">Roadmap</span>
+              </div>
+              <ul className="space-y-3">
+                {AVAILABILITY_PLANNED.map((item) => (
+                  <li key={item} className="flex items-start gap-2.5 text-sm text-text-body leading-relaxed">
+                    <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-text-muted/60 flex-shrink-0" />
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Subprocessors / vendor security */}
+      <section id="subprocessors" className="bg-bg-elevated border-y border-hairline scroll-mt-20">
+        <div className="container-site py-20 lg:py-[100px]">
+          <div className="max-w-2xl mb-10">
+            <p className="eyebrow mb-4">Vendor security &amp; subprocessors</p>
+            <h2 className="text-3xl sm:text-4xl font-extrabold text-text leading-tight mb-4">
               The infrastructure partners behind the platform.
             </h2>
+            <p className="text-text-muted leading-relaxed">
+              We keep our own supply chain small and deliberate. Each subprocessor is selected for
+              its security posture and processes only the data needed to deliver its service.
+            </p>
           </div>
           <ul className="grid sm:grid-cols-2 gap-x-8 gap-y-3 max-w-3xl">
             {SUBPROCESSORS.map(([name, desc]) => (
@@ -171,8 +314,8 @@ export default function TrustCenterPage() {
         </div>
       </section>
 
-      {/* Legal documents + disclosure */}
-      <section className="bg-bg">
+      {/* Legal documents + incident & disclosure */}
+      <section id="incident" className="bg-bg scroll-mt-20">
         <div className="container-site py-20 lg:py-[100px]">
           <div className="grid lg:grid-cols-2 gap-14">
             <div>
@@ -204,11 +347,23 @@ export default function TrustCenterPage() {
               </ul>
             </div>
             <div className="card bg-bg-elevated-2 border-accent/30 p-8">
-              <h2 className="text-text font-bold text-lg mb-2">Report a vulnerability</h2>
-              <p className="text-sm text-text-muted leading-relaxed mb-6">
-                We welcome responsible disclosure. Email us with enough detail to reproduce the
-                issue and we&apos;ll acknowledge within 5 business days.
+              <h2 className="text-text font-bold text-lg mb-2">Incident reporting &amp; responsible disclosure</h2>
+              <p className="text-sm text-text-muted leading-relaxed mb-5">
+                Found a vulnerability, or need to report a security concern? Email us with enough
+                detail to reproduce the issue. Our commitments to reporters:
               </p>
+              <ul className="space-y-2.5 mb-6">
+                {DISCLOSURE_COMMITMENTS.map((c) => (
+                  <li key={c} className="flex items-start gap-2.5 text-sm text-text-body leading-relaxed">
+                    <span className="mt-0.5 w-4 h-4 rounded-full bg-accent/15 text-accent flex items-center justify-center flex-shrink-0">
+                      <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                    </span>
+                    {c}
+                  </li>
+                ))}
+              </ul>
               <a href={`mailto:${SECURITY_EMAIL}`} className="btn-primary w-full">
                 {SECURITY_EMAIL}
               </a>
