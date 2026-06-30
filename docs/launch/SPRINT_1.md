@@ -72,6 +72,8 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 ## Part B — Promotion gates (operator-only)
 
 > Unchanged from the original Sprint 1 definition. These cannot be executed by an automated session — they require Render / Stripe / staging-UI / production-DB access.
+>
+> **▶ Executable playbook:** `OPERATOR_RUNBOOK.md` reduces Gates 1–5 below to step-by-step operator instructions with copy-pasteable commands/SQL, PASS/FAIL criteria, and an evidence log. It also surfaces three code-vs-doc findings to decide before launch (D-1 `platform` monthly is currently a self-serve checkout line, not portal-only; D-2 Enterprise/`admin` is not granted by the Stripe webhook; D-3 member seats are not metered by the webhook).
 
 ### Launch state (verified)
 - **Production (`main`):** `959951b9` — carries only the Priority-4 4A.1 contract-stubs foundation; stable, known-good.
