@@ -20,12 +20,18 @@ export async function POST(request: Request) {
     // correct multipart boundary when given a FormData body.
     const formData = await request.formData();
 
+    // Forward the voice diagnostic correlation id (non-sensitive) so one iPad
+    // attempt is traceable browser → app → engine.
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      "x-api-key": token,
+    };
+    const diagnosticId = request.headers.get("x-voice-diagnostic-id");
+    if (diagnosticId) headers["x-voice-diagnostic-id"] = diagnosticId;
+
     const engineRes = await fetch(`${ENGINE_URL}/api/ask/transcribe`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "x-api-key": token,
-      },
+      headers,
       body: formData,
     });
 
