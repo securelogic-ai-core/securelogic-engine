@@ -7,7 +7,9 @@ import PasswordInput from "./PasswordInput";
  * Logo + tagline at top, card in center, max-width 420px.
  */
 
-const LOGO_URL = "https://app.securelogicai.com/branding/securelogic-ai-logo.png";
+// Icon-only brand mark served from the app origin. The wordmark is rendered as
+// text beside it (see brand row) — so it is never duplicated inside the image.
+const BRAND_ICON = "/branding/securelogic-ai-icon.png";
 
 /** Shared inline style for AuthInput's underlying <input> (and its PasswordInput variant). */
 const authInputStyle = {
@@ -29,19 +31,31 @@ const styles = {
     display: "flex",
     flexDirection: "column" as const,
     alignItems: "center",
-    justifyContent: "center",
-    padding: "24px 16px",
+    // Top-align so the card's top stays above the fold on tablet/desktop even
+    // when the form is tall (long forms simply scroll below).
+    justifyContent: "flex-start",
+    padding: "56px 16px 40px",
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   },
-  logoWrap: {
-    marginBottom: "24px",
-    textAlign: "center" as const,
+  brandRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "10px",
+    marginBottom: "28px",
   },
-  tagline: {
-    marginTop: "10px",
-    fontSize: "13px",
-    color: "#94a3b8",
-    letterSpacing: "0.01em",
+  brandIcon: {
+    display: "block",
+    width: "28px",
+    height: "28px",
+    borderRadius: "7px",
+    flexShrink: 0,
+  },
+  brandName: {
+    fontSize: "17px",
+    fontWeight: 700,
+    color: "#f1f5f9",
+    letterSpacing: "-0.01em",
   },
   card: {
     width: "100%",
@@ -64,14 +78,11 @@ export function AuthCard({
 }) {
   return (
     <div style={styles.page}>
-      <div style={styles.logoWrap}>
-        <img
-          src={LOGO_URL}
-          alt="SecureLogic AI"
-          height={36}
-          style={{ display: "block", margin: "0 auto" }}
-        />
-        <p style={styles.tagline}>Cyber Risk Intelligence. Delivered Weekly.</p>
+      <div style={styles.brandRow}>
+        {/* Icon-only mark; the adjacent text is the single wordmark, so it is
+            decorative (aria-hidden) to avoid a redundant accessible name. */}
+        <img src={BRAND_ICON} alt="" aria-hidden="true" width={28} height={28} style={styles.brandIcon} />
+        <span style={styles.brandName}>SecureLogic AI</span>
       </div>
 
       <div style={styles.card}>
