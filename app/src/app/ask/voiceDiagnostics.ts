@@ -30,10 +30,8 @@ export type VoiceErrorStage =
 
 export type VoiceDiagnostic = {
   correlationId: string;
-  /** Summary of the capability decision, e.g. "supported" or "unsupported:ios". */
+  /** Summary of the capability decision, e.g. "supported" or "unsupported:no_media_recorder". */
   capability: string;
-  /** Whether this attempt ran in staging diagnostic mode (iOS gate bypassed). */
-  diagnosticMode: boolean;
   /** mimeType we asked MediaRecorder for ("" = browser default). */
   selectedMimeType: string;
   /** mediaRecorder.mimeType actually produced. */
@@ -56,7 +54,6 @@ export function emptyDiagnostic(correlationId: string): VoiceDiagnostic {
   return {
     correlationId,
     capability: "unknown",
-    diagnosticMode: false,
     selectedMimeType: "",
     recorderMimeType: "",
     blobType: "",
@@ -81,7 +78,6 @@ export function buildDiagnosticCode(d: VoiceDiagnostic): string {
   return [
     "VOICE-DIAG",
     `cid=${dash(d.correlationId)}`,
-    `mode=${d.diagnosticMode ? "diag" : "normal"}`,
     `stage=${dash(d.stage)}`,
     `cap=${dash(d.capability)}`,
     `sel=${dash(d.selectedMimeType)}`,
@@ -91,18 +87,6 @@ export function buildDiagnosticCode(d: VoiceDiagnostic): string {
     `http=${dash(d.uploadStatus)}`,
     `code=${dash(d.errorCode)}`,
   ].join(" ");
-}
-
-/**
- * Staging / local hosts run in "diagnostic mode": the blanket iOS voice gate is
- * bypassed so we can capture a real iPad failure. Production hosts
- * (securelogicai.com / app.securelogicai.com) never match, so production keeps
- * the safe gate. Hostname-based so it needs no env var / render.yaml change.
- */
-export function isStagingHost(hostname: string): boolean {
-  const h = (hostname || "").toLowerCase();
-  if (h === "localhost" || h === "127.0.0.1") return true;
-  return h.includes("staging");
 }
 
 /** Random, non-PII correlation id. Prefers crypto.randomUUID; falls back for non-secure/local contexts. */

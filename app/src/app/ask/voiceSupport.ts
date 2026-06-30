@@ -6,21 +6,21 @@
  * builds a `VoiceEnv` snapshot from `navigator` / `window` at runtime via
  * `readVoiceEnv()` and feeds it to `detectVoiceSupport()`.
  *
- * Why this gate exists
- * --------------------
+ * Gating policy: CAPABILITY DETECTION ONLY
+ * ----------------------------------------
  * Voice input depends on the browser `MediaRecorder` + `getUserMedia` APIs and
- * an OpenAI Whisper transcription round-trip on the engine. On iPad / iOS
- * Safari (every iOS browser is WebKit under the hood):
- *   - `MediaRecorder` support is version-dependent and was historically absent;
- *   - `audio/webm` is not supported (only `audio/mp4`); and
- *   - iOS-produced `mp4` has not been validated end-to-end against Whisper on
- *     real hardware.
- * Until that path is proven reliable, we deliberately treat iOS/iPadOS as
- * unsupported and surface a clear "type instead" message rather than letting a
- * user hit a silent recording/transcription failure. (Sprint 2 — voice.)
+ * an OpenAI Whisper transcription round-trip on the engine. We offer voice
+ * whenever the browser genuinely has those capabilities and a supported
+ * recording format (webm or mp4). We do **not** blacklist any browser or device
+ * by name — iPad / iOS Safari record `audio/webm; codecs=opus` (or `audio/mp4`)
+ * just fine, and the real iPad failure was a server-side content-type guard
+ * (since fixed), not a device limitation.
  *
- * The runtime `getUserMedia`/`MediaRecorder` try/catch in AskClient remains as
- * defense-in-depth for browsers that pass this check but still fail mid-record.
+ * If a browser truly lacks the APIs, detection returns `supported: false` with
+ * the specific reason and the UI hides the mic with a clear "type instead"
+ * note. The runtime `getUserMedia`/`MediaRecorder` try/catch in AskClient
+ * remains as defense-in-depth for anything that passes this check but still
+ * fails mid-record (surfaced via the voice diagnostic).
  */
 
 export type VoiceEnv = {
@@ -38,7 +38,6 @@ export type VoiceEnv = {
 };
 
 export type VoiceUnsupportedReason =
-  | "ios"
   | "no_media_devices"
   | "no_media_recorder"
   | "no_supported_mime";
@@ -51,25 +50,11 @@ export const VOICE_UNSUPPORTED_MESSAGE =
   "Voice input is not yet supported on this browser. Please type your question instead.";
 
 /**
- * Detect iOS / iPadOS. iPadOS 13+ reports a desktop-Safari `userAgent` and a
- * `platform` of "MacIntel", so the touch-point heuristic is required to tell a
- * real Mac (0–1 touch points) from an iPad (>1).
- */
-export function isIOS(
-  env: Pick<VoiceEnv, "userAgent" | "platform" | "maxTouchPoints">
-): boolean {
-  const ua = env.userAgent || "";
-  if (/iPad|iPhone|iPod/i.test(ua)) return true;
-  if (env.platform === "MacIntel" && env.maxTouchPoints > 1) return true;
-  return false;
-}
-
-/**
- * Decide whether to offer voice input. Order matters: iOS is gated off first
- * (deliberate pre-launch limitation), then genuine capability gaps.
+ * Decide whether to offer voice input — capability only, no browser/device
+ * name checks. Offered when getUserMedia + MediaRecorder (with isTypeSupported)
+ * + a supported recording format (webm or mp4) are present.
  */
 export function detectVoiceSupport(env: VoiceEnv): VoiceSupport {
-  if (isIOS(env)) return { supported: false, reason: "ios" };
   if (!env.hasMediaDevices) return { supported: false, reason: "no_media_devices" };
   if (!env.hasMediaRecorder || !env.canCheckTypes) {
     return { supported: false, reason: "no_media_recorder" };

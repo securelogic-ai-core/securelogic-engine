@@ -62,7 +62,7 @@ At launch, several systems ship deliberately **inert** (flag-gated or unwired) a
 **Fix (shipped):** added a curated, static **product-knowledge source** (`src/api/lib/productKnowledge.ts`) grounded in the real UI navigation and engine routes, injected into the Ask system prompt, plus guardrails that (a) answer product/how-to questions from product knowledge first, (b) forbid claiming "no access" when the product-knowledge answer exists, and (c) re-scope the no-invented-data rule to organization data only — while still grounding *data* questions in the org context.
 **Done when:** Ask answers core platform how-to questions accurately; tests assert the knowledge content and prompt assembly. Verified on staging.
 
-### A-2 — Temporary iPad/iOS voice gate (NOT a fix)
+### A-2 — Temporary iPad/iOS voice gate (NOT a fix) — SUPERSEDED by capability-only gating (A-4)
 **Problem:** voice transcription was reported failing on iPad. The cause was **not** diagnosed.
 **Action (shipped):** a **precautionary** capability + iPadOS detector (`app/src/app/ask/voiceSupport.ts`) hides the mic button on production iPad/iOS and shows "Voice input is not yet supported on this browser. Please type your question instead." This is a **temporary safe default**, not a resolution — it does not explain or fix the failure. See `KNOWN_ISSUES.md` D-10 and A-3 below.
 **Status:** open. The gate stays until A-3 produces evidence.
@@ -118,7 +118,30 @@ At launch, several systems ship deliberately **inert** (flag-gated or unwired) a
 - **Voice is launch-optional** unless we advertise it as supported.
 - If voice is **not fully validated** by launch, it must be labelled **Beta** or hidden behind capability detection (the current production behavior).
 
-**Done when:** an iPad `VOICE-DIAG` line + matching engine log are captured, the cause is classified per the table, and the decision rule is applied (re-enable / fix / defer / keep gate). Until then this item stays **open**.
+**Done when:** an iPad `VOICE-DIAG` line + matching engine log are captured, the cause is classified per the table, and the decision rule is applied (re-enable / fix / defer / keep gate). **Done — cause B classified, fix + re-enable shipped (A-4).**
+
+### A-4 — Fix + capability-only re-enable (shipped to develop; operator browser matrix pending before prod)
+
+**Fix (cause B).** Added `/api/ask/transcribe` to the content-type enforcement exemption (extracted to the tested `src/api/lib/contentTypeAllowlist.ts` predicate + `enforceJsonContentType` middleware so it can't regress) and hardened the transcribe `fileFilter` to match the base MIME. Verified on staging at the HTTP layer: the exact failing request went **415 → 401** (now reaches auth instead of being blocked at the gate).
+
+**Re-enable (capability detection only — applies the A-3 decision rule).** `app/src/app/ask/voiceSupport.ts` no longer gates by browser/device name — voice is offered whenever `getUserMedia` + `MediaRecorder` + a supported format (webm/mp4) are present, and hidden only on a genuine capability gap (clear "type instead" note). iPad/iPhone get the mic when capable. The staging-only diagnostic-mode bypass was removed (no longer needed). The correlation-id diagnostic + graceful runtime fallbacks remain, so any undiscovered per-browser failure surfaces a `VOICE-DIAG` code rather than a silent break.
+
+**Automated evidence (CI-enforced, in lieu of the live browser run an automated session can't perform):**
+- `src/api/tests/transcribeRoute.test.ts` — `audio/webm; codecs=opus` and `audio/mp4` upload through the **real content-type guard + multer + (mocked) Whisper → `200 ok`**; unsupported type → `415 unsupported_audio_type`; no file → `400 no_audio`; correlation id echoed.
+- `src/api/tests/contentTypeAllowlist.test.ts` — every multipart endpoint is exempt; **`/api/ask/transcribe` multipart is never 415'd** (regression lock); non-exempt non-JSON still 415s.
+- `app/src/app/ask/__tests__/voiceSupport.test.ts` — a **capable iPad/iPhone is offered voice** (no name blacklist); voice hides only on real capability gaps.
+
+**Remaining (operator — REQUIRED before promoting voice to `main`/prod).** Run the live browser matrix on staging and capture, for each, a `VOICE-DIAG` line (+ matching engine `voice_transcribe_diagnostic` log, same `cid`):
+
+| Browser | Expected |
+|---|---|
+| iPad Safari (Premium login) | mic visible; record → `http=200`, query auto-fills |
+| Desktop Chrome | mic visible; record → `http=200` |
+| Desktop Safari | mic visible; record → `http=200` |
+
+If all three pass → voice is validated and may be promoted with the rest of the launch. If any browser genuinely cannot record, capability detection already hides voice there gracefully (per the launch rule: voice is launch-optional / Beta unless validated). This automated session **did not** run this matrix — it requires real devices, a Premium session, and Render log access.
+
+**Done when:** the three-browser matrix passes on staging (or the failing browser is documented and left gracefully gated), and the launch decision on voice is recorded.
 
 ---
 

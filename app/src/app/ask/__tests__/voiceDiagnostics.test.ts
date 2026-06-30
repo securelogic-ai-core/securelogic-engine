@@ -2,25 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   buildDiagnosticCode,
   emptyDiagnostic,
-  isStagingHost,
   newCorrelationId,
   type VoiceDiagnostic,
 } from "../voiceDiagnostics";
-
-describe("isStagingHost", () => {
-  it("treats staging Render hosts as diagnostic mode", () => {
-    expect(isStagingHost("securelogic-app-staging.onrender.com")).toBe(true);
-  });
-  it("treats localhost / 127.0.0.1 as diagnostic mode", () => {
-    expect(isStagingHost("localhost")).toBe(true);
-    expect(isStagingHost("127.0.0.1")).toBe(true);
-  });
-  it("does NOT treat production hosts as diagnostic mode", () => {
-    expect(isStagingHost("securelogicai.com")).toBe(false);
-    expect(isStagingHost("app.securelogicai.com")).toBe(false);
-    expect(isStagingHost("")).toBe(false);
-  });
-});
 
 describe("newCorrelationId", () => {
   it("returns a non-empty string and is reasonably unique", () => {
@@ -36,37 +20,53 @@ describe("buildDiagnosticCode", () => {
   it("renders a compact, non-sensitive one-liner with every key field", () => {
     const d: VoiceDiagnostic = {
       ...emptyDiagnostic("cid-123"),
-      diagnosticMode: true,
-      capability: "unsupported:ios",
-      selectedMimeType: "audio/mp4",
-      recorderMimeType: "audio/mp4",
-      blobType: "audio/mp4",
-      blobSize: 10342,
-      filenameExt: "mp4",
-      uploadStatus: 500,
-      stage: "transcribe",
-      errorCode: "openai_error",
-      errorMessage: "Failed to transcribe audio.",
+      capability: "supported",
+      selectedMimeType: "audio/webm",
+      recorderMimeType: "audio/webm; codecs=opus",
+      blobType: "audio/webm; codecs=opus",
+      blobSize: 115417,
+      filenameExt: "webm",
+      uploadStatus: 200,
+      stage: "ok",
+      errorCode: null,
+      errorMessage: null,
     };
     const code = buildDiagnosticCode(d);
     expect(code).toContain("VOICE-DIAG");
     expect(code).toContain("cid=cid-123");
-    expect(code).toContain("mode=diag");
+    expect(code).toContain("stage=ok");
+    expect(code).toContain("cap=supported");
+    expect(code).toContain("sel=audio/webm");
+    expect(code).toContain("rec=audio/webm; codecs=opus");
+    expect(code).toContain("blob=audio/webm; codecs=opus/115417B");
+    expect(code).toContain("ext=webm");
+    expect(code).toContain("http=200");
+  });
+
+  it("renders an error-attempt line with the failure code", () => {
+    const d: VoiceDiagnostic = {
+      ...emptyDiagnostic("cid-err"),
+      capability: "supported",
+      selectedMimeType: "audio/webm",
+      recorderMimeType: "audio/webm; codecs=opus",
+      blobType: "audio/webm; codecs=opus",
+      blobSize: 115417,
+      filenameExt: "webm",
+      uploadStatus: 415,
+      stage: "transcribe",
+      errorCode: "unsupported_media_type",
+      errorMessage: "This audio format isn't supported.",
+    };
+    const code = buildDiagnosticCode(d);
     expect(code).toContain("stage=transcribe");
-    expect(code).toContain("cap=unsupported:ios");
-    expect(code).toContain("sel=audio/mp4");
-    expect(code).toContain("rec=audio/mp4");
-    expect(code).toContain("blob=audio/mp4/10342B");
-    expect(code).toContain("ext=mp4");
-    expect(code).toContain("http=500");
-    expect(code).toContain("code=openai_error");
-    // No PII / audio / secrets — and the human error message is NOT embedded.
-    expect(code).not.toContain("Failed to transcribe");
+    expect(code).toContain("http=415");
+    expect(code).toContain("code=unsupported_media_type");
+    // The human-readable message is NOT embedded (non-sensitive code only).
+    expect(code).not.toContain("isn't supported");
   });
 
   it("renders dashes for empty/null fields instead of leaking 'null'/''", () => {
     const code = buildDiagnosticCode(emptyDiagnostic("cid-x"));
-    expect(code).toContain("mode=normal");
     expect(code).toContain("sel=-");
     expect(code).toContain("rec=-");
     expect(code).toContain("http=-");
