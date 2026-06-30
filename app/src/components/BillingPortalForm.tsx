@@ -1,29 +1,29 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { createSubmitGuard } from "./billingPortalSubmit";
 
 /**
  * Manage/Update Billing CTA.
  *
- * Wraps the native <form method="POST" action="/api/billing/portal"> so we can
- * give the user immediate pending feedback on the first click. The Stripe
- * portal round-trip (BFF route → engine → Stripe) can take several seconds; with
- * a plain submit button the page gives no visual signal, so users tap a second
- * time believing the first click was ignored.
+ * Wraps the native <form method="POST" action="/api/billing/portal"> so the
+ * browser performs a real top-level POST and follows the route's 303 redirect
+ * (success → Stripe portal; error → /account). The Stripe round-trip can take
+ * several seconds, so we give immediate pending feedback on the first click.
  *
- * Mechanism: onSubmit flips a local pending flag WITHOUT preventDefault, so the
- * browser still performs the native POST and the route's 303 redirect is
- * unchanged. The component unmounts when that navigation lands (success → Stripe;
- * error → /account), which also clears the pending state.
- *
- * NOTE on useFormStatus: useFormStatus().pending only engages for React form
- * *Actions* (function actions). These forms intentionally keep a string action
- * for a native POST + server 303 redirect, for which useFormStatus never reports
- * pending — hence the local useState flag here instead.
+ * Single-click correctness (see ./billingPortalSubmit.ts):
+ * We must NOT use the button's `disabled` attribute to gate submission —
+ * disabling a submit button synchronously inside onSubmit can suppress the
+ * native form submission in some browsers, which made the first click appear to
+ * do nothing and forced users to click again. Instead:
+ *   - the FIRST submit always proceeds natively (no preventDefault, button never
+ *     disabled), so a single click reliably fires the POST + 303; and
+ *   - pending state is conveyed purely via the label + aria-busy; and
+ *   - genuine duplicate submits (rapid double-click before navigation lands) are
+ *     blocked by preventDefault()-ing the 2nd+ submit via a ref-held guard.
  *
  * Progressive enhancement: with JS disabled, onSubmit never runs and the form
- * still submits and redirects normally; the button simply never shows the
- * pending label.
+ * still submits and redirects normally.
  */
 export function BillingPortalForm({
   label,
@@ -37,18 +37,35 @@ export function BillingPortalForm({
   pendingLabel?: string;
 }) {
   const [pending, setPending] = useState(false);
+  // One guard per mounted form instance; persists across re-renders.
+  const guardRef = useRef<ReturnType<typeof createSubmitGuard> | null>(null);
+  if (guardRef.current === null) {
+    guardRef.current = createSubmitGuard();
+  }
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    if (!guardRef.current!.shouldProceed()) {
+      // Already submitting — block the duplicate POST. We do NOT disable the
+      // button (that can cancel the in-flight native submission); preventDefault
+      // on the later submit is the safe way to dedupe.
+      event.preventDefault();
+      return;
+    }
+    // First submit: let the native POST proceed; only reflect pending visually.
+    setPending(true);
+  }
 
   return (
     <form
       action="/api/billing/portal"
       method="POST"
       className={formClassName}
-      onSubmit={() => setPending(true)}
+      onSubmit={handleSubmit}
     >
       <button
         type="submit"
-        disabled={pending}
         aria-busy={pending}
+        data-pending={pending ? "true" : undefined}
         className={buttonClassName}
       >
         {pending ? pendingLabel : label}
