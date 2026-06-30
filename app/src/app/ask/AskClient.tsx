@@ -8,6 +8,14 @@ import {
   VOICE_UNSUPPORTED_MESSAGE,
   type VoiceSupport,
 } from "./voiceSupport";
+import {
+  VOICE_DIAGNOSTIC_HEADER,
+  buildDiagnosticCode,
+  emptyDiagnostic,
+  isStagingHost,
+  newCorrelationId,
+  type VoiceDiagnostic,
+} from "./voiceDiagnostics";
 import type { AskResponse } from "@/lib/api";
 
 // ─────────────────────────────────────────────────────────────
@@ -139,8 +147,17 @@ export function AskClient() {
   // browsers lacking MediaRecorder resolve to `supported: false`. See
   // voiceSupport.ts for why iOS is gated off pre-launch.
   const [voiceSupport, setVoiceSupport] = useState<VoiceSupport | null>(null);
+  // Staging/local run in diagnostic mode: the blanket iOS gate is bypassed so we
+  // can capture a real iPad failure. Production keeps the gate (see
+  // voiceDiagnostics.isStagingHost). Resolved on mount to avoid hydration drift.
+  const [diagnosticMode, setDiagnosticMode] = useState(false);
+  // Last voice diagnostic (non-sensitive) to surface on failure.
+  const [diagnostic, setDiagnostic] = useState<VoiceDiagnostic | null>(null);
   useEffect(() => {
     setVoiceSupport(detectVoiceSupport(readVoiceEnv()));
+    setDiagnosticMode(
+      typeof window !== "undefined" && isStagingHost(window.location.hostname)
+    );
   }, []);
 
   // Auto-resize textarea
@@ -202,6 +219,36 @@ export function AskClient() {
     }
 
     setRecordingError(null);
+    setDiagnostic(null);
+
+    // Build a non-sensitive diagnostic across the whole attempt so one failure
+    // (especially on iPad) yields an unambiguous cause. Never holds audio.
+    const diag: VoiceDiagnostic = emptyDiagnostic(newCorrelationId());
+    diag.diagnosticMode = diagnosticMode;
+    diag.capability = voiceSupport
+      ? voiceSupport.supported
+        ? "supported"
+        : `unsupported:${voiceSupport.reason}`
+      : "unknown";
+
+    // Record a failure: stamp the diagnostic, log it, and surface both the
+    // friendly error and the diagnostic code.
+    const fail = (
+      stage: VoiceDiagnostic["stage"],
+      code: string,
+      message?: string,
+      status = 0
+    ) => {
+      diag.stage = stage;
+      diag.errorCode = code;
+      diag.errorMessage = message ?? null;
+      diag.uploadStatus = status || diag.uploadStatus;
+      // eslint-disable-next-line no-console
+      console.error("Voice diagnostic:", { ...diag }, buildDiagnosticCode(diag));
+      setDiagnostic({ ...diag });
+      setRecordingError({ status, code, message });
+    };
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
@@ -210,6 +257,7 @@ export function AskClient() {
         : MediaRecorder.isTypeSupported("audio/mp4")
         ? "audio/mp4"
         : "";
+      diag.selectedMimeType = mimeType;
 
       const mediaRecorder = mimeType
         ? new MediaRecorder(stream, { mimeType })
@@ -229,20 +277,38 @@ export function AskClient() {
 
         const recordedMime = mediaRecorder.mimeType || mimeType || "audio/webm";
         const audioBlob = new Blob(audioChunksRef.current, { type: recordedMime });
+        const ext = recordedMime.includes("webm") ? "webm" : recordedMime.includes("ogg") ? "ogg" : "mp4";
+
+        diag.recorderMimeType = mediaRecorder.mimeType || "";
+        diag.blobType = audioBlob.type || "";
+        diag.blobSize = audioBlob.size;
+        diag.filenameExt = ext;
 
         try {
-          const ext = recordedMime.includes("webm") ? "webm" : recordedMime.includes("ogg") ? "ogg" : "mp4";
+          // Empty/short capture (cause C) — identify client-side without
+          // spending a Whisper call on zero bytes.
+          if (audioBlob.size === 0) {
+            fail("capture", "no_audio", "No audio was captured. Please try recording again.");
+            return;
+          }
+
           const fd = new FormData();
           fd.append("audio", audioBlob, `recording.${ext}`);
           let transcribeRes: Response;
           try {
-            transcribeRes = await fetch("/api/transcribe", { method: "POST", body: fd });
+            transcribeRes = await fetch("/api/transcribe", {
+              method: "POST",
+              body: fd,
+              headers: { [VOICE_DIAGNOSTIC_HEADER]: diag.correlationId },
+            });
           } catch (fetchErr) {
             // eslint-disable-next-line no-console
             console.error("Transcribe request failed (network):", fetchErr);
-            setRecordingError({ status: 0, code: "network_error" });
+            fail("upload", "network_error");
             return;
           }
+
+          diag.uploadStatus = transcribeRes.status;
 
           if (!transcribeRes.ok) {
             let body: { error?: string; message?: string } = {};
@@ -251,27 +317,18 @@ export function AskClient() {
             } catch {
               // proxy returned non-JSON; surface the status with no code
             }
-            // eslint-disable-next-line no-console
-            console.error("Transcribe request failed:", {
-              status: transcribeRes.status,
-              code:   body.error,
-              message:body.message,
-            });
-            setRecordingError({
-              status: transcribeRes.status,
-              code:   body.error,
-              message:body.message,
-            });
+            fail("transcribe", body.error ?? "transcription_failed", body.message, transcribeRes.status);
             return;
           }
 
           const result = (await transcribeRes.json()) as { text: string };
           if (result.text) {
+            diag.stage = "ok";
             setQuery(result.text);
             submitQuery(result.text);
           } else {
             // 200 but empty text — shouldn't happen but guard anyway.
-            setRecordingError({ status: 200, code: "transcription_failed" });
+            fail("empty_result", "transcription_failed", undefined, 200);
           }
         } finally {
           setIsTranscribing(false);
@@ -283,20 +340,21 @@ export function AskClient() {
     } catch (err) {
       const name = (err as { name?: string }).name ?? "";
       if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-        setRecordingError({
-          status: 0,
-          code: "microphone_denied",
-          message: "Microphone access denied. Please allow microphone access and try again.",
-        });
+        fail(
+          "permission",
+          "microphone_denied",
+          "Microphone access denied. Please allow microphone access and try again."
+        );
       } else {
-        setRecordingError({
-          status: 0,
-          code: "voice_unsupported",
-          message: "Voice input is not supported on this browser. Please type your question instead.",
-        });
+        // No MediaRecorder/getUserMedia, or the constructor threw (cause A).
+        fail(
+          "capability",
+          "voice_unsupported",
+          "Voice input is not supported on this browser. Please type your question instead."
+        );
       }
     }
-  }, [isRecording, submitQuery]);
+  }, [isRecording, submitQuery, diagnosticMode, voiceSupport]);
 
   return (
     <div style={{ maxWidth: "720px", margin: "0 auto", padding: "48px 24px" }}>
@@ -408,10 +466,11 @@ export function AskClient() {
 
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             {/* ── Microphone button ──
-                 Only rendered when the browser can reliably support voice
-                 input. On iPad/iOS and browsers without MediaRecorder the
+                 Rendered when the browser can reliably support voice input, OR
+                 in staging diagnostic mode (where the iOS gate is bypassed so we
+                 can capture a real iPad failure). On production iPad/iOS the
                  button is omitted and an explanatory note is shown below. */}
-            {voiceSupport?.supported && (
+            {(voiceSupport?.supported || diagnosticMode) && (
             <button
               onClick={toggleRecording}
               disabled={isTranscribing || isPending}
@@ -493,8 +552,10 @@ export function AskClient() {
         {/* ── Voice-unsupported note ──
              Shown in place of the mic button on iPad/iOS and browsers that
              lack reliable MediaRecorder support, so users understand why
-             voice is absent instead of seeing a silently broken button. */}
-        {voiceSupport && !voiceSupport.supported && (
+             voice is absent instead of seeing a silently broken button.
+             Suppressed in diagnostic mode, where we deliberately let the
+             attempt run to capture the real failure. */}
+        {voiceSupport && !voiceSupport.supported && !diagnosticMode && (
           <p
             style={{
               margin: "12px 0 0",
@@ -533,6 +594,43 @@ export function AskClient() {
               recordingError.message ??
               TRANSCRIBE_FALLBACK}
           </p>
+
+          {/* ── Diagnostic code (non-sensitive) ──
+               A compact, screenshot-friendly trace of this voice attempt so we
+               can diagnose iPad failures from one real attempt. Contains only
+               codes, mime strings, byte sizes, an HTTP status, and a random
+               correlation id — no audio, secrets, or PII. */}
+          {diagnostic && (
+            <details style={{ marginTop: "10px" }}>
+              <summary
+                style={{
+                  cursor: "pointer",
+                  fontSize: "11px",
+                  color: "#94a3b8",
+                  userSelect: "none",
+                }}
+              >
+                Diagnostic details (share with support)
+              </summary>
+              <code
+                style={{
+                  display: "block",
+                  marginTop: "8px",
+                  padding: "10px 12px",
+                  background: "#0a0f1a",
+                  border: "1px solid #1e2d45",
+                  borderRadius: "6px",
+                  fontSize: "11px",
+                  lineHeight: "1.5",
+                  color: "#94a3b8",
+                  wordBreak: "break-all",
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                }}
+              >
+                {buildDiagnosticCode(diagnostic)}
+              </code>
+            </details>
+          )}
         </div>
       )}
 
