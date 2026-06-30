@@ -21,7 +21,7 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 |---|---|---|---|
 | A1 | Manage Billing single-click bug | ✅ **DONE** | `develop` ← PR #409 (`0614429a`) |
 | A2 | Add Confirm Password to signup | ✅ **DONE** | `develop` ← PR #411 |
-| A3 | Onboarding flow — smallest correct UX improvement | ⬜ Pending | — |
+| A3 | Onboarding flow — smallest correct UX improvement | ✅ **DONE** | `develop` ← PR #412 |
 | A4 | Return to Dashboard / Return to Account nav on auth pages | ⬜ Pending | — |
 | A5 | Complete onboarding QA | ⬜ Pending | — |
 
@@ -41,7 +41,15 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 - **Validation:** app `tsc` clean; tests 7/7; CI green on PR #411. Staging auto-deploys from `develop`.
 - **Rollback:** revert the PR #411 merge; no migration/config/flag.
 
-### A3–A5
+### A3 — Onboarding flow: smallest correct UX improvement ✅ DONE
+- **Review + root cause:** the `/getting-started` onboarding checklist's `getCompletedSteps` keyed BOTH step 4 ("Run an assessment") and step 5 ("Review your security posture") to `control_assessments > 0`. So the 5-step progress bar could never read "4 of 5" — running the first assessment jumped it 3→5 and flipped "All done!" before any posture had been computed or reviewed. A dishonest progress indicator is the clearest small defect in the flow.
+- **Smallest correct fix:** decouple step 5 to a real posture signal already returned by `getDashboardSummary` (`posture.overall_score` / `snapshot_date`), so progress is honest and step 5 completes only when posture actually exists. Logic extracted to a pure module `onboardingProgress.ts`. No change to step destinations, copy, or the skip/complete actions (kept minimal).
+- **Files:** `app/src/app/getting-started/page.tsx`, `app/src/app/getting-started/onboardingProgress.ts` (new), `app/src/app/getting-started/__tests__/onboardingProgress.test.ts` (new).
+- **Tests:** 6 cases — empty org; each inventory step independent; the previously-impossible "4 of 5" state; step-5 completion via `overall_score`, via `snapshot_date`, and the `score === 0` (real score, not missing) edge.
+- **Validation:** app `tsc` clean; tests 6/6; CI green on PR #412. Staging auto-deploys from `develop`.
+- **Rollback:** revert the PR #412 merge; no migration/config/flag (presentation-only completion logic).
+
+### A4–A5
 Defined by the operator directive; each will be filled in on completion with root cause, files, tests, validation, rollback.
 
 ---
