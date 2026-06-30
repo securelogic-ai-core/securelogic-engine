@@ -73,7 +73,7 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 
 > Unchanged from the original Sprint 1 definition. These cannot be executed by an automated session — they require Render / Stripe / staging-UI / production-DB access.
 >
-> **▶ Executable playbook:** `OPERATOR_RUNBOOK.md` reduces Gates 1–5 below to step-by-step operator instructions with copy-pasteable commands/SQL, PASS/FAIL criteria, and an evidence log. It also surfaces three code-vs-doc findings to decide before launch (D-1 `platform` monthly is currently a self-serve checkout line, not portal-only; D-2 Enterprise/`admin` is not granted by the Stripe webhook; D-3 member seats are not metered by the webhook).
+> **▶ Executable playbook:** `OPERATOR_RUNBOOK.md` reduces Gates 1–5 below to step-by-step operator instructions with copy-pasteable commands/SQL, PASS/FAIL criteria, and an evidence log. It also documents two webhook notes (D-2 Enterprise/`admin` is granted out-of-band, not by the Stripe webhook; D-3 member seats are not metered by the webhook). The earlier D-1 question is **resolved**: Platform Monthly ($800/mo) is **intentionally self-serve checkout** — the code already implements this, so no code change was needed.
 
 ### Launch state (verified)
 - **Production (`main`):** `959951b9` — carries only the Priority-4 4A.1 contract-stubs foundation; stable, known-good.
@@ -87,7 +87,7 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 
 **Gate 2 — Stripe test-mode portal capabilities.** subscription_update, price changes, prorations, cancellations (per decision); all 4 test Price IDs in the allowed-plan list.
 
-**Gate 3 — Staging checkout amounts.** Brief Pro $49/mo; Team Professional $199/mo; Platform Professional — Annual $7,200/yr; Platform Professional monthly ($800/mo) remains Billing-Portal-only.
+**Gate 3 — Staging checkout amounts.** Brief Pro $49/mo; Team Professional $199/mo; Platform Professional monthly $800/mo; Platform Professional — Annual $7,200/yr. All four paid plans are **self-serve checkout**; Free needs no checkout (default tier); Enterprise is sales-led only (custom contract, no Stripe checkout).
 
 **Gate 4 — Staging portal upgrade/downgrade transitions.** For each of the 5 transitions: Stripe sub updates + webhook fires + `entitlement_level` correct + return-to-app.
 
