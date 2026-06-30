@@ -22,7 +22,7 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 | A1 | Manage Billing single-click bug | ✅ **DONE** | `develop` ← PR #409 (`0614429a`) |
 | A2 | Add Confirm Password to signup | ✅ **DONE** | `develop` ← PR #411 |
 | A3 | Onboarding flow — smallest correct UX improvement | ✅ **DONE** | `develop` ← PR #412 |
-| A4 | Return to Dashboard / Return to Account nav on auth pages | ✅ **DONE** | `develop` ← PR #PENDING |
+| A4 | Return to Dashboard / Return to Account nav on auth pages | ✅ **DONE** | `develop` ← PR #413 |
 | A5 | Complete onboarding QA | ⬜ Pending | — |
 
 ### A1 — Manage Billing single-click bug ✅ DONE
@@ -57,7 +57,7 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 - **Files:** `app/src/components/authReturnLink.ts` (new, pure), `app/src/components/AuthReturnLink.tsx` (new, server component), `app/src/components/AuthReturnLayout.tsx` (new), `app/src/components/__tests__/authReturnLink.test.ts` (new), and one `layout.tsx` each under `login/`, `signup/`, `forgot-password/`, `reset-password/`, `verify-email/`, `accept-invite/`.
 - **Tests:** 6 cases — JWT session → link; legacy API-key session → link; unauthenticated → null; both-undefined → null; destination/label locked to `/dashboard` + `← Return to Dashboard`; empty-string `jwtToken` treated as unauthenticated (mirrors `/signup`'s `??`).
 - **Validation:** root `tsc -p tsconfig.ci.json` clean; full root `vitest` 4652/4652 (incl. the new 6); app `next build` exit 0. Staging auto-deploys from `develop`.
-- **Rollback:** revert the PR #PENDING merge; no migration/config/flag (presentation-only, additive files).
+- **Rollback:** revert the PR #413 merge; no migration/config/flag (presentation-only, additive files).
 
 ### A5
 Defined by the operator directive; will be filled in on completion with root cause, files, tests, validation, rollback.
