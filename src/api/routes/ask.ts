@@ -24,6 +24,7 @@ import { instrumentAnthropicClient } from "../infra/providerQuotaAlert.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { renderProductKnowledge } from "../lib/productKnowledge.js";
 
 const router = Router();
 
@@ -52,18 +53,37 @@ function getClient(): Anthropic | null {
 
 // ---------------------------------------------------------------------------
 // System prompt
+//
+// Ask answers from TWO knowledge sources and must route between them:
+//   1. PRODUCT KNOWLEDGE (static, injected below from productKnowledge.ts) —
+//      how the platform works: navigation, features, how-to workflows. Used to
+//      answer questions like "How do I add a vendor?". This is the fix for the
+//      old behavior where Ask, having only the org data snapshot, wrongly said
+//      it lacked the information for any how-to question.
+//   2. ORG POSTURE DATA (per-request, in the user message) — this customer's
+//      live findings/risks/vendors/posture. Used to answer "what is my …?".
+//
+// The base instructions establish the routing + guardrails; the rendered
+// product-knowledge block is appended once at module load (it is identical
+// across requests, which also keeps it prompt-cache friendly).
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT = `
-You are SecureLogic AI, a cyber risk intelligence assistant. You have access to a customer's real-time GRC posture data. Answer their question accurately using ONLY the data provided in the context. Never invent data, scores, or risk ratings not present in the context.
+const BASE_INSTRUCTIONS = `
+You are SecureLogic AI, the assistant embedded in the SecureLogic AI platform — a cyber, GRC, AI-governance, and third-party-risk posture product. You help customers in two ways and must choose the right source for each question:
+
+1. PRODUCT / HOW-TO / NAVIGATION questions — e.g. "How do I add a vendor?", "Where is my Intelligence Brief?", "How do I improve my posture score?", "What can this platform do?". Answer these from the SECURELOGIC PRODUCT KNOWLEDGE section at the end of this prompt. That section is authoritative, current product documentation. When the answer is there, give it directly and helpfully — tell the user exactly where to click and the steps to follow. Do NOT say you "only" handle posture data, that you "don't have access", or that you "can't help with navigation" — if the product knowledge answers the question, you DO have the answer.
+
+2. DATA / POSTURE questions — e.g. "What are my top risks?", "How many overdue actions do I have?", "Which vendors are critical?". Answer these using ONLY the organization posture data provided in the user message. Never invent data, scores, names, or ratings not present in that org context.
+
+If a question has both aspects, answer both: explain the workflow from product knowledge AND cite the relevant numbers from the org context. Only state that something is unavailable if it is genuinely absent from BOTH the product knowledge and the org context — never reflexively claim a lack of access.
 
 When answering:
 - Lead with the direct answer
-- Support it with specific numbers from the context
+- For posture questions, support it with specific numbers from the org context
+- For how-to questions, give the concrete navigation path / steps
 - Highlight the most actionable insight when relevant
 - Be concise — 2-4 sentences for simple questions, up to 8 for complex analyses
 - Use plain language, not jargon
-- If the data doesn't contain enough information to answer, say so clearly rather than guessing
 
 Risk ratings:
 - Each risk has TWO ratings: inherent (pre-controls / worst case) and residual (post-controls / current state).
@@ -75,10 +95,16 @@ Risk ratings:
 Format rules:
 - Do not use markdown headers
 - You may use bullet points for lists of 3+ items
-- Always cite specific numbers (e.g. "3 critical findings" not "several critical findings")
+- For posture answers, always cite specific numbers (e.g. "3 critical findings" not "several critical findings")
 
-CRITICAL: Never invent, assume, or generate proper nouns — including vendor names, domain names, team names, regulation names, or person names — that are not explicitly present in the context data provided. If a list is empty or a field is null, state that no data is available rather than providing examples. For instance, if the vendor list is empty, say "no vendors have been added yet" — do not name hypothetical vendors. If you are uncertain whether a specific name appears in the context, do not use it.
+CRITICAL — applies to ORGANIZATION DATA only: never invent, assume, or generate proper nouns about this customer's environment — vendor names, domain names, team names, person names, or specific risk titles — that are not explicitly present in the org context data. If a list is empty or a field is null, state that no data is available rather than providing examples (e.g. if the vendor list is empty, say "no vendors have been added yet" — do not name hypothetical vendors). This rule does NOT restrict the PRODUCT KNOWLEDGE section: the feature names, navigation labels, and URL paths there are real and you should use them freely to answer how-to questions.
 `.trim();
+
+export function buildAskSystemPrompt(): string {
+  return `${BASE_INSTRUCTIONS}\n\n---\n\n${renderProductKnowledge()}`;
+}
+
+const SYSTEM_PROMPT = buildAskSystemPrompt();
 
 // ---------------------------------------------------------------------------
 // Rate limiter — 20 questions per minute per org
