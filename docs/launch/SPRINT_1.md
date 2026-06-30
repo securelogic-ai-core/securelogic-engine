@@ -22,7 +22,7 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 | A1 | Manage Billing single-click bug | ✅ **DONE** | `develop` ← PR #409 (`0614429a`) |
 | A2 | Add Confirm Password to signup | ✅ **DONE** | `develop` ← PR #411 |
 | A3 | Onboarding flow — smallest correct UX improvement | ✅ **DONE** | `develop` ← PR #412 |
-| A4 | Return to Dashboard / Return to Account nav on auth pages | ⬜ Pending | — |
+| A4 | Return to Dashboard / Return to Account nav on auth pages | ✅ **DONE** | `develop` ← PR #413 |
 | A5 | Complete onboarding QA | ⬜ Pending | — |
 
 ### A1 — Manage Billing single-click bug ✅ DONE
@@ -49,8 +49,18 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 - **Validation:** app `tsc` clean; tests 6/6; CI green on PR #412. Staging auto-deploys from `develop`.
 - **Rollback:** revert the PR #412 merge; no migration/config/flag (presentation-only completion logic).
 
-### A4–A5
-Defined by the operator directive; each will be filled in on completion with root cause, files, tests, validation, rollback.
+### A4 — Return to Dashboard navigation on auth pages ✅ DONE
+- **Root cause:** auth pages render a full-bleed `AuthCard` with no app chrome, and `middleware.ts` only redirects *unauthenticated* users *into* `/login` — it never redirects an authenticated user *away* from an auth page. So a signed-in user who lands on one (stale bookmark, external link, or a legitimate token flow like `reset-password` / `accept-invite`) is stranded: no nav, and even the brand row isn't a link. (`/signup` was the lone exception — its server page already `redirect("/dashboard")`s authed users.)
+- **Decision (operator-approved):** Dashboard only. Server-rendered **only** when an authenticated session exists; destination `/dashboard`; label `← Return to Dashboard`. No "Account" target (no route-specific reason today). No client-side session detection.
+- **Smallest safe fix:** the session cookie is httpOnly, so signed-in state must be read on the server. Added a server component `AuthReturnLink` (reads `getSession()`, renders nothing for unauthenticated visitors) mounted via a one-line per-route `layout.tsx` re-exporting a shared `AuthReturnLayout`. This touches **zero** lines of the critical, untested client auth forms (login/reset/verify/forgot) and yields *consistent* placement (a fixed top-left link) across both `AuthCard` pages and the custom-markup `accept-invite` page. The auth predicate (`jwtToken ?? apiKey`) is extracted to a pure, tested module `authReturnLink.ts`, mirroring `/signup`'s exact check.
+  - **Note on placement:** rendered as a fixed top-left link rather than an in-card footer, specifically to avoid restructuring the untested client auth forms (a Server Component can't be imported into a Client page; in-card placement would require extracting all four forms). Trivially relocatable later if an in-card footer is preferred.
+- **Files:** `app/src/components/authReturnLink.ts` (new, pure), `app/src/components/AuthReturnLink.tsx` (new, server component), `app/src/components/AuthReturnLayout.tsx` (new), `app/src/components/__tests__/authReturnLink.test.ts` (new), and one `layout.tsx` each under `login/`, `signup/`, `forgot-password/`, `reset-password/`, `verify-email/`, `accept-invite/`.
+- **Tests:** 6 cases — JWT session → link; legacy API-key session → link; unauthenticated → null; both-undefined → null; destination/label locked to `/dashboard` + `← Return to Dashboard`; empty-string `jwtToken` treated as unauthenticated (mirrors `/signup`'s `??`).
+- **Validation:** root `tsc -p tsconfig.ci.json` clean; full root `vitest` 4652/4652 (incl. the new 6); app `next build` exit 0. Staging auto-deploys from `develop`.
+- **Rollback:** revert the PR #413 merge; no migration/config/flag (presentation-only, additive files).
+
+### A5
+Defined by the operator directive; will be filled in on completion with root cause, files, tests, validation, rollback.
 
 ---
 
