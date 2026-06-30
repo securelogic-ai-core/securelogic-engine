@@ -50,6 +50,7 @@ import { requestAudit } from "./middleware/requestAudit.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 import { Sentry } from "./lib/sentry.js";
+import { isContentTypeEnforcementExempt } from "./lib/contentTypeAllowlist.js";
 
 // Lemon Squeezy is dormant: route /webhooks/lemon is unmounted (returns 404).
 // Re-enable by re-adding these imports and the app.post block in the WEBHOOKS
@@ -260,13 +261,11 @@ export function createApp(opts: CreateAppOptions): express.Express {
     const isBodyMethod =
       method === "POST" || method === "PUT" || method === "PATCH";
 
-    if (
-      req.originalUrl.startsWith("/webhooks/lemon") ||
-      req.originalUrl.startsWith("/webhooks/email/resend") ||
-      req.originalUrl.startsWith("/api/vendor-assessments/analyze-document") ||
-      /^\/api\/vendor-assurance\/documents(\?|$)/.test(req.originalUrl) ||
-      /^\/api\/sso\/[^/]+\/acs/.test(req.originalUrl)
-    ) {
+    // Routes that legitimately receive non-JSON bodies (raw webhooks, multipart
+    // uploads, SAML form posts) are exempt from JSON enforcement. See
+    // contentTypeAllowlist.ts — /api/ask/transcribe (multipart audio) was
+    // missing here, which 415'd every Ask voice attempt at the gate.
+    if (isContentTypeEnforcementExempt(req.originalUrl)) {
       next();
       return;
     }

@@ -67,9 +67,11 @@ At launch, several systems ship deliberately **inert** (flag-gated or unwired) a
 **Action (shipped):** a **precautionary** capability + iPadOS detector (`app/src/app/ask/voiceSupport.ts`) hides the mic button on production iPad/iOS and shows "Voice input is not yet supported on this browser. Please type your question instead." This is a **temporary safe default**, not a resolution — it does not explain or fix the failure. See `KNOWN_ISSUES.md` D-10 and A-3 below.
 **Status:** open. The gate stays until A-3 produces evidence.
 
-### A-3 — Voice Diagnostic Workstream (shipped instrumentation; evidence pending)
+### A-3 — Voice Diagnostic Workstream (DIAGNOSED — cause B; fix shipped to develop)
 
 **Objective.** Determine the **actual** root cause of iPad/iOS voice failure from one real attempt, so we can make an evidence-based launch decision — fix our code, accept a platform limit, or defer to a different approach. Replace assumption with data.
+
+> **RESULT (cause B — our implementation).** A real attempt produced `VOICE-DIAG … sel=audio/webm rec=audio/webm; codecs=opus blob=…/115417B http=415 code=unsupported_media_type`. The device recorded valid audio (115 KB webm/opus); the `415` came from the global **content-type enforcement guard** in `src/api/app.ts`, whose exemption list **omitted `/api/ask/transcribe`** — so multipart audio was rejected before reaching the route (the engine's own transcribe diagnostics never fired). This broke voice on **every** browser, not just iPad. **Fix shipped to `develop`:** `/api/ask/transcribe` added to the exemption list (extracted to the tested `contentTypeAllowlist.ts` predicate) + transcribe `fileFilter` now matches the base MIME. **Next:** confirm an iPad `http=200 code=ok` on staging, then a follow-up re-enables iOS voice (per the decision rule below); the production iOS gate stays until that confirmation.
 
 **Current known facts.**
 - The earlier "WebM-only / iOS mp4 unsupported" explanation was **not evidence-based** and is withdrawn: the client already falls back to `audio/mp4`, the engine allow-lists `audio/mp4`/`audio/x-m4a`/`.mp4`/`.m4a`, and Whisper accepts AAC-in-MP4. A simple format mismatch is **not** a proven cause.
