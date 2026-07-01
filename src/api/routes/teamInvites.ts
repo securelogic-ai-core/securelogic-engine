@@ -25,6 +25,7 @@ import { requireRole } from "../middleware/requireRole.js";
 import { signJwt } from "../lib/jwt.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { recordAllCurrentConsents } from "../lib/legalConsent.js";
+import { enforceSeatLimit } from "../lib/seatLimit.js";
 
 const router = Router();
 
@@ -707,6 +708,23 @@ router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
       res.status(409).json({
         error: "email_already_registered",
         detail: "This email is already registered. Please log in instead."
+      });
+      return;
+    }
+
+    // Seat-cap enforcement on the ACCEPT path (fail closed). The invite-create
+    // handler checks the cap at send time, but seats can fill between send and
+    // accept — multiple pending invites, SSO JIT provisioning, or an
+    // admin-lowered cap. Re-check here (same shared helper the SSO path uses)
+    // so acceptance can never push the org over max_members. Both the new-user
+    // INSERT and the inactive→active reactivation below consume a seat, so this
+    // gates ahead of either. On rejection we return BEFORE the transaction, so
+    // the invite stays 'pending' and the same link succeeds once a seat frees.
+    const seat = await enforceSeatLimit(invite.organization_id);
+    if (seat.exceeded) {
+      res.status(409).json({
+        error: "seat_limit_reached",
+        detail: `This organisation has reached its plan limit of ${seat.cap} members. Ask an admin to free a seat or upgrade, then use this invite link again.`
       });
       return;
     }
