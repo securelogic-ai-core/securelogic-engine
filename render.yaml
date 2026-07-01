@@ -58,6 +58,13 @@ services:
       - key: APP_BASE_URL
         sync: false
 
+      # Engine's OWN public origin, used to build the SAML ACS URL the IdP posts
+      # back to. Set each environment to its own engine URL so a staging SSO flow
+      # uses the staging ACS endpoint. The code falls back to the production engine
+      # when unset, so this MUST be set explicitly on the staging engine service.
+      - key: ENGINE_URL_BASE
+        sync: false
+
       # Stripe — optional; billing routes are disabled if not set
       - key: STRIPE_SECRET_KEY
         sync: false
@@ -205,6 +212,13 @@ services:
         sync: false
 
       - key: APP_BASE_URL
+        sync: false
+
+      # Engine's OWN public origin, used to build the SAML ACS URL the IdP posts
+      # back to. Set each environment to its own engine URL so a staging SSO flow
+      # uses the staging ACS endpoint. The code falls back to the production engine
+      # when unset, so this MUST be set explicitly on the staging engine service.
+      - key: ENGINE_URL_BASE
         sync: false
 
       - key: STRIPE_SECRET_KEY
@@ -365,6 +379,13 @@ services:
       - key: APP_BASE_URL
         sync: false
 
+      # Engine's OWN public origin, used to build the SAML ACS URL the IdP posts
+      # back to. Set each environment to its own engine URL so a staging SSO flow
+      # uses the staging ACS endpoint. The code falls back to the production engine
+      # when unset, so this MUST be set explicitly on the staging engine service.
+      - key: ENGINE_URL_BASE
+        sync: false
+
       # Anthropic API key — required for LLM signal enrichment, executive synthesis,
       # thesis headline, cross-domain analysis, and action summary generation.
       # Without this, all briefs fall back to generic template content.
@@ -442,6 +463,13 @@ services:
       # Base URL of the staging API — used to build unsubscribe links
       # appended to outbound newsletter emails
       - key: APP_BASE_URL
+        sync: false
+
+      # Engine's OWN public origin, used to build the SAML ACS URL the IdP posts
+      # back to. Set each environment to its own engine URL so a staging SSO flow
+      # uses the staging ACS endpoint. The code falls back to the production engine
+      # when unset, so this MUST be set explicitly on the staging engine service.
+      - key: ENGINE_URL_BASE
         sync: false
 
       # Consumed by the LLM control matcher (PR #345) on the signal-ingestion
@@ -850,6 +878,20 @@ services:
       - key: NEXT_PUBLIC_APP_URL
         sync: false
 
+      # Canonical public URL of THIS marketing site, used for metadataBase /
+      # canonical tags / OG / sitemap. Set each environment to its OWN site URL so
+      # the staging build never emits production canonical/OG metadata.
+      # Prod: https://www.securelogicai.com · Staging: the staging Render URL.
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+
+      # Public origin of the SecureLogic engine API that the Brief signup form
+      # POSTs to. Set each environment to its OWN API origin so a staging build
+      # never posts subscriber emails to the production API.
+      # Prod: https://api.securelogicai.com · Staging: the staging engine URL.
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
+
   # Staging mirror of securelogic-website — tracks develop so the rebuilt
   # marketing site can be previewed before it is promoted to main. No custom
   # domains: it stays on its Render-assigned URL
@@ -871,4 +913,18 @@ services:
       # Used by the Nav and Footer to build login/register CTAs.
       # e.g. https://app.securelogicai.com
       - key: NEXT_PUBLIC_APP_URL
+        sync: false
+
+      # Canonical public URL of THIS marketing site, used for metadataBase /
+      # canonical tags / OG / sitemap. Set each environment to its OWN site URL so
+      # the staging build never emits production canonical/OG metadata.
+      # Prod: https://www.securelogicai.com · Staging: the staging Render URL.
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+
+      # Public origin of the SecureLogic engine API that the Brief signup form
+      # POSTs to. Set each environment to its OWN API origin so a staging build
+      # never posts subscriber emails to the production API.
+      # Prod: https://api.securelogicai.com · Staging: the staging engine URL.
+      - key: NEXT_PUBLIC_API_URL
         sync: false

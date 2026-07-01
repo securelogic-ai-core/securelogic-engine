@@ -24,6 +24,7 @@ import { requireRole } from "../middleware/requireRole.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { getAppBaseUrl } from "../lib/alerting/alertPrimitives.js";
 
 // No-op schema validator — production IdPs produce valid assertions.
 // Using @authenio/samlify-node-xmllint would require a native dependency
@@ -33,7 +34,17 @@ samlify.setSchemaValidator({
   validate: (_response: string) => Promise.resolve(""),
 });
 
-const APP_URL = process.env.APP_URL ?? "https://securelogic-app.onrender.com";
+// App public base URL for SSO redirects (login error pages, auth-sso-callback).
+// Reuse the canonical, env-driven APP_BASE_URL (required in prod, set per
+// environment) so a staging SSO flow redirects to the *staging* app instead of
+// silently bouncing the user into production. APP_URL remains an optional override.
+const APP_URL = process.env.APP_URL ?? getAppBaseUrl();
+
+// Engine's own public origin, used to build the SAML ACS URL the IdP posts back
+// to. This must be a stable, per-environment value that matches what is
+// registered with each IdP, so it is config-driven via ENGINE_URL_BASE (declared
+// in render.yaml per service). The fallback is the production engine and MUST be
+// overridden on staging via the ENGINE_URL_BASE env var.
 const ENGINE_URL_BASE =
   process.env.ENGINE_URL_BASE ?? "https://securelogic-engine.onrender.com";
 

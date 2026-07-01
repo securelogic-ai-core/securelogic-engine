@@ -18,6 +18,18 @@ const nextConfig = {
   },
 
   async headers() {
+    // Engine origin must be allowed for browser-side SSO domain checks. Derive it
+    // from the configured engine URL so a staging build allows the staging engine
+    // and a prod build allows the prod engine — never a hardcoded cross-environment
+    // host. Falls back to localhost for dev; only the origin (scheme+host) is used.
+    const engineOrigin = (() => {
+      try {
+        return new URL(process.env.NEXT_PUBLIC_ENGINE_URL ?? "http://localhost:4000").origin;
+      } catch {
+        return "http://localhost:4000";
+      }
+    })();
+
     const csp = [
       "default-src 'self'",
       // unsafe-inline required for Next.js inline scripts; unsafe-eval for hydration
@@ -26,8 +38,7 @@ const nextConfig = {
       // blob: for QR code canvas data URLs; data: for inline images; https: for remote assets
       "img-src 'self' data: blob: https:",
       "font-src 'self' data:",
-      // Engine URL must be allowed for browser-side SSO domain checks
-      "connect-src 'self' https://securelogic-engine.onrender.com",
+      `connect-src 'self' ${engineOrigin}`,
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",

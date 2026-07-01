@@ -2,7 +2,11 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
 
-const ENGINE_URL = process.env.ENGINE_API_URL ?? "https://securelogic-engine.onrender.com";
+// Engine base URL shown in the API docs examples. Set per environment via
+// ENGINE_API_URL; the dev fallback is localhost — never a production host — so a
+// staging deploy that is missing the value does not render production URLs in
+// staging docs. Matches the convention in app/src/lib/api.ts and the API routes.
+const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
 
 function CodeBlock({ children }: { children: string }) {
   return (

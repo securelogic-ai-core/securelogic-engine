@@ -12,7 +12,11 @@ import {
   AuthDivider,
 } from "@/components/AuthCard";
 
-const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL ?? "https://securelogic-engine.onrender.com";
+// Browser-facing engine base URL. Set per environment (staging→staging engine,
+// prod→prod engine) via NEXT_PUBLIC_ENGINE_URL. The dev fallback is localhost —
+// NEVER a production host, so a missing value in a staging build fails locally
+// instead of silently routing staging traffic to production.
+const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL ?? "http://localhost:4000";
 
 interface SsoDomainResult {
   hasSso: boolean;

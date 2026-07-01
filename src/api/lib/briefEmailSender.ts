@@ -33,6 +33,7 @@ import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { renderBriefEmail, renderBriefEmailText, type BriefEmailData, type EmailBriefItem, type EmailBriefCategory } from "./briefEmailRenderer.js";
 import type { BriefSynthesis } from "./briefSynthesizer.js";
+import { getAppBaseUrl } from "./alerting/alertPrimitives.js";
 
 const RESEND_API_URL = "https://api.resend.com/emails";
 
@@ -554,6 +555,9 @@ export async function sendBrief(
       medium_count,
       low_count,
       categories,
+      // Env-driven app base URL so logo + CTA links match the sending environment
+      // (staging brief → staging app) instead of always pointing at production.
+      app_base_url: getAppBaseUrl(),
       executive_headline: executiveHeadline,
       executive_summary: executiveSummary
     };
