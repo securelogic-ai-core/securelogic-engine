@@ -215,6 +215,13 @@ function renderNumberedList(text: string): string {
 // Section renderers
 // ---------------------------------------------------------------------------
 
+/** Resolve the app base URL for links/assets in the email. Caller-injected and
+ *  env-driven (APP_BASE_URL); the production app is only a last-resort default so
+ *  the pure renderer never throws when a caller omits the value. */
+function resolveAppBaseUrl(data: BriefEmailData): string {
+  return (data.app_base_url ?? "https://app.securelogicai.com").replace(/\/$/, "");
+}
+
 /**
  * Masthead + hero row.
  *
@@ -224,13 +231,6 @@ function renderNumberedList(text: string): string {
  * - Optional executive headline
  * - Risk count pills (table row, no flexbox)
  */
-/** Resolve the app base URL for links/assets in the email. Caller-injected and
- *  env-driven (APP_BASE_URL); the production app is only a last-resort default so
- *  the pure renderer never throws when a caller omits the value. */
-function resolveAppBaseUrl(data: BriefEmailData): string {
-  return (data.app_base_url ?? "https://app.securelogicai.com").replace(/\/$/, "");
-}
-
 function renderMasthead(data: BriefEmailData): string {
   const appBaseUrl = resolveAppBaseUrl(data);
   const period = escHtml(formatPeriodLabel(data.period_start, data.period_end));
