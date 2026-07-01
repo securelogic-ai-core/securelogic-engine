@@ -42,6 +42,32 @@ services:
       - key: JWT_SECRET
         sync: false
 
+      # ── Boot-critical (engine exits at boot without these) ──────────────
+      # validateEnv.ts REQUIRED_ENV_PROD + validateFieldEncryptionKey(). These
+      # were previously undeclared here and had to be remembered as
+      # dashboard-only vars; declared now so render.yaml is a complete boot
+      # contract for the engine service.
+
+      # AES-256-GCM key — exactly 64 lowercase hex chars — encrypting sensitive
+      # JSONB at rest (report_json, content_json, raw_payload). Required in prod.
+      - key: FIELD_ENCRYPTION_KEY
+        sync: false
+
+      # HMAC secret (min 16 chars) signing one-click unsubscribe links.
+      - key: UNSUBSCRIBE_SECRET
+        sync: false
+
+      # Verified Resend sender for outbound Intelligence Brief emails. Read by
+      # briefEmailSender.ts (BRIEF_FROM_EMAIL). DISTINCT from
+      # NEWSLETTER_FROM_EMAIL below, which is the transactional / recovery /
+      # invite sender — both coexist and are set independently.
+      - key: BRIEF_FROM_EMAIL
+        sync: false
+
+      # Base URL for CAN-SPAM unsubscribe links in Brief emails.
+      - key: BRIEF_UNSUBSCRIBE_BASE_URL
+        sync: false
+
       # Scheduler trigger secret (min 32 chars) — bearer token for
       # POST /api/admin/briefs/run-scheduler. Required at boot in production
       # per validateEnv.ts; engine refuses to start without it.
@@ -97,6 +123,12 @@ services:
       - key: STRIPE_PORTAL_RETURN_URL
         sync: false
 
+      # Stripe billing-portal configuration ID — selects the portal feature set
+      # (which products/prices the customer can switch to). Read by the billing
+      # portal route; without it the portal uses the Stripe account default.
+      - key: STRIPE_PORTAL_CONFIGURATION_ID
+        sync: false
+
       # Resend webhook signing secret (from Resend Dashboard > Webhooks)
       # Required: without this, bounce and complaint events return 401 and
       # are never recorded — suppression list will not auto-populate
@@ -121,6 +153,14 @@ services:
       # returns a 503 and the user sees
       # "Could not transcribe audio."
       - key: OPENAI_API_KEY
+        sync: false
+
+      # Anthropic API key — LLM signal enrichment in the intelligence brief
+      # generator (src/api/lib/intelligenceBriefGenerator.ts) and the LLM
+      # control matcher (SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED below, which
+      # no-ops without this). Without it, brief items fall back to generic
+      # template content via fallbackWhyItMatters()/fallbackRecommendedActions().
+      - key: ANTHROPIC_API_KEY
         sync: false
 
       # Sentry error tracking (engine). DSN + environment label are set in the
@@ -203,6 +243,24 @@ services:
         sync: false
 
       - key: JWT_SECRET
+        sync: false
+
+      # ── Boot-critical (engine exits at boot without these) ──────────────
+      # Lockstep with the prod engine block. validateEnv.ts REQUIRED_ENV_PROD +
+      # validateFieldEncryptionKey() (NODE_ENV stays "production" on staging, so
+      # every prod boot gate applies here too).
+      - key: FIELD_ENCRYPTION_KEY
+        sync: false
+
+      - key: UNSUBSCRIBE_SECRET
+        sync: false
+
+      # BRIEF_FROM_EMAIL: verified Resend sender for Intelligence Brief emails
+      # (briefEmailSender.ts). Distinct from NEWSLETTER_FROM_EMAIL below.
+      - key: BRIEF_FROM_EMAIL
+        sync: false
+
+      - key: BRIEF_UNSUBSCRIBE_BASE_URL
         sync: false
 
       - key: SCHEDULER_SECRET
