@@ -1,5 +1,53 @@
 # Delivery-Readiness Audit — Soft-Launch Gating Doc
 
+> ## ⏫ 2026-07-01 REFRESH — this section SUPERSEDES the 2026-06-22 audit below
+>
+> The original audit (dated 2026-06-22, commit `90e9863e`) was written **immediately
+> before** the GAP-3 action-recommendation work landed. Several of its Section 2 / Section 3
+> gaps have since been closed and are verified live on `main`. The 2026-06-22 body is
+> **retained unedited below as history**, with inline `SUPERSEDED 2026-07-01` markers on the
+> specific claims that changed. Where a claim is *not* marked, it still stands.
+>
+> **Verified changes since 2026-06-22 (method unchanged — the generator was found, not just the table):**
+>
+> - **Action-recommendation engine — SHIPPED (supersedes §2c and §3c).** `actionRecommendationEngine.ts`
+>   exists and is wired into `cyberSignalProcessingService.ts` and `controlAssessments.ts`,
+>   flag `SECURELOGIC_ACTION_ENGINE_ENABLED="true"` on every engine block. Generators live on
+>   `main`: **finding→action** (#276), **risk→action** (#285), **failed-control-assessment→action**
+>   (#291). The blanket "actions is pure manual CRUD / nothing creates a task" claim in §2c no
+>   longer holds. *Not yet built:* obligation→action and critical-posture→action (two of the four
+>   §3c generators) — do not advertise regulatory-obligation-driven task creation yet.
+>
+> - **Entitlement gating — rank-2 leak CLOSED.** Platform-wide **rank-2 → rank-4** gate flip
+>   (#245) plus the caps audit (#284). Paid platform surfaces (vendor risk, AI governance)
+>   now gate at rank-4/premium rather than leaking to rank-2 Brief tiers.
+>
+> - **GDPR data export — fully wired end-to-end.** Request → `dataRightsWorker.ts` →
+>   R2 bundle via `createDataExportWriteStream` (`dataExportStorage.ts`) → `sendExportReadyEmail`
+>   (`exportReadyEmail.ts`, worker `:244`) with a single-use `dataExportDownloadToken`. The
+>   `securelogic-data-rights-worker` is deployed (`render.yaml`, prod + staging). The
+>   2026-06-18 "inert until an email sender exists" caveat is resolved.
+>
+> - **Postgres RLS — on `main` but INERT. Do NOT market as "RLS-enforced".** The A04-G1
+>   row-level-security policies are committed, but the engine's `DATABASE_URL` still connects as
+>   the table-owner role (RLS is bypassed for owners) — the cutover to the `app_request` role is
+>   unshipped. Tenant isolation today is enforced by **explicit application-level org-scoping**
+>   (`withTenant` / route code + the cross-org-isolation CI gate), not by the database. Marketing
+>   may say "strict per-tenant isolation," **not** "database-enforced row-level security."
+>
+> - **Pricing — canonical is the 2026-06-30 lock.** Brief Pro **$49/mo** · Team Professional
+>   **$199/mo** (up to 6 members) · Platform Professional **$600/mo billed annually**
+>   ($7,200/yr founding rate through Dec 2026) or **$800/mo** month-to-month · Enterprise
+>   **Custom**. Source of truth: `website/src/lib/pricing.ts`. **The "$279" figure is dead** —
+>   it was a June-22 provisional Team price that was **never committed** to code or docs; a
+>   repo-wide grep finds zero occurrences. Any external note quoting "$199 → $279" is void.
+>
+> **Still accurate from the 2026-06-22 body:** §1a–§1d (signal currency, AI-enriched Brief,
+> live posture, vendor/AI-system suggested matching) and §2a/§2b (controls/obligations still have
+> no signal-*link* generator; matching is still name-ILIKE, suggestion-queue not automatic).
+>
+> ---
+
 **Date:** 2026-06-22
 **Scope:** Read-only delta audit of the four chained capability promises in our advertised
 positioning, verified against current `develop`. Method rule: distinguish "a route/table
@@ -88,6 +136,10 @@ Section 3 build list lands**.
   connected." Don't imply identifier-grade precision.
 
 ### 2c. "Know what to do next" — NO action-recommendation engine
+> **SUPERSEDED 2026-07-01.** An action-recommendation engine now exists and is live
+> (`actionRecommendationEngine.ts`; generators finding→action / risk→action /
+> failed-control-assessment→action, #276/#285/#291). The claims below held on 2026-06-22 but
+> no longer describe `main`. Obligation→action and critical-posture→action remain unbuilt.
 - `actions` is **pure manual CRUD** (`actions.ts`: `POST` creates, `PATCH` updates). No
   process reads posture gaps, failed assessments, overdue items, unlinked signals, or new
   obligations to emit actions. The matcher creates **findings** and flags **risks** —
@@ -117,6 +169,10 @@ high-confidence matches become real links without a click — the only path to a
 "automatic" claim.
 
 ### 3c. Action-recommendation engine (closes §2c)
+> **DONE 2026-07-01 (partial).** The engine shipped to `main`: finding→action (#276),
+> risk→action (#285), failed-control-assessment→action (#291), wired through
+> `cyberSignalProcessingService.ts` / `controlAssessments.ts` and flag-enabled. **Remaining**
+> from the original list: obligation→action and critical-posture→action are not yet built.
 Build the engine that reads posture (`postureSnapshot.ts`), open findings/risks, failed
 control assessments, and obligations, and writes `actions` rows with `source_type` /
 `source_id`. Generators to ship: obligation→action, failed-assessment→action,
