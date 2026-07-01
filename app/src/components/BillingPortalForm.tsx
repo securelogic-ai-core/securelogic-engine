@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   decidePortalSubmit,
   phaseAfterPendingTimeout,
+  interpretPortalResponse,
   PORTAL_PENDING_TIMEOUT_MS,
   type PortalSubmitPhase,
 } from "./billingPortalSubmit";
@@ -11,30 +12,23 @@ import {
 /**
  * Manage/Update Billing CTA.
  *
- * Wraps the native <form method="POST" action="/api/billing/portal"> so the
- * browser performs a real top-level POST and follows the route's 303 redirect
- * (success → Stripe portal; error → /account). The Stripe round-trip can take
- * several seconds, so we give immediate pending feedback on the first click.
+ * Client-controlled submit (Sprint 3H follow-up): on submit we `preventDefault`
+ * and drive the request ourselves — `fetch('/api/billing/portal')` → the route
+ * returns `{ url }` JSON for the XHR → `window.location.assign(url)`. This
+ * replaces the previous reliance on the browser following a native cross-origin
+ * 303, which failed non-deterministically on the FIRST click (a warm engine
+ * still required a second click). Taking explicit control makes single-click
+ * deterministic and also fixes the return-to-/account behavior.
  *
- * Single-click correctness (see ./billingPortalSubmit.ts):
- * We must NOT use the button's `disabled` attribute to gate submission —
- * disabling a submit button synchronously inside onSubmit can suppress the
- * browser's native submission, which made the first click appear to do nothing
- * and forced users to click again. Instead the FIRST submit always proceeds
- * natively (no preventDefault, button never disabled) and pending is conveyed
- * purely via the label + aria-busy; genuine duplicate submits (a rapid 2nd click
- * before navigation lands) are blocked by preventDefault()-ing them.
+ * Progressive enhancement preserved: the element is still a real
+ * `<form action="/api/billing/portal" method="POST">`, so with JS disabled the
+ * native POST fires and the route returns its 303 (non-XHR path) exactly as
+ * before. The button is never disabled (disabling it synchronously inside submit
+ * was an earlier single-click bug); pending is conveyed via label + aria-busy.
  *
- * Never-stuck guarantee (Sprint 3H): a client-side watchdog auto-resets the
- * pending state after PORTAL_PENDING_TIMEOUT_MS. On a cold/slow engine the native
- * POST can stay in flight for many seconds; rather than sit indefinitely in
- * "Opening billing…", the CTA returns to a usable state, re-arms (a subsequent
- * click fires a fresh POST — no page refresh needed), and shows a concise retry
- * message. A successful/failed response navigates away first, unmounting the
- * form and clearing the timer, so the watchdog only ever fires on a genuine hang.
- *
- * Progressive enhancement: with JS disabled, onSubmit never runs and the form
- * still submits and redirects normally (the route returns a 303).
+ * Timeout/retry UX preserved: a request is aborted after PORTAL_PENDING_TIMEOUT_MS
+ * and the CTA re-arms with a concise retry message — the UI never hangs
+ * indefinitely, and a subsequent click fires a fresh request with no page refresh.
  */
 export function BillingPortalForm({
   label,
@@ -53,44 +47,77 @@ export function BillingPortalForm({
 }) {
   const [pending, setPending] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
-  // Synchronous phase, read inside onSubmit to decide preventDefault; the
-  // useState values above drive the visual only.
+  // Synchronous phase, read inside onSubmit to block duplicate in-flight submits.
   const phaseRef = useRef<PortalSubmitPhase>("idle");
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
-  // Clear the watchdog if the form unmounts (e.g. a successful 303 navigation).
+  // On unmount, clear the watchdog and abort any in-flight request.
   useEffect(() => {
     return () => {
       if (timerRef.current !== null) clearTimeout(timerRef.current);
+      abortRef.current?.abort();
     };
   }, []);
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  function armRetry() {
+    // Re-arm the CTA (pending → timedout) and surface the retry message.
+    phaseRef.current = phaseAfterPendingTimeout(phaseRef.current); // "timedout"
+    setPending(false);
+    setTimedOut(true);
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    // Take client control of navigation. (No-JS clients never reach this handler
+    // and fall back to the native form POST + 303.)
+    event.preventDefault();
+
     const { proceed, nextPhase } = decidePortalSubmit(phaseRef.current);
-    if (!proceed) {
-      // A request is already in flight — block the duplicate POST. We do NOT
-      // disable the button (that can cancel the in-flight native submission);
-      // preventDefault on the later submit is the safe way to dedupe.
-      event.preventDefault();
-      return;
-    }
+    if (!proceed) return; // a request is already in flight — block the duplicate
 
     phaseRef.current = nextPhase; // "pending"
     setPending(true);
     setTimedOut(false);
 
+    const controller = new AbortController();
+    abortRef.current = controller;
     if (timerRef.current !== null) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      // Still here after the timeout → the native POST is hanging (cold/slow
-      // engine). Re-arm the CTA and surface a retry message so the UI never
-      // stays indefinitely in the pending state and never needs a refresh.
-      phaseRef.current = phaseAfterPendingTimeout(phaseRef.current); // "timedout"
-      setPending(false);
-      setTimedOut(true);
-      timerRef.current = null;
-    }, PORTAL_PENDING_TIMEOUT_MS);
+    timerRef.current = setTimeout(() => controller.abort(), PORTAL_PENDING_TIMEOUT_MS);
 
-    // First/again submit: let the native POST + 303 proceed (no preventDefault).
+    let action: ReturnType<typeof interpretPortalResponse>;
+    try {
+      const res = await fetch("/api/billing/portal", {
+        method: "POST",
+        headers: { "x-portal-xhr": "1", Accept: "application/json" },
+        signal: controller.signal,
+      });
+      let body: { url?: string; error?: string } = {};
+      try {
+        body = (await res.json()) as { url?: string; error?: string };
+      } catch {
+        // Non-JSON body → interpretPortalResponse falls through to "retry".
+      }
+      action = interpretPortalResponse(res.status, body);
+    } catch {
+      // Network failure or abort (timeout) → retry.
+      action = { kind: "retry" };
+    } finally {
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      abortRef.current = null;
+    }
+
+    if (action.kind === "navigate") {
+      window.location.assign(action.url); // leaving the page; keep pending state
+      return;
+    }
+    if (action.kind === "login") {
+      window.location.assign("/login");
+      return;
+    }
+    armRetry();
   }
 
   return (

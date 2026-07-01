@@ -22,8 +22,18 @@ export async function POST(request: Request) {
 
   const token = session.jwtToken ?? session.apiKey ?? null;
 
+  // The client CTA sends `x-portal-xhr: 1` and takes control of navigation, so
+  // it needs the portal URL as JSON. A no-JS native form POST sends neither
+  // header, so it keeps the original 303-redirect behavior (progressive
+  // enhancement) — the response contract is unchanged for that path.
+  const wantsJson =
+    request.headers.get("x-portal-xhr") === "1" ||
+    (request.headers.get("accept") ?? "").includes("application/json");
+
   if (!token) {
-    return NextResponse.redirect(`${origin}/login`, { status: 303 });
+    return wantsJson
+      ? NextResponse.json({ error: "unauthenticated" }, { status: 401 })
+      : NextResponse.redirect(`${origin}/login`, { status: 303 });
   }
 
   // Bounded transient-retry to absorb a cold/restarting engine on the first
@@ -52,10 +62,15 @@ export async function POST(request: Request) {
       );
     }
     const reason = encodeURIComponent(result.error);
-    return NextResponse.redirect(
-      `${origin}/account?billing_error=portal_failed&reason=${reason}`,
-      { status: 303 }
-    );
+    return wantsJson
+      ? NextResponse.json(
+          { error: "portal_failed", reason: result.error },
+          { status: 502 }
+        )
+      : NextResponse.redirect(
+          `${origin}/account?billing_error=portal_failed&reason=${reason}`,
+          { status: 303 }
+        );
   }
 
   if (attempts > 1) {
@@ -64,5 +79,7 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.redirect(result.url, { status: 303 });
+  return wantsJson
+    ? NextResponse.json({ url: result.url })
+    : NextResponse.redirect(result.url, { status: 303 });
 }
