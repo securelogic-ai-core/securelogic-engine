@@ -67,3 +67,38 @@ export function phaseAfterPendingTimeout(phase: PortalSubmitPhase): PortalSubmit
  * (15s) so a single successful cold attempt still navigates before the reset.
  */
 export const PORTAL_PENDING_TIMEOUT_MS = 16000;
+
+/**
+ * What the client should do with the billing-portal response.
+ *   - navigate: `window.location.assign(url)` to the Stripe portal.
+ *   - login:    session expired → send to /login.
+ *   - retry:    transient/failed → reset the CTA and show the retry message.
+ */
+export type PortalAction =
+  | { kind: "navigate"; url: string }
+  | { kind: "login" }
+  | { kind: "retry" };
+
+/**
+ * Pure interpretation of the `/api/billing/portal` XHR response.
+ *
+ * This is the heart of the Sprint 3H follow-up fix: the CTA now takes explicit
+ * client control of navigation (fetch → this decision → `window.location.assign`)
+ * instead of relying on the browser to follow a native cross-origin 303 — which
+ * was non-deterministic on the first click. Kept pure so single-click behavior
+ * is unit-tested in node without a DOM.
+ *
+ *   - 200 with a non-empty `url` → navigate (the one-click success path).
+ *   - 401                        → login (session gone).
+ *   - anything else              → retry (server error / transient / no url).
+ */
+export function interpretPortalResponse(
+  status: number,
+  body: { url?: string; error?: string }
+): PortalAction {
+  if (status === 200 && typeof body.url === "string" && body.url.length > 0) {
+    return { kind: "navigate", url: body.url };
+  }
+  if (status === 401) return { kind: "login" };
+  return { kind: "retry" };
+}
