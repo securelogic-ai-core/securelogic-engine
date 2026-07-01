@@ -1,7 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { createSubmitGuard } from "./billingPortalSubmit";
+import { useEffect, useRef, useState } from "react";
+import {
+  decidePortalSubmit,
+  phaseAfterPendingTimeout,
+  PORTAL_PENDING_TIMEOUT_MS,
+  type PortalSubmitPhase,
+} from "./billingPortalSubmit";
 
 /**
  * Manage/Update Billing CTA.
@@ -14,45 +19,78 @@ import { createSubmitGuard } from "./billingPortalSubmit";
  * Single-click correctness (see ./billingPortalSubmit.ts):
  * We must NOT use the button's `disabled` attribute to gate submission —
  * disabling a submit button synchronously inside onSubmit can suppress the
- * native form submission in some browsers, which made the first click appear to
- * do nothing and forced users to click again. Instead:
- *   - the FIRST submit always proceeds natively (no preventDefault, button never
- *     disabled), so a single click reliably fires the POST + 303; and
- *   - pending state is conveyed purely via the label + aria-busy; and
- *   - genuine duplicate submits (rapid double-click before navigation lands) are
- *     blocked by preventDefault()-ing the 2nd+ submit via a ref-held guard.
+ * browser's native submission, which made the first click appear to do nothing
+ * and forced users to click again. Instead the FIRST submit always proceeds
+ * natively (no preventDefault, button never disabled) and pending is conveyed
+ * purely via the label + aria-busy; genuine duplicate submits (a rapid 2nd click
+ * before navigation lands) are blocked by preventDefault()-ing them.
+ *
+ * Never-stuck guarantee (Sprint 3H): a client-side watchdog auto-resets the
+ * pending state after PORTAL_PENDING_TIMEOUT_MS. On a cold/slow engine the native
+ * POST can stay in flight for many seconds; rather than sit indefinitely in
+ * "Opening billing…", the CTA returns to a usable state, re-arms (a subsequent
+ * click fires a fresh POST — no page refresh needed), and shows a concise retry
+ * message. A successful/failed response navigates away first, unmounting the
+ * form and clearing the timer, so the watchdog only ever fires on a genuine hang.
  *
  * Progressive enhancement: with JS disabled, onSubmit never runs and the form
- * still submits and redirects normally.
+ * still submits and redirects normally (the route returns a 303).
  */
 export function BillingPortalForm({
   label,
   buttonClassName,
   formClassName,
   pendingLabel = "Opening billing…",
+  retryMessage = "Billing is taking longer than expected. Please click to try again.",
+  retryClassName,
 }: {
   label: string;
   buttonClassName: string;
   formClassName?: string;
   pendingLabel?: string;
+  retryMessage?: string;
+  retryClassName?: string;
 }) {
   const [pending, setPending] = useState(false);
-  // One guard per mounted form instance; persists across re-renders.
-  const guardRef = useRef<ReturnType<typeof createSubmitGuard> | null>(null);
-  if (guardRef.current === null) {
-    guardRef.current = createSubmitGuard();
-  }
+  const [timedOut, setTimedOut] = useState(false);
+  // Synchronous phase, read inside onSubmit to decide preventDefault; the
+  // useState values above drive the visual only.
+  const phaseRef = useRef<PortalSubmitPhase>("idle");
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear the watchdog if the form unmounts (e.g. a successful 303 navigation).
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+    };
+  }, []);
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    if (!guardRef.current!.shouldProceed()) {
-      // Already submitting — block the duplicate POST. We do NOT disable the
-      // button (that can cancel the in-flight native submission); preventDefault
-      // on the later submit is the safe way to dedupe.
+    const { proceed, nextPhase } = decidePortalSubmit(phaseRef.current);
+    if (!proceed) {
+      // A request is already in flight — block the duplicate POST. We do NOT
+      // disable the button (that can cancel the in-flight native submission);
+      // preventDefault on the later submit is the safe way to dedupe.
       event.preventDefault();
       return;
     }
-    // First submit: let the native POST proceed; only reflect pending visually.
+
+    phaseRef.current = nextPhase; // "pending"
     setPending(true);
+    setTimedOut(false);
+
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      // Still here after the timeout → the native POST is hanging (cold/slow
+      // engine). Re-arm the CTA and surface a retry message so the UI never
+      // stays indefinitely in the pending state and never needs a refresh.
+      phaseRef.current = phaseAfterPendingTimeout(phaseRef.current); // "timedout"
+      setPending(false);
+      setTimedOut(true);
+      timerRef.current = null;
+    }, PORTAL_PENDING_TIMEOUT_MS);
+
+    // First/again submit: let the native POST + 303 proceed (no preventDefault).
   }
 
   return (
@@ -70,6 +108,21 @@ export function BillingPortalForm({
       >
         {pending ? pendingLabel : label}
       </button>
+      {timedOut && (
+        <p
+          role="status"
+          aria-live="polite"
+          data-portal-retry="true"
+          className={retryClassName}
+          style={
+            retryClassName
+              ? undefined
+              : { marginTop: 8, fontSize: 12, lineHeight: 1.4, color: "#b45309" }
+          }
+        >
+          {retryMessage}
+        </p>
+      )}
     </form>
   );
 }
