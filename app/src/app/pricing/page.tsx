@@ -34,15 +34,37 @@ const PLANS = [
     name: "Team Professional",
     price: "$199",
     period: "/ mo",
-    description: "For security and risk teams that need shared access and priority support.",
+    description: "For security and risk teams that need shared brief access.",
     features: [
       "Everything in Brief Pro",
-      "Up to 6 seats",
+      "Up to 6 members",
+      "Credit toward Platform when you upgrade",
       "Priority support",
-      "Early access to new modules",
     ],
     cta: "Get Started",
     href: "/signup?plan=teams",
+    style: "outline" as const,
+  },
+  {
+    name: "Platform Professional",
+    price: "$600",
+    period: "/mo billed annually",
+    priceDetails: [
+      "$7,200 / year · founding rate through Dec 2026",
+      "or $800/mo month-to-month",
+    ],
+    description: "The full risk platform — vendor risk, AI governance, compliance, and posture.",
+    features: [
+      "Everything in Brief Pro",
+      "Vendor risk + AI governance",
+      "Compliance — SOC 2, ISO 27001, GDPR, HIPAA, NIST CSF",
+      "Risk register + posture scoring",
+      "Up to 10 seats / 50 monitored entities",
+    ],
+    cta: "Start annual — $600/mo",
+    href: "/signup?plan=platform_annual",
+    secondaryCta: "Start monthly — $800/mo",
+    secondaryHref: "/signup?plan=platform",
     style: "primary" as const,
     badge: "Most Popular",
   },
@@ -52,8 +74,8 @@ const PLANS = [
     period: "",
     description: "Tailored for large organizations with compliance, procurement, and SLA requirements.",
     features: [
-      "Everything in Team Professional",
-      "Unlimited seats",
+      "Everything in Platform Professional",
+      "SSO / SAML + multi-org (MSSP)",
       "Custom SLA",
       "Dedicated onboarding",
       "Invoice billing",
@@ -69,14 +91,15 @@ export default function PricingPage() {
     <div className="max-w-6xl mx-auto px-6 py-20">
       <div className="text-center mb-14">
         <h1 className="text-3xl font-bold text-slate-900 mb-4">
-          Intelligence Brief — Pricing
+          Plans &amp; Pricing
         </h1>
         <p className="text-slate-600 max-w-xl mx-auto">
-          Start free. Upgrade when you need full depth, full access, or team-wide coverage.
+          Start free with the Intelligence Brief. Upgrade to the full risk platform when you
+          need vendor risk, AI governance, compliance, and posture.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-16">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-5 mb-16">
         {PLANS.map((plan) => (
           <PlanCard key={plan.name} plan={plan} />
         ))}
@@ -126,10 +149,13 @@ function PlanCard({
     name: string;
     price: string;
     period: string;
+    priceDetails?: string[];
     description: string;
     features: string[];
     cta: string;
     href: string;
+    secondaryCta?: string;
+    secondaryHref?: string;
     style: PlanStyle;
     badge?: string;
   };
@@ -175,6 +201,11 @@ function PlanCard({
             <span className={`text-base font-normal ${periodClass}`}> {plan.period}</span>
           )}
         </div>
+        {plan.priceDetails?.map((d) => (
+          <div key={d} className={`text-xs mt-1 ${periodClass}`}>
+            {d}
+          </div>
+        ))}
       </div>
 
       <p className={`text-sm mb-6 leading-relaxed ${descClass}`}>{plan.description}</p>
@@ -191,6 +222,16 @@ function PlanCard({
       <Link href={plan.href} className={ctaClass}>
         {plan.cta}
       </Link>
+      {plan.secondaryCta && plan.secondaryHref && (
+        <Link
+          href={plan.secondaryHref}
+          className={`block text-center mt-2 text-xs font-medium underline-offset-2 hover:underline ${
+            isPrimary ? "text-teal-100" : isDark ? "text-slate-400" : "text-slate-500"
+          }`}
+        >
+          {plan.secondaryCta}
+        </Link>
+      )}
     </div>
   );
 }
