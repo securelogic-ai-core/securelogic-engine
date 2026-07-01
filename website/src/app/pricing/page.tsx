@@ -46,7 +46,7 @@ const COMPARISON: { free: string; pro: string }[] = [
   { free: "General coverage", pro: "Personalized to your registered vendors & risks" },
   { free: "No org context", pro: "Relevant-to-your-org flags" },
   { free: "No archive access", pro: "Full searchable archive" },
-  { free: "Standard delivery", pro: "Priority delivery every Monday" },
+  { free: "Standard delivery", pro: "Priority weekly delivery" },
   { free: "Email only", pro: "Severity filtering" },
 ];
 
