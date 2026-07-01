@@ -183,7 +183,7 @@ export function Header({
       <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
 
         {/* Wordmark */}
-        <Link href={isAuthenticated ? "/dashboard" : "https://www.securelogicai.com"} className="flex items-center gap-3">
+        <Link href={isAuthenticated ? "/dashboard" : SITE_URL} className="flex items-center gap-3">
           {/* Icon-only mark; the adjacent text is the single wordmark, so the
               image is decorative (alt="" + aria-hidden) to avoid a redundant
               accessible name. Matches the AuthCard branding. */}

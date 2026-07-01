@@ -65,6 +65,12 @@ export type BriefEmailData = {
   medium_count: number;
   low_count: number;
   categories: EmailBriefCategory[];
+  /** Absolute base URL of the app surface (e.g. https://app.securelogicai.com),
+   *  injected by the caller from the env-driven APP_BASE_URL. Used for the logo
+   *  and CTA links so a brief sent from staging links to staging, not production.
+   *  Optional to preserve the pure-renderer contract; the renderer falls back to
+   *  the production app only when a caller omits it. */
+  app_base_url?: string;
   /** v2 — short punchy headline shown in the hero, e.g. "High-threat week." */
   executive_headline?: string | null;
   /** v2 — full executive summary paragraph shown beneath the hero */
@@ -218,7 +224,15 @@ function renderNumberedList(text: string): string {
  * - Optional executive headline
  * - Risk count pills (table row, no flexbox)
  */
+/** Resolve the app base URL for links/assets in the email. Caller-injected and
+ *  env-driven (APP_BASE_URL); the production app is only a last-resort default so
+ *  the pure renderer never throws when a caller omits the value. */
+function resolveAppBaseUrl(data: BriefEmailData): string {
+  return (data.app_base_url ?? "https://app.securelogicai.com").replace(/\/$/, "");
+}
+
 function renderMasthead(data: BriefEmailData): string {
+  const appBaseUrl = resolveAppBaseUrl(data);
   const period = escHtml(formatPeriodLabel(data.period_start, data.period_end));
   const dateLabel = escHtml(formatDate(data.period_end));
 
@@ -239,7 +253,7 @@ function renderMasthead(data: BriefEmailData): string {
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
             <td style="vertical-align:middle;">
-              <img src="https://app.securelogicai.com/branding/securelogic-ai-logo.png"
+              <img src="${appBaseUrl}/branding/securelogic-ai-logo.png"
                    alt="SecureLogic AI" height="36"
                    style="display:block;">
             </td>
@@ -528,6 +542,8 @@ function renderCycleSummary(data: BriefEmailData): string {
 function renderUpgradeBanner(data: BriefEmailData): string {
   if (!data.upgrade_cta) return "";
 
+  const appBaseUrl = resolveAppBaseUrl(data);
+
   const totalCount  = data.total_signal_count ?? 0;
   const hiddenCount = data.hidden_count ?? 0;
 
@@ -560,7 +576,7 @@ function renderUpgradeBanner(data: BriefEmailData): string {
           ${hiddenLine}
           <tr>
             <td style="padding-top:16px;">
-              <a href="https://app.securelogicai.com/signup"
+              <a href="${appBaseUrl}/signup"
                  style="display:inline-block;background-color:#0d9488;color:#ffffff;
                         font-size:13px;font-weight:700;font-family:Arial,Helvetica,sans-serif;
                         padding:10px 22px;border-radius:5px;text-decoration:none;
@@ -575,7 +591,7 @@ function renderUpgradeBanner(data: BriefEmailData): string {
 }
 
 /** Dark footer: logo, subscriber note, unsubscribe link, org name. */
-function renderFooter(orgName: string): string {
+function renderFooter(orgName: string, appBaseUrl: string): string {
   return `
     <tr>
       <td bgcolor="#0f172a"
@@ -584,7 +600,7 @@ function renderFooter(orgName: string): string {
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
             <td style="padding-bottom:16px;">
-              <img src="https://app.securelogicai.com/branding/securelogic-ai-logo.png"
+              <img src="${appBaseUrl}/branding/securelogic-ai-logo.png"
                    alt="SecureLogic AI" height="24"
                    style="display:block;">
             </td>
@@ -638,6 +654,7 @@ function renderFooter(orgName: string): string {
  * replace this before sending, same as the HTML version.
  */
 export function renderBriefEmailText(data: BriefEmailData, orgName: string): string {
+  const appBaseUrl = resolveAppBaseUrl(data);
   const DIVIDER = "─".repeat(60);
   const period = formatPeriodLabel(data.period_start, data.period_end);
 
@@ -701,7 +718,7 @@ export function renderBriefEmailText(data: BriefEmailData, orgName: string): str
     if (data.hidden_count && data.hidden_count > 0) {
       lines.push(`+ ${data.hidden_count} more signal${data.hidden_count !== 1 ? "s" : ""} in the full brief`);
     }
-    lines.push("Upgrade to Brief Pro — $49/mo: https://app.securelogicai.com/signup", "");
+    lines.push(`Upgrade to Brief Pro — $49/mo: ${appBaseUrl}/signup`, "");
   }
 
   lines.push(
@@ -735,7 +752,7 @@ export function renderBriefEmail(data: BriefEmailData, orgName: string): string 
   const executiveSummary = renderExecutiveSummary(data);
   const upgradeBanner = renderUpgradeBanner(data);
   const cycleSummary = renderCycleSummary(data);
-  const footer = renderFooter(orgName);
+  const footer = renderFooter(orgName, resolveAppBaseUrl(data));
 
   const categoryRows = data.categories
     .filter((g) => g.items.length > 0)
