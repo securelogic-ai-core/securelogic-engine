@@ -37,3 +37,29 @@ describe("teamInvites — seat-limit enforcement", () => {
     expect(insertIdx).toBeGreaterThan(capIdx);
   });
 });
+
+describe("teamInvites — accept-path seat-cap enforcement (bypass regression)", () => {
+  it("imports the shared enforceSeatLimit helper", () => {
+    expect(SRC).toMatch(/import \{ enforceSeatLimit \} from "\.\.\/lib\/seatLimit\.js"/);
+  });
+
+  it("re-checks the cap on accept using the invite's organization_id", () => {
+    expect(SRC).toMatch(/enforceSeatLimit\(invite\.organization_id\)/);
+    expect(SRC).toMatch(/seat\.exceeded/);
+  });
+
+  it("rejects with 409 seat_limit_reached on accept (a second enforcement site)", () => {
+    const occurrences = SRC.match(/seat_limit_reached/g) ?? [];
+    // One in the invite-create path, one in the accept path.
+    expect(occurrences.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("checks the cap BEFORE consuming the invite (before user activation and the accepted UPDATE)", () => {
+    const seatIdx      = SRC.indexOf("enforceSeatLimit(invite.organization_id)");
+    const userInsertIdx = SRC.search(/INSERT INTO users/);
+    const acceptedIdx   = SRC.search(/status = 'accepted'/);
+    expect(seatIdx).toBeGreaterThan(-1);
+    expect(userInsertIdx).toBeGreaterThan(seatIdx);
+    expect(acceptedIdx).toBeGreaterThan(seatIdx);
+  });
+});
