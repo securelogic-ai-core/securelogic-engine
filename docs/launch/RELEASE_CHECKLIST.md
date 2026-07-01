@@ -56,6 +56,14 @@ The migration runner (`scripts/runMigrations.ts`) is **filename-keyed**: a resha
 - [ ] Confirm region pins are correct for every service block (immutable post-provision).
 - [ ] Confirm no secret/env var is being removed that a prod service still requires.
 
+### Sprint 3A — staging↔prod URL env vars (build-time; set on prod BEFORE promotion)
+
+These are `sync: false` dashboard values baked into the app/website build at build time. Since PR #427 removed the hardcoded production fallbacks, an **unset** value on the production service now regresses prod instead of silently pointing at prod:
+
+- [ ] **`securelogic-website` (prod marketing)** has `NEXT_PUBLIC_API_URL` set to the production engine API origin. Since #427 the Brief signup form falls back to `localhost:4000` when unset (previously the prod `api.` host) — an unset value makes production brief signup POST to localhost.
+- [ ] **`securelogic-app` (prod app)** has `NEXT_PUBLIC_ENGINE_URL` set to the production engine URL. Since #427 both the login SSO domain-check and the CSP `connect-src` are derived from it — an unset value bakes `localhost:4000` into the prod CSP and login, breaking app↔engine communication.
+- [ ] New CI lane **`url-drift`** is green on the promotion head (guards hardcoded prod hosts in `app/` + `website/`; added in #427, so §1 now has 8 lanes).
+
 ## 6. Rollback plan
 
 - [ ] Record the known-good production commit to revert to: `__________`.
