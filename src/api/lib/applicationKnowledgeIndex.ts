@@ -34,6 +34,17 @@ export type NavInputItem =
       items: Array<{ label: string; href: string }>;
     };
 
+/**
+ * Structural shape of an app SECONDARY_NAV_ITEM (account / settings surfaces
+ * reached from the user menu, not the header) — declared locally so this lib
+ * does not import app code. `access` is DECLARED on the input when the page
+ * restricts who can use it: these pages gate in their Server Component body
+ * (role redirect, entitlement upsell), which is invisible to both the route
+ * scanner and this builder, so it cannot be reliably inferred. Omit `access`
+ * for a signed-in-only page and the builder defaults it to "all".
+ */
+export type SecondaryNavInputItem = { label: string; href: string; group: string; access?: NavAccess };
+
 /** A discovered page route (one `page.tsx`). */
 export type RawRoute = { path: string; dynamic: boolean };
 
@@ -61,14 +72,35 @@ export type IndexRoute = {
   access: NavAccess;
 };
 
+/**
+ * A customer-facing account/settings destination (from SECONDARY_NAV_ITEMS).
+ * `access` is the entitlement declared on the source item (mirroring the real
+ * page-body guard), defaulting to "all" when the item declares none.
+ */
+export type IndexSecondaryItem = {
+  label: string;
+  href: string;
+  /** Grouping label for rendering (e.g. "Account", "Settings", "Billing"). */
+  group: string;
+  access: NavAccess;
+};
+
 export type ApplicationKnowledgeIndex = {
   version: number;
   navigation: IndexNavItem[];
   destinations: IndexDestination[];
   routes: IndexRoute[];
+  /**
+   * Account / settings / billing / onboarding destinations reached from the
+   * user menu rather than the header. Built from SECONDARY_NAV_ITEMS; each href
+   * is a real page route (drift-locked by the index test) and each `access` is
+   * the entitlement declared on the source item.
+   */
+  secondaryNavigation: IndexSecondaryItem[];
 };
 
-export const APPLICATION_KNOWLEDGE_INDEX_VERSION = 1;
+// v2 adds `secondaryNavigation` (account/settings surfaces) to the schema.
+export const APPLICATION_KNOWLEDGE_INDEX_VERSION = 2;
 
 function accessOf(item: { platform?: boolean; premium?: boolean; admin?: boolean }): NavAccess {
   if (item.admin) return "admin";
@@ -84,7 +116,8 @@ function accessOf(item: { platform?: boolean; premium?: boolean; admin?: boolean
  */
 export function buildApplicationKnowledgeIndex(
   nav: NavInputItem[],
-  rawRoutes: RawRoute[]
+  rawRoutes: RawRoute[],
+  secondaryNav: SecondaryNavInputItem[] = []
 ): ApplicationKnowledgeIndex {
   const navigation: IndexNavItem[] = nav.map((item) => {
     const access = accessOf(item);
@@ -138,7 +171,21 @@ export function buildApplicationKnowledgeIndex(
   }
   routes.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
-  return { version: APPLICATION_KNOWLEDGE_INDEX_VERSION, navigation, destinations, routes };
+  // Secondary navigation: entitlement is the value DECLARED on the source item
+  // (mirroring the page-body guard the scanner/builder cannot see). Only when an
+  // item declares no access do we fall back to the header-derived route access,
+  // then to "all" for a signed-in destination — inference is never allowed to
+  // override an explicit declaration. Source order is preserved so the generated
+  // artifact and the rebuild compare equal.
+  const routeAccess = new Map(routes.map((r) => [r.path, r.access]));
+  const secondaryNavigation: IndexSecondaryItem[] = secondaryNav.map((item) => ({
+    label: item.label,
+    href: item.href,
+    group: item.group,
+    access: item.access ?? routeAccess.get(item.href) ?? "all",
+  }));
+
+  return { version: APPLICATION_KNOWLEDGE_INDEX_VERSION, navigation, destinations, routes, secondaryNavigation };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 /**
  * AUTO-GENERATED — DO NOT EDIT BY HAND.
- * Source of truth: app/src/lib/navigation.ts + app/src/app/** route tree.
+ * Source of truth: app/src/lib/navigation.ts (NAV_ITEMS + SECONDARY_NAV_ITEMS)
+ *                  + app/src/app/** route tree.
  * Regenerate: npm run generate:knowledge-index
  * Verified by: src/api/tests/applicationKnowledgeIndex.test.ts (drift check).
  */
@@ -8,7 +9,7 @@ import type { ApplicationKnowledgeIndex } from "./applicationKnowledgeIndex.js";
 
 export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
 {
-  "version": 1,
+  "version": 2,
   "navigation": [
     {
       "type": "link",
@@ -717,6 +718,80 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "path": "/verify-email",
       "dynamic": false,
       "navLabel": null,
+      "access": "all"
+    }
+  ],
+  "secondaryNavigation": [
+    {
+      "label": "Account, profile & billing",
+      "href": "/account",
+      "group": "Account",
+      "access": "all"
+    },
+    {
+      "label": "Team & users",
+      "href": "/account/team",
+      "group": "Account",
+      "access": "all"
+    },
+    {
+      "label": "API keys",
+      "href": "/account/api-keys",
+      "group": "Account",
+      "access": "all"
+    },
+    {
+      "label": "Notifications & alerts",
+      "href": "/account/alerts",
+      "group": "Account",
+      "access": "all"
+    },
+    {
+      "label": "Privacy & data rights",
+      "href": "/account/privacy",
+      "group": "Account",
+      "access": "all"
+    },
+    {
+      "label": "Plans & pricing",
+      "href": "/pricing",
+      "group": "Billing",
+      "access": "all"
+    },
+    {
+      "label": "Security settings",
+      "href": "/settings/security",
+      "group": "Settings",
+      "access": "admin"
+    },
+    {
+      "label": "Single sign-on (SSO)",
+      "href": "/settings/sso",
+      "group": "Settings",
+      "access": "premium"
+    },
+    {
+      "label": "Webhooks",
+      "href": "/settings/webhooks",
+      "group": "Settings",
+      "access": "all"
+    },
+    {
+      "label": "Risk rating scale",
+      "href": "/settings/risk-scale",
+      "group": "Settings",
+      "access": "all"
+    },
+    {
+      "label": "Risk policy",
+      "href": "/settings/risk-policy",
+      "group": "Settings",
+      "access": "all"
+    },
+    {
+      "label": "Getting started checklist",
+      "href": "/getting-started",
+      "group": "Onboarding",
       "access": "all"
     }
   ]

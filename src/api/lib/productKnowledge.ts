@@ -69,6 +69,30 @@ function renderNavigation(index: ApplicationKnowledgeIndex): string {
 }
 
 /**
+ * Render the account / settings / billing / onboarding destinations (the
+ * secondary navigation reached from the user menu, not the header). 100%
+ * machine-derived from SECONDARY_NAV_ITEMS via the index; grouped in source
+ * order. Returns "" when the index carries no secondary navigation (older
+ * generated artifacts), so the section is simply omitted.
+ */
+function renderSecondaryNavigation(index: ApplicationKnowledgeIndex): string {
+  const items = index.secondaryNavigation ?? [];
+  if (items.length === 0) return "";
+  const groupsInOrder: string[] = [];
+  const byGroup = new Map<string, string[]>();
+  for (const item of items) {
+    if (!byGroup.has(item.group)) {
+      byGroup.set(item.group, []);
+      groupsInOrder.push(item.group);
+    }
+    byGroup.get(item.group)!.push(`    - ${item.label} → ${item.href}${accessNote(item.access)}`);
+  }
+  return groupsInOrder
+    .map((g) => `- ${g}:\n${byGroup.get(g)!.join("\n")}`)
+    .join("\n");
+}
+
+/**
  * Capabilities the assistant must NOT claim a UI exists for. Keeps it honest
  * about things that are derived/server-side rather than user-authored.
  */
@@ -86,10 +110,11 @@ export const NOT_USER_ACTIONS: ReadonlyArray<string> = [
  */
 export function renderProductKnowledge(): string {
   const nav = renderNavigation(KNOWLEDGE_INDEX);
+  const secondaryNav = renderSecondaryNavigation(KNOWLEDGE_INDEX);
   const flows = renderWorkflows(WORKFLOW_REGISTRY);
   const limits = NOT_USER_ACTIONS.map((s) => `- ${s}`).join("\n");
 
-  return [
+  const sections = [
     "SECURELOGIC PRODUCT KNOWLEDGE (how the platform works — use this to answer product / how-to / navigation questions)",
     "",
     "What the platform is:",
@@ -97,11 +122,24 @@ export function renderProductKnowledge(): string {
     "",
     "Top navigation, menus, and who can see each (auto-generated from the live app menu — always current):",
     nav,
+  ];
+
+  if (secondaryNav) {
+    sections.push(
+      "",
+      "Account & settings (reached from the account/user menu, not the top nav — auto-generated from the live app, always current):",
+      secondaryNav
+    );
+  }
+
+  sections.push(
     "",
     "Common workflows (each is a validated step-by-step; navigation, routes, and permissions are checked against the live UI):",
     flows,
     "",
     "Important limits (do not claim these UIs exist):",
-    limits,
-  ].join("\n");
+    limits
+  );
+
+  return sections.join("\n");
 }
