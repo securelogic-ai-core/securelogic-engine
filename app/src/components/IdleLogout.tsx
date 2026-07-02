@@ -3,45 +3,72 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-const IDLE_TIMEOUT_MS  = 30 * 60 * 1000; // 30 minutes
-const WARNING_BEFORE_MS = 2 * 60 * 1000; // show warning 2 minutes before logout
-const CHECK_INTERVAL_MS = 60 * 1000;     // check every 60 seconds
+const DEFAULT_IDLE_SECONDS = 30 * 60;
 
-export default function IdleLogout() {
+interface IdleLogoutProps {
+  /**
+   * Idle window in seconds. Passed from the server layout, which reads
+   * SESSION_IDLE_SECONDS at request time so the client timer matches the
+   * server-enforced idle cap without a build-time (NEXT_PUBLIC) coupling.
+   */
+  idleSeconds?: number;
+}
+
+export default function IdleLogout({ idleSeconds }: IdleLogoutProps) {
   const router          = useRouter();
   const lastActivityRef = useRef<number>(Date.now());
+  const loggingOutRef   = useRef<boolean>(false);
   const [showWarning, setShowWarning] = useState(false);
 
   useEffect(() => {
+    const idleMs = (idleSeconds && idleSeconds > 0 ? idleSeconds : DEFAULT_IDLE_SECONDS) * 1000;
+    // Warn a little before logout; scale down for short (test) windows.
+    const warningBeforeMs = Math.min(2 * 60 * 1000, Math.floor(idleMs * 0.25));
+    // Poll cadence: frequent enough to be responsive, never a storm.
+    const checkIntervalMs = Math.min(60 * 1000, Math.max(5 * 1000, Math.floor(idleMs / 6)));
+
+    function doLogout() {
+      if (loggingOutRef.current) return;
+      loggingOutRef.current = true;
+      void fetch("/api/logout", { method: "POST" }).finally(() => {
+        router.push("/login?reason=idle");
+      });
+    }
+
     function resetTimer() {
       lastActivityRef.current = Date.now();
       setShowWarning(false);
     }
 
+    // Promptly enforce when the tab regains focus/visibility after being away,
+    // instead of waiting for the next poll tick or navigation.
+    function checkNow() {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastActivityRef.current >= idleMs) doLogout();
+    }
+
     const events = ["mousemove", "mousedown", "keydown", "touchstart", "scroll", "click"] as const;
     events.forEach((evt) => window.addEventListener(evt, resetTimer, { passive: true }));
+    document.addEventListener("visibilitychange", checkNow);
+    window.addEventListener("focus", checkNow);
 
     const interval = setInterval(() => {
       const idle = Date.now() - lastActivityRef.current;
-
-      if (idle >= IDLE_TIMEOUT_MS) {
+      if (idle >= idleMs) {
         clearInterval(interval);
-        void fetch("/api/logout", { method: "POST" }).finally(() => {
-          router.push("/login?reason=idle");
-        });
+        doLogout();
         return;
       }
-
-      if (idle >= IDLE_TIMEOUT_MS - WARNING_BEFORE_MS) {
-        setShowWarning(true);
-      }
-    }, CHECK_INTERVAL_MS);
+      if (idle >= idleMs - warningBeforeMs) setShowWarning(true);
+    }, checkIntervalMs);
 
     return () => {
       events.forEach((evt) => window.removeEventListener(evt, resetTimer));
+      document.removeEventListener("visibilitychange", checkNow);
+      window.removeEventListener("focus", checkNow);
       clearInterval(interval);
     };
-  }, [router]);
+  }, [router, idleSeconds]);
 
   if (!showWarning) return null;
 
@@ -66,7 +93,7 @@ export default function IdleLogout() {
       }}
     >
       <p style={{ margin: 0, color: "#e2e8f0", fontSize: "14px", lineHeight: "1.4", flex: 1 }}>
-        You&apos;ve been inactive for a while. You&apos;ll be logged out in 2 minutes.
+        You&apos;ve been inactive for a while and will be signed out soon.
       </p>
       <button
         onClick={() => {
