@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Header } from "@/components/Header";
 import { getSession } from "@/lib/session";
+import { getIdleSeconds } from "@/lib/sessionPolicy";
 import { getConsentStatus } from "@/lib/api";
 import IdleLogout from "@/components/IdleLogout";
 import ConsentInterstitial from "@/components/ConsentInterstitial";
@@ -61,7 +62,7 @@ export default async function RootLayout({
         {consent.consentRequired && (
           <ConsentInterstitial missingDocuments={consent.missingDocuments} />
         )}
-        {isAuthenticated && <IdleLogout />}
+        {isAuthenticated && <IdleLogout idleSeconds={getIdleSeconds()} />}
         <footer className="border-t border-brand-line bg-brand-surface mt-16">
           <div className="max-w-6xl mx-auto px-6 py-6 flex items-center justify-between">
             <span className="text-slate-400 text-sm">

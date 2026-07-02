@@ -1,11 +1,6 @@
 import { getIronSession } from "iron-session";
 import { cookies } from "next/headers";
-
-// Absolute session lifetime. Configurable via SESSION_TIMEOUT_SECONDS env var.
-// Default: 8 hours — appropriate for a security platform.
-const SESSION_MAX_AGE_SECONDS = parseInt(
-  process.env.SESSION_TIMEOUT_SECONDS ?? String(60 * 60 * 8)
-);
+import { getAbsoluteSeconds } from "@/lib/sessionPolicy";
 
 export interface SessionData {
   // Customer auth (email/password — new)
@@ -28,6 +23,11 @@ export interface SessionData {
   // Pre-auth: paid tier the user picked on /signup, replayed by
   // /verify-email after the email-verification step to redirect into checkout.
   pendingPlan?: "professional" | "teams" | "platform" | "platform_annual";
+
+  // Session-timeout enforcement claims (PR-C1). Owned by middleware:
+  // loginAt is stamped once (absolute cap), lastActivityAt slides (idle cap).
+  loginAt?: number;
+  lastActivityAt?: number;
 }
 
 /**
@@ -44,7 +44,9 @@ export function getSessionOptions() {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production" || process.env.FORCE_SECURE_COOKIE === "true",
       sameSite: "lax" as const,
-      maxAge: SESSION_MAX_AGE_SECONDS,
+      // Absolute cookie lifetime — kept in step with the middleware absolute cap
+      // (SESSION_ABSOLUTE_SECONDS, legacy fallback SESSION_TIMEOUT_SECONDS, 12 h).
+      maxAge: getAbsoluteSeconds(),
     },
   };
 }

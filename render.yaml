@@ -902,9 +902,20 @@ services:
       - key: SESSION_SECRET
         sync: false
 
-      # Absolute session lifetime in seconds. Default: 28800 (8 hours).
-      # Set lower for higher-security deployments.
+      # Legacy absolute session lifetime in seconds (default 8 h when set).
+      # Superseded by SESSION_ABSOLUTE_SECONDS below; still honored as a fallback
+      # so existing deployments keep their configured lifetime until migrated.
       - key: SESSION_TIMEOUT_SECONDS
+        sync: false
+
+      # PR-C1 session-timeout enforcement (runtime vars — a restart applies them;
+      # neither is NEXT_PUBLIC/build-time, so no rebuild is required).
+      #
+      # Idle (sliding) timeout in seconds. Activity extends it. Default 1800 (30 min).
+      - key: SESSION_IDLE_SECONDS
+        sync: false
+      # Absolute (non-extendable) timeout in seconds from login. Default 43200 (12 h).
+      - key: SESSION_ABSOLUTE_SECONDS
         sync: false
 
       # Sentry error tracking (app). Values set in the Render dashboard.
