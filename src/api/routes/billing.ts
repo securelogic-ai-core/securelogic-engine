@@ -68,10 +68,10 @@ async function resolveStripeCustomer(
 
    Five tiers (one free, four paid):
      starter          →  (no Stripe — default free plan)
-     professional     →  STRIPE_PRICE_ID_PROFESSIONAL      ($29/mo)
-     teams            →  STRIPE_PRICE_ID_TEAMS             ($189/mo, up to 10 seats)
-     platform         →  STRIPE_PRICE_ID_PLATFORM          ($1,099/mo)
-     platform_annual  →  STRIPE_PRICE_ID_PLATFORM_ANNUAL   ($12,000/yr)
+     professional     →  STRIPE_PRICE_ID_PROFESSIONAL      ($49/mo)
+     teams            →  STRIPE_PRICE_ID_TEAMS             ($199/mo, up to 6 seats)
+     platform         →  STRIPE_PRICE_ID_PLATFORM          ($800/mo)
+     platform_annual  →  STRIPE_PRICE_ID_PLATFORM_ANNUAL   ($7,200/yr = $600/mo billed annually)
 
    Entitlement mapping:
      professional, teams                 → entitlement_level="professional" (Brief access)
@@ -85,6 +85,30 @@ async function resolveStripeCustomer(
    ========================================================= */
 
 const VALID_TIERS = new Set(["professional", "teams", "platform", "platform_annual"]);
+
+/**
+ * Tiers eligible for the free trial. PLATFORM ONLY — both the monthly
+ * ($800/mo) and annual ($7,200/yr) Platform prices. The Brief tiers
+ * (professional, teams) are NEVER trial-eligible: the Free Intelligence
+ * Brief is the Brief funnel, so a Brief-tier trial would cannibalise it.
+ */
+const PLATFORM_TRIAL_TIERS = new Set(["platform", "platform_annual"]);
+
+/**
+ * Master switch for the Platform free trial. OFF unless
+ * SECURELOGIC_PLATFORM_TRIAL_ENABLED === "true" (default off, declared with a
+ * safe "false" value in render.yaml). With the flag off, Platform checkouts
+ * behave exactly as before — no trial, immediate payment.
+ */
+function platformTrialEnabled(): boolean {
+  return process.env.SECURELOGIC_PLATFORM_TRIAL_ENABLED === "true";
+}
+
+/** Trial length in days, from TRIAL_PERIOD_DAYS (default 14). */
+function trialPeriodDays(): number {
+  const raw = parseInt(process.env.TRIAL_PERIOD_DAYS ?? "14", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 14;
+}
 
 function resolvePriceId(tier: string): string {
   const map: Record<string, string | undefined> = {
@@ -159,6 +183,43 @@ router.post("/billing/checkout", requireApiKey, attachOrganizationContext, async
     // does not depend on webhook timing.
     const customerId = await resolveStripeCustomer(orgId, apiKeyLabel, apiKeyId);
 
+    // Platform free trial — Platform tiers only, flag-gated, one per org.
+    const applyTrial = platformTrialEnabled() && PLATFORM_TRIAL_TIERS.has(tier);
+
+    if (applyTrial) {
+      // Re-trial guard: ONE trial per organization, enforced here at
+      // checkout-session creation and FAILING CLOSED. trial_started_at is set
+      // by the webhook when a trial actually begins (not here), so an abandoned
+      // trial checkout never burns the org's single trial. On any DB error the
+      // outer catch returns 500 — no session, no trial (fail closed).
+      const priorTrial = await pg.query<{ trial_started_at: string | null }>(
+        `SELECT trial_started_at FROM organizations WHERE id = $1 LIMIT 1`,
+        [orgId]
+      );
+      if (priorTrial.rows[0]?.trial_started_at) {
+        logger.info(
+          { event: "billing_trial_already_used", orgId, tier },
+          "POST /api/billing/checkout: org already used its Platform trial — rejecting trial checkout"
+        );
+        res.status(409).json({
+          error: "trial_already_used",
+          detail: `This organization has already used its ${trialPeriodDays()}-day Platform free trial. You can subscribe without a trial from Manage Billing.`,
+        });
+        return;
+      }
+    }
+
+    // Card is required up front — Checkout collects a payment method by default
+    // in subscription mode (we never set payment_method_collection:if_required).
+    // trial_settings.missing_payment_method:cancel is a safety net so a trial
+    // with no card ends by canceling rather than leaving an unpaid invoice.
+    const trialFields = applyTrial
+      ? {
+          trial_period_days: trialPeriodDays(),
+          trial_settings: { end_behavior: { missing_payment_method: "cancel" as const } },
+        }
+      : {};
+
     const session = await getStripe().checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
@@ -170,6 +231,7 @@ router.post("/billing/checkout", requireApiKey, attachOrganizationContext, async
       // Same metadata propagated to all subscription lifecycle events.
       subscription_data: {
         metadata: { organization_id: orgId, api_key_id: apiKeyId, tier },
+        ...trialFields,
       },
       success_url: successUrl,
       cancel_url: cancelUrl
@@ -185,7 +247,14 @@ router.post("/billing/checkout", requireApiKey, attachOrganizationContext, async
     }
 
     logger.info(
-      { event: "billing_checkout_created", apiKeyId, customerId, sessionId: session.id, tier },
+      {
+        event: "billing_checkout_created",
+        apiKeyId,
+        customerId,
+        sessionId: session.id,
+        tier,
+        trialDays: applyTrial ? trialPeriodDays() : null,
+      },
       "Stripe checkout session created"
     );
 
@@ -328,10 +397,11 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
       payment_failed_at:           string | null;
       stripe_subscription_tier:    string | null;
       stripe_subscription_status:  string | null;
+      trial_started_at:            string | null;
     }>(
       `SELECT entitlement_level, stripe_customer_id,
               payment_failed_at, stripe_subscription_tier,
-              stripe_subscription_status
+              stripe_subscription_status, trial_started_at
          FROM organizations WHERE id = $1 LIMIT 1`,
       [orgId]
     );
@@ -348,6 +418,7 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
       payment_failed_at,
       stripe_subscription_tier,
       stripe_subscription_status,
+      trial_started_at,
     } = row;
 
     // Derive a human-readable tier label from entitlement_level
@@ -364,15 +435,26 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
         stripe_customer_id: null,
         current_period_end: null,
         payment_failed_at:  payment_failed_at ?? null,
-        subscription_tier:  stripe_subscription_tier ?? null
+        subscription_tier:  stripe_subscription_tier ?? null,
+        trial_end:          null,
+        amount:             null,
+        currency:           null,
+        interval:           null
       });
       return;
     }
 
-    // Fetch live subscription state from Stripe
-    type BillingStatus = "active" | "past_due" | "canceled" | "none";
+    // Fetch live subscription state from Stripe. "trialing" is surfaced as a
+    // DISTINCT status (not collapsed into "active") so the app can show a
+    // "Free Trial" label + banner; trial_end and the actual price amount come
+    // straight off the live subscription so the UI never hardcodes a price.
+    type BillingStatus = "active" | "trialing" | "past_due" | "canceled" | "none";
     let status: BillingStatus = "none";
     let current_period_end: string | null = null;
+    let trial_end: string | null = null;
+    let amount: number | null = null;
+    let currency: string | null = null;
+    let interval: string | null = null;
 
     try {
       const subs = await getStripe().subscriptions.list({
@@ -384,7 +466,9 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
       const sub = subs.data[0] ?? null;
 
       if (sub) {
-        if (sub.status === "active" || sub.status === "trialing") {
+        if (sub.status === "trialing") {
+          status = "trialing";
+        } else if (sub.status === "active") {
           status = "active";
         } else if (sub.status === "past_due") {
           status = "past_due";
@@ -397,6 +481,17 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
         current_period_end = periodEnd
           ? new Date(periodEnd * 1000).toISOString()
           : null;
+
+        // Trial end + the actual subscribed price (unit_amount / interval) —
+        // read from the live subscription so the app shows the real charge
+        // ($800/mo vs $7,200/yr), never a hardcoded value.
+        trial_end = sub.trial_end
+          ? new Date(sub.trial_end * 1000).toISOString()
+          : null;
+        const price = sub.items.data[0]?.price ?? null;
+        amount   = price?.unit_amount ?? null;
+        currency = price?.currency ?? null;
+        interval = price?.recurring?.interval ?? null;
       }
     } catch (err) {
       // Stripe unavailable — fall back to DB-derived status so the endpoint
@@ -408,7 +503,19 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
         "GET /api/billing/subscription: Stripe API call failed, using DB state"
       );
 
-      if (stripe_subscription_status === "active" || stripe_subscription_status === "trialing") {
+      if (stripe_subscription_status === "trialing") {
+        status = "trialing";
+        // Stripe is unavailable, so derive the trial end from the persisted
+        // trial start + TRIAL_PERIOD_DAYS. Best-effort/approximate — the live
+        // Stripe path above is authoritative when reachable. Amount is unknown
+        // in fallback (not persisted) and stays null; the UI degrades to the
+        // trial label without a dollar figure.
+        if (trial_started_at) {
+          trial_end = new Date(
+            new Date(trial_started_at).getTime() + trialPeriodDays() * 86400000
+          ).toISOString();
+        }
+      } else if (stripe_subscription_status === "active") {
         status = "active";
       } else if (stripe_subscription_status === "past_due") {
         status = "past_due";
@@ -428,7 +535,11 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
       stripe_customer_id,
       current_period_end,
       payment_failed_at:  payment_failed_at ?? null,
-      subscription_tier:  stripe_subscription_tier ?? null
+      subscription_tier:  stripe_subscription_tier ?? null,
+      trial_end,
+      amount,
+      currency,
+      interval
     });
   } catch (err) {
     logger.error(

@@ -50,6 +50,7 @@ import { requestAudit } from "./middleware/requestAudit.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 import { Sentry } from "./lib/sentry.js";
+import { enforceJsonContentType } from "./lib/contentTypeAllowlist.js";
 
 // Lemon Squeezy is dormant: route /webhooks/lemon is unmounted (returns 404).
 // Re-enable by re-adding these imports and the app.post block in the WEBHOOKS
@@ -255,53 +256,10 @@ export function createApp(opts: CreateAppOptions): express.Express {
      STRICT CONTENT-TYPE ENFORCEMENT (ENTERPRISE)
      ========================================================= */
 
-  app.use((req, res, next) => {
-    const method = req.method.toUpperCase();
-    const isBodyMethod =
-      method === "POST" || method === "PUT" || method === "PATCH";
-
-    if (
-      req.originalUrl.startsWith("/webhooks/lemon") ||
-      req.originalUrl.startsWith("/webhooks/email/resend") ||
-      req.originalUrl.startsWith("/api/vendor-assessments/analyze-document") ||
-      /^\/api\/vendor-assurance\/documents(\?|$)/.test(req.originalUrl) ||
-      /^\/api\/sso\/[^/]+\/acs/.test(req.originalUrl)
-    ) {
-      next();
-      return;
-    }
-
-    if (!isBodyMethod) {
-      next();
-      return;
-    }
-
-    const ct = req.headers["content-type"] ?? "";
-
-    if (typeof ct !== "string" || ct.trim().length === 0) {
-      next();
-      return;
-    }
-
-    const normalized = ct.toLowerCase();
-
-    if (!normalized.startsWith("application/json")) {
-      logger.warn(
-        {
-          event: "blocked_invalid_content_type",
-          method: req.method,
-          route: req.originalUrl,
-          contentType: ct
-        },
-        "Blocked request with invalid Content-Type"
-      );
-
-      res.status(415).json({ error: "unsupported_media_type" });
-      return;
-    }
-
-    next();
-  });
+  // Routes that legitimately receive non-JSON bodies (raw webhooks, multipart
+  // uploads incl. /api/ask/transcribe audio, SAML form posts) are exempt — see
+  // contentTypeAllowlist.ts (pure + tested so the exempt list can't regress).
+  app.use(enforceJsonContentType);
 
   /* =========================================================
      REQUEST CORRELATION

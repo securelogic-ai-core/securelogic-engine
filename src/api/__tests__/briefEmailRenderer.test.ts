@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   renderBriefEmail,
+  renderBriefEmailText,
   type BriefEmailData,
   type EmailBriefItem,
   type EmailBriefCategory
@@ -582,5 +583,45 @@ describe("renderBriefEmail — relevance badges", () => {
 
   it("low relevance uses slate (#64748b)", () => {
     expect(makeHtml("low")).toContain("#64748b");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// app_base_url injection — staging↔production drift (Sprint 3A)
+// ---------------------------------------------------------------------------
+describe("renderBriefEmail — app base URL injection", () => {
+  const stagingData: BriefEmailData = {
+    ...fullData,
+    app_base_url: "https://app.staging.securelogicai.com",
+    upgrade_cta: true,
+    total_signal_count: 42
+  };
+
+  it("uses the injected app_base_url for logo + CTA in the HTML and never the prod app", () => {
+    const html = renderBriefEmail(stagingData, "Acme");
+    expect(html).toContain("https://app.staging.securelogicai.com/branding/securelogic-ai-logo.png");
+    expect(html).toContain("https://app.staging.securelogicai.com/signup");
+    expect(html).not.toContain("https://app.securelogicai.com/");
+  });
+
+  it("uses the injected app_base_url in the plain-text part", () => {
+    const text = renderBriefEmailText(stagingData, "Acme");
+    expect(text).toContain("https://app.staging.securelogicai.com/signup");
+    expect(text).not.toContain("https://app.securelogicai.com/signup");
+  });
+
+  it("falls back to the production app only when app_base_url is omitted", () => {
+    const html = renderBriefEmail({ ...fullData, upgrade_cta: true, total_signal_count: 42 }, "Acme");
+    expect(html).toContain("https://app.securelogicai.com/branding/securelogic-ai-logo.png");
+    expect(html).toContain("https://app.securelogicai.com/signup");
+  });
+
+  it("normalizes a trailing slash on the injected base URL", () => {
+    const html = renderBriefEmail(
+      { ...stagingData, app_base_url: "https://app.staging.securelogicai.com/" },
+      "Acme"
+    );
+    expect(html).not.toContain("securelogicai.com//branding");
+    expect(html).not.toContain("securelogicai.com//signup");
   });
 });

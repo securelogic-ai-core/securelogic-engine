@@ -1,0 +1,19 @@
+id: manage_actions
+title: 'Manage remediation actions'
+goal: 'Track remediation actions, their owners, and due dates to closure.'
+permissions: platform
+navigation:
+  - Risk
+  - Actions
+routes:
+  - /actions
+ordered_steps:
+  - 'Open Risk → Actions in the top navigation (or go to /actions).'
+  - 'Review open, blocked, and overdue actions; sort by due date and priority.'
+  - 'Update status and ownership as work progresses, and close actions when done.'
+expected_result: 'Remediation work is tracked to closure with clear owners and due dates.'
+common_mistakes:
+  - 'Leaving actions unassigned, so overdue items have no owner.'
+related_workflows:
+  - review_findings
+  - treat_risk

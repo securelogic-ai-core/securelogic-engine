@@ -71,56 +71,56 @@ function stripLeadingTitle(markdown: string): string {
 
 const markdownComponents: Components = {
   h1: ({ children }) => (
-    <h1 className="text-3xl font-bold text-navy-900 mt-12 mb-4">{children}</h1>
+    <h1 className="text-3xl font-bold text-text mt-12 mb-4">{children}</h1>
   ),
   h2: ({ children, id }) => (
-    <h2 id={id} className="text-3xl font-bold text-navy-900 mt-12 mb-4 scroll-mt-24">
+    <h2 id={id} className="text-3xl font-bold text-text mt-12 mb-4 scroll-mt-24">
       {children}
     </h2>
   ),
   h3: ({ children, id }) => (
-    <h3 id={id} className="text-xl font-semibold text-navy-900 mt-8 mb-3 scroll-mt-24">
+    <h3 id={id} className="text-xl font-semibold text-text mt-8 mb-3 scroll-mt-24">
       {children}
     </h3>
   ),
-  p: ({ children }) => <p className="text-slate-700 leading-relaxed my-4">{children}</p>,
-  ul: ({ children }) => <ul className="list-disc pl-6 my-4 space-y-1">{children}</ul>,
-  ol: ({ children }) => <ol className="list-decimal pl-6 my-4 space-y-1">{children}</ol>,
-  li: ({ children }) => <li className="mb-2 text-slate-700 leading-relaxed">{children}</li>,
-  strong: ({ children }) => <strong className="font-semibold text-navy-900">{children}</strong>,
+  p: ({ children }) => <p className="text-text-body leading-relaxed my-4">{children}</p>,
+  ul: ({ children }) => <ul className="list-disc pl-6 my-4 space-y-1 marker:text-text-muted">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal pl-6 my-4 space-y-1 marker:text-text-muted">{children}</ol>,
+  li: ({ children }) => <li className="mb-2 text-text-body leading-relaxed">{children}</li>,
+  strong: ({ children }) => <strong className="font-semibold text-text">{children}</strong>,
   table: ({ children }) => (
     <div className="overflow-x-auto">
-      <table className="border-collapse w-full my-6 border border-slate-200 text-sm">
+      <table className="border-collapse w-full my-6 border border-hairline text-sm">
         {children}
       </table>
     </div>
   ),
   th: ({ children }) => (
-    <th className="bg-slate-50 p-3 text-left font-semibold border-b border-slate-200 text-navy-900 align-top">
+    <th className="bg-bg-elevated-2 p-3 text-left font-semibold border-b border-hairline text-text align-top">
       {children}
     </th>
   ),
   td: ({ children }) => (
-    <td className="p-3 border-b border-slate-200 text-slate-700 align-top">{children}</td>
+    <td className="p-3 border-b border-hairline text-text-body align-top">{children}</td>
   ),
   blockquote: ({ children }) => (
-    <blockquote className="border-l-4 border-teal-600 pl-4 italic text-slate-600 my-4">
+    <blockquote className="border-l-4 border-accent pl-4 italic text-text-muted my-4">
       {children}
     </blockquote>
   ),
-  hr: () => <hr className="my-8 border-slate-200" />,
+  hr: () => <hr className="my-8 border-hairline" />,
   a: ({ href, children, className }) => {
     // Heading self-links injected by rehype-autolink-headings (behavior: "wrap")
-    // should not pick up the teal/underline link styling — keep heading text plain.
+    // should not pick up the accent/underline link styling — keep heading text plain.
     if (typeof className === "string" && className.includes("heading-link")) {
       return (
-        <a href={href} className="no-underline text-inherit hover:text-teal-700 transition-colors">
+        <a href={href} className="no-underline text-inherit hover:text-accent transition-colors">
           {children}
         </a>
       );
     }
     return (
-      <a href={href} className="text-teal-600 hover:text-teal-700 underline">
+      <a href={href} className="text-accent hover:text-accent-hover underline">
         {children}
       </a>
     );
@@ -139,22 +139,22 @@ export function MarkdownPage({
   return (
     <>
       {/* Hero */}
-      <section className="relative overflow-hidden bg-navy-900 border-b border-slate-800 pt-20 pb-20 px-4 text-center">
+      <section className="relative overflow-hidden bg-bg border-b border-hairline pt-20 pb-20 px-4 text-center">
         <div
           className="absolute inset-0 pointer-events-none"
           aria-hidden="true"
           style={{
             background:
-              "radial-gradient(ellipse 60% 80% at 50% 120%, rgba(13,148,136,0.13) 0%, transparent 65%)",
+              "radial-gradient(ellipse 60% 80% at 50% 120%, rgba(0,196,180,0.13) 0%, transparent 65%)",
           }}
         />
         <div className="relative max-w-3xl mx-auto">
-          <p className="text-xs font-bold text-teal-400 uppercase tracking-widest mb-4">
+          <p className="eyebrow mb-4">
             {eyebrow}
           </p>
-          <h1 className="text-4xl font-bold text-white mb-4">{title}</h1>
+          <h1 className="text-4xl font-extrabold text-text mb-4">{title}</h1>
           {(effectiveDate || lastUpdated) && (
-            <p className="text-sm text-slate-400">
+            <p className="text-sm text-text-muted">
               {effectiveDate && <>Effective {effectiveDate}</>}
               {effectiveDate && lastUpdated && <> &middot; </>}
               {lastUpdated && <>Last updated {lastUpdated}</>}

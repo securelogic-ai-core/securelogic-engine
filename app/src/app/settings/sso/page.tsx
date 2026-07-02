@@ -34,7 +34,7 @@ export default async function SsoSettingsPage() {
           textAlign: "center",
         }}>
           <p style={{ color: "#94a3b8", marginBottom: "16px" }}>
-            SSO requires a <strong style={{ color: "#00c4b4" }}>Professional</strong> plan or above.
+            SSO requires a <strong style={{ color: "#00c4b4" }}>Brief Pro</strong> plan or above.
           </p>
           <Link
             href="/billing"
@@ -78,7 +78,7 @@ export default async function SsoSettingsPage() {
             padding: "4px 10px",
             borderRadius: "20px",
           }}>
-            Professional Plan
+            Brief Pro Plan
           </span>
         )}
       </div>

@@ -5,6 +5,7 @@ import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPo
 import { BriefCard } from "@/components/BriefCard";
 import { IntelligenceBriefDashboardCard } from "@/components/IntelligenceBriefDashboardCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
+import { BillingPortalForm } from "@/components/BillingPortalForm";
 import { PostureDashboard } from "./PostureDashboard";
 import { LastLoginBanner } from "./LastLoginBanner";
 import { IndustryTemplatesBanner } from "./IndustryTemplatesBanner";
@@ -276,14 +277,10 @@ function ManageBillingButton() {
       <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">
         Billing
       </h3>
-      <form action="/api/billing/portal" method="POST">
-        <button
-          type="submit"
-          className="w-full text-sm text-slate-200 hover:text-white border border-brand-line hover:border-slate-500 font-medium py-2 rounded-lg transition-colors"
-        >
-          Manage Billing
-        </button>
-      </form>
+      <BillingPortalForm
+        label="Manage Billing"
+        buttonClassName="w-full text-sm text-slate-200 hover:text-white border border-brand-line hover:border-slate-500 font-medium py-2 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+      />
       <p className="mt-2 text-xs text-slate-400 text-center">
         Upgrade, downgrade, or cancel anytime
       </p>
@@ -388,7 +385,7 @@ function SamplePostureDashboard() {
               type="submit"
               className="inline-flex items-center gap-2 bg-teal-700 hover:bg-teal-600 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
             >
-              Upgrade to Platform Professional — $1,099/mo
+              Upgrade to Platform Professional — $800/mo
             </button>
           </form>
         </div>

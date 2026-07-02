@@ -277,10 +277,10 @@ router.patch("/organizations/:id", async (req, res) => {
     }
 
     // Seat cap (active members). The sales-led operator path for seat
-    // allocation above the default 10 — Team is "up to 10 seats" (= default),
+    // allocation above the default 6 — Team is "up to 6 seats" (= default),
     // Platform / Enterprise ("Unlimited seats", Custom / invoice) are raised
     // here per contract. Mirrors max_monitored_entities: non-negative integer,
-    // never auto-touched by Stripe (no self-serve tier exceeds 10 seats), so
+    // never auto-touched by Stripe (no self-serve tier exceeds 6 seats), so
     // lowering or raising it is exclusively this operator action. (#9b)
     let maxMembers: number | null = null;
     if (req.body?.max_members !== undefined) {

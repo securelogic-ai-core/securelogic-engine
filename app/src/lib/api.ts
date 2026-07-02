@@ -31,7 +31,7 @@ export type MeResponse = {
  * Single source of truth for the human-readable plan label rendered across
  * the account page, dashboard, and any future surface. Prefers the precise
  * Stripe tier (which distinguishes Platform Annual from Platform Monthly,
- * and Team Professional from solo Professional); falls back to the coarser
+ * and Brief Team from solo Brief Pro); falls back to the coarser
  * entitlement_level when the Stripe tier is absent (legacy rows, free).
  */
 export function planDisplayName(
@@ -39,15 +39,15 @@ export function planDisplayName(
   stripeSubscriptionTier?: string | null
 ): string {
   switch (stripeSubscriptionTier) {
-    case "professional":    return "Professional";
-    case "teams":           return "Team Professional";
+    case "professional":    return "Brief Pro";
+    case "teams":           return "Brief Team";
     case "platform":        return "Platform Professional";
     case "platform_annual": return "Platform Annual";
     case "team":            return "Platform Professional";
   }
   switch (entitlementLevel) {
     case "premium":      return "Platform Professional";
-    case "professional": return "Professional";
+    case "professional": return "Brief Pro";
     case "admin":        return "Enterprise";
     default:             return "Free";
   }
@@ -1022,6 +1022,38 @@ export async function getMe(apiKey: string): Promise<MeResponse | null> {
     const res = await engineFetch("/api/me", apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<MeResponse>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Billing/subscription state from GET /api/billing/subscription.
+ * `status` distinguishes "trialing" from "active"; trial_end + amount/interval
+ * come straight off the live Stripe subscription (never hardcoded).
+ */
+export interface SubscriptionInfo {
+  tier: string;
+  entitlement_level: string;
+  status: "active" | "trialing" | "past_due" | "canceled" | "none";
+  stripe_customer_id: string | null;
+  current_period_end: string | null;
+  payment_failed_at: string | null;
+  subscription_tier: string | null;
+  /** ISO timestamp the trial converts to a paid subscription (trialing only). */
+  trial_end: string | null;
+  /** Subscribed price in the smallest currency unit (e.g. cents). */
+  amount: number | null;
+  currency: string | null;
+  /** Stripe recurring interval: "month" | "year". */
+  interval: string | null;
+}
+
+export async function getSubscription(token: string): Promise<SubscriptionInfo | null> {
+  try {
+    const res = await engineFetch("/api/billing/subscription", token);
+    if (!res.ok) return null;
+    return res.json() as Promise<SubscriptionInfo>;
   } catch {
     return null;
   }

@@ -1,0 +1,20 @@
+id: add_control
+title: 'Add a control'
+goal: 'Add a control to your library so coverage can be assessed and evidenced.'
+permissions: platform
+navigation:
+  - Compliance
+  - Controls
+routes:
+  - /controls
+  - /controls/new
+ordered_steps:
+  - 'Open Compliance → Controls in the top navigation (or go to /controls).'
+  - 'Click "+ Add Control" to open the form at /controls/new.'
+  - 'Describe the control and map it to frameworks, then save.'
+expected_result: 'The control appears in the library, ready to assess and attach evidence to.'
+common_mistakes:
+  - 'Adding a control without mapping it to any framework, so it does not affect readiness.'
+related_workflows:
+  - assess_control
+  - upload_evidence

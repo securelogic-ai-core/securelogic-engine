@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
-import { getMe, getAuthMe, planDisplayName } from "@/lib/api";
+import { getMe, getAuthMe, getSubscription, planDisplayName } from "@/lib/api";
+import { BillingPortalForm } from "@/components/BillingPortalForm";
 import MfaSection from "./security/MfaSection";
 import ChangePasswordSection from "./security/ChangePasswordSection";
 
@@ -29,6 +30,28 @@ function RoleBadge({ role }: { role: string }) {
   );
 }
 
+/**
+ * Formats a Stripe price (amount in the smallest currency unit + interval) into
+ * a display string like "$800/mo" or "$7,200/yr". Returns null when the amount
+ * is unknown (e.g. the Stripe-unavailable fallback), so callers can omit the
+ * dollar figure rather than show a hardcoded one.
+ */
+function formatSubscriptionPrice(
+  amount: number | null,
+  currency: string | null,
+  interval: string | null,
+): string | null {
+  if (amount === null || amount === undefined) return null;
+  const dollars = amount / 100;
+  const money = dollars.toLocaleString("en-US", {
+    style: "currency",
+    currency: (currency ?? "usd").toUpperCase(),
+    minimumFractionDigits: Number.isInteger(dollars) ? 0 : 2,
+  });
+  const per = interval === "year" ? "/yr" : interval === "month" ? "/mo" : "";
+  return `${money}${per}`;
+}
+
 const BILLING_ERRORS: Record<string, string> = {
   checkout_failed: "We couldn't start the checkout session. Please try again or contact support.",
   portal_failed: "We couldn't open the billing portal. Please try again or contact support.",
@@ -47,9 +70,10 @@ export default async function AccountPage({
   }
 
   // Prefer JWT-auth /api/auth/me for richer data when available
-  const [me, authMe] = await Promise.all([
+  const [me, authMe, subscription] = await Promise.all([
     getMe(token),
     session.jwtToken ? getAuthMe(session.jwtToken) : null,
+    getSubscription(token),
   ]);
 
   if (!me) {
@@ -64,6 +88,30 @@ export default async function AccountPage({
   const isPlatform    = isPaid;
   const isAdmin       = userRole === "admin";
   const planName      = planDisplayName(me.entitlementLevel, me.stripeSubscriptionTier);
+
+  // ── Trial status (display only) ────────────────────────────────────────
+  // Sourced from the live Stripe subscription via GET /api/billing/subscription
+  // (trial_end + amount are authoritative there; DB fallback derives trial_end
+  // from trial_started_at + TRIAL_PERIOD_DAYS). On conversion day Stripe flips
+  // status trialing → active and this block naturally stops rendering.
+  const isTrialing  = subscription?.status === "trialing";
+  const trialEndDate = isTrialing && subscription?.trial_end ? new Date(subscription.trial_end) : null;
+  const trialDaysLeft = trialEndDate
+    ? Math.max(0, Math.ceil((trialEndDate.getTime() - Date.now()) / 86_400_000))
+    : null;
+  const trialUrgent = isTrialing && trialDaysLeft !== null && trialDaysLeft <= 3;
+  const trialEndLabel = trialEndDate
+    ? trialEndDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+    : null;
+  // Amount comes straight off the subscribed price — never hardcoded.
+  const trialAmountLabel = formatSubscriptionPrice(
+    subscription?.amount ?? null,
+    subscription?.currency ?? null,
+    subscription?.interval ?? null,
+  );
+  const daysLeftText = trialDaysLeft === null
+    ? null
+    : trialDaysLeft === 1 ? "1 day left" : `${trialDaysLeft} days left`;
   const { billing_error: billingError, reason: billingReason, mfa_required: mfaRequired } = await searchParams;
   const billingErrorMessage = billingError ? BILLING_ERRORS[billingError] ?? null : null;
   const showMfaBanner = mfaRequired === "1";
@@ -86,14 +134,11 @@ export default async function AccountPage({
             </p>
           </div>
           {isAdmin && (
-            <form action="/api/billing/portal" method="POST" className="flex-shrink-0">
-              <button
-                type="submit"
-                className="text-sm font-semibold text-red-700 border border-red-300 hover:border-red-500 px-4 py-1.5 rounded-lg transition-colors whitespace-nowrap"
-              >
-                Update Billing
-              </button>
-            </form>
+            <BillingPortalForm
+              label="Update Billing"
+              formClassName="flex-shrink-0"
+              buttonClassName="text-sm font-semibold text-red-700 border border-red-300 hover:border-red-500 px-4 py-1.5 rounded-lg transition-colors whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed"
+            />
           )}
         </div>
       )}
@@ -252,25 +297,59 @@ export default async function AccountPage({
             >
               {planName}
             </span>
-            {isPaid && (
+            {isTrialing ? (
+              <span className="text-amber-700 text-sm font-medium">
+                Free Trial{daysLeftText ? ` — ${daysLeftText}` : ""}
+                {trialEndLabel ? ` (converts to ${planName} on ${trialEndLabel})` : ""}
+              </span>
+            ) : isPaid ? (
               <span className="text-slate-500 text-sm">Active subscription</span>
-            )}
+            ) : null}
           </div>
 
           {isPaid ? (
             <div>
-              <p className="text-slate-600 text-sm mb-4">
-                Active subscription. Full access to all Intelligence Brief content.
-              </p>
-              {isAdmin && (
-                <form action="/api/billing/portal" method="POST">
-                  <button
-                    type="submit"
-                    className="border border-slate-300 hover:border-slate-400 text-slate-700 hover:text-slate-900 text-sm font-medium px-5 py-2 rounded-lg transition-colors"
+              {isTrialing ? (
+                <div
+                  className={`mb-4 rounded-lg border p-4 ${
+                    trialUrgent ? "border-red-300 bg-red-50" : "border-amber-200 bg-amber-50"
+                  }`}
+                >
+                  <p
+                    className={`text-sm font-semibold ${
+                      trialUrgent ? "text-red-800" : "text-amber-900"
+                    }`}
                   >
-                    Manage Billing
-                  </button>
-                </form>
+                    {trialUrgent
+                      ? `Your trial ends in ${daysLeftText ?? "under a day"} — you'll be charged ${
+                          trialAmountLabel ?? "your plan price"
+                        }${trialEndLabel ? ` on ${trialEndLabel}` : ""} unless you cancel.`
+                      : `You're on a free trial with full Platform access${
+                          daysLeftText ? ` — ${daysLeftText}` : ""
+                        }.${
+                          trialAmountLabel && trialEndLabel
+                            ? ` Converts to ${trialAmountLabel} on ${trialEndLabel}.`
+                            : ""
+                        }`}
+                  </p>
+                  <p className={`text-xs mt-1 ${trialUrgent ? "text-red-700" : "text-amber-700"}`}>
+                    Cancel anytime before then and you won&apos;t be charged.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-slate-600 text-sm mb-4">
+                  Active subscription. Full access to all Intelligence Brief content.
+                </p>
+              )}
+              {isAdmin && (
+                <BillingPortalForm
+                  label={isTrialing ? "Manage billing" : "Manage Billing"}
+                  buttonClassName={
+                    trialUrgent
+                      ? "border border-red-400 bg-white hover:bg-red-50 text-red-700 hover:text-red-800 text-sm font-semibold px-5 py-2 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                      : "border border-slate-300 hover:border-slate-400 text-slate-700 hover:text-slate-900 text-sm font-medium px-5 py-2 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  }
+                />
               )}
               {!isAdmin && (
                 <p className="text-xs text-slate-400">Only admins can manage billing.</p>
@@ -289,7 +368,7 @@ export default async function AccountPage({
                       type="submit"
                       className="w-full border border-teal-600 text-teal-600 hover:bg-teal-50 text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                     >
-                      Professional — $29/mo
+                      Brief Pro — $49/mo
                     </button>
                   </form>
                   <form action="/api/billing/checkout" method="POST">
@@ -298,7 +377,7 @@ export default async function AccountPage({
                       type="submit"
                       className="w-full border border-teal-600 text-teal-600 hover:bg-teal-50 text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                     >
-                      Team Professional — $189/mo
+                      Brief Team — $199/mo
                     </button>
                   </form>
                   <form action="/api/billing/checkout" method="POST">
@@ -307,7 +386,7 @@ export default async function AccountPage({
                       type="submit"
                       className="w-full bg-teal-600 hover:bg-teal-500 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                     >
-                      Platform Professional — $1,099/mo
+                      Platform Professional — $800/mo
                     </button>
                   </form>
                   <form action="/api/billing/checkout" method="POST">
@@ -316,7 +395,7 @@ export default async function AccountPage({
                       type="submit"
                       className="w-full bg-teal-600 hover:bg-teal-500 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                     >
-                      Platform Annual — $12,000/yr
+                      Platform Annual — $600/mo billed annually
                     </button>
                   </form>
                   <p className="text-xs text-slate-500 pt-1">

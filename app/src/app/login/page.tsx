@@ -12,7 +12,11 @@ import {
   AuthDivider,
 } from "@/components/AuthCard";
 
-const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL ?? "https://securelogic-engine.onrender.com";
+// Browser-facing engine base URL. Set per environment (staging→staging engine,
+// prod→prod engine) via NEXT_PUBLIC_ENGINE_URL. The dev fallback is localhost —
+// NEVER a production host, so a missing value in a staging build fails locally
+// instead of silently routing staging traffic to production.
+const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL ?? "http://localhost:4000";
 
 interface SsoDomainResult {
   hasSso: boolean;
@@ -237,7 +241,7 @@ function LoginForm() {
       title="Sign in"
       subtitle="Access your SecureLogic AI account."
     >
-      {(reason === "idle" || reason === "session_invalidated") && (
+      {(reason === "idle" || reason === "expired" || reason === "session_invalidated") && (
         <div
           style={{
             background:   "rgba(59,130,246,0.1)",
@@ -252,6 +256,8 @@ function LoginForm() {
         >
           {reason === "session_invalidated"
             ? "Your session was invalidated because your password was changed. Please sign in again."
+            : reason === "expired"
+            ? "Your session expired. Please sign in again."
             : "You were signed out due to inactivity. Please sign in again."}
         </div>
       )}

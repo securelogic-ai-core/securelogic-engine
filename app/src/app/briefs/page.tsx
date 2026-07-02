@@ -136,8 +136,8 @@ export default async function BriefsPage() {
             Upgrade for full access to all Intelligence Brief content.
           </p>
           <div className="flex items-center justify-center gap-3 flex-wrap">
-            <CheckoutButton tier="professional" label="Professional — $29/mo" variant="solid" />
-            <CheckoutButton tier="teams" label="Team — $209/mo" variant="outline" />
+            <CheckoutButton tier="professional" label="Brief Pro — $49/mo" variant="solid" />
+            <CheckoutButton tier="teams" label="Brief Team — $199/mo" variant="outline" />
           </div>
         </div>
       )}

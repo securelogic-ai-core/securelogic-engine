@@ -1,0 +1,21 @@
+id: add_ai_system
+title: 'Add an AI system'
+goal: 'Register an AI system in the inventory so it can be governed and assessed.'
+permissions: platform
+navigation:
+  - Assets
+  - AI Systems
+routes:
+  - /ai-systems
+  - /ai-systems/new
+  - /ai-systems/import
+ordered_steps:
+  - 'Open Assets → AI Systems in the top navigation (or go to /ai-systems).'
+  - 'Click "Add AI System" to open the form at /ai-systems/new.'
+  - 'Fill in the system details and save. Bulk import is available at /ai-systems/import.'
+expected_result: 'The AI system appears in the inventory, ready for a governance review or assessment.'
+common_mistakes:
+  - 'Recording a vendor dependency before the AI system exists — add the system first.'
+related_workflows:
+  - review_ai_governance
+  - add_vendor

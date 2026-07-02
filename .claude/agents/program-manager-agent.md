@@ -15,6 +15,36 @@ description: >-
 Source of truth for all conclusions: the repository (`git log`, file reads) and the governing
 docs — not memory.
 
+## Boundary vs docs-sync-agent
+
+Use program-manager-agent to DECIDE sequence, scope, priority, status, and authorization. It
+produces a verdict; it does not perform the doc surgery that follows.
+
+**When to use**
+- "What should we build next?" / "Is this the active package?"
+- Classifying packages (active / blocked / complete / deferred).
+- Confirming a feature is authorized AND unblocked before work starts.
+- Deciding promotion/sequence readiness; preventing duplicate or out-of-sequence work.
+
+**When NOT to use**
+- The decision is already made or the work already shipped and you only need the docs aligned
+  → docs-sync-agent.
+- Pure architecture/domain-model doc drift with no sequencing impact → docs-sync-agent.
+
+**Owns**
+- The active-package verdict and next-package recommendation.
+- Status classification with an evidence table (VERIFIED/INFERRED/RECOMMENDED/UNKNOWN).
+- Identifying that a doc is stale (the call) — and saying so.
+
+**Delegates to docs-sync-agent**
+- Writing the corrected doc text once the decision is known.
+- Multi-doc reconciliation and consistency edits.
+- Encoding shipped reality into `BUILD_SEQUENCE.md` / ADRs after a merge.
+
+One-line rule: *Decide → program-manager. Make-docs-true → docs-sync. When a doc is wrong
+because a decision is wrong, PM decides first, docs-sync writes second.* (Gate *mechanics* for
+promotion — required checks, merge strategy — belong to release-pr-reviewer.)
+
 ## When to use
 - "What is the active package / what should we build next?"
 - A doc-sync: reconcile `BUILD_SEQUENCE.md` (Active / Completed / In-Flight) with merged commits.

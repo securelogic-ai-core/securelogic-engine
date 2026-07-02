@@ -2,8 +2,11 @@
 
 > **Status:** **Architecture Ratified – Implementation Pending** (operator-ratified 2026-06-25). This is the
 > approved architectural baseline for SecureLogic AI external-signal work. It ratifies architecture and
-> design decisions **only** — it is **NOT** authorization to implement. Priority 4 (Signal Ingestion
-> Hardening) remains **BLOCKED** until the §12 prerequisites are satisfied (#5/#6/#7 still OPEN).
+> design decisions **only** — this *document* is not itself the implementation authorization. Priority 4
+> (Signal Ingestion Hardening) is now **ACTIVE**: the §12 prerequisites **#5/#6/#7 were all SATISFIED**
+> (#5 2026-06-26; #6/#7 2026-06-25) and the **operator authorized the build scope on 2026-06-26**.
+> Implementation has begun — slice **4A.1** is merged to `develop` (see the dated *Update (2026-06-26)*
+> below the Ratification block, and `docs/roadmap/priority-4-implementation-plan.md`).
 > **Scope:** documentation only. No application code is changed by this package's design phase.
 > **Date started:** 2026-06-25. **Ratified:** 2026-06-25.
 > **Authoring skill:** `securelogic-intelligence-pipeline-engineer` (+ `securelogic-enterprise-architect` for layering, `securelogic-program-manager` for sequencing).
@@ -368,6 +371,22 @@ package's completion in `BUILD_SEQUENCE.md` and naming any successor are a **sep
 doc-sync, pending operator approval** (not done here). Priority 4 is a separate, not-yet-authorized package
 gated on §12 #5–#7.
 
+### Update (2026-06-26) — Priority 4 authorized; conditions 3 & 4 above superseded
+
+> The 2026-06-25 ratification block above is preserved as dated history. Two of its conditions have since
+> been overtaken by events and are recorded here rather than rewritten in place:
+>
+> - **Condition 3 ("implementation remains BLOCKED") — SUPERSEDED 2026-06-26.** All §12 prerequisites
+>   (#5/#6/#7) were satisfied and the **operator authorized the Priority-4 build scope** (decisions D1–D7
+>   operator-approved, PR #370; plan accepted, PR #369). Priority 4 is now an **ACTIVE** build package.
+> - **Condition 4 ("#5, #6, #7 remain OPEN") — SUPERSEDED.** All three are **✅ SATISFIED** (see §12, which
+>   already reflects this): #5 on 2026-06-26, #6/#7 on 2026-06-25.
+>
+> **Implementation status:** the first slice — **4A.1** (RSS-registry `kind` discriminator) — is
+> implemented and **merged to `develop`** (PR #371 `feat/p4a-registry-kind`, commit `650d478d`,
+> 2026-06-26), CI 7/7 green, strictly additive (no DB/config/behavior change). This *design document*
+> remains the architectural baseline; the executable plan is `docs/roadmap/priority-4-implementation-plan.md`.
+
 ## 12. Prerequisites for the next package (Priority 4 — Signal Ingestion Hardening)
 
 Status after the **2026-06-25 decision review** (§10):
@@ -382,9 +401,9 @@ Status after the **2026-06-25 decision review** (§10):
 4. **Clustering identity key (T4 / D2) — RESOLVED:** CVE-primary `cluster_key` beside `dedup_hash`.
    Remaining: validate the CVE-less fingerprint against real data in P4.
 
-**Gating prerequisites — status:** #5 **OPEN**; #6 and #7 **✅ SATISFIED (2026-06-25)** (kept in sync with `BUILD_SEQUENCE.md`).
+**Gating prerequisites — status:** **#5, #6, #7 all ✅ SATISFIED** (#5 2026-06-26; #6/#7 2026-06-25) (kept in sync with `BUILD_SEQUENCE.md`).
 5. **A real-Postgres integration lane** for ingestion + a **cross-org isolation test** closing R5
-   (worker→brief per-org filtering) — Priority-4 changes per-org fan-out, so this is a gating prerequisite. **OPEN.**
+   (worker→brief per-org filtering) — Priority-4 changes per-org fan-out, so this is a gating prerequisite. **✅ SATISFIED (2026-06-26)** — `test/isolation/r5PipelineIsolation.test.ts` green in the `cross-org-isolation` lane; R5 RESOLVED in `TENANT_ISOLATION_STANDARD.md`.
 6. **`main→develop` reconciliation — ✅ SATISFIED (2026-06-25).** `main` was back-merged into `develop`
    via a **true merge commit `56992b3b`** (`--no-ff`, not squashed; parents `[7e7eaebc doc commit,
    cbd3504b origin/main]`). **Evidence (VERIFIED — matches `BUILD_SEQUENCE.md`):** `origin/develop..origin/main`
@@ -402,5 +421,6 @@ Status after the **2026-06-25 decision review** (§10):
 
 ---
 
-> **Next step:** review this draft. Per the package rules, **no code will be proposed until this design is
-> ratified.** Open questions in §10 and prerequisites in §12 are the decisions needed before Priority 4.
+> **Status (2026-06-26):** this design is **ratified** and Priority 4 is **authorized and underway** (slice
+> 4A.1 merged to `develop`). The §10 open questions were resolved and the §12 prerequisites satisfied; the
+> decisions are recorded in `docs/roadmap/priority-4-implementation-plan.md` §10, which now drives the build.

@@ -17,36 +17,36 @@ export default function IntelligenceBriefPage() {
   return (
     <>
       {/* Hero */}
-      <section className="bg-navy-900 text-white pt-20 pb-24 px-4 relative overflow-hidden">
+      <section className="bg-bg text-text pt-20 pb-24 px-4 relative overflow-hidden">
         <div
           className="absolute inset-0 pointer-events-none"
           aria-hidden="true"
           style={{
             background:
-              "radial-gradient(ellipse 70% 60% at 50% 100%, rgba(13,148,136,0.18) 0%, transparent 65%), radial-gradient(ellipse 40% 40% at 50% 80%, rgba(6,78,100,0.25) 0%, transparent 60%)",
+              "radial-gradient(ellipse 70% 60% at 50% 100%, rgba(0,196,180,0.18) 0%, transparent 65%), radial-gradient(ellipse 40% 40% at 50% 80%, rgba(6,78,100,0.25) 0%, transparent 60%)",
           }}
         />
         <div className="relative max-w-3xl mx-auto text-center">
-          <span className="inline-block text-xs font-bold text-teal-400 uppercase tracking-widest mb-4">
+          <span className="inline-block text-xs font-bold text-accent uppercase tracking-widest mb-4">
             SecureLogic AI · Available Now
           </span>
           <h1 className="text-5xl sm:text-6xl font-extrabold leading-tight tracking-tight mb-6">
             Intelligence Brief
           </h1>
-          <p className="text-lg text-slate-300 leading-relaxed mb-8 max-w-2xl mx-auto">
+          <p className="text-lg text-text-body leading-relaxed mb-8 max-w-2xl mx-auto">
             Weekly executive-grade risk intelligence — synthesized from hundreds of signals across
             security, regulatory, vendor risk, and AI governance sources.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link
               href="/#brief-signup"
-              className="inline-flex items-center justify-center px-6 py-3 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-500 transition-colors text-sm"
+              className="inline-flex items-center justify-center px-6 py-3 rounded-lg bg-accent text-[#04201d] font-semibold hover:bg-accent-hover transition-colors text-sm"
             >
               Get the Free Brief
             </Link>
             <a
-              href={`${APP_URL}/signup?plan=brief-pro`}
-              className="inline-flex items-center justify-center px-6 py-3 rounded-lg border border-slate-600 text-slate-200 font-semibold hover:border-slate-400 hover:text-white transition-colors text-sm"
+              href={`${APP_URL}/signup?plan=professional`}
+              className="inline-flex items-center justify-center px-6 py-3 rounded-lg border border-hairline text-text font-semibold hover:border-accent hover:text-white transition-colors text-sm"
             >
               Start Brief Pro
             </a>
@@ -58,8 +58,8 @@ export default function IntelligenceBriefPage() {
       <section className="py-20 px-4">
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-14">
-            <h2 className="text-2xl font-bold text-slate-900 mb-3">What every issue includes</h2>
-            <p className="text-slate-500 max-w-xl mx-auto">
+            <h2 className="text-2xl font-bold text-text mb-3">What every issue includes</h2>
+            <p className="text-text-muted max-w-xl mx-auto">
               Built for security leaders who need to understand risk exposure without spending hours
               aggregating sources.
             </p>
@@ -98,9 +98,9 @@ export default function IntelligenceBriefPage() {
                   "AI policy, EU AI Act, ISO 42001, model risk, and AI system governance developments affecting enterprise AI adoption.",
               },
             ].map((item) => (
-              <div key={item.title} className="bg-white rounded-xl border border-slate-200 p-7 shadow-sm hover:border-teal-300/60 hover:shadow-md hover:shadow-teal-500/5 transition-all">
-                <h3 className="font-semibold text-slate-900 mb-2">{item.title}</h3>
-                <p className="text-sm text-slate-500 leading-relaxed">{item.description}</p>
+              <div key={item.title} className="bg-bg-elevated rounded-xl border border-hairline p-7 shadow-sm hover:border-accent/50 hover:shadow-md hover:shadow-accent/5 transition-all">
+                <h3 className="font-semibold text-text mb-2">{item.title}</h3>
+                <p className="text-sm text-text-muted leading-relaxed">{item.description}</p>
               </div>
             ))}
           </div>
@@ -108,22 +108,22 @@ export default function IntelligenceBriefPage() {
       </section>
 
       {/* Sample signals */}
-      <section className="bg-slate-900 py-20 px-4 text-white">
+      <section className="bg-bg py-20 px-4 text-text">
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-12">
             <h2 className="text-2xl font-bold mb-3">Format preview</h2>
-            <p className="text-slate-400 text-sm">This is the structure and format of a real issue. Content is illustrative.</p>
+            <p className="text-text-muted text-sm">This is the structure and format of a real issue. Content is illustrative.</p>
           </div>
 
-          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+          <div className="bg-bg-elevated rounded-xl border border-hairline overflow-hidden">
             {/* Brief header mock */}
-            <div className="p-6 border-b border-slate-700">
+            <div className="p-6 border-b border-hairline">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-xs text-teal-400 font-semibold uppercase tracking-wider">SecureLogic AI · Intelligence Brief</p>
-                <span className="text-xs text-slate-500">Weekly Edition</span>
+                <p className="text-xs text-accent font-semibold uppercase tracking-wider">SecureLogic AI · Intelligence Brief</p>
+                <span className="text-xs text-text-muted">Weekly Edition</span>
               </div>
-              <p className="text-sm text-slate-300 leading-relaxed">
-                <span className="font-medium text-white">Executive synthesis: </span>
+              <p className="text-sm text-text-body leading-relaxed">
+                <span className="font-medium text-text">Executive synthesis: </span>
                 This week's brief captures an elevated threat environment, with three critical-severity
                 findings requiring immediate action. The convergence of active zero-day exploitation,
                 a major vendor supply chain incident, and new EU AI Act enforcement guidance creates
@@ -132,15 +132,15 @@ export default function IntelligenceBriefPage() {
             </div>
 
             {/* Risk counts */}
-            <div className="px-6 py-4 flex gap-3 border-b border-slate-700">
-              <span className="px-3 py-1 bg-red-900/50 text-red-300 text-xs font-semibold rounded-full border border-red-800/40">3 Critical</span>
-              <span className="px-3 py-1 bg-orange-900/50 text-orange-300 text-xs font-semibold rounded-full border border-orange-800/40">7 High</span>
-              <span className="px-3 py-1 bg-yellow-900/40 text-yellow-300 text-xs font-semibold rounded-full border border-yellow-800/40">12 Medium</span>
-              <span className="px-3 py-1 bg-slate-700 text-slate-300 text-xs font-semibold rounded-full">9 Low</span>
+            <div className="px-6 py-4 flex gap-3 border-b border-hairline">
+              <span className="px-3 py-1 bg-danger/15 text-danger text-xs font-semibold rounded-full border border-danger/30">3 Critical</span>
+              <span className="px-3 py-1 bg-warning/15 text-warning text-xs font-semibold rounded-full border border-warning/30">7 High</span>
+              <span className="px-3 py-1 bg-yellow-400/15 text-yellow-300 text-xs font-semibold rounded-full border border-yellow-400/30">12 Medium</span>
+              <span className="px-3 py-1 bg-bg-elevated-2 text-text-body text-xs font-semibold rounded-full">9 Low</span>
             </div>
 
             {/* Signal cards */}
-            <div className="divide-y divide-slate-700/60">
+            <div className="divide-y divide-hairline">
               {[
                 {
                   tag: "VENDOR RISK",
@@ -159,21 +159,21 @@ export default function IntelligenceBriefPage() {
               ].map((signal) => (
                 <div key={signal.title} className="p-5">
                   <div className="flex items-center gap-2.5 mb-2">
-                    <span className="text-[10px] font-bold text-teal-400 bg-teal-900/40 px-2 py-0.5 rounded uppercase tracking-wide">
+                    <span className="text-[10px] font-bold text-accent bg-accent/15 px-2 py-0.5 rounded uppercase tracking-wide">
                       {signal.tag}
                     </span>
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide ${
                       signal.severity === "CRITICAL"
-                        ? "text-red-300 bg-red-900/40"
-                        : "text-orange-300 bg-orange-900/40"
+                        ? "text-danger bg-danger/15"
+                        : "text-warning bg-warning/15"
                     }`}>
                       {signal.severity}
                     </span>
                   </div>
-                  <h4 className="font-semibold text-white text-sm mb-1.5">{signal.title}</h4>
-                  <p className="text-slate-400 text-xs leading-relaxed mb-3">{signal.body}</p>
-                  <div className="bg-teal-900/20 border border-teal-800/30 rounded-lg p-3">
-                    <p className="text-xs text-teal-300">
+                  <h4 className="font-semibold text-text text-sm mb-1.5">{signal.title}</h4>
+                  <p className="text-text-muted text-xs leading-relaxed mb-3">{signal.body}</p>
+                  <div className="bg-accent/10 border border-accent/30 rounded-lg p-3">
+                    <p className="text-xs text-accent">
                       <span className="font-semibold">Recommended action: </span>
                       {signal.action}
                     </p>
@@ -182,12 +182,12 @@ export default function IntelligenceBriefPage() {
               ))}
 
               <div className="p-5 text-center">
-                <p className="text-sm text-slate-500">
+                <p className="text-sm text-text-muted">
                   + 29 more signals this issue — available to subscribers
                 </p>
                 <a
-                  href={`${APP_URL}/signup?plan=brief-pro`}
-                  className="mt-3 inline-flex items-center px-4 py-2 rounded-lg bg-teal-600 text-white text-xs font-semibold hover:bg-teal-500 transition-colors"
+                  href={`${APP_URL}/signup?plan=professional`}
+                  className="mt-3 inline-flex items-center px-4 py-2 rounded-lg bg-accent text-[#04201d] text-xs font-semibold hover:bg-accent-hover transition-colors"
                 >
                   Subscribe to read full brief
                 </a>
@@ -200,22 +200,22 @@ export default function IntelligenceBriefPage() {
       {/* Pricing CTA */}
       <section className="py-20 px-4">
         <div className="max-w-xl mx-auto text-center">
-          <h2 className="text-2xl font-bold text-slate-900 mb-3">Get the Intelligence Brief</h2>
-          <p className="text-slate-500 mb-8 leading-relaxed">
+          <h2 className="text-2xl font-bold text-text mb-3">Get the Intelligence Brief</h2>
+          <p className="text-text-muted mb-8 leading-relaxed">
             Full access to every issue — all signals, recommendations, and the executive synthesis.
             Cancel any time.
           </p>
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-8 mb-6">
-            <p className="text-xs text-slate-400 uppercase tracking-wider font-medium mb-1">{briefPro.name}</p>
+          <div className="bg-bg-elevated border border-hairline rounded-2xl shadow-sm p-8 mb-6">
+            <p className="text-xs text-text-muted uppercase tracking-wider font-medium mb-1">{briefPro.name}</p>
             <div className="flex items-baseline justify-center gap-1.5 mb-1">
-              <p className="text-4xl font-bold text-slate-900">{briefPro.price}</p>
-              <span className="text-sm text-slate-500">per month</span>
+              <p className="text-4xl font-bold text-text">{briefPro.price}</p>
+              <span className="text-sm text-text-muted">per month</span>
             </div>
-            <p className="text-sm text-slate-500 mb-6">{briefPro.tagline}</p>
-            <ul className="text-sm text-slate-600 space-y-2.5 text-left mb-8">
+            <p className="text-sm text-text-muted mb-6">{briefPro.tagline}</p>
+            <ul className="text-sm text-text-body space-y-2.5 text-left mb-8">
               {briefPro.features.map((f) => (
                 <li key={f} className="flex items-start gap-2.5">
-                  <span className="mt-0.5 w-4 h-4 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center flex-shrink-0">
+                  <span className="mt-0.5 w-4 h-4 rounded-full bg-accent/15 text-accent flex items-center justify-center flex-shrink-0">
                     <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                     </svg>
@@ -225,20 +225,20 @@ export default function IntelligenceBriefPage() {
               ))}
             </ul>
             <a
-              href={`${APP_URL}/signup?plan=brief-pro`}
-              className="block w-full text-center py-3 px-6 rounded-lg bg-teal-600 text-white font-semibold hover:bg-teal-500 transition-colors"
+              href={`${APP_URL}/signup?plan=professional`}
+              className="block w-full text-center py-3 px-6 rounded-lg bg-accent text-[#04201d] font-semibold hover:bg-accent-hover transition-colors"
             >
               Start Brief Pro
             </a>
           </div>
-          <p className="text-xs text-slate-400 leading-relaxed">
+          <p className="text-xs text-text-muted leading-relaxed">
             Prefer to start free? The weekly{" "}
-            <Link href="/#brief-signup" className="text-teal-600 hover:underline">
+            <Link href="/#brief-signup" className="text-accent hover:underline">
               Intelligence Brief is free
             </Link>{" "}
             — no credit card. Need team distribution or the full risk platform? Compare
-            Brief-Team and Platform Professional on the{" "}
-            <Link href="/pricing/" className="text-teal-600 hover:underline">
+            Brief Team and Platform Professional on the{" "}
+            <Link href="/pricing/" className="text-accent hover:underline">
               pricing page
             </Link>
             .

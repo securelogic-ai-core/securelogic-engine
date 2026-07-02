@@ -1,0 +1,19 @@
+id: activate_framework
+title: 'Activate a framework'
+goal: 'Activate a framework (e.g. NIST CSF, NIST AI RMF, ISO/IEC 42001, SOC 2) to assess controls and obligations against it.'
+permissions: platform
+navigation:
+  - Compliance
+  - Frameworks
+routes:
+  - /frameworks
+ordered_steps:
+  - 'Open Compliance → Frameworks in the top navigation (or go to /frameworks).'
+  - 'Choose a framework and activate it to pull in its requirements.'
+  - 'Map controls and obligations to the framework, then track readiness on the compliance views.'
+expected_result: 'The framework''s requirements are available and readiness is tracked as you assess.'
+common_mistakes:
+  - 'Activating a framework but never mapping controls to it, so readiness stays at zero.'
+related_workflows:
+  - assess_control
+  - review_ai_governance

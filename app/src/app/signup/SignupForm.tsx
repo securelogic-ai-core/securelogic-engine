@@ -11,6 +11,7 @@ import {
   AuthDivider,
 } from "@/components/AuthCard";
 import ConsentCheckbox from "@/components/ConsentCheckbox";
+import { validatePasswordStrength, validatePasswordsMatch } from "./signupValidation";
 
 type PaidTier = "professional" | "teams" | "platform" | "platform_annual";
 
@@ -28,10 +29,10 @@ function parsePlanParam(raw: string | null): PaidTier | null {
 
 function planLabel(tier: PaidTier): string {
   switch (tier) {
-    case "professional":    return "Professional — $29/mo";
-    case "teams":           return "Team Professional — $189/mo";
-    case "platform":        return "Platform Professional — $1,099/mo";
-    case "platform_annual": return "Platform Annual — $12,000/yr";
+    case "professional":    return "Brief Pro — $49/mo";
+    case "teams":           return "Brief Team — $199/mo";
+    case "platform":        return "Platform Professional — $800/mo";
+    case "platform_annual": return "Platform Annual — $600/mo billed annually";
   }
 }
 
@@ -47,24 +48,21 @@ export function SignupForm({ plan: rawPlan }: Props) {
   const [name,       setName]       = useState("");
   const [email,      setEmail]      = useState("");
   const [password,   setPassword]   = useState("");
+  const [confirm,    setConfirm]    = useState("");
   const [promoCode,  setPromoCode]  = useState("");
   const [accepted,   setAccepted]   = useState(false);
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState<string | null>(null);
 
-  function clientValidatePassword(pw: string): string | null {
-    if (pw.length < 12) return "Must be 12+ characters with uppercase, lowercase, and a number";
-    if (!/[a-z]/.test(pw) || !/[A-Z]/.test(pw) || !/[0-9]/.test(pw))
-      return "Must be 12+ characters with uppercase, lowercase, and a number";
-    return null;
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
-    const pwErr = clientValidatePassword(password);
+    const pwErr = validatePasswordStrength(password);
     if (pwErr) { setError(pwErr); return; }
+
+    const matchErr = validatePasswordsMatch(password, confirm);
+    if (matchErr) { setError(matchErr); return; }
 
     if (!accepted) {
       setError("Please accept the Terms of Service, Privacy Policy, and AI Transparency & Responsible Use Policy to continue.");
@@ -154,6 +152,15 @@ export function SignupForm({ plan: rawPlan }: Props) {
           value={password}
           onChange={setPassword}
           placeholder="12+ characters"
+          autoComplete="new-password"
+        />
+        <AuthInput
+          id="confirm"
+          label="Confirm Password"
+          type="password"
+          value={confirm}
+          onChange={setConfirm}
+          placeholder="Repeat your password"
           autoComplete="new-password"
         />
 

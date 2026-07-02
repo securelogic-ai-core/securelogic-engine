@@ -42,6 +42,32 @@ services:
       - key: JWT_SECRET
         sync: false
 
+      # ── Boot-critical (engine exits at boot without these) ──────────────
+      # validateEnv.ts REQUIRED_ENV_PROD + validateFieldEncryptionKey(). These
+      # were previously undeclared here and had to be remembered as
+      # dashboard-only vars; declared now so render.yaml is a complete boot
+      # contract for the engine service.
+
+      # AES-256-GCM key — exactly 64 lowercase hex chars — encrypting sensitive
+      # JSONB at rest (report_json, content_json, raw_payload). Required in prod.
+      - key: FIELD_ENCRYPTION_KEY
+        sync: false
+
+      # HMAC secret (min 16 chars) signing one-click unsubscribe links.
+      - key: UNSUBSCRIBE_SECRET
+        sync: false
+
+      # Verified Resend sender for outbound Intelligence Brief emails. Read by
+      # briefEmailSender.ts (BRIEF_FROM_EMAIL). DISTINCT from
+      # NEWSLETTER_FROM_EMAIL below, which is the transactional / recovery /
+      # invite sender — both coexist and are set independently.
+      - key: BRIEF_FROM_EMAIL
+        sync: false
+
+      # Base URL for CAN-SPAM unsubscribe links in Brief emails.
+      - key: BRIEF_UNSUBSCRIBE_BASE_URL
+        sync: false
+
       # Scheduler trigger secret (min 32 chars) — bearer token for
       # POST /api/admin/briefs/run-scheduler. Required at boot in production
       # per validateEnv.ts; engine refuses to start without it.
@@ -56,6 +82,13 @@ services:
 
       # Base URL for unsubscribe links (e.g. https://app.example.com)
       - key: APP_BASE_URL
+        sync: false
+
+      # Engine's OWN public origin, used to build the SAML ACS URL the IdP posts
+      # back to. Set each environment to its own engine URL so a staging SSO flow
+      # uses the staging ACS endpoint. The code falls back to the production engine
+      # when unset, so this MUST be set explicitly on the staging engine service.
+      - key: ENGINE_URL_BASE
         sync: false
 
       # Stripe — optional; billing routes are disabled if not set
@@ -90,6 +123,12 @@ services:
       - key: STRIPE_PORTAL_RETURN_URL
         sync: false
 
+      # Stripe billing-portal configuration ID — selects the portal feature set
+      # (which products/prices the customer can switch to). Read by the billing
+      # portal route; without it the portal uses the Stripe account default.
+      - key: STRIPE_PORTAL_CONFIGURATION_ID
+        sync: false
+
       # Resend webhook signing secret (from Resend Dashboard > Webhooks)
       # Required: without this, bounce and complaint events return 401 and
       # are never recorded — suppression list will not auto-populate
@@ -116,6 +155,14 @@ services:
       - key: OPENAI_API_KEY
         sync: false
 
+      # Anthropic API key — LLM signal enrichment in the intelligence brief
+      # generator (src/api/lib/intelligenceBriefGenerator.ts) and the LLM
+      # control matcher (SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED below, which
+      # no-ops without this). Without it, brief items fall back to generic
+      # template content via fallbackWhyItMatters()/fallbackRecommendedActions().
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
       # Sentry error tracking (engine). DSN + environment label are set in the
       # Render dashboard, never in the repo. When SENTRY_DSN_ENGINE is unset the
       # engine boots normally with Sentry disabled. See docs/sentry-setup.md.
@@ -124,6 +171,18 @@ services:
 
       - key: SENTRY_ENV
         sync: false
+
+      # Platform free trial (PR-C2). Non-secret config with safe defaults, so
+      # declared with explicit `value:` (not sync:false): the engine ships
+      # trial-OFF and only enables it when an operator flips the flag to "true".
+      # PLATFORM tiers only; card required; one trial per org. NOTE: the website
+      # "Start Free Trial" CTAs are always visible, so at launch this flag MUST
+      # be flipped to "true" or those CTAs charge immediately (no trial).
+      - key: SECURELOGIC_PLATFORM_TRIAL_ENABLED
+        value: "false"
+      # Trial length in days (Stripe trial_period_days). Default 14.
+      - key: TRIAL_PERIOD_DAYS
+        value: "14"
 
       # Dormant-engine enablement — PRODUCTION (operator-authorized 2026-06-24).
       # The "match → surface → what to do next" engine, live. All three are
@@ -198,6 +257,24 @@ services:
       - key: JWT_SECRET
         sync: false
 
+      # ── Boot-critical (engine exits at boot without these) ──────────────
+      # Lockstep with the prod engine block. validateEnv.ts REQUIRED_ENV_PROD +
+      # validateFieldEncryptionKey() (NODE_ENV stays "production" on staging, so
+      # every prod boot gate applies here too).
+      - key: FIELD_ENCRYPTION_KEY
+        sync: false
+
+      - key: UNSUBSCRIBE_SECRET
+        sync: false
+
+      # BRIEF_FROM_EMAIL: verified Resend sender for Intelligence Brief emails
+      # (briefEmailSender.ts). Distinct from NEWSLETTER_FROM_EMAIL below.
+      - key: BRIEF_FROM_EMAIL
+        sync: false
+
+      - key: BRIEF_UNSUBSCRIBE_BASE_URL
+        sync: false
+
       - key: SCHEDULER_SECRET
         sync: false
 
@@ -205,6 +282,13 @@ services:
         sync: false
 
       - key: APP_BASE_URL
+        sync: false
+
+      # Engine's OWN public origin, used to build the SAML ACS URL the IdP posts
+      # back to. Set each environment to its own engine URL so a staging SSO flow
+      # uses the staging ACS endpoint. The code falls back to the production engine
+      # when unset, so this MUST be set explicitly on the staging engine service.
+      - key: ENGINE_URL_BASE
         sync: false
 
       - key: STRIPE_SECRET_KEY
@@ -232,6 +316,9 @@ services:
         sync: false
 
       - key: STRIPE_PORTAL_RETURN_URL
+        sync: false
+
+      - key: STRIPE_PORTAL_CONFIGURATION_ID
         sync: false
 
       - key: RESEND_WEBHOOK_SECRET
@@ -284,6 +371,13 @@ services:
       # not receive this var; production enablement is a future package decision.
       - key: SECURELOGIC_VENDOR_ASSURANCE_ENABLED
         value: "true"
+
+      # Platform free trial (PR-C2) — lockstep with the prod engine block.
+      # Non-secret config; default trial-OFF until an operator flips it to "true".
+      - key: SECURELOGIC_PLATFORM_TRIAL_ENABLED
+        value: "false"
+      - key: TRIAL_PERIOD_DAYS
+        value: "14"
 
       # Dormant-engine enablement — STAGING (lockstep with the prod engine block).
       # All three signal-engine capabilities on; disable any by setting "false".
@@ -360,6 +454,13 @@ services:
       # Base URL of the main API (e.g. https://app.example.com) — used to build
       # unsubscribe links appended to outbound newsletter emails
       - key: APP_BASE_URL
+        sync: false
+
+      # Engine's OWN public origin, used to build the SAML ACS URL the IdP posts
+      # back to. Set each environment to its own engine URL so a staging SSO flow
+      # uses the staging ACS endpoint. The code falls back to the production engine
+      # when unset, so this MUST be set explicitly on the staging engine service.
+      - key: ENGINE_URL_BASE
         sync: false
 
       # Anthropic API key — required for LLM signal enrichment, executive synthesis,
@@ -439,6 +540,13 @@ services:
       # Base URL of the staging API — used to build unsubscribe links
       # appended to outbound newsletter emails
       - key: APP_BASE_URL
+        sync: false
+
+      # Engine's OWN public origin, used to build the SAML ACS URL the IdP posts
+      # back to. Set each environment to its own engine URL so a staging SSO flow
+      # uses the staging ACS endpoint. The code falls back to the production engine
+      # when unset, so this MUST be set explicitly on the staging engine service.
+      - key: ENGINE_URL_BASE
         sync: false
 
       # Consumed by the LLM control matcher (PR #345) on the signal-ingestion
@@ -794,9 +902,20 @@ services:
       - key: SESSION_SECRET
         sync: false
 
-      # Absolute session lifetime in seconds. Default: 28800 (8 hours).
-      # Set lower for higher-security deployments.
+      # Legacy absolute session lifetime in seconds (default 8 h when set).
+      # Superseded by SESSION_ABSOLUTE_SECONDS below; still honored as a fallback
+      # so existing deployments keep their configured lifetime until migrated.
       - key: SESSION_TIMEOUT_SECONDS
+        sync: false
+
+      # PR-C1 session-timeout enforcement (runtime vars — a restart applies them;
+      # neither is NEXT_PUBLIC/build-time, so no rebuild is required).
+      #
+      # Idle (sliding) timeout in seconds. Activity extends it. Default 1800 (30 min).
+      - key: SESSION_IDLE_SECONDS
+        sync: false
+      # Absolute (non-extendable) timeout in seconds from login. Default 43200 (12 h).
+      - key: SESSION_ABSOLUTE_SECONDS
         sync: false
 
       # Sentry error tracking (app). Values set in the Render dashboard.
@@ -847,6 +966,20 @@ services:
       - key: NEXT_PUBLIC_APP_URL
         sync: false
 
+      # Canonical public URL of THIS marketing site, used for metadataBase /
+      # canonical tags / OG / sitemap. Set each environment to its OWN site URL so
+      # the staging build never emits production canonical/OG metadata.
+      # Prod: https://www.securelogicai.com · Staging: the staging Render URL.
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+
+      # Public origin of the SecureLogic engine API that the Brief signup form
+      # POSTs to. Set each environment to its OWN API origin so a staging build
+      # never posts subscriber emails to the production API.
+      # Prod: https://api.securelogicai.com · Staging: the staging engine URL.
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
+
   # Staging mirror of securelogic-website — tracks develop so the rebuilt
   # marketing site can be previewed before it is promoted to main. No custom
   # domains: it stays on its Render-assigned URL
@@ -868,4 +1001,18 @@ services:
       # Used by the Nav and Footer to build login/register CTAs.
       # e.g. https://app.securelogicai.com
       - key: NEXT_PUBLIC_APP_URL
+        sync: false
+
+      # Canonical public URL of THIS marketing site, used for metadataBase /
+      # canonical tags / OG / sitemap. Set each environment to its OWN site URL so
+      # the staging build never emits production canonical/OG metadata.
+      # Prod: https://www.securelogicai.com · Staging: the staging Render URL.
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+
+      # Public origin of the SecureLogic engine API that the Brief signup form
+      # POSTs to. Set each environment to its OWN API origin so a staging build
+      # never posts subscriber emails to the production API.
+      # Prod: https://api.securelogicai.com · Staging: the staging engine URL.
+      - key: NEXT_PUBLIC_API_URL
         sync: false

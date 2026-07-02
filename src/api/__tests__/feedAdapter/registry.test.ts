@@ -60,6 +60,12 @@ describe("registry shape", () => {
     }
   });
 
+  it("every registered feed exposes the kind discriminator 'rss' (only kind implemented in 4A)", () => {
+    for (const feed of FEEDS) {
+      expect(feed.kind).toBe("rss");
+    }
+  });
+
   it("THREAT_INTEL_FEED_IDS contains the three threat-intel ids", () => {
     expect([...THREAT_INTEL_FEED_IDS].sort()).toEqual([
       "bleepingcomputer",

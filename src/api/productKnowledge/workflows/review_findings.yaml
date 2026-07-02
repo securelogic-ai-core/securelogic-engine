@@ -1,0 +1,19 @@
+id: review_findings
+title: 'Review findings'
+goal: 'Triage open findings by severity and decide what to remediate.'
+permissions: platform
+navigation:
+  - Risk
+  - Findings
+routes:
+  - /findings
+ordered_steps:
+  - 'Open Risk → Findings in the top navigation (or go to /findings).'
+  - 'Filter by severity and status to focus on critical and high open findings first.'
+  - 'Open a finding to review its detail, then create or link a remediation action.'
+expected_result: 'High-priority findings are triaged and routed to remediation actions.'
+common_mistakes:
+  - 'Closing a finding without an action or evidence to justify it.'
+related_workflows:
+  - manage_actions
+  - assess_vendor

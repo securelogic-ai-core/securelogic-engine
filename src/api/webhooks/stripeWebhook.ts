@@ -687,6 +687,26 @@ export async function stripeWebhook(
       return;
     }
 
+    // Trial ending soon (fires ~3 days before a trial converts). No
+    // entitlement change — access continues through conversion. Handle
+    // explicitly (rather than falling into the generic ignored path) so it
+    // is logged as a heads-up and never errors. A dunning/heads-up email can
+    // hang off this event later; for now it is a graceful, logged 200.
+    if (eventType === "customer.subscription.trial_will_end") {
+      const sub = event.data.object as Stripe.Subscription;
+      logger.info(
+        {
+          event: "stripe_trial_will_end",
+          subscriptionId: sub.id,
+          trialEnd: sub.trial_end,
+          customerId: typeof sub.customer === "string" ? sub.customer : sub.customer?.id ?? null,
+        },
+        "stripeWebhook: Platform trial ending soon — heads-up only, no entitlement change"
+      );
+      respond({ received: true, trial_will_end: true });
+      return;
+    }
+
     // Determine what entitlement action to take
     const subscription =
       eventType.startsWith("customer.subscription.")
@@ -790,6 +810,29 @@ export async function stripeWebhook(
       subscriptionStatus,
       apiKeyId
     );
+
+    // Record the org's one-time Platform trial the moment it actually begins.
+    // Set at trial START (not at checkout creation) so an abandoned checkout
+    // never burns the org's single trial. Guarded WHERE trial_started_at IS
+    // NULL → idempotent across the trialing 'created' + 'updated' events. The
+    // checkout handler reads this column to reject a second trial (one per org).
+    if (
+      subscriptionStatus === "trialing" &&
+      (rawSubscriptionTier === "platform" || rawSubscriptionTier === "platform_annual")
+    ) {
+      const claimed = await pg.query(
+        `UPDATE organizations SET trial_started_at = NOW()
+          WHERE id = $1 AND trial_started_at IS NULL
+          RETURNING id`,
+        [orgId]
+      );
+      if ((claimed.rowCount ?? 0) > 0) {
+        logger.info(
+          { event: "stripe_platform_trial_started", orgId, subscriptionId },
+          "stripeWebhook: Platform trial started — recorded one-time trial claim on organization"
+        );
+      }
+    }
 
     // Platform upgrade: cancel any prior Brief subscriptions on the same
     // customer so they don't pay twice. Only fires for checkout.session.completed

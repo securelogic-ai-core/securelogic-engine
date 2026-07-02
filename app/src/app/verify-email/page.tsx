@@ -26,10 +26,10 @@ function parsePlanParam(raw: string | null): PaidTier | null {
 
 function planLabel(tier: PaidTier): string {
   switch (tier) {
-    case "professional":    return "Professional — $29/mo";
-    case "teams":           return "Team Professional — $189/mo";
-    case "platform":        return "Platform Professional — $1,099/mo";
-    case "platform_annual": return "Platform Annual — $12,000/yr";
+    case "professional":    return "Brief Pro — $49/mo";
+    case "teams":           return "Brief Team — $199/mo";
+    case "platform":        return "Platform Professional — $800/mo";
+    case "platform_annual": return "Platform Annual — $600/mo billed annually";
   }
 }
 

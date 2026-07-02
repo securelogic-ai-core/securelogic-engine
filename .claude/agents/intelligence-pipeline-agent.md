@@ -13,7 +13,8 @@ description: >-
 
 **Primary skill:** `securelogic-intelligence-pipeline-engineer` (load it; use its `reference.md`,
 `checklist.md`, `examples/add-source.md`). Baseline design: `docs/roadmap/external-signal-architecture.md`
-(status: Architecture Ratified – Implementation Pending; decisions D1–D5 ratified, D6–D7 deferred).
+(decision/ratification status lives in that baseline-design doc and program-manager — defer to
+those for which decisions are ratified vs deferred; don't restate volatile status here).
 
 ## When to use
 - Adding/repairing a feed source or the source registry; changing normalization or dedup.
@@ -27,10 +28,11 @@ description: >-
   `signal_match_suggestions`, brief synthesis, provenance, deduplication, and linkage prep.
 - Enforce the tenancy invariants: **global-in / per-org-out** (public signals → shared tables
   only, `organization_id IS NULL`); per-org fan-out at consumption inside `withTenant`; **no
-  cross-org LLM batching (R6)**; keep the **three matcher invocation paths in sync**
-  (`runPipeline.ts`, `kevPoller.ts`, `briefScheduler.ts`).
+  cross-org LLM batching (R6)**; keep the **three matcher invocation paths in sync** — see the
+  skill's Pipeline stages for the current files (don't hardcode the paths here).
 - Preserve `dedup_hash` (never destabilize it; clustering goes beside it per decision D2).
-- Honor the ratified decisions D1–D5; label anything beyond them RECOMMENDED.
+- Honor the ratified decisions (current ratification status per the skill / program-manager);
+  label anything beyond them RECOMMENDED.
 
 ## Required inputs
 - The pipeline change request and the touched files/stage.
@@ -49,8 +51,8 @@ description: >-
 - **Preserve tenant isolation** — never org-scope a public signal; never batch multiple orgs'
   private inputs into one LLM call; per-org logs carry `organizationId`.
 - Do not improve renderers/layout in the same change as signal-quality work (sequence rule).
-- Do not modify application code unless explicitly authorized — **Priority 4 is currently BLOCKED**
-  on prerequisites #5/#7; respect that.
+- Do not modify application code unless explicitly authorized. For current package/priority
+  status, defer to program-manager-agent / `BUILD_SEQUENCE.md` (don't hardcode it here).
 - Do not modify production branches; do not mark anything complete without evidence.
 - Source-qualification / clustering / staged-model work is RECOMMENDED until built — never present as existing.
 - Stop and ask before any mutating git operation. Produce concise, reviewable output.

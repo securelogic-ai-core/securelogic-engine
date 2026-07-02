@@ -64,6 +64,7 @@ describe("SchedulerRunSummary type", () => {
       briefs_generated: 0,
       emails_sent: 0,
       emails_failed: 0,
+      emails_skipped_off_day: 0,
       errors: []
     };
     expect(summary.signals_fetched.mitre_attack).toBe(0);

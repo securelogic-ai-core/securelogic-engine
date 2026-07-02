@@ -1,0 +1,22 @@
+id: add_risk
+title: 'Add a risk to the register'
+goal: 'Log a risk so it can be rated, owned, and treated.'
+permissions: platform
+navigation:
+  - Risk
+  - Risk Register
+routes:
+  - /risks
+  - /risks/new
+  - /risks/import
+ordered_steps:
+  - 'Open Risk → Risk Register in the top navigation (or go to /risks).'
+  - 'Click "+ Add Risk" to open the new-risk form at /risks/new.'
+  - 'Set the likelihood and impact; the inherent and residual ratings follow from your risk scale. Save.'
+expected_result: 'The risk appears in the register with an inherent and residual rating.'
+common_mistakes:
+  - 'Leaving the residual rating unset — it defaults from controls/treatments, not guesswork.'
+  - 'Logging the same risk twice instead of updating the existing entry.'
+related_workflows:
+  - treat_risk
+  - manage_actions

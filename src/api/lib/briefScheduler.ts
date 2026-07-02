@@ -59,14 +59,24 @@ import {
   enrichBriefItems,
   capByUrgencyBuckets,
   finalizeBrief,
+  sourcePriority,
   type CyberSignalForBrief,
   type BriefItem
 } from "./intelligenceBriefGenerator.js";
+import {
+  sourceQualificationEnabled,
+  loadSourceQualification,
+  makeQualificationPriority
+} from "./signals/sourceQualification.js";
+import { recomputeSourceReliability } from "./signals/sourceReliability.js";
+import { signalClusteringEnabled } from "./signals/signalClustering.js";
+import { briefProvenanceEnabled, buildProvenanceRows } from "./signals/briefProvenance.js";
 import {
   runSynthesisSafely,
   fetchPriorBriefContext
 } from "./briefSynthesizer.js";
 import { sendBrief } from "./briefEmailSender.js";
+import { isBriefSendDay } from "./briefSendWindow.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -96,6 +106,8 @@ export type SchedulerRunSummary = {
   briefs_generated: number;
   emails_sent: number;
   emails_failed: number;
+  /** Orgs whose brief was generated but NOT emailed because the run fell on a non-send day (any day except Tuesday UTC). */
+  emails_skipped_off_day: number;
   errors: string[];
 };
 
@@ -238,7 +250,30 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
   // briefId/base come back as the scope's return value so the rest of the
   // function (and the mark-failed handlers) can address the committed row.
 
-  const { briefId, base } = await withTenant(orgId, async () => {
+  // B4: choose the source-credibility ordinal for brief ranking. Flag OFF (the
+  // default) ⇒ legacy `sourcePriority`, so the pipeline below is byte-identical
+  // to pre-B4. Flag ON ⇒ a qualification-derived priority (authority_tier ×
+  // reliability) read from the GLOBAL `sources` table — loaded once here, before
+  // the tenant transaction (sources has no org scope / RLS). `sourcePriority` is
+  // the fallback for any source absent from the qualification map.
+  let priorityOf = sourcePriority;
+  if (sourceQualificationEnabled()) {
+    // Per-brief-cycle, flag-gated, non-fatal: refresh B3 reliability from the
+    // current feed_health snapshot so ranking reads fresh values. A recompute
+    // failure must NOT block the brief — fall through to whatever values the
+    // `sources` table already holds. No worker/cron involved (engine-only).
+    try {
+      await recomputeSourceReliability(pgElevated);
+    } catch (err) {
+      logger.error(
+        { event: "source_reliability_recompute_failed", orgId, err },
+        "Source reliability recompute failed (non-fatal) — using existing sources.reliability"
+      );
+    }
+    priorityOf = makeQualificationPriority(await loadSourceQualification(pg), sourcePriority);
+  }
+
+  const { briefId, base, signalMeta } = await withTenant(orgId, async () => {
     const client = createSavepointClient(requireTenantContext());
     try {
       await client.query("BEGIN");
@@ -255,7 +290,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
       const signalsResult = await client.query<CyberSignalForBrief>(
         `SELECT id, signal_type, severity, normalized_summary,
                 affected_cve, affected_vendor, source, ingestion_timestamp,
-                raw_payload
+                cluster_key, raw_payload
          FROM cyber_signals
          WHERE (organization_id = $1 OR organization_id IS NULL)
            AND ingestion_timestamp >= $2
@@ -268,10 +303,19 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
       // Returns the pre-enrichment shortlist (top ENRICHMENT_SHORTLIST items
       // by composite ranking key); enrichment runs on the shortlist, then
       // capByUrgencyBuckets reduces to BRIEF_MAX_ITEMS.
-      const newBase = generateBrief(signalsResult.rows);
+      const newBase = generateBrief(signalsResult.rows, {
+        priorityOf,
+        clusteringEnabled: signalClusteringEnabled()
+      });
+
+      // D2: per-signal source + cluster_key, so the persist phase can denormalise
+      // them onto provenance edges (incl. corroborating signals not on the item).
+      const newSignalMeta = new Map<string, { source: string; cluster_key: string | null }>(
+        signalsResult.rows.map((s) => [s.id, { source: s.source, cluster_key: s.cluster_key ?? null }])
+      );
 
       await client.query("COMMIT");
-      return { briefId: newBriefId, base: newBase };
+      return { briefId: newBriefId, base: newBase, signalMeta: newSignalMeta };
     } catch (err) {
       await client.query("ROLLBACK").catch(() => {});
       throw err;
@@ -307,7 +351,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
   // Apply the urgency-bucket cap. After this, cappedItems.length is bounded
   // by BRIEF_MAX_ITEMS — this is what gets persisted and synthesized.
   const { items: cappedItems, counts: urgencyCounts } =
-    capByUrgencyBuckets(enrichedItems);
+    capByUrgencyBuckets(enrichedItems, priorityOf);
 
   logger.info(
     {
@@ -397,16 +441,44 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
             );
           });
 
-          await client.query(
+          const insertedItems = await client.query<{ id: string; sort_order: number }>(
             `INSERT INTO intelligence_brief_items
                (organization_id, brief_id, cyber_signal_id, category, relevance,
                 title, summary, affected_cve, affected_vendor, source_slug,
                 signal_type, severity, sort_order,
                 why_it_matters, recommended_actions, analyst_notes,
                 urgency)
-             VALUES ${itemPlaceholders.join(", ")}`,
+             VALUES ${itemPlaceholders.join(", ")}
+             RETURNING id, sort_order`,
             itemValues
           );
+
+          // D2 (flag-gated): write lineage edges (canonical + corroborating) for
+          // each persisted item, in THIS tenant transaction so the RLS policy is
+          // satisfied and the edges are atomic with the items.
+          if (briefProvenanceEnabled()) {
+            const idBySortOrder = new Map<number, string>(
+              insertedItems.rows.map((r) => [r.sort_order, r.id])
+            );
+            const sourceById = new Map<string, string | null>(
+              [...signalMeta].map(([sid, m]) => [sid, m.source])
+            );
+            for (const item of finalized.items as BriefItem[]) {
+              const briefItemId = idBySortOrder.get(item.sort_order);
+              if (!briefItemId) continue;
+              const clusterKey = signalMeta.get(item.cyber_signal_id)?.cluster_key ?? null;
+              const rows = buildProvenanceRows(item, briefItemId, orgId, clusterKey, sourceById);
+              for (const row of rows) {
+                await client.query(
+                  `INSERT INTO intelligence_brief_item_provenance
+                     (organization_id, brief_item_id, cyber_signal_id, source_slug, cluster_key, relation)
+                   VALUES ($1, $2, $3, $4, $5, $6)
+                   ON CONFLICT (brief_item_id, cyber_signal_id) DO NOTHING`,
+                  [row.organization_id, row.brief_item_id, row.cyber_signal_id, row.source_slug, row.cluster_key, row.relation]
+                );
+              }
+            }
+          }
         }
 
         // Explicitly set status to 'published' before this function returns so
@@ -487,10 +559,17 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     briefs_generated: 0,
     emails_sent: 0,
     emails_failed: 0,
+    emails_skipped_off_day: 0,
     errors: []
   };
 
-  logger.info({ event: "scheduler_run_start" }, "Brief scheduler run started");
+  // Email delivery is restricted to the weekly send day (Tuesday UTC). The
+  // cron only fires Tuesday, but this in-code gate also covers manual runs
+  // (POST /api/admin/briefs/run-scheduler) and any future cron change.
+  // Briefs are still generated on an off-day run; only the send is skipped.
+  const isSendDay = isBriefSendDay(new Date());
+
+  logger.info({ event: "scheduler_run_start", isSendDay }, "Brief scheduler run started");
 
   // ── Step 1: Find all orgs with active subscribers ───────────────────────
 
@@ -964,7 +1043,21 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
       continue;
     }
 
-    // Send brief to all active subscribers for this org
+    // Send brief to all active subscribers for this org — Tuesday only.
+    // On an off-day run the brief is generated and stored (above) but NOT
+    // emailed; this is the defense-in-depth guard for manual/off-schedule runs.
+    if (!isSendDay) {
+      summary.emails_skipped_off_day++;
+      logger.info(
+        { event: "scheduler_brief_send_skipped_off_day", orgId, briefId, weekday: new Date().getUTCDay() },
+        "Brief generated but email send skipped — not the weekly send day (Tuesday UTC), no Intelligence Brief email"
+      );
+      if (!orgFailed) {
+        summary.orgs_processed++;
+      }
+      continue;
+    }
+
     try {
       const sendResult = await sendBrief(briefId, orgId);
       summary.emails_sent += sendResult.sent;
@@ -999,6 +1092,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
       briefs_generated: summary.briefs_generated,
       emails_sent: summary.emails_sent,
       emails_failed: summary.emails_failed,
+      emails_skipped_off_day: summary.emails_skipped_off_day,
       error_count: summary.errors.length
     },
     "Brief scheduler run completed"

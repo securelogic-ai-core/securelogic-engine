@@ -1,0 +1,21 @@
+id: review_ai_governance
+title: 'Run an AI governance review'
+goal: 'Assess an AI system''s governance posture against your active frameworks.'
+permissions: platform
+navigation:
+  - Assets
+  - AI Systems
+routes:
+  - /ai-systems
+  - /ai-systems/[id]/review
+  - /ai-systems/[id]/assess
+ordered_steps:
+  - 'Open Assets → AI Systems and select the system to open its detail page.'
+  - 'Click "New Governance Review" (/ai-systems/[id]/review) or "New Assessment" (/ai-systems/[id]/assess).'
+  - 'Answer the governance questions and save.'
+expected_result: 'The AI system''s governance posture and review history are updated.'
+common_mistakes:
+  - 'Running a review before activating any framework to assess against.'
+related_workflows:
+  - add_ai_system
+  - activate_framework

@@ -5,12 +5,17 @@ import { useState, type FormEvent } from "react";
 // Public, unauthenticated endpoint on the SecureLogic engine API.
 // Contract: POST { email, name? } -> 201 { ok: true }
 //   409 { error: "already_subscribed" } · 400 { error: "invalid_email" }
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://api.securelogicai.com";
+//
+// Set per environment via NEXT_PUBLIC_API_URL (staging build → staging engine API,
+// prod build → prod engine API). The dev fallback is localhost — NEVER a production
+// host — so a staging build that is missing the value fails locally instead of
+// silently posting subscriber emails to the production API.
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 type Status = "idle" | "submitting" | "success" | "error";
 
 const MESSAGES: Record<string, string> = {
-  success: "You're subscribed! First brief arrives Monday.",
+  success: "You're subscribed! Your first brief arrives within a week.",
   already_subscribed: "You're already on the list.",
   invalid_email: "Please enter a valid email address.",
   generic: "Something went wrong. Please try again.",
@@ -134,7 +139,7 @@ export function BriefSignupForm() {
         aria-live="polite"
         className={`text-xs mt-3 min-h-[1rem] ${status === "error" ? "text-danger" : "text-text-muted"}`}
       >
-        {message || "No credit card required. First brief arrives Monday."}
+        {message || "No credit card required. First brief arrives within a week."}
       </p>
     </form>
   );

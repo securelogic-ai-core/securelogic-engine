@@ -39,6 +39,20 @@ jobs:
       - run: npm ci
       - run: npm run lint
 
+  # Fails if a production host (app./api.securelogicai.com or the prod Render
+  # service hosts) is hardcoded into app/ or website/ source, which would ship in
+  # the staging build and route staging traffic to production. Zero-dependency —
+  # no npm ci needed. (Also covered by the test job via envUrlDrift.test.ts.)
+  url-drift:
+    name: url-drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: ".nvmrc"
+      - run: node scripts/check-env-url-drift.mjs
+
   test:
     name: test
     runs-on: ubuntu-latest

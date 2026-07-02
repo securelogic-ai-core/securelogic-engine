@@ -424,12 +424,18 @@ These documents are the controlling source of truth for product intent, current 
 ### Non-negotiable rules
 - Do not infer the roadmap from convenience.
 - Do not treat Platform Annual as a separate product tier.
-- The active commercial model is:
+- The active commercial model — customer-facing display tiers are exactly:
   - Intelligence Brief — Free
   - Brief Pro
-  - Team Professional
+  - Brief Team
   - Platform Professional
   - Enterprise
+- Internal identifiers intentionally differ from these display names and MUST NOT be
+  renamed to match them. The stable internal keys are: `professional` (= Brief Pro),
+  `teams` (= Brief Team), `platform` / `platform_annual` (= Platform Professional).
+  These keys appear in entitlement values, Stripe metadata/tiers, `STRIPE_PRICE_ID_*`
+  env vars, API fields, DB values, and `?plan=` routes. Changing a display label never
+  changes these keys.
 - Platform Annual is only the annual billing option for Platform Professional.
 - The Platform is the main product.
 - The Intelligence Brief is the wedge.

@@ -25,12 +25,11 @@ html {
   scroll-behavior: smooth;
 }
 
-/* Out-of-scope pages (platform, intelligence-brief, security, legal) are
-   light-themed on a white body. The rebuilt index/pricing/about/contact
-   pages paint their own full-bleed dark sections, so the body color below
-   stays neutral and never regresses the light pages. */
+/* Dark is the canonical design language for the entire site. Every page paints
+   its own full-bleed dark sections; the body provides the base dark surface so
+   there is no light flash between sections or on short pages. */
 body {
-  @apply antialiased text-slate-900 bg-white;
+  @apply antialiased text-text bg-bg;
 }
 
 /* Visible keyboard focus on every interactive control, sitewide. */

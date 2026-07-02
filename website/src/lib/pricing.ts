@@ -2,7 +2,7 @@
  * Shared pricing model — single source of truth for the homepage and the
  * pricing page so the two never drift. Reflects the official commercial model
  * for this build:
- *   Intelligence Brief (Free) · Brief Pro · Brief-Team · Platform Professional · Enterprise
+ *   Intelligence Brief (Free) · Brief Pro · Brief Team · Platform Professional · Enterprise
  *
  * Platform Professional uses the revised founding-annual + month-to-month
  * structure (overrides any older $799 / $7,990 figures).
@@ -20,6 +20,9 @@ export interface PricingTier {
   features: string[];
   cta: string;
   ctaHref: string;
+  /** Optional second self-service CTA — Platform Professional offers monthly alongside annual. */
+  secondaryCta?: string;
+  secondaryCtaHref?: string;
   /** Visual grouping — the three Brief tiers vs. the Platform/Enterprise class. */
   group: "brief" | "platform";
   badge?: string;
@@ -47,7 +50,7 @@ export function getPricingTiers(appUrl: string): PricingTier[] {
         "Weekly AI-enriched brief",
         "Top signals from 9 live sources",
         "Executive summary + analyst commentary",
-        "Delivered every Monday",
+        "Delivered weekly",
       ],
       cta: "Get the Free Brief",
       ctaHref: "/#brief-signup",
@@ -67,14 +70,14 @@ export function getPricingTiers(appUrl: string): PricingTier[] {
         "Relevant-to-your-org signal matching",
         "Brief archive and search",
         "Severity filtering",
-        "Priority delivery every Monday",
+        "Priority weekly delivery",
       ],
       cta: "Start Brief Pro",
-      ctaHref: `${appUrl}/signup?plan=brief-pro`,
+      ctaHref: `${appUrl}/signup?plan=professional`,
     },
     {
       id: "brief-team",
-      name: "Brief-Team",
+      name: "Brief Team",
       price: "$199",
       priceNote: "/ month",
       group: "brief",
@@ -88,8 +91,8 @@ export function getPricingTiers(appUrl: string): PricingTier[] {
         "Brief-only (no platform workflows)",
         "Past 6 members → move to Platform",
       ],
-      cta: "Start Brief-Team",
-      ctaHref: `${appUrl}/signup?plan=brief-team`,
+      cta: "Start Brief Team",
+      ctaHref: `${appUrl}/signup?plan=teams`,
     },
     {
       id: "platform-professional",
@@ -100,7 +103,7 @@ export function getPricingTiers(appUrl: string): PricingTier[] {
       featured: true,
       badge: "Most Popular",
       urgency: "Founding rate · through Dec 2026",
-      priceDetails: ["$7,200 / year total", "$800 month-to-month"],
+      priceDetails: ["$7,200 / year total"],
       lockNote: "Locked in for as long as you remain an active customer.",
       allowance: "Up to 10 seats / 50 monitored entities",
       tagline:
@@ -116,8 +119,10 @@ export function getPricingTiers(appUrl: string): PricingTier[] {
         "Leadership intelligence dashboard",
         "API access + audit log",
       ],
-      cta: "Start Free Trial",
-      ctaHref: `${appUrl}/signup?plan=professional`,
+      cta: "Start annual — $600/mo",
+      ctaHref: `${appUrl}/signup?plan=platform_annual`,
+      secondaryCta: "Start monthly — $800/mo",
+      secondaryCtaHref: `${appUrl}/signup?plan=platform`,
     },
     {
       id: "enterprise",
