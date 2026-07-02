@@ -3,6 +3,7 @@
 **Date drafted:** 2026-05-06
 **Status:** Draft for operator review. Not yet committed to repo.
 **Companion document:** `RISK_REGISTER_STATE.md`
+**Lifecycle spec:** `docs/specs/risk-lifecycle-spec.md` (merged to develop `4b41cb96`, PR #450) is the authority for the formal gated risk lifecycle and its R1–R4 build epics. It **supersedes RR-3** (`risk_lifecycle_events` replaces the `security_audit_log` projection) and **subsumes RR-8** (`risk_approvals` realizes the acceptance/approval workflow). See the per-item notes below.
 **Purpose:** Sequence the work to bring the risk register from its current state to enterprise-grade across the three buckets identified in the state document. This is the durable plan; individual packages will be scoped against it.
 
 ---
@@ -86,6 +87,8 @@ This wave establishes the linkage infrastructure that makes the rest of Bucket A
 
 ### RR-3: Per-risk audit trail
 
+> **SUPERSEDED (2026-07-02) by `docs/specs/risk-lifecycle-spec.md` (PR #450).** RR-3 shipped only as a fire-and-forget projection over `security_audit_log` (written post-`COMMIT`, not awaited). The lifecycle spec replaces it with a dedicated append-only `risk_lifecycle_events` table written **inside the transition transaction** (§6/§7 of the spec, epic **R1**). The existing "History" section (`RiskHistorySection`) remains as the legacy projection view; the new lifecycle event stream is authoritative. Do not build RR-3 as a standalone package — it is realized by R1.
+
 **Bucket:** B (item 9)
 **Effort:** S to M depending on RR-0 outcome
 **Dependencies:** RR-0
@@ -160,6 +163,8 @@ A risk that's already linked to a vendor or AI system via `source_type='vendor'`
 **Why this in Wave 3:** Multi-entity linkage on a single risk is the fully-realized connective-tissue claim. After this ships, every entity in the platform can link to every other through risks as the hub.
 
 ### RR-8: Risk acceptance workflow
+
+> **SUBSUMED (2026-07-02) into `docs/specs/risk-lifecycle-spec.md` (PR #450).** RR-8's acceptance workflow becomes a special case of the lifecycle's executive-approval gate: the proposed columns `acceptance_rationale` / `acceptance_approver_user_id` / `acceptance_expires_at` are absorbed into the new `risk_approvals` table as `request_rationale`/`decision_rationale`, `approver_user_id`, and `expires_at` with `kind='risk_acceptance'`. Separation of duties (proposer ≠ approver) is enforced there. Built as epic **R2** (approvals + roles). Do not build RR-8 as a standalone package.
 
 **Bucket:** B (item 6)
 **Effort:** M
