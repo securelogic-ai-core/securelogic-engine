@@ -260,20 +260,21 @@ For each transition above, on **staging** (test mode):
 ## Gate 5 — Migration validation + production pre-flight
 
 ### Objective
-Confirm the six staged migrations (`20260706`–`20260711`) apply cleanly on staging, are not silently skipped by the filename-keyed runner (F-1), and that the seat-cap migration won't wrongly lower a legitimately-provisioned 10-seat org.
+Confirm the seven staged migrations (`20260706`–`20260712`) apply cleanly on staging, are not silently skipped by the filename-keyed runner (F-1), and that the seat-cap migration won't wrongly lower a legitimately-provisioned 10-seat org.
 
 ### Why it exists
 The migration runner is **filename-keyed** (`scripts/runMigrations.ts:71-77`): a migration whose filename already exists in `schema_migrations` is silently skipped — so a reshaped file can deploy with **none of its DDL applied**. Separately, `20260711` runs `UPDATE organizations SET max_members=6 WHERE max_members=10`, which cannot tell a *stale-default* 10 from a *deliberately-set* 10.
 
 ### What the evidence is / where it comes from
 - Runner: `scripts/runMigrations.ts` — `MIGRATION_DATABASE_URL ?? DATABASE_URL` (line 6); tracking table `schema_migrations(filename UNIQUE)` (lines 22-30); skip-if-applied (lines 71-77); per-file `BEGIN…COMMIT` (40-59). Auto-runs on engine deploy (`RELEASE_CHECKLIST.md:78`).
-- The six migrations in `db/migrations/` (all additive + `IF NOT EXISTS`/idempotent):
+- The seven migrations in `db/migrations/` (all additive + `IF NOT EXISTS`/idempotent):
   - `20260706_risk_numeric_score.sql` — `risks` adds `residual_score/inherent_score/score_basis` + range CHECKs + backfill + index. Nullable, re-runnable.
   - `20260707_sources.sql` — `CREATE TABLE sources` (global, no RLS) + 13-row seed `ON CONFLICT DO NOTHING`. Reversible `DROP TABLE sources`.
   - `20260708_sources_authority.sql` — DML updates to `sources` + guarded `sources_authority_vocab_check`.
   - `20260709_cyber_signals_cluster_key.sql` — `cyber_signals ADD COLUMN cluster_key` + **non-unique** partial index; **dedup_hash/unique dedup indexes untouched** (R-1 invariant).
   - `20260710_brief_item_signal_provenance.sql` — `CREATE TABLE intelligence_brief_item_provenance` + RLS policy (NOT FORCE; INERT until A04-G1 flip).
   - `20260711_team_seat_cap_6.sql` — `max_members` DEFAULT 6 + `UPDATE … WHERE max_members=10`. **Not auto-reversible** (a 6 could be original or backfilled).
+  - `20260712_organization_platform_trial.sql` — `organizations ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ` (Platform free-trial, PR-C2). Nullable, no backfill, re-runnable. Consumed only by the trial path (Stripe `status='trialing'`); no seat-cap or data risk.
 - `/version` contract (post-deploy): engine `src/api/routes/index.ts:180-187`, app `app/src/app/api/version/route.ts:5-12` → `{commit,service,branch,deployedAt}`.
 - Flags that must be **OFF in prod** (these gate the new migrations' consumers): `SOURCE_QUALIFICATION`, `SIGNAL_CLUSTERING`, `SOURCE_AUTHORITY`, `BRIEF_PROVENANCE` (`RELEASE_CHECKLIST.md:42`).
 
@@ -288,7 +289,8 @@ WHERE filename IN (
   '20260708_sources_authority.sql',
   '20260709_cyber_signals_cluster_key.sql',
   '20260710_brief_item_signal_provenance.sql',
-  '20260711_team_seat_cap_6.sql'
+  '20260711_team_seat_cap_6.sql',
+  '20260712_organization_platform_trial.sql'
 );
 ```
 Expected: **0 rows** (none applied yet under these names). Any returned filename whose committed content differs from what's recorded ⇒ **do not promote**; re-stamp or rename before release.
@@ -301,19 +303,19 @@ WHERE max_members = 10;
 ```
 Expected: **0 rows**, or only rows you can confirm are **stale-default** orgs (never deliberately set to 10). Any legitimately-provisioned 10-seat org here would be silently lowered to 6 by `20260711`.
 
-**C. Staging apply validation:** ensure staging has auto-applied all six (it deploys from `develop`). Confirm:
+**C. Staging apply validation:** ensure staging has auto-applied all seven (it deploys from `develop`). Confirm:
 ```sql
 SELECT filename, applied_at FROM schema_migrations
 WHERE filename LIKE '202607%' ORDER BY filename;
 ```
-Expected: all six present with recent `applied_at`, and no migration errors in the staging engine deploy log.
+Expected: all seven present with recent `applied_at`, and no migration errors in the staging engine deploy log.
 
 **D. Flag state:** confirm `SOURCE_QUALIFICATION`, `SIGNAL_CLUSTERING`, `SOURCE_AUTHORITY`, `BRIEF_PROVENANCE` are **OFF / unset** in the **production** engine env. (Do not enable them.)
 
 **E. Post-deploy (after the operator-authorized promotion, per `RELEASE_CHECKLIST.md` §9 — not part of clearing this gate):** `/version` on prod engine and app both return the promoted commit; `/health` green; the six filenames now appear in prod `schema_migrations`.
 
 ### Expected results
-- F-1 returns 0 in staging + prod; seat-cap pre-flight returns no legitimate 10-seat org; all six applied cleanly on staging; the four flags OFF in prod.
+- F-1 returns 0 in staging + prod; seat-cap pre-flight returns no legitimate 10-seat org; all seven applied cleanly on staging; the four flags OFF in prod.
 
 ### Evidence required
 - F-1 query output (staging + prod).
@@ -325,7 +327,7 @@ Expected: all six present with recent `applied_at`, and no migration errors in t
 - All of the above true. (Post-promotion: prod `/version` = promoted commit and the six rows recorded.)
 
 ### FAIL criteria
-- F-1 non-zero for any of the six with changed content → silent-skip risk; halt.
+- F-1 non-zero for any of the seven with changed content → silent-skip risk; halt.
 - Seat-cap pre-flight returns a real 10-seat customer → it would be cut to 6; halt and adjust the migration or the org.
 - A staging migration errored / a filename missing from staging `schema_migrations` → fix before promotion.
 - Any of the four flags ON in prod → stop; this launch ships them OFF.

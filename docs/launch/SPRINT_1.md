@@ -91,7 +91,7 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 
 **Gate 4 — Staging portal upgrade/downgrade transitions.** For each of the 5 transitions: Stripe sub updates + webhook fires + `entitlement_level` correct + return-to-app.
 
-**Gate 5 — Migration validation + production pre-flight.** Validate all 6 staged migrations on staging (`20260706`–`20260711`); F-1 filename-key check returns 0 in staging + prod; seat-cap pre-flight `WHERE max_members = 10` shows no legit 10-seat org wrongly lowered to 6.
+**Gate 5 — Migration validation + production pre-flight.** Validate all 7 staged migrations on staging (`20260706`–`20260712`); F-1 filename-key check returns 0 in staging + prod; seat-cap pre-flight `WHERE max_members = 10` shows no legit 10-seat org wrongly lowered to 6.
 
 ### Promotion-readiness gate
 - All 7 CI lanes green on the promotion head.

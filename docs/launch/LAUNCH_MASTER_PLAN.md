@@ -2,7 +2,7 @@
 
 > **Status:** Pre-launch hold (NO-GO). `develop` is staged and ahead of production `main`; promotion is gated on operator-only release gates (see `SPRINT_1.md`).
 > **Owner:** SecureLogic AI platform/operator.
-> **Last reconciled:** 2026-06-30 (`develop` tip `b221c0c8`, production `main` `959951b9`).
+> **Last reconciled:** 2026-07-02 (`develop` tip `17353bb9`, production `main` `959951b9`).
 
 This is the controlling launch document. It defines what "launch" means for SecureLogic AI, what is already shipped, what blocks production go-live, and the sprint sequence that gets us there safely. It is grounded only in verified repository and governing-doc state — not aspiration.
 

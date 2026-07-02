@@ -1,7 +1,7 @@
 # Known Issues & Limitations at Launch
 
 > **Purpose:** An honest, verified catalogue of limitations, technical debt, and intentionally-inert paths at launch. Per `FINAL_PRODUCT_STANDARD.md`, stale or dishonest docs are treated as defects — this list is deliberately candid.
-> **Last reconciled:** 2026-06-30 (`develop` `b221c0c8`, `main` `959951b9`).
+> **Last reconciled:** 2026-07-02 (`develop` `17353bb9`, `main` `959951b9`).
 > **Severity key:** 🔴 launch-blocking · 🟠 ship-with-mitigation · 🟡 known-debt (post-launch) · 🟢 cosmetic/orientation.
 
 This file does **not** track CI bugs or transient failures. It tracks structural limitations a customer, auditor, or future engineer must know about.
