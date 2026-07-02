@@ -44,7 +44,9 @@ function fmtDateTime(iso: string | null): string {
 }
 
 function actorLabel(ev: LifecycleEvent): string {
-  if (ev.actor_user_id) return "User";
+  // Prefer the joined user name/email (R4 actor name-join); fall back to the
+  // non-user actor labels when there is no user identity on the event.
+  if (ev.actor_user_id) return ev.actor_name || ev.actor_email || "User";
   if (ev.actor_api_key_id) return "API key";
   return "System";
 }

@@ -26,6 +26,7 @@ import { requireNotViewer } from "../middleware/requireRole.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { riskLifecycleFeatureFlag } from "../lib/riskLifecycleFeatureFlag.js";
+import { validateEvidenceMetadata } from "../lib/evidenceValidation.js";
 import {
   evaluateTransition,
   legacyStatusForTransition,
@@ -104,10 +105,9 @@ export async function loadGateRow(orgId: string, riskId: string): Promise<GateRo
           WHERE t.organization_id = $1 AND t.risk_id = $2)::int          AS treatment_count,
        EXISTS(
          SELECT 1 FROM evidence e
-         JOIN risk_treatments t
-           ON t.id = e.source_id AND e.source_type = 'risk_treatment'
-         WHERE t.organization_id = $1 AND t.risk_id = $2
-           AND e.organization_id = $1
+         WHERE e.organization_id = $1
+           AND e.source_type = 'risk' AND e.source_id = $2
+           AND e.detached_at IS NULL
        )                                                                  AS has_evidence,
        EXISTS(
          SELECT 1 FROM risk_approvals a
@@ -439,15 +439,17 @@ export async function getRiskLifecycleEvents(req: Request, res: Response): Promi
     let beforeClause = "";
     if (before) {
       params.push(before);
-      beforeClause = `AND created_at < $${params.length}`;
+      beforeClause = `AND e.created_at < $${params.length}`;
     }
     params.push(limit);
     const rows = await pg.query(
-      `SELECT id, from_state, to_state, transition, actor_user_id,
-              actor_api_key_id, comment, evidence_ids, approval_id, created_at
-         FROM risk_lifecycle_events
-        WHERE organization_id = $1 AND risk_id = $2 ${beforeClause}
-        ORDER BY created_at DESC, id DESC
+      `SELECT e.id, e.from_state, e.to_state, e.transition, e.actor_user_id,
+              e.actor_api_key_id, e.comment, e.evidence_ids, e.approval_id, e.created_at,
+              u.name AS actor_name, u.email AS actor_email
+         FROM risk_lifecycle_events e
+         LEFT JOIN users u ON u.id = e.actor_user_id AND u.organization_id = e.organization_id
+        WHERE e.organization_id = $1 AND e.risk_id = $2 ${beforeClause}
+        ORDER BY e.created_at DESC, e.id DESC
         LIMIT $${params.length}`,
       params
     );
@@ -459,6 +461,163 @@ export async function getRiskLifecycleEvents(req: Request, res: Response): Promi
   } catch (err) {
     logger.error({ err, riskId }, "get_risk_lifecycle_events_failed");
     res.status(500).json({ error: "get_risk_lifecycle_events_failed" });
+  }
+}
+
+// ── Risk evidence (Epic R4) ─────────────────────────────────────────────────
+// Reuses the shared, write-once `evidence` table with source_type='risk' (NOT a
+// parallel store). Attach/list operate on LIVE rows; detach is a SOFT delete
+// (detached_at) so the audit trail survives. Live risk evidence satisfies the
+// evidence_required lifecycle gate on advance_to_treatment (see loadGateRow).
+const RISK_EVIDENCE_SELECT = `
+  id, title, description, evidence_type,
+  collected_at, collected_by, external_ref, created_at`;
+
+/** Confirm the risk exists in this org (RLS-scoped). */
+async function riskExistsInOrg(orgId: string, riskId: string): Promise<boolean> {
+  const r = await pg.query(
+    `SELECT 1 FROM risks WHERE id = $1 AND organization_id = $2`,
+    [riskId, orgId]
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
+// GET /api/risks/:id/evidence — live risk-attached evidence, newest first.
+export async function listRiskEvidence(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const riskId = req.params.id;
+  if (!isUuid(riskId)) {
+    res.status(400).json({ error: "risk_id_must_be_uuid" });
+    return;
+  }
+  try {
+    if (!(await riskExistsInOrg(organizationId, riskId))) {
+      res.status(404).json({ error: "risk_not_found" });
+      return;
+    }
+    const rows = await pg.query(
+      `SELECT ${RISK_EVIDENCE_SELECT}
+         FROM evidence
+        WHERE organization_id = $1 AND source_type = 'risk' AND source_id = $2
+          AND detached_at IS NULL
+        ORDER BY created_at DESC, id DESC`,
+      [organizationId, riskId]
+    );
+    res.status(200).json({ evidence: rows.rows });
+  } catch (err) {
+    logger.error({ err, riskId }, "list_risk_evidence_failed");
+    res.status(500).json({ error: "list_risk_evidence_failed" });
+  }
+}
+
+// POST /api/risks/:id/evidence — attach an evidence record to the risk.
+export async function attachRiskEvidence(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const riskId = req.params.id;
+  if (!isUuid(riskId)) {
+    res.status(400).json({ error: "risk_id_must_be_uuid" });
+    return;
+  }
+  const meta = validateEvidenceMetadata(req.body);
+  if ("error" in meta) {
+    res.status(400).json(meta);
+    return;
+  }
+  const m = meta.metadata;
+  try {
+    if (!(await riskExistsInOrg(organizationId, riskId))) {
+      res.status(404).json({ error: "risk_not_found" });
+      return;
+    }
+    const ins = await pg.query(
+      `INSERT INTO evidence (
+         organization_id, source_type, source_id, title, description,
+         evidence_type, collected_at, collected_by, external_ref
+       )
+       VALUES ($1, 'risk', $2::uuid, $3, $4, $5, $6, $7, $8)
+       RETURNING ${RISK_EVIDENCE_SELECT}`,
+      [
+        organizationId,
+        riskId,
+        m.title,
+        m.description,
+        m.evidence_type,
+        m.collected_at,
+        m.collected_by,
+        m.external_ref,
+      ]
+    );
+    const evidence = ins.rows[0];
+    writeAuditEvent({
+      organizationId,
+      actorUserId: getUserId(req),
+      actorApiKeyId: getApiKeyId(req),
+      eventType: "risk_evidence.attached",
+      resourceType: "risk",
+      resourceId: riskId,
+      payload: { evidence_id: evidence.id, evidence_type: m.evidence_type },
+      ipAddress: req.ip ?? null,
+    });
+    res.status(201).json({ evidence });
+  } catch (err) {
+    logger.error({ err, riskId }, "attach_risk_evidence_failed");
+    res.status(500).json({ error: "attach_risk_evidence_failed" });
+  }
+}
+
+// DELETE /api/risks/:id/evidence/:evidenceId — SOFT detach (sets detached_at).
+export async function detachRiskEvidence(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const riskId = req.params.id;
+  const evidenceId = req.params.evidenceId;
+  if (!isUuid(riskId)) {
+    res.status(400).json({ error: "risk_id_must_be_uuid" });
+    return;
+  }
+  if (!isUuid(evidenceId)) {
+    res.status(400).json({ error: "evidence_id_must_be_uuid" });
+    return;
+  }
+  try {
+    const upd = await pg.query(
+      `UPDATE evidence
+          SET detached_at = NOW()
+        WHERE organization_id = $1 AND id = $2
+          AND source_type = 'risk' AND source_id = $3
+          AND detached_at IS NULL
+        RETURNING id`,
+      [organizationId, evidenceId, riskId]
+    );
+    if ((upd.rowCount ?? 0) === 0) {
+      res.status(404).json({ error: "evidence_not_found" });
+      return;
+    }
+    writeAuditEvent({
+      organizationId,
+      actorUserId: getUserId(req),
+      actorApiKeyId: getApiKeyId(req),
+      eventType: "risk_evidence.detached",
+      resourceType: "risk",
+      resourceId: riskId,
+      payload: { evidence_id: evidenceId },
+      ipAddress: req.ip ?? null,
+    });
+    res.status(200).json({ id: evidenceId, detached: true });
+  } catch (err) {
+    logger.error({ err, riskId, evidenceId }, "detach_risk_evidence_failed");
+    res.status(500).json({ error: "detach_risk_evidence_failed" });
   }
 }
 
@@ -475,5 +634,10 @@ const CHAIN = [
 router.get("/risks/:id/lifecycle", ...CHAIN, asTenant(getRiskLifecycle));
 router.post("/risks/:id/lifecycle/transitions", ...CHAIN, requireNotViewer, asTenant(executeRiskTransition));
 router.get("/risks/:id/lifecycle/events", ...CHAIN, asTenant(getRiskLifecycleEvents));
+
+// Risk evidence (Epic R4) — same flag-gated / entitlement / tenant chain.
+router.get("/risks/:id/evidence", ...CHAIN, asTenant(listRiskEvidence));
+router.post("/risks/:id/evidence", ...CHAIN, requireNotViewer, asTenant(attachRiskEvidence));
+router.delete("/risks/:id/evidence/:evidenceId", ...CHAIN, requireNotViewer, asTenant(detachRiskEvidence));
 
 export default router;

@@ -153,7 +153,7 @@ export interface GateInputs {
   hasOwner: boolean;
   /** risks.residual_rating IS NOT NULL */
   hasScore: boolean;
-  /** ≥1 evidence linked to the risk (via its treatments in R1) */
+  /** ≥1 live evidence record attached to the risk (source_type='risk', R4) */
   hasEvidence: boolean;
   /** org policy risk_settings.require_evidence_gate (default false ⇒ advisory) */
   evidenceGateEnforced: boolean;

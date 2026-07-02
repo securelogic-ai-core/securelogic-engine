@@ -21,12 +21,20 @@ describe("VALID_SOURCE_TYPES", () => {
     expect(VALID_SOURCE_TYPES.has("obligation_review")).toBe(true);
   });
 
-  it("has exactly eight values", () => {
-    expect(VALID_SOURCE_TYPES.size).toBe(8);
+  it("has exactly nine values", () => {
+    // R4 drift reconciliation: policy_review was already in the DB CHECK and the
+    // route's SOURCE_TYPE_TABLE but missing from the validator; adding it makes 9.
+    // 'risk' is intentionally NOT here — risk evidence uses its own flag-gated routes.
+    expect(VALID_SOURCE_TYPES.size).toBe(9);
   });
 
   it("includes dependency_review", () => {
     expect(VALID_SOURCE_TYPES.has("dependency_review")).toBe(true);
+  });
+
+  it("includes policy_review (R4 reconciliation) but not risk", () => {
+    expect(VALID_SOURCE_TYPES.has("policy_review")).toBe(true);
+    expect(VALID_SOURCE_TYPES.has("risk")).toBe(false);
   });
 });
 

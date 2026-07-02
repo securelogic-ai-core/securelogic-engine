@@ -791,3 +791,78 @@ read endpoints; the `SECURELOGIC_RISK_LIFECYCLE_ENABLED` flag (default off →
 routes 404/disabled), `render.yaml` declaration, and `premium` entitlement gate.
 Transitions that require an approved approval (e.g. `pending_approval →
 mitigation`) are recognized by the machine but not satisfiable until R2.
+
+---
+
+## 12. Decisions (R4 build — 2026-07-02)
+
+R4 shipped evidence gating, notifications, the residual-review + archived screens,
+and the R3 walkthrough fixes. Where the build refined the R4 sketch above, the
+as-built decisions are:
+
+1. **Risk evidence reuses the shared `evidence` table** (`source_type='risk'`,
+   `source_id=risk.id`) — migration `20260716_evidence_source_type_risk.sql` adds
+   `'risk'` to `evidence_source_type_check`. It is exposed through **new
+   flag-gated risk-scoped routes** (`GET/POST /api/risks/:id/evidence`,
+   `DELETE /api/risks/:id/evidence/:evidenceId`) on the same middleware chain as
+   the other lifecycle routes, rather than through the generic `POST /api/evidence`
+   — so flag-off every risk-evidence route 404s and no `source_type='risk'` leaks
+   through the generic route (`'risk'` is deliberately NOT added to the generic
+   validator's `VALID_SOURCE_TYPES`).
+2. **Detach is a SOFT delete.** Evidence is otherwise write-once, so the migration
+   adds a nullable `detached_at` (not `deleted_at`); the risk-scoped DELETE sets it,
+   and lists + the `has_evidence` gate filter `detached_at IS NULL`. All other
+   `source_type`s stay strictly write-once.
+3. **Evidence gate repointed to risk-level evidence.** `loadGateRow.has_evidence`
+   now counts live `source_type='risk'` evidence on the risk (previously it looked
+   at *treatment* evidence, which cannot exist at `scoping` where the
+   `advance_to_treatment` evidence gate fires — the old wiring was effectively
+   unsatisfiable).
+4. **Drift reconciled:** `policy_review` (already in the DB CHECK + the route's
+   `SOURCE_TYPE_TABLE`) was missing from `evidenceValidation.ts`'s
+   `VALID_SOURCE_TYPES` and is now accepted; the stale "Must be one of…" detail
+   string was corrected.
+5. **Notifications: email via the shared transactional sender** (`sendEmail()` on
+   the `NEWSLETTER_FROM_EMAIL` family — never the brief sender), in a new
+   `riskLifecycleNotifier.ts` mirroring `exportReadyEmail.ts`. There is no in-app
+   notification store to reuse. Rather than the `createAlertBatcher` seam (an
+   org-wide finding fan-out with the wrong recipient model), targeted recipients
+   are resolved via `pgElevated` with explicit org scoping (as `writeAuditEvent`
+   does) and fired **fire-and-forget, outside the transition transaction**.
+   Triggers: owner-assigned → the new owner; approval-requested → org admins;
+   approval-decided → the proposer. Gated by a dedicated sibling flag
+   **`SECURELOGIC_RISK_LIFECYCLE_NOTIFICATIONS_ENABLED` (default off)**, so enabling
+   the lifecycle does not by itself start sending customer email.
+6. **Residual-review + archived are UI over existing transitions.** No new engine
+   transitions: residual-review drives `close` / `rescore` (loop-back); archived
+   uses `archive` / `unarchive`. Archived is a `lifecycle_state`, so the default
+   `lifecycle_state IS DISTINCT FROM 'archived'` exclusion on `GET /api/risks` (and
+   the `?archived=true` view) is applied **only when the flag is on** — flag-off the
+   list SQL is byte-for-byte unchanged.
+
+### Open — pre-GA (deferred to the GA-flip decision point)
+
+**Q9. Existing risks sit at `lifecycle_state = NULL` (read as `draft`) regardless
+of their legacy `status`.** There is no backfill: a risk that is "mitigated" in the
+legacy register still enters the lifecycle at `draft`, so before any
+customer-facing flag-on the register would show every pre-existing risk as
+un-started. This must be resolved before GA. Options:
+
+- **(a) Seeding migration** — a one-time `status → lifecycle_state` mapping
+  (e.g. `mitigated`/`closed` → a sensible lifecycle state) run at flag-on.
+  *Pro:* instant, no per-risk user action. *Con:* the mapping is lossy (legacy
+  `status` has no notion of owner/score/evidence gates, so a seeded
+  `treatment_selection`/`closed` risk may not actually satisfy the gates that
+  state implies); risky to reverse; must be idempotent and flag-guarded.
+- **(b) Explicit per-risk "adopt into lifecycle" action** — risks stay at
+  `draft` until a user adopts each one, which runs it through the real gates.
+  *Pro:* honest — every lifecycle state is genuinely earned; no lossy inference.
+  *Con:* manual, slow for large registers; needs its own UI + endpoint.
+- **(c) Hybrid** — bulk-seed only the unambiguous terminal cases
+  (`closed`/`transferred` → `closed`/`archived`) via migration, leave active
+  risks for explicit adoption.
+
+**Decision deferred** to the GA-flip decision point (backfill/adoption
+implementation is explicitly out of R4 scope). Until then the R4 draft-state copy
+in the lifecycle panel explains to users that an un-adopted risk has not entered
+the lifecycle and that assessment is the first step.
