@@ -89,7 +89,7 @@ export function UpgradeCard({ entitlementLevel = "free" }: UpgradeCardProps) {
           disabled={loading !== null}
           className="w-full bg-white/10 hover:bg-white/20 disabled:opacity-60 text-slate-100 font-semibold text-sm py-2 rounded-lg transition-colors border border-white/20"
         >
-          {loading === "teams" ? "Redirecting…" : "Team Professional — $199/mo"}
+          {loading === "teams" ? "Redirecting…" : "Brief Team — $199/mo"}
         </button>
       </div>
     </div>

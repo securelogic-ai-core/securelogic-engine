@@ -237,7 +237,7 @@ export default function IntelligenceBriefPage() {
               Intelligence Brief is free
             </Link>{" "}
             — no credit card. Need team distribution or the full risk platform? Compare
-            Team Professional and Platform Professional on the{" "}
+            Brief Team and Platform Professional on the{" "}
             <Link href="/pricing/" className="text-accent hover:underline">
               pricing page
             </Link>

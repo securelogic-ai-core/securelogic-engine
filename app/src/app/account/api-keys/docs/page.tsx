@@ -115,7 +115,7 @@ export default async function ApiDocsPage() {
 
       <Section title="Rate Limits">
         <P>
-          Paid plans (Professional, Platform): <strong>120 requests per minute</strong>.
+          Paid plans (Brief Pro, Platform): <strong>120 requests per minute</strong>.
         </P>
         <P>
           Starter plan: <strong>20 requests per minute</strong>.

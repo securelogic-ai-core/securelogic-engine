@@ -31,7 +31,7 @@ const PLANS = [
     style: "outline" as const,
   },
   {
-    name: "Team Professional",
+    name: "Brief Team",
     price: "$199",
     period: "/ mo",
     description: "For security and risk teams that need shared brief access.",
