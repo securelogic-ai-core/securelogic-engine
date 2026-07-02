@@ -86,6 +86,30 @@ async function resolveStripeCustomer(
 
 const VALID_TIERS = new Set(["professional", "teams", "platform", "platform_annual"]);
 
+/**
+ * Tiers eligible for the free trial. PLATFORM ONLY — both the monthly
+ * ($800/mo) and annual ($7,200/yr) Platform prices. The Brief tiers
+ * (professional, teams) are NEVER trial-eligible: the Free Intelligence
+ * Brief is the Brief funnel, so a Brief-tier trial would cannibalise it.
+ */
+const PLATFORM_TRIAL_TIERS = new Set(["platform", "platform_annual"]);
+
+/**
+ * Master switch for the Platform free trial. OFF unless
+ * SECURELOGIC_PLATFORM_TRIAL_ENABLED === "true" (default off, declared with a
+ * safe "false" value in render.yaml). With the flag off, Platform checkouts
+ * behave exactly as before — no trial, immediate payment.
+ */
+function platformTrialEnabled(): boolean {
+  return process.env.SECURELOGIC_PLATFORM_TRIAL_ENABLED === "true";
+}
+
+/** Trial length in days, from TRIAL_PERIOD_DAYS (default 14). */
+function trialPeriodDays(): number {
+  const raw = parseInt(process.env.TRIAL_PERIOD_DAYS ?? "14", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 14;
+}
+
 function resolvePriceId(tier: string): string {
   const map: Record<string, string | undefined> = {
     professional:    process.env.STRIPE_PRICE_ID_PROFESSIONAL?.trim(),
@@ -159,6 +183,43 @@ router.post("/billing/checkout", requireApiKey, attachOrganizationContext, async
     // does not depend on webhook timing.
     const customerId = await resolveStripeCustomer(orgId, apiKeyLabel, apiKeyId);
 
+    // Platform free trial — Platform tiers only, flag-gated, one per org.
+    const applyTrial = platformTrialEnabled() && PLATFORM_TRIAL_TIERS.has(tier);
+
+    if (applyTrial) {
+      // Re-trial guard: ONE trial per organization, enforced here at
+      // checkout-session creation and FAILING CLOSED. trial_started_at is set
+      // by the webhook when a trial actually begins (not here), so an abandoned
+      // trial checkout never burns the org's single trial. On any DB error the
+      // outer catch returns 500 — no session, no trial (fail closed).
+      const priorTrial = await pg.query<{ trial_started_at: string | null }>(
+        `SELECT trial_started_at FROM organizations WHERE id = $1 LIMIT 1`,
+        [orgId]
+      );
+      if (priorTrial.rows[0]?.trial_started_at) {
+        logger.info(
+          { event: "billing_trial_already_used", orgId, tier },
+          "POST /api/billing/checkout: org already used its Platform trial — rejecting trial checkout"
+        );
+        res.status(409).json({
+          error: "trial_already_used",
+          detail: `This organization has already used its ${trialPeriodDays()}-day Platform free trial. You can subscribe without a trial from Manage Billing.`,
+        });
+        return;
+      }
+    }
+
+    // Card is required up front — Checkout collects a payment method by default
+    // in subscription mode (we never set payment_method_collection:if_required).
+    // trial_settings.missing_payment_method:cancel is a safety net so a trial
+    // with no card ends by canceling rather than leaving an unpaid invoice.
+    const trialFields = applyTrial
+      ? {
+          trial_period_days: trialPeriodDays(),
+          trial_settings: { end_behavior: { missing_payment_method: "cancel" as const } },
+        }
+      : {};
+
     const session = await getStripe().checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
@@ -170,6 +231,7 @@ router.post("/billing/checkout", requireApiKey, attachOrganizationContext, async
       // Same metadata propagated to all subscription lifecycle events.
       subscription_data: {
         metadata: { organization_id: orgId, api_key_id: apiKeyId, tier },
+        ...trialFields,
       },
       success_url: successUrl,
       cancel_url: cancelUrl
@@ -185,7 +247,14 @@ router.post("/billing/checkout", requireApiKey, attachOrganizationContext, async
     }
 
     logger.info(
-      { event: "billing_checkout_created", apiKeyId, customerId, sessionId: session.id, tier },
+      {
+        event: "billing_checkout_created",
+        apiKeyId,
+        customerId,
+        sessionId: session.id,
+        tier,
+        trialDays: applyTrial ? trialPeriodDays() : null,
+      },
       "Stripe checkout session created"
     );
 

@@ -224,7 +224,7 @@ export default function HomePage() {
               </div>
 
               <ul className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-text-muted">
-                {["No credit card to start", "SSO / SAML available", "No AI training on your data"].map((t) => (
+                {["14-day free trial · cancel anytime", "SSO / SAML available", "No AI training on your data"].map((t) => (
                   <li key={t} className="flex items-center gap-1.5">
                     <span className="text-accent"><Check className="w-3 h-3" /></span>
                     {t}

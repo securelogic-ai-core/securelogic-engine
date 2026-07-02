@@ -125,3 +125,35 @@ describe("stripeWebhook.ts: stale-revoke guard", () => {
     expect(SOURCE).toMatch(/currentSubId !== subscriptionId/);
   });
 });
+
+describe("stripeWebhook.ts: Platform free trial (PR-C2)", () => {
+  it("status 'trialing' grants full entitlement identically to 'active'", () => {
+    // Both statuses land on the same grant branch (activeSubscription: true).
+    expect(SOURCE).toMatch(
+      /status === "active" \|\| status === "trialing"[\s\S]{0,120}activeSubscription:\s*true/
+    );
+  });
+
+  it("records trial_started_at only for a Platform tier at status 'trialing', guarded IS NULL", () => {
+    expect(SOURCE).toMatch(/subscriptionStatus === "trialing"/);
+    expect(SOURCE).toMatch(/rawSubscriptionTier === "platform"/);
+    expect(SOURCE).toMatch(/rawSubscriptionTier === "platform_annual"/);
+    // Idempotent, at-most-once write — guarded WHERE trial_started_at IS NULL.
+    expect(SOURCE).toMatch(
+      /UPDATE organizations SET trial_started_at = NOW\(\)[\s\S]{0,80}WHERE id = \$1 AND trial_started_at IS NULL/
+    );
+  });
+
+  it("records the trial claim AFTER the entitlement sync (not before)", () => {
+    const syncIdx = SOURCE.indexOf("await syncOrgEntitlement(");
+    const claimIdx = SOURCE.indexOf("UPDATE organizations SET trial_started_at = NOW()");
+    expect(syncIdx).toBeGreaterThan(-1);
+    expect(claimIdx).toBeGreaterThan(syncIdx);
+  });
+
+  it("handles customer.subscription.trial_will_end gracefully (logged, no throw, 200)", () => {
+    expect(SOURCE).toMatch(/eventType === "customer\.subscription\.trial_will_end"/);
+    expect(SOURCE).toMatch(/stripe_trial_will_end/);
+    expect(SOURCE).toMatch(/trial_will_end:\s*true/);
+  });
+});
