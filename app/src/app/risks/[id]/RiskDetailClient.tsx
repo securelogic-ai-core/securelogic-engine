@@ -25,6 +25,7 @@ import { useState } from "react";
 import type { Risk, RiskScaleLevel, RiskTreatment, Finding } from "@/lib/api";
 import { RiskHistorySection } from "@/components/risks/RiskHistorySection";
 import { LinkedControlsSection } from "@/components/risks/LinkedControlsSection";
+import { LinkedEvidenceSection } from "@/components/risks/LinkedEvidenceSection";
 import { LinkedObligationsSection } from "@/components/risks/LinkedObligationsSection";
 import { LifecyclePanel } from "@/components/risks/LifecyclePanel";
 import { LifecycleEventStream } from "@/components/risks/LifecycleEventStream";
@@ -384,6 +385,11 @@ export function RiskDetailClient({
 
       {/* Mitigating Controls (RR-4) */}
       <LinkedControlsSection riskId={risk.id} />
+
+      {/* Assessment evidence (R4) — attach/detach; renders nothing when the
+          risk-lifecycle flag is off. Bumps the lifecycle refresh so the evidence
+          gate requirement + event stream update after a change. */}
+      <LinkedEvidenceSection riskId={risk.id} onChanged={() => setLifecycleRefresh((k) => k + 1)} />
 
       {/* Affected Obligations (RR-6) */}
       <LinkedObligationsSection riskId={risk.id} />

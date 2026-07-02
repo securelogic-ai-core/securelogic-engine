@@ -19,7 +19,8 @@ export const VALID_SOURCE_TYPES = new Set([
   "obligation_review",
   "dependency_review",
   "risk_treatment",
-  "finding"
+  "finding",
+  "policy_review"
 ]);
 
 export const VALID_EVIDENCE_TYPES = new Set([
@@ -81,7 +82,9 @@ export function validateEvidenceCreate(body: unknown): EvidenceCreateResult {
   if (!VALID_SOURCE_TYPES.has(b["source_type"] as string)) {
     return {
       error: "invalid_source_type",
-      detail: "Must be one of: control_test, vendor_review, ai_review, obligation_review"
+      detail:
+        "Must be one of: control_test, vendor_review, ai_review, obligation_review, " +
+        "ai_governance_review, dependency_review, risk_treatment, finding, policy_review"
     };
   }
   const source_type = b["source_type"] as string;
@@ -94,6 +97,41 @@ export function validateEvidenceCreate(body: unknown): EvidenceCreateResult {
     return { error: "source_id_must_be_uuid" };
   }
   const source_id = b["source_id"] as string;
+
+  // title + evidence_type + optional metadata — shared with the risk-scoped
+  // evidence route (Epic R4), which supplies source_type/source_id from the URL.
+  const meta = validateEvidenceMetadata(b);
+  if ("error" in meta) return meta;
+
+  return { input: { source_type, source_id, ...meta.metadata } };
+}
+
+// ---------------------------------------------------------------------------
+// validateEvidenceMetadata — the source-agnostic fields of an evidence record.
+// Reused by validateEvidenceCreate (generic POST /api/evidence) and by the
+// risk-scoped POST /api/risks/:id/evidence route, which derives source_type='risk'
+// and source_id from the URL rather than the body. Keeping this in one place
+// means both paths validate title/evidence_type/dates identically.
+// ---------------------------------------------------------------------------
+
+export type EvidenceMetadata = {
+  title: string;
+  description: string | null;
+  evidence_type: string;
+  collected_at: string | null;
+  collected_by: string | null;
+  external_ref: string | null;
+};
+
+export type EvidenceMetadataResult =
+  | { metadata: EvidenceMetadata }
+  | { error: string; detail?: string };
+
+export function validateEvidenceMetadata(body: unknown): EvidenceMetadataResult {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return { error: "request_body_required" };
+  }
+  const b = body as Record<string, unknown>;
 
   // title — required non-empty string
   if (!isNonEmptyString(b["title"])) {
@@ -168,16 +206,7 @@ export function validateEvidenceCreate(body: unknown): EvidenceCreateResult {
   }
 
   return {
-    input: {
-      source_type,
-      source_id,
-      title,
-      description,
-      evidence_type,
-      collected_at,
-      collected_by,
-      external_ref
-    }
+    metadata: { title, description, evidence_type, collected_at, collected_by, external_ref }
   };
 }
 

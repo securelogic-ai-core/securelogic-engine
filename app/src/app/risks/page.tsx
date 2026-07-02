@@ -116,6 +116,11 @@ export default async function RisksPage({
   // For now, filtering on legacy = filtering on residual.
   const activeRating = sp.risk_rating ?? "";
   const activeReviewStatus = sp.review_status ?? "";
+  // R4 §4.6 — archived view. Only meaningful when the risk-lifecycle flag is on
+  // (the engine ignores the param otherwise); the toggle is shown only when the
+  // public lifecycle flag is enabled, so a flag-off list page is unchanged.
+  const lifecycleUiEnabled = process.env.NEXT_PUBLIC_RISK_LIFECYCLE_ENABLED === "true";
+  const activeArchived = sp.archived === "true";
 
   // Fetch four endpoints in parallel:
   //   1. /api/risks      — full row data (incl. due_date, updated_at) for ALL statuses
@@ -134,6 +139,7 @@ export default async function RisksPage({
     domain?: string;
     risk_rating?: string;
     review_status?: "overdue" | "due_soon" | "up_to_date";
+    archived?: boolean;
     limit: number;
   } = { limit: 200 };
   if (activeStatus)        basicParams.status        = activeStatus;
@@ -144,6 +150,7 @@ export default async function RisksPage({
       activeReviewStatus === "up_to_date") {
     basicParams.review_status = activeReviewStatus;
   }
+  if (lifecycleUiEnabled && activeArchived) basicParams.archived = true;
 
   const [basicData, intelligenceData, summary, scale] = await Promise.all([
     getRisks(token, basicParams),
@@ -201,6 +208,7 @@ export default async function RisksPage({
     ...(sp.domain        ? { domain:        sp.domain }        : {}),
     ...(sp.risk_rating   ? { risk_rating:   sp.risk_rating }   : {}),
     ...(sp.review_status ? { review_status: sp.review_status } : {}),
+    ...(sp.archived ? { archived: sp.archived } : {}),
   };
 
   return (
@@ -354,6 +362,18 @@ export default async function RisksPage({
             />
           ))}
         </div>
+
+        {/* R4 §4.6 — archived view toggle. Shown only when the public risk-
+            lifecycle flag is enabled, so a flag-off list page is unchanged. */}
+        {lifecycleUiEnabled && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-semibold uppercase tracking-wide mr-1" style={{ color: "#64748b" }}>
+              Lifecycle
+            </span>
+            <FilterPill label="Active" href={filterHref(currentSp, "archived", null)} active={!activeArchived} />
+            <FilterPill label="Archived" href={filterHref(currentSp, "archived", "true")} active={activeArchived} />
+          </div>
+        )}
       </div>
 
       {/* Risk table */}

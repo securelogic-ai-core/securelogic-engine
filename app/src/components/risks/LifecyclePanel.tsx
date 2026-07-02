@@ -181,6 +181,8 @@ export function LifecyclePanel({
   const inActiveAssessment = current === "scoping";
   const inTreatmentSelection = current === "treatment_selection";
   const inPendingApproval = current === "pending_approval";
+  const inDraft = current === "draft";
+  const inResidualReview = current === "residual_review";
 
   return (
     <div className="mb-6 p-5" style={CARD_STYLE}>
@@ -192,6 +194,15 @@ export function LifecyclePanel({
           </span>
         </div>
       </div>
+
+      {/* Draft-state explainer (R4) — the risk hasn't entered the formal
+          lifecycle yet; assessment is the first step. */}
+      {inDraft && (
+        <p className="text-sm mb-4" style={{ color: "#94a3b8" }}>
+          This risk hasn&apos;t entered the formal lifecycle yet. Begin the assessment
+          to assign an owner, score the residual risk, and work it through treatment and review.
+        </p>
+      )}
 
       {/* 12-stage progress rail */}
       <div className="flex flex-wrap gap-x-4 gap-y-2 mb-4">
@@ -268,6 +279,26 @@ export function LifecyclePanel({
               Go to approvals queue →
             </Link>
           )}
+        </div>
+      )}
+
+      {/* Residual-review decision (R4, §4.5) — compare residual vs the original
+          inherent rating (shown in the Risk Rating card below), then close if the
+          residual is acceptable or re-score if new evidence changes the picture.
+          The Close / Re-score actions come from allowed_transitions below. */}
+      {inResidualReview && (
+        <div
+          className="mb-4 p-3 rounded"
+          style={{ background: "rgba(0,196,180,0.06)", border: "1px solid rgba(0,196,180,0.2)" }}
+        >
+          <p className="text-sm" style={{ color: "#5eead4" }}>
+            Residual review — confirm the treated risk is acceptable.
+          </p>
+          <p className="text-xs mt-1" style={{ color: "#94a3b8" }}>
+            Compare the residual rating against the original inherent rating in the Risk
+            Rating section below. Close the risk if the residual level is acceptable, or
+            re-score it if new evidence changes the assessment.
+          </p>
         </div>
       )}
 

@@ -30,6 +30,8 @@ import {
   validateRiskListQuery
 } from "../lib/riskValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { sendOwnerAssignedNotification } from "../lib/riskLifecycleNotifier.js";
+import { riskLifecycleEnabled } from "../lib/riskLifecycleFeatureFlag.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { resolveOwnerUserSameOrg } from "../lib/ownerUserResolver.js";
 import { resolveCadenceDays } from "../lib/riskCadence.js";
@@ -481,6 +483,20 @@ router.get(
       if (input.risk_rating !== null) {
         params.push(input.risk_rating);
         conditions.push(`risk_rating = $${params.length}`);
+      }
+
+      // Archived filter (Epic R4, §4.6) — archived is a lifecycle_state, so this
+      // is ONLY applied when the risk-lifecycle flag is on. When the flag is off
+      // no predicate is added and the list is byte-for-byte identical to before.
+      //   default:          hide archived (IS DISTINCT FROM keeps NULL/never-in-
+      //                     lifecycle rows visible)
+      //   ?archived=true:   show ONLY archived (the explicit archived view)
+      if (riskLifecycleEnabled()) {
+        if (input.archived === true) {
+          conditions.push(`lifecycle_state = 'archived'`);
+        } else {
+          conditions.push(`lifecycle_state IS DISTINCT FROM 'archived'`);
+        }
       }
 
       // RR-5: review_status filter — three buckets relative to today.
@@ -1469,6 +1485,24 @@ router.patch(
         },
         ipAddress: req.ip ?? null
       });
+
+      // Owner-assigned notification (Epic R4) — when the PATCH assigns a NEW
+      // owner (to a real user). Fire-and-forget on pgElevated + the shared
+      // sender, decoupled from this committed transaction; no-ops entirely when
+      // SECURELOGIC_RISK_LIFECYCLE_NOTIFICATIONS_ENABLED is off, so flag-off
+      // behavior is unchanged.
+      if (
+        input.owner_user_id !== undefined &&
+        risk.owner_user_id &&
+        before.owner_user_id !== risk.owner_user_id
+      ) {
+        void sendOwnerAssignedNotification({
+          organizationId,
+          riskId: risk.id as string,
+          riskTitle: (risk.title as string) ?? "a risk",
+          ownerUserId: risk.owner_user_id as string,
+        }).catch(() => {});
+      }
 
       // Webhook on PATCH — closes the gap flagged in earlier
       // investigation (item 1 from Decision §11 scope). Same payload

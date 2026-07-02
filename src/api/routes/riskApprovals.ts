@@ -29,6 +29,10 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireNotViewer } from "../middleware/requireRole.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import {
+  sendApprovalRequestedNotification,
+  sendApprovalDecidedNotification,
+} from "../lib/riskLifecycleNotifier.js";
 import { riskLifecycleFeatureFlag } from "../lib/riskLifecycleFeatureFlag.js";
 import { canApprove } from "../lib/riskApprovalAuthority.js";
 import {
@@ -118,7 +122,7 @@ export async function requestRiskApproval(req: Request, res: Response): Promise<
 
   try {
     const riskRes = await pg.query(
-      `SELECT lifecycle_state, owner_user_id, residual_rating, residual_score
+      `SELECT lifecycle_state, owner_user_id, residual_rating, residual_score, title
          FROM risks WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
       [riskId, organizationId]
     );
@@ -209,6 +213,15 @@ export async function requestRiskApproval(req: Request, res: Response): Promise<
       ipAddress: req.ip ?? null,
     });
 
+    // Notify eligible approvers — fire-and-forget, OUTSIDE this transaction
+    // (pgElevated + separate sender). A mail failure never affects the request.
+    void sendApprovalRequestedNotification({
+      organizationId,
+      riskId,
+      riskTitle: (risk.title as string) ?? "a risk",
+      requesterName: null,
+    }).catch(() => {});
+
     res.status(201).json({ approval: approvalRow, lifecycle_state: "pending_approval" });
   } catch (err) {
     logger.error({ err, riskId }, "request_risk_approval_failed");
@@ -280,7 +293,7 @@ export async function decideRiskApproval(req: Request, res: Response): Promise<v
     }
 
     const riskRes = await pg.query(
-      `SELECT lifecycle_state FROM risks WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+      `SELECT lifecycle_state, title FROM risks WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
       [riskId, organizationId]
     );
     if ((riskRes.rowCount ?? 0) === 0) {
@@ -288,6 +301,7 @@ export async function decideRiskApproval(req: Request, res: Response): Promise<v
       return;
     }
     const current: string = riskRes.rows[0].lifecycle_state ?? DEFAULT_LIFECYCLE_STATE;
+    const riskTitle: string = (riskRes.rows[0].title as string) ?? "a risk";
 
     // Validate BEFORE mutating. approvalGranted reflects the pending decision.
     const gates: GateInputs = {
@@ -339,6 +353,19 @@ export async function decideRiskApproval(req: Request, res: Response): Promise<v
       payload: { risk_id: riskId, from: current, to: toState },
       ipAddress: req.ip ?? null,
     });
+
+    // Notify the proposer of the decision — fire-and-forget, OUTSIDE this
+    // transaction (pgElevated + separate sender). Never affects the response.
+    if (approval.requested_by_user_id) {
+      void sendApprovalDecidedNotification({
+        organizationId,
+        riskId,
+        riskTitle,
+        proposerUserId: approval.requested_by_user_id as string,
+        decision: decisionInput,
+        comment: comment.trim(),
+      }).catch(() => {});
+    }
 
     res.status(200).json({
       approval: { id: approvalId, decision: decisionInput, approver_user_id: actorUserId },

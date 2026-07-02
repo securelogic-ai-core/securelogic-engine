@@ -2012,6 +2012,7 @@ export async function getRisks(
     domain?:        string;
     risk_rating?:   string;
     review_status?: "overdue" | "due_soon" | "up_to_date";
+    archived?:      boolean;
     limit?:         number;
   }
 ): Promise<RisksResponse | null> {
@@ -2021,6 +2022,7 @@ export async function getRisks(
     if (params?.domain)         qs.set("domain",        params.domain);
     if (params?.risk_rating)    qs.set("risk_rating",   params.risk_rating);
     if (params?.review_status)  qs.set("review_status", params.review_status);
+    if (params?.archived)       qs.set("archived",      "true");
     qs.set("limit", String(params?.limit ?? 50));
     const res = await engineFetch(`/api/risks?${qs.toString()}`, apiKey);
     if (!res.ok) return null;
@@ -3109,10 +3111,23 @@ export type LifecycleEvent = {
   transition:       string;
   actor_user_id:    string | null;
   actor_api_key_id: string | null;
+  actor_name:       string | null;
+  actor_email:      string | null;
   comment:          string | null;
   evidence_ids:     string[];
   approval_id:      string | null;
   created_at:       string;
+};
+
+export type RiskEvidence = {
+  id:            string;
+  title:         string;
+  description:   string | null;
+  evidence_type: string;
+  collected_at:  string | null;
+  collected_by:  string | null;
+  external_ref:  string | null;
+  created_at:    string;
 };
 
 export type PendingApproval = {
@@ -3187,6 +3202,69 @@ export async function getRiskLifecycleEvents(
     return { ok: true, events: body.events ?? [], next_cursor: body.next_cursor ?? null };
   } catch {
     return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function getRiskEvidence(
+  riskId: string
+): Promise<ReadResult<{ evidence: RiskEvidence[] }>> {
+  try {
+    const res = await fetch(`/api/risks/${encodeURIComponent(riskId)}/evidence`, {
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      return { ok: false, disabled: res.status === 404, error: await readError(res) };
+    }
+    const body = (await res.json()) as { evidence: RiskEvidence[] };
+    return { ok: true, evidence: body.evidence ?? [] };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function attachRiskEvidence(
+  riskId: string,
+  input: {
+    title: string;
+    evidence_type: string;
+    description?: string | null;
+    collected_at?: string | null;
+    collected_by?: string | null;
+    external_ref?: string | null;
+  }
+): Promise<ActionResult<{ evidence: RiskEvidence }>> {
+  try {
+    const res = await fetch(`/api/risks/${encodeURIComponent(riskId)}/evidence`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      return { ok: false, error: await readError(res), status: res.status };
+    }
+    const body = (await res.json()) as { evidence: RiskEvidence };
+    return { ok: true, evidence: body.evidence };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function detachRiskEvidence(
+  riskId: string,
+  evidenceId: string
+): Promise<ActionResult<{ detached?: boolean }>> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/evidence/${encodeURIComponent(evidenceId)}`,
+      { method: "DELETE", cache: "no-store" }
+    );
+    if (!res.ok) {
+      return { ok: false, error: await readError(res), status: res.status };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
   }
 }
 

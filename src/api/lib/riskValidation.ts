@@ -762,6 +762,9 @@ export type RiskListQueryInput = {
   risk_rating: string | null;
   // RR-5: filter on review-cadence position relative to today.
   review_status: "overdue" | "due_soon" | "up_to_date" | null;
+  // R4 §4.6: when true, return ONLY archived risks (the explicit archived view).
+  // Only honored by the handler when the risk-lifecycle flag is on.
+  archived: boolean;
   limit: number;
   before_created_at: string | null;
   before_id: string | null;
@@ -828,6 +831,11 @@ export function validateRiskListQuery(query: unknown): RiskListQueryResult {
     review_status = v as "overdue" | "due_soon" | "up_to_date";
   }
 
+  // R4 §4.6 archived view — truthy query param opts into the archived-only list.
+  const archived =
+    "archived" in q &&
+    (q["archived"] === "true" || q["archived"] === true || q["archived"] === "1");
+
   const hasBefore = isNonEmptyString(q["before_created_at"]);
   const hasBeforeId = isNonEmptyString(q["before_id"]);
   if (hasBefore !== hasBeforeId) {
@@ -848,6 +856,6 @@ export function validateRiskListQuery(query: unknown): RiskListQueryResult {
   const limit = parseLimit(q["limit"]);
 
   return {
-    input: { status, domain, risk_rating, review_status, limit, before_created_at, before_id }
+    input: { status, domain, risk_rating, review_status, archived, limit, before_created_at, before_id }
   };
 }
