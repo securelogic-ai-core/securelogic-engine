@@ -1027,6 +1027,38 @@ export async function getMe(apiKey: string): Promise<MeResponse | null> {
   }
 }
 
+/**
+ * Billing/subscription state from GET /api/billing/subscription.
+ * `status` distinguishes "trialing" from "active"; trial_end + amount/interval
+ * come straight off the live Stripe subscription (never hardcoded).
+ */
+export interface SubscriptionInfo {
+  tier: string;
+  entitlement_level: string;
+  status: "active" | "trialing" | "past_due" | "canceled" | "none";
+  stripe_customer_id: string | null;
+  current_period_end: string | null;
+  payment_failed_at: string | null;
+  subscription_tier: string | null;
+  /** ISO timestamp the trial converts to a paid subscription (trialing only). */
+  trial_end: string | null;
+  /** Subscribed price in the smallest currency unit (e.g. cents). */
+  amount: number | null;
+  currency: string | null;
+  /** Stripe recurring interval: "month" | "year". */
+  interval: string | null;
+}
+
+export async function getSubscription(token: string): Promise<SubscriptionInfo | null> {
+  try {
+    const res = await engineFetch("/api/billing/subscription", token);
+    if (!res.ok) return null;
+    return res.json() as Promise<SubscriptionInfo>;
+  } catch {
+    return null;
+  }
+}
+
 export async function getIssues(apiKey: string): Promise<IssuesResponse | null> {
   try {
     const res = await engineFetch("/api/newsletter-issues", apiKey);
