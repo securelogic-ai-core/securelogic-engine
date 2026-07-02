@@ -233,6 +233,46 @@ describe("POST transition — gate & validation failures", () => {
   });
 });
 
+describe("POST transition — approval transitions are refused (routed to the approvals endpoint)", () => {
+  it.each(["submit_for_approval", "approve", "reject"])(
+    "409 use_approvals_endpoint for %s — the generic endpoint cannot bypass canApprove/SoD",
+    async (transition) => {
+      // A stale approved approval would otherwise satisfy the state machine's
+      // approval_required gate; the guard refuses before any lookup/mutation.
+      h.state.gateRow.approval_granted = true;
+      h.state.riskRow = {
+        lifecycle_state: "pending_approval",
+        owner_user_id: "o",
+        residual_rating: "High",
+        residual_score: 60,
+      };
+      const res = await request(makeApp())
+        .post(`/api/risks/${RISK}/lifecycle/transitions`)
+        .send({ transition, comment: "x" });
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({ error: "use_approvals_endpoint", transition });
+      // No state change and no event — authority never crossed.
+      expect(wrote(/UPDATE risks SET/)).toBe(false);
+      expect(wrote(/INSERT INTO risk_lifecycle_events/)).toBe(false);
+    }
+  );
+
+  it("does not advertise approval-managed transitions in GET allowed_transitions", async () => {
+    h.state.gateRow.treatment_count = 1;
+    h.state.riskRow = {
+      lifecycle_state: "treatment_selection",
+      owner_user_id: "owner-1",
+      residual_rating: "High",
+      residual_score: 60,
+    };
+    const res = await request(makeApp()).get(`/api/risks/${RISK}/lifecycle`);
+    expect(res.status).toBe(200);
+    expect(res.body.allowed_transitions).not.toContain("submit_for_approval");
+    expect(res.body.allowed_transitions).not.toContain("approve");
+    expect(res.body.allowed_transitions).not.toContain("reject");
+  });
+});
+
 describe("GET /lifecycle", () => {
   it("returns state, gates and allowed transitions", async () => {
     h.state.riskRow = {

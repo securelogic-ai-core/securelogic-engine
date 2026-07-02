@@ -39,28 +39,53 @@ const router = Router();
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function isUuid(v: unknown): v is string {
+export function isUuid(v: unknown): v is string {
   return typeof v === "string" && UUID_RE.test(v);
 }
 
-function getOrgId(req: Request): string | null {
+export function getOrgId(req: Request): string | null {
   const ctx = (req as unknown as {
     organizationContext?: { organizationId?: string };
   }).organizationContext;
   return ctx?.organizationId ?? null;
 }
 
-function getApiKeyId(req: Request): string | null {
+export function getApiKeyId(req: Request): string | null {
   return (req as unknown as { apiKey?: { id?: string } }).apiKey?.id ?? null;
 }
 
-function getUserId(req: Request): string | null {
+export function getUserId(req: Request): string | null {
   return (req as unknown as { userId?: string }).userId ?? null;
+}
+
+export function getUserRole(req: Request): string | null {
+  return (req as unknown as { userRole?: string }).userRole ?? null;
 }
 
 const TRANSITION_SET = new Set<string>(TRANSITIONS);
 
-interface GateRow {
+/**
+ * Transitions owned exclusively by the approvals sub-workflow — POST
+ * /api/risks/:id/approvals (request) and .../:approvalId/decision (approve|reject).
+ * Those endpoints enforce the single approver-authority seam (`canApprove`),
+ * separation of duties, and decision recording. They are REFUSED on this generic
+ * transition endpoint so the executive-approval gate cannot be crossed outside
+ * that seam.
+ *
+ * Why this matters (SoD core, Epic R2): the pure state machine's `reject` edge
+ * requires only actor-identity + SoD, and its `approve` edge's `approval_required`
+ * gate is satisfied by *any* prior approved approval on the risk. So without this
+ * guard a non-approver could reject an approval (from cycle 1), or — on a
+ * re-opened risk carrying a stale approved row — approve one, both bypassing
+ * `canApprove`. Routing all three through the approvals endpoints closes that.
+ */
+const APPROVAL_MANAGED_TRANSITIONS = new Set<string>([
+  "submit_for_approval",
+  "approve",
+  "reject",
+]);
+
+export interface GateRow {
   treatment_count: number;
   has_evidence: boolean;
   approval_granted: boolean;
@@ -71,7 +96,7 @@ interface GateRow {
 
 /** One round-trip that resolves every gate input for a risk (no Promise.all —
  *  single query keeps us off concurrent queries on the tenant client). */
-async function loadGateRow(orgId: string, riskId: string): Promise<GateRow> {
+export async function loadGateRow(orgId: string, riskId: string): Promise<GateRow> {
   const q = await pg.query(
     `SELECT
        (SELECT count(*) FROM risk_treatments t
@@ -112,7 +137,7 @@ async function loadGateRow(orgId: string, riskId: string): Promise<GateRow> {
 
 /** Whether approval is required for this risk under the threshold model.
  *  NULL threshold ⇒ always required (designated-approver model, R1 default). */
-function computeApprovalRequired(
+export function computeApprovalRequired(
   threshold: number | null,
   residualScore: number | null
 ): boolean {
@@ -121,7 +146,7 @@ function computeApprovalRequired(
   return residualScore >= threshold;
 }
 
-function buildGateInputs(
+export function buildGateInputs(
   gr: GateRow,
   hasOwner: boolean,
   hasScore: boolean,
@@ -175,8 +200,12 @@ export async function getRiskLifecycle(req: Request, res: Response): Promise<voi
     const gr = await loadGateRow(organizationId, riskId);
     const gates = buildGateInputs(gr, hasOwner, hasScore, residualScore, getUserId(req));
 
+    // allowed_transitions describes what THIS (generic) endpoint will accept, so
+    // the approval-managed transitions are excluded — R3 drives those from the
+    // `gates` block via the approvals endpoints. Keeps GET and POST consistent.
     const allowed: string[] = [];
     for (const t of TRANSITIONS) {
+      if (APPROVAL_MANAGED_TRANSITIONS.has(t)) continue;
       if (evaluateTransition(current, t, gates).allowed) allowed.push(t);
     }
 
@@ -216,6 +245,19 @@ export async function executeRiskTransition(req: Request, res: Response): Promis
   const transition = body.transition;
   if (typeof transition !== "string" || !TRANSITION_SET.has(transition)) {
     res.status(400).json({ error: "invalid_transition_name" });
+    return;
+  }
+  // Approval transitions must flow through the approvals endpoints (the single
+  // canApprove authority seam) — refuse them here so SoD/authority cannot be
+  // bypassed via the generic transition endpoint.
+  if (APPROVAL_MANAGED_TRANSITIONS.has(transition)) {
+    res.status(409).json({
+      error: "use_approvals_endpoint",
+      transition,
+      detail:
+        "approval transitions are handled by POST /api/risks/:id/approvals and " +
+        "POST /api/risks/:id/approvals/:approvalId/decision",
+    });
     return;
   }
   const comment = body.comment;
