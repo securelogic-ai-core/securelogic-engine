@@ -26,6 +26,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requireNotViewer } from "../middleware/requireRole.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { riskLifecycleFeatureFlag } from "../lib/riskLifecycleFeatureFlag.js";
@@ -405,8 +406,11 @@ const CHAIN = [
   requireEntitlement("premium"),
 ] as const;
 
-router.post("/risks/:id/approvals", ...CHAIN, asTenant(requestRiskApproval));
-router.post("/risks/:id/approvals/:approvalId/decision", ...CHAIN, asTenant(decideRiskApproval));
+// Approval mutations require a non-viewer role (decision also enforces admin via
+// canApprove; requireNotViewer no-ops for API-key auth, which the handlers then
+// refuse with approval_requires_user). The queue read is open to viewers.
+router.post("/risks/:id/approvals", ...CHAIN, requireNotViewer, asTenant(requestRiskApproval));
+router.post("/risks/:id/approvals/:approvalId/decision", ...CHAIN, requireNotViewer, asTenant(decideRiskApproval));
 router.get("/approvals", ...CHAIN, asTenant(listApprovals));
 
 export default router;

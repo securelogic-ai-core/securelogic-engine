@@ -22,6 +22,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requireNotViewer } from "../middleware/requireRole.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { riskLifecycleFeatureFlag } from "../lib/riskLifecycleFeatureFlag.js";
@@ -469,8 +470,10 @@ const CHAIN = [
   requireEntitlement("premium"),
 ] as const;
 
+// Reads are open to viewers; mutations require a non-viewer role (requireNotViewer
+// no-ops for API-key auth — spec §9 allows API-key transitions attributed to null).
 router.get("/risks/:id/lifecycle", ...CHAIN, asTenant(getRiskLifecycle));
-router.post("/risks/:id/lifecycle/transitions", ...CHAIN, asTenant(executeRiskTransition));
+router.post("/risks/:id/lifecycle/transitions", ...CHAIN, requireNotViewer, asTenant(executeRiskTransition));
 router.get("/risks/:id/lifecycle/events", ...CHAIN, asTenant(getRiskLifecycleEvents));
 
 export default router;

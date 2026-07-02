@@ -19,6 +19,9 @@ const h = vi.hoisted(() => ({
       require_evidence_gate: false,
     },
     events: [] as unknown[],
+    // Role attached by the requireApiKey mock (null ⇒ no role set, i.e. the
+    // API-key path; a string ⇒ JWT user with that role).
+    actorRole: null as string | null,
   },
 }));
 
@@ -50,6 +53,7 @@ vi.mock("../middleware/requireApiKey.js", () => ({
     // Simulate an authenticated user session (JWT bridge) by default.
     req.userId = "user-1";
     req.apiKey = { id: "key-1" };
+    if (h.state.actorRole) req.userRole = h.state.actorRole;
     next();
   },
 }));
@@ -91,6 +95,7 @@ beforeEach(() => {
     require_evidence_gate: false,
   };
   h.state.events = [];
+  h.state.actorRole = null;
 });
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
@@ -150,6 +155,40 @@ describe("POST transition — happy path", () => {
     expect(res.status).toBe(200);
     expect(res.body.lifecycle_state).toBe("closed");
     expect(wrote(/UPDATE risks SET lifecycle_state = \$1, status = \$2/)).toBe(true);
+  });
+});
+
+describe("POST transition — viewer role is refused (requireNotViewer)", () => {
+  it("403 read_only_access for a viewer JWT — no state change or event", async () => {
+    h.state.actorRole = "viewer";
+    h.state.riskRow = {
+      lifecycle_state: null,
+      owner_user_id: "owner-1",
+      residual_rating: "High",
+      residual_score: 60,
+    };
+    const res = await request(makeApp())
+      .post(`/api/risks/${RISK}/lifecycle/transitions`)
+      .send({ transition: "begin_assessment", comment: "starting" });
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ error: "read_only_access" });
+    expect(wrote(/UPDATE risks SET/)).toBe(false);
+    expect(wrote(/INSERT INTO risk_lifecycle_events/)).toBe(false);
+  });
+
+  it("still allows a non-viewer JWT (analyst) to transition", async () => {
+    h.state.actorRole = "analyst";
+    h.state.riskRow = {
+      lifecycle_state: null,
+      owner_user_id: "owner-1",
+      residual_rating: "High",
+      residual_score: 60,
+    };
+    const res = await request(makeApp())
+      .post(`/api/risks/${RISK}/lifecycle/transitions`)
+      .send({ transition: "begin_assessment", comment: "starting" });
+    expect(res.status).toBe(200);
+    expect(res.body.lifecycle_state).toBe("scoping");
   });
 });
 

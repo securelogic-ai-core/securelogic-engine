@@ -21,10 +21,13 @@
  */
 
 import Link from "next/link";
+import { useState } from "react";
 import type { Risk, RiskScaleLevel, RiskTreatment, Finding } from "@/lib/api";
 import { RiskHistorySection } from "@/components/risks/RiskHistorySection";
 import { LinkedControlsSection } from "@/components/risks/LinkedControlsSection";
 import { LinkedObligationsSection } from "@/components/risks/LinkedObligationsSection";
+import { LifecyclePanel } from "@/components/risks/LifecyclePanel";
+import { LifecycleEventStream } from "@/components/risks/LifecycleEventStream";
 import { ReviewCadenceCard } from "./ReviewCadenceCard";
 import { MarkReviewedButton } from "./MarkReviewedButton";
 
@@ -101,17 +104,26 @@ export function RiskDetailClient({
   findings,
   scaleLevels,
   effectiveCadenceByRating,
+  userRole,
 }: {
   risk: Risk;
   treatments: RiskTreatment[];
   findings: Finding[];
   scaleLevels: RiskScaleLevel[];
   effectiveCadenceByRating: Record<string, number>;
+  /** users.role via getAuthMe — drives approver-only affordances. Null when
+   *  role is unavailable (e.g. API-key session); the engine still enforces. */
+  userRole: string | null;
 }) {
   // Header pill displays residual_rating per Decision §5 — the
   // post-controls "current state" rating is the headline number.
   const ratingStyle = ratingStyleFromScale(risk.residual_rating, scaleLevels);
   const statusStyle = STATUS_STYLES[risk.status] ?? { background: "rgba(148,163,184,0.12)", color: "#94a3b8" };
+
+  // Shared refresh counter so the lifecycle history re-fetches after the panel
+  // executes a transition. Both lifecycle components render nothing when the
+  // feature flag is off (engine 404), so the affordances simply don't appear.
+  const [lifecycleRefresh, setLifecycleRefresh] = useState(0);
 
   // The metadata grid carries the workflow / ownership fields.
   // Likelihood / Impact / Rating are split into Inherent + Residual
@@ -216,6 +228,14 @@ export function RiskDetailClient({
           ))}
         </div>
       </div>
+
+      {/* Lifecycle panel (R3) — current stage, gates, and transition actions.
+          Renders nothing when the risk-lifecycle flag is off. */}
+      <LifecyclePanel
+        riskId={risk.id}
+        userRole={userRole}
+        onChanged={() => setLifecycleRefresh((k) => k + 1)}
+      />
 
       {/*
         Rating block — three rows × two columns (Inherent | Residual).
@@ -375,6 +395,10 @@ export function RiskDetailClient({
           effectiveCadenceByRating={effectiveCadenceByRating}
         />
       </div>
+
+      {/* Lifecycle history (R3) — the authoritative, append-only event stream,
+          distinct from the RR-3 audit projection below. */}
+      <LifecycleEventStream riskId={risk.id} refreshKey={lifecycleRefresh} />
 
       {/* History (RR-3) */}
       <RiskHistorySection riskId={risk.id} />
