@@ -377,7 +377,7 @@ export default async function AccountPage({
                       type="submit"
                       className="w-full border border-teal-600 text-teal-600 hover:bg-teal-50 text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                     >
-                      Team Professional — $199/mo
+                      Brief Team — $199/mo
                     </button>
                   </form>
                   <form action="/api/billing/checkout" method="POST">

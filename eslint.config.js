@@ -56,6 +56,12 @@ export default [
   // -----------------------------
   {
     files: ["**/__tests__/**/*.ts"],
+    languageOptions: {
+      parser: tsparser
+    },
+    plugins: {
+      "@typescript-eslint": tseslint
+    },
     rules: {
       "@typescript-eslint/no-explicit-any": "off"
     }

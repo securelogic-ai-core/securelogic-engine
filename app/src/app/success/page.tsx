@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 function planDisplayName(entitlementLevel: string | null): string {
   switch (entitlementLevel) {
     case "premium":      return "Team";
-    case "professional": return "Professional";
+    case "professional": return "Brief Pro";
     case "admin":        return "Enterprise";
     default:             return "Premium";
   }

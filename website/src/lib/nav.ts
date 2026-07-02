@@ -87,7 +87,7 @@ export const FOOTER_COLUMNS: FooterColumn[] = [
     links: [
       { label: "Get the Free Brief", href: "/#brief-signup" },
       { label: "Brief Pro", href: "/pricing/" },
-      { label: "Team Professional", href: "/pricing/" },
+      { label: "Brief Team", href: "/pricing/" },
       { label: "Sample issue", href: "/intelligence-brief/" },
     ],
   },

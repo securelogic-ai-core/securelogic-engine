@@ -61,7 +61,7 @@ const PLATFORM_HIGHLIGHTS = [
 ];
 
 const DETAILS = [
-  "Team Professional includes up to 6 seats.",
+  "Brief Team includes up to 6 seats.",
   "Need more than 6 seats on the brief? Move to Platform.",
   "Platform Professional includes up to 10 seats / 50 monitored entities.",
   "Need more than 10 seats or 50 entities, white-labeling, SSO/SAML, or multi-org? Talk to us about Enterprise.",
@@ -130,11 +130,11 @@ const PROCUREMENT = [
   },
   {
     title: "Seats & monitored entities",
-    body: "Team Professional includes up to 6 seats; Platform Professional includes up to 10 seats and 50 monitored entities (vendors and AI systems). Need more seats or entities, multi-org, or white-labeling? That's Enterprise.",
+    body: "Brief Team includes up to 6 seats; Platform Professional includes up to 10 seats and 50 monitored entities (vendors and AI systems). Need more seats or entities, multi-org, or white-labeling? That's Enterprise.",
   },
   {
     title: "Proration",
-    body: "Upgrades take effect immediately and are prorated for the remainder of the current billing period, so you only pay the difference. Team Professional spend is credited toward Platform when you upgrade.",
+    body: "Upgrades take effect immediately and are prorated for the remainder of the current billing period, so you only pay the difference. Brief Team spend is credited toward Platform when you upgrade.",
   },
   {
     title: "Purchase orders & invoicing",
@@ -169,7 +169,7 @@ const FAQ = [
   },
   {
     q: "Can I start with the brief and upgrade later?",
-    a: "Absolutely — that's the intended path. Start free, move to Brief Pro or Team Professional, then upgrade to the Platform when you're ready. Team Professional spend is credited toward Platform when you upgrade.",
+    a: "Absolutely — that's the intended path. Start free, move to Brief Pro or Brief Team, then upgrade to the Platform when you're ready. Brief Team spend is credited toward Platform when you upgrade.",
   },
   {
     q: "Can we pay by invoice or purchase order?",
@@ -177,7 +177,7 @@ const FAQ = [
   },
   {
     q: "How does proration work when we upgrade?",
-    a: "Upgrades take effect immediately and are prorated for the remainder of the current billing period — you only pay the difference. Team Professional spend is credited toward Platform when you move up.",
+    a: "Upgrades take effect immediately and are prorated for the remainder of the current billing period — you only pay the difference. Brief Team spend is credited toward Platform when you move up.",
   },
   {
     q: "What do you need for our security and procurement review?",

@@ -31,7 +31,7 @@ export type MeResponse = {
  * Single source of truth for the human-readable plan label rendered across
  * the account page, dashboard, and any future surface. Prefers the precise
  * Stripe tier (which distinguishes Platform Annual from Platform Monthly,
- * and Team Professional from solo Professional); falls back to the coarser
+ * and Brief Team from solo Brief Pro); falls back to the coarser
  * entitlement_level when the Stripe tier is absent (legacy rows, free).
  */
 export function planDisplayName(
@@ -39,15 +39,15 @@ export function planDisplayName(
   stripeSubscriptionTier?: string | null
 ): string {
   switch (stripeSubscriptionTier) {
-    case "professional":    return "Professional";
-    case "teams":           return "Team Professional";
+    case "professional":    return "Brief Pro";
+    case "teams":           return "Brief Team";
     case "platform":        return "Platform Professional";
     case "platform_annual": return "Platform Annual";
     case "team":            return "Platform Professional";
   }
   switch (entitlementLevel) {
     case "premium":      return "Platform Professional";
-    case "professional": return "Professional";
+    case "professional": return "Brief Pro";
     case "admin":        return "Enterprise";
     default:             return "Free";
   }

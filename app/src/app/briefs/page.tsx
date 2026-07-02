@@ -137,7 +137,7 @@ export default async function BriefsPage() {
           </p>
           <div className="flex items-center justify-center gap-3 flex-wrap">
             <CheckoutButton tier="professional" label="Brief Pro — $49/mo" variant="solid" />
-            <CheckoutButton tier="teams" label="Team Professional — $199/mo" variant="outline" />
+            <CheckoutButton tier="teams" label="Brief Team — $199/mo" variant="outline" />
           </div>
         </div>
       )}
