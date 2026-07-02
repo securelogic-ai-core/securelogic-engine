@@ -195,6 +195,8 @@ services:
         value: "true"
       - key: SECURELOGIC_ACTION_ENGINE_ENABLED        # item 1 — idempotent action writes, free
         value: "true"
+      - key: SECURELOGIC_RISK_LIFECYCLE_ENABLED       # Epic R1 — risk lifecycle, DARK (default off)
+        value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
 
@@ -385,6 +387,8 @@ services:
         value: "true"
       - key: SECURELOGIC_ACTION_ENGINE_ENABLED        # item 1 — idempotent action writes, free
         value: "true"
+      - key: SECURELOGIC_RISK_LIFECYCLE_ENABLED       # Epic R1 — risk lifecycle, DARK (default off)
+        value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
 
@@ -480,6 +484,8 @@ services:
         value: "true"
       - key: SECURELOGIC_ACTION_ENGINE_ENABLED        # item 1 — idempotent action writes, free
         value: "true"
+      - key: SECURELOGIC_RISK_LIFECYCLE_ENABLED       # Epic R1 — risk lifecycle, DARK (default off)
+        value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
 
@@ -565,6 +571,8 @@ services:
         value: "true"
       - key: SECURELOGIC_ACTION_ENGINE_ENABLED        # item 1 — idempotent action writes, free
         value: "true"
+      - key: SECURELOGIC_RISK_LIFECYCLE_ENABLED       # Epic R1 — risk lifecycle, DARK (default off)
+        value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
 

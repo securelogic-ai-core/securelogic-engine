@@ -751,3 +751,43 @@ prioritized, but its notifications depend on R2's approval events).
 `risks/page.tsx`, new `approvals/` and `risks/[id]/residual-review/` pages,
 `components/risks/Lifecycle*.tsx`, `RiskEvidenceSection.tsx`, proxy routes under
 `app/src/app/api/risks/[id]/lifecycle/*` and `api/approvals/*`, `app/src/lib/api.ts`.
+
+---
+
+## Decisions (R1 build authorization, 2026-07-02)
+
+The following resolve the open questions in §11 so R1 can proceed. These are
+binding for the R-phase build; the rest of §11 remains open for later epics.
+
+- **Q1 — Approver model → (a) designated approver, now.** Build the designated
+  approver model via the `canApprove(user, risk)` seam (R2). The score-threshold
+  column `risk_settings.approval_threshold_score` **ships in R1 as `NULL`/unused**
+  (per §7.4) so model (b) layers on later with zero schema rework. While it is
+  `NULL`, all treatment plans require approval under model (a) (approval execution
+  itself is R2).
+- **Q2 — API-key approvals → 403, non-approval transitions attributed-or-null.**
+  Approval decision endpoints (R2) require a JWT user identity; API-key-only
+  requests get **403 `actor_identity_required`**. For R1: non-approval transitions
+  are permitted via API key and record `actor_user_id = NULL` (audited as an
+  org/API-key actor); JWT requests record `actor_user_id = req.userId`. The
+  `risk_lifecycle_events.actor_user_id` column is therefore nullable (§7.2).
+- **Q3 — `lifecycle_state` coexists; `status` derived.** `risks.lifecycle_state`
+  is a **net-new nullable column** (§7.1). Legacy `risks.status` is retained and,
+  when the flag is on, kept as a derived mirror of `lifecycle_state` per §3.5.
+  When the flag is **off**, `lifecycle_state` is never read or written and every
+  existing risk route behaves exactly as today (inert).
+- **Q5 — Entitlement gate = `premium` (rank 4).** The lifecycle is gated
+  `requireEntitlement("premium")`, identical to the rest of the risk family
+  (Bucket A). The `teams`/`platform` collapse (§9) is accepted for R1; finer
+  Platform-only gating stays deferred (§11 Q5 remains open).
+
+**R1 scope boundary.** R1 ships: the `lifecycle_state` column; the
+`risk_lifecycle_events` append-only, in-transaction audit stream;
+the `risk_approvals` + `risk_settings` **schema scaffolding** (no approval
+execution — that is R2); the pure transition state machine (9 states, full
+matrix incl. loop-backs, terminal semantics, gate predicates incl. an
+unknown/garbage-state fail-safe); the transition-execution and lifecycle-event
+read endpoints; the `SECURELOGIC_RISK_LIFECYCLE_ENABLED` flag (default off →
+routes 404/disabled), `render.yaml` declaration, and `premium` entitlement gate.
+Transitions that require an approved approval (e.g. `pending_approval →
+mitigation`) are recognized by the machine but not satisfiable until R2.
