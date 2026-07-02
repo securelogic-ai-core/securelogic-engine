@@ -397,10 +397,11 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
       payment_failed_at:           string | null;
       stripe_subscription_tier:    string | null;
       stripe_subscription_status:  string | null;
+      trial_started_at:            string | null;
     }>(
       `SELECT entitlement_level, stripe_customer_id,
               payment_failed_at, stripe_subscription_tier,
-              stripe_subscription_status
+              stripe_subscription_status, trial_started_at
          FROM organizations WHERE id = $1 LIMIT 1`,
       [orgId]
     );
@@ -417,6 +418,7 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
       payment_failed_at,
       stripe_subscription_tier,
       stripe_subscription_status,
+      trial_started_at,
     } = row;
 
     // Derive a human-readable tier label from entitlement_level
@@ -433,15 +435,26 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
         stripe_customer_id: null,
         current_period_end: null,
         payment_failed_at:  payment_failed_at ?? null,
-        subscription_tier:  stripe_subscription_tier ?? null
+        subscription_tier:  stripe_subscription_tier ?? null,
+        trial_end:          null,
+        amount:             null,
+        currency:           null,
+        interval:           null
       });
       return;
     }
 
-    // Fetch live subscription state from Stripe
-    type BillingStatus = "active" | "past_due" | "canceled" | "none";
+    // Fetch live subscription state from Stripe. "trialing" is surfaced as a
+    // DISTINCT status (not collapsed into "active") so the app can show a
+    // "Free Trial" label + banner; trial_end and the actual price amount come
+    // straight off the live subscription so the UI never hardcodes a price.
+    type BillingStatus = "active" | "trialing" | "past_due" | "canceled" | "none";
     let status: BillingStatus = "none";
     let current_period_end: string | null = null;
+    let trial_end: string | null = null;
+    let amount: number | null = null;
+    let currency: string | null = null;
+    let interval: string | null = null;
 
     try {
       const subs = await getStripe().subscriptions.list({
@@ -453,7 +466,9 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
       const sub = subs.data[0] ?? null;
 
       if (sub) {
-        if (sub.status === "active" || sub.status === "trialing") {
+        if (sub.status === "trialing") {
+          status = "trialing";
+        } else if (sub.status === "active") {
           status = "active";
         } else if (sub.status === "past_due") {
           status = "past_due";
@@ -466,6 +481,17 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
         current_period_end = periodEnd
           ? new Date(periodEnd * 1000).toISOString()
           : null;
+
+        // Trial end + the actual subscribed price (unit_amount / interval) —
+        // read from the live subscription so the app shows the real charge
+        // ($800/mo vs $7,200/yr), never a hardcoded value.
+        trial_end = sub.trial_end
+          ? new Date(sub.trial_end * 1000).toISOString()
+          : null;
+        const price = sub.items.data[0]?.price ?? null;
+        amount   = price?.unit_amount ?? null;
+        currency = price?.currency ?? null;
+        interval = price?.recurring?.interval ?? null;
       }
     } catch (err) {
       // Stripe unavailable — fall back to DB-derived status so the endpoint
@@ -477,7 +503,19 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
         "GET /api/billing/subscription: Stripe API call failed, using DB state"
       );
 
-      if (stripe_subscription_status === "active" || stripe_subscription_status === "trialing") {
+      if (stripe_subscription_status === "trialing") {
+        status = "trialing";
+        // Stripe is unavailable, so derive the trial end from the persisted
+        // trial start + TRIAL_PERIOD_DAYS. Best-effort/approximate — the live
+        // Stripe path above is authoritative when reachable. Amount is unknown
+        // in fallback (not persisted) and stays null; the UI degrades to the
+        // trial label without a dollar figure.
+        if (trial_started_at) {
+          trial_end = new Date(
+            new Date(trial_started_at).getTime() + trialPeriodDays() * 86400000
+          ).toISOString();
+        }
+      } else if (stripe_subscription_status === "active") {
         status = "active";
       } else if (stripe_subscription_status === "past_due") {
         status = "past_due";
@@ -497,7 +535,11 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
       stripe_customer_id,
       current_period_end,
       payment_failed_at:  payment_failed_at ?? null,
-      subscription_tier:  stripe_subscription_tier ?? null
+      subscription_tier:  stripe_subscription_tier ?? null,
+      trial_end,
+      amount,
+      currency,
+      interval
     });
   } catch (err) {
     logger.error(
