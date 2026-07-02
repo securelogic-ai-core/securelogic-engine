@@ -3077,6 +3077,237 @@ export async function getControlsViaProxy(
 }
 
 // =========================================================
+// Risk lifecycle (R3) — browser-side, all go through the Next.js
+// proxies under /api/risks/[id]/lifecycle/* and /api/approvals.
+//
+// The engine returns 404 when SECURELOGIC_RISK_LIFECYCLE_ENABLED is off;
+// the read helpers surface that as { ok:false, disabled:true } so the UI
+// can render nothing rather than an error. Action helpers return the
+// engine's machine-readable `error` reason for inline gate feedback.
+// =========================================================
+
+export type LifecycleGates = {
+  owner:                  boolean;
+  score:                  boolean;
+  evidence:               boolean;
+  evidence_gate_enforced: boolean;
+  treatment_count:        number;
+  approval_granted:       boolean;
+  approval_required:      boolean;
+};
+
+export type RiskLifecycleState = {
+  lifecycle_state:     string;
+  gates:               LifecycleGates;
+  allowed_transitions: string[];
+};
+
+export type LifecycleEvent = {
+  id:               string;
+  from_state:       string | null;
+  to_state:         string;
+  transition:       string;
+  actor_user_id:    string | null;
+  actor_api_key_id: string | null;
+  comment:          string | null;
+  evidence_ids:     string[];
+  approval_id:      string | null;
+  created_at:       string;
+};
+
+export type PendingApproval = {
+  id:                   string;
+  risk_id:              string;
+  treatment_id:         string | null;
+  kind:                 string;
+  decision:             string;
+  requested_by_user_id: string | null;
+  approver_user_id:     string | null;
+  request_rationale:    string | null;
+  expires_at:           string | null;
+  created_at:           string;
+  risk_title:           string | null;
+  risk_domain:          string | null;
+  residual_rating:      string | null;
+  residual_score:       number | null;
+  lifecycle_state:      string | null;
+  is_self_proposed:     boolean;
+};
+
+type ReadResult<T> =
+  | ({ ok: true } & T)
+  | { ok: false; disabled: boolean; error: string };
+
+type ActionResult<T> =
+  | ({ ok: true } & T)
+  | { ok: false; error: string; status: number };
+
+async function readError(res: Response): Promise<string> {
+  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  return body?.error ?? `http_${res.status}`;
+}
+
+export async function getRiskLifecycle(
+  riskId: string
+): Promise<ReadResult<{ data: RiskLifecycleState }>> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/lifecycle`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) {
+      return { ok: false, disabled: res.status === 404, error: await readError(res) };
+    }
+    return { ok: true, data: (await res.json()) as RiskLifecycleState };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function getRiskLifecycleEvents(
+  riskId: string,
+  opts: { limit?: number; before?: string } = {}
+): Promise<ReadResult<{ events: LifecycleEvent[]; next_cursor: string | null }>> {
+  try {
+    const qs = new URLSearchParams();
+    if (opts.limit !== undefined) qs.set("limit", String(opts.limit));
+    if (opts.before) qs.set("before", opts.before);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/lifecycle/events${suffix}`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) {
+      return { ok: false, disabled: res.status === 404, error: await readError(res) };
+    }
+    const body = (await res.json()) as {
+      events: LifecycleEvent[];
+      next_cursor: string | null;
+    };
+    return { ok: true, events: body.events ?? [], next_cursor: body.next_cursor ?? null };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function executeRiskTransition(
+  riskId: string,
+  input: { transition: string; comment: string; expected_from_state?: string }
+): Promise<ActionResult<{ lifecycle_state: string }>> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/lifecycle/transitions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) {
+      return { ok: false, error: await readError(res), status: res.status };
+    }
+    const body = (await res.json()) as { lifecycle_state: string };
+    return { ok: true, lifecycle_state: body.lifecycle_state };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function requestRiskApproval(
+  riskId: string,
+  input: {
+    kind?: "treatment_plan" | "risk_acceptance";
+    treatment_id?: string;
+    request_rationale?: string;
+    expires_at?: string;
+  } = {}
+): Promise<ActionResult<{ lifecycle_state: string }>> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/approvals`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) {
+      return { ok: false, error: await readError(res), status: res.status };
+    }
+    const body = (await res.json()) as { lifecycle_state: string };
+    return { ok: true, lifecycle_state: body.lifecycle_state };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function decideRiskApproval(
+  riskId: string,
+  approvalId: string,
+  input: { decision: "approved" | "rejected"; comment: string }
+): Promise<ActionResult<{ lifecycle_state: string }>> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/approvals/${encodeURIComponent(approvalId)}/decision`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) {
+      return { ok: false, error: await readError(res), status: res.status };
+    }
+    const body = (await res.json()) as { lifecycle_state: string };
+    return { ok: true, lifecycle_state: body.lifecycle_state };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+/** Server-side approvals fetch (Bearer token via engineFetch) for the initial
+ *  render of the approvals page. Mirrors getPendingApprovals but does not go
+ *  through the browser proxy. Passing the JWT lets the engine compute
+ *  is_self_proposed for the current user. */
+export async function getApprovalsServer(
+  token: string,
+  status: "pending" | "approved" | "rejected" = "pending"
+): Promise<ReadResult<{ approvals: PendingApproval[] }>> {
+  try {
+    const res = await engineFetch(`/api/approvals?status=${status}`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: res.status === 404, error: `http_${res.status}` };
+    }
+    const body = (await res.json()) as { approvals: PendingApproval[] };
+    return { ok: true, approvals: body.approvals ?? [] };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function getPendingApprovals(
+  opts: { status?: "pending" | "approved" | "rejected"; limit?: number } = {}
+): Promise<ReadResult<{ approvals: PendingApproval[] }>> {
+  try {
+    const qs = new URLSearchParams();
+    if (opts.status) qs.set("status", opts.status);
+    if (opts.limit !== undefined) qs.set("limit", String(opts.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    const res = await fetch(`/api/approvals${suffix}`, { cache: "no-store" });
+    if (!res.ok) {
+      return { ok: false, disabled: res.status === 404, error: await readError(res) };
+    }
+    const body = (await res.json()) as { approvals: PendingApproval[] };
+    return { ok: true, approvals: body.approvals ?? [] };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+// =========================================================
 // Risk-obligation linkage helpers (RR-6) — browser-side, all
 // go through the Next.js proxy at /api/risks/[id]/obligations etc.
 // =========================================================

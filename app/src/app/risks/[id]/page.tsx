@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getSession } from "@/lib/session";
 import {
   getMe,
+  getAuthMe,
   getRiskById,
   getRiskTreatments,
   getRiskScale,
@@ -37,13 +38,18 @@ export default async function RiskDetailPage({
   // always returns four rating keys (defaults if no row); a null
   // response here is rare (network) and the card falls back to the
   // documented defaults via residual_rating lookup.
-  const [risk, treatmentsData, scale, findingsData, riskSettings] = await Promise.all([
+  // Sixth fetch — the caller's role (getAuthMe needs a JWT; API-key sessions
+  // resolve to null role). Drives approver-only affordances in the lifecycle
+  // panel; the engine remains the authority regardless of what the UI shows.
+  const [risk, treatmentsData, scale, findingsData, riskSettings, authMe] = await Promise.all([
     getRiskById(token, id),
     getRiskTreatments(token, { risk_id: id, limit: 50 }),
     getRiskScale(token),
     getFindings(token, { source_type: "risk", source_id: id, status: "open", limit: 50 }),
     getRiskSettingsServer(token),
+    session.jwtToken ? getAuthMe(session.jwtToken) : Promise.resolve(null),
   ]);
+  const userRole = authMe?.role ?? null;
 
   if (!risk) notFound();
 
@@ -71,6 +77,7 @@ export default async function RiskDetailPage({
         findings={findingsData?.findings ?? []}
         scaleLevels={scale?.levels ?? []}
         effectiveCadenceByRating={effectiveCadenceByRating}
+        userRole={userRole}
       />
     </div>
   );

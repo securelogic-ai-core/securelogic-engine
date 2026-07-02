@@ -127,6 +127,15 @@ describe("POST request approval", () => {
     expect(res.body).toEqual({ error: "approval_requires_user" });
   });
 
+  it("403 read_only_access for a viewer JWT (requireNotViewer) — no mutation", async () => {
+    h.state.actor = { userId: "viewer-1", role: "viewer" };
+    h.state.riskRow = { lifecycle_state: "treatment_selection", owner_user_id: "o", residual_rating: "High", residual_score: 60 };
+    const res = await request(makeApp()).post(`/api/risks/${RISK}/approvals`).send({});
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ error: "read_only_access" });
+    expect(wrote(/INSERT INTO risk_approvals/)).toBe(false);
+  });
+
   it("happy path: treatment_selection→pending_approval, opens approval + event", async () => {
     h.state.riskRow = { lifecycle_state: "treatment_selection", owner_user_id: "o", residual_rating: "High", residual_score: 60 };
     const res = await request(makeApp())
@@ -191,6 +200,18 @@ describe("POST decision", () => {
       .send(decideBody);
     expect(res.status).toBe(403);
     expect(res.body).toEqual({ error: "approval_requires_user" });
+  });
+
+  it("403 read_only_access for a viewer JWT (requireNotViewer, before canApprove)", async () => {
+    h.state.actor = { userId: "viewer-1", role: "viewer" };
+    h.state.approvalRow = { id: APPROVAL, decision: "pending", requested_by_user_id: PROPOSER };
+    h.state.riskRow = { lifecycle_state: "pending_approval" };
+    const res = await request(makeApp())
+      .post(`/api/risks/${RISK}/approvals/${APPROVAL}/decision`)
+      .send(decideBody);
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ error: "read_only_access" });
+    expect(wrote(/UPDATE risk_approvals/)).toBe(false);
   });
 
   it("403 approver_role_required for a non-admin JWT user", async () => {
