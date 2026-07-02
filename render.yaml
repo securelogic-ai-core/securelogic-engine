@@ -172,6 +172,18 @@ services:
       - key: SENTRY_ENV
         sync: false
 
+      # Platform free trial (PR-C2). Non-secret config with safe defaults, so
+      # declared with explicit `value:` (not sync:false): the engine ships
+      # trial-OFF and only enables it when an operator flips the flag to "true".
+      # PLATFORM tiers only; card required; one trial per org. NOTE: the website
+      # "Start Free Trial" CTAs are always visible, so at launch this flag MUST
+      # be flipped to "true" or those CTAs charge immediately (no trial).
+      - key: SECURELOGIC_PLATFORM_TRIAL_ENABLED
+        value: "false"
+      # Trial length in days (Stripe trial_period_days). Default 14.
+      - key: TRIAL_PERIOD_DAYS
+        value: "14"
+
       # Dormant-engine enablement — PRODUCTION (operator-authorized 2026-06-24).
       # The "match → surface → what to do next" engine, live. All three are
       # read from process.env at signal-processing time; disable any one by
@@ -359,6 +371,13 @@ services:
       # not receive this var; production enablement is a future package decision.
       - key: SECURELOGIC_VENDOR_ASSURANCE_ENABLED
         value: "true"
+
+      # Platform free trial (PR-C2) — lockstep with the prod engine block.
+      # Non-secret config; default trial-OFF until an operator flips it to "true".
+      - key: SECURELOGIC_PLATFORM_TRIAL_ENABLED
+        value: "false"
+      - key: TRIAL_PERIOD_DAYS
+        value: "14"
 
       # Dormant-engine enablement — STAGING (lockstep with the prod engine block).
       # All three signal-engine capabilities on; disable any by setting "false".

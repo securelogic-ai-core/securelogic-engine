@@ -161,7 +161,7 @@ const FAQ = [
   },
   {
     q: "Do I need a credit card for the trial?",
-    a: "No. The free Intelligence Brief never requires a card, and you can start a Platform Professional trial without entering payment details up front.",
+    a: "The free Intelligence Brief never requires a card. The 14-day Platform Professional free trial does require a card up front — you won't be charged until the trial ends, and you can cancel anytime before then with no charge.",
   },
   {
     q: "Do you support enterprise requirements like SSO and white-labeling?",

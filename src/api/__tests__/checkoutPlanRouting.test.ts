@@ -82,3 +82,50 @@ describe("checkout plan routing: tier -> entitlement_level (tierToDbLevel)", () 
     expect(premiumClass).toEqual(["platform", "platform_annual"]);
   });
 });
+
+describe("Platform free trial (PR-C2): Platform-only, flag-gated, one per org", () => {
+  it("trial-eligible tiers are EXACTLY the two Platform tiers (never Brief tiers)", () => {
+    // Exact-match of the Set literal guarantees the Brief tiers
+    // (professional, teams) are not trial-eligible.
+    expect(BILLING).toMatch(
+      /const PLATFORM_TRIAL_TIERS = new Set\(\["platform", "platform_annual"\]\)/
+    );
+  });
+
+  it("is gated by SECURELOGIC_PLATFORM_TRIAL_ENABLED === \"true\" (default off)", () => {
+    expect(BILLING).toMatch(
+      /process\.env\.SECURELOGIC_PLATFORM_TRIAL_ENABLED === "true"/
+    );
+  });
+
+  it("trial length comes from TRIAL_PERIOD_DAYS, defaulting to 14", () => {
+    expect(BILLING).toMatch(/process\.env\.TRIAL_PERIOD_DAYS \?\? "14"/);
+  });
+
+  it("only attaches trial_period_days when the flag is on AND the tier is a Platform trial tier", () => {
+    expect(BILLING).toMatch(
+      /platformTrialEnabled\(\) && PLATFORM_TRIAL_TIERS\.has\(tier\)/
+    );
+    expect(BILLING).toMatch(/trial_period_days:\s*trialPeriodDays\(\)/);
+  });
+
+  it("re-trial guard reads trial_started_at and fails closed with 409 trial_already_used", () => {
+    expect(BILLING).toMatch(
+      /SELECT trial_started_at FROM organizations WHERE id = \$1/
+    );
+    expect(BILLING).toMatch(/status\(409\)[\s\S]{0,160}trial_already_used/);
+  });
+
+  it("checks the re-trial guard BEFORE creating the checkout session", () => {
+    const guardIdx = BILLING.indexOf("trial_already_used");
+    const sessionIdx = BILLING.search(/checkout\.sessions\.create/);
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(sessionIdx).toBeGreaterThan(guardIdx);
+  });
+
+  it("requires a card up front (never sets payment_method_collection: if_required)", () => {
+    expect(BILLING).not.toMatch(/payment_method_collection:\s*["']if_required["']/);
+    // Safety net for a missing PM at trial end.
+    expect(BILLING).toMatch(/missing_payment_method:\s*["']cancel["']/);
+  });
+});
