@@ -1,0 +1,26 @@
+# Enterprise Context / Risk Intelligence — Operator Action Ledger
+
+Operator-only actions (env vars, `render.yaml` dashboard values, rebuilds, Stripe config,
+prod flag flips, external-API credentials, prod DB) required by this workstream. **These are
+NOT performed by the build agent** — they are recorded here for Simmee/operator execution.
+Each slice's report reproduces this ledger. Nothing here is a prerequisite to *building*
+(dark) code; several gate *enablement* (which is out of scope — GATE B).
+
+Last updated: 2026-07-03.
+
+| ID | Action | Service / where | Exact value / steps | Needed by | Status |
+|---|---|---|---|---|---|
+| **L-1** | Ratify the Platform-vs-Enterprise access model + AD-17 per-org capability-grant shape + entity/edge cap values (**GATE A ruling**) | product/commercial decision | Choose from the options memo prepared before Slice 9; the agent implements the ruled model, does not guess | Slice 9 (gating); and before ANY prod enable | **PENDING — GATE A** |
+| **L-2** | Prod enablement of `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` | Render env (prod ECL-serving services) | Set `= true` ONLY after: AD-17 grant shipped + H1 edge cap + H2 load test pass + staging soak green. **Out of scope for this goal (GATE B).** | GA (post-goal) | **PENDING — GATE B (do not perform under this goal)** |
+| **L-3** | Decide the CSV/bulk-import per-org row-limit value | commercial/operator | Slice 3 reuses the S1 `max_enterprise_entities` cap mechanism; the import hard row-limit *value* is an operator decision (blueprint §24 Q1). Ship a conservative default; operator tunes via `UPDATE` (no DDL) | Slice 3 (tunable post-merge) | PENDING |
+| **L-4** | Validate the ECL UI build in CI (app has no local test runner; sandbox SIGTERMs on app build) | CI (GitHub Actions) | Rely on the CI `build`/`typecheck`/`lint` lanes for the `app/` surface when the sandbox cannot build it locally | Slice 7 (UI/CX) | PENDING |
+| **L-5** | Connector credentials + tenant setup (per connector) | external SaaS + Render env | ServiceNow CMDB / Defender / CrowdStrike / Wiz / Tenable / Qualys / Rapid7 / cloud / identity — API tokens, instance URLs, OAuth apps. Agent builds adapters + mock-backed tests only; real-credential round-trips are operator work. One row per connector will be appended in Slice 8 | Slice 8 (connectors) | PENDING (details per connector) |
+| **L-6** | Staging load-test environment for the recursive graph resolver | staging DB + seed | A staging org seeded with a dense/large graph (10⁴–10⁵ entities, high fan-out) so H2 `EXPLAIN`/load numbers are real. Agent writes the harness; operator provisions the data volume if not synthesizable in CI | Slice 10 (scale validation) | PENDING |
+
+## Standing reminders
+- **`render.yaml` flag declaration** (`SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED = false`) is a
+  **code change** (repo), not an operator action — the agent will bundle it into the Slice 3 PR.
+  It is listed nowhere above because it is not operator-only. The **prod flip to `true`** (L-2)
+  is the operator action.
+- No credentials are ever inlined in commands or committed. No prod DB writes. No Render
+  dashboard changes by the agent.
