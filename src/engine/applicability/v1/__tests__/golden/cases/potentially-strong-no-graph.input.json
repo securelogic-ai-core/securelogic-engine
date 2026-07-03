@@ -1,0 +1,6 @@
+{
+  "signalId": "golden-potentially",
+  "candidates": [
+    { "target_type": "ai_system", "target_id": "ai-chatbot", "match_score": 84, "match_reason": "model_family_match" }
+  ]
+}

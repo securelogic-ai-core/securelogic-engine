@@ -1,0 +1,52 @@
+{
+  "decision": "affected",
+  "confidence": 92,
+  "confidence_band": "high",
+  "reasoning_steps": [
+    {
+      "rule_id": "R_inputs",
+      "inputs_considered": "1 candidate(s), 1 scored, top_score=92, neighborhood=present",
+      "outcome": "inputs normalized"
+    },
+    {
+      "rule_id": "R_blast_radius",
+      "inputs_considered": "1 graph-representable target(s); neighborhood provided",
+      "outcome": "3 affected entities reachable"
+    },
+    {
+      "rule_id": "R1_strong_match_reachable",
+      "inputs_considered": "match_tier=strong, has_reachability=true",
+      "outcome": "decision=affected"
+    },
+    {
+      "rule_id": "R_confidence_boost",
+      "inputs_considered": "base + log2(3+1)*6 (max 18)",
+      "outcome": "confidence=92"
+    }
+  ],
+  "affected_entities": [
+    {
+      "node_type": "application",
+      "node_id": "app-billing",
+      "min_depth": 1,
+      "via_target_type": "vendor",
+      "via_target_id": "vendor-acme"
+    },
+    {
+      "node_type": "business_service",
+      "node_id": "svc-payments",
+      "min_depth": 1,
+      "via_target_type": "vendor",
+      "via_target_id": "vendor-acme"
+    },
+    {
+      "node_type": "identity",
+      "node_id": "owner-jane",
+      "min_depth": 2,
+      "via_target_type": "vendor",
+      "via_target_id": "vendor-acme"
+    }
+  ],
+  "engine_version": "iae-v1.0.0",
+  "schema_version": "applicability-result.v1"
+}

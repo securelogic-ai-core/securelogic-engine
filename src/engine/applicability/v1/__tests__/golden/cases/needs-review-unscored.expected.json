@@ -1,0 +1,20 @@
+{
+  "decision": "needs_review",
+  "confidence": 50,
+  "confidence_band": "medium",
+  "reasoning_steps": [
+    {
+      "rule_id": "R_inputs",
+      "inputs_considered": "1 candidate(s), 0 scored, top_score=none, neighborhood=absent",
+      "outcome": "inputs normalized"
+    },
+    {
+      "rule_id": "R5_unscored_candidates",
+      "inputs_considered": "1 candidate(s), all with null match_score",
+      "outcome": "needs_review (human must quantify)"
+    }
+  ],
+  "affected_entities": [],
+  "engine_version": "iae-v1.0.0",
+  "schema_version": "applicability-result.v1"
+}
