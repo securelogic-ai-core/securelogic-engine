@@ -6,8 +6,11 @@ import { usePathname } from "next/navigation";
 import { LogoutButton } from "./LogoutButton";
 import UserMenu from "./UserMenu";
 import { NAV_ITEMS, filterNav, type NavItem } from "@/lib/navigation";
+import { getSiteBaseUrl } from "@/lib/siteUrl";
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.securelogicai.com";
+// Marketing-site base for the logo/home link. Env-aware + build-time — see
+// getSiteBaseUrl(). Staging must set NEXT_PUBLIC_SITE_URL or this links back to prod.
+const SITE_URL = getSiteBaseUrl();
 
 // ─── Nav config ───────────────────────────────────────────────────────────────
 

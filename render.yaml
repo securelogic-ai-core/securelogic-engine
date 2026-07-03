@@ -905,6 +905,18 @@ services:
       - key: NEXT_PUBLIC_ENGINE_URL
         sync: false
 
+      # Public URL of the marketing website (securelogic-website), used by the
+      # app Header (logo/home link) and the consent legal links
+      # (terms/privacy/ai-policy). Set each environment to its OWN marketing site
+      # so the STAGING app never links users back to the production site.
+      # Prod: https://www.securelogicai.com · Staging: the staging website URL.
+      # BUILD-TIME (NEXT_PUBLIC_*): a value change requires an app REBUILD.
+      # The securelogic-app-staging service is dashboard-only (not in this file);
+      # set its value there. Code falls back to the prod apex if unset, so an
+      # unset prod build stays correct while an unset staging build leaks prod.
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+
       # Secret used to encrypt the iron-session cookie.
       # Must be at least 32 characters. Generate with: openssl rand -hex 32
       - key: SESSION_SECRET
