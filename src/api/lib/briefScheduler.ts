@@ -165,9 +165,9 @@ async function ingestSignalsForOrg(
           `INSERT INTO cyber_signals (
              organization_id, source, signal_type, severity, raw_payload,
              normalized_summary, affected_vendor, affected_cve, external_id,
-             dedup_hash, ingestion_timestamp, processed
+             dedup_hash, cluster_key, ingestion_timestamp, processed
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), FALSE)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), FALSE)
            ON CONFLICT (organization_id, dedup_hash) DO NOTHING
            RETURNING id, source, signal_type, severity, normalized_summary,
                      affected_vendor, affected_cve, organization_id`,
@@ -181,7 +181,11 @@ async function ingestSignalsForOrg(
             normalized.affected_vendor,
             normalized.affected_cve,
             normalized.external_id,
-            normalized.dedup_hash
+            normalized.dedup_hash,
+            // C2b (P4/4C): persist the normalizer-computed cluster_key beside
+            // dedup_hash so flag-gated clustering operates on live signals, not
+            // only manually-backfilled rows. Inert while SIGNAL_CLUSTERING is off.
+            normalized.cluster_key
           ]
         );
 

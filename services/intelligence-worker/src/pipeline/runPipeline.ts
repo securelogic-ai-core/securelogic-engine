@@ -39,6 +39,7 @@ import {
 // Mirrors processSignal phase 7, which runs the control matcher AFTER its commit.
 import { runLlmControlMatcherForSignal } from "../../../../src/api/lib/llmControlMatcher.js";
 import { buildDedupHash } from "../../../../src/api/lib/cyberSignalNormalizer.js";
+import { clusterKey } from "../../../../src/api/lib/signals/clusterKey.js";
 import { createAlertBatcher } from "../../../../src/api/lib/alerting/alertService.js";
 import { matcherAlertsEnabled } from "../../../../src/api/lib/alerting/matcherAlertsFeatureFlag.js";
 
@@ -124,6 +125,18 @@ async function bridgeSignalsToCyberSignals(
 
     const normalizedSummary = signal.summary.slice(0, 2000) || signal.title;
 
+    // C2b (P4/4C): the RSS/bridge path does not run the full normalizer, so
+    // cluster_key is derived here from the same inputs used elsewhere. CVE-primary
+    // is timestamp-independent; the CVE-less fingerprint uses the ingestion moment,
+    // matching the normalizer's accepted approximation (the DB sets
+    // ingestion_timestamp to NOW()). Inert while SIGNAL_CLUSTERING is off.
+    const clusterKeyValue = clusterKey({
+      affected_cve: signal.affectedCve,
+      affected_vendor: signal.affectedVendor,
+      signal_type: signalType,
+      ingestion_timestamp: new Date()
+    });
+
     try {
       const result = await pgElevated.query<{ id: string }>(
         `INSERT INTO cyber_signals (
@@ -137,12 +150,13 @@ async function bridgeSignalsToCyberSignals(
           affected_cve,
           external_id,
           dedup_hash,
+          cluster_key,
           processed
         ) VALUES (
           NULL, $1, $2, $3,
           $4::jsonb, $5,
           $6, $7,
-          $8, $9, FALSE
+          $8, $9, $10, FALSE
         )
         ON CONFLICT (dedup_hash) WHERE organization_id IS NULL DO NOTHING
         RETURNING id`,
@@ -155,7 +169,8 @@ async function bridgeSignalsToCyberSignals(
           signal.affectedVendor,
           signal.affectedCve,
           externalId,
-          dedupHash
+          dedupHash,
+          clusterKeyValue
         ]
       );
 

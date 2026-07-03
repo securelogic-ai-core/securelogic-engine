@@ -215,6 +215,15 @@ describe("runPipeline.ts source — dedup-collapse fix wiring", () => {
     expect(source).toMatch(/INSERT INTO cyber_signals \([\s\S]*?external_id,[\s\S]*?dedup_hash,/);
   });
 
+  it("the bridge INSERT persists cluster_key (C2b — flag-gated clustering needs live rows)", () => {
+    // The bridge path does not run the full normalizer, so cluster_key is derived
+    // here via clusterKey() from the same inputs, then written BESIDE dedup_hash.
+    // Without this, SECURELOGIC_SIGNAL_CLUSTERING would no-op on RSS/bridge signals
+    // (NULL cluster_key). dedup_hash and its ON CONFLICT are untouched.
+    expect(source).toMatch(/clusterKey\(\{[\s\S]*?affected_cve:\s*signal\.affectedCve/);
+    expect(source).toMatch(/INSERT INTO cyber_signals \([\s\S]*?dedup_hash,\s*cluster_key,/);
+  });
+
   it("the push site forwards signal.url into the bridgeable record", () => {
     expect(source).toMatch(/url:\s*signal\.url \?\? null,/);
   });
