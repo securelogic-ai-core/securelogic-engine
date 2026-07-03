@@ -197,6 +197,8 @@ services:
         value: "true"
       - key: SECURELOGIC_RISK_LIFECYCLE_ENABLED       # Epic R1 — risk lifecycle, DARK (default off)
         value: "false"
+      - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL (Priority 5) — DARK (default off); do NOT enable in prod until AD-17 grant + edge cap (H1) + graph load test (H2)
+        value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
 
@@ -389,6 +391,8 @@ services:
         value: "true"
       - key: SECURELOGIC_RISK_LIFECYCLE_ENABLED       # Epic R1 — risk lifecycle, DARK (default off)
         value: "false"
+      - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL (Priority 5) — DARK (default off); do NOT enable in prod until AD-17 grant + edge cap (H1) + graph load test (H2)
+        value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
 
@@ -486,6 +490,8 @@ services:
         value: "true"
       - key: SECURELOGIC_RISK_LIFECYCLE_ENABLED       # Epic R1 — risk lifecycle, DARK (default off)
         value: "false"
+      - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL (Priority 5) — DARK (default off); do NOT enable in prod until AD-17 grant + edge cap (H1) + graph load test (H2)
+        value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
 
@@ -572,6 +578,8 @@ services:
       - key: SECURELOGIC_ACTION_ENGINE_ENABLED        # item 1 — idempotent action writes, free
         value: "true"
       - key: SECURELOGIC_RISK_LIFECYCLE_ENABLED       # Epic R1 — risk lifecycle, DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL (Priority 5) — DARK (default off); do NOT enable in prod until AD-17 grant + edge cap (H1) + graph load test (H2)
         value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"

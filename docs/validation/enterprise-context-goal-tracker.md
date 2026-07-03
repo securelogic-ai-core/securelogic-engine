@@ -23,7 +23,7 @@ Last updated: 2026-07-03 (scaffolding + Item 1 recorded).
 | # | Item | Status | PRs / SHAs | Flags | Ledger refs |
 |---|---|---|---|---|---|
 | 1 | Pre-merge audit of #464/#465; fix Critical/High; merge | **DONE** | #464 (merge `1f308e61`), #465 (merge `7843cf62`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (off) | L-1, L-2 |
-| 2 | Slice 3 — CSV/spreadsheet import (assets, vendors, apps, AI systems, data stores) | **TODO (next)** | — | (reuses S1 flag) | L-3 (import row-limit value) |
+| 2 | Slice 3 — CSV/spreadsheet import (assets, vendors, apps, AI systems, data stores) | **DONE (pending merge)** | this PR | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (now declared in render.yaml, off) | L-3 |
 | 3 | Slice 4 — Applicability Engine (deterministic decision fn) | TODO | — | — | — |
 | 4 | Slice 5 — Explainability surface | TODO | — | — | — |
 | 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | TODO | — | — | — |
@@ -78,10 +78,20 @@ Last updated: 2026-07-03 (scaffolding + Item 1 recorded).
   graph resolver `GET /api/enterprise-graph` (repo's first `WITH RECURSIVE`; AD-13 union of
   generic edges + `ai_system_vendor_dependencies`).
 
-## Known governance-hygiene items (Item 11 backlog)
-- `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` is **not declared in `render.yaml`** (0 occurrences).
-  Strict `=== "true"` means it is still OFF everywhere, but rule 2 wants it declared with an
-  explicit safe value (`false`) per service. **To bundle into the Slice 3 PR** (code change,
-  inert; not operator-only).
-- `BUILD_SEQUENCE.md` Active-package line still reads "Priority 4 ACTIVE"; ECL S1/S2 are merged.
-  Update the active-workstream record as part of Item 11 / next slice.
+## Slice 3 — CSV/spreadsheet import (as-built)
+- **Pure core** `enterpriseContextImport.ts` (`planImport`) — deterministic per-row plan
+  (ok/invalid/duplicate_in_file/duplicate_in_db/cap_exceeded); dispatches all 5 types to the
+  manual-create validators; cap-agnostic. 14 unit tests.
+- **Parser** `enterpriseImportParser.ts` — CSV + XLSX via exceljs, lowercased headers, blank-row
+  skip, `MAX_IMPORT_ROWS` guard. 3 round-trip tests.
+- **Route** `POST /api/enterprise-context/import?entity_type=&mode=preview|commit` — multer
+  memoryStorage (5 MB), flag-gated, asTenant; preview = dry-run plan, commit = insert `ok` rows
+  in one tenant tx (`ON CONFLICT DO NOTHING`), audited. Enterprise types → `enforceEnterpriseEntityLimit`;
+  vendor/ai_system → `enforceEntityLimit`. 8 handler tests (guards, preview, commit, cap).
+- **v1 scope note:** import does NOT assign `owner_user_id` (IDOR-safe — no cross-org user refs);
+  owners assigned post-import. No new table (synchronous preview+commit).
+- **Flag now declared** in `render.yaml` (`= "false"`, 4 service blocks) — governance-hygiene item closed.
+
+## Remaining governance-hygiene (Item 11)
+- `BUILD_SEQUENCE.md` Active-package line still reads "Priority 4 ACTIVE"; ECL S1/S2/S3 are the active
+  workstream. Update the active-workstream record as an Item 11 doc-sync.
