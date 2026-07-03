@@ -413,7 +413,10 @@ export async function deleteEnterpriseEntity(req: Request, res: Response): Promi
     payload: null
   });
 
-  res.status(204).send();
+  // 200 + JSON, not 204 + send(): under asTenant the buffering proxy allows only
+  // status()+json() and THROWS on send()/streaming (deferredResponse.ts), which would
+  // roll back the delete and leave a false "deleted" audit event. (Wave-0d pattern.)
+  res.status(200).json({ deleted: true, id });
 }
 
 // ---------------------------------------------------------------------------
