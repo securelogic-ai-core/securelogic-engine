@@ -73,7 +73,10 @@ They must not be re-declared differently in each module.
 | AI Governance Assessment | ai_governance_assessments | POST /api/ai-governance-assessments, GET /api/ai-governance-assessments, GET /api/ai-governance-assessments/:id, PATCH /api/ai-governance-assessments/:id | Complete — package ai-governance-review-workflow |
 | Dependency Assessment | dependency_assessments | POST /api/dependency-assessments, GET /api/dependency-assessments, GET /api/dependency-assessments/:id, PATCH /api/dependency-assessments/:id | Complete — package dependency-review-workflow |
 | Vendor Assurance Document | vendor_assurance_documents | POST /api/vendor-assurance/documents, GET /api/vendor-assurance/documents, GET /api/vendor-assurance/documents/:id, GET /api/vendor-assurance/documents/:id/extraction, GET /api/vendor-assurance/documents/:id/pdf, POST /api/vendor-assurance/extractions/:id/review-decisions, POST /api/vendor-assurance/documents/:id/finalize | Phase 1 — package vendor-assurance-intelligence-phase-1. Staging-only behind SECURELOGIC_VENDOR_ASSURANCE_ENABLED. PDF stored in Cloudflare R2 via the Phase 0 blob primitive at org/{organizationId}/vendor-assurance/{documentId}/original.pdf. Extraction is one-per-document (no re-extraction). Review decisions are APPEND-ONLY — no UNIQUE on (extraction_id, field_name); current decision per field = latest by (decided_at DESC, id DESC). Finalize requires every material field to have a current decision. Reviewed values display on the vendor detail card via projection-at-read-time; no stored snapshot table. No writes to findings, vendor_assessments, vendor_reviews, risks, signal_*_links, or vendors.current_risk_score. |
+
+
 | Enterprise Entity | enterprise_entities (+ typed child enterprise_data_stores) | GET /api/enterprise-entities, POST /api/enterprise-entities, GET /api/enterprise-entities/:id, PATCH /api/enterprise-entities/:id, DELETE /api/enterprise-entities/:id | Slice 1 — package enterprise-context-layer-foundation (Priority 5). Canonical HEADER for NEW customer-context objects; `vendors`/`ai_systems` keep their own tables and are NOT valid `entity_type`s (referenced later, never copied). Typed load-bearing attributes (classification/residency/retention/encryption) live in the child `enterprise_data_stores`, never a JSON blob. Behind SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED (default off; **do NOT enable in prod until the AD-17 capability grant ships** — else reaches all rank-4 orgs, per §9). Per-org cap `organizations.max_enterprise_entities`, SEPARATE from max_monitored_entities (does not touch enforceEntityLimit). RLS inert (NOT FORCE). OUT of Slice 1: relationship graph, applicability engine, CSV import, connectors, UI, entity↔risk/finding links. |
+| Enterprise Relationship | enterprise_relationships | GET /api/enterprise-relationships (?node_type,&node_id), POST /api/enterprise-relationships, DELETE /api/enterprise-relationships/:id | Slice 2 — package enterprise-context-layer-foundation (Priority 5). Generic ADDITIVE intra-org edge for NEW relationships; polymorphic endpoints (enterprise_entity/vendor/ai_system/user), no FK; soft-delete. The read-time resolver UNIONs the existing TYPED edges (typed-authoritative, AD-13) — a later slice **S2b**; this ships the edge substrate + CRUD only. Two-endpoint same-org pre-flight; behind SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED; RLS inert (NOT FORCE). |
 
 ---
 
@@ -238,6 +241,22 @@ object). Additive-only; extend via migration + this list together.
 - internal
 - confidential
 - restricted
+
+### Enterprise Relationship Node Type (enterprise_relationships.from_type / to_type CHECK constraint)
+Node types an edge endpoint may reference. `enterprise_entity` is a NEW ECL node; the
+others are existing canonical objects the graph points AT (never contains — AD-3).
+- enterprise_entity
+- vendor
+- ai_system
+- user
+
+### Enterprise Relationship Type (enterprise_relationships.relationship_type CHECK constraint)
+- depends_on
+- runs_on
+- owned_by
+- part_of
+- serves
+- processes_data_in
 
 ## Key Relationships
 

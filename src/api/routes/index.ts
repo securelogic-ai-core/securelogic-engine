@@ -82,6 +82,7 @@ import signalControlLinksRouter from "./signalControlLinks.js";
 import signalObligationLinksRouter from "./signalObligationLinks.js";
 import signalMatchSuggestionsRouter from "./signalMatchSuggestions.js";
 import enterpriseEntitiesRouter from "./enterpriseEntities.js";
+import enterpriseRelationshipsRouter from "./enterpriseRelationships.js";
 import templatesRouter from "./templates.js";
 import aiSystemVendorDependenciesRouter from "./aiSystemVendorDependencies.js";
 import riskScoringWeightsRouter from "./riskScoringWeights.js";
@@ -464,6 +465,7 @@ router.use("/api", riskApprovalsRouter);
   // (SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED, default off → 404 before auth) gates
   // the surface in-router.
   router.use("/api", enterpriseEntitiesRouter);
+  router.use("/api", enterpriseRelationshipsRouter);
   router.use("/api", templatesRouter);
   router.use("/api", aiSystemVendorDependenciesRouter);
   router.use("/api", riskScoringWeightsRouter);
