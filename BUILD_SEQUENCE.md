@@ -247,15 +247,17 @@ Done when:
 
 **Feature flag:** the entire slice is gated behind **`SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED`** (default off); prod remains inert until the operator flips it.
 
-**Table strategy (approved):**
-- Introduce a single generic **`enterprise_entities`** table as the home for *new* context types (assets, applications, business services, and future customer-context objects). Org-scoped and subject to the standard A04-G1 tenant-isolation model.
-- Keep the existing **`vendors`** and **`ai_systems`** tables **as-is** — they remain the canonical stores for those two entity types.
+**S0 decision (2026-07-03 — operator-approved; docs-only, still no implementation authorized).** The Slice-1 S0 review accepted both **B** recommendations from the ratified blueprint `docs/architecture/enterprise-context/ENTERPRISE_CONTEXT_ARCHITECTURE.md` (merged as PR #459) and its `ARCHITECTURE_REVIEW.md`, resolving review findings **AR-1 (Critical — load-bearing attributes must not live in JSONB)** and **AR-15 (High — meter at the moment the write path opens)**. This revises only the *table shape* and the *metering timing* of the two "(approved)" decisions below; the feature flag, the no-backfill rule, the out-of-scope list, the "extend `signal_match_suggestions`" rule, and the **Priority-4-complete + explicit-authorization gate remain unchanged.**
+
+**Table strategy (approved — updated 2026-07-03 S0):**
+- Introduce a shared **`enterprise_entities` header** table (org-scoped; standard A04-G1 tenant-isolation) holding the columns common to every context type (name, description, `owner_user_id` → `users`, status, criticality, confidence, provenance via `source_type`/`source_id`, `external_ref`), plus a **typed child table per load-bearing type** for that type's type-specific, compliance-relevant, queryable attributes. **Slice 1 ships the header + exactly one typed child, `enterprise_data_stores`** (e.g. `data_classification`, `residency_region`, `retention_policy`, `encryption_at_rest`), to prove the pattern before it is replicated. Any `metadata JSONB` is restricted to genuinely-freeform customer custom fields — **never** compliance-load-bearing attributes, which must be typed columns. Later typed children (`enterprise_assets`, `enterprise_business_services`, `enterprise_identities`, …) each land in their own later slice/migration. *Rationale (AR-1):* load-bearing / regulator-relevant attributes must be typed, constrained, indexed and queryable for the later Applicability Engine's blast-radius query and for legal defensibility; a single generic table would strand them in unindexed JSONB and force a future migration over live customer data.
+- Keep the existing **`vendors`** and **`ai_systems`** tables **as-is** — they remain the canonical stores for those two entity types, referenced (never copied) by the header/graph.
 - **Do not** force-migrate existing `vendors`/`ai_systems` rows into `enterprise_entities`. No backfill, no dual-write in Slice 1. Unification of the read surface (if ever) is a separate, later decision.
 
-**Metering (approved):**
+**Metering (approved — updated 2026-07-03 S0):**
 - `enterprise_entities` rows do **NOT** count toward **`max_monitored_entities`**.
 - **Do not touch `enforceEntityLimit`** or its callers in this slice.
-- A **hard import row-limit** will be applied **later, when CSV import is built** — not in Slice 1.
+- A **per-org cap on `enterprise_entities` (and a companion edge cap) ships in Slice 1**, enforced at the write path (count-and-compare → `409`) as a **separate counter, decoupled from `max_monitored_entities` and without touching `enforceEntityLimit`** (the two bullets above remain in force). Slice 1 ships the *mechanism* with a conservative default cap; the exact per-tier cap *value* remains an operator / commercial decision (blueprint §24 Q1), tunable without a schema change. The later CSV / bulk-import row-limit (S3) **reuses this same mechanism**. *Rationale (AR-15):* Slice 1 opens an org-scoped API write route, so an unmetered, scriptable create path would be a commercial / scale exposure the moment it ships.
 
 **Explicitly OUT of scope for Slice 1 (do not build):**
 - CSV / bulk import
@@ -266,11 +268,11 @@ Done when:
 - any scoring/posture changes
 - any risk creation or `risks` writes
 
-**Slice 1 scope (for the review conversation, not yet authorized to build):** the `enterprise_entities` table + provenance columns, tenant-isolation policy, and the minimal org-scoped read/write route surface behind the flag. Entity↔risk / entity↔finding link tables and applicability assessment follow in later slices. Prefer **extending** `signal_match_suggestions` for linkage rather than duplicating it (see the ratified `external-signal-architecture.md` baseline).
+**Slice 1 scope (not yet authorized to build):** the `enterprise_entities` header + the `enterprise_data_stores` typed child + provenance columns, the (RLS-ready) tenant-isolation policy, the per-org entity/edge cap enforced at the write path, and the minimal org-scoped read/write route surface behind the flag. Entity↔risk / entity↔finding link tables and applicability assessment follow in later slices. Prefer **extending** `signal_match_suggestions` for linkage rather than duplicating it (see the ratified `external-signal-architecture.md` baseline).
 
 **Sequencing note:** this overlaps the previously deferred "Enterprise Context" concept; it is now the named Priority-5 Slice-1 substrate. It is **not** the current Active package (Priority 4 remains active) — Slice 1 build is gated on completing Priority 4 and on operator authorization of this scope.
 
-**Canonical-model forward note:** `enterprise_entities` is a new table not yet present in `CANONICAL_DOMAIN_MODEL.md`. When/if Slice 1 is authorized to build, `CANONICAL_DOMAIN_MODEL.md` must be updated to register `enterprise_entities` (and its entity-type taxonomy) so the domain-model authority stays in sync — no CANONICAL change is made by this docs-only amendment.
+**Canonical-model forward note:** `enterprise_entities` is a new table not yet present in `CANONICAL_DOMAIN_MODEL.md`. When/if Slice 1 is authorized to build, `CANONICAL_DOMAIN_MODEL.md` must be updated to register `enterprise_entities`, its typed child tables (starting with `enterprise_data_stores`), and its entity-type taxonomy so the domain-model authority stays in sync — no CANONICAL change is made by this docs-only amendment.
 
 ### Priority 6 — Intelligence Brief premiumization
 #### Package: brief-premiumization
