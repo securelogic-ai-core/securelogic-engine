@@ -1,0 +1,21 @@
+{
+  "signalId": "golden-affected",
+  "candidates": [
+    { "target_type": "vendor", "target_id": "vendor-acme", "match_score": 92, "match_reason": "vendor_name_ilike" }
+  ],
+  "neighborhood": {
+    "root": { "node_type": "vendor", "node_id": "vendor-acme" },
+    "depth": 3,
+    "nodes": [
+      { "node_type": "vendor", "node_id": "vendor-acme", "depth": 0 },
+      { "node_type": "application", "node_id": "app-billing", "depth": 1 },
+      { "node_type": "business_service", "node_id": "svc-payments", "depth": 1 },
+      { "node_type": "identity", "node_id": "owner-jane", "depth": 2 }
+    ],
+    "edges": [
+      { "from_type": "vendor", "from_id": "vendor-acme", "to_type": "application", "to_id": "app-billing", "relationship_type": "supplies", "source": "enterprise_relationship" },
+      { "from_type": "vendor", "from_id": "vendor-acme", "to_type": "business_service", "to_id": "svc-payments", "relationship_type": "supports", "source": "enterprise_relationship" },
+      { "from_type": "application", "from_id": "app-billing", "to_type": "identity", "to_id": "owner-jane", "relationship_type": "owned_by", "source": "enterprise_relationship" }
+    ]
+  }
+}

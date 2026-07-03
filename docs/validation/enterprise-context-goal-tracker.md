@@ -14,7 +14,7 @@ enablement is out of scope (GATE B).
 at the time, pre-goal). From Slice 3 onward, feature PRs **squash-merge + delete branch**
 per the goal.
 
-Last updated: 2026-07-03 (scaffolding + Item 1 recorded).
+Last updated: 2026-07-03 (Items 1–2 DONE; Slice 4a pure IAE core built, pending merge).
 
 ---
 
@@ -23,8 +23,8 @@ Last updated: 2026-07-03 (scaffolding + Item 1 recorded).
 | # | Item | Status | PRs / SHAs | Flags | Ledger refs |
 |---|---|---|---|---|---|
 | 1 | Pre-merge audit of #464/#465; fix Critical/High; merge | **DONE** | #464 (merge `1f308e61`), #465 (merge `7843cf62`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (off) | L-1, L-2 |
-| 2 | Slice 3 — CSV/spreadsheet import (assets, vendors, apps, AI systems, data stores) | **DONE (pending merge)** | this PR | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (now declared in render.yaml, off) | L-3 |
-| 3 | Slice 4 — Applicability Engine (deterministic decision fn) | TODO | — | — | — |
+| 2 | Slice 3 — CSV/spreadsheet import (assets, vendors, apps, AI systems, data stores) | **DONE** | #467 (squash `17627ac7`) + prereq dep-fix #468 (squash `205c39ef`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared in render.yaml, off) | L-3 |
+| 3 | Slice 4 — Applicability Engine (deterministic decision fn) | **4a DONE (pending merge)** — pure IAE core; 4b (tables/worker/queue) TODO | this PR (S4a) | none (pure, inert — no callers) | — |
 | 4 | Slice 5 — Explainability surface | TODO | — | — | — |
 | 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | TODO | — | — | — |
 | 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | TODO | — | — | — |
@@ -91,6 +91,30 @@ Last updated: 2026-07-03 (scaffolding + Item 1 recorded).
 - **v1 scope note:** import does NOT assign `owner_user_id` (IDOR-safe — no cross-org user refs);
   owners assigned post-import. No new table (synchronous preview+commit).
 - **Flag now declared** in `render.yaml` (`= "false"`, 4 service blocks) — governance-hygiene item closed.
+
+## Slice 4a — pure IAE applicability core (as-built)
+- **Carve-out of the large S4** (design `ENTERPRISE_CONTEXT_ARCHITECTURE.md` §6–8). S4a = the pure,
+  I/O-free reasoning core ONLY; **4b** (WORM/hash-chained `applicability_assessments` + `applicability_evidence`
+  + `applicability_affected_entities` tables) and **4c/4d** (dedicated `applicability-worker` + sharded
+  queue + fan-out pre-filter) follow as separate slices. Design brief produced by the architecture authority.
+- **Module** `src/engine/applicability/v1/` mirroring `src/engine/scoring/v2/`:
+  - `ApplicabilityEngineV1.assess(input, policy?)` — pure, deterministic, no clock/RNG/DB. **Consumes** matcher
+    candidates + an already-resolved `GraphNeighborhood`; **does NOT re-walk the graph** (AD-13 keeps the resolver
+    the single traversal authority) and **cannot query** (so it cannot leak across tenants — tenant scoping is the
+    caller's job in a later slice).
+  - Decision enum (AD-5) `affected | potentially_affected | not_affected | needs_review | unknown` + `confidence`
+    0–100 + band; first-class ordered `reasoning_steps` (the explainability substrate a later slice hash-chains,
+    AD-16); normalized `affected_entities` blast radius (in-memory BFS over the passed-in neighborhood).
+  - `applicabilityPolicy.ts` = versioned typed rule corpus (`engine_version`/`schema_version` pin every decision);
+    golden-case suite is the change-audit (AD-7-support) — a corpus edit that moves a golden requires the
+    regenerated fixture + a version bump in the same PR.
+- **Tests (22, database-free):** decision-matrix, blast-radius correctness, determinism (input/candidate/edge-order
+  permutations deep-equal), confidence-range fuzz, version-pin, and a **purity/inertness** test (module imports no
+  `pg`/postgres/resolver-runtime; only type-only resolver import) + 4 golden regression cases.
+- **INERT by construction:** nothing in a live path imports it (verified `grep` → zero importers); no route, no
+  worker, no migration, no flag wiring — inertness is guaranteed by absence of callers, stronger than a flag.
+- **NEXT (S4b):** persistence tables (WORM, by-value evidence, hash chain) + `CANONICAL_DOMAIN_MODEL` registration
+  (deferred here per design — nothing canonical to register until a table exists) + cross-org isolation test.
 
 ## Remaining governance-hygiene (Item 11)
 - `BUILD_SEQUENCE.md` Active-package line still reads "Priority 4 ACTIVE"; ECL S1/S2/S3 are the active

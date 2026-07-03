@@ -1,0 +1,25 @@
+{
+  "decision": "potentially_affected",
+  "confidence": 55,
+  "confidence_band": "medium",
+  "reasoning_steps": [
+    {
+      "rule_id": "R_inputs",
+      "inputs_considered": "1 candidate(s), 1 scored, top_score=84, neighborhood=absent",
+      "outcome": "inputs normalized"
+    },
+    {
+      "rule_id": "R_blast_radius",
+      "inputs_considered": "1 graph-representable target(s); neighborhood absent",
+      "outcome": "0 affected entities reachable"
+    },
+    {
+      "rule_id": "R2_strong_match_no_reachability",
+      "inputs_considered": "match_tier=strong, has_reachability=false",
+      "outcome": "decision=potentially_affected"
+    }
+  ],
+  "affected_entities": [],
+  "engine_version": "iae-v1.0.0",
+  "schema_version": "applicability-result.v1"
+}
