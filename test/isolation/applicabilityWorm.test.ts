@@ -84,8 +84,23 @@ describe("AD-16 — applicability record is WORM (owner connection, elevated)", 
       await expect(pool.query(`DELETE FROM ${c.table} WHERE id = $1`, [c.getId()])).rejects.toThrow(/append-only|WORM/i);
     });
 
-    it(`${c.table}: TRUNCATE raises append-only`, async () => {
-      await expect(pool.query(`TRUNCATE ${c.table}`)).rejects.toThrow(/append-only|WORM/i);
+    it(`${c.table}: plain TRUNCATE is blocked`, async () => {
+      // Two guards prevent TRUNCATE, and which one fires depends on FK topology:
+      //  - the PARENT (applicability_assessments) is referenced by the two child
+      //    tables' FKs, so a plain TRUNCATE is rejected by Postgres's FK-reference
+      //    guard ("cannot truncate a table referenced in a foreign key constraint")
+      //    BEFORE the BEFORE-TRUNCATE trigger runs;
+      //  - the CHILD tables are unreferenced, so their TRUNCATE reaches the trigger
+      //    and raises the append-only message.
+      // Either way TRUNCATE is prevented (immutability holds). TRUNCATE ... CASCADE
+      // is covered separately below — it bypasses the FK guard and hits the trigger.
+      await expect(pool.query(`TRUNCATE ${c.table}`)).rejects.toThrow(
+        /append-only|WORM|cannot truncate a table referenced/i
+      );
+    });
+
+    it(`${c.table}: TRUNCATE CASCADE raises append-only (trigger fires)`, async () => {
+      await expect(pool.query(`TRUNCATE ${c.table} CASCADE`)).rejects.toThrow(/append-only|WORM/i);
     });
 
     it(`${c.table}: the row still exists after the blocked mutations`, async () => {
