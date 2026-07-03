@@ -1,0 +1,4582 @@
+[
+  {
+    "id": "dashboard-001",
+    "domain": "Dashboard",
+    "intent": "where_is",
+    "question": "Where do I find my dashboard?",
+    "target": {
+      "kind": "workflow",
+      "ref": "view_dashboard"
+    }
+  },
+  {
+    "id": "dashboard-002",
+    "domain": "Dashboard",
+    "intent": "how_to",
+    "question": "How do I pull up the main dashboard view to see where we stand?",
+    "target": {
+      "kind": "workflow",
+      "ref": "view_dashboard"
+    }
+  },
+  {
+    "id": "dashboard-003",
+    "domain": "Dashboard",
+    "intent": "where_is",
+    "question": "which page shows the overview when I first log in",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/dashboard"
+    }
+  },
+  {
+    "id": "dashboard-004",
+    "domain": "Dashboard",
+    "intent": "how_to",
+    "question": "I'm an exec and I just want the one screen that summarizes our security posture — where is it?",
+    "target": {
+      "kind": "workflow",
+      "ref": "view_dashboard"
+    }
+  },
+  {
+    "id": "dashboard-005",
+    "domain": "Dashboard",
+    "intent": "list_view",
+    "question": "Take me to /dashboard, what am I looking at there?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/dashboard"
+    }
+  },
+  {
+    "id": "dashboard-006",
+    "domain": "Dashboard",
+    "intent": "config",
+    "question": "Can I customize which widgets show up on my dashboard?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "dashboard-007",
+    "domain": "Dashboard",
+    "intent": "negative",
+    "question": "Is there a dark mode for the dashboard?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "dashboard-008",
+    "domain": "Dashboard",
+    "intent": "negative",
+    "question": "Do you have a mobile app so I can check the dashboard on my phone?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "dashboard-009",
+    "domain": "Dashboard",
+    "intent": "where_is",
+    "question": "Where can I see the detailed posture breakdown, not just the summary tiles?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/posture"
+    }
+  },
+  {
+    "id": "dashboard-010",
+    "domain": "Dashboard",
+    "intent": "how_to",
+    "question": "how do i get back to the home overview screen",
+    "target": {
+      "kind": "workflow",
+      "ref": "view_dashboard"
+    }
+  },
+  {
+    "id": "dashboard-011",
+    "domain": "Dashboard",
+    "intent": "can_i",
+    "question": "Can I drag and drop the cards on the dashboard to rearrange them?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "dashboard-012",
+    "domain": "Dashboard",
+    "intent": "where_is",
+    "question": "Where's the landing page that shows our overall risk at a glance?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/dashboard"
+    }
+  },
+  {
+    "id": "dashboard-013",
+    "domain": "Dashboard",
+    "intent": "how_to",
+    "question": "How do I drill into the posture score I see on the dashboard?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/posture"
+    }
+  },
+  {
+    "id": "dashboard-014",
+    "domain": "Dashboard",
+    "intent": "config",
+    "question": "Can I set a different page as my default landing page instead of the dashboard?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "dashboard-015",
+    "domain": "Dashboard",
+    "intent": "where_is",
+    "question": "navigate me to the dashboard please",
+    "target": {
+      "kind": "workflow",
+      "ref": "view_dashboard"
+    }
+  },
+  {
+    "id": "dashboard-016",
+    "domain": "Dashboard",
+    "intent": "how_to",
+    "question": "How do I read the metrics on the main dashboard — what does each tile mean?",
+    "target": {
+      "kind": "workflow",
+      "ref": "view_dashboard"
+    }
+  },
+  {
+    "id": "dashboard-017",
+    "domain": "Dashboard",
+    "intent": "how_to",
+    "question": "Show me where the posture detail page lives so I can see the score history.",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/posture"
+    }
+  },
+  {
+    "id": "reports-001",
+    "domain": "Reports",
+    "intent": "where_is",
+    "question": "Where's my Intelligence Brief?",
+    "target": {
+      "kind": "workflow",
+      "ref": "view_brief"
+    }
+  },
+  {
+    "id": "reports-002",
+    "domain": "Reports",
+    "intent": "how_to",
+    "question": "How do I read this week's intelligence brief?",
+    "target": {
+      "kind": "workflow",
+      "ref": "view_brief"
+    }
+  },
+  {
+    "id": "reports-003",
+    "domain": "Reports",
+    "intent": "list_view",
+    "question": "Where can I see all my past briefs, like an archive of previous editions?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/briefs"
+    }
+  },
+  {
+    "id": "reports-004",
+    "domain": "Reports",
+    "intent": "how_to",
+    "question": "How do I build a custom report from scratch inside the app?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "reports-005",
+    "domain": "Reports",
+    "intent": "can_i",
+    "question": "Can I export my findings as a PDF report to hand to the auditors?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "reports-006",
+    "domain": "Reports",
+    "intent": "how_to",
+    "question": "how do i open the brief",
+    "target": {
+      "kind": "workflow",
+      "ref": "view_brief"
+    }
+  },
+  {
+    "id": "reports-007",
+    "domain": "Reports",
+    "intent": "config",
+    "question": "Can I schedule a recurring report to be generated every month?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "reports-008",
+    "domain": "Reports",
+    "intent": "can_i",
+    "question": "Can I white-label the reports and drop our company logo on them?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "reports-009",
+    "domain": "Reports",
+    "intent": "where_is",
+    "question": "I'm looking for the executive brief that got generated — where does it show up?",
+    "target": {
+      "kind": "workflow",
+      "ref": "view_brief"
+    }
+  },
+  {
+    "id": "reports-010",
+    "domain": "Reports",
+    "intent": "how_to",
+    "question": "How do I create an executive summary report for the board myself?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "reports-011",
+    "domain": "Reports",
+    "intent": "list_view",
+    "question": "take me to the briefs section",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/briefs"
+    }
+  },
+  {
+    "id": "reports-012",
+    "domain": "Reports",
+    "intent": "can_i",
+    "question": "Can I download a gap-analysis report as a document?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "reports-013",
+    "domain": "Reports",
+    "intent": "negative",
+    "question": "Do you have a drag-and-drop report builder like the BI tools have?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "reports-014",
+    "domain": "Reports",
+    "intent": "where_is",
+    "question": "Where is the intelligence brief published each week — how do I view it?",
+    "target": {
+      "kind": "workflow",
+      "ref": "view_brief"
+    }
+  },
+  {
+    "id": "reports-015",
+    "domain": "Reports",
+    "intent": "how_to",
+    "question": "How do I export the vendor list to Excel for our quarterly report?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "reports-016",
+    "domain": "Reports",
+    "intent": "can_i",
+    "question": "Can the platform automatically email a report to my board every quarter?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "reports-017",
+    "domain": "Reports",
+    "intent": "where_is",
+    "question": "which menu item has the briefs",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/briefs"
+    }
+  },
+  {
+    "id": "reports-018",
+    "domain": "Reports",
+    "intent": "how_to",
+    "question": "How do I get to the latest Intelligence Brief so I can share it with my CISO?",
+    "target": {
+      "kind": "workflow",
+      "ref": "view_brief"
+    }
+  },
+  {
+    "id": "onboarding-001",
+    "domain": "Onboarding",
+    "intent": "where_is",
+    "question": "Where's the getting started checklist for new accounts?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/getting-started"
+    }
+  },
+  {
+    "id": "onboarding-002",
+    "domain": "Onboarding",
+    "intent": "how_to",
+    "question": "I just signed up — how do I get started and what should I do first?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/getting-started"
+    }
+  },
+  {
+    "id": "onboarding-003",
+    "domain": "Onboarding",
+    "intent": "where_is",
+    "question": "is there an onboarding page that walks me through setup",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/getting-started"
+    }
+  },
+  {
+    "id": "onboarding-004",
+    "domain": "Onboarding",
+    "intent": "how_to",
+    "question": "How do I see what steps are left to finish setting up my organization?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/getting-started"
+    }
+  },
+  {
+    "id": "onboarding-005",
+    "domain": "Onboarding",
+    "intent": "negative",
+    "question": "Is there an interactive guided tour that highlights each feature as I go?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "onboarding-006",
+    "domain": "Onboarding",
+    "intent": "how_to",
+    "question": "how do i onboard my team when we first come on board",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/getting-started"
+    }
+  },
+  {
+    "id": "onboarding-007",
+    "domain": "Onboarding",
+    "intent": "where_is",
+    "question": "Where do I find the setup checklist to track my initial configuration progress?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/getting-started"
+    }
+  },
+  {
+    "id": "onboarding-008",
+    "domain": "Onboarding",
+    "intent": "negative",
+    "question": "Do you have a dedicated help center or knowledge base I can search through?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "onboarding-009",
+    "domain": "Onboarding",
+    "intent": "how_to",
+    "question": "What's the recommended first thing to configure after we activate our account?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/getting-started"
+    }
+  },
+  {
+    "id": "onboarding-010",
+    "domain": "Onboarding",
+    "intent": "where_is",
+    "question": "Take me to the getting started area.",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/getting-started"
+    }
+  },
+  {
+    "id": "onboarding-011",
+    "domain": "Onboarding",
+    "intent": "can_i",
+    "question": "Can I revisit the onboarding checklist after I've already dismissed it?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/getting-started"
+    }
+  },
+  {
+    "id": "onboarding-012",
+    "domain": "Onboarding",
+    "intent": "negative",
+    "question": "Are there onboarding tutorial videos I can watch?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "onboarding-013",
+    "domain": "Onboarding",
+    "intent": "how_to",
+    "question": "How do I know if my initial setup is complete?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/getting-started"
+    }
+  },
+  {
+    "id": "onboarding-014",
+    "domain": "Onboarding",
+    "intent": "where_is",
+    "question": "new here, where's the quick-start guide",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/getting-started"
+    }
+  },
+  {
+    "id": "onboarding-015",
+    "domain": "Onboarding",
+    "intent": "how_to",
+    "question": "How do I walk my colleague through the first-time setup steps?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/getting-started"
+    }
+  },
+  {
+    "id": "onboarding-016",
+    "domain": "Onboarding",
+    "intent": "list_view",
+    "question": "What onboarding tasks does the platform recommend for a new organization?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/getting-started"
+    }
+  },
+  {
+    "id": "onboarding-017",
+    "domain": "Onboarding",
+    "intent": "where_is",
+    "question": "Where's the checklist that shows my setup completion status?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/getting-started"
+    }
+  },
+  {
+    "id": "profile-001",
+    "domain": "Profile",
+    "intent": "how_to",
+    "question": "How do I change my name on my profile?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "profile-002",
+    "domain": "Profile",
+    "intent": "how_to",
+    "question": "How do I update the email address on my account?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "profile-003",
+    "domain": "Profile",
+    "intent": "where_is",
+    "question": "Where's my account page?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "profile-004",
+    "domain": "Profile",
+    "intent": "where_is",
+    "question": "where do i manage my personal account settings",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "profile-005",
+    "domain": "Profile",
+    "intent": "how_to",
+    "question": "How do I edit my profile details?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "profile-006",
+    "domain": "Profile",
+    "intent": "can_i",
+    "question": "Can I update my display name that shows up across the platform?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "profile-007",
+    "domain": "Profile",
+    "intent": "where_is",
+    "question": "Take me to my account home.",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "profile-008",
+    "domain": "Profile",
+    "intent": "how_to",
+    "question": "How do I change my password?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/security"
+    }
+  },
+  {
+    "id": "profile-009",
+    "domain": "Profile",
+    "intent": "can_i",
+    "question": "Can I delete my account entirely and have my data removed?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/privacy"
+    }
+  },
+  {
+    "id": "profile-010",
+    "domain": "Profile",
+    "intent": "negative",
+    "question": "Can I upload a profile photo or avatar?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "profile-011",
+    "domain": "Profile",
+    "intent": "how_to",
+    "question": "how do i fix the spelling of my name in the account settings",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "profile-012",
+    "domain": "Profile",
+    "intent": "config",
+    "question": "Where do I go to manage my account preferences?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "profile-013",
+    "domain": "Profile",
+    "intent": "negative",
+    "question": "Can I set my preferred timezone in my profile?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "profile-014",
+    "domain": "Profile",
+    "intent": "where_is",
+    "question": "Which section lets me view and edit my user info?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "profile-015",
+    "domain": "Profile",
+    "intent": "how_to",
+    "question": "I got married and changed my last name — how do I update it here?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "profile-016",
+    "domain": "Profile",
+    "intent": "negative",
+    "question": "Can I change the platform's language to French in my profile?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "profile-017",
+    "domain": "Profile",
+    "intent": "can_i",
+    "question": "Can I update my contact email so notifications go to a different inbox?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "profile-018",
+    "domain": "Profile",
+    "intent": "where_is",
+    "question": "where's the profile page to review my personal details",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "vendors-001",
+    "domain": "Vendors",
+    "intent": "how_to",
+    "question": "How do I add a new vendor to our inventory?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_vendor"
+    }
+  },
+  {
+    "id": "vendors-002",
+    "domain": "Vendors",
+    "intent": "where_is",
+    "question": "Where can I see the full list of vendors we're tracking?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/vendors"
+    }
+  },
+  {
+    "id": "vendors-003",
+    "domain": "Vendors",
+    "intent": "how_to",
+    "question": "What's the process for running an assessment on one of our vendors?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_vendor"
+    }
+  },
+  {
+    "id": "vendors-004",
+    "domain": "Vendors",
+    "intent": "how_to",
+    "question": "We just onboarded a new SaaS supplier — how do I get them into the system?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_vendor"
+    }
+  },
+  {
+    "id": "vendors-005",
+    "domain": "Vendors",
+    "intent": "where_is",
+    "question": "Which menu do I use to get to the vendors area?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Vendors"
+    }
+  },
+  {
+    "id": "vendors-006",
+    "domain": "Vendors",
+    "intent": "list_view",
+    "question": "Show me all the third-party vendors in our account.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/vendors"
+    }
+  },
+  {
+    "id": "vendors-007",
+    "domain": "Vendors",
+    "intent": "can_i",
+    "question": "Can I upload a vendor's SOC 2 report against their record?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/vendors"
+    }
+  },
+  {
+    "id": "vendors-008",
+    "domain": "Vendors",
+    "intent": "config",
+    "question": "How do I kick off an assessment for a specific vendor?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_vendor"
+    }
+  },
+  {
+    "id": "vendors-009",
+    "domain": "Vendors",
+    "intent": "how_to",
+    "question": "Walk me through creating a vendor entry from scratch.",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_vendor"
+    }
+  },
+  {
+    "id": "vendors-010",
+    "domain": "Vendors",
+    "intent": "where_is",
+    "question": "Where do our supplier records live in the platform?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/vendors"
+    }
+  },
+  {
+    "id": "vendors-011",
+    "domain": "Vendors",
+    "intent": "can_i",
+    "question": "Is there a standalone page just for uploading a SOC report by itself?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "vendors-012",
+    "domain": "Vendors",
+    "intent": "negative",
+    "question": "Can Ask auto-discover our vendors by scanning our email inbox?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "vendors-013",
+    "domain": "Vendors",
+    "intent": "negative",
+    "question": "Does the platform automatically crawl vendor websites to pull in their details?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "vendors-014",
+    "domain": "Vendors",
+    "intent": "list_view",
+    "question": "I want to review every vendor we've entered — where's that view?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/vendors"
+    }
+  },
+  {
+    "id": "vendors-015",
+    "domain": "Vendors",
+    "intent": "how_to",
+    "question": "How do I register a new payment processor as a vendor?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_vendor"
+    }
+  },
+  {
+    "id": "vendors-016",
+    "domain": "Vendors",
+    "intent": "where_is",
+    "question": "Where do I attach a vendor's assurance documents like their audit report?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/vendors"
+    }
+  },
+  {
+    "id": "vendors-017",
+    "domain": "Vendors",
+    "intent": "where_is",
+    "question": "Where would I go to look at the documents I've stored for a particular vendor?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/vendors"
+    }
+  },
+  {
+    "id": "vendors-018",
+    "domain": "Vendors",
+    "intent": "negative",
+    "question": "Is there an nth-party dependency graph showing our vendors' sub-processors?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "vendors-019",
+    "domain": "Vendors",
+    "intent": "how_to",
+    "question": "How do I start a fresh assessment for our cloud hosting provider?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_vendor"
+    }
+  },
+  {
+    "id": "vendors-020",
+    "domain": "Vendors",
+    "intent": "can_i",
+    "question": "Can I pull up the vendor directory to check who's already in there?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/vendors"
+    }
+  },
+  {
+    "id": "vendors-021",
+    "domain": "Vendors",
+    "intent": "negative",
+    "question": "Can I build a custom vendor report with my own layout and charts?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "vendors-022",
+    "domain": "Vendors",
+    "intent": "how_to",
+    "question": "New MSP just signed — how do I get them tracked in SecureLogic?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_vendor"
+    }
+  },
+  {
+    "id": "vendors-023",
+    "domain": "Vendors",
+    "intent": "where_is",
+    "question": "Take me to where all our third parties are listed.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Vendors"
+    }
+  },
+  {
+    "id": "vendors-024",
+    "domain": "Vendors",
+    "intent": "how_to",
+    "question": "How do I record my findings after reviewing a vendor's controls?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_vendor"
+    }
+  },
+  {
+    "id": "vendors-026",
+    "domain": "Vendors",
+    "intent": "how_to",
+    "question": "Where do I upload the SOC 2 Type II PDF a vendor just sent us?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/vendors"
+    }
+  },
+  {
+    "id": "vendors-027",
+    "domain": "Vendors",
+    "intent": "list_view",
+    "question": "Give me a rundown of every supplier currently in our vendor inventory.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/vendors"
+    }
+  },
+  {
+    "id": "vendors-028",
+    "domain": "Vendors",
+    "intent": "how_to",
+    "question": "How do I add a data-analytics contractor as a vendor record?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_vendor"
+    }
+  },
+  {
+    "id": "vendor risk-001",
+    "domain": "Vendor Risk",
+    "intent": "where_is",
+    "question": "Where's the vendor risk heatmap so I can see high-risk suppliers at a glance?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/vendors/risk"
+    }
+  },
+  {
+    "id": "vendor risk-002",
+    "domain": "Vendor Risk",
+    "intent": "how_to",
+    "question": "How do I view our vendors ranked by risk level?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/vendors/risk"
+    }
+  },
+  {
+    "id": "vendor risk-003",
+    "domain": "Vendor Risk",
+    "intent": "config",
+    "question": "What does a vendor's risk score actually mean and where does it come from?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/vendors"
+    }
+  },
+  {
+    "id": "vendor risk-004",
+    "domain": "Vendor Risk",
+    "intent": "where_is",
+    "question": "Is there a single screen that plots all our vendors by their risk exposure?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/vendors/risk"
+    }
+  },
+  {
+    "id": "vendor risk-005",
+    "domain": "Vendor Risk",
+    "intent": "list_view",
+    "question": "Show me which vendors are flagged as our riskiest right now.",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/vendors/risk"
+    }
+  },
+  {
+    "id": "vendor risk-006",
+    "domain": "Vendor Risk",
+    "intent": "can_i",
+    "question": "Can I see a vendor's inherent versus residual risk breakdown?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/vendors"
+    }
+  },
+  {
+    "id": "vendor risk-007",
+    "domain": "Vendor Risk",
+    "intent": "how_to",
+    "question": "How do I check the overall risk posture across all our third parties?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/vendors/risk"
+    }
+  },
+  {
+    "id": "vendor risk-008",
+    "domain": "Vendor Risk",
+    "intent": "negative",
+    "question": "Does the platform continuously monitor the dark web for breaches at our vendors?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "vendor risk-009",
+    "domain": "Vendor Risk",
+    "intent": "where_is",
+    "question": "Where do I find the risk view for our supplier portfolio?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/vendors/risk"
+    }
+  },
+  {
+    "id": "vendor risk-010",
+    "domain": "Vendor Risk",
+    "intent": "how_to",
+    "question": "How is the risk rating for each vendor calculated in this system?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/vendors"
+    }
+  },
+  {
+    "id": "vendor risk-011",
+    "domain": "Vendor Risk",
+    "intent": "negative",
+    "question": "Can Ask pull live security ratings for my vendors from an external ratings provider?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "vendor risk-012",
+    "domain": "Vendor Risk",
+    "intent": "list_view",
+    "question": "I need the heatmap that colors vendors by risk severity — where is it?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/vendors/risk"
+    }
+  },
+  {
+    "id": "vendor risk-013",
+    "domain": "Vendor Risk",
+    "intent": "can_i",
+    "question": "Can I sort our vendors from highest to lowest risk somewhere?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/vendors/risk"
+    }
+  },
+  {
+    "id": "vendor risk-014",
+    "domain": "Vendor Risk",
+    "intent": "how_to",
+    "question": "How do I understand why one of our vendors is showing an elevated risk score?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/vendors"
+    }
+  },
+  {
+    "id": "vendor risk-015",
+    "domain": "Vendor Risk",
+    "intent": "negative",
+    "question": "Is there concentration-risk analytics showing which cloud region too many vendors depend on?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "vendor risk-016",
+    "domain": "Vendor Risk",
+    "intent": "where_is",
+    "question": "Point me to the vendor risk dashboard, please.",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/vendors/risk"
+    }
+  },
+  {
+    "id": "vendor risk-017",
+    "domain": "Vendor Risk",
+    "intent": "where_is",
+    "question": "Where can I look at the residual risk assigned to a particular supplier?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/vendors"
+    }
+  },
+  {
+    "id": "vendor risk-018",
+    "domain": "Vendor Risk",
+    "intent": "negative",
+    "question": "Does SecureLogic auto-generate a fourth-party supply-chain map for each vendor?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "assets-001",
+    "domain": "Assets",
+    "intent": "where_is",
+    "question": "Where is the Assets menu and what's under it?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Assets"
+    }
+  },
+  {
+    "id": "assets-002",
+    "domain": "Assets",
+    "intent": "how_to",
+    "question": "How do I get to the Assets section to manage vendors and AI systems?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Assets"
+    }
+  },
+  {
+    "id": "assets-003",
+    "domain": "Assets",
+    "intent": "list_view",
+    "question": "What can I find under the Assets dropdown?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Assets"
+    }
+  },
+  {
+    "id": "assets-004",
+    "domain": "Assets",
+    "intent": "where_is",
+    "question": "I'm looking for our inventory of tracked assets — which nav item is that?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Assets"
+    }
+  },
+  {
+    "id": "assets-005",
+    "domain": "Assets",
+    "intent": "can_i",
+    "question": "Can I manage both vendors and AI systems from the same Assets area?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Assets"
+    }
+  },
+  {
+    "id": "assets-006",
+    "domain": "Assets",
+    "intent": "negative",
+    "question": "Does the Assets section auto-discover hardware and endpoints on our network?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "assets-007",
+    "domain": "Assets",
+    "intent": "how_to",
+    "question": "How do I navigate to the Assets overview?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Assets"
+    }
+  },
+  {
+    "id": "assets-008",
+    "domain": "Assets",
+    "intent": "negative",
+    "question": "Is there a CMDB-style asset inventory that syncs from our IT tooling?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "assets-009",
+    "domain": "Assets",
+    "intent": "where_is",
+    "question": "Which items sit inside the Assets menu?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Assets"
+    }
+  },
+  {
+    "id": "assets-010",
+    "domain": "Assets",
+    "intent": "where_is",
+    "question": "Where do I go to see both our vendor list and our AI systems together?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Assets"
+    }
+  },
+  {
+    "id": "assets-012",
+    "domain": "Assets",
+    "intent": "negative",
+    "question": "Can the Assets area track our software licenses and their renewal dates?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "assets-013",
+    "domain": "Assets",
+    "intent": "how_to",
+    "question": "Take me to the Assets part of the platform.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Assets"
+    }
+  },
+  {
+    "id": "assets-014",
+    "domain": "Assets",
+    "intent": "list_view",
+    "question": "What sub-sections show up when I expand Assets?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Assets"
+    }
+  },
+  {
+    "id": "ai governance-001",
+    "domain": "AI Governance",
+    "intent": "how_to",
+    "question": "How do I add a new AI system to our inventory?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_ai_system"
+    }
+  },
+  {
+    "id": "ai governance-002",
+    "domain": "AI Governance",
+    "intent": "how_to",
+    "question": "What's the workflow for reviewing AI governance on one of our models?",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_ai_governance"
+    }
+  },
+  {
+    "id": "ai governance-003",
+    "domain": "AI Governance",
+    "intent": "where_is",
+    "question": "Where can I see the list of AI systems we've registered?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/ai-systems"
+    }
+  },
+  {
+    "id": "ai governance-004",
+    "domain": "AI Governance",
+    "intent": "how_to",
+    "question": "We just deployed an internal chatbot — how do I record it as an AI system?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_ai_system"
+    }
+  },
+  {
+    "id": "ai governance-005",
+    "domain": "AI Governance",
+    "intent": "list_view",
+    "question": "Show me every AI system currently in our catalog.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/ai-systems"
+    }
+  },
+  {
+    "id": "ai governance-006",
+    "domain": "AI Governance",
+    "intent": "how_to",
+    "question": "How do I run a governance review on a machine-learning model we use?",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_ai_governance"
+    }
+  },
+  {
+    "id": "ai governance-007",
+    "domain": "AI Governance",
+    "intent": "where_is",
+    "question": "Which menu holds our AI systems inventory?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/ai-systems"
+    }
+  },
+  {
+    "id": "ai governance-008",
+    "domain": "AI Governance",
+    "intent": "how_to",
+    "question": "How do I kick off the AI governance review process for a specific system?",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_ai_governance"
+    }
+  },
+  {
+    "id": "ai governance-009",
+    "domain": "AI Governance",
+    "intent": "how_to",
+    "question": "Walk me through registering a third-party LLM tool as an AI system.",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_ai_system"
+    }
+  },
+  {
+    "id": "ai governance-010",
+    "domain": "AI Governance",
+    "intent": "can_i",
+    "question": "Can I pull up the full directory of AI systems we're governing?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/ai-systems"
+    }
+  },
+  {
+    "id": "ai governance-011",
+    "domain": "AI Governance",
+    "intent": "negative",
+    "question": "Does the platform automatically detect shadow AI usage across our employees?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "ai governance-012",
+    "domain": "AI Governance",
+    "intent": "how_to",
+    "question": "How do I add our fraud-detection model to the AI inventory?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_ai_system"
+    }
+  },
+  {
+    "id": "ai governance-013",
+    "domain": "AI Governance",
+    "intent": "where_is",
+    "question": "Where do I go to review governance for our AI systems?",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_ai_governance"
+    }
+  },
+  {
+    "id": "ai governance-014",
+    "domain": "AI Governance",
+    "intent": "list_view",
+    "question": "I want to browse all the AI systems on file — where's that page?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/ai-systems"
+    }
+  },
+  {
+    "id": "ai governance-015",
+    "domain": "AI Governance",
+    "intent": "negative",
+    "question": "Can SecureLogic scan our code repos to find AI models we haven't registered?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "ai governance-016",
+    "domain": "AI Governance",
+    "intent": "how_to",
+    "question": "How do I create an AI system record for a vendor-provided recommendation engine?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_ai_system"
+    }
+  },
+  {
+    "id": "ai governance-017",
+    "domain": "AI Governance",
+    "intent": "config",
+    "question": "How do I document a governance assessment on our generative-AI assistant?",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_ai_governance"
+    }
+  },
+  {
+    "id": "ai governance-018",
+    "domain": "AI Governance",
+    "intent": "negative",
+    "question": "Does the tool run automated bias and fairness testing on our models?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "ai governance-019",
+    "domain": "AI Governance",
+    "intent": "where_is",
+    "question": "Take me to the AI Systems list under Assets.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/ai-systems"
+    }
+  },
+  {
+    "id": "ai governance-020",
+    "domain": "AI Governance",
+    "intent": "can_i",
+    "question": "Can I start a governance review directly from an AI system's record?",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_ai_governance"
+    }
+  },
+  {
+    "id": "ai governance-021",
+    "domain": "AI Governance",
+    "intent": "negative",
+    "question": "Is there a real-time monitor that alerts when a model's outputs start drifting?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "ai governance-022",
+    "domain": "AI Governance",
+    "intent": "how_to",
+    "question": "How do I enter a new AI system we're piloting into the platform?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_ai_system"
+    }
+  },
+  {
+    "id": "ai governance-023",
+    "domain": "AI Governance",
+    "intent": "negative",
+    "question": "Can Ask automatically classify each AI system's EU AI Act risk tier for me?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "ai governance-024",
+    "domain": "AI Governance",
+    "intent": "where_is",
+    "question": "Where do I go to review AI governance obligations for a system we already added?",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_ai_governance"
+    }
+  },
+  {
+    "id": "compliance-001",
+    "domain": "Compliance",
+    "intent": "where_is",
+    "question": "Where do I find the compliance section in the platform?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Compliance"
+    }
+  },
+  {
+    "id": "compliance-002",
+    "domain": "Compliance",
+    "intent": "how_to",
+    "question": "How do I get to everything related to my compliance program?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Compliance"
+    }
+  },
+  {
+    "id": "compliance-003",
+    "domain": "Compliance",
+    "intent": "list_view",
+    "question": "What's under the Compliance menu?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Compliance"
+    }
+  },
+  {
+    "id": "compliance-004",
+    "domain": "Compliance",
+    "intent": "where_is",
+    "question": "I'm trying to manage our compliance posture — which area of the app handles that?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Compliance"
+    }
+  },
+  {
+    "id": "compliance-005",
+    "domain": "Compliance",
+    "intent": "how_to",
+    "question": "Show me where controls, frameworks, policies and obligations all live.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Compliance"
+    }
+  },
+  {
+    "id": "compliance-006",
+    "domain": "Compliance",
+    "intent": "can_i",
+    "question": "Can I track my compliance readiness for an audit in here?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Compliance"
+    }
+  },
+  {
+    "id": "compliance-007",
+    "domain": "Compliance",
+    "intent": "where_is",
+    "question": "Which menu do I open to start working on compliance?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Compliance"
+    }
+  },
+  {
+    "id": "compliance-008",
+    "domain": "Compliance",
+    "intent": "how_to",
+    "question": "How is the compliance workspace organized?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Compliance"
+    }
+  },
+  {
+    "id": "compliance-009",
+    "domain": "Compliance",
+    "intent": "list_view",
+    "question": "Give me a rundown of the compliance capabilities available to my org.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Compliance"
+    }
+  },
+  {
+    "id": "compliance-010",
+    "domain": "Compliance",
+    "intent": "config",
+    "question": "Where do I set up our compliance program for the first time?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Compliance"
+    }
+  },
+  {
+    "id": "compliance-011",
+    "domain": "Compliance",
+    "intent": "negative",
+    "question": "Does the platform automatically make us compliant with HIPAA once I turn it on?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "compliance-012",
+    "domain": "Compliance",
+    "intent": "negative",
+    "question": "Will SecureLogic issue us a compliance certificate we can hand to auditors?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "compliance-013",
+    "domain": "Compliance",
+    "intent": "negative",
+    "question": "Can the tool file our compliance paperwork with regulators on our behalf?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "compliance-014",
+    "domain": "Compliance",
+    "intent": "how_to",
+    "question": "Where's the starting point for assessing where we stand on compliance?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Compliance"
+    }
+  },
+  {
+    "id": "compliance-015",
+    "domain": "Compliance",
+    "intent": "can_i",
+    "question": "Is there a place to see all my compliance-related objects together?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Compliance"
+    }
+  },
+  {
+    "id": "compliance-016",
+    "domain": "Compliance",
+    "intent": "negative",
+    "question": "Does Ask keep a running compliance chat history I can revisit later?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "controls-001",
+    "domain": "Controls",
+    "intent": "how_to",
+    "question": "How do I add a new control?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_control"
+    }
+  },
+  {
+    "id": "controls-002",
+    "domain": "Controls",
+    "intent": "how_to",
+    "question": "What's the process for creating a control in the platform?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_control"
+    }
+  },
+  {
+    "id": "controls-003",
+    "domain": "Controls",
+    "intent": "how_to",
+    "question": "I need to register a new security control — walk me through it.",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_control"
+    }
+  },
+  {
+    "id": "controls-004",
+    "domain": "Controls",
+    "intent": "how_to",
+    "question": "Where do I go to set up an access-control safeguard in our program?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_control"
+    }
+  },
+  {
+    "id": "controls-005",
+    "domain": "Controls",
+    "intent": "how_to",
+    "question": "How do I assess one of our controls?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_control"
+    }
+  },
+  {
+    "id": "controls-006",
+    "domain": "Controls",
+    "intent": "how_to",
+    "question": "I want to evaluate whether a control is operating effectively — how?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_control"
+    }
+  },
+  {
+    "id": "controls-007",
+    "domain": "Controls",
+    "intent": "how_to",
+    "question": "What's the way to record an assessment result against a control?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_control"
+    }
+  },
+  {
+    "id": "controls-008",
+    "domain": "Controls",
+    "intent": "where_is",
+    "question": "Where can I see the list of all our controls?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/controls"
+    }
+  },
+  {
+    "id": "controls-009",
+    "domain": "Controls",
+    "intent": "list_view",
+    "question": "Show me our controls inventory.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/controls"
+    }
+  },
+  {
+    "id": "controls-010",
+    "domain": "Controls",
+    "intent": "where_is",
+    "question": "Which page lists every control we're tracking?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/controls"
+    }
+  },
+  {
+    "id": "controls-011",
+    "domain": "Controls",
+    "intent": "can_i",
+    "question": "Can I attach evidence to a control I've set up?",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "controls-012",
+    "domain": "Controls",
+    "intent": "how_to",
+    "question": "How do I upload proof that a control is in place?",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "controls-013",
+    "domain": "Controls",
+    "intent": "where_is",
+    "question": "Under which menu do I find Controls?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/controls"
+    }
+  },
+  {
+    "id": "controls-014",
+    "domain": "Controls",
+    "intent": "can_i",
+    "question": "Can I mark a control as assessed after reviewing it?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_control"
+    }
+  },
+  {
+    "id": "controls-015",
+    "domain": "Controls",
+    "intent": "config",
+    "question": "How do I create a control and then evaluate its effectiveness?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_control"
+    }
+  },
+  {
+    "id": "controls-016",
+    "domain": "Controls",
+    "intent": "negative",
+    "question": "Does the platform automatically test all our controls for us without any input?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "controls-017",
+    "domain": "Controls",
+    "intent": "negative",
+    "question": "Is there a global 'add evidence' page not tied to any control?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "controls-018",
+    "domain": "Controls",
+    "intent": "list_view",
+    "question": "Take me to where our full control library is displayed.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/controls"
+    }
+  },
+  {
+    "id": "frameworks-001",
+    "domain": "Frameworks",
+    "intent": "how_to",
+    "question": "How do I turn on NIST CSF for our organization?",
+    "target": {
+      "kind": "workflow",
+      "ref": "activate_framework"
+    }
+  },
+  {
+    "id": "frameworks-002",
+    "domain": "Frameworks",
+    "intent": "how_to",
+    "question": "What's the process for activating a framework?",
+    "target": {
+      "kind": "workflow",
+      "ref": "activate_framework"
+    }
+  },
+  {
+    "id": "frameworks-003",
+    "domain": "Frameworks",
+    "intent": "how_to",
+    "question": "I want to adopt ISO/IEC 42001 — how do I enable it?",
+    "target": {
+      "kind": "workflow",
+      "ref": "activate_framework"
+    }
+  },
+  {
+    "id": "frameworks-004",
+    "domain": "Frameworks",
+    "intent": "how_to",
+    "question": "How do we get SOC 2 stood up as one of our frameworks?",
+    "target": {
+      "kind": "workflow",
+      "ref": "activate_framework"
+    }
+  },
+  {
+    "id": "frameworks-005",
+    "domain": "Frameworks",
+    "intent": "how_to",
+    "question": "Where do I activate the NIST AI RMF for our AI governance program?",
+    "target": {
+      "kind": "workflow",
+      "ref": "activate_framework"
+    }
+  },
+  {
+    "id": "frameworks-006",
+    "domain": "Frameworks",
+    "intent": "where_is",
+    "question": "Where can I see which frameworks we've enabled?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/frameworks"
+    }
+  },
+  {
+    "id": "frameworks-007",
+    "domain": "Frameworks",
+    "intent": "list_view",
+    "question": "Show me the list of available frameworks.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/frameworks"
+    }
+  },
+  {
+    "id": "frameworks-008",
+    "domain": "Frameworks",
+    "intent": "where_is",
+    "question": "Which page shows the frameworks we're aligned to?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/frameworks"
+    }
+  },
+  {
+    "id": "frameworks-009",
+    "domain": "Frameworks",
+    "intent": "can_i",
+    "question": "Can I switch on more than one framework at the same time?",
+    "target": {
+      "kind": "workflow",
+      "ref": "activate_framework"
+    }
+  },
+  {
+    "id": "frameworks-010",
+    "domain": "Frameworks",
+    "intent": "config",
+    "question": "How do I set up SOC 2 and start mapping our controls to it?",
+    "target": {
+      "kind": "workflow",
+      "ref": "activate_framework"
+    }
+  },
+  {
+    "id": "frameworks-011",
+    "domain": "Frameworks",
+    "intent": "how_to",
+    "question": "How do controls map across the frameworks once one is active?",
+    "target": {
+      "kind": "workflow",
+      "ref": "activate_framework"
+    }
+  },
+  {
+    "id": "frameworks-012",
+    "domain": "Frameworks",
+    "intent": "where_is",
+    "question": "Under Compliance, where's the Frameworks area?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/frameworks"
+    }
+  },
+  {
+    "id": "frameworks-013",
+    "domain": "Frameworks",
+    "intent": "negative",
+    "question": "Is PCI-DSS one of the built-in frameworks I can activate?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "frameworks-014",
+    "domain": "Frameworks",
+    "intent": "negative",
+    "question": "Can I enable GDPR as a framework the same way as NIST CSF?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "frameworks-015",
+    "domain": "Frameworks",
+    "intent": "negative",
+    "question": "Does activating a framework automatically generate our ISO certificate?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "frameworks-016",
+    "domain": "Frameworks",
+    "intent": "negative",
+    "question": "Is there a CMMC framework template ready to switch on?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "frameworks-017",
+    "domain": "Frameworks",
+    "intent": "can_i",
+    "question": "Which frameworks can I actually turn on — is NIST AI RMF one of them?",
+    "target": {
+      "kind": "workflow",
+      "ref": "activate_framework"
+    }
+  },
+  {
+    "id": "frameworks-018",
+    "domain": "Frameworks",
+    "intent": "list_view",
+    "question": "List the frameworks supported so I can pick which to enable.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/frameworks"
+    }
+  },
+  {
+    "id": "policies-001",
+    "domain": "Policies",
+    "intent": "where_is",
+    "question": "Where do I manage our policies?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/policies"
+    }
+  },
+  {
+    "id": "policies-002",
+    "domain": "Policies",
+    "intent": "how_to",
+    "question": "How do I add a new policy to the platform?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/policies"
+    }
+  },
+  {
+    "id": "policies-003",
+    "domain": "Policies",
+    "intent": "list_view",
+    "question": "Show me all of our policies.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/policies"
+    }
+  },
+  {
+    "id": "policies-004",
+    "domain": "Policies",
+    "intent": "where_is",
+    "question": "Which section holds our security and governance policies?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/policies"
+    }
+  },
+  {
+    "id": "policies-005",
+    "domain": "Policies",
+    "intent": "how_to",
+    "question": "I need to create a new acceptable-use policy — where do I do that?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/policies"
+    }
+  },
+  {
+    "id": "policies-006",
+    "domain": "Policies",
+    "intent": "where_is",
+    "question": "Under the Compliance menu, where are Policies?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/policies"
+    }
+  },
+  {
+    "id": "policies-007",
+    "domain": "Policies",
+    "intent": "can_i",
+    "question": "Can I keep our written policies tracked in here?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/policies"
+    }
+  },
+  {
+    "id": "policies-008",
+    "domain": "Policies",
+    "intent": "config",
+    "question": "How do I set up a policy record for our data retention rules?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/policies"
+    }
+  },
+  {
+    "id": "policies-009",
+    "domain": "Policies",
+    "intent": "list_view",
+    "question": "Take me to the page that lists our policy documents.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/policies"
+    }
+  },
+  {
+    "id": "policies-010",
+    "domain": "Policies",
+    "intent": "how_to",
+    "question": "What's the path to register a new policy?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/policies"
+    }
+  },
+  {
+    "id": "policies-011",
+    "domain": "Policies",
+    "intent": "negative",
+    "question": "Can the assistant auto-write our information security policy for us?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "policies-012",
+    "domain": "Policies",
+    "intent": "negative",
+    "question": "Will the platform generate a full set of policy documents automatically?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "policies-013",
+    "domain": "Policies",
+    "intent": "negative",
+    "question": "Does it draft and approve our policies without any human involved?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "policies-014",
+    "domain": "Policies",
+    "intent": "can_i",
+    "question": "Is there a spot to view and add policies together?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/policies"
+    }
+  },
+  {
+    "id": "policies-015",
+    "domain": "Policies",
+    "intent": "where_is",
+    "question": "Where's the Policies page located in the navigation?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/policies"
+    }
+  },
+  {
+    "id": "obligations-001",
+    "domain": "Obligations",
+    "intent": "where_is",
+    "question": "Where do I track our compliance obligations?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/obligations"
+    }
+  },
+  {
+    "id": "obligations-002",
+    "domain": "Obligations",
+    "intent": "list_view",
+    "question": "Show me the list of obligations we're responsible for.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/obligations"
+    }
+  },
+  {
+    "id": "obligations-003",
+    "domain": "Obligations",
+    "intent": "how_to",
+    "question": "How do I add a new regulatory obligation?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/obligations"
+    }
+  },
+  {
+    "id": "obligations-004",
+    "domain": "Obligations",
+    "intent": "where_is",
+    "question": "Which page holds our legal and regulatory obligations?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/obligations"
+    }
+  },
+  {
+    "id": "obligations-005",
+    "domain": "Obligations",
+    "intent": "how_to",
+    "question": "I need to record a new obligation from a data-protection law — where?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/obligations"
+    }
+  },
+  {
+    "id": "obligations-006",
+    "domain": "Obligations",
+    "intent": "how_to",
+    "question": "How do I assess whether we're meeting one of our obligations?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/obligations"
+    }
+  },
+  {
+    "id": "obligations-007",
+    "domain": "Obligations",
+    "intent": "where_is",
+    "question": "Under Compliance, where's the Obligations area?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/obligations"
+    }
+  },
+  {
+    "id": "obligations-008",
+    "domain": "Obligations",
+    "intent": "can_i",
+    "question": "Can I map our controls to the obligations they satisfy?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_control"
+    }
+  },
+  {
+    "id": "obligations-009",
+    "domain": "Obligations",
+    "intent": "list_view",
+    "question": "Take me to where all our obligations are listed.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/obligations"
+    }
+  },
+  {
+    "id": "obligations-010",
+    "domain": "Obligations",
+    "intent": "config",
+    "question": "How do I set up and then assess a new obligation?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/obligations"
+    }
+  },
+  {
+    "id": "obligations-011",
+    "domain": "Obligations",
+    "intent": "can_i",
+    "question": "Is there a place to keep all our compliance obligations in one view?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/obligations"
+    }
+  },
+  {
+    "id": "obligations-012",
+    "domain": "Obligations",
+    "intent": "negative",
+    "question": "Does the platform automatically detect every legal obligation that applies to us?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "obligations-013",
+    "domain": "Obligations",
+    "intent": "negative",
+    "question": "Will it file our regulatory obligations with the authorities for us?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "obligations-014",
+    "domain": "Obligations",
+    "intent": "how_to",
+    "question": "What's the way to link an obligation to the framework it comes from?",
+    "target": {
+      "kind": "workflow",
+      "ref": "activate_framework"
+    }
+  },
+  {
+    "id": "obligations-015",
+    "domain": "Obligations",
+    "intent": "where_is",
+    "question": "Where in the navigation do I find Obligations?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/obligations"
+    }
+  },
+  {
+    "id": "risk-001",
+    "domain": "Risk",
+    "intent": "how_to",
+    "question": "How do I add a new risk to our risk register?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_risk"
+    }
+  },
+  {
+    "id": "risk-002",
+    "domain": "Risk",
+    "intent": "where_is",
+    "question": "Where do I find the risk register in the platform?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/risks"
+    }
+  },
+  {
+    "id": "risk-003",
+    "domain": "Risk",
+    "intent": "how_to",
+    "question": "What's the process for logging a newly identified risk from a vendor assessment?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_risk"
+    }
+  },
+  {
+    "id": "risk-004",
+    "domain": "Risk",
+    "intent": "how_to",
+    "question": "I need to record a mitigation plan for one of our high risks — how do I do that?",
+    "target": {
+      "kind": "workflow",
+      "ref": "treat_risk"
+    }
+  },
+  {
+    "id": "risk-005",
+    "domain": "Risk",
+    "intent": "where_is",
+    "question": "Which menu has the list of all our open risks?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Risk Register"
+    }
+  },
+  {
+    "id": "risk-006",
+    "domain": "Risk",
+    "intent": "how_to",
+    "question": "How do I treat a risk once we've decided on a remediation approach?",
+    "target": {
+      "kind": "workflow",
+      "ref": "treat_risk"
+    }
+  },
+  {
+    "id": "risk-007",
+    "domain": "Risk",
+    "intent": "can_i",
+    "question": "Can I create a risk entry directly, or does it have to come from a finding?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_risk"
+    }
+  },
+  {
+    "id": "risk-008",
+    "domain": "Risk",
+    "intent": "list_view",
+    "question": "Show me where I can see all risks sorted by severity.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/risks"
+    }
+  },
+  {
+    "id": "risk-009",
+    "domain": "Risk",
+    "intent": "how_to",
+    "question": "Walk me through recording a risk treatment for a residual risk we're carrying.",
+    "target": {
+      "kind": "workflow",
+      "ref": "treat_risk"
+    }
+  },
+  {
+    "id": "risk-010",
+    "domain": "Risk",
+    "intent": "where_is",
+    "question": "Where is the risk register located — under which top nav item?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Risk Register"
+    }
+  },
+  {
+    "id": "risk-011",
+    "domain": "Risk",
+    "intent": "how_to",
+    "question": "How can I capture a new operational risk our team flagged this quarter?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_risk"
+    }
+  },
+  {
+    "id": "risk-012",
+    "domain": "Risk",
+    "intent": "config",
+    "question": "Can I set a risk owner and target remediation date when I add a risk?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_risk"
+    }
+  },
+  {
+    "id": "risk-013",
+    "domain": "Risk",
+    "intent": "how_to",
+    "question": "What's the difference between the inherent rating and the residual rating on a risk?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/risks"
+    }
+  },
+  {
+    "id": "risk-014",
+    "domain": "Risk",
+    "intent": "can_i",
+    "question": "Can I mitigate a risk by linking it to a control we've already implemented?",
+    "target": {
+      "kind": "workflow",
+      "ref": "treat_risk"
+    }
+  },
+  {
+    "id": "risk-015",
+    "domain": "Risk",
+    "intent": "list_view",
+    "question": "I want a view of every risk currently in an open state — where is that?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/risks"
+    }
+  },
+  {
+    "id": "risk-016",
+    "domain": "Risk",
+    "intent": "how_to",
+    "question": "How do I get a risk into the register so it shows up on the heatmap?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_risk"
+    }
+  },
+  {
+    "id": "risk-017",
+    "domain": "Risk",
+    "intent": "where_is",
+    "question": "Take me to the page where risks are managed.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/risks"
+    }
+  },
+  {
+    "id": "risk-018",
+    "domain": "Risk",
+    "intent": "how_to",
+    "question": "How do I document that we're transferring a risk to our insurer?",
+    "target": {
+      "kind": "workflow",
+      "ref": "treat_risk"
+    }
+  },
+  {
+    "id": "risk-019",
+    "domain": "Risk",
+    "intent": "negative",
+    "question": "Does the platform automatically assign risk owners using AI based on the risk description?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "risk-020",
+    "domain": "Risk",
+    "intent": "negative",
+    "question": "Can SecureLogic auto-generate the entire risk register for me by scanning our environment?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "findings-001",
+    "domain": "Findings",
+    "intent": "how_to",
+    "question": "How do I review the findings that have been raised against our controls?",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_findings"
+    }
+  },
+  {
+    "id": "findings-002",
+    "domain": "Findings",
+    "intent": "where_is",
+    "question": "Where can I see all the open findings for our organization?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/findings"
+    }
+  },
+  {
+    "id": "findings-003",
+    "domain": "Findings",
+    "intent": "where_is",
+    "question": "Which menu do I use to get to the findings list?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Findings"
+    }
+  },
+  {
+    "id": "findings-004",
+    "domain": "Findings",
+    "intent": "how_to",
+    "question": "Walk me through triaging the findings that came out of our last assessment.",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_findings"
+    }
+  },
+  {
+    "id": "findings-005",
+    "domain": "Findings",
+    "intent": "list_view",
+    "question": "Show me a view of findings filtered by severity so I can prioritize.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/findings"
+    }
+  },
+  {
+    "id": "findings-006",
+    "domain": "Findings",
+    "intent": "how_to",
+    "question": "How do I work through the findings assigned to my team?",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_findings"
+    }
+  },
+  {
+    "id": "findings-007",
+    "domain": "Findings",
+    "intent": "can_i",
+    "question": "Can I review a finding and decide whether it needs a remediation action?",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_findings"
+    }
+  },
+  {
+    "id": "findings-008",
+    "domain": "Findings",
+    "intent": "where_is",
+    "question": "Take me to where the findings are tracked.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/findings"
+    }
+  },
+  {
+    "id": "findings-009",
+    "domain": "Findings",
+    "intent": "list_view",
+    "question": "I need to see every finding across all our vendors in one place.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/findings"
+    }
+  },
+  {
+    "id": "findings-010",
+    "domain": "Findings",
+    "intent": "how_to",
+    "question": "What's the workflow for reviewing and dispositioning findings?",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_findings"
+    }
+  },
+  {
+    "id": "findings-011",
+    "domain": "Findings",
+    "intent": "can_i",
+    "question": "Can I filter findings by which control framework they map to?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/findings"
+    }
+  },
+  {
+    "id": "findings-012",
+    "domain": "Findings",
+    "intent": "where_is",
+    "question": "Under the Risk menu, where do findings live?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Findings"
+    }
+  },
+  {
+    "id": "findings-013",
+    "domain": "Findings",
+    "intent": "how_to",
+    "question": "How do I go through and clear the backlog of open findings?",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_findings"
+    }
+  },
+  {
+    "id": "findings-014",
+    "domain": "Findings",
+    "intent": "negative",
+    "question": "Does the platform automatically remediate findings for me without any human review?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "findings-015",
+    "domain": "Findings",
+    "intent": "negative",
+    "question": "Can Ask auto-close all my low-severity findings in bulk with one command?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "findings-016",
+    "domain": "Findings",
+    "intent": "config",
+    "question": "Where do I go to see and review the findings raised this month?",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_findings"
+    }
+  },
+  {
+    "id": "actions-001",
+    "domain": "Actions",
+    "intent": "how_to",
+    "question": "How do I manage the remediation actions we've opened?",
+    "target": {
+      "kind": "workflow",
+      "ref": "manage_actions"
+    }
+  },
+  {
+    "id": "actions-002",
+    "domain": "Actions",
+    "intent": "where_is",
+    "question": "Where can I find all our outstanding action items?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/actions"
+    }
+  },
+  {
+    "id": "actions-003",
+    "domain": "Actions",
+    "intent": "list_view",
+    "question": "Show me the list of overdue actions so I can chase owners.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/actions"
+    }
+  },
+  {
+    "id": "actions-004",
+    "domain": "Actions",
+    "intent": "how_to",
+    "question": "How do I close out an action once the work is done?",
+    "target": {
+      "kind": "workflow",
+      "ref": "manage_actions"
+    }
+  },
+  {
+    "id": "actions-005",
+    "domain": "Actions",
+    "intent": "where_is",
+    "question": "Which menu has the actions tracker?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Actions"
+    }
+  },
+  {
+    "id": "actions-006",
+    "domain": "Actions",
+    "intent": "can_i",
+    "question": "Can I reassign an action to a different owner?",
+    "target": {
+      "kind": "workflow",
+      "ref": "manage_actions"
+    }
+  },
+  {
+    "id": "actions-007",
+    "domain": "Actions",
+    "intent": "list_view",
+    "question": "I want to see actions that are due this week — where is that view?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/actions"
+    }
+  },
+  {
+    "id": "actions-008",
+    "domain": "Actions",
+    "intent": "how_to",
+    "question": "What's the process for updating the status of an in-progress action?",
+    "target": {
+      "kind": "workflow",
+      "ref": "manage_actions"
+    }
+  },
+  {
+    "id": "actions-009",
+    "domain": "Actions",
+    "intent": "where_is",
+    "question": "Take me to where remediation actions are tracked.",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/actions"
+    }
+  },
+  {
+    "id": "actions-010",
+    "domain": "Actions",
+    "intent": "how_to",
+    "question": "How do I track the corrective actions tied to a finding?",
+    "target": {
+      "kind": "workflow",
+      "ref": "manage_actions"
+    }
+  },
+  {
+    "id": "actions-011",
+    "domain": "Actions",
+    "intent": "list_view",
+    "question": "Where do I see every action item across the whole program in one list?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/actions"
+    }
+  },
+  {
+    "id": "actions-012",
+    "domain": "Actions",
+    "intent": "can_i",
+    "question": "Can I set a due date and priority when I manage an action?",
+    "target": {
+      "kind": "workflow",
+      "ref": "manage_actions"
+    }
+  },
+  {
+    "id": "actions-013",
+    "domain": "Actions",
+    "intent": "where_is",
+    "question": "Under Risk, where is the actions page?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "Actions"
+    }
+  },
+  {
+    "id": "actions-014",
+    "domain": "Actions",
+    "intent": "how_to",
+    "question": "How do I mark an overdue action as complete and add a closure note?",
+    "target": {
+      "kind": "workflow",
+      "ref": "manage_actions"
+    }
+  },
+  {
+    "id": "actions-015",
+    "domain": "Actions",
+    "intent": "negative",
+    "question": "Will the platform automatically execute the remediation actions for us end to end?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "actions-016",
+    "domain": "Actions",
+    "intent": "negative",
+    "question": "Can Ask send automated reminder emails to action owners on a schedule I define?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "exceptions-001",
+    "domain": "Exceptions",
+    "intent": "how_to",
+    "question": "How do I file a policy exception when a control can't be met right now?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "exceptions-002",
+    "domain": "Exceptions",
+    "intent": "where_is",
+    "question": "Where is the exceptions register in the platform?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "exceptions-003",
+    "domain": "Exceptions",
+    "intent": "how_to",
+    "question": "We want to formally accept a risk instead of remediating it — how do we do that?",
+    "target": {
+      "kind": "workflow",
+      "ref": "treat_risk"
+    }
+  },
+  {
+    "id": "exceptions-004",
+    "domain": "Exceptions",
+    "intent": "can_i",
+    "question": "Can I raise a compliance exception with an expiry date and approver?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "exceptions-005",
+    "domain": "Exceptions",
+    "intent": "how_to",
+    "question": "How do I track a temporary waiver for a control we can't implement yet?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "exceptions-006",
+    "domain": "Exceptions",
+    "intent": "how_to",
+    "question": "How do I record that leadership has chosen to accept this risk?",
+    "target": {
+      "kind": "workflow",
+      "ref": "treat_risk"
+    }
+  },
+  {
+    "id": "exceptions-007",
+    "domain": "Exceptions",
+    "intent": "where_is",
+    "question": "Which menu do I use to submit an exception request for review?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "exceptions-008",
+    "domain": "Exceptions",
+    "intent": "can_i",
+    "question": "Can I create an exception workflow with an approval chain and sign-off?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "exceptions-009",
+    "domain": "Exceptions",
+    "intent": "how_to",
+    "question": "How do I log a risk acceptance decision with a justification?",
+    "target": {
+      "kind": "workflow",
+      "ref": "treat_risk"
+    }
+  },
+  {
+    "id": "exceptions-010",
+    "domain": "Exceptions",
+    "intent": "list_view",
+    "question": "Where can I see all active exceptions and their expiry dates?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "exceptions-011",
+    "domain": "Exceptions",
+    "intent": "how_to",
+    "question": "Our auditor wants an exception log — how do I produce one in SecureLogic?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "exceptions-012",
+    "domain": "Exceptions",
+    "intent": "config",
+    "question": "How do I configure who can approve exceptions in our org?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "exceptions-013",
+    "domain": "Exceptions",
+    "intent": "how_to",
+    "question": "How do I capture a risk we've decided to accept rather than treat?",
+    "target": {
+      "kind": "workflow",
+      "ref": "treat_risk"
+    }
+  },
+  {
+    "id": "exceptions-014",
+    "domain": "Exceptions",
+    "intent": "can_i",
+    "question": "Is there an exceptions module where I can grant a time-boxed deviation from policy?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "exceptions-015",
+    "domain": "Exceptions",
+    "intent": "where_is",
+    "question": "Where do I go to document a formal acceptance of a residual risk?",
+    "target": {
+      "kind": "workflow",
+      "ref": "treat_risk"
+    }
+  },
+  {
+    "id": "riskscoring-001",
+    "domain": "Risk Scoring",
+    "intent": "config",
+    "question": "Where do I configure our risk rating scale, like the likelihood and impact levels?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/risk-scale"
+    }
+  },
+  {
+    "id": "riskscoring-002",
+    "domain": "Risk Scoring",
+    "intent": "config",
+    "question": "How do I change the risk scoring policy our organization uses?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/risk-policy"
+    }
+  },
+  {
+    "id": "riskscoring-003",
+    "domain": "Risk Scoring",
+    "intent": "how_to",
+    "question": "Can you explain the difference between inherent and residual risk scoring here?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/risks"
+    }
+  },
+  {
+    "id": "riskscoring-004",
+    "domain": "Risk Scoring",
+    "intent": "config",
+    "question": "Where can I adjust the 5x5 matrix we use to rate risks?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/risk-scale"
+    }
+  },
+  {
+    "id": "riskscoring-005",
+    "domain": "Risk Scoring",
+    "intent": "config",
+    "question": "How do I set the thresholds that determine when a risk is high versus critical?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/risk-policy"
+    }
+  },
+  {
+    "id": "riskscoring-006",
+    "domain": "Risk Scoring",
+    "intent": "how_to",
+    "question": "How is a risk's residual rating calculated once controls are applied?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/risks"
+    }
+  },
+  {
+    "id": "riskscoring-007",
+    "domain": "Risk Scoring",
+    "intent": "config",
+    "question": "Where do I customize the labels for our impact levels in the scoring scale?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/risk-scale"
+    }
+  },
+  {
+    "id": "riskscoring-008",
+    "domain": "Risk Scoring",
+    "intent": "config",
+    "question": "I want to define our risk appetite thresholds — which settings page controls that?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/risk-policy"
+    }
+  },
+  {
+    "id": "riskscoring-009",
+    "domain": "Risk Scoring",
+    "intent": "how_to",
+    "question": "What does the inherent rating on a risk actually represent?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/risks"
+    }
+  },
+  {
+    "id": "riskscoring-010",
+    "domain": "Risk Scoring",
+    "intent": "config",
+    "question": "How do I edit the likelihood scale so it matches our internal methodology?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/risk-scale"
+    }
+  },
+  {
+    "id": "riskscoring-011",
+    "domain": "Risk Scoring",
+    "intent": "can_i",
+    "question": "Can I change the scoring policy so risks are rated on a 1-to-3 scale instead?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/risk-policy"
+    }
+  },
+  {
+    "id": "riskscoring-012",
+    "domain": "Risk Scoring",
+    "intent": "how_to",
+    "question": "How does the platform derive the overall risk score from likelihood and impact?",
+    "target": {
+      "kind": "injected_destination",
+      "ref": "/risks"
+    }
+  },
+  {
+    "id": "riskscoring-013",
+    "domain": "Risk Scoring",
+    "intent": "config",
+    "question": "Where is the risk scale configuration in settings?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/risk-scale"
+    }
+  },
+  {
+    "id": "riskscoring-014",
+    "domain": "Risk Scoring",
+    "intent": "negative",
+    "question": "Does SecureLogic use an AI model to automatically decide the correct risk score for each risk?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "riskscoring-015",
+    "domain": "Risk Scoring",
+    "intent": "negative",
+    "question": "Can I import an external risk scoring engine and have the platform run it for us?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "assessments-001",
+    "domain": "Assessments",
+    "intent": "how_to",
+    "question": "How do I run an assessment on one of our controls?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_control"
+    }
+  },
+  {
+    "id": "assessments-002",
+    "domain": "Assessments",
+    "intent": "where_is",
+    "question": "Where do I go to assess a specific control?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_control"
+    }
+  },
+  {
+    "id": "assessments-003",
+    "domain": "Assessments",
+    "intent": "how_to",
+    "question": "What's the process for assessing a control's effectiveness?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_control"
+    }
+  },
+  {
+    "id": "assessments-004",
+    "domain": "Assessments",
+    "intent": "how_to",
+    "question": "I need to complete a vendor assessment for a new supplier. How do I do that?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_vendor"
+    }
+  },
+  {
+    "id": "assessments-005",
+    "domain": "Assessments",
+    "intent": "where_is",
+    "question": "Where can I kick off a risk assessment for one of our vendors?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_vendor"
+    }
+  },
+  {
+    "id": "assessments-006",
+    "domain": "Assessments",
+    "intent": "how_to",
+    "question": "How do I evaluate a vendor's inherent and residual risk in the platform?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_vendor"
+    }
+  },
+  {
+    "id": "assessments-007",
+    "domain": "Assessments",
+    "intent": "how_to",
+    "question": "How do I run an AI governance review on one of our AI systems?",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_ai_governance"
+    }
+  },
+  {
+    "id": "assessments-008",
+    "domain": "Assessments",
+    "intent": "where_is",
+    "question": "Where do I assess an AI system against our governance requirements?",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_ai_governance"
+    }
+  },
+  {
+    "id": "assessments-009",
+    "domain": "Assessments",
+    "intent": "how_to",
+    "question": "We just onboarded a new model. How do I register the AI system before assessing it?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_ai_system"
+    }
+  },
+  {
+    "id": "assessments-010",
+    "domain": "Assessments",
+    "intent": "how_to",
+    "question": "How do I assess our posture against a compliance framework like NIST CSF?",
+    "target": {
+      "kind": "workflow",
+      "ref": "activate_framework"
+    }
+  },
+  {
+    "id": "assessments-011",
+    "domain": "Assessments",
+    "intent": "where_is",
+    "question": "Where do I activate a framework so I can start assessing against it?",
+    "target": {
+      "kind": "workflow",
+      "ref": "activate_framework"
+    }
+  },
+  {
+    "id": "assessments-012",
+    "domain": "Assessments",
+    "intent": "how_to",
+    "question": "How do I get ISO 27001 turned on so we can assess our controls against it?",
+    "target": {
+      "kind": "workflow",
+      "ref": "activate_framework"
+    }
+  },
+  {
+    "id": "assessments-013",
+    "domain": "Assessments",
+    "intent": "list_view",
+    "question": "Is there one page where I can see all of our assessments across the whole org?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "assessments-014",
+    "domain": "Assessments",
+    "intent": "where_is",
+    "question": "Where's the central assessments dashboard that lists every assessment we've done?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "assessments-015",
+    "domain": "Assessments",
+    "intent": "negative",
+    "question": "Can the tool auto-fill our assessment answers using AI so we don't have to?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "assessments-016",
+    "domain": "Assessments",
+    "intent": "negative",
+    "question": "Does SecureLogic automatically score our vendor assessments without us answering anything?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "assessments-017",
+    "domain": "Assessments",
+    "intent": "can_i",
+    "question": "Can I re-assess a control after we've remediated a finding on it?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_control"
+    }
+  },
+  {
+    "id": "assessments-018",
+    "domain": "Assessments",
+    "intent": "negative",
+    "question": "Can I schedule assessments to recur automatically every quarter?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "assessments-019",
+    "domain": "Assessments",
+    "intent": "negative",
+    "question": "Can I import completed assessment responses from an Excel questionnaire?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "assessments-020",
+    "domain": "Assessments",
+    "intent": "how_to",
+    "question": "How do I do a governance review for an AI system we already registered?",
+    "target": {
+      "kind": "workflow",
+      "ref": "review_ai_governance"
+    }
+  },
+  {
+    "id": "assessments-021",
+    "domain": "Assessments",
+    "intent": "config",
+    "question": "How do I add a new AI system to the inventory so it shows up for review?",
+    "target": {
+      "kind": "workflow",
+      "ref": "add_ai_system"
+    }
+  },
+  {
+    "id": "assessments-022",
+    "domain": "Assessments",
+    "intent": "negative",
+    "question": "Can I assign a control assessment to one of my teammates and track their progress?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "assessments-023",
+    "domain": "Assessments",
+    "intent": "list_view",
+    "question": "How do I pull up a list of all our overdue or pending assessments?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "assessments-024",
+    "domain": "Assessments",
+    "intent": "negative",
+    "question": "Does the platform let me benchmark our assessment results against industry peers?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "assessments-025",
+    "domain": "Assessments",
+    "intent": "can_i",
+    "question": "Can I assess a vendor before I've fully finished adding them?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_vendor"
+    }
+  },
+  {
+    "id": "assessments-026",
+    "domain": "Assessments",
+    "intent": "how_to",
+    "question": "Walk me through starting a control assessment — where do I click?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_control"
+    }
+  },
+  {
+    "id": "assessments-027",
+    "domain": "Assessments",
+    "intent": "negative",
+    "question": "Is there a library of pre-built assessment templates I can browse and reuse?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "assessments-028",
+    "domain": "Assessments",
+    "intent": "how_to",
+    "question": "How do I assess our third-party provider against our security requirements?",
+    "target": {
+      "kind": "workflow",
+      "ref": "assess_vendor"
+    }
+  },
+  {
+    "id": "evidence-001",
+    "domain": "Evidence",
+    "intent": "how_to",
+    "question": "How do I upload evidence to support a control?",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "evidence-002",
+    "domain": "Evidence",
+    "intent": "where_is",
+    "question": "Where do I attach a document as evidence for one of our controls?",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "evidence-003",
+    "domain": "Evidence",
+    "intent": "how_to",
+    "question": "I have a policy PDF I want to attach as evidence. How do I do that?",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "evidence-004",
+    "domain": "Evidence",
+    "intent": "how_to",
+    "question": "How do I add supporting evidence to an obligation?",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "evidence-005",
+    "domain": "Evidence",
+    "intent": "where_is",
+    "question": "Where's the evidence library where I can see all our uploaded evidence in one place?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "evidence-006",
+    "domain": "Evidence",
+    "intent": "where_is",
+    "question": "Is there a global 'Add Evidence' page, or do I have to start from a specific item?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "evidence-007",
+    "domain": "Evidence",
+    "intent": "how_to",
+    "question": "How do I upload evidence for an AI system during its governance review?",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "evidence-008",
+    "domain": "Evidence",
+    "intent": "how_to",
+    "question": "How do I attach evidence to a vendor to back up their assessment?",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "evidence-009",
+    "domain": "Evidence",
+    "intent": "negative",
+    "question": "Does SecureLogic automatically pull evidence from our Google Drive?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "evidence-010",
+    "domain": "Evidence",
+    "intent": "negative",
+    "question": "Can it sync evidence from our SharePoint or Confluence document repository automatically?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "evidence-011",
+    "domain": "Evidence",
+    "intent": "list_view",
+    "question": "How do I browse every piece of evidence we've collected across all controls?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "evidence-012",
+    "domain": "Evidence",
+    "intent": "how_to",
+    "question": "I'm on a control detail page — how do I add a new piece of evidence there?",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "evidence-013",
+    "domain": "Evidence",
+    "intent": "can_i",
+    "question": "Can I attach a screenshot as evidence directly, or does it have to be a PDF?",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "evidence-014",
+    "domain": "Evidence",
+    "intent": "negative",
+    "question": "Does the platform remind me when a piece of evidence is about to expire?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "evidence-015",
+    "domain": "Evidence",
+    "intent": "negative",
+    "question": "Can I bulk-upload a whole folder of evidence files at once from a single upload page?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "evidence-016",
+    "domain": "Evidence",
+    "intent": "how_to",
+    "question": "Where do I go to attach evidence to a specific obligation we're tracking?",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "evidence-017",
+    "domain": "Evidence",
+    "intent": "can_i",
+    "question": "Can I add evidence without linking it to a control or vendor first?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "evidence-018",
+    "domain": "Evidence",
+    "intent": "how_to",
+    "question": "How do I supply proof documentation for a control we're assessing?",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "evidence-019",
+    "domain": "Evidence",
+    "intent": "negative",
+    "question": "Does SecureLogic run an AI check to validate that our uploaded evidence is sufficient?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "evidence-020",
+    "domain": "Evidence",
+    "intent": "config",
+    "question": "How do I attach an audit report as evidence when reviewing an AI system?",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "evidence-021",
+    "domain": "Evidence",
+    "intent": "negative",
+    "question": "Is there an evidence approval workflow where a reviewer signs off before it counts?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "evidence-022",
+    "domain": "Evidence",
+    "intent": "where_is",
+    "question": "Which item do I need to open first before I can upload evidence?",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "evidence-023",
+    "domain": "Evidence",
+    "intent": "how_to",
+    "question": "How do I attach evidence files to a vendor record?",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "evidence-024",
+    "domain": "Evidence",
+    "intent": "list_view",
+    "question": "Where can I see a full inventory of every evidence artifact with its upload dates?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "evidence-025",
+    "domain": "Evidence",
+    "intent": "negative",
+    "question": "Can the tool automatically collect evidence from our cloud accounts like AWS or Azure?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "evidence-026",
+    "domain": "Evidence",
+    "intent": "how_to",
+    "question": "Show me how to add evidence to back up a control's effectiveness rating.",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "evidence-027",
+    "domain": "Evidence",
+    "intent": "can_i",
+    "question": "Can I reuse the same evidence file across multiple controls at once?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "evidence-028",
+    "domain": "Evidence",
+    "intent": "how_to",
+    "question": "How do I provide evidence for a compliance obligation we need to demonstrate?",
+    "target": {
+      "kind": "workflow",
+      "ref": "upload_evidence"
+    }
+  },
+  {
+    "id": "billing-001",
+    "domain": "Billing",
+    "intent": "where_is",
+    "question": "Where do I go to download a copy of my last invoice for expense reporting?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/billing-return"
+    }
+  },
+  {
+    "id": "billing-002",
+    "domain": "Billing",
+    "intent": "how_to",
+    "question": "How do I update the credit card on file for our account?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "billing-003",
+    "domain": "Billing",
+    "intent": "how_to",
+    "question": "Our card just expired — walk me through changing the payment method before the next charge.",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "billing-004",
+    "domain": "Billing",
+    "intent": "where_is",
+    "question": "Where can I see our billing history and past receipts?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/billing-return"
+    }
+  },
+  {
+    "id": "billing-005",
+    "domain": "Billing",
+    "intent": "how_to",
+    "question": "How do I open the billing portal to manage our subscription and payment details?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "billing-006",
+    "domain": "Billing",
+    "intent": "how_to",
+    "question": "I need to cancel our plan — where does that get done?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "billing-007",
+    "domain": "Billing",
+    "intent": "can_i",
+    "question": "Can I change the billing email so invoices go to our finance team instead of me?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "billing-008",
+    "domain": "Billing",
+    "intent": "how_to",
+    "question": "As the CFO I want to review what we've been charged this year. Where's the billing area?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/billing-return"
+    }
+  },
+  {
+    "id": "billing-009",
+    "domain": "Billing",
+    "intent": "config",
+    "question": "Where do I update our company's VAT/tax ID on the billing account?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "billing-010",
+    "domain": "Billing",
+    "intent": "can_i",
+    "question": "Can I pay by wire transfer or ACH instead of putting a credit card on file?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "billing-011",
+    "domain": "Billing",
+    "intent": "can_i",
+    "question": "Can we get billed annually by invoice with net-30 terms instead of card auto-charge?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "billing-012",
+    "domain": "Billing",
+    "intent": "where_is",
+    "question": "After checkout it sent me somewhere — where do I confirm the payment went through?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/billing-return"
+    }
+  },
+  {
+    "id": "billing-013",
+    "domain": "Billing",
+    "intent": "how_to",
+    "question": "How do I add a PO number to our invoices?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "billing-014",
+    "domain": "Billing",
+    "intent": "how_to",
+    "question": "Where do I go to upgrade to a paid plan and enter payment?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/pricing"
+    }
+  },
+  {
+    "id": "billing-015",
+    "domain": "Billing",
+    "intent": "config",
+    "question": "How do I update the billing address on our account?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "subscription-001",
+    "domain": "Subscription",
+    "intent": "where_is",
+    "question": "How do I check which plan we're currently subscribed to?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "subscription-002",
+    "domain": "Subscription",
+    "intent": "where_is",
+    "question": "Where can I compare the different plans and what each tier includes?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/pricing"
+    }
+  },
+  {
+    "id": "subscription-003",
+    "domain": "Subscription",
+    "intent": "how_to",
+    "question": "We've outgrown our tier — how do I upgrade from Team Professional to Platform Professional?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/pricing"
+    }
+  },
+  {
+    "id": "subscription-004",
+    "domain": "Subscription",
+    "intent": "how_to",
+    "question": "How do I downgrade our subscription to a cheaper plan?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "subscription-005",
+    "domain": "Subscription",
+    "intent": "where_is",
+    "question": "Where do I see how many seats our subscription includes and how many are used?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "subscription-006",
+    "domain": "Subscription",
+    "intent": "how_to",
+    "question": "How do I add more seats to our plan?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "subscription-007",
+    "domain": "Subscription",
+    "intent": "where_is",
+    "question": "When does our current subscription renew?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "subscription-008",
+    "domain": "Subscription",
+    "intent": "can_i",
+    "question": "Can I switch from monthly to annual billing to save money?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "subscription-009",
+    "domain": "Subscription",
+    "intent": "list_view",
+    "question": "What features do I get if I move up to the Platform plan versus what we have now?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/pricing"
+    }
+  },
+  {
+    "id": "subscription-010",
+    "domain": "Subscription",
+    "intent": "config",
+    "question": "Where do I manage or change our subscription tier?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "subscription-011",
+    "domain": "Subscription",
+    "intent": "can_i",
+    "question": "Can I put our subscription on pause for a couple of months without fully cancelling?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "subscription-012",
+    "domain": "Subscription",
+    "intent": "how_to",
+    "question": "How do I start a free trial of the platform features before committing?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/pricing"
+    }
+  },
+  {
+    "id": "subscription-013",
+    "domain": "Subscription",
+    "intent": "can_i",
+    "question": "Can I build a custom plan by picking only the specific modules we need?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "subscription-014",
+    "domain": "Subscription",
+    "intent": "where_is",
+    "question": "I'm not sure if we're on the free Brief or a paid tier — where does it show our current subscription status?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account"
+    }
+  },
+  {
+    "id": "users-001",
+    "domain": "Users",
+    "intent": "how_to",
+    "question": "How do I invite a new user to our organization?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "users-002",
+    "domain": "Users",
+    "intent": "how_to",
+    "question": "One of our analysts left the company — how do I remove their access?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "users-003",
+    "domain": "Users",
+    "intent": "list_view",
+    "question": "Where can I see a list of everyone who has access to our account?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "users-004",
+    "domain": "Users",
+    "intent": "how_to",
+    "question": "How do I change a user's role from member to admin?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "users-005",
+    "domain": "Users",
+    "intent": "where_is",
+    "question": "Where do I manage user roles and permissions for my team?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "users-006",
+    "domain": "Users",
+    "intent": "how_to",
+    "question": "I sent an invite but the person never got it — how do I resend it?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "users-007",
+    "domain": "Users",
+    "intent": "can_i",
+    "question": "Can I have more than one administrator on the account?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "users-008",
+    "domain": "Users",
+    "intent": "how_to",
+    "question": "As an admin, how do I onboard three new hires and give them access?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "users-009",
+    "domain": "Users",
+    "intent": "where_is",
+    "question": "Where do I revoke a pending invitation I sent by mistake?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "users-010",
+    "domain": "Users",
+    "intent": "can_i",
+    "question": "Can I set granular, field-level permissions so a user can view risks but not vendors?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "users-011",
+    "domain": "Users",
+    "intent": "config",
+    "question": "Where do I transfer the account owner role to someone else?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "users-012",
+    "domain": "Users",
+    "intent": "can_i",
+    "question": "Can I create custom roles with my own permission sets beyond admin and member?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "users-013",
+    "domain": "Users",
+    "intent": "how_to",
+    "question": "How do I accept the invite that was sent to me to join our organization?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "users-014",
+    "domain": "Users",
+    "intent": "list_view",
+    "question": "Is there a per-seat usage report showing which users have logged in recently?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "users-015",
+    "domain": "Users",
+    "intent": "where_is",
+    "question": "Where's the admin area for adding and removing people from our workspace?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "teams-001",
+    "domain": "Teams",
+    "intent": "where_is",
+    "question": "Where do I manage the members of our team?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "teams-002",
+    "domain": "Teams",
+    "intent": "list_view",
+    "question": "How do I see who's on my team and what they can do?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "teams-003",
+    "domain": "Teams",
+    "intent": "how_to",
+    "question": "How do I add a colleague to our team workspace?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "teams-004",
+    "domain": "Teams",
+    "intent": "can_i",
+    "question": "Can I organize users into separate sub-teams or departments within our org?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "teams-005",
+    "domain": "Teams",
+    "intent": "how_to",
+    "question": "How do I remove someone from the team?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "teams-006",
+    "domain": "Teams",
+    "intent": "where_is",
+    "question": "Where's the team management page in the app?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "teams-007",
+    "domain": "Teams",
+    "intent": "config",
+    "question": "How do I change what a team member is allowed to access?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "teams-008",
+    "domain": "Teams",
+    "intent": "can_i",
+    "question": "Can I assign vendors to specific team members so they only see their own portfolio?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "teams-009",
+    "domain": "Teams",
+    "intent": "how_to",
+    "question": "Our GRC lead needs to bring on two more people — how does she add them to the team?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "teams-010",
+    "domain": "Teams",
+    "intent": "list_view",
+    "question": "Where do I view pending team invitations that haven't been accepted yet?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "teams-011",
+    "domain": "Teams",
+    "intent": "where_is",
+    "question": "I want to manage collaborators on our account — where do I find that?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "teams-012",
+    "domain": "Teams",
+    "intent": "can_i",
+    "question": "Can two separate teams share one subscription but keep their data siloed from each other?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "teams-013",
+    "domain": "Teams",
+    "intent": "how_to",
+    "question": "How do I promote a team member to admin so they can manage the team too?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "teams-014",
+    "domain": "Teams",
+    "intent": "config",
+    "question": "Where do I update team member access levels after a reorg?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/team"
+    }
+  },
+  {
+    "id": "settings-001",
+    "domain": "Settings",
+    "intent": "where_is",
+    "question": "Where are the security settings for our account?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/security"
+    }
+  },
+  {
+    "id": "settings-002",
+    "domain": "Settings",
+    "intent": "how_to",
+    "question": "How do I set up SSO / SAML so our staff can log in with our identity provider?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/sso"
+    }
+  },
+  {
+    "id": "settings-003",
+    "domain": "Settings",
+    "intent": "config",
+    "question": "Where do I configure SAML single sign-on with Okta?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/sso"
+    }
+  },
+  {
+    "id": "settings-004",
+    "domain": "Settings",
+    "intent": "how_to",
+    "question": "How do I set up a webhook so our SIEM gets notified of new findings?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/webhooks"
+    }
+  },
+  {
+    "id": "settings-005",
+    "domain": "Settings",
+    "intent": "where_is",
+    "question": "Where do I manage our webhooks and their endpoints?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/webhooks"
+    }
+  },
+  {
+    "id": "settings-006",
+    "domain": "Settings",
+    "intent": "how_to",
+    "question": "How do I generate an API key to pull data into our own tooling?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/api-keys"
+    }
+  },
+  {
+    "id": "settings-007",
+    "domain": "Settings",
+    "intent": "where_is",
+    "question": "Where do I find our API keys and the API documentation?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/api-keys"
+    }
+  },
+  {
+    "id": "settings-008",
+    "domain": "Settings",
+    "intent": "how_to",
+    "question": "How do I rotate or revoke an API key that may have been exposed?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/api-keys"
+    }
+  },
+  {
+    "id": "settings-009",
+    "domain": "Settings",
+    "intent": "config",
+    "question": "Where can I adjust the risk scoring scale used across the platform?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/risk-scale"
+    }
+  },
+  {
+    "id": "settings-010",
+    "domain": "Settings",
+    "intent": "config",
+    "question": "How do I change our risk scoring policy so likelihood is weighted differently?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/risk-policy"
+    }
+  },
+  {
+    "id": "settings-011",
+    "domain": "Settings",
+    "intent": "how_to",
+    "question": "As the IT admin, how do I enforce SSO and turn off password logins?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/sso"
+    }
+  },
+  {
+    "id": "settings-012",
+    "domain": "Settings",
+    "intent": "where_is",
+    "question": "Where do I change my account password and security options?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/security"
+    }
+  },
+  {
+    "id": "settings-013",
+    "domain": "Settings",
+    "intent": "how_to",
+    "question": "How do I enable multi-factor authentication for my login?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/security"
+    }
+  },
+  {
+    "id": "settings-014",
+    "domain": "Settings",
+    "intent": "can_i",
+    "question": "Can I set an IP allowlist so the platform only accepts logins from our office network?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "settings-015",
+    "domain": "Settings",
+    "intent": "where_is",
+    "question": "Where's the general settings area to configure our workspace?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/settings/security"
+    }
+  },
+  {
+    "id": "notifications-001",
+    "domain": "Notifications",
+    "intent": "where_is",
+    "question": "Where do I manage which email alerts I receive?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/alerts"
+    }
+  },
+  {
+    "id": "notifications-002",
+    "domain": "Notifications",
+    "intent": "how_to",
+    "question": "How do I turn off the daily digest email but keep critical alerts?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/alerts"
+    }
+  },
+  {
+    "id": "notifications-003",
+    "domain": "Notifications",
+    "intent": "config",
+    "question": "Where do I configure my notification preferences?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/alerts"
+    }
+  },
+  {
+    "id": "notifications-004",
+    "domain": "Notifications",
+    "intent": "how_to",
+    "question": "How do I get alerted when a new high-severity finding is created for one of our vendors?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/alerts"
+    }
+  },
+  {
+    "id": "notifications-005",
+    "domain": "Notifications",
+    "intent": "where_is",
+    "question": "I'm getting too many emails — where do I dial back the alerts?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/alerts"
+    }
+  },
+  {
+    "id": "notifications-006",
+    "domain": "Notifications",
+    "intent": "config",
+    "question": "How do I set the frequency of the Intelligence Brief email?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/alerts"
+    }
+  },
+  {
+    "id": "notifications-007",
+    "domain": "Notifications",
+    "intent": "how_to",
+    "question": "How do I unsubscribe from alert emails entirely?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/alerts"
+    }
+  },
+  {
+    "id": "notifications-008",
+    "domain": "Notifications",
+    "intent": "can_i",
+    "question": "Can I route alerts to a shared distribution list instead of just my personal email?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/alerts"
+    }
+  },
+  {
+    "id": "notifications-009",
+    "domain": "Notifications",
+    "intent": "can_i",
+    "question": "Can I get notifications pushed to Slack or Microsoft Teams instead of email?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "notifications-010",
+    "domain": "Notifications",
+    "intent": "can_i",
+    "question": "Can I get SMS text alerts for critical incidents?",
+    "target": {
+      "kind": "absent",
+      "ref": ""
+    }
+  },
+  {
+    "id": "notifications-011",
+    "domain": "Notifications",
+    "intent": "where_is",
+    "question": "Where do I opt into weekly summary emails about our posture?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/alerts"
+    }
+  },
+  {
+    "id": "notifications-012",
+    "domain": "Notifications",
+    "intent": "config",
+    "question": "How do I change my email alert settings after switching to a new work address?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/alerts"
+    }
+  },
+  {
+    "id": "notifications-013",
+    "domain": "Notifications",
+    "intent": "how_to",
+    "question": "How do I subscribe my compliance officer to obligation-change alerts?",
+    "target": {
+      "kind": "ungated_route",
+      "ref": "/account/alerts"
+    }
+  }
+]
