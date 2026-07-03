@@ -376,6 +376,28 @@ never the source), `schema_version`, `engine_version`, `content_hash`, `prev_has
 >   for records that must survive legal scrutiny; typed child rows make it queryable and
 >   support legal hold (§ Enterprise Readiness).
 
+> **S4b as-built reconciliation (2026-07-03).** When Slice 4b built the three persistence
+> tables, two statements in this document were found to conflict with 4b's own constraints
+> and were reconciled (architect-reviewed) as follows — the tables as shipped are canonical:
+> 1. **Non-partitioned at creation.** "Partition … established at table creation" (§ Enterprise
+>    Readiness / L636-era) contradicts the **S3.5 gate** (a partitioning spike with load-test/
+>    EXPLAIN data *before* S4 writes anything). Partitioning is a *scale* optimization, not an
+>    evidentiary property (the AR-8/AD-16 defensibility is by-value + WORM + hash chain +
+>    reproducibility, all preserved). The tables are empty through 4b and until the 4c writer, so
+>    the convert-while-empty window is preserved; **the partition decision is deferred to S3.5
+>    completion, before the first write.** (There is also zero partitioning precedent in the repo.)
+> 2. **No `is_current` column.** AD-7-revised lists `is_current` on the header, but a mutable flag
+>    **cannot coexist with WORM** (flipping a prior row true→false is a forbidden UPDATE). "Current"
+>    is instead **derived** — the newest row per `(organization_id, signal_id, target_type, target_id)`
+>    via a `created_at DESC` index. If that read ever profiles hot, the escape hatch is a separate,
+>    non-WORM pointer table upserted by the worker — never a mutable column on the append-only record.
+>
+> Immutability is enforced by a `BEFORE UPDATE/DELETE` + `BEFORE TRUNCATE` **trigger** (fires
+> regardless of role → survives the app_request/FORCE-RLS flip, unlike RLS), plus a REVOKE-of-DML
+> grant (app_request gets SELECT,INSERT only) as defense-in-depth. The hash chain is fork-proofed by
+> `UNIQUE (organization_id, prev_hash)`; the pure canonical-hash helper lives at
+> `src/engine/applicability/v1/contentHash.ts` (write-time wiring is 4c).
+
 ---
 
 ## 8. Automated Workflow Engine
