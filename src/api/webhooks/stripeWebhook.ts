@@ -721,19 +721,30 @@ export async function stripeWebhook(
       return;
     }
 
-    // Extract the SecureLogic api_keys.id from metadata
-    const apiKeyId = extractApiKeyId(event);
+    // Extract the SecureLogic api_keys.id from metadata. This is a resolution
+    // FALLBACK, never a gate. Checkout-originated events carry it, but Stripe
+    // lifecycle events (renewals, portal plan changes, cancellations, dunning)
+    // frequently do not — and any subscription created outside the app's own
+    // Checkout (dashboard, comped, migrated, internal) never carries it. The
+    // durable resolver is organizations.stripe_customer_id (backfilled on first
+    // grant), so an absent or malformed api_key_id must fall through to
+    // customer-id resolution below, not short-circuit the event. Bailing here
+    // was the PR-D1 defect: it made the documented-primary customer-id resolver
+    // unreachable, so cancellations/downgrades on metadata-less subscriptions
+    // silently failed to sync (entitlement never revoked/adjusted).
+    const rawApiKeyId = extractApiKeyId(event);
+    const apiKeyId = isValidApiKeyId(rawApiKeyId) ? rawApiKeyId : null;
 
-    if (!isValidApiKeyId(apiKeyId)) {
+    if (rawApiKeyId !== null && apiKeyId === null) {
+      // Present but malformed — worth a warning, but NOT fatal. Resolution
+      // continues via stripe_customer_id below.
       logger.warn(
         {
           event: "stripe_webhook_invalid_api_key_id",
           stripeEventType: eventType
         },
-        "stripeWebhook: missing or invalid api_key_id in metadata"
+        "stripeWebhook: api_key_id present in metadata but malformed — falling back to customer-id resolution"
       );
-      respond({ received: true, ignored: true });
-      return;
     }
 
     // Extract customer ID, sub ID, raw tier, and status for DB sync
@@ -799,8 +810,16 @@ export async function stripeWebhook(
       }
     }
 
-    // Write to Redis (supplementary cache) then sync to Postgres (primary)
-    await setEntitlementInRedis(apiKeyId, entitlement);
+    // Write to Redis (supplementary cache) then sync to Postgres (primary).
+    // The Redis entry is keyed per api_key and is read ONLY by the admin
+    // entitlements route — request-time enforcement reads
+    // organizations.entitlement_level from Postgres (attachOrganizationContext).
+    // When the event carried no valid api_key_id (resolved via customer-id),
+    // there is no key to write; skip the cache and let the authoritative
+    // Postgres sync below stand.
+    if (apiKeyId) {
+      await setEntitlementInRedis(apiKeyId, entitlement);
+    }
     await syncOrgEntitlement(
       orgId,
       entitlement,
