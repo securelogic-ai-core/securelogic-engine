@@ -242,6 +242,36 @@ Required outcomes:
 Done when:
 - external intelligence no longer floats separately from the platform operating model
 
+#### Sub-package (Slice 1): enterprise-context-layer-foundation — DOCS-ONLY (awaiting review; no SQL/code authorized)
+**Status (2026-07-03):** Adopted by the operator as the concrete **Priority-5 substrate for Signal-to-Platform Linkage**. This is the **Enterprise Context Layer foundation** — the durable customer-context objects that later Priority-5 linkage (D6/D7: dependency linkage, reassessment triggers) will resolve signals against. **This BUILD_SEQUENCE amendment is docs-only; it authorizes no schema, migration, route, or application code.** Stop for review before any SQL or implementation.
+
+**Feature flag:** the entire slice is gated behind **`SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED`** (default off); prod remains inert until the operator flips it.
+
+**Table strategy (approved):**
+- Introduce a single generic **`enterprise_entities`** table as the home for *new* context types (assets, applications, business services, and future customer-context objects). Org-scoped and subject to the standard A04-G1 tenant-isolation model.
+- Keep the existing **`vendors`** and **`ai_systems`** tables **as-is** — they remain the canonical stores for those two entity types.
+- **Do not** force-migrate existing `vendors`/`ai_systems` rows into `enterprise_entities`. No backfill, no dual-write in Slice 1. Unification of the read surface (if ever) is a separate, later decision.
+
+**Metering (approved):**
+- `enterprise_entities` rows do **NOT** count toward **`max_monitored_entities`**.
+- **Do not touch `enforceEntityLimit`** or its callers in this slice.
+- A **hard import row-limit** will be applied **later, when CSV import is built** — not in Slice 1.
+
+**Explicitly OUT of scope for Slice 1 (do not build):**
+- CSV / bulk import
+- Applicability Assessment
+- any matcher or `signal_match_suggestions` changes
+- connectors / external ingestion of entities
+- any UI
+- any scoring/posture changes
+- any risk creation or `risks` writes
+
+**Slice 1 scope (for the review conversation, not yet authorized to build):** the `enterprise_entities` table + provenance columns, tenant-isolation policy, and the minimal org-scoped read/write route surface behind the flag. Entity↔risk / entity↔finding link tables and applicability assessment follow in later slices. Prefer **extending** `signal_match_suggestions` for linkage rather than duplicating it (see the ratified `external-signal-architecture.md` baseline).
+
+**Sequencing note:** this overlaps the previously deferred "Enterprise Context" concept; it is now the named Priority-5 Slice-1 substrate. It is **not** the current Active package (Priority 4 remains active) — Slice 1 build is gated on completing Priority 4 and on operator authorization of this scope.
+
+**Canonical-model forward note:** `enterprise_entities` is a new table not yet present in `CANONICAL_DOMAIN_MODEL.md`. When/if Slice 1 is authorized to build, `CANONICAL_DOMAIN_MODEL.md` must be updated to register `enterprise_entities` (and its entity-type taxonomy) so the domain-model authority stays in sync — no CANONICAL change is made by this docs-only amendment.
+
 ### Priority 6 — Intelligence Brief premiumization
 #### Package: brief-premiumization
 Objective:
