@@ -238,7 +238,10 @@ export async function deleteEnterpriseRelationship(req: Request, res: Response):
     payload: null
   });
 
-  res.status(204).send();
+  // 200 + JSON, not 204 + send(): under asTenant the buffering proxy throws on send()
+  // (deferredResponse.ts), which would roll back the soft-delete and leave a false
+  // "deleted" audit event. (Wave-0d pattern.)
+  res.status(200).json({ deleted: true, id });
 }
 
 // ---------------------------------------------------------------------------
