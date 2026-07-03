@@ -78,6 +78,7 @@ They must not be re-declared differently in each module.
 | Enterprise Entity | enterprise_entities (+ typed child enterprise_data_stores) | GET /api/enterprise-entities, POST /api/enterprise-entities, GET /api/enterprise-entities/:id, PATCH /api/enterprise-entities/:id, DELETE /api/enterprise-entities/:id | Slice 1 — package enterprise-context-layer-foundation (Priority 5). Canonical HEADER for NEW customer-context objects; `vendors`/`ai_systems` keep their own tables and are NOT valid `entity_type`s (referenced later, never copied). Typed load-bearing attributes (classification/residency/retention/encryption) live in the child `enterprise_data_stores`, never a JSON blob. Behind SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED (default off; **do NOT enable in prod until the AD-17 capability grant ships** — else reaches all rank-4 orgs, per §9). Per-org cap `organizations.max_enterprise_entities`, SEPARATE from max_monitored_entities (does not touch enforceEntityLimit). RLS inert (NOT FORCE). OUT of Slice 1: relationship graph, applicability engine, CSV import, connectors, UI, entity↔risk/finding links. |
 | Enterprise Relationship | enterprise_relationships | GET /api/enterprise-relationships (?node_type,&node_id), POST /api/enterprise-relationships, DELETE /api/enterprise-relationships/:id | Slice 2 — package enterprise-context-layer-foundation (Priority 5). Generic ADDITIVE intra-org edge for NEW relationships; polymorphic endpoints (enterprise_entity/vendor/ai_system/user), no FK; soft-delete. The read-time resolver UNIONs the existing TYPED edges (typed-authoritative, AD-13) — a later slice **S2b**; this ships the edge substrate + CRUD only. Two-endpoint same-org pre-flight; behind SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED; RLS inert (NOT FORCE). |
 | Enterprise Graph (read-time) | (no table — resolver over enterprise_relationships + ai_system_vendor_dependencies) | GET /api/enterprise-graph (?node_type,&node_id,&depth) | Slice 2b — bounded (MAX_DEPTH 5, default 3) cycle-safe outbound traversal (`enterpriseGraphResolver.ts`, the repo's first WITH RECURSIVE). Typed-edge-authoritative UNION (AD-13): generic edges + the typed ai_system↔vendor dependency; other typed edges (dependencies, signal_*_links with global-signal endpoints, risk_*_links) are a documented later extension. Org-isolated by the `organization_id=$org` edge filter + seed-node same-org pre-flight. ⚠ NOT load-tested at Fortune-500 fan-out (AR-4) — do not raise MAX_DEPTH without the load test; materialized-adjacency fallback is the designed escape. |
+| Applicability Assessment | applicability_assessments (+ children applicability_evidence, applicability_affected_entities) | (none yet — read surface is Slice 5; writer is Slice 4c) | Slice 4b (Priority 5). The **immutable, by-value, hash-chained, reproducible** record of a per-org applicability decision (AD-16): `decision` (5-value enum) + `confidence` 0–100 + band + ordered `reasoning_steps` (JSONB narration trace, by value) + `content_hash`/`prev_hash` chain. Produced by the pure `ApplicabilityEngineV1` (Slice 4a, `src/engine/applicability/v1/`). **WORM** — UPDATE/DELETE/TRUNCATE blocked by trigger regardless of role (survives the app_request/FORCE flip); app_request granted SELECT,INSERT only. `applicability_evidence` = by-value input snapshots (reproducibility); `applicability_affected_entities` = normalized blast radius (queryable). **Ships NON-PARTITIONED** (partition strategy deferred to S3.5/pre-4c-write per that gate) and with **no `is_current` column** (WORM forbids the flip; "current" is derived from the `(org,signal,target,created_at DESC)` index) — both reconcile ENTERPRISE_CONTEXT_ARCHITECTURE.md via the S4b doc-sync. Behind SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED; RLS inert (NOT FORCE); empty until Slice 4c. |
 
 ---
 
@@ -258,6 +259,21 @@ others are existing canonical objects the graph points AT (never contains — AD
 - part_of
 - serves
 - processes_data_in
+
+### Applicability Decision (applicability_assessments.decision CHECK constraint)
+Single source of truth: `APPLICABILITY_DECISIONS` in `src/engine/applicability/v1/types.ts`
+(the pure engine's output enum) — the DB CHECK mirrors it; keep in lockstep.
+- affected
+- potentially_affected
+- not_affected
+- needs_review
+- unknown
+
+### Applicability Confidence Band (applicability_assessments.confidence_band CHECK constraint)
+Single source of truth: `CONFIDENCE_BANDS` in `src/engine/applicability/v1/types.ts`.
+- low
+- medium
+- high
 
 ## Key Relationships
 

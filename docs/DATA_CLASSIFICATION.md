@@ -173,7 +173,13 @@ tables once the `app_request` flip lands).
 `reports`, `posture_snapshots` (**RLS enabled**), `domain_scores`,
 `organization_risk_scales`, `webhook_endpoints`, `webhook_deliveries`,
 `org_sso_configs`, `api_usage_daily`,
-`enterprise_data_stores` (**RLS enabled**; typed child of a `data_store` enterprise_entity, CASCADE with parent — ECL Slice 1).
+`enterprise_data_stores` (**RLS enabled**; typed child of a `data_store` enterprise_entity, CASCADE with parent — ECL Slice 1),
+`applicability_assessments` / `applicability_evidence` / `applicability_affected_entities`
+(**RLS enabled**, **WORM/append-only** — the immutable, hash-chained applicability
+decision record + by-value evidence + normalized blast radius; no user ref; ECL Slice 4b;
+empty until the Slice 4c writer. UPDATE/DELETE/TRUNCATE blocked by trigger regardless of
+role — the reaper must never attempt to mutate these; org deletion is tombstone-last so the
+org-FK CASCADE never fires).
 
 ### E — System-wide / operational (leave alone)
 `signals`, `insights`, `trends`, `trend_signals`, `cyber_signals`,

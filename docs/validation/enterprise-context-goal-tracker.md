@@ -24,7 +24,7 @@ Last updated: 2026-07-03 (Items 1–2 DONE; Slice 4a pure IAE core built, pendin
 |---|---|---|---|---|---|
 | 1 | Pre-merge audit of #464/#465; fix Critical/High; merge | **DONE** | #464 (merge `1f308e61`), #465 (merge `7843cf62`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (off) | L-1, L-2 |
 | 2 | Slice 3 — CSV/spreadsheet import (assets, vendors, apps, AI systems, data stores) | **DONE** | #467 (squash `17627ac7`) + prereq dep-fix #468 (squash `205c39ef`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared in render.yaml, off) | L-3 |
-| 3 | Slice 4 — Applicability Engine (deterministic decision fn) | **4a DONE (pending merge)** — pure IAE core; 4b (tables/worker/queue) TODO | this PR (S4a) | none (pure, inert — no callers) | — |
+| 3 | Slice 4 — Applicability Engine (deterministic decision fn) | **4a DONE** (`2a9e4b96`); **4b DONE (pending merge)** — persistence tables; 4c writer/worker + 4d queue TODO | #469 (4a); this PR (4b) | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared, off) | — |
 | 4 | Slice 5 — Explainability surface | TODO | — | — | — |
 | 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | TODO | — | — | — |
 | 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | TODO | — | — | — |
@@ -115,6 +115,31 @@ Last updated: 2026-07-03 (Items 1–2 DONE; Slice 4a pure IAE core built, pendin
   worker, no migration, no flag wiring — inertness is guaranteed by absence of callers, stronger than a flag.
 - **NEXT (S4b):** persistence tables (WORM, by-value evidence, hash chain) + `CANONICAL_DOMAIN_MODEL` registration
   (deferred here per design — nothing canonical to register until a table exists) + cross-org isolation test.
+
+## Slice 4b — applicability persistence tables (as-built)
+- **Three WORM tables** (empty/dark, no writer until 4c): `applicability_assessments` (header — decision +
+  confidence + band + `reasoning_steps` JSONB by value + `content_hash`/`prev_hash` chain + version pins),
+  `applicability_evidence` (by-value input snapshots), `applicability_affected_entities` (normalized blast
+  radius). Migrations `20260722`–`20260726` (header → evidence → affected → WORM → RLS).
+- **Immutability (AD-16):** `BEFORE UPDATE/DELETE` + `BEFORE TRUNCATE` trigger (shared fn, fires regardless
+  of role → survives the app_request/FORCE flip), mirroring `risk_lifecycle_events_immutable`. Defense-in-depth:
+  app_request granted **SELECT,INSERT only** (no UPDATE/DELETE — diverges from the ECL full-DML grant).
+- **Hash chain:** pure helper `src/engine/applicability/v1/contentHash.ts` (`serializeCanonical` explicit
+  pipe-joined field string — never JSON.stringify; `created_at` excluded for reproducibility; `verifyChain`).
+  Fork-proofed by `UNIQUE (organization_id, prev_hash)`; per-org advisory lock is a 4c concern.
+- **Two doc reconciliations** (architect-reviewed, recorded in `ENTERPRISE_CONTEXT_ARCHITECTURE.md` §7 S4b note):
+  (1) **non-partitioned** (partition deferred to S3.5/pre-4c-write — the doc's "partition at creation" contradicts
+  its own S3.5 gate; partitioning is scale not evidentiary; zero repo precedent); (2) **no `is_current` column**
+  (WORM forbids the flip — "current" derived from the `(org,signal,target,created_at DESC)` index).
+- **Tenant + classification:** inert NULLIF RLS (NOT FORCE) on all three; `dataClassification.ts` + `docs/DATA_CLASSIFICATION.md`
+  as **Category D** (org data, no user ref); `CANONICAL_DOMAIN_MODEL.md` registers the 3 objects + decision/confidence_band
+  enums (source of truth = `types.ts`).
+- **Tests:** `contentHash.test.ts` (determinism, known-vector, 3-link chain + tamper detection — unit) + isolation
+  `applicabilityAssessmentsRls.test.ts` (SELECT isolation + WITH-CHECK + fail-closed, all 3 tables) +
+  `applicabilityWorm.test.ts` (owner-connection UPDATE/DELETE/TRUNCATE raise on all 3 tables).
+- **NEXT (S4c):** the writer/worker that runs `ApplicabilityEngineV1`, persists the result under `withTenant`,
+  selects the per-org `prev_hash` predecessor under an advisory lock, and INSERTs the assessment + evidence + affected
+  rows in one tenant tx.
 
 ## Remaining governance-hygiene (Item 11)
 - `BUILD_SEQUENCE.md` Active-package line still reads "Priority 4 ACTIVE"; ECL S1/S2/S3 are the active
