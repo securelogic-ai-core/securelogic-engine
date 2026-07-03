@@ -150,6 +150,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   signal_ai_system_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
   signal_control_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
   signal_obligation_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
+  enterprise_entities: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "low", rlsStatus: "enabled", specialHandling: "NEW (ECL Slice 1, Priority 5). Enterprise Context header — org-context inventory (asset/app/service/data-store names). owner_user_id ON DELETE SET NULL (never fires under tombstone O-3). Behind SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED. RLS enabled from creation (NOT FORCE, inert until app_request flip). Low PII." },
 
   // ── D — Org data not tied to a specific user (leave alone on user delete) ──
   organizations: { category: "D", piiRisk: "low", rlsStatus: "none", exportExcludedColumns: ["stripe_customer_id", "stripe_subscription_id", "stripe_subscription_tier", "stripe_subscription_status", "payment_failed_at", "promo_code"], specialHandling: "ROOT-TENANT. Carries Stripe F-fields (stripe_customer_id, stripe_subscription_*, payment_failed_at) + promo_code with legal-retention — OMITTED from the org_full export (exportExcludedColumns, PR #2b/Q5); entitlement_level (the portable plan tier) is retained. Only touched on ORG deletion, which is out of scope for this workstream." },
@@ -171,6 +172,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   webhook_deliveries: { category: "D", piiRisk: "low", rlsStatus: "pending" },
   org_sso_configs: { category: "D", piiRisk: "low", rlsStatus: "none", specialHandling: "Org-level SAML IdP config; no user ref." },
   api_usage_daily: { category: "D", piiRisk: "none", rlsStatus: "pending" },
+  enterprise_data_stores: { category: "D", piiRisk: "none", rlsStatus: "enabled", specialHandling: "NEW (ECL Slice 1). Typed child of a data_store enterprise_entity (CASCADE with parent). No user ref — org data-store metadata (classification/residency/retention/encryption). RLS enabled from creation (NOT FORCE, inert until app_request flip)." },
 
   // ── E — System-wide / operational (leave alone) ────────────────────────────
   signals: { category: "E", piiRisk: "low", rlsStatus: "pending" },

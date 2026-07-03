@@ -155,6 +155,7 @@ tables once the `app_request` flip lands).
 | `signal_ai_system_links` | created_by_user_id | low | pending |
 | `signal_control_links` | created_by_user_id | low | pending |
 | `signal_obligation_links` | created_by_user_id | low | pending |
+| `enterprise_entities` | owner_user_id | low | **enabled** |
 
 > **Deprecated TEXT `reviewer_id`.** Five tables (`risk_treatments`,
 > `obligation_assessments`, `vendor_reviews`, `ai_governance_assessments`,
@@ -170,7 +171,8 @@ tables once the `app_request` flip lands).
 `evidence` (⚠ `collected_by` is free TEXT — may embed a name/email, see O-7),
 `reports`, `posture_snapshots` (**RLS enabled**), `domain_scores`,
 `organization_risk_scales`, `webhook_endpoints`, `webhook_deliveries`,
-`org_sso_configs`, `api_usage_daily`.
+`org_sso_configs`, `api_usage_daily`,
+`enterprise_data_stores` (**RLS enabled**; typed child of a `data_store` enterprise_entity, CASCADE with parent — ECL Slice 1).
 
 ### E — System-wide / operational (leave alone)
 `signals`, `insights`, `trends`, `trend_signals`, `cyber_signals`,
