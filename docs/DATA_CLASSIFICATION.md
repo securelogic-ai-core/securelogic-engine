@@ -156,6 +156,7 @@ tables once the `app_request` flip lands).
 | `signal_control_links` | created_by_user_id | low | pending |
 | `signal_obligation_links` | created_by_user_id | low | pending |
 | `enterprise_entities` | owner_user_id | low | **enabled** |
+| `enterprise_relationships` | created_by_user_id | none | **enabled** |
 
 > **Deprecated TEXT `reviewer_id`.** Five tables (`risk_treatments`,
 > `obligation_assessments`, `vendor_reviews`, `ai_governance_assessments`,
