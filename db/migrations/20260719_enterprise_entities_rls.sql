@@ -37,3 +37,11 @@ DROP POLICY IF EXISTS enterprise_data_stores_tenant_isolation ON enterprise_data
 CREATE POLICY enterprise_data_stores_tenant_isolation ON enterprise_data_stores
   USING      (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid)
   WITH CHECK (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
+
+-- Tier-C DML grant for the non-owner app_request role. Tables created AFTER
+-- 20260621 (the last grant migration) are not covered by the central grant list, so
+-- a new table + its RLS policy must grant explicitly — otherwise app_request hits
+-- "permission denied" instead of being RLS-filtered. Bare GRANT matches the
+-- 20260621 idiom (the role is guaranteed to exist post-20260618; GRANT is idempotent).
+GRANT SELECT, INSERT, UPDATE, DELETE ON enterprise_entities   TO app_request;
+GRANT SELECT, INSERT, UPDATE, DELETE ON enterprise_data_stores TO app_request;
