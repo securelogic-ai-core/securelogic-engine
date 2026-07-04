@@ -26,6 +26,16 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # The engine `typecheck` above runs tsconfig.ci.json, whose `include` is
+      # engine-only (src/api, src/engine, …) and does NOT cover app/. The Next
+      # app is therefore type-checked NOWHERE in PR CI today — `next build` runs
+      # only at Render deploy time, so app/ type errors surface as a red deploy,
+      # not a red PR. Fold the app's own `tsc --noEmit` into this ALREADY-REQUIRED
+      # job (same reasoning as the intelligence-worker build folded into `build`
+      # below): it becomes a blocking gate without a branch-protection ruleset
+      # change. `--include=dev` mirrors render.yaml so typescript is installed.
+      - name: app typecheck
+        run: cd app && npm ci --include=dev && npm run typecheck
 
   lint:
     name: lint
