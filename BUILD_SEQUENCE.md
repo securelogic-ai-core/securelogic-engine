@@ -65,6 +65,20 @@ Billing note:
 ## Active package
 `Priority 4 — Signal Ingestion Hardening` — **status: ACTIVE — IMPLEMENTATION AUTHORIZED & UNDERWAY (2026-06-26).**
 
+> **Active-workstream update (2026-07-04):** the live build workstream has moved to the
+> **Enterprise Context Layer (ECL)** — authorized as the *Priority-5 foundation* (PRs #458,
+> #459; distinct from BUILD_SEQUENCE's own "Priority 5 — Signal-to-platform linkage" numbering
+> below, which is a different axis). ECL **Slices 1–10 are shipped dark to `develop`** (flag
+> `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` off; nothing wired/enabled): S1 entities+data_stores,
+> S2/S2b relationship graph + recursive resolver, S3 CSV import, S4a–c applicability engine +
+> WORM decision store + writer, S5 explainability, S6 workflow-recommendation core, S7
+> signal-linkage core, S8 connector framework + ServiceNow reference adapter, S9 Enterprise
+> capability gating (GATE A ruled), S10 graph-resolver scale harness. **Remaining:** Item 7
+> (UI/CX) and Item 11 (this governance-doc sync). Full item ledger and per-slice SHAs:
+> `docs/validation/enterprise-context-goal-tracker.md`; operator actions:
+> `docs/validation/enterprise-context-operator-ledger.md`. Priority 4's own B/C/D shipped-record
+> reconciliation is tracked separately (PR #461) and is not restated here.
+
 > **History (preserved):** this package was **BLOCKED (set 2026-06-25, operator-approved)** pending three technical prerequisites and a separate build-scope authorization. It was **unblocked on 2026-06-26** when all three prerequisites (#5/#6/#7) were satisfied **and** the operator authorized the build scope (the §10 decisions D1–D7 were operator-approved, PR #370; the implementation plan was accepted, PR #369). The prior BLOCKED decision is retained below as dated record, not erased.
 
 The architecture for this work is **ratified** — see `docs/roadmap/external-signal-architecture.md` (status: *Architecture Ratified – Implementation Pending*), the approved architectural baseline, and the executable plan `docs/roadmap/priority-4-implementation-plan.md`. **Implementation is now authorized and has begun.** The design-vs-build distinction still holds: completing the Priority 3 *design* (`external-signal-architecture`, recorded under Completed) did **not** authorize the *build* — the build was authorized separately on 2026-06-26.

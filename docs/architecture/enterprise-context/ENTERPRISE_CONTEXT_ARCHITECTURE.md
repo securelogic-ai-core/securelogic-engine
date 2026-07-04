@@ -1,11 +1,20 @@
 # Enterprise Context Architecture
 
-> **Version 2 (post-review). Status: ARCHITECTURE DRAFT — FOR REVIEW.** DOCS-ONLY. This
-> document authorizes **no** schema, migration, route, worker, SQL, or application code.
-> It is the design blueprint for the Enterprise Context Layer (ECL), the Enterprise
-> Relationship Graph, the Intelligent Applicability Engine (IAE), the Explainability
-> Engine, and the Automated Workflow Engine. Nothing here is built until Priority 4
-> completes and the operator authorizes a specific slice.
+> **Version 2 (post-review). Status: DESIGN BLUEPRINT — PARTIALLY AS-BUILT (updated
+> 2026-07-04).** This document is the design blueprint for the Enterprise Context Layer
+> (ECL), the Enterprise Relationship Graph, the Intelligent Applicability Engine (IAE), the
+> Explainability Engine, and the Automated Workflow Engine. **As-built status:** Slices
+> 1–10 of this blueprint are now **implemented and shipped dark to `develop`** (behind
+> `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED`, default off — nothing wired or enabled in prod).
+> The design text below remains the *intended* architecture; where a slice shipped a
+> deliberately reconciled variation (e.g. the WORM decision store shipped **non-partitioned
+> and without an `is_current` column**, and the graph resolver ships **typed-edge-authoritative
+> UNION** without the materialized-adjacency fallback), the authoritative as-built record is
+> the goal tracker + CANONICAL build-status table, not this draft. **Per-slice SHAs, item
+> ledger, and the remaining work (Item 7 UI/CX):**
+> `docs/validation/enterprise-context-goal-tracker.md`. **Operator enable/rollback steps:**
+> `docs/runbooks/enterprise-context-enable-rollback.md`. Prod enablement remains gated
+> (GATE B) and is out of scope for the build goal.
 >
 > **What changed in v2:** every **Critical** and **High** finding from
 > `ARCHITECTURE_REVIEW.md` is now part of the architecture, not an appended note. The
