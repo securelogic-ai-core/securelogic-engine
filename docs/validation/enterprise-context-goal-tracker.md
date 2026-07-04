@@ -14,7 +14,12 @@ enablement is out of scope (GATE B).
 at the time, pre-goal). From Slice 3 onward, feature PRs **squash-merge + delete branch**
 per the goal.
 
-Last updated: 2026-07-03 (Items 1–2 DONE; Item 3/S4 DONE — 4a+4b merged, 4c writer pending merge; next Item 4/S5 Explainability).
+Last updated: 2026-07-04 (RESUME reconciliation). Items 1–9 DONE **and merged** to `develop`
+(4c #471 `cb15c788`, S5 #472 `cb1c2be2`, S6 #473 `b82bd4cb`, S7 #474 `33f4a929`, S8 #475
+`d0351c1c`, GATE-A memo #476, S9 #477 `c495dc0c`). Item 10 (Scale) = PR **#478 OPEN**, all 8
+CI checks green, mergeable CLEAN — the interruption point; awaiting squash-merge. Item 11
+(governance docs → as-built) IN-PROGRESS. Item 7 (UI/CX) intentionally sequenced last (needs
+L-4 app CI build).
 
 ---
 
