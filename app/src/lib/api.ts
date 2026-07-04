@@ -5,6 +5,21 @@
  * The engine URL and API key never reach the browser.
  */
 
+import {
+  entitiesQuery,
+  relationshipsQuery,
+  graphQuery,
+  importQuery,
+  isFeatureDisabledStatus,
+  type EntityType,
+  type NodeType,
+  type EnterpriseEntity,
+  type EnterpriseRelationship,
+  type GraphNeighborhood,
+  type ImportEntityType,
+  type ImportPlan,
+} from "./enterpriseContext";
+
 const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
 
 // =========================================================
@@ -4700,4 +4715,248 @@ export async function uploadVendorAssuranceDocument(
   } catch {
     return { error: "upload_failed" };
   }
+}
+
+// =========================================================
+// ENTERPRISE CONTEXT LAYER (ECL) — Tier-1 UI (goal Item 7, Phase 7A.1)
+// =========================================================
+//
+// READS run server-side via engineFetch(path, token) and return the gate-aware
+// ReadResult union: { ok:false, disabled:true } means the engine returned 404 (feature
+// off / not granted → hide it); { ok:false, disabled:false } is a real error. WRITES run
+// client-side through the Next proxy routes under /api/enterprise-context/** and return
+// ActionResult so the caller can map the engine error code via enterpriseContextErrorMessage.
+// The whole surface is dark until SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED is on.
+
+// ── Reads (Server Components) ──────────────────────────────────────────────────
+
+export async function getEnterpriseEntities(
+  token: string,
+  params: { entity_type?: EntityType; limit?: number; offset?: number } = {},
+): Promise<ReadResult<{ enterprise_entities: EnterpriseEntity[]; limit: number; offset: number }>> {
+  try {
+    const res = await engineFetch(`/api/enterprise-entities?${entitiesQuery(params)}`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as {
+      enterprise_entities: EnterpriseEntity[];
+      limit: number;
+      offset: number;
+    };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function getEnterpriseEntity(
+  token: string,
+  id: string,
+): Promise<ReadResult<{ enterprise_entity: EnterpriseEntity }>> {
+  try {
+    const res = await engineFetch(`/api/enterprise-entities/${encodeURIComponent(id)}`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as { enterprise_entity: EnterpriseEntity };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function getEnterpriseRelationships(
+  token: string,
+  params: { node_type?: NodeType; node_id?: string; limit?: number; offset?: number } = {},
+): Promise<
+  ReadResult<{ enterprise_relationships: EnterpriseRelationship[]; limit: number; offset: number }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/enterprise-relationships?${relationshipsQuery(params)}`,
+      token,
+    );
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as {
+      enterprise_relationships: EnterpriseRelationship[];
+      limit: number;
+      offset: number;
+    };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function getEnterpriseGraph(
+  token: string,
+  params: { node_type: NodeType; node_id: string; depth?: number },
+): Promise<ReadResult<{ enterprise_graph: GraphNeighborhood }>> {
+  try {
+    const res = await engineFetch(`/api/enterprise-graph?${graphQuery(params)}`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as { enterprise_graph: GraphNeighborhood };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+// ── Writes (Client Components → Next proxy routes) ─────────────────────────────
+
+export interface EnterpriseEntityCreateInput {
+  entity_type: EntityType;
+  name: string;
+  description?: string;
+  owner_user_id?: string;
+  status?: string;
+  criticality?: string;
+  confidence?: string;
+  external_ref?: string;
+  data_store?: {
+    data_classification?: string;
+    residency_region?: string;
+    retention_policy?: string;
+    encryption_at_rest?: boolean;
+  };
+}
+
+export type EnterpriseEntityUpdateInput = Partial<Omit<EnterpriseEntityCreateInput, "entity_type">>;
+
+export async function createEnterpriseEntity(
+  input: EnterpriseEntityCreateInput,
+): Promise<ActionResult<{ enterprise_entity: EnterpriseEntity }>> {
+  try {
+    const res = await fetch(`/api/enterprise-context/entities`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as { enterprise_entity: EnterpriseEntity };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function updateEnterpriseEntity(
+  id: string,
+  input: EnterpriseEntityUpdateInput,
+): Promise<ActionResult<{ enterprise_entity: EnterpriseEntity }>> {
+  try {
+    const res = await fetch(`/api/enterprise-context/entities/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as { enterprise_entity: EnterpriseEntity };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function deleteEnterpriseEntity(
+  id: string,
+): Promise<ActionResult<{ deleted: boolean; id: string }>> {
+  try {
+    const res = await fetch(`/api/enterprise-context/entities/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as { deleted: boolean; id: string };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export interface EnterpriseRelationshipCreateInput {
+  from_type: NodeType;
+  from_id: string;
+  to_type: NodeType;
+  to_id: string;
+  relationship_type: string;
+  note?: string;
+}
+
+export async function createEnterpriseRelationship(
+  input: EnterpriseRelationshipCreateInput,
+): Promise<ActionResult<{ enterprise_relationship: EnterpriseRelationship }>> {
+  try {
+    const res = await fetch(`/api/enterprise-context/relationships`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as { enterprise_relationship: EnterpriseRelationship };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function deleteEnterpriseRelationship(
+  id: string,
+): Promise<ActionResult<{ deleted: boolean; id: string }>> {
+  try {
+    const res = await fetch(`/api/enterprise-context/relationships/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as { deleted: boolean; id: string };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+// ── Import (Client Components → multipart Next proxy) ───────────────────────────
+
+async function runEnterpriseImport(
+  entity_type: ImportEntityType,
+  mode: "preview" | "commit",
+  file: File,
+): Promise<ActionResult<ImportPlan>> {
+  try {
+    const fd = new FormData();
+    fd.set("file", file);
+    const res = await fetch(`/api/enterprise-context/import?${importQuery(entity_type, mode)}`, {
+      method: "POST",
+      body: fd,
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as ImportPlan;
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export function previewEnterpriseImport(
+  entity_type: ImportEntityType,
+  file: File,
+): Promise<ActionResult<ImportPlan>> {
+  return runEnterpriseImport(entity_type, "preview", file);
+}
+
+export function commitEnterpriseImport(
+  entity_type: ImportEntityType,
+  file: File,
+): Promise<ActionResult<ImportPlan>> {
+  return runEnterpriseImport(entity_type, "commit", file);
 }
