@@ -30,12 +30,12 @@ Last updated: 2026-07-03 (Items 1–2 DONE; Item 3/S4 DONE — 4a+4b merged, 4c 
 | 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | **core DONE (pending merge)** — pure reassessment triggers + drift detection; live worker adapter TODO | this PR (S7 core) | none (pure, inert — no callers) | — |
 | 7 | UI/CX — context screens, graph view, dashboards | TODO | — | — | L-4 (app build via CI) |
 | 8 | Connectors (ServiceNow/Defender/CrowdStrike/Wiz/Tenable/cloud/identity) — dark, mock-tested | **framework + reference adapter DONE (pending merge)** — ServiceNow CMDB implemented; 7 planned (config schemas registered) | this PR (S8) | per-connector flags (at eventual call site) | L-5.1..L-5.9 |
-| 9 | Enterprise gating (after GATE A ruling) | **BLOCKED — GATE A** | — | AD-17 capability grant | L-1 |
+| 9 | Enterprise gating (after GATE A ruling) | **BLOCKED — GATE A (options memo ready, awaiting Simmee ruling)** | — | AD-17 capability grant | L-1 |
 | 10 | Scale validation (recursive load, EXPLAIN, partitioning) | TODO | — | — | L-6 (staging load env) |
 | 11 | Governance docs → as-built (CANONICAL, arch, runbooks, rollback) | IN-PROGRESS | this PR (scaffolding) | — | — |
 
 ### Decision gates
-- **GATE A** (before Slice 9): Platform-vs-Enterprise access model + AD-17 capability-grant shape + entity/edge caps. **Simmee ruling required.** Prepare options/tradeoffs, then STOP and ask. Not yet reached (Slices 3–8 come first).
+- **GATE A** (before Slice 9): Platform-vs-Enterprise access model + AD-17 capability-grant shape + entity/edge caps. **Simmee ruling required. REACHED 2026-07-04** — options + recommendations in `enterprise-context-gate-a-memo.md`; presented to operator; **BLOCKED awaiting ruling** (Item 9 build starts only after). Recommendations: 1A Enterprise-only · 2A per-org capability column + `requireCapability` · 3A conservative tunable caps (10k entities / 50k edges) + new edge cap.
 - **GATE B** (absolute): nothing enabled in production under this goal, ever. GA enablement is outside this goal's authority.
 
 ---
