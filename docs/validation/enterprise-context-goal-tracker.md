@@ -31,7 +31,7 @@ Last updated: 2026-07-03 (Items 1–2 DONE; Item 3/S4 DONE — 4a+4b merged, 4c 
 | 7 | UI/CX — context screens, graph view, dashboards | TODO | — | — | L-4 (app build via CI) |
 | 8 | Connectors (ServiceNow/Defender/CrowdStrike/Wiz/Tenable/cloud/identity) — dark, mock-tested | **framework + reference adapter DONE (pending merge)** — ServiceNow CMDB implemented; 7 planned (config schemas registered) | this PR (S8) | per-connector flags (at eventual call site) | L-5.1..L-5.9 |
 | 9 | Enterprise gating (GATE A ruled 2026-07-04) | **DONE (pending merge)** — capability gate + edge cap + entity default | this PR (S9) | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` + `enterprise_context` capability | L-1 (RESOLVED), L-7 |
-| 10 | Scale validation (recursive load, EXPLAIN, partitioning) | TODO | — | — | L-6 (staging load env) |
+| 10 | Scale validation (recursive load, EXPLAIN, partitioning) | **DONE (pending merge)** — harness + EXPLAIN numbers + written findings/decisions | this PR (S10) | — | L-6 (staging load env) |
 | 11 | Governance docs → as-built (CANONICAL, arch, runbooks, rollback) | IN-PROGRESS | this PR (scaffolding) | — | — |
 
 ### Decision gates
@@ -229,6 +229,18 @@ Last updated: 2026-07-03 (Items 1–2 DONE; Item 3/S4 DONE — 4a+4b merged, 4c 
   (real columns/defaults, edge-count semantics, capability round-trip → resolver). 75 existing ECL unit tests still green.
 - **Still DARK:** `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` off (feature flag is still the first 404 gate; capability runs after).
   Production enablement is GATE B (out of scope). Operator actions: grant/revoke capability per org + tune caps → ledger L-7.
+
+## Item 10 — Scale validation (as-built)
+- **Harness** `test/isolation/enterpriseGraphScale.test.ts` — seeds a graph (400-wide fan-out hub → ~800 nodes, 150-node deep
+  chain, 3-node cycle), runs `EXPLAIN (ANALYZE, BUFFERS)` on the resolver's exact nodes query at depths 1–5, asserts bounded +
+  depth-capped + cycle-safe, emits timings.
+- **Numbers (local/CI scale):** fan-out hub depth 1→5 = 5.0 / 126.6 / 129.2 / 145.4 / 184.4 ms (node count plateaus at 801 by
+  depth 2 — latency keeps rising ⇒ cost = path enumeration + O(path-len) visited-array guard, NOT node count). Deep chain depth 5
+  = 6 nodes / 1.5 ms. Cycle terminates.
+- **Findings + decisions** in `enterprise-context-scale-findings.md`: H2 stays a real gate (super-linear at enterprise fan-out);
+  **materialized-adjacency fallback** decided (build before enabling any large-fan-out org; trigger ≈ p95 > 250 ms or > 10⁴ edges);
+  **partitioning** decided (defer; hash-by-org on `enterprise_relationships` past ~10⁵ edges/org; WORM tables by created_at range);
+  the 50k edge cap alone does NOT bound latency → per-org p95 monitor gates cap increases. True 10⁴–10⁵ run = operator **L-6**.
 
 ## Remaining governance-hygiene (Item 11)
 - `BUILD_SEQUENCE.md` Active-package line still reads "Priority 4 ACTIVE"; ECL S1/S2/S3 are the active
