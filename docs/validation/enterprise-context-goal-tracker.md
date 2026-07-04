@@ -27,7 +27,7 @@ Last updated: 2026-07-03 (Items 1–2 DONE; Item 3/S4 DONE — 4a+4b merged, 4c 
 | 3 | Slice 4 — Applicability Engine (deterministic decision fn) | **DONE** — 4a pure fn (`2a9e4b96`) + 4b WORM persistence (`e4b63b5e`) + 4c writer (this PR). Reproducible + test-locked. Live enqueue/fan-out worker (4d) delivered under S7/Item 6 (reassessment). | #469 (4a); #470 (4b); this PR (4c) | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared, off) | — |
 | 4 | Slice 5 — Explainability surface | **DONE (pending merge)** — pure render layer over stored decision | this PR (S5) | none (pure, inert — no callers) | — |
 | 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | **core DONE (pending merge)** — pure recommendation-derivation + idempotency; live dispatcher adapter TODO | this PR (S6 core) | none (pure, inert — no callers) | — |
-| 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | TODO | — | — | — |
+| 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | **core DONE (pending merge)** — pure reassessment triggers + drift detection; live worker adapter TODO | this PR (S7 core) | none (pure, inert — no callers) | — |
 | 7 | UI/CX — context screens, graph view, dashboards | TODO | — | — | L-4 (app build via CI) |
 | 8 | Connectors (ServiceNow/Defender/CrowdStrike/Wiz/Tenable/cloud/identity) — dark, mock-tested | TODO | — | per-connector flags | L-5.. (per-connector creds) |
 | 9 | Enterprise gating (after GATE A ruling) | **BLOCKED — GATE A** | — | AD-17 capability grant | L-1 |
@@ -184,6 +184,19 @@ Last updated: 2026-07-03 (Items 1–2 DONE; Item 3/S4 DONE — 4a+4b merged, 4c 
 - **INERT:** pure core, no callers. The live dispatcher (write suggestion via `signal_match_suggestions` + `assessment_id`,
   enqueue action via the GAP-3 `actions` pattern, notify via `createAlertBatcher` — notifications OUTSIDE the tx, audit atomic)
   is a later flag-gated adapter slice, mirroring 4a-core→4c-writer.
+
+## Slice 7 — Signal linkage core (as-built)
+- **`src/engine/applicability/v1/reassessment.ts`** — two pure fns:
+  - `planReassessment(event, linked)` — a `ChangeEvent` (signal_changed / edge_changed / entity_changed) selects exactly
+    the existing assessments to re-evaluate (AD-14: scope to target OR blast-radius touched; edge/entity events org-scoped;
+    deduped + deterministically ordered). **DONE bar: a changed signal re-evaluates its linked entities.**
+  - `detectDrift(prior, current)` — compares a prior stored decision (or null) to a fresh one → `{drifted, kind, severity,
+    changes, added/removed_entities}`. Decision change crossing `affected` = high; band/blast-radius change = medium.
+- **Tests (14, database-free):** signal/edge/entity triggers, org-scoping, dedup/order; drift for new/decision/band/radius,
+  severity tiers, determinism.
+- **INERT:** pure core, no callers. The live reassessment worker (for each plan item → re-run 4a engine → persist 4c →
+  detectDrift vs prior → if drifted, derive S6 recommendations) is a later flag-gated adapter. This also delivers the
+  deferred "4d" reassessment path noted under Item 3.
 
 ## Remaining governance-hygiene (Item 11)
 - `BUILD_SEQUENCE.md` Active-package line still reads "Priority 4 ACTIVE"; ECL S1/S2/S3 are the active
