@@ -15,7 +15,7 @@ import { Router, type Request, type Response } from "express";
 import { pg } from "../infra/postgres.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
-import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requireCapability } from "../lib/enterpriseContextCapability.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { enterpriseContextFeatureFlag } from "../lib/enterpriseContextFeatureFlag.js";
 import {
@@ -89,7 +89,7 @@ const chain = [
   enterpriseContextFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium")
+  requireCapability("enterprise_context")
 ];
 
 router.get("/enterprise-graph", ...chain, asTenant(getEnterpriseGraph));

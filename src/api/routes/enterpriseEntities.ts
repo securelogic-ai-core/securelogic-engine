@@ -30,7 +30,7 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
-import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requireCapability } from "../lib/enterpriseContextCapability.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { enterpriseContextFeatureFlag } from "../lib/enterpriseContextFeatureFlag.js";
@@ -426,7 +426,7 @@ const chain = [
   enterpriseContextFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium")
+  requireCapability("enterprise_context")
 ];
 
 router.get("/enterprise-entities", ...chain, asTenant(listEnterpriseEntities));

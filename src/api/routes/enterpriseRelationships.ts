@@ -22,7 +22,8 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
-import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requireCapability } from "../lib/enterpriseContextCapability.js";
+import { enforceEnterpriseEdgeLimit } from "../lib/enterpriseEdgeLimit.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { enterpriseContextFeatureFlag } from "../lib/enterpriseContextFeatureFlag.js";
@@ -154,6 +155,14 @@ export async function createEnterpriseRelationship(req: Request, res: Response):
     return;
   }
 
+  // Per-org edge cap (H1). Separate counter — never touches max_monitored_entities /
+  // enforceEntityLimit. Enforced at create; existing over-cap edges are grandfathered.
+  const edgeLimit = await enforceEnterpriseEdgeLimit(orgId);
+  if (edgeLimit.exceeded) {
+    res.status(409).json({ error: "enterprise_edge_limit_reached", used: edgeLimit.used, cap: edgeLimit.cap });
+    return;
+  }
+
   let created;
   try {
     created = await pg.query(
@@ -251,7 +260,7 @@ const chain = [
   enterpriseContextFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium")
+  requireCapability("enterprise_context")
 ];
 
 router.get("/enterprise-relationships", ...chain, asTenant(listEnterpriseRelationships));

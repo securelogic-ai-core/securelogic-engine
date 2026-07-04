@@ -1,7 +1,12 @@
 # GATE A — Enterprise Context access model, AD-17 grant shape, entity/edge caps
 
-**Status: BLOCKED — awaiting Simmee ruling.** Per the goal, Item 9 (Enterprise gating) and
-production enablement cannot proceed until these three are decided. Everything built so far
+**Status: RULED 2026-07-04 (operator).** Decisions: (1) access = **Platform Professional +
+Enterprise** (Option 1B — ECL is core to the intelligence experience, not Enterprise-only);
+(2) grant = **capability-based** — `requireCapability("enterprise_context")`, Platform plans
+granted by default, per-org override (Option 2A mechanism); (3) caps = conservative **10k
+entities / 50k edges** (Option 3A values), separate from `max_monitored_entities`,
+`enforceEntityLimit` untouched, Enterprise higher-configurable later. Implemented in Item 9.
+Production enablement remains GATE B (out of scope). Everything built so far
 (Items 1–8) is DARK and additive; nothing here changes until the ruling is implemented as its
 own slice. This memo states the problem, the options, and a recommendation for each.
 
