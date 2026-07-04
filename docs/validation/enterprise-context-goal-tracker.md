@@ -30,12 +30,12 @@ Last updated: 2026-07-03 (Items 1–2 DONE; Item 3/S4 DONE — 4a+4b merged, 4c 
 | 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | **core DONE (pending merge)** — pure reassessment triggers + drift detection; live worker adapter TODO | this PR (S7 core) | none (pure, inert — no callers) | — |
 | 7 | UI/CX — context screens, graph view, dashboards | TODO | — | — | L-4 (app build via CI) |
 | 8 | Connectors (ServiceNow/Defender/CrowdStrike/Wiz/Tenable/cloud/identity) — dark, mock-tested | **framework + reference adapter DONE (pending merge)** — ServiceNow CMDB implemented; 7 planned (config schemas registered) | this PR (S8) | per-connector flags (at eventual call site) | L-5.1..L-5.9 |
-| 9 | Enterprise gating (after GATE A ruling) | **BLOCKED — GATE A (options memo ready, awaiting Simmee ruling)** | — | AD-17 capability grant | L-1 |
+| 9 | Enterprise gating (GATE A ruled 2026-07-04) | **DONE (pending merge)** — capability gate + edge cap + entity default | this PR (S9) | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` + `enterprise_context` capability | L-1 (RESOLVED), L-7 |
 | 10 | Scale validation (recursive load, EXPLAIN, partitioning) | TODO | — | — | L-6 (staging load env) |
 | 11 | Governance docs → as-built (CANONICAL, arch, runbooks, rollback) | IN-PROGRESS | this PR (scaffolding) | — | — |
 
 ### Decision gates
-- **GATE A** (before Slice 9): Platform-vs-Enterprise access model + AD-17 capability-grant shape + entity/edge caps. **Simmee ruling required. REACHED 2026-07-04** — options + recommendations in `enterprise-context-gate-a-memo.md`; presented to operator; **BLOCKED awaiting ruling** (Item 9 build starts only after). Recommendations: 1A Enterprise-only · 2A per-org capability column + `requireCapability` · 3A conservative tunable caps (10k entities / 50k edges) + new edge cap.
+- **GATE A** — **RULED 2026-07-04 (operator).** (1) Access = **Platform Professional + Enterprise** (ECL is core, not Enterprise-only). (2) Grant = **capability-based** (`requireCapability("enterprise_context")`, not hard-coded tier checks); Platform plans get it by default; per-org controllable. (3) Caps = conservative **10k entities / 50k edges**, separate from `max_monitored_entities`, `enforceEntityLimit` untouched; Enterprise higher configurable later. Implemented in Item 9 (this PR). Memo: `enterprise-context-gate-a-memo.md`.
 - **GATE B** (absolute): nothing enabled in production under this goal, ever. GA enablement is outside this goal's authority.
 
 ---
@@ -213,6 +213,22 @@ Last updated: 2026-07-03 (Items 1–2 DONE; Item 3/S4 DONE — 4a+4b merged, 4c 
   (URL + Basic auth), config validation (missing field / non-https), registry completeness, planned-adapter guards.
 - **Credentials → operator ledger L-5.1..L-5.9** (one per connector). **INERT:** no route/worker calls any connector; behind
   the ECL flag + per-connector flag at the eventual call site.
+
+## Item 9 — Enterprise gating (as-built, GATE A ruled)
+- **Capability gate (AD-17)** `src/api/lib/enterpriseContextCapability.ts` — pure `resolveEnterpriseContextCapability(entitlement, override)`
+  + `requireCapability("enterprise_context")` middleware. Per-org override column `organizations.enterprise_context_capability`
+  (migration `20260729`): TRUE/FALSE = explicit grant/deny; NULL = inherit default (Platform Professional + Enterprise granted;
+  Brief tiers/starter denied). **Replaces `requireEntitlement("premium")`** on all 4 ECL route chains (entities, relationships,
+  graph, import) — capability-based, not hard-coded tier checks, per the ruling.
+- **Caps (migration `20260728`)** — entity default raised 1000→**10,000** (existing old-default rows migrated forward);
+  NEW `organizations.max_enterprise_edges` default **50,000** (closes H1) + `enforceEnterpriseEdgeLimit` (`enterpriseEdgeLimit.ts`)
+  wired into the relationship-create handler → 409 `enterprise_edge_limit_reached`. Both SEPARATE from `max_monitored_entities`;
+  `enforceEntityLimit` untouched.
+- **Tests:** unit `enterpriseContextCapability.test.ts` (resolver truth table + middleware grant/deny/403/401/err, pg mocked) +
+  `enterpriseEdgeLimit.test.ts` (threshold + default fallback, pg mocked) + isolation `enterpriseContextGating.test.ts`
+  (real columns/defaults, edge-count semantics, capability round-trip → resolver). 75 existing ECL unit tests still green.
+- **Still DARK:** `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` off (feature flag is still the first 404 gate; capability runs after).
+  Production enablement is GATE B (out of scope). Operator actions: grant/revoke capability per org + tune caps → ledger L-7.
 
 ## Remaining governance-hygiene (Item 11)
 - `BUILD_SEQUENCE.md` Active-package line still reads "Priority 4 ACTIVE"; ECL S1/S2/S3 are the active
