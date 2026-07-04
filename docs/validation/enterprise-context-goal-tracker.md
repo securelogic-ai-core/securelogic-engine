@@ -29,7 +29,7 @@ Last updated: 2026-07-03 (Items 1–2 DONE; Item 3/S4 DONE — 4a+4b merged, 4c 
 | 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | **core DONE (pending merge)** — pure recommendation-derivation + idempotency; live dispatcher adapter TODO | this PR (S6 core) | none (pure, inert — no callers) | — |
 | 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | **core DONE (pending merge)** — pure reassessment triggers + drift detection; live worker adapter TODO | this PR (S7 core) | none (pure, inert — no callers) | — |
 | 7 | UI/CX — context screens, graph view, dashboards | TODO | — | — | L-4 (app build via CI) |
-| 8 | Connectors (ServiceNow/Defender/CrowdStrike/Wiz/Tenable/cloud/identity) — dark, mock-tested | TODO | — | per-connector flags | L-5.. (per-connector creds) |
+| 8 | Connectors (ServiceNow/Defender/CrowdStrike/Wiz/Tenable/cloud/identity) — dark, mock-tested | **framework + reference adapter DONE (pending merge)** — ServiceNow CMDB implemented; 7 planned (config schemas registered) | this PR (S8) | per-connector flags (at eventual call site) | L-5.1..L-5.9 |
 | 9 | Enterprise gating (after GATE A ruling) | **BLOCKED — GATE A** | — | AD-17 capability grant | L-1 |
 | 10 | Scale validation (recursive load, EXPLAIN, partitioning) | TODO | — | — | L-6 (staging load env) |
 | 11 | Governance docs → as-built (CANONICAL, arch, runbooks, rollback) | IN-PROGRESS | this PR (scaffolding) | — | — |
@@ -197,6 +197,22 @@ Last updated: 2026-07-03 (Items 1–2 DONE; Item 3/S4 DONE — 4a+4b merged, 4c 
 - **INERT:** pure core, no callers. The live reassessment worker (for each plan item → re-run 4a engine → persist 4c →
   detectDrift vs prior → if drifted, derive S6 recommendations) is a later flag-gated adapter. This also delivers the
   deferred "4d" reassessment path noted under Item 3.
+
+## Slice 8 — Connectors (as-built)
+- **Framework** `src/api/lib/connectors/` — `ConnectorAdapter` interface (pure `normalize()` + I/O `fetch(config, http)`
+  with an injectable `HttpClient`), shared config-schema validation (`validateAgainstFields`), `plannedAdapter()` factory.
+  Normalized output = the ECL import shape (`NormalizedEntity` mirrors Slice 3 import rows + `NormalizedRelationship`),
+  so connectors reuse the import path (`planImport`) rather than a parallel write path.
+- **Reference adapter** `serviceNowCmdb.ts` — full fetch (CMDB CI table, Basic auth) + pure normalize (sys_class→entity_type,
+  business_criticality→ECL vocabulary, `depends_on`→relationships, dedup, deterministic order). Gotcha fixed: strip the
+  `cmdb_ci_` prefix before substring-matching (the "db" in "cmdb" spuriously matched data_store).
+- **Registry** `registry.ts` — all 9 roadmap connectors registered; ServiceNow = `reference`, the other 8 (`microsoft_defender`,
+  `crowdstrike_falcon`, `wiz`, `tenable`, `qualys`, `rapid7`, `cloud_inventory`, `identity_provider`) = `planned` (config schema
+  present; normalize/fetch throw `connector_not_implemented` until their adapter lands).
+- **Tests (11):** ServiceNow normalize mapping + dependency edges + dedup + malformed tolerance, fetch via fake HttpClient
+  (URL + Basic auth), config validation (missing field / non-https), registry completeness, planned-adapter guards.
+- **Credentials → operator ledger L-5.1..L-5.9** (one per connector). **INERT:** no route/worker calls any connector; behind
+  the ECL flag + per-connector flag at the eventual call site.
 
 ## Remaining governance-hygiene (Item 11)
 - `BUILD_SEQUENCE.md` Active-package line still reads "Priority 4 ACTIVE"; ECL S1/S2/S3 are the active
