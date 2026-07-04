@@ -14,7 +14,7 @@ enablement is out of scope (GATE B).
 at the time, pre-goal). From Slice 3 onward, feature PRs **squash-merge + delete branch**
 per the goal.
 
-Last updated: 2026-07-03 (Items 1–2 DONE; Slice 4a pure IAE core built, pending merge).
+Last updated: 2026-07-03 (Items 1–2 DONE; Item 3/S4 DONE — 4a+4b merged, 4c writer pending merge; next Item 4/S5 Explainability).
 
 ---
 
@@ -24,7 +24,7 @@ Last updated: 2026-07-03 (Items 1–2 DONE; Slice 4a pure IAE core built, pendin
 |---|---|---|---|---|---|
 | 1 | Pre-merge audit of #464/#465; fix Critical/High; merge | **DONE** | #464 (merge `1f308e61`), #465 (merge `7843cf62`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (off) | L-1, L-2 |
 | 2 | Slice 3 — CSV/spreadsheet import (assets, vendors, apps, AI systems, data stores) | **DONE** | #467 (squash `17627ac7`) + prereq dep-fix #468 (squash `205c39ef`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared in render.yaml, off) | L-3 |
-| 3 | Slice 4 — Applicability Engine (deterministic decision fn) | **4a DONE** (`2a9e4b96`); **4b DONE (pending merge)** — persistence tables; 4c writer/worker + 4d queue TODO | #469 (4a); this PR (4b) | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared, off) | — |
+| 3 | Slice 4 — Applicability Engine (deterministic decision fn) | **DONE** — 4a pure fn (`2a9e4b96`) + 4b WORM persistence (`e4b63b5e`) + 4c writer (this PR). Reproducible + test-locked. Live enqueue/fan-out worker (4d) delivered under S7/Item 6 (reassessment). | #469 (4a); #470 (4b); this PR (4c) | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared, off) | — |
 | 4 | Slice 5 — Explainability surface | TODO | — | — | — |
 | 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | TODO | — | — | — |
 | 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | TODO | — | — | — |
@@ -140,6 +140,21 @@ Last updated: 2026-07-03 (Items 1–2 DONE; Slice 4a pure IAE core built, pendin
 - **NEXT (S4c):** the writer/worker that runs `ApplicabilityEngineV1`, persists the result under `withTenant`,
   selects the per-org `prev_hash` predecessor under an advisory lock, and INSERTs the assessment + evidence + affected
   rows in one tenant tx.
+
+## Slice 4c — applicability persistence writer (as-built)
+- **`src/api/lib/applicabilityAssessmentWriter.ts`** — `persistApplicabilityAssessment(db, {identity, result, evidence})`.
+  Bridges the pure engine (4a) → WORM tables (4b): runs inside a `withTenant(orgId, …)` tx; takes an injectable
+  `Queryable` (the `pg` proxy in prod; a raw `app_request` client in the isolation test). Per-org
+  `pg_advisory_xact_lock(hashtext(orgId))` serializes chain appends; reads the tail, computes `content_hash` via
+  the 4b helper, INSERTs assessment + evidence + affected_entities in one tx. Returns `{assessmentId, contentHash, prevHash}`.
+- **Migration `20260727`** adds `seq BIGSERIAL` to `applicability_assessments` — the tail lookup orders by `seq DESC`,
+  not `created_at` (which returns the tx-start time and ties for multiple decisions persisted in ONE tenant tx →
+  would fork the chain). Additive ADD COLUMN on the empty table (WORM trigger blocks DML, not DDL).
+- **Tests:** `applicabilityAssessmentWriter.test.ts` (mock-Queryable unit — advisory-lock ordering, GENESIS, hash
+  match, evidence/affected loops) + isolation `applicabilityWriter.test.ts` (real Postgres: 3 decisions chained in
+  ONE tx via `seq`, `verifyChain` end-to-end, cross-org WITH-CHECK reject).
+- **INERT:** no caller yet — the live enqueue-on-signal + fan-out worker (4d) is S7/Item 6. Behind the ECL flag at
+  the eventual call site.
 
 ## Remaining governance-hygiene (Item 11)
 - `BUILD_SEQUENCE.md` Active-package line still reads "Priority 4 ACTIVE"; ECL S1/S2/S3 are the active
