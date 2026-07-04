@@ -16,10 +16,10 @@ per the goal.
 
 Last updated: 2026-07-04 (RESUME reconciliation). Items 1–9 DONE **and merged** to `develop`
 (4c #471 `cb15c788`, S5 #472 `cb1c2be2`, S6 #473 `b82bd4cb`, S7 #474 `33f4a929`, S8 #475
-`d0351c1c`, GATE-A memo #476, S9 #477 `c495dc0c`). Item 10 (Scale) = PR **#478 OPEN**, all 8
-CI checks green, mergeable CLEAN — the interruption point; awaiting squash-merge. Item 11
-(governance docs → as-built) IN-PROGRESS. Item 7 (UI/CX) intentionally sequenced last (needs
-L-4 app CI build).
+`d0351c1c`, GATE-A memo #476, S9 #477 `c495dc0c`). Item 10 (Scale) **merged** #478 (squash
+`d3ad01ed`) — the interruption point, resolved. Item 11 (governance docs → as-built) **DONE**
+(this branch). **Item 7 (UI/CX) is the only remaining item** — intentionally sequenced last
+(needs L-4 app CI build); not started.
 
 ---
 
@@ -29,15 +29,15 @@ L-4 app CI build).
 |---|---|---|---|---|---|
 | 1 | Pre-merge audit of #464/#465; fix Critical/High; merge | **DONE** | #464 (merge `1f308e61`), #465 (merge `7843cf62`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (off) | L-1, L-2 |
 | 2 | Slice 3 — CSV/spreadsheet import (assets, vendors, apps, AI systems, data stores) | **DONE** | #467 (squash `17627ac7`) + prereq dep-fix #468 (squash `205c39ef`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared in render.yaml, off) | L-3 |
-| 3 | Slice 4 — Applicability Engine (deterministic decision fn) | **DONE** — 4a pure fn (`2a9e4b96`) + 4b WORM persistence (`e4b63b5e`) + 4c writer (this PR). Reproducible + test-locked. Live enqueue/fan-out worker (4d) delivered under S7/Item 6 (reassessment). | #469 (4a); #470 (4b); this PR (4c) | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared, off) | — |
-| 4 | Slice 5 — Explainability surface | **DONE (pending merge)** — pure render layer over stored decision | this PR (S5) | none (pure, inert — no callers) | — |
-| 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | **core DONE (pending merge)** — pure recommendation-derivation + idempotency; live dispatcher adapter TODO | this PR (S6 core) | none (pure, inert — no callers) | — |
-| 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | **core DONE (pending merge)** — pure reassessment triggers + drift detection; live worker adapter TODO | this PR (S7 core) | none (pure, inert — no callers) | — |
+| 3 | Slice 4 — Applicability Engine (deterministic decision fn) | **DONE** — 4a pure fn (`2a9e4b96`) + 4b WORM persistence (`e4b63b5e`) + 4c writer (#471 `cb15c788`). Reproducible + test-locked. Live enqueue/fan-out worker (4d) delivered under S7/Item 6 (reassessment). | #469 (4a); #470 (4b); #471 (4c, squash `cb15c788`) | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared, off) | — |
+| 4 | Slice 5 — Explainability surface | **DONE** — pure render layer over stored decision | #472 (squash `cb1c2be2`); branch deleted | none (pure, inert — no callers) | — |
+| 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | **core DONE (pending merge)** — pure recommendation-derivation + idempotency; live dispatcher adapter TODO | #473 (squash `b82bd4cb`); branch deleted | none (pure, inert — no callers) | — |
+| 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | **core DONE (pending merge)** — pure reassessment triggers + drift detection; live worker adapter TODO | #474 (squash `33f4a929`); branch deleted | none (pure, inert — no callers) | — |
 | 7 | UI/CX — context screens, graph view, dashboards | TODO | — | — | L-4 (app build via CI) |
-| 8 | Connectors (ServiceNow/Defender/CrowdStrike/Wiz/Tenable/cloud/identity) — dark, mock-tested | **framework + reference adapter DONE (pending merge)** — ServiceNow CMDB implemented; 7 planned (config schemas registered) | this PR (S8) | per-connector flags (at eventual call site) | L-5.1..L-5.9 |
-| 9 | Enterprise gating (GATE A ruled 2026-07-04) | **DONE (pending merge)** — capability gate + edge cap + entity default | this PR (S9) | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` + `enterprise_context` capability | L-1 (RESOLVED), L-7 |
-| 10 | Scale validation (recursive load, EXPLAIN, partitioning) | **DONE (pending merge)** — harness + EXPLAIN numbers + written findings/decisions | this PR (S10) | — | L-6 (staging load env) |
-| 11 | Governance docs → as-built (CANONICAL, arch, runbooks, rollback) | IN-PROGRESS | this PR (scaffolding) | — | — |
+| 8 | Connectors (ServiceNow/Defender/CrowdStrike/Wiz/Tenable/cloud/identity) — dark, mock-tested | **framework + reference adapter DONE (pending merge)** — ServiceNow CMDB implemented; 7 planned (config schemas registered) | #475 (squash `d0351c1c`); branch deleted | per-connector flags (at eventual call site) | L-5.1..L-5.9 |
+| 9 | Enterprise gating (GATE A ruled 2026-07-04) | **DONE** — capability gate + edge cap + entity default | GATE-A memo #476 (`572961b8`); gating #477 (squash `c495dc0c`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` + `enterprise_context` capability | L-1 (RESOLVED), L-7 |
+| 10 | Scale validation (recursive load, EXPLAIN, partitioning) | **DONE** — harness + EXPLAIN numbers + written findings/decisions | #478 (squash `d3ad01ed`); branch deleted | — | L-6 (staging load env) |
+| 11 | Governance docs → as-built (CANONICAL, arch, runbooks, rollback) | **DONE** — this PR | `BUILD_SEQUENCE.md` active-workstream note; `CANONICAL_DOMAIN_MODEL.md` build-status rows (4c/5/6/7 + capability/caps + connectors); `ENTERPRISE_CONTEXT_ARCHITECTURE.md` as-built banner; new `docs/runbooks/enterprise-context-enable-rollback.md` | — | — |
 
 ### Decision gates
 - **GATE A** — **RULED 2026-07-04 (operator).** (1) Access = **Platform Professional + Enterprise** (ECL is core, not Enterprise-only). (2) Grant = **capability-based** (`requireCapability("enterprise_context")`, not hard-coded tier checks); Platform plans get it by default; per-org controllable. (3) Caps = conservative **10k entities / 50k edges**, separate from `max_monitored_entities`, `enforceEntityLimit` untouched; Enterprise higher configurable later. Implemented in Item 9 (this PR). Memo: `enterprise-context-gate-a-memo.md`.
@@ -247,6 +247,26 @@ L-4 app CI build).
   **partitioning** decided (defer; hash-by-org on `enterprise_relationships` past ~10⁵ edges/org; WORM tables by created_at range);
   the 50k edge cap alone does NOT bound latency → per-org p95 monitor gates cap increases. True 10⁴–10⁵ run = operator **L-6**.
 
-## Remaining governance-hygiene (Item 11)
-- `BUILD_SEQUENCE.md` Active-package line still reads "Priority 4 ACTIVE"; ECL S1/S2/S3 are the active
-  workstream. Update the active-workstream record as an Item 11 doc-sync.
+## Item 11 — governance docs → as-built (DONE, this PR)
+Reconciled the governing docs to shipped reality (Slices 1–10 dark on `develop`):
+- **`BUILD_SEQUENCE.md`** — added a dated *Active-workstream update* note recording that the
+  ECL (authorized as the *Priority-5 foundation*, #458/#459) is the live workstream with
+  S1–S10 shipped dark; Items 7 (UI/CX) + 11 remaining. Placed away from the Priority-4 record
+  region (that B/C/D reconciliation is the separate open PR #461) to avoid conflict, and noted
+  the two distinct "Priority 5" numberings (ECL foundation vs BUILD_SEQUENCE's signal-linkage).
+- **`CANONICAL_DOMAIN_MODEL.md`** — build-status table advanced past S4b: Applicability row now
+  records the 4c writer (`cb15c788`) + S5 explainability (`cb1c2be2`) + S6 workflow-rec
+  (`b82bd4cb`) + S7 signal-linkage (`33f4a929`) cores; added **Enterprise Capability & Caps**
+  row (GATE-A caps + capability column, migr `20260728`/`20260729`) and **Connector Framework**
+  row (registry + ServiceNow reference adapter, `d0351c1c`). (ECL enums were already present.)
+- **`ENTERPRISE_CONTEXT_ARCHITECTURE.md`** — replaced the stale "nothing built until Priority 4
+  completes / DRAFT — FOR REVIEW" banner with a **DESIGN BLUEPRINT — PARTIALLY AS-BUILT** status
+  that flags the two deliberate as-built variations (WORM store non-partitioned + no `is_current`;
+  resolver typed-edge-UNION without the materialized-adjacency fallback) and points to the
+  authoritative records. Design body left intact.
+- **`docs/runbooks/enterprise-context-enable-rollback.md`** — NEW operator runbook: the two-switch
+  gate model, the §2 pre-enable gate table (incl. H2/L-6 caveat + materialized-adjacency trigger),
+  the enable procedure (capability grant / cap tuning / flag flip = L-2/L-7), and the
+  flag-off-inert rollback (WORM tables must not be TRUNCATEd as rollback).
+
+Prod enablement stays **GATE B** (out of scope). No code/schema changed in Item 11 — docs only.
