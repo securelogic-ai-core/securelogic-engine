@@ -21,3 +21,16 @@ ALTER TABLE applicability_assessments
 -- Chain-tail lookup: newest row for an org by monotonic sequence.
 CREATE INDEX IF NOT EXISTS idx_applicability_assessments_org_seq
   ON applicability_assessments (organization_id, seq DESC);
+
+-- The BIGSERIAL creates the OWNED sequence applicability_assessments_seq_seq. The
+-- table's SELECT,INSERT grant does NOT cover it, so app_request needs USAGE on the
+-- sequence to evaluate the column DEFAULT (nextval) on INSERT — otherwise every
+-- app_request INSERT fails "permission denied for sequence" (post-20260621 grant gap,
+-- same as the table grants). pg_get_serial_sequence resolves the name robustly.
+DO $$
+BEGIN
+  EXECUTE format(
+    'GRANT USAGE, SELECT ON SEQUENCE %s TO app_request',
+    pg_get_serial_sequence('applicability_assessments', 'seq')
+  );
+END $$;
