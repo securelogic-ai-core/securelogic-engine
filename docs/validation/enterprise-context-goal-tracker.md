@@ -26,7 +26,7 @@ Last updated: 2026-07-03 (Items 1–2 DONE; Item 3/S4 DONE — 4a+4b merged, 4c 
 | 2 | Slice 3 — CSV/spreadsheet import (assets, vendors, apps, AI systems, data stores) | **DONE** | #467 (squash `17627ac7`) + prereq dep-fix #468 (squash `205c39ef`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared in render.yaml, off) | L-3 |
 | 3 | Slice 4 — Applicability Engine (deterministic decision fn) | **DONE** — 4a pure fn (`2a9e4b96`) + 4b WORM persistence (`e4b63b5e`) + 4c writer (this PR). Reproducible + test-locked. Live enqueue/fan-out worker (4d) delivered under S7/Item 6 (reassessment). | #469 (4a); #470 (4b); this PR (4c) | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared, off) | — |
 | 4 | Slice 5 — Explainability surface | **DONE (pending merge)** — pure render layer over stored decision | this PR (S5) | none (pure, inert — no callers) | — |
-| 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | TODO | — | — | — |
+| 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | **core DONE (pending merge)** — pure recommendation-derivation + idempotency; live dispatcher adapter TODO | this PR (S6 core) | none (pure, inert — no callers) | — |
 | 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | TODO | — | — | — |
 | 7 | UI/CX — context screens, graph view, dashboards | TODO | — | — | L-4 (app build via CI) |
 | 8 | Connectors (ServiceNow/Defender/CrowdStrike/Wiz/Tenable/cloud/identity) — dark, mock-tested | TODO | — | per-connector flags | L-5.. (per-connector creds) |
@@ -169,6 +169,21 @@ Last updated: 2026-07-03 (Items 1–2 DONE; Item 3/S4 DONE — 4a+4b merged, 4c 
   reproducibility TRUE untampered + FALSE on tampered hash + FALSE on altered reasoning step, determinism, text render.
 - **INERT:** pure module, no callers (the UI/export that consumes it is Item 7). An optional LLM *narration* on top
   (AD-7) is a later add — the structured explanation is the source and is complete on its own.
+
+## Slice 6 — Workflow automation core (as-built)
+- **`src/engine/applicability/v1/workflowRecommendations.ts`** — pure `deriveWorkflowRecommendations(stored, policy?)`:
+  maps a persisted decision → a deterministic set of workflow RECOMMENDATIONS (finding_draft, risk_review_recommendation,
+  evidence_request, human_review_task, notification), each with a stable `idempotency_key = sha256(content_hash|type|target)`.
+- **AD-9 respected:** emits `risk_review_recommendation` only — NEVER `risk_open`/`risk_transition` (risk creation/transition
+  stays human/lifecycle-gated). AD-8a: recommendations are the human-review projection of the assessment (carry its content_hash).
+- **Decision mapping:** affected → finding_draft + risk_review + evidence_request + owner notification(s) (one per blast-radius
+  identity, else target-scoped fallback); potentially_affected → human_review_task + informational notification; needs_review →
+  human_review_task; not_affected/unknown → nothing. Priority follows the confidence band. Versioned `DEFAULT_WORKFLOW_POLICY`.
+- **Tests (12, database-free):** decision mapping, AD-9 no-auto-risk guard, owner-notification + fallback, priority-by-band,
+  policy gating, and the **idempotency** property (re-derive → identical keys; new content_hash → different keys; unique per type/target).
+- **INERT:** pure core, no callers. The live dispatcher (write suggestion via `signal_match_suggestions` + `assessment_id`,
+  enqueue action via the GAP-3 `actions` pattern, notify via `createAlertBatcher` — notifications OUTSIDE the tx, audit atomic)
+  is a later flag-gated adapter slice, mirroring 4a-core→4c-writer.
 
 ## Remaining governance-hygiene (Item 11)
 - `BUILD_SEQUENCE.md` Active-package line still reads "Priority 4 ACTIVE"; ECL S1/S2/S3 are the active
