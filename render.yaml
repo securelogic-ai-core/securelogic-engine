@@ -925,6 +925,15 @@ services:
       - key: NEXT_PUBLIC_SITE_URL
         sync: false
 
+      # ECL (Priority 5) nav visibility — DARK (default off). App half of the
+      # two-switch model: this only reveals the "Context" header item; the engine's
+      # own SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED independently 404s every ECL
+      # route. RUNTIME (not NEXT_PUBLIC): a restart applies it, no rebuild.
+      # The securelogic-app-staging service is dashboard-only — set it there for
+      # staging validation. Prod flip is GATE B (operator ledger L-2).
+      - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
+        value: "false"
+
       # Secret used to encrypt the iron-session cookie.
       # Must be at least 32 characters. Generate with: openssl rand -hex 32
       - key: SESSION_SECRET

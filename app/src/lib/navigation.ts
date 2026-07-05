@@ -20,14 +20,25 @@
  * An item with no flag is visible to everyone signed in.
  */
 
+/**
+ * Feature-flag keys a nav item may declare via `featureFlag`. A flagged item is
+ * hidden unless the caller passes `flags` with that key === true — FAIL-CLOSED, so a
+ * dark feature's nav entry can ship in code while staying invisible everywhere the
+ * flag is off. The server layout resolves the env flag and threads it through the
+ * (client) Header, since client components can't read non-NEXT_PUBLIC env vars.
+ */
+export type NavFeatureFlag = "enterprise_context";
+export type NavFlags = Partial<Record<NavFeatureFlag, boolean>>;
+
 export type NavItem =
-  | { type: "link"; label: string; href: string; platform?: boolean; premium?: boolean; admin?: boolean }
+  | { type: "link"; label: string; href: string; platform?: boolean; premium?: boolean; admin?: boolean; featureFlag?: NavFeatureFlag }
   | {
       type: "group";
       label: string;
       platform?: boolean;
       premium?: boolean;
       admin?: boolean;
+      featureFlag?: NavFeatureFlag;
       items: Array<{ label: string; href: string }>;
     };
 
@@ -42,6 +53,9 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "AI Systems", href: "/ai-systems" },
     ],
   },
+  // Enterprise Context Layer — DARK: featureFlag keeps this hidden until the
+  // app-side SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED env is true (GATE B for prod).
+  { type: "link", label: "Context", href: "/enterprise-context", platform: true, featureFlag: "enterprise_context" },
   { type: "group", label: "Compliance", platform: true,
     items: [
       { label: "Controls",    href: "/controls" },
@@ -65,8 +79,10 @@ export function filterNav(
   isPlatformUser: boolean,
   isPremiumUser: boolean,
   isAdminUser: boolean,
+  flags?: NavFlags,
 ): NavItem[] {
   return items.filter(item => {
+    if (item.featureFlag && flags?.[item.featureFlag] !== true) return false; // fail-closed
     if (item.platform && !isPlatformUser) return false;
     if (item.premium  && !isPremiumUser)  return false;
     if (item.admin    && !isAdminUser)    return false;

@@ -51,6 +51,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       ]
     },
     {
+      "type": "link",
+      "label": "Context",
+      "href": "/enterprise-context",
+      "access": "platform"
+    },
+    {
       "type": "group",
       "label": "Compliance",
       "access": "platform",
@@ -135,6 +141,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "href": "/ai-systems",
       "access": "platform",
       "group": "Assets"
+    },
+    {
+      "label": "Context",
+      "href": "/enterprise-context",
+      "access": "platform",
+      "group": null
     },
     {
       "label": "Controls",
@@ -399,32 +411,38 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     {
       "path": "/enterprise-context",
       "dynamic": false,
-      "navLabel": null,
-      "access": "all"
+      "navLabel": "Context",
+      "access": "platform"
     },
     {
       "path": "/enterprise-context/entities/[id]",
       "dynamic": true,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
     },
     {
       "path": "/enterprise-context/entities/[id]/edit",
       "dynamic": true,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
     },
     {
       "path": "/enterprise-context/entities/new",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
     },
     {
       "path": "/enterprise-context/graph",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
+    },
+    {
+      "path": "/enterprise-context/import",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "platform"
     },
     {
       "path": "/findings",

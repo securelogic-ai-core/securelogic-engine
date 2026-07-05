@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LogoutButton } from "./LogoutButton";
 import UserMenu from "./UserMenu";
-import { NAV_ITEMS, filterNav, type NavItem } from "@/lib/navigation";
+import { NAV_ITEMS, filterNav, type NavFlags, type NavItem } from "@/lib/navigation";
 import { getSiteBaseUrl } from "@/lib/siteUrl";
 
 // Marketing-site base for the logo/home link. Env-aware + build-time — see
@@ -150,6 +150,12 @@ interface HeaderProps {
   isAdminUser?: boolean;
   /** SSO settings link for professional+ orgs */
   isSsoEligible?: boolean;
+  /**
+   * Server-resolved feature flags for flag-gated nav items (fail-closed: a flagged
+   * item is hidden unless its key is true). Resolved in app/layout.tsx from env —
+   * this is a client component and can't read non-NEXT_PUBLIC env itself.
+   */
+  navFlags?: NavFlags;
   userName?: string;
   userEmail?: string;
   userRole?: string;
@@ -162,6 +168,7 @@ export function Header({
   isPremiumUser = false,
   isAdminUser = false,
   isSsoEligible = false,
+  navFlags,
   userName,
   userEmail,
   userRole,
@@ -179,7 +186,7 @@ export function Header({
     return () => document.removeEventListener("click", handleClick);
   }, [mobileOpen]);
 
-  const visibleNav = filterNav(NAV_ITEMS, isPlatformUser, isPremiumUser, isAdminUser);
+  const visibleNav = filterNav(NAV_ITEMS, isPlatformUser, isPremiumUser, isAdminUser, navFlags);
 
   return (
     <header className="relative sticky top-0 z-50 bg-navy-900/95 backdrop-blur-md border-b border-slate-800 shadow-[0_1px_0_rgba(255,255,255,0.06),0_4px_24px_rgba(0,0,0,0.5)]">
