@@ -36,6 +36,9 @@ import {
   type ImportEntityType,
   type NormalizedImportInput
 } from "../lib/enterpriseContextImport.js";
+import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
+import { registerAsset } from "../lib/assetRegistrar.js";
+import { entityTypeToAssetType } from "../lib/assetRegistry.js";
 
 const router = Router();
 
@@ -81,25 +84,34 @@ async function capHeadroom(entityType: ImportEntityType, orgId: string): Promise
 async function insertOne(orgId: string, normalized: NormalizedImportInput): Promise<boolean> {
   if (normalized.kind === "vendor") {
     const v = normalized.input;
-    const r = await pg.query(
+    const r = await pg.query<{ id: string }>(
       `INSERT INTO vendors (organization_id, name, service_description, category, criticality,
                             data_sensitivity, access_level, website, owner_user_id, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, 'active')
        ON CONFLICT DO NOTHING RETURNING id`,
       [orgId, v.name, v.service_description, v.category, v.criticality, v.data_sensitivity, v.access_level, v.website]
     );
-    return (r.rowCount ?? 0) > 0;
+    if ((r.rowCount ?? 0) === 0) return false;
+    // EAR Phase 1: registry upsert, same asTenant tx (flag-gated, dark by default).
+    if (assetRegistryEnabled()) {
+      await registerAsset(orgId, "vendor", "vendors", r.rows[0]!.id);
+    }
+    return true;
   }
   if (normalized.kind === "ai_system") {
     const a = normalized.input;
-    const r = await pg.query(
+    const r = await pg.query<{ id: string }>(
       `INSERT INTO ai_systems (organization_id, name, use_case, owner_user_id, model_type,
                                data_classification, deployment_status, criticality, risk_classification)
        VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, $8)
        ON CONFLICT DO NOTHING RETURNING id`,
       [orgId, a.name, a.use_case, a.model_type, a.data_classification, a.deployment_status, a.criticality, a.risk_classification]
     );
-    return (r.rowCount ?? 0) > 0;
+    if ((r.rowCount ?? 0) === 0) return false;
+    if (assetRegistryEnabled()) {
+      await registerAsset(orgId, "ai_system", "ai_systems", r.rows[0]!.id);
+    }
+    return true;
   }
   // enterprise_entity (asset / application / data_store)
   const e = normalized.input;
@@ -112,6 +124,9 @@ async function insertOne(orgId: string, normalized: NormalizedImportInput): Prom
   );
   if ((r.rowCount ?? 0) === 0) return false;
   const id = r.rows[0]!.id;
+  if (assetRegistryEnabled()) {
+    await registerAsset(orgId, entityTypeToAssetType(e.entity_type), "enterprise_entities", id);
+  }
   if (e.entity_type === "data_store" && e.data_store) {
     const ds = e.data_store;
     await pg.query(

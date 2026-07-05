@@ -177,6 +177,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   org_sso_configs: { category: "D", piiRisk: "low", rlsStatus: "none", specialHandling: "Org-level SAML IdP config; no user ref." },
   api_usage_daily: { category: "D", piiRisk: "none", rlsStatus: "pending" },
   enterprise_data_stores: { category: "D", piiRisk: "none", rlsStatus: "enabled", specialHandling: "NEW (ECL Slice 1). Typed child of a data_store enterprise_entity (CASCADE with parent). No user ref — org data-store metadata (classification/residency/retention/encryption). RLS enabled from creation (NOT FORCE, inert until app_request flip)." },
+  assets: { category: "D", piiRisk: "none", rlsStatus: "enabled", specialHandling: "NEW (EAR Phase 1). Tier-0 asset registry spine — identity-only (asset_type + polymorphic backing_kind/backing_id pointer + lifecycle_status; NO name/criticality/owner copy per EAR-AD-2). No user ref, no PII. Reads behind SECURELOGIC_ASSET_REGISTRY_ENABLED; writes only via registerAsset()/backfill (flag-gated) and the 20260803 in-migration backfill. RLS enabled from creation (NOT FORCE, inert until app_request flip)." },
 
   // ── E — System-wide / operational (leave alone) ────────────────────────────
   signals: { category: "E", piiRisk: "low", rlsStatus: "pending" },

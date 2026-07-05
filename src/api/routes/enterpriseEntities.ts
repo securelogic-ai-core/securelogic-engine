@@ -42,6 +42,9 @@ import {
   isUuid,
   type DataStoreInput
 } from "../lib/enterpriseEntityValidation.js";
+import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
+import { registerAsset, deregisterAsset } from "../lib/assetRegistrar.js";
+import { entityTypeToAssetType } from "../lib/assetRegistry.js";
 
 const router = Router();
 
@@ -224,6 +227,11 @@ export async function createEnterpriseEntity(req: Request, res: Response): Promi
   }
 
   const entity = created.rows[0] as { id: string };
+
+  // EAR Phase 1: registry upsert, same asTenant tx (flag-gated, dark by default).
+  if (assetRegistryEnabled()) {
+    await registerAsset(orgId, entityTypeToAssetType(input.entity_type), "enterprise_entities", entity.id);
+  }
 
   // Typed child (data_store only). Runs in the same asTenant transaction.
   let dataStore: DataStoreInput | null = null;
@@ -412,6 +420,11 @@ export async function deleteEnterpriseEntity(req: Request, res: Response): Promi
   if (del.rowCount === 0) {
     res.status(404).json({ error: "not_found" });
     return;
+  }
+
+  // EAR Phase 1: registry row removal, same asTenant tx (flag-gated).
+  if (assetRegistryEnabled()) {
+    await deregisterAsset(orgId, "enterprise_entities", id);
   }
 
   // ECL R3: a deleted entity shrinks blast radii that referenced it. Same

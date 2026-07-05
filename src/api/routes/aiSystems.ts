@@ -20,8 +20,10 @@
  */
 
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
+import { registerAsset, deregisterAsset } from "../lib/assetRegistrar.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
@@ -106,34 +108,43 @@ router.post(
 
       let result;
       try {
-        result = await pg.query(
-          `
-          INSERT INTO ai_systems (
-            organization_id,
-            name,
-            use_case,
-            owner_user_id,
-            model_type,
-            data_classification,
-            deployment_status,
-            criticality,
-            risk_classification
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-          RETURNING ${AI_SYSTEM_SELECT}
-          `,
-          [
-            organizationId,
-            input.name,
-            input.use_case ?? null,
-            input.owner_user_id ?? (req as any).autoUserId ?? null,
-            input.model_type ?? null,
-            input.data_classification ?? null,
-            input.deployment_status ?? null,
-            input.criticality ?? null,
-            input.risk_classification ?? null
-          ]
-        );
+        // withTenant: single tx so the EAR registry upsert (flag-gated, dark
+        // by default) is atomic with the INSERT. No behavior change while
+        // SECURELOGIC_ASSET_REGISTRY_ENABLED is off.
+        result = await withTenant(organizationId, async () => {
+          const created = await pg.query(
+            `
+            INSERT INTO ai_systems (
+              organization_id,
+              name,
+              use_case,
+              owner_user_id,
+              model_type,
+              data_classification,
+              deployment_status,
+              criticality,
+              risk_classification
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING ${AI_SYSTEM_SELECT}
+            `,
+            [
+              organizationId,
+              input.name,
+              input.use_case ?? null,
+              input.owner_user_id ?? (req as any).autoUserId ?? null,
+              input.model_type ?? null,
+              input.data_classification ?? null,
+              input.deployment_status ?? null,
+              input.criticality ?? null,
+              input.risk_classification ?? null
+            ]
+          );
+          if (assetRegistryEnabled()) {
+            await registerAsset(organizationId, "ai_system", "ai_systems", (created.rows[0] as { id: string }).id);
+          }
+          return created;
+        });
       } catch (err: any) {
         if (err?.code === "23505") {
           res.status(409).json({
@@ -547,11 +558,19 @@ router.delete(
         return;
       }
 
-      const result = await pg.query(
-        `DELETE FROM ai_systems
-         WHERE id = $1 AND organization_id = $2`,
-        [aiSystemId, organizationId]
-      );
+      // withTenant: registry deregistration (flag-gated) is atomic with the
+      // DELETE. No behavior change while the EAR flag is off.
+      const result = await withTenant(organizationId, async () => {
+        const del = await pg.query(
+          `DELETE FROM ai_systems
+           WHERE id = $1 AND organization_id = $2`,
+          [aiSystemId, organizationId]
+        );
+        if ((del.rowCount ?? 0) > 0 && assetRegistryEnabled()) {
+          await deregisterAsset(organizationId, "ai_systems", aiSystemId);
+        }
+        return del;
+      });
 
       if ((result.rowCount ?? 0) === 0) {
         res.status(404).json({ error: "ai_system_not_found" });
