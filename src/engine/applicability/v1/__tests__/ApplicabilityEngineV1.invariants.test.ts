@@ -180,6 +180,46 @@ describe("ApplicabilityEngineV1 — blast radius", () => {
     expect(r.reasoning_steps.some((s) => s.rule_id === "R2_strong_match_no_reachability")).toBe(true);
   });
 
+  it("asset target with a graph_node alias roots the BFS at its backing node and reaches 'affected' with attribution intact", () => {
+    // EAR Phase 2 regression (caught in CI): the asset target's registry id
+    // is NOT a node in the neighborhood — its backing entity is. graph_node
+    // must seed the traversal while via_target keeps the asset identity.
+    const backingId = "77777777-7777-7777-7777-777777777777";
+    const assetId = "88888888-8888-8888-8888-888888888888";
+    const nb: GraphNeighborhood = {
+      root: { node_type: "enterprise_entity", node_id: backingId },
+      depth: 3,
+      nodes: [
+        { node_type: "enterprise_entity", node_id: backingId, depth: 0 },
+        { node_type: "enterprise_entity", node_id: "store-1", depth: 1 }
+      ],
+      edges: [
+        { from_type: "enterprise_entity", from_id: backingId, to_type: "enterprise_entity", to_id: "store-1", relationship_type: "stores_data_in", source: "enterprise_relationship" }
+      ]
+    };
+    const r = ApplicabilityEngineV1.assess({
+      signalId: "sig-alias",
+      candidates: [candidate({
+        target_type: "asset",
+        target_id: assetId,
+        match_score: 100,
+        asset_type: "application",
+        graph_node: { node_type: "enterprise_entity", node_id: backingId }
+      })],
+      neighborhood: nb
+    });
+    expect(r.decision).toBe("affected");
+    expect(r.reasoning_steps.some((s) => s.rule_id === "R1_strong_match_reachable")).toBe(true);
+    expect(r.affected_entities).toEqual([
+      expect.objectContaining({
+        node_type: "enterprise_entity",
+        node_id: "store-1",
+        via_target_type: "asset",
+        via_target_id: assetId
+      })
+    ]);
+  });
+
   it("asset targets consult the registry spec: graph-representable asset types require reachability, non-graph ones don't", () => {
     // application → graphRepresentable=true → no reachability ⇒ R2.
     const app = ApplicabilityEngineV1.assess({

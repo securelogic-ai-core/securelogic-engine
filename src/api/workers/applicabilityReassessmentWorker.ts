@@ -307,7 +307,9 @@ async function reassessItem(
   let neighborhood: GraphNeighborhood | undefined;
   if (isGraphRepresentableTarget(item.target_type, candidate.asset_type ?? null)) {
     if (item.target_type === "asset") {
-      // Seed at the backing node (see BACKING_KIND_NODE_TYPE).
+      // Seed at the backing node (see BACKING_KIND_NODE_TYPE), and hand the
+      // engine the same graph identity so its BFS roots where the org's
+      // edges actually are (candidate.graph_node).
       const backing = await pg.query(
         `SELECT backing_kind, backing_id FROM assets WHERE id = $1 AND organization_id = $2`,
         [item.target_id, orgId]
@@ -315,6 +317,7 @@ async function reassessItem(
       const b = backing.rows[0] as { backing_kind: string; backing_id: string } | undefined;
       const nodeType = b ? BACKING_KIND_NODE_TYPE[b.backing_kind] : undefined;
       if (b && nodeType) {
+        candidate.graph_node = { node_type: nodeType, node_id: b.backing_id };
         neighborhood = await resolveNeighborhood(orgId, nodeType, b.backing_id, DEFAULT_DEPTH);
       }
     } else {

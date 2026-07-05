@@ -1,3 +1,4 @@
+
 -- Migration: phase2_asset_targets
 -- Package: Enterprise Asset Registry — Phase 2 (generalize the chokepoints)
 --

@@ -71,6 +71,12 @@ export interface MatcherCandidate {
    * and absent for quartet targets — pre-Phase-2 inputs are unchanged. */
   asset_type?: string | null;
   asset_id?: string | null;
+  /** EAR Phase 2 — traversal-seed alias. Registry ('asset') targets exist in
+   * the org graph as their BACKING node (e.g. enterprise_entity), so the
+   * caller passes that node here and the blast-radius BFS roots at it, while
+   * via_target attribution keeps the ('asset', target_id) identity. Absent →
+   * the target itself is the graph node (quartet behavior, unchanged). */
+  graph_node?: { node_type: string; node_id: string } | null;
 }
 
 /**
