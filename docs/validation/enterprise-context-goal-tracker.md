@@ -16,7 +16,8 @@ per the goal.
 
 Last updated: 2026-07-05 (**AUDIT CORRECTION** — the previous "ALL 1–11 DONE" header was
 over-optimistic; re-verified against the original goal's per-item DONE-criteria after the
-`goal.md` text was recovered). **DONE: 1, 2, 3, 4, 9, 10, 11. PARTIAL: 5, 6, 7, 8.** Nothing
+`goal.md` text was recovered). **DONE: 1, 2, 3, 4, 5 (R2 dispatcher, 2026-07-05), 9, 10, 11.
+PARTIAL: 6, 7, 8.** Nothing
 is BLOCKED-ON-SIMMEE (GATE A ruled; GATE B is a standing prohibition, not a blocker).
 
 **Why the correction (verified by importer trace across `origin/develop`):** the entire ECL
@@ -41,10 +42,11 @@ and `reassessment` have no route/worker importer at all*. So:
   by the pure fn, so Item 3 stays DONE, but the live-write path it implies is Item 6's PARTIAL work.
 
 Everything remains DARK (`SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED = false`, engine + app),
-`main` untouched, GATE B intact. **Remaining ENGINEERING work (not operator/ledger):** S6
-dispatcher (R2), S7 worker + enqueue (R3), applicability/evidence read routes (R4) + views
-(R5), exec-dashboard stats endpoint + UI (R6), 7 connector adapters (R7). Operator-only items
-stay in the ledger (L-2/L-4/L-5.x/L-6/L-8).
+`main` untouched, GATE B intact. **Remaining ENGINEERING work (not operator/ledger):**
+S7 worker + enqueue (R3), applicability/evidence read routes (R4) + views
+(R5), exec-dashboard stats endpoint + UI (R6), 7 connector adapters (R7). ~~S6 dispatcher
+(R2)~~ — delivered (Item 5 DONE). Operator-only items stay in the ledger
+(L-2/L-4/L-5.x/L-6/L-8/L-9).
 
 ---
 
@@ -56,7 +58,7 @@ stay in the ledger (L-2/L-4/L-5.x/L-6/L-8).
 | 2 | Slice 3 — CSV/spreadsheet import (assets, vendors, apps, AI systems, data stores) | **DONE** | #467 (squash `17627ac7`) + prereq dep-fix #468 (squash `205c39ef`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared in render.yaml, off) | L-3 |
 | 3 | Slice 4 — Applicability Engine (deterministic decision fn) | **DONE** — 4a pure fn (`2a9e4b96`) + 4b WORM persistence (`e4b63b5e`) + 4c writer (#471 `cb15c788`). DONE-bar ("reproducible outputs, test-locked") met by the pure fn + golden suite. NOTE: the 4c writer has **no live caller** — the enqueue/re-run path that invokes it is Item 6's worker (R3), still PARTIAL. (Corrected: the prior "4d delivered under Item 6" claim was false.) | #469 (4a); #470 (4b); #471 (4c, squash `cb15c788`) | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared, off) | — |
 | 4 | Slice 5 — Explainability surface | **DONE** — pure render layer over stored decision | #472 (squash `cb1c2be2`); branch deleted | none (pure, inert — no callers) | — |
-| 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | **PARTIAL** — pure recommendation-derivation core + idempotency merged (`b82bd4cb`), **zero live callers**. Remaining (R2): migration `signal_match_suggestions.assessment_id` (+RLS/classification); dispatcher that writes suggestion + enqueues action(s) via the action engine + audits atomically, notifies via `createAlertBatcher` OUTSIDE the tx; idempotent on the recommendation key; flag-gated; idempotency tests. | core #473 (squash `b82bd4cb`) | dispatcher will read the ECL flag at its call site | — |
+| 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | **DONE** — pure core (`b82bd4cb`) + **R2 live dispatcher** (`applicabilityWorkflowDispatcher.ts` + migration `20260730`): writes the pending suggestion (with `assessment_id`, AD-8a), drafts the finding + enqueues actions via the GAP-3 ON-CONFLICT pattern (AD-9: risk REVIEW action only, never a risk write), returns AlertItems for `createAlertBatcher` OUTSIDE the tx; idempotent on the recommendation key via (org, assessment, marker) partial unique indexes; 11 unit + 4 real-PG idempotency/RLS tests. Live invocation = Item 6's R3 worker. | core #473 (squash `b82bd4cb`); dispatcher R2 PR (see git log) | `SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED` (declared `"false"`, 4 engine blocks) AND ECL flag, both at the call site | L-9 |
 | 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | **PARTIAL** — pure `planReassessment`/`detectDrift` core + tests merged (`33f4a929`), **zero live callers**; nothing re-runs the engine. DONE-bar ("changed signal re-evaluates linked entities in tests") NOT met. Remaining (R3): worker that on a ChangeEvent runs planReassessment → re-runs `ApplicabilityEngineV1` → persists via the 4c writer → `detectDrift` → derives S6 recs → dispatches (R2); enqueue trigger; integration test. | core #474 (squash `33f4a929`) | worker will read the ECL flag at its call site | — |
 | 7 | UI/CX — screens, entity detail, graph view, applicability view, evidence view, exec dashboard | **PARTIAL** — DONE: management screens, entity detail, graph view, CSV import, fail-closed nav (7A.0–7A.4). **Missing (named deliverables): applicability view, evidence view, exec dashboard.** Remaining: R4 (read routes) → R5 (applicability + evidence views) → R6 (exec dashboard + stats endpoint). | 7A.0 #480 `4b566bad`; 7A.1 #481 `228f8f11`; 7A.2 #484 `d3ccad1e`; 7A.3 #485 `cca10015`; 7A.4 #486 `15ffac4d` | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` off on both switches (engine 404 + app nav hidden) | L-4 (partial), L-8 |
 | 8 | Connectors (ServiceNow/Defender/CrowdStrike/Wiz/Tenable/Qualys/Rapid7/cloud/identity) — dark, mock-tested | **PARTIAL** — framework + registry (all 9 registered) + **ServiceNow reference adapter (1 of 8) DONE** with mock tests (`d0351c1c`). The other 7 throw `connector_not_implemented` (config schema only). Remaining (R7): real `normalize()`/`fetch()` + mock-backed tests for Defender, CrowdStrike, Wiz, Tenable, Qualys, Rapid7, cloud inventory, identity provider. | framework + ServiceNow #475 (squash `d0351c1c`) | per-connector flags at call site | L-5.1 done-adapter; L-5.2..L-5.9 credentials (adapters are engineering, not ledger) |
@@ -214,6 +216,31 @@ stay in the ledger (L-2/L-4/L-5.x/L-6/L-8).
 - **INERT:** pure core, no callers. The live dispatcher (write suggestion via `signal_match_suggestions` + `assessment_id`,
   enqueue action via the GAP-3 `actions` pattern, notify via `createAlertBatcher` — notifications OUTSIDE the tx, audit atomic)
   is a later flag-gated adapter slice, mirroring 4a-core→4c-writer.
+
+### R2 — live dispatcher (as-built, 2026-07-05)
+- **`src/api/lib/applicabilityWorkflowDispatcher.ts`** — `dispatchApplicabilityWorkflow(db, {assessmentId, stored, policy?})`,
+  called INSIDE `withTenant(orgId, …)` (injectable Queryable, the 4c-writer shape). Applies the pure S6 recommendations:
+  finding_draft → `findings` (source_type `applicability_assessment`); risk_review/evidence_request/human_review →
+  `actions` (markers `auto_applicability_risk_review` / `auto_applicability_evidence_request` / `auto_applicability_human_review`,
+  GAP-3 ON-CONFLICT pattern — AD-9: a risk REVIEW action only, never a risks/lifecycle write); notification recs →
+  returned `AlertItem[]` the caller add()s to `createAlertBatcher` and flush()es AFTER commit (outside-tx convention;
+  N identity notifications coalesce to ONE finding-anchored item; only High severity alerts — the engine never asserts Critical).
+  Also writes/refreshes the AD-8a human-review projection: ONE pending `signal_match_suggestions` row per (org, signal, target)
+  carrying `assessment_id` (`DO UPDATE` re-points the pending row at the newest decision; terminal rows spawn a fresh pending row).
+- **Migration `20260730_applicability_workflow_dispatch.sql`** — `signal_match_suggestions.assessment_id` (nullable FK → WORM
+  header; no ON DELETE action needed, assessments are undeletable) + reverse-lookup partial index; findings/actions
+  `source_type` CHECKs += `applicability_assessment`; partial unique dedup indexes: one generated finding per (org, assessment),
+  one action per (org, assessment, marker). These indexes ARE the durable at-most-once ledger for the recommendation key
+  (content_hash ↔ assessment row is 1:1); notification at-most-once = the alert-send ledger (per user+finding), matcher-identical.
+- **Atomicity:** suggestion + finding + actions in ONE tenant tx (riskLifecycle convention: domain record in-tx,
+  `writeAuditEvent` mirror fired by the caller AFTER commit — the Item-1 F1 lesson).
+- **Flags:** call sites must check `enterpriseContextEnabled()` AND new `applicabilityWorkflowEnabled()`
+  (`SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED === "true"`, declared `"false"` in the 4 engine render.yaml blocks). Prod flip = L-9.
+- **Tests:** 11 unit (flag, mapping, decision coverage, AD-9 guard, identity-coalescing, conflict/skip paths) +
+  4 isolation on real Postgres (committed tenant-tx dispatch; re-dispatch no-op with counts proven unchanged; reassessment
+  re-points suggestion + generates new work; cross-org dispatch rejected by RLS WITH CHECK with zero leakage).
+- **Docs:** CANONICAL source-type lists (+ stale `cyber_signal`/`obligation` entries reconciled), `dataClassification.ts`
+  suggestion entry notes `assessment_id`. **No live caller yet — R3's worker is the live path; module stays inert.**
 
 ## Slice 7 — Signal linkage core (as-built)
 - **`src/engine/applicability/v1/reassessment.ts`** — two pure fns:

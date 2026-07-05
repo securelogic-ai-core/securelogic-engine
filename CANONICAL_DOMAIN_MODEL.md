@@ -122,9 +122,11 @@ DB-canonical (findings.source_type CHECK constraint — authoritative):
 - `ai_governance_review` — AI governance assessment workflow (mutable, `ai_governance_assessments`)
 - `obligation_review` — obligation assessment workflow (`obligation_assessments`)
 - `dependency_review` — dependency assessment workflow (mutable, `dependency_assessments`)
+- `cyber_signal` — findings auto-created by the cyber-signal ingestion matcher (distinct from `signal`, the Intelligence Brief pipeline)
 - `signal` — signal-sourced findings
 - `manual` — manually entered findings
 - `risk` — posture signals derived from open risk register entries
+- `applicability_assessment` — findings auto-drafted by the ECL applicability workflow dispatcher (R2/Slice 6, migration `20260730`); `source_id` = `applicability_assessments.id`, one generated finding per assessment (partial unique index)
 
 ### Source Type (actions)
 - `assessment`
@@ -132,6 +134,8 @@ DB-canonical (findings.source_type CHECK constraint — authoritative):
 - `signal`
 - `manual`
 - `risk`
+- `obligation` — GAP-3 increment 3 (`20260628`); `source_id` = obligation UUID
+- `applicability_assessment` — ECL applicability workflow dispatcher (R2/Slice 6, `20260730`); `source_id` = `applicability_assessments.id`; generated markers `auto_applicability_risk_review` / `auto_applicability_evidence_request` / `auto_applicability_human_review`, each with its own partial unique dedup index
 
 ### Domain (non-exhaustive — extend as needed)
 - `Access Management`
