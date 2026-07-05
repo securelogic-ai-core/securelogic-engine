@@ -5,7 +5,10 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { validateEnterpriseRelationshipCreate } from "../lib/enterpriseRelationshipValidation.js";
+import {
+  validateEnterpriseRelationshipCreate,
+  RELATIONSHIP_TYPES
+} from "../lib/enterpriseRelationshipValidation.js";
 
 const A = "11111111-1111-1111-1111-111111111111";
 const B = "22222222-2222-2222-2222-222222222222";
@@ -69,6 +72,49 @@ describe("validateEnterpriseRelationshipCreate", () => {
     // same id but different type is allowed (different nodes)
     const ok = validateEnterpriseRelationshipCreate({ from_type: "vendor", from_id: A, to_type: "ai_system", to_id: A, relationship_type: "depends_on" });
     expect("input" in ok).toBe(true);
+  });
+
+  it("accepts every EAR-AD-4 infrastructure relationship type between existing node types", () => {
+    // EAR-AD-4 (asset registry graph substrate expansion): the six infrastructure
+    // edges are live vocabulary immediately — an application entity can be
+    // hosted_on an asset entity, stores_data_in a data-store entity, etc.
+    const infra = [
+      "hosted_on",
+      "connects_to",
+      "stores_data_in",
+      "authenticates_via",
+      "exposed_via",
+      "managed_by"
+    ] as const;
+    for (const relationship_type of infra) {
+      expect(RELATIONSHIP_TYPES).toContain(relationship_type);
+      const r = validateEnterpriseRelationshipCreate({
+        from_type: "enterprise_entity",
+        from_id: A,
+        to_type: "enterprise_entity",
+        to_id: B,
+        relationship_type
+      });
+      expect("input" in r, `${relationship_type} should validate`).toBe(true);
+    }
+    // Legacy ECL vocabulary is untouched.
+    for (const relationship_type of ["depends_on", "runs_on", "owned_by", "part_of", "serves", "processes_data_in"]) {
+      const r = validateEnterpriseRelationshipCreate({
+        from_type: "enterprise_entity", from_id: A, to_type: "vendor", to_id: B, relationship_type
+      });
+      expect("input" in r, `${relationship_type} should still validate`).toBe(true);
+    }
+  });
+
+  it("rejects 'asset' endpoints at the route layer while the registry is schema-dark", () => {
+    // The DB CHECK admits 'asset' (20260801 migration), but the route gate must
+    // NOT until the Tier-0 `assets` table exists for the same-org pre-flight.
+    expect(
+      validateEnterpriseRelationshipCreate({ from_type: "asset", from_id: A, to_type: "vendor", to_id: B, relationship_type: "managed_by" })
+    ).toMatchObject({ error: "from_type_invalid" });
+    expect(
+      validateEnterpriseRelationshipCreate({ from_type: "enterprise_entity", from_id: A, to_type: "asset", to_id: B, relationship_type: "hosted_on" })
+    ).toMatchObject({ error: "to_type_invalid" });
   });
 
   it("bounds the note", () => {

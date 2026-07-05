@@ -61,6 +61,13 @@ export const RELATIONSHIP_TYPES = [
   "part_of",
   "serves",
   "processes_data_in",
+  // EAR-AD-4 infrastructure vocabulary (asset registry graph substrate expansion).
+  "hosted_on",
+  "connects_to",
+  "stores_data_in",
+  "authenticates_via",
+  "exposed_via",
+  "managed_by",
 ] as const;
 export type RelationshipType = (typeof RELATIONSHIP_TYPES)[number];
 
