@@ -82,6 +82,13 @@ export default async function EnterpriseContextPage({
         {result.ok && (
           <div className="flex items-center gap-3 flex-shrink-0">
             <Link
+              href="/enterprise-context/dashboard"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium border transition-colors hover:opacity-80"
+              style={{ borderColor: "#1e293b", color: "#94a3b8" }}
+            >
+              Dashboard
+            </Link>
+            <Link
               href="/enterprise-context/applicability"
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium border transition-colors hover:opacity-80"
               style={{ borderColor: "#1e293b", color: "#94a3b8" }}

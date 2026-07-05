@@ -433,6 +433,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "platform"
     },
     {
+      "path": "/enterprise-context/dashboard",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
       "path": "/enterprise-context/entities/[id]",
       "dynamic": true,
       "navLabel": null,
