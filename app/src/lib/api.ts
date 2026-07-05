@@ -4826,7 +4826,27 @@ export interface EnterpriseEntityCreateInput {
   };
 }
 
-export type EnterpriseEntityUpdateInput = Partial<Omit<EnterpriseEntityCreateInput, "entity_type">>;
+/**
+ * PATCH is partial with per-key replace semantics; a supplied key overwrites the column.
+ * Optional string/enum fields accept explicit null to CLEAR the stored value (the engine
+ * validator maps null → NULL; empty-string clears strings but is invalid for enums).
+ * A supplied `data_store` object replaces ALL four attributes (omitted attrs become null).
+ */
+export interface EnterpriseEntityUpdateInput {
+  name?: string;
+  description?: string | null;
+  owner_user_id?: string | null;
+  status?: string;
+  criticality?: string | null;
+  confidence?: string | null;
+  external_ref?: string | null;
+  data_store?: {
+    data_classification?: string | null;
+    residency_region?: string | null;
+    retention_policy?: string | null;
+    encryption_at_rest?: boolean | null;
+  };
+}
 
 export async function createEnterpriseEntity(
   input: EnterpriseEntityCreateInput,
