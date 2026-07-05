@@ -78,6 +78,16 @@ Billing note:
 > `docs/validation/enterprise-context-goal-tracker.md`; operator actions:
 > `docs/validation/enterprise-context-operator-ledger.md`. Priority 4's own B/C/D shipped-record
 > reconciliation is tracked separately (PR #461) and is not restated here.
+>
+> **Completion update (2026-07-05):** Items 7 and 11 are now also DONE — the ECL goal's
+> **build scope is complete (Items 1–11 all merged to `develop`, all dark)**. Item 7 (Tier-1
+> UI/CX) shipped as five slices: #480 CI lane, #481 api client, #484 entity screens, #485
+> relationships + graph view, #486 CSV import UI + fail-closed nav (`SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED`
+> now also declared `false` on `securelogic-app` — nav is the presentation half of the
+> two-switch model). Nothing is enabled anywhere; prod enablement remains **GATE B**
+> (runbook `docs/runbooks/enterprise-context-enable-rollback.md`). Recorded follow-ups:
+> engine stats/rollup endpoint (then dashboards), Tier-2 read routes + surfaces, S6/S7 live
+> adapters, remaining connector adapters, L-6 true-volume load run.
 
 > **History (preserved):** this package was **BLOCKED (set 2026-06-25, operator-approved)** pending three technical prerequisites and a separate build-scope authorization. It was **unblocked on 2026-06-26** when all three prerequisites (#5/#6/#7) were satisfied **and** the operator authorized the build scope (the §10 decisions D1–D7 were operator-approved, PR #370; the implementation plan was accepted, PR #369). The prior BLOCKED decision is retained below as dated record, not erased.
 

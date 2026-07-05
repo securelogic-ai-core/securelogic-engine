@@ -26,6 +26,14 @@ to see any ECL behavior:
    ruled under **GATE A** (2026-07-04): available to **Platform Professional + Enterprise**;
    Platform default on; per-org override via the column.
 
+There is additionally a **presentation-only third switch** (Item 7): the same
+`SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` var on the **app** service (`securelogic-app`,
+declared `false` in render.yaml; staging app is dashboard-only — ledger **L-8**) reveals the
+"Context" header item. It is fail-closed and gates *navigation visibility only* — with it on
+and the engine flag off, the screens render their "not available" state (every engine route
+404s); with it off and the engine on, the pages are reachable by URL but unlisted. Full
+enablement flips engine + app together.
+
 Per-org resource ceilings (independent of `max_monitored_entities`):
 - `organizations.max_enterprise_entities` — entity cap (migration `20260717`; GATE-A default **10,000**).
 - `organizations.max_enterprise_edges` — relationship-edge cap (migration `20260728`; GATE-A default **50,000**; over-cap insert returns **409**).
@@ -40,7 +48,7 @@ Per-org resource ceilings (independent of `max_monitored_entities`):
 | H1 — edge cap | Bounded edge count per org (409 over-cap) | **Shipped** (Slice 9) |
 | H2 — resolver load | Recursive graph resolver validated at enterprise fan-out | **Harness shipped** (Slice 10, `d3ad01ed`). **A true 10⁴–10⁵-edge volume run is still operator work — ledger L-6.** The 50k edge cap alone does *not* bound resolver latency (cost is path enumeration, super-linear at high fan-out); gate any cap increase on a per-org **p95 latency monitor**, and build the **materialized-adjacency fallback** before enabling any large-fan-out org (trigger ≈ p95 > 250 ms or > 10⁴ edges). See `docs/validation/enterprise-context-scale-findings.md`. |
 | Staging soak | ECL enabled on a staging org, green for the soak window | **Pending** (operator) |
-| UI (Item 7) | Context screens / graph view / dashboards | **Not built** — enabling before Item 7 exposes API + engine only, no UI |
+| UI (Item 7) | Context screens / graph view / import / nav | **Shipped dark** (7A.0–7A.4: #480 `4b566bad`, #481 `228f8f11`, #484 `d3ccad1e`, #485 `cca10015`, #486 `15ffac4d`). Rollup dashboards deferred pending an engine stats endpoint (tracker Item 7 note) |
 
 ---
 
