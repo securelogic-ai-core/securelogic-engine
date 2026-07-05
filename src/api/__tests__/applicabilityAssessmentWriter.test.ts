@@ -48,6 +48,11 @@ function mockDb(tailRows: Array<Record<string, unknown>>) {
     async query(text: string, params: unknown[] = []) {
       calls.push({ text, params });
       if (/pg_advisory_xact_lock/.test(text)) return { rows: [], rowCount: 0 };
+      // R4 canonicalization pass — echo the input (the test evidence is already
+      // canonical), so hand-computed expected hashes stay valid.
+      if (/\(\$1::jsonb\)::text/.test(text)) {
+        return { rows: [{ v: String(params[0]) }], rowCount: 1 };
+      }
       if (/SELECT content_hash FROM applicability_assessments/.test(text)) {
         return { rows: tailRows, rowCount: tailRows.length };
       }
