@@ -88,11 +88,11 @@ describe("connector registry", () => {
     expect(ids).toEqual([...REQUIRED_CONNECTOR_IDS].sort());
   });
 
-  it("ServiceNow is the reference adapter; the rest are planned", () => {
+  it("ServiceNow is the reference adapter; the rest are implemented (R7 — none planned)", () => {
     expect(getConnector("servicenow_cmdb")!.status).toBe("reference");
     for (const id of REQUIRED_CONNECTOR_IDS) {
       if (id === "servicenow_cmdb") continue;
-      expect(getConnector(id)!.status).toBe("planned");
+      expect(getConnector(id)!.status).toBe("implemented");
     }
   });
 
@@ -100,9 +100,10 @@ describe("connector registry", () => {
     for (const c of listConnectors()) expect(c.configFields.length).toBeGreaterThan(0);
   });
 
-  it("planned adapters validate config but throw connector_not_implemented on normalize/fetch", () => {
-    const defender = getConnector("microsoft_defender")!;
-    expect("config" in defender.validateConfig({ tenant_id: "t", client_id: "c", client_secret: "s" })).toBe(true);
-    expect(() => defender.normalize({})).toThrow(/connector_not_implemented/);
+  it("no adapter throws connector_not_implemented on normalize anymore (R7)", () => {
+    for (const c of listConnectors()) {
+      // normalize is pure and must tolerate malformed input rather than throw.
+      expect(c.normalize({})).toEqual({ entities: [], relationships: [] });
+    }
   });
 });

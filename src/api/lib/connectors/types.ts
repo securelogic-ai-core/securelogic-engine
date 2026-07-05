@@ -60,9 +60,31 @@ export type ConfigValidationResult =
 /** Minimal injectable HTTP surface — a fake satisfies it in tests; prod uses the SSRF-safe client. */
 export interface HttpClient {
   getJson(url: string, headers: Record<string, string>): Promise<unknown>;
+  /**
+   * POST application/x-www-form-urlencoded — the OAuth2 client-credentials leg
+   * (Defender, Falcon, Wiz). Optional so pre-R7 fakes stay valid; adapters that
+   * need it throw a typed error when the injected client lacks it.
+   */
+  postForm?(url: string, headers: Record<string, string>, form: Record<string, string>): Promise<unknown>;
+  /** POST application/json (GraphQL-style APIs — Wiz). Optional, same contract as postForm. */
+  postJson?(url: string, headers: Record<string, string>, body: unknown): Promise<unknown>;
 }
 
-export type ConnectorStatus = "reference" | "planned";
+/** Typed guard for adapters that need the optional POST legs. */
+export function requirePostForm(http: HttpClient, connectorId: string): NonNullable<HttpClient["postForm"]> {
+  if (!http.postForm) throw new Error(`connector_http_client_missing_post_form: ${connectorId}`);
+  return http.postForm.bind(http);
+}
+export function requirePostJson(http: HttpClient, connectorId: string): NonNullable<HttpClient["postJson"]> {
+  if (!http.postJson) throw new Error(`connector_http_client_missing_post_json: ${connectorId}`);
+  return http.postJson.bind(http);
+}
+
+/**
+ * 'reference' = the canonical fully-implemented adapter the others mirror;
+ * 'implemented' = fetch+normalize implemented (R7); 'planned' = config schema only.
+ */
+export type ConnectorStatus = "reference" | "implemented" | "planned";
 
 export interface ConnectorAdapter {
   id: string;

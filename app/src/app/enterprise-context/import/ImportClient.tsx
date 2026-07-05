@@ -24,6 +24,7 @@ import { entityTypeLabel, titleFromSnake } from "@/lib/enterpriseContextFormat";
 const COLUMNS_BY_TYPE: Record<ImportEntityType, string[]> = {
   asset: ["name*", "description", "status", "criticality", "confidence", "external_ref"],
   application: ["name*", "description", "status", "criticality", "confidence", "external_ref"],
+  identity: ["name*", "description", "status", "criticality", "confidence", "external_ref"],
   data_store: [
     "name*", "description", "status", "criticality", "confidence", "external_ref",
     "data_classification", "residency_region", "retention_policy", "encryption_at_rest",
