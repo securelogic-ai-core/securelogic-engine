@@ -217,6 +217,35 @@ New heavy types follow the ECL **S0 rule** (load-bearing attributes are typed co
 child, never JSON) — precedent cost = 1 detail table + 1 RLS migration each, exactly like
 `enterprise_data_stores`.
 
+### 2.4 Graph substrate for asset relationships — RATIFIED
+
+> **EAR-AD-4 — Asset/infrastructure edges live in `enterprise_relationships`; there is no
+> `enterprise_asset_relationships` table.** (Ratified 2026-07-05 — "Option 1" of the two
+> candidate designs; shipped in `20260801_enterprise_relationships_asset_expansion.sql`.)
+>
+> - **Option 1 (CHOSEN) — expand the existing substrate additively.** Widen the endpoint
+>   CHECKs to admit `asset` (Tier-0 registry endpoints) and extend `relationship_type` with
+>   the infrastructure vocabulary: `hosted_on`, `connects_to`, `stores_data_in`,
+>   `authenticates_via`, `exposed_via`, `managed_by`. The shipped recursive resolver
+>   (`enterpriseGraphResolver.ts`) and the AD-13 typed-edge union are **vocabulary-agnostic**
+>   and are reused unchanged for traversal/blast-radius.
+> - **Option 2 (REJECTED) — a new `enterprise_asset_relationships` table.** Rejected because it
+>   would split the org's graph into two edge stores, force a second UNION arm in the resolver
+>   plus a duplicate RLS/cap/audit/validation surface, and contradict §3.1's own ruling that
+>   `enterprise_relationships` is *"already the general edge substrate"* (REUSE). ECL AD-3
+>   exists precisely so new relationship kinds are enum growth, not new tables.
+>
+> **Sequencing note:** the six infrastructure `relationship_type` values are live vocabulary
+> immediately (usable between existing node types — application/data-store/asset/identity
+> entities, vendors, ai_systems). The `asset` endpoint type is **schema-dark**: the DB CHECK
+> admits it, but the route layer's `NODE_TYPES` / `NODE_TYPE_TABLE` gate
+> (`enterpriseRelationshipValidation.ts`) does not, until the Phase-1 `assets` table exists for
+> the two-endpoint same-org pre-flight. Phase 1 flips it on route-side with **zero** further
+> edge-table migration. Everything is additive: no ECL context edge, legacy endpoint type, or
+> legacy relationship_type changes behavior; RLS, the live-edge unique index, the no-self-edge
+> CHECK, the per-org edge cap, and the `dataClassification` entry apply to the new vocabulary
+> unchanged.
+
 ---
 
 ## 3. Reuse / generalize / rewrite map
@@ -232,7 +261,7 @@ Legend: **REUSE** = unchanged; **GENERALIZE** = small additive change to widen s
 | `enterprise_entities` (+ `enterprise_data_stores`) | **GENERALIZE** | Becomes the generic Tier-1 backing for lightweight types; add `asset_id`; extend `entity_type` enum for `business_process` when needed. |
 | `signal_match_suggestions`, `applicability_assessments`, `applicability_affected_entities` | **GENERALIZE** | Add nullable `asset_id` alongside `(target_type,target_id)`; stop growing the quartet enums (EAR-AD-3). |
 | `signal_*_links` (4 tables) | **WRAP** | Keep as authoritative typed edges (ECL AD-13); expose a `signal_asset_links` **view** unifying them by `asset_id`. New links can target `asset_id` generically. |
-| `enterprise_relationships` | **REUSE** | Already the general edge substrate; its endpoints resolve to `asset_id` via the registry. |
+| `enterprise_relationships` | **REUSE (expanded — EAR-AD-4, SHIPPED)** | Already the general edge substrate; endpoint CHECKs widened to admit `asset`, infrastructure `relationship_type` vocabulary added (`20260801` migration). No new edge table. Endpoints resolve to `asset_id` via the registry. |
 | `findings`, `actions`, `evidence` | **REUSE** | Their `(source_type,source_id)` already spans assessments/risks/signals; add asset-sourced values as additive enum entries (precedent: R2 added `applicability_assessment`). |
 | `risks`, `risk_treatments`, `risk_*_links`, lifecycle/approvals | **REUSE** | Risk stays its own object (a risk is *about* assets, not an asset). Link risks to `asset_id`. |
 | `dependencies`, `ai_system_vendor_dependencies` | **WRAP** | Typed edges stay authoritative (AD-13); optionally surface as relationships keyed by `asset_id`. `dependency_type='api'` is the seed for the `api` asset type. |

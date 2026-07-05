@@ -144,3 +144,117 @@ describe("A04-G1 — enterprise_relationships RLS enforcement", () => {
     expect(orgs).toContain(seed.orgB.id);
   });
 });
+
+/**
+ * EAR-AD-4 (20260801_enterprise_relationships_asset_expansion.sql): the graph
+ * substrate expansion is ADDITIVE — the widened CHECKs admit 'asset' endpoints
+ * and the six infrastructure relationship types, legacy ECL vocabulary still
+ * inserts, unknown values are still rejected, and RLS applies to the new
+ * vocabulary unchanged (same table, same policy).
+ */
+describe("EAR-AD-4 — enterprise_relationships asset/infrastructure vocabulary", () => {
+  const INFRA_TYPES = [
+    "hosted_on", "connects_to", "stores_data_in",
+    "authenticates_via", "exposed_via", "managed_by"
+  ];
+
+  const insertSql = (fromType: string, toType: string) =>
+    `INSERT INTO enterprise_relationships
+       (organization_id, from_type, from_id, to_type, to_id, relationship_type)
+     VALUES ($1, '${fromType}', $2, '${toType}', $3, $4) RETURNING id`;
+
+  it("accepts every new infrastructure relationship_type (legacy endpoints)", async () => {
+    for (const t of INFRA_TYPES) {
+      const r = await pool.query(insertSql("enterprise_entity", "enterprise_entity"), [
+        seed.orgA.id, crypto.randomUUID(), crypto.randomUUID(), t
+      ]);
+      expect(r.rowCount, `${t} should insert`).toBe(1);
+    }
+  });
+
+  it("accepts 'asset' as BOTH endpoint types (schema-dark until registry Phase 1)", async () => {
+    const from = await pool.query(insertSql("asset", "vendor"), [
+      seed.orgA.id, crypto.randomUUID(), crypto.randomUUID(), "managed_by"
+    ]);
+    expect(from.rowCount).toBe(1);
+    const to = await pool.query(insertSql("enterprise_entity", "asset"), [
+      seed.orgA.id, crypto.randomUUID(), crypto.randomUUID(), "hosted_on"
+    ]);
+    expect(to.rowCount).toBe(1);
+  });
+
+  it("legacy ECL vocabulary still inserts (no behavior change)", async () => {
+    const r = await pool.query(insertSql("enterprise_entity", "vendor"), [
+      seed.orgA.id, crypto.randomUUID(), crypto.randomUUID(), "depends_on"
+    ]);
+    expect(r.rowCount).toBe(1);
+  });
+
+  it("still rejects unknown node types and relationship types (CHECKs intact)", async () => {
+    await expect(
+      pool.query(insertSql("cloud_resource", "vendor"), [
+        seed.orgA.id, crypto.randomUUID(), crypto.randomUUID(), "hosted_on"
+      ])
+    ).rejects.toThrow(/from_type_chk/);
+    await expect(
+      pool.query(insertSql("enterprise_entity", "spaceship"), [
+        seed.orgA.id, crypto.randomUUID(), crypto.randomUUID(), "hosted_on"
+      ])
+    ).rejects.toThrow(/to_type_chk/);
+    await expect(
+      pool.query(insertSql("enterprise_entity", "vendor"), [
+        seed.orgA.id, crypto.randomUUID(), crypto.randomUUID(), "loves"
+      ])
+    ).rejects.toThrow(/type_chk/);
+  });
+
+  it("RLS WITH CHECK applies to the new vocabulary (cross-org insert rejected)", async () => {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL ROLE app_request");
+      await client.query("SELECT set_config('app.current_org_id', $1, true)", [seed.orgA.id]);
+      await expect(
+        client.query(insertSql("asset", "asset"), [
+          seed.orgB.id, crypto.randomUUID(), crypto.randomUUID(), "connects_to"
+        ])
+      ).rejects.toThrow(/row-level security/i);
+    } finally {
+      await client.query("ROLLBACK").catch(() => {});
+      client.release();
+    }
+  });
+
+  it("the shipped recursive resolver traverses new-vocabulary edges unchanged", async () => {
+    // The resolver SQL is vocabulary-agnostic; prove an asset-endpoint +
+    // infrastructure-type chain is reachable with the mirrored node query
+    // (same CTE as enterpriseGraphResolver.ts / enterpriseGraphResolverRls.test.ts).
+    const n1 = crypto.randomUUID(), n2 = crypto.randomUUID(), n3 = crypto.randomUUID();
+    await pool.query(insertSql("enterprise_entity", "asset"), [seed.orgA.id, n1, n2, "hosted_on"]);
+    await pool.query(insertSql("asset", "vendor"), [seed.orgA.id, n2, n3, "managed_by"]);
+
+    const res = await pool.query(
+      `WITH RECURSIVE unified_edges AS (
+         SELECT from_type, from_id, to_type, to_id FROM enterprise_relationships
+          WHERE organization_id = $1 AND deleted_at IS NULL
+       ),
+       reachable AS (
+         SELECT $2::text AS node_type, $3::uuid AS node_id, 0 AS depth,
+                ARRAY[$2 || ':' || ($3::uuid)::text] AS visited
+         UNION ALL
+         SELECT e.to_type, e.to_id, r.depth + 1,
+                r.visited || (e.to_type || ':' || (e.to_id)::text)
+           FROM reachable r
+           JOIN unified_edges e ON e.from_type = r.node_type AND e.from_id = r.node_id
+          WHERE r.depth < $4
+            AND NOT ((e.to_type || ':' || (e.to_id)::text) = ANY (r.visited))
+       )
+       SELECT node_type, node_id, MIN(depth)::int AS depth
+         FROM reachable GROUP BY node_type, node_id`,
+      [seed.orgA.id, "enterprise_entity", n1, 3]
+    );
+    const byId = new Map(res.rows.map((r) => [r.node_id, r]));
+    expect(byId.get(n2)).toMatchObject({ node_type: "asset", depth: 1 });
+    expect(byId.get(n3)).toMatchObject({ node_type: "vendor", depth: 2 });
+  });
+});
