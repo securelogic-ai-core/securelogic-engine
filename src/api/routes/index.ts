@@ -87,6 +87,7 @@ import enterpriseGraphRouter from "./enterpriseGraph.js";
 import enterpriseContextImportRouter from "./enterpriseContextImport.js";
 import applicabilityAssessmentsRouter from "./applicabilityAssessments.js";
 import enterpriseContextStatsRouter from "./enterpriseContextStats.js";
+import assetsRouter from "./assets.js";
 import templatesRouter from "./templates.js";
 import aiSystemVendorDependenciesRouter from "./aiSystemVendorDependencies.js";
 import riskScoringWeightsRouter from "./riskScoringWeights.js";
@@ -474,6 +475,10 @@ router.use("/api", riskApprovalsRouter);
   router.use("/api", enterpriseContextImportRouter);
   router.use("/api", applicabilityAssessmentsRouter);
   router.use("/api", enterpriseContextStatsRouter);
+  // Enterprise Asset Registry (Phase 0). Same unconditional-mount pattern; its
+  // OWN flag (SECURELOGIC_ASSET_REGISTRY_ENABLED, default off → 404 before
+  // auth) gates the surface in-router.
+  router.use("/api", assetsRouter);
   router.use("/api", templatesRouter);
   router.use("/api", aiSystemVendorDependenciesRouter);
   router.use("/api", riskScoringWeightsRouter);
