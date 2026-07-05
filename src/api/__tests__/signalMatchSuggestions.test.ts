@@ -1290,7 +1290,9 @@ describe("signalMatchSuggestions — list handler", () => {
     expect(sql).toMatch(/LEFT JOIN ai_systems\s+ai\s+ON s\.target_type = 'ai_system'/);
     expect(sql).toMatch(/LEFT JOIN controls\s+c\s+ON s\.target_type = 'control'/);
     expect(sql).toMatch(/LEFT JOIN obligations\s+o\s+ON s\.target_type = 'obligation'/);
-    expect(sql).toMatch(/COALESCE\(v\.name, ai\.name, c\.name, o\.title\) AS target_name/);
+    // EAR Phase 2: asset targets enrich through the registry view.
+    expect(sql).toMatch(/LEFT JOIN asset_registry_v ar ON s\.target_type = 'asset'/);
+    expect(sql).toMatch(/COALESCE\(v\.name, ai\.name, c\.name, o\.title, ar\.name\) AS target_name/);
   });
 
   it("returns target_name in the suggestion row when the JOIN resolves a vendor name", async () => {

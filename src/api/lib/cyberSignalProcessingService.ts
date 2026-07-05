@@ -60,6 +60,12 @@ import {
   MIN_MATCH_SCORE,
   SUGGESTION_CAP
 } from "./signalTargetMatching.js";
+import { ASSET_TYPE_SPECS } from "./assetRegistry.js";
+import { assetRegistryEnabled } from "./assetRegistryFeatureFlag.js";
+
+/** EAR Phase 2: cap on generic-asset-matcher suggestions per signal (canonical-
+ * exact only, so >1 means several same-named entities — cap defensively). */
+const ASSET_SUGGESTION_CAP = 10;
 import {
   fuzzyVendorMatchEnabled,
   vendorNameSimilarity,
@@ -338,12 +344,24 @@ export async function runMatcherForSignal(
         ? canonicalizeVendorName(signal.affected_vendor)
         : "";
 
+    // EAR Phase 2 (ARCHITECTURE.md §1.4 chokepoint 2): WHICH types are
+    // name-matched risk targets comes from the asset-type spec, not per-type
+    // hard-codes. vendor/ai_system are spec-true → the two live branches below
+    // behave identically; enterprise_entities-backed spec targets
+    // (application/database) are handled by the generic registry branch
+    // further down, which activates only behind SECURELOGIC_ASSET_REGISTRY_ENABLED.
+    const nameCanonicalTargets = new Set(
+      Object.values(ASSET_TYPE_SPECS)
+        .filter((s) => s.isRiskTarget && s.matchStrategy === "name_canonical")
+        .map((s) => s.type)
+    );
+
     // Hoisted so the Phase-2 fuzzy branch (below) can reuse the org's active
     // vendor rows without a second query. Populated only when we enter the
     // exact branch — which is exactly the precondition for fuzzy to run.
     let activeVendorRows: Array<{ id: string; name: string; criticality: string | null }> = [];
 
-    if (canonicalSignalVendor !== "") {
+    if (canonicalSignalVendor !== "" && nameCanonicalTargets.has("vendor")) {
       // Normalization-then-exact: fetch this org's active vendors and compare
       // canonical forms in TS using the SAME canonicalizeVendorName as the
       // signal side. SQL regexp_replace would be a SECOND implementation of the
@@ -381,7 +399,7 @@ export async function runMatcherForSignal(
       // 2. AI system matching — only if no vendor match.
       // ---------------------------------------------------------------
 
-      if (matchedVendorId === null) {
+      if (matchedVendorId === null && nameCanonicalTargets.has("ai_system")) {
         // Same canonical-exact approach as the vendor branch, against the
         // org's AI systems. Reuses canonicalSignalVendor (already non-empty here).
         const aiResult = await client.query<{
@@ -670,6 +688,80 @@ export async function runMatcherForSignal(
             })
           ]
         );
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // EAR Phase 2: generic asset matcher — the §1.3 plane convergence.
+    // SUGGEST-ONLY and FLAG-GATED (SECURELOGIC_ASSET_REGISTRY_ENABLED,
+    // default off → byte-for-byte inert in prod). Canonical-exact match of
+    // the signal's affected_vendor against enterprise_entities-backed
+    // registry assets whose spec is a name_canonical risk target
+    // (application/database today; Phase-3 types join by spec flip alone).
+    // Writes signal_match_suggestions with target_type='asset' + asset_id
+    // (EAR-AD-3 — the quartet enum stops growing). No findings, no links,
+    // no risk flagging — the accept path for 'asset' targets is a Phase-3
+    // decision (link-store shape).
+    // ---------------------------------------------------------------
+    if (assetRegistryEnabled() && canonicalSignalVendor !== "") {
+      const entityBackedTargets = Object.values(ASSET_TYPE_SPECS)
+        .filter(
+          (s) =>
+            s.isRiskTarget &&
+            s.matchStrategy === "name_canonical" &&
+            s.backingKind === "enterprise_entities"
+        )
+        .map((s) => s.type);
+      if (entityBackedTargets.length > 0) {
+        const assetRows = await client.query<{ asset_id: string; asset_type: string; name: string }>(
+          `
+          SELECT a.id AS asset_id, a.asset_type, e.name
+          FROM assets a
+          JOIN enterprise_entities e
+            ON e.id = a.backing_id AND e.organization_id = a.organization_id
+          WHERE a.organization_id = $1
+            AND a.backing_kind = 'enterprise_entities'
+            AND a.asset_type = ANY($2)
+            AND e.status = 'active'
+          ORDER BY e.name ASC
+          `,
+          [orgId, entityBackedTargets]
+        );
+        const assetMatches = assetRows.rows
+          .filter((r) => canonicalizeVendorName(r.name) === canonicalSignalVendor)
+          .slice(0, ASSET_SUGGESTION_CAP);
+        for (const m of assetMatches) {
+          await client.query(
+            `
+            INSERT INTO signal_match_suggestions (
+              organization_id, signal_id, target_type, target_id, asset_id,
+              match_reason, match_score, match_metadata
+            )
+            VALUES ($1, $2::uuid, 'asset', $3::uuid, $3::uuid, 'asset_name_canonical', 100, $4::jsonb)
+            ON CONFLICT (organization_id, signal_id, target_type, target_id)
+              WHERE accepted_at IS NULL AND dismissed_at IS NULL
+              DO NOTHING
+            `,
+            [
+              orgId,
+              signalId,
+              m.asset_id,
+              JSON.stringify({
+                source: signal.source,
+                matched_branch: "asset_generic",
+                matched_string: signal.affected_vendor,
+                candidate_name: m.name,
+                asset_type: m.asset_type
+              })
+            ]
+          );
+        }
+        if (assetMatches.length > 0) {
+          logger.info(
+            { event: "signal_asset_suggestions_created", organizationId: orgId, signalId, count: assetMatches.length },
+            "Generic asset matcher wrote registry-target suggestions"
+          );
+        }
       }
     }
 

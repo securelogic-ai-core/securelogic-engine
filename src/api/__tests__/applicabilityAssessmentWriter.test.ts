@@ -84,10 +84,13 @@ describe("persistApplicabilityAssessment", () => {
     expect(out.contentHash).toBe(expectedHash);
 
     const insert = calls.find((c) => /INSERT INTO applicability_assessments/.test(c.text))!;
-    // params: [org, signal, target_type, target_id, decision, confidence, band, steps, engine, schema, content_hash, prev_hash]
-    expect(insert.params[10]).toBe(expectedHash);
-    expect(insert.params[11]).toBe(GENESIS_PREV_HASH);
-    expect(insert.params[4]).toBe("affected");
+    // params: [org, signal, target_type, target_id, asset_id (EAR Phase 2 —
+    // registry pointer, deliberately NOT hashed), decision, confidence, band,
+    // steps, engine, schema, content_hash, prev_hash]
+    expect(insert.params[4]).toBeNull(); // quartet target → no registry pointer
+    expect(insert.params[11]).toBe(expectedHash);
+    expect(insert.params[12]).toBe(GENESIS_PREV_HASH);
+    expect(insert.params[5]).toBe("affected");
   });
 
   it("chains onto the existing tail content_hash", async () => {

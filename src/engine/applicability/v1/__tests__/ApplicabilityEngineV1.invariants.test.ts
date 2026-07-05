@@ -144,14 +144,101 @@ describe("ApplicabilityEngineV1 — blast radius", () => {
     }
   });
 
-  it("control/obligation targets carry no blast radius (not graph-representable)", () => {
+  it("control/obligation targets carry no blast radius but strong matches reach 'affected' (R1b)", () => {
+    // EAR Phase 2: reachability is only required of graph-representable
+    // targets. control/obligation structurally cannot appear in the graph, so
+    // a strong match alone concludes 'affected' (rule R1b) — previously they
+    // were capped at potentially_affected forever (ARCHITECTURE.md §1.4).
     const r = ApplicabilityEngineV1.assess({
       signalId: "sig-c",
       candidates: [candidate({ target_type: "control", target_id: "ctrl-1", match_score: 95 })],
       neighborhood: neighborhood(vendorId)
     });
-    expect(r.affected_entities).toEqual([]);
-    expect(r.decision).toBe("potentially_affected"); // strong match, no reachability
+    expect(r.affected_entities).toEqual([]); // still no blast radius
+    expect(r.decision).toBe("affected");
+    expect(r.reasoning_steps.some((s) => s.rule_id === "R1b_strong_match_non_graph_target")).toBe(true);
+  });
+
+  it("moderate-tier control matches stay potentially_affected (R1b requires strong)", () => {
+    const r = ApplicabilityEngineV1.assess({
+      signalId: "sig-c2",
+      candidates: [candidate({ target_type: "control", target_id: "ctrl-1", match_score: 60 })],
+      neighborhood: neighborhood(vendorId)
+    });
+    expect(r.decision).toBe("potentially_affected");
+  });
+
+  it("strong vendor match WITHOUT reachability still stays potentially_affected (R2 unchanged)", () => {
+    // Graph-representable targets keep the reachability requirement — R1b
+    // must not weaken the vendor/ai_system decision matrix.
+    const r = ApplicabilityEngineV1.assess({
+      signalId: "sig-c3",
+      candidates: [candidate({ target_id: "vendor-unreachable", match_score: 95 })]
+      // no neighborhood
+    });
+    expect(r.decision).toBe("potentially_affected");
+    expect(r.reasoning_steps.some((s) => s.rule_id === "R2_strong_match_no_reachability")).toBe(true);
+  });
+
+  it("asset target with a graph_node alias roots the BFS at its backing node and reaches 'affected' with attribution intact", () => {
+    // EAR Phase 2 regression (caught in CI): the asset target's registry id
+    // is NOT a node in the neighborhood — its backing entity is. graph_node
+    // must seed the traversal while via_target keeps the asset identity.
+    const backingId = "77777777-7777-7777-7777-777777777777";
+    const assetId = "88888888-8888-8888-8888-888888888888";
+    const nb: GraphNeighborhood = {
+      root: { node_type: "enterprise_entity", node_id: backingId },
+      depth: 3,
+      nodes: [
+        { node_type: "enterprise_entity", node_id: backingId, depth: 0 },
+        { node_type: "enterprise_entity", node_id: "store-1", depth: 1 }
+      ],
+      edges: [
+        { from_type: "enterprise_entity", from_id: backingId, to_type: "enterprise_entity", to_id: "store-1", relationship_type: "stores_data_in", source: "enterprise_relationship" }
+      ]
+    };
+    const r = ApplicabilityEngineV1.assess({
+      signalId: "sig-alias",
+      candidates: [candidate({
+        target_type: "asset",
+        target_id: assetId,
+        match_score: 100,
+        asset_type: "application",
+        graph_node: { node_type: "enterprise_entity", node_id: backingId }
+      })],
+      neighborhood: nb
+    });
+    expect(r.decision).toBe("affected");
+    expect(r.reasoning_steps.some((s) => s.rule_id === "R1_strong_match_reachable")).toBe(true);
+    expect(r.affected_entities).toEqual([
+      expect.objectContaining({
+        node_type: "enterprise_entity",
+        node_id: "store-1",
+        via_target_type: "asset",
+        via_target_id: assetId
+      })
+    ]);
+  });
+
+  it("asset targets consult the registry spec: graph-representable asset types require reachability, non-graph ones don't", () => {
+    // application → graphRepresentable=true → no reachability ⇒ R2.
+    const app = ApplicabilityEngineV1.assess({
+      signalId: "sig-c4",
+      candidates: [candidate({ target_type: "asset", target_id: "asset-1", match_score: 95, asset_type: "application" })]
+    });
+    expect(app.decision).toBe("potentially_affected");
+    // cloud_resource → graphRepresentable=false (no detail table yet) ⇒ R1b.
+    const cr = ApplicabilityEngineV1.assess({
+      signalId: "sig-c5",
+      candidates: [candidate({ target_type: "asset", target_id: "asset-2", match_score: 95, asset_type: "cloud_resource" })]
+    });
+    expect(cr.decision).toBe("affected");
+    // unknown asset_type → fail-closed (not graph-representable) ⇒ R1b path.
+    const unk = ApplicabilityEngineV1.assess({
+      signalId: "sig-c6",
+      candidates: [candidate({ target_type: "asset", target_id: "asset-3", match_score: 95, asset_type: "not_a_type" })]
+    });
+    expect(unk.decision).toBe("affected");
   });
 
   it("empty neighborhood -> empty blast radius, decision still valid", () => {

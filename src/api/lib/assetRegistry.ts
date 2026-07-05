@@ -9,11 +9,13 @@
  * enterprise_entities; `asset_id` equals the backing row id until the Tier-0
  * `assets` table ships in Phase 1 and the view's identity source is repointed.
  *
- * The AssetTypeSpec registry is the code-level capability table that Phase 2
- * uses to replace the two hard-coded chokepoints (GRAPH_REPRESENTABLE and the
- * matcher's per-type branches — ARCHITECTURE.md §1.4). In Phase 0 it is
- * declarative truth only: the flags reflect TODAY's shipped behavior, so no
- * consumer changes until Phase 2 deliberately rewires them.
+ * The AssetTypeSpec registry is the code-level capability table that replaced
+ * the two hard-coded chokepoints in Phase 2 (ARCHITECTURE.md §1.4): the
+ * applicability engine + reassessment worker consume `graphRepresentable`
+ * (via isGraphRepresentableTarget), and the matcher derives its name-matched
+ * target set from `isRiskTarget`/`matchStrategy` — vendor/ai_system on the
+ * live branches, enterprise_entities-backed types via the flag-gated generic
+ * asset matcher.
  */
 
 /** Extensible in exactly one place (ARCHITECTURE.md §2.2). */
@@ -80,10 +82,14 @@ export interface AssetTypeSpec {
 }
 
 /**
- * Phase-0 truth table: flags mirror CURRENTLY SHIPPED behavior exactly
- * (vendor/ai_system are the two graph-representable, name-matched risk targets
- * — ARCHITECTURE.md §1.3/§1.4). New types onboard in Phase 3; flags flip in
- * Phase 2/3 when the consuming code paths are actually generalized.
+ * Truth table (updated in Phase 2 — the chokepoints now CONSUME it):
+ * `graphRepresentable` is true for every type whose backing rows exist as
+ * ECL graph nodes today — vendors, ai_systems, and all enterprise_entities-
+ * backed types (application/database/business_process/generic) — the graph
+ * substrate has carried edges between those node types since ECL S2/EAR-AD-4.
+ * `isRiskTarget`/`matchStrategy` remain vendor/ai_system-only until Phase 3
+ * onboards new types; the generic asset matcher (Phase 2) matches
+ * enterprise_entities-backed inventory behind the registry flag.
  */
 export const ASSET_TYPE_SPECS: Readonly<Record<AssetType, AssetTypeSpec>> = {
   vendor: {
@@ -103,16 +109,16 @@ export const ASSET_TYPE_SPECS: Readonly<Record<AssetType, AssetTypeSpec>> = {
   application: {
     type: "application",
     backingKind: "enterprise_entities",
-    graphRepresentable: false,
-    isRiskTarget: false,
-    matchStrategy: "none"
+    graphRepresentable: true,
+    isRiskTarget: true,
+    matchStrategy: "name_canonical"
   },
   database: {
     type: "database",
     backingKind: "enterprise_entities",
-    graphRepresentable: false,
-    isRiskTarget: false,
-    matchStrategy: "none",
+    graphRepresentable: true,
+    isRiskTarget: true,
+    matchStrategy: "name_canonical",
     typedChild: "enterprise_data_stores"
   },
   cloud_resource: {
@@ -146,14 +152,14 @@ export const ASSET_TYPE_SPECS: Readonly<Record<AssetType, AssetTypeSpec>> = {
   business_process: {
     type: "business_process",
     backingKind: "enterprise_entities",
-    graphRepresentable: false,
+    graphRepresentable: true,
     isRiskTarget: false,
     matchStrategy: "none"
   },
   generic: {
     type: "generic",
     backingKind: "enterprise_entities",
-    graphRepresentable: false,
+    graphRepresentable: true,
     isRiskTarget: false,
     matchStrategy: "none"
   }
@@ -174,4 +180,29 @@ export const ENTITY_TYPE_TO_ASSET_TYPE: Readonly<Record<string, AssetType>> = {
 
 export function entityTypeToAssetType(entityType: string): AssetType {
   return ENTITY_TYPE_TO_ASSET_TYPE[entityType] ?? "generic";
+}
+
+/**
+ * Phase 2 bridge: is a MATCH TARGET graph-representable (can carry a blast
+ * radius)? Replaces the two GRAPH_REPRESENTABLE hard-codes (ARCHITECTURE.md
+ * §1.4). Match-target vocabulary is the quartet + 'asset' (EAR-AD-3 — the
+ * quartet stops growing; new types target the registry generically):
+ *   - vendor / ai_system   → their spec (true);
+ *   - control / obligation → false — canonical GRC objects, not graph nodes
+ *     (they reach 'affected' via the R1b non-graph rule instead);
+ *   - asset                → the registry row's asset_type spec (callers pass
+ *     it from assets.asset_type; unknown/absent → false, fail-closed).
+ * Pure config — safe to import from the pure engine.
+ */
+export function isGraphRepresentableTarget(
+  targetType: string,
+  assetType?: string | null
+): boolean {
+  if (targetType === "vendor" || targetType === "ai_system") {
+    return ASSET_TYPE_SPECS[targetType].graphRepresentable;
+  }
+  if (targetType === "asset") {
+    return isAssetType(assetType) ? ASSET_TYPE_SPECS[assetType].graphRepresentable : false;
+  }
+  return false;
 }
