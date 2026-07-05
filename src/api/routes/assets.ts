@@ -30,6 +30,8 @@ import { requireCapability } from "../lib/enterpriseContextCapability.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { assetRegistryFeatureFlag } from "../lib/assetRegistryFeatureFlag.js";
 import { isAssetType } from "../lib/assetRegistry.js";
+import { validateAssetDetailCreate, DETAIL_TABLE_SPEC } from "../lib/assetDetailValidation.js";
+import { createDetailAsset } from "../lib/assetDetailPersistence.js";
 
 const router = Router();
 
@@ -109,6 +111,81 @@ export async function listAssets(req: Request, res: Response): Promise<void> {
   });
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * EAR Phase 3a: unified create for the four DETAIL-BACKED types only
+ * (cloud_resource / endpoint / api / identity_system — the unified surface is
+ * their CRUD home). vendor / ai_system / application / database /
+ * business_process keep their per-type routes (EAR-AD-1 federation — the
+ * registry never replaces them). Insert + registration are one tx (asTenant).
+ */
+export async function createAsset(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const validated = validateAssetDetailCreate(req.body);
+  if ("error" in validated) {
+    res.status(400).json(validated);
+    return;
+  }
+  const result = await createDetailAsset(orgId, validated.input);
+  if ("error" in result) {
+    if (result.error === "cap_exceeded") {
+      res.status(409).json({
+        error: "asset_cap_exceeded",
+        detail: `Your plan allows up to ${result.cap} assets of this type.`
+      });
+      return;
+    }
+    res.status(409).json({ error: result.error });
+    return;
+  }
+  res.status(201).json({ asset: result.row });
+}
+
+/** Canonical header (view row) + typed detail for one asset. */
+export async function getAsset(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = req.params.id;
+  if (typeof id !== "string" || !UUID_RE.test(id)) {
+    res.status(400).json({ error: "invalid_id" });
+    return;
+  }
+
+  const header = await pg.query(
+    `SELECT ${ASSET_COLS} FROM asset_registry_v
+      WHERE organization_id = $1 AND asset_id = $2
+      LIMIT 1`,
+    [orgId, id]
+  );
+  if (header.rowCount === 0) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const row = header.rows[0] as { backing_kind: string; backing_id: string };
+
+  // Typed detail for the detail-backed kinds (closed dispatch — never input).
+  const detailSpec = Object.values(DETAIL_TABLE_SPEC).find((s) => s.table === row.backing_kind);
+  let detail: Record<string, unknown> | null = null;
+  if (detailSpec) {
+    const d = await pg.query(
+      `SELECT * FROM ${detailSpec.table} WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [row.backing_id, orgId]
+    );
+    detail = (d.rows[0] as Record<string, unknown>) ?? null;
+  }
+
+  res.status(200).json({ asset: header.rows[0], detail });
+}
+
 const chain = [
   assetRegistryFeatureFlag,
   requireApiKey,
@@ -117,5 +194,7 @@ const chain = [
 ];
 
 router.get("/assets", ...chain, asTenant(listAssets));
+router.get("/assets/:id", ...chain, asTenant(getAsset));
+router.post("/assets", ...chain, asTenant(createAsset));
 
 export default router;

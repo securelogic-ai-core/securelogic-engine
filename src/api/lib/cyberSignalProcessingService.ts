@@ -704,28 +704,34 @@ export async function runMatcherForSignal(
     // decision (link-store shape).
     // ---------------------------------------------------------------
     if (assetRegistryEnabled() && canonicalSignalVendor !== "") {
-      const entityBackedTargets = Object.values(ASSET_TYPE_SPECS)
+      // Every spec-declared name_canonical risk target that is NOT one of the
+      // two live branches (vendor/ai_system) matches here, uniformly through
+      // the registry view: application/database (enterprise_entities-backed)
+      // and the Phase-3a detail-backed types (cloud_resource/endpoint/api/
+      // identity_system). Registered rows only (a.id join) — the suggestion
+      // target is the Tier-0 asset id.
+      const registryTargets = Object.values(ASSET_TYPE_SPECS)
         .filter(
           (s) =>
             s.isRiskTarget &&
             s.matchStrategy === "name_canonical" &&
-            s.backingKind === "enterprise_entities"
+            s.backingKind !== "vendors" &&
+            s.backingKind !== "ai_systems"
         )
         .map((s) => s.type);
-      if (entityBackedTargets.length > 0) {
+      if (registryTargets.length > 0) {
         const assetRows = await client.query<{ asset_id: string; asset_type: string; name: string }>(
           `
-          SELECT a.id AS asset_id, a.asset_type, e.name
+          SELECT a.id AS asset_id, a.asset_type, rv.name
           FROM assets a
-          JOIN enterprise_entities e
-            ON e.id = a.backing_id AND e.organization_id = a.organization_id
+          JOIN asset_registry_v rv
+            ON rv.asset_id = a.id AND rv.organization_id = a.organization_id
           WHERE a.organization_id = $1
-            AND a.backing_kind = 'enterprise_entities'
             AND a.asset_type = ANY($2)
-            AND e.status = 'active'
-          ORDER BY e.name ASC
+            AND rv.status = 'active'
+          ORDER BY rv.name ASC
           `,
-          [orgId, entityBackedTargets]
+          [orgId, registryTargets]
         );
         const assetMatches = assetRows.rows
           .filter((r) => canonicalizeVendorName(r.name) === canonicalSignalVendor)

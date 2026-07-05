@@ -83,9 +83,11 @@ import type { EvidenceSnapshot } from "../../engine/applicability/v1/contentHash
 import { isGraphRepresentableTarget } from "../lib/assetRegistry.js";
 
 /** Node type a registry backing kind resolves to in the ECL graph — 'asset'
- * targets seed neighborhood resolution at their BACKING node, where the org's
- * existing topology lives (asset-endpoint edges also traverse via the
- * vocabulary-agnostic resolver, but the backing node is the reliable seed). */
+ * targets seed neighborhood resolution at their BACKING node when that node
+ * type exists in the edge vocabulary (the org's pre-registry topology lives
+ * there). Detail-backed kinds (Phase 3a: cloud_resources/endpoints/apis/
+ * identity_systems) have NO backing node type — their graph identity IS the
+ * Tier-0 ('asset', asset_id) endpoint (EAR-AD-4), so they seed at themselves. */
 const BACKING_KIND_NODE_TYPE: Record<string, string> = {
   vendors: "vendor",
   ai_systems: "ai_system",
@@ -315,10 +317,17 @@ async function reassessItem(
         [item.target_id, orgId]
       );
       const b = backing.rows[0] as { backing_kind: string; backing_id: string } | undefined;
-      const nodeType = b ? BACKING_KIND_NODE_TYPE[b.backing_kind] : undefined;
-      if (b && nodeType) {
-        candidate.graph_node = { node_type: nodeType, node_id: b.backing_id };
-        neighborhood = await resolveNeighborhood(orgId, nodeType, b.backing_id, DEFAULT_DEPTH);
+      if (b) {
+        const nodeType = BACKING_KIND_NODE_TYPE[b.backing_kind];
+        if (nodeType) {
+          candidate.graph_node = { node_type: nodeType, node_id: b.backing_id };
+          neighborhood = await resolveNeighborhood(orgId, nodeType, b.backing_id, DEFAULT_DEPTH);
+        } else {
+          // Detail-backed kind: the asset's own Tier-0 node is its graph
+          // identity (edges reference 'asset' endpoints — EAR-AD-4).
+          candidate.graph_node = { node_type: "asset", node_id: item.target_id };
+          neighborhood = await resolveNeighborhood(orgId, "asset", item.target_id, DEFAULT_DEPTH);
+        }
       }
     } else {
       neighborhood = await resolveNeighborhood(orgId, item.target_type, item.target_id, DEFAULT_DEPTH);

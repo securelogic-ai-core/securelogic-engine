@@ -82,14 +82,15 @@ export interface AssetTypeSpec {
 }
 
 /**
- * Truth table (updated in Phase 2 — the chokepoints now CONSUME it):
- * `graphRepresentable` is true for every type whose backing rows exist as
- * ECL graph nodes today — vendors, ai_systems, and all enterprise_entities-
- * backed types (application/database/business_process/generic) — the graph
- * substrate has carried edges between those node types since ECL S2/EAR-AD-4.
- * `isRiskTarget`/`matchStrategy` remain vendor/ai_system-only until Phase 3
- * onboards new types; the generic asset matcher (Phase 2) matches
- * enterprise_entities-backed inventory behind the registry flag.
+ * Truth table (Phase 2 wired the consumers; Phase 3a onboarded the four new
+ * native types with their 20260806 detail tables):
+ * - `graphRepresentable`: vendors/ai_systems/enterprise_entities-backed types
+ *   appear as their backing node in the ECL graph; the four detail-backed
+ *   types appear as their Tier-0 'asset' node (EAR-AD-4 asset endpoints) —
+ *   the reassessment worker picks the right seed per backing kind.
+ * - `isRiskTarget` + `matchStrategy`: vendor/ai_system on the live matcher
+ *   branches; every other name_canonical type is matched by the generic
+ *   registry matcher behind SECURELOGIC_ASSET_REGISTRY_ENABLED.
  */
 export const ASSET_TYPE_SPECS: Readonly<Record<AssetType, AssetTypeSpec>> = {
   vendor: {
@@ -124,30 +125,30 @@ export const ASSET_TYPE_SPECS: Readonly<Record<AssetType, AssetTypeSpec>> = {
   cloud_resource: {
     type: "cloud_resource",
     backingKind: "cloud_resources",
-    graphRepresentable: false,
-    isRiskTarget: false,
-    matchStrategy: "none"
+    graphRepresentable: true,
+    isRiskTarget: true,
+    matchStrategy: "name_canonical"
   },
   endpoint: {
     type: "endpoint",
     backingKind: "endpoints",
-    graphRepresentable: false,
-    isRiskTarget: false,
-    matchStrategy: "none"
+    graphRepresentable: true,
+    isRiskTarget: true,
+    matchStrategy: "name_canonical"
   },
   api: {
     type: "api",
     backingKind: "apis",
-    graphRepresentable: false,
-    isRiskTarget: false,
-    matchStrategy: "none"
+    graphRepresentable: true,
+    isRiskTarget: true,
+    matchStrategy: "name_canonical"
   },
   identity_system: {
     type: "identity_system",
     backingKind: "identity_systems",
-    graphRepresentable: false,
-    isRiskTarget: false,
-    matchStrategy: "none"
+    graphRepresentable: true,
+    isRiskTarget: true,
+    matchStrategy: "name_canonical"
   },
   business_process: {
     type: "business_process",
