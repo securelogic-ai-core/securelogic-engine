@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git fetch *)",
+      "Bash(git -C /workspaces/securelogic-engine branch -a)",
+      "Bash(git -C /workspaces/securelogic-engine remote -v)",
+      "Bash(echo \"---exit:$?---\")",
+      "Bash(gh pr *)",
+      "Bash(git ls-tree *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" https://api.github.com/repos/securelogic-ai-core/securelogic-engine)",
+      "Bash(env)",
+      "Read(//home/node/.claude/**)",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'docs\\(enterprise-context\\): RESUME sync — record 7A.0 \\(#480\\) + 7A.1 \\(#481 squash 228f8f11\\), Item 7 IN PROGRESS, L-4 partial *)",
+      "Bash(git push *)",
+      "Bash(npx vitest *)",
+      "Bash(npm run *)",
+      "Bash(npm ci *)",
+      "Bash(python3 *)",
+      "Bash(git commit -m 'feat\\(enterprise-context\\): 7A.2 — Tier-1 entity screens \\(list/detail/new/edit/delete\\), dark *)",
+      "Bash(git commit -m 'fix\\(7A.2\\): regenerate application knowledge index for the new enterprise-context routes *)",
+      "Bash(git commit -m 'feat\\(enterprise-context\\): 7A.3 — relationship management + SVG dependency graph view, dark *)",
+      "Bash(awk '-F|' '{print $2\" =>\"$NF}')",
+      "Bash(git ls-remote *)",
+      "Bash(git commit -q -m 'docs\\(enterprise-context\\): AUDIT CORRECTION — items 5/6/7/8 PARTIAL, not DONE *)",
+      "Bash(git -C /workspaces/securelogic-engine branch -a --sort=-committerdate)",
+      "Bash(git -C /workspaces/securelogic-engine log --oneline -10 develop)",
+      "Bash(git -C /workspaces/securelogic-engine fetch origin develop --quiet)",
+      "Bash(git -C /workspaces/securelogic-engine show origin/develop:docs/validation/enterprise-context-goal-tracker.md)",
+      "Bash(grep -n \"jobs:\\\\| [a-z-]*:$\" .github/workflows/pr-ci.yml)",
+      "Bash(perl -0pi -e 's/\\(      - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL \\\\\\(Priority 5\\\\\\) — DARK \\\\\\(default off\\\\\\); do NOT enable in prod until AD-17 grant \\\\+ edge cap \\\\\\(H1\\\\\\) \\\\+ graph load test \\\\\\(H2\\\\\\)\\\\n        value: \"false\"\\\\n\\)/$1      - key: SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED # ECL R2\\\\/S6 dispatcher — DARK \\(default off\\); requires ECL flag too\\\\n        value: \"false\"\\\\n/g' render.yaml)",
+      "Bash(npx eslint *)",
+      "Bash(pg_isready)",
+      "Bash(npm test *)",
+      "Bash(bash scripts/guard-imports.sh)",
+      "Bash(bash scripts/check-tenant-coverage.sh)",
+      "Bash(git commit -m 'feat\\(enterprise-context\\): R2 — S6 live workflow dispatcher \\(dark, flag-gated, idempotent on the recommendation key\\) *)",
+      "Bash(export TEST_DATABASE_URL=postgresql://harness:harness@127.0.0.1:55432/harness)",
+      "Bash(git commit -q -m 'feat\\(enterprise-context\\): R3 — S7 live reassessment worker + change-event enqueue \\(dark, flag-gated\\) *)"
+    ]
+  }
+}

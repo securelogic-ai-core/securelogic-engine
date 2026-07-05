@@ -26,6 +26,7 @@ import { requireCapability } from "../lib/enterpriseContextCapability.js";
 import { enforceEnterpriseEdgeLimit } from "../lib/enterpriseEdgeLimit.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { enqueueApplicabilityReassessment } from "../lib/applicabilityReassessment.js";
 import { enterpriseContextFeatureFlag } from "../lib/enterpriseContextFeatureFlag.js";
 import {
   validateEnterpriseRelationshipCreate,
@@ -196,6 +197,16 @@ export async function createEnterpriseRelationship(req: Request, res: Response):
     { event: "enterprise_relationship_created", organizationId: orgId, relationshipId: edge.id, relationshipType: input.relationship_type },
     "Enterprise relationship created"
   );
+
+  // ECL R3: a new edge extends reachability from BOTH endpoints — one
+  // edge_changed event per endpoint node (planReassessment matches single
+  // nodes). Same asTenant tx; deduped + self-gated inside the enqueuer.
+  await enqueueApplicabilityReassessment(pg, orgId, {
+    type: "edge_changed", organization_id: orgId, node_type: input.from_type, node_id: input.from_id
+  });
+  await enqueueApplicabilityReassessment(pg, orgId, {
+    type: "edge_changed", organization_id: orgId, node_type: input.to_type, node_id: input.to_id
+  });
   writeAuditEvent({
     organizationId: orgId,
     ...auditActor(req),
@@ -230,13 +241,22 @@ export async function deleteEnterpriseRelationship(req: Request, res: Response):
   const del = await pg.query(
     `UPDATE enterprise_relationships SET deleted_at = NOW()
       WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
-      RETURNING id`,
+      RETURNING id, from_type, from_id, to_type, to_id`,
     [id, orgId]
   );
   if (del.rowCount === 0) {
     res.status(404).json({ error: "not_found" });
     return;
   }
+
+  // ECL R3: a removed edge shrinks reachability from both endpoints.
+  const removed = del.rows[0] as { from_type: string; from_id: string; to_type: string; to_id: string };
+  await enqueueApplicabilityReassessment(pg, orgId, {
+    type: "edge_changed", organization_id: orgId, node_type: removed.from_type, node_id: removed.from_id
+  });
+  await enqueueApplicabilityReassessment(pg, orgId, {
+    type: "edge_changed", organization_id: orgId, node_type: removed.to_type, node_id: removed.to_id
+  });
 
   writeAuditEvent({
     organizationId: orgId,
