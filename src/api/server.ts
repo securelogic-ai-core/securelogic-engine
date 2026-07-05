@@ -12,6 +12,7 @@ import { logger } from "./infra/logger.js";
 
 import { startScheduler } from "./lib/schedulerRunner.js";
 import { startAccountDeletionReaperEnqueuer } from "./lib/accountDeletionEnqueuer.js";
+import { startApplicabilityReassessmentWorker } from "./workers/applicabilityReassessmentWorker.js";
 import { createApp } from "./app.js";
 
 /* =========================================================
@@ -123,6 +124,10 @@ await startupCheck();
 
 startScheduler();
 startAccountDeletionReaperEnqueuer();
+// ECL R3: in-process reassessment worker. Registered always; every tick
+// self-gates on SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED (zero DB access while
+// off), so this line is inert until the operator enables the ECL.
+startApplicabilityReassessmentWorker();
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   logger.info(

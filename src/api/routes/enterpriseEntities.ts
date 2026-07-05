@@ -35,6 +35,7 @@ import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { enterpriseContextFeatureFlag } from "../lib/enterpriseContextFeatureFlag.js";
 import { enforceEnterpriseEntityLimit } from "../lib/enterpriseEntityLimit.js";
+import { enqueueApplicabilityReassessment } from "../lib/applicabilityReassessment.js";
 import {
   validateEnterpriseEntityCreate,
   validateEnterpriseEntityUpdate,
@@ -367,6 +368,15 @@ export async function updateEnterpriseEntity(req: Request, res: Response): Promi
     dataStore = dsRow.rows[0] as DataStoreInput;
   }
 
+  // ECL R3: a changed entity may invalidate applicability decisions whose target
+  // or blast radius touches it. Same asTenant tx — enqueued iff the PATCH commits.
+  await enqueueApplicabilityReassessment(pg, orgId, {
+    type: "entity_changed",
+    organization_id: orgId,
+    node_type: "enterprise_entity",
+    node_id: id
+  });
+
   writeAuditEvent({
     organizationId: orgId,
     ...auditActor(req),
@@ -403,6 +413,15 @@ export async function deleteEnterpriseEntity(req: Request, res: Response): Promi
     res.status(404).json({ error: "not_found" });
     return;
   }
+
+  // ECL R3: a deleted entity shrinks blast radii that referenced it. Same
+  // asTenant tx — enqueued iff the DELETE commits.
+  await enqueueApplicabilityReassessment(pg, orgId, {
+    type: "entity_changed",
+    organization_id: orgId,
+    node_type: "enterprise_entity",
+    node_id: id
+  });
 
   writeAuditEvent({
     organizationId: orgId,

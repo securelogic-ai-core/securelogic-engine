@@ -74,6 +74,7 @@ import {
   buildObligationActionDraft
 } from "./actionRecommendationEngine.js";
 import { runLlmControlMatcherForSignal } from "./llmControlMatcher.js";
+import { enqueueApplicabilityReassessment } from "./applicabilityReassessment.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1020,6 +1021,15 @@ export async function processSignal(
     // so the worker fan-out gets them natively. The count is surfaced on the
     // MatcherResult; no separate UPDATE risks here.
     risksUpdated = matcherResult.risks_flagged;
+
+    // ECL R3 (Slice 7): enqueue an applicability-reassessment job for this
+    // (org, signal) on the SAME client — committed iff the processing commits.
+    // Self-gating: a zero-DB no-op unless SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED,
+    // so this line is inert in every environment where the ECL is dark.
+    await enqueueApplicabilityReassessment(client, orgId, {
+      type: "signal_changed",
+      signal_id: signalId
+    });
 
     await client.query("COMMIT");
 
