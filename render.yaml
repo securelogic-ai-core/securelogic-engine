@@ -199,6 +199,8 @@ services:
         value: "false"
       - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL (Priority 5) — DARK (default off); do NOT enable in prod until AD-17 grant + edge cap (H1) + graph load test (H2)
         value: "false"
+      - key: SECURELOGIC_ASSET_REGISTRY_ENABLED       # EAR Phase 0 (asset registry) — DARK (default off); GATE B posture, do NOT enable in prod under the EAR goal
+        value: "false"
       - key: SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED # ECL R2/S6 dispatcher — DARK (default off); requires ECL flag too
         value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
@@ -395,6 +397,8 @@ services:
         value: "false"
       - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL (Priority 5) — DARK (default off); do NOT enable in prod until AD-17 grant + edge cap (H1) + graph load test (H2)
         value: "false"
+      - key: SECURELOGIC_ASSET_REGISTRY_ENABLED       # EAR Phase 0 (asset registry) — DARK (default off); GATE B posture, do NOT enable in prod under the EAR goal
+        value: "false"
       - key: SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED # ECL R2/S6 dispatcher — DARK (default off); requires ECL flag too
         value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
@@ -496,6 +500,8 @@ services:
         value: "false"
       - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL (Priority 5) — DARK (default off); do NOT enable in prod until AD-17 grant + edge cap (H1) + graph load test (H2)
         value: "false"
+      - key: SECURELOGIC_ASSET_REGISTRY_ENABLED       # EAR Phase 0 (asset registry) — DARK (default off); GATE B posture, do NOT enable in prod under the EAR goal
+        value: "false"
       - key: SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED # ECL R2/S6 dispatcher — DARK (default off); requires ECL flag too
         value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
@@ -586,6 +592,8 @@ services:
       - key: SECURELOGIC_RISK_LIFECYCLE_ENABLED       # Epic R1 — risk lifecycle, DARK (default off)
         value: "false"
       - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL (Priority 5) — DARK (default off); do NOT enable in prod until AD-17 grant + edge cap (H1) + graph load test (H2)
+        value: "false"
+      - key: SECURELOGIC_ASSET_REGISTRY_ENABLED       # EAR Phase 0 (asset registry) — DARK (default off); GATE B posture, do NOT enable in prod under the EAR goal
         value: "false"
       - key: SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED # ECL R2/S6 dispatcher — DARK (default off); requires ECL flag too
         value: "false"
