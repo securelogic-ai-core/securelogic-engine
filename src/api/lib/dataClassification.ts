@@ -145,7 +145,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   assessments: { category: "C", userRefColumns: ["created_by"], piiRisk: "high", rlsStatus: "enabled" },
   findings: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "enabled" },
   actions: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "pending" },
-  signal_match_suggestions: { category: "C", userRefColumns: ["accepted_by_user_id", "dismissed_by_user_id"], piiRisk: "medium", rlsStatus: "enabled" },
+  signal_match_suggestions: { category: "C", userRefColumns: ["accepted_by_user_id", "dismissed_by_user_id"], piiRisk: "medium", rlsStatus: "enabled", specialHandling: "assessment_id (nullable, 20260730) links a suggestion to the WORM applicability_assessments decision that produced it (ECL R2 dispatcher); matcher-written rows leave it NULL. No user data in the new column." },
   signal_vendor_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
   signal_ai_system_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
   signal_control_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
