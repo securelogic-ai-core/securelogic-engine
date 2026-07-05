@@ -1,8 +1,14 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
-import { getEnterpriseEntity, getEnterpriseRelationships } from "@/lib/api";
-import type { EnterpriseRelationship } from "@/lib/enterpriseContext";
+import {
+  getAiSystems,
+  getEnterpriseEntities,
+  getEnterpriseEntity,
+  getEnterpriseRelationships,
+  getVendors,
+} from "@/lib/api";
+import type { EnterpriseRelationship, NodeType } from "@/lib/enterpriseContext";
 import {
   entityTypeLabel,
   nodeTypeLabel,
@@ -10,13 +16,16 @@ import {
   relationshipTypeLabel,
   titleFromSnake,
 } from "@/lib/enterpriseContextFormat";
+import { buildNodeNameMap, nodeDisplayName } from "@/lib/enterpriseGraphLayout";
 import {
   CriticalityBadge,
   EntityTypeChip,
   ReadFailurePanel,
   StatusChip,
 } from "../../shared";
+import { AddRelationshipForm, type TargetCandidate } from "./AddRelationshipForm";
 import { DeleteEntityButton } from "./DeleteEntityButton";
+import { DeleteRelationshipButton } from "./DeleteRelationshipButton";
 
 export default async function EnterpriseEntityDetailPage({
   params,
@@ -35,14 +44,20 @@ export default async function EnterpriseEntityDetailPage({
     entitlementLevel === "team";
   if (!isPlatformUser) redirect("/dashboard");
 
-  const [entityResult, relsResult] = await Promise.all([
-    getEnterpriseEntity(token, id),
-    getEnterpriseRelationships(token, {
-      node_type: "enterprise_entity",
-      node_id: id,
-      limit: 50,
-    }),
-  ]);
+  const [entityResult, relsResult, entitiesResult, vendorsResult, aiSystemsResult] =
+    await Promise.all([
+      getEnterpriseEntity(token, id),
+      getEnterpriseRelationships(token, {
+        node_type: "enterprise_entity",
+        node_id: id,
+        limit: 50,
+      }),
+      // Name resolution + relationship-target candidates (each list page-capped;
+      // the form keeps a paste-an-ID fallback for anything beyond the first page).
+      getEnterpriseEntities(token, { limit: 100 }),
+      getVendors(token),
+      getAiSystems(token),
+    ]);
 
   if (!entityResult.ok) {
     // A plain not_found 404 is indistinguishable from feature-off by design; either
@@ -58,6 +73,20 @@ export default async function EnterpriseEntityDetailPage({
   const entity = entityResult.enterprise_entity;
   const relationships = relsResult.ok ? relsResult.enterprise_relationships : [];
   const isDataStore = entity.entity_type === "data_store";
+
+  const nameMap = buildNodeNameMap({
+    entities: entitiesResult.ok ? entitiesResult.enterprise_entities : [],
+    vendors: vendorsResult?.vendors ?? [],
+    aiSystems: aiSystemsResult?.ai_systems ?? [],
+  });
+  const candidates: Partial<Record<NodeType, TargetCandidate[]>> = {
+    enterprise_entity: entitiesResult.ok
+      ? entitiesResult.enterprise_entities.map((e) => ({ id: e.id, name: e.name }))
+      : [],
+    vendor: (vendorsResult?.vendors ?? []).map((v) => ({ id: v.id, name: v.name })),
+    ai_system: (aiSystemsResult?.ai_systems ?? []).map((a) => ({ id: a.id, name: a.name })),
+    user: [],
+  };
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-12">
@@ -81,6 +110,13 @@ export default async function EnterpriseEntityDetailPage({
           )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          <Link
+            href={`/enterprise-context/graph?node_type=enterprise_entity&node_id=${entity.id}`}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:opacity-80"
+            style={{ borderColor: "#1e293b", color: "#94a3b8" }}
+          >
+            View Graph
+          </Link>
           <Link
             href={`/enterprise-context/entities/${entity.id}/edit`}
             className="px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:opacity-80"
@@ -149,28 +185,35 @@ export default async function EnterpriseEntityDetailPage({
         </div>
       )}
 
-      {/* Relationships (read-only in 7A.2; create/delete + graph view land next) */}
+      {/* Relationships */}
       <div className="bg-brand-surface border border-brand-line rounded-xl p-6 mb-6">
-        <h2 className="text-sm font-semibold mb-4" style={{ color: "#f1f5f9" }}>
-          Relationships
-          {relationships.length > 0 && (
-            <span className="ml-2 text-xs font-normal" style={{ color: "#94a3b8" }}>
-              {relationships.length}
-              {relationships.length === 50 ? "+" : ""}
-            </span>
-          )}
-        </h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
+            Relationships
+            {relationships.length > 0 && (
+              <span className="ml-2 text-xs font-normal" style={{ color: "#94a3b8" }}>
+                {relationships.length}
+                {relationships.length === 50 ? "+" : ""}
+              </span>
+            )}
+          </h2>
+        </div>
         {relationships.length === 0 ? (
-          <p className="text-xs" style={{ color: "#64748b" }}>
+          <p className="text-xs mb-4" style={{ color: "#64748b" }}>
             No relationships yet.
           </p>
         ) : (
-          <ul className="space-y-2">
+          <ul className="space-y-2 mb-4">
             {relationships.map((rel) => (
-              <RelationshipRow key={rel.id} rel={rel} selfId={entity.id} />
+              <RelationshipRow key={rel.id} rel={rel} selfId={entity.id} nameMap={nameMap} />
             ))}
           </ul>
         )}
+        <AddRelationshipForm
+          entityId={entity.id}
+          entityName={entity.name}
+          candidates={candidates}
+        />
       </div>
 
       {/* Danger zone */}
@@ -214,16 +257,17 @@ function NodeRef({
   nodeType,
   nodeId,
   selfId,
+  nameMap,
 }: {
   nodeType: string;
   nodeId: string;
   selfId: string;
+  nameMap: Map<string, string>;
 }) {
   if (nodeType === "enterprise_entity" && nodeId === selfId) {
     return <span style={{ color: "#f1f5f9" }}>this entity</span>;
   }
-  const short = `${nodeId.slice(0, 8)}…`;
-  const label = `${nodeTypeLabel(nodeType)} ${short}`;
+  const label = `${nodeTypeLabel(nodeType)} · ${nodeDisplayName(nameMap, nodeType, nodeId)}`;
   if (nodeType === "enterprise_entity") {
     return (
       <Link
@@ -252,17 +296,26 @@ function NodeRef({
   return <span style={{ color: "#cbd5e1" }}>{label}</span>;
 }
 
-function RelationshipRow({ rel, selfId }: { rel: EnterpriseRelationship; selfId: string }) {
+function RelationshipRow({
+  rel,
+  selfId,
+  nameMap,
+}: {
+  rel: EnterpriseRelationship;
+  selfId: string;
+  nameMap: Map<string, string>;
+}) {
   return (
     <li
       className="rounded-lg border px-4 py-2.5 text-sm flex items-center gap-2 flex-wrap"
       style={{ borderColor: "#1e2d45" }}
     >
-      <NodeRef nodeType={rel.from_type} nodeId={rel.from_id} selfId={selfId} />
+      <NodeRef nodeType={rel.from_type} nodeId={rel.from_id} selfId={selfId} nameMap={nameMap} />
       <span className="text-xs font-medium" style={{ color: "#94a3b8" }}>
         {relationshipTypeLabel(rel.relationship_type)}
       </span>
-      <NodeRef nodeType={rel.to_type} nodeId={rel.to_id} selfId={selfId} />
+      <NodeRef nodeType={rel.to_type} nodeId={rel.to_id} selfId={selfId} nameMap={nameMap} />
+      <DeleteRelationshipButton relationshipId={rel.id} />
       {rel.note && (
         <span className="text-xs w-full mt-1" style={{ color: "#64748b" }}>
           {rel.note}
