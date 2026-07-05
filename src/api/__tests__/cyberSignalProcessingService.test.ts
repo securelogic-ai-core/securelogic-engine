@@ -656,10 +656,28 @@ describe("GAP-1 wiring — source asserts", () => {
     expect(MATCHING_SRC).not.toMatch(/scoreControlMatch/);
   });
 
-  it("exactly three ON CONFLICT dedup INSERTs remain (vendor exact + obligation + vendor fuzzy)", () => {
+  it("exactly four ON CONFLICT dedup INSERTs remain (vendor exact + obligation + vendor fuzzy + EAR generic asset)", () => {
     const conflictCount =
       (SUT_SRC.match(/ON CONFLICT \(organization_id, signal_id, target_type, target_id\)\s*\n\s*WHERE accepted_at IS NULL AND dismissed_at IS NULL\s*\n\s*DO NOTHING/g) || []).length;
-    expect(conflictCount).toBe(3);
+    expect(conflictCount).toBe(4);
+  });
+
+  it("the EAR generic asset matcher is flag-fenced and suggest-only", () => {
+    // The registry branch must consult the flag (prod-live path stays inert
+    // while dark) and must never create findings or typed links.
+    expect(SUT_SRC).toMatch(/assetRegistryEnabled\(\) && canonicalSignalVendor !== ""/);
+    const assetBlock = SUT_SRC.slice(
+      SUT_SRC.indexOf("EAR Phase 2: generic asset matcher"),
+      SUT_SRC.indexOf("GAP-1: obligation suggestion generation")
+    );
+    expect(assetBlock).toContain("'asset'");
+    expect(assetBlock).not.toMatch(/INSERT INTO findings/);
+    expect(assetBlock).not.toMatch(/INSERT INTO signal_vendor_links/);
+  });
+
+  it("the live vendor/ai_system branches are spec-consulted (EAR Phase 2 chokepoint 2)", () => {
+    expect(SUT_SRC).toMatch(/nameCanonicalTargets\.has\("vendor"\)/);
+    expect(SUT_SRC).toMatch(/nameCanonicalTargets\.has\("ai_system"\)/);
   });
 
   it("threshold (MIN_MATCH_SCORE) is applied via filter before the top-N slice", () => {

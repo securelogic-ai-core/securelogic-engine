@@ -78,9 +78,19 @@ import type {
   GraphNeighborhood
 } from "../../engine/applicability/v1/types.js";
 import type { EvidenceSnapshot } from "../../engine/applicability/v1/contentHash.js";
+// EAR Phase 2: spec-driven graph-representability (replaces the local
+// GRAPH_REPRESENTABLE hard-code — ARCHITECTURE.md §1.4 chokepoint 1, site B).
+import { isGraphRepresentableTarget } from "../lib/assetRegistry.js";
 
-/** Target types that exist as graph nodes (blast radius possible). Mirrors the engine. */
-const GRAPH_REPRESENTABLE = new Set<MatchTargetType>(["vendor", "ai_system"]);
+/** Node type a registry backing kind resolves to in the ECL graph — 'asset'
+ * targets seed neighborhood resolution at their BACKING node, where the org's
+ * existing topology lives (asset-endpoint edges also traverse via the
+ * vocabulary-agnostic resolver, but the backing node is the reliable seed). */
+const BACKING_KIND_NODE_TYPE: Record<string, string> = {
+  vendors: "vendor",
+  ai_systems: "ai_system",
+  enterprise_entities: "enterprise_entity"
+};
 
 /** Hard cap on items processed per job — a runaway plan is split across retries, not unbounded. */
 export const MAX_ITEMS_PER_JOB = 200;
@@ -246,10 +256,11 @@ async function loadCandidate(
   item: ReassessmentItem
 ): Promise<{ candidate: MatcherCandidate; suggestionId: string | null }> {
   const res = await pg.query(
-    `SELECT id, match_score, match_reason
-       FROM signal_match_suggestions
-      WHERE organization_id = $1 AND signal_id = $2 AND target_type = $3 AND target_id = $4
-      ORDER BY created_at DESC
+    `SELECT s.id, s.match_score, s.match_reason, s.asset_id, a.asset_type
+       FROM signal_match_suggestions s
+       LEFT JOIN assets a ON a.id = s.asset_id AND a.organization_id = s.organization_id
+      WHERE s.organization_id = $1 AND s.signal_id = $2 AND s.target_type = $3 AND s.target_id = $4
+      ORDER BY s.created_at DESC
       LIMIT 1`,
     [orgId, item.signal_id, item.target_type, item.target_id]
   );
@@ -259,7 +270,11 @@ async function loadCandidate(
       target_type: item.target_type,
       target_id: item.target_id,
       match_score: row && row.match_score !== null && row.match_score !== undefined ? Number(row.match_score) : null,
-      match_reason: row && typeof row.match_reason === "string" ? row.match_reason : "reassessment_no_suggestion"
+      match_reason: row && typeof row.match_reason === "string" ? row.match_reason : "reassessment_no_suggestion",
+      // EAR Phase 2: present only for 'asset' targets — drives the engine's
+      // spec-based graph-representability.
+      asset_type: row && typeof row.asset_type === "string" ? row.asset_type : null,
+      asset_id: row && typeof row.asset_id === "string" ? row.asset_id : null
     },
     suggestionId: row ? String(row.id) : null
   };
@@ -290,8 +305,21 @@ async function reassessItem(
   const { candidate, suggestionId } = await loadCandidate(orgId, item);
 
   let neighborhood: GraphNeighborhood | undefined;
-  if (GRAPH_REPRESENTABLE.has(item.target_type)) {
-    neighborhood = await resolveNeighborhood(orgId, item.target_type, item.target_id, DEFAULT_DEPTH);
+  if (isGraphRepresentableTarget(item.target_type, candidate.asset_type ?? null)) {
+    if (item.target_type === "asset") {
+      // Seed at the backing node (see BACKING_KIND_NODE_TYPE).
+      const backing = await pg.query(
+        `SELECT backing_kind, backing_id FROM assets WHERE id = $1 AND organization_id = $2`,
+        [item.target_id, orgId]
+      );
+      const b = backing.rows[0] as { backing_kind: string; backing_id: string } | undefined;
+      const nodeType = b ? BACKING_KIND_NODE_TYPE[b.backing_kind] : undefined;
+      if (b && nodeType) {
+        neighborhood = await resolveNeighborhood(orgId, nodeType, b.backing_id, DEFAULT_DEPTH);
+      }
+    } else {
+      neighborhood = await resolveNeighborhood(orgId, item.target_type, item.target_id, DEFAULT_DEPTH);
+    }
   }
 
   const result: ApplicabilityResult = ApplicabilityEngineV1.assess({
@@ -334,7 +362,12 @@ async function reassessItem(
     target_type: item.target_type,
     target_id: item.target_id
   };
-  const persisted = await persistApplicabilityAssessment(pg, { identity, result, evidence });
+  const persisted = await persistApplicabilityAssessment(pg, {
+    identity,
+    result,
+    evidence,
+    assetId: candidate.asset_id ?? null
+  });
 
   const current: StoredAssessment = {
     ...identity,

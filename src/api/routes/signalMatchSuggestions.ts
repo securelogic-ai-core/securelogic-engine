@@ -63,6 +63,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
 import {
   validateSignalMatchSuggestionAccept,
   validateSignalMatchSuggestionDismiss,
@@ -143,7 +144,7 @@ const SUGGESTION_ENRICHED_SELECT = `
   s.dismissed_at,
   s.dismissed_by_user_id,
   s.dismissal_reason,
-  COALESCE(v.name, ai.name, c.name, o.title) AS target_name
+  COALESCE(v.name, ai.name, c.name, o.title, ar.name) AS target_name
 `;
 
 // Reusable LEFT JOIN block paired with SUGGESTION_ENRICHED_SELECT. Each join
@@ -155,6 +156,8 @@ const SUGGESTION_ENRICH_JOIN = `
   LEFT JOIN ai_systems  ai ON s.target_type = 'ai_system'  AND ai.id = s.target_id
   LEFT JOIN controls    c  ON s.target_type = 'control'    AND c.id  = s.target_id
   LEFT JOIN obligations o  ON s.target_type = 'obligation' AND o.id  = s.target_id
+  LEFT JOIN asset_registry_v ar ON s.target_type = 'asset' AND ar.asset_id = s.target_id
+                               AND ar.organization_id = s.organization_id
 `;
 
 /**
@@ -337,16 +340,20 @@ export async function listSignalMatchSuggestions(req: Request, res: Response): P
   }
 
   const rawTargetType = req.query.target_type;
-  let targetTypeFilter: TargetType | null = null;
+  let targetTypeFilter: TargetType | "asset" | null = null;
   if (rawTargetType !== undefined && String(rawTargetType).trim() !== "") {
-    if (!isTargetType(rawTargetType)) {
+    // EAR Phase 2: 'asset' rows exist only when the registry matcher (flag-
+    // gated) writes them; the filter value is fenced on the same flag so the
+    // API surface does not advertise the vocabulary while dark.
+    const assetAllowed = assetRegistryEnabled() && rawTargetType === "asset";
+    if (!isTargetType(rawTargetType) && !assetAllowed) {
       res.status(400).json({
         error: "invalid_target_type",
         detail: "target_type must be one of: vendor, ai_system, control, obligation"
       });
       return;
     }
-    targetTypeFilter = rawTargetType;
+    targetTypeFilter = assetAllowed ? "asset" : (rawTargetType as TargetType);
   }
 
   const stateClause =
@@ -480,6 +487,19 @@ export async function acceptSignalMatchSuggestion(req: Request, res: Response): 
       return;
     }
 
+    if (suggestion.target_type === "asset") {
+      // EAR Phase 2: 'asset' suggestions are DELIBERATELY not acceptable yet —
+      // accepting means writing a link row, and the link-store shape for
+      // registry targets (generic table vs per-type — ECL AD-13) is a Phase-3
+      // decision. Explicit 409, not the defensive 500 below. Dismissal works
+      // normally (type-agnostic).
+      await client.query("ROLLBACK");
+      res.status(409).json({
+        error: "asset_target_accept_unsupported",
+        detail: "Accepting asset-registry suggestions ships with the registry link store (Phase 3). Dismissal is supported."
+      });
+      return;
+    }
     if (!isTargetType(suggestion.target_type)) {
       // Defensive: the CHECK constraint should make this impossible, but if a
       // future migration loosens it, fail closed rather than mis-route.

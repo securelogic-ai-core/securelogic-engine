@@ -42,6 +42,14 @@ export interface PersistApplicabilityArgs {
    * JSONB, and hashed as-is). Order does not matter — the hash sorts internally.
    */
   evidence: EvidenceSnapshot[];
+  /**
+   * EAR Phase 2 (EAR-AD-3): optional registry pointer, set for 'asset' targets.
+   * Stored as a resolvable compat column, deliberately NOT part of the content
+   * hash — the hash already binds (target_type, target_id), which uniquely
+   * identify the target; asset_id adds no decision content, so pre-Phase-2
+   * chains verify unchanged.
+   */
+  assetId?: string | null;
 }
 
 export interface PersistApplicabilityResult {
@@ -101,15 +109,16 @@ export async function persistApplicabilityAssessment(
 
   const inserted = await db.query(
     `INSERT INTO applicability_assessments
-       (organization_id, signal_id, target_type, target_id, decision, confidence,
+       (organization_id, signal_id, target_type, target_id, asset_id, decision, confidence,
         confidence_band, reasoning_steps, engine_version, schema_version, content_hash, prev_hash)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13)
      RETURNING id`,
     [
       orgId,
       identity.signal_id,
       identity.target_type,
       identity.target_id,
+      args.assetId ?? null,
       result.decision,
       result.confidence,
       result.confidence_band,
