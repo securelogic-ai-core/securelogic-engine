@@ -37,8 +37,11 @@ function makeResult(decision: ApplicabilityResult["decision"]): ApplicabilityRes
     schema_version: "applicability-result.v1"
   };
 }
+// NOTE: captured_value here is written in the Postgres jsonb-canonical text
+// rendering ('": "' / '", "' spacing) so the writer's R4 canonicalization pass
+// is an identity transform and the expected hashes below stay hand-computable.
 const evidence: EvidenceSnapshot[] = [
-  { evidence_type: "match_candidate", ref_table: "signal_match_suggestions", ref_id: null, captured_value: '{"s":80}', weight: 1 }
+  { evidence_type: "match_candidate", ref_table: "signal_match_suggestions", ref_id: null, captured_value: '{"s": 80}', weight: 1 }
 ];
 
 async function asOrg<T>(orgId: string, fn: (c: PoolClient) => Promise<T>): Promise<T> {

@@ -43,10 +43,9 @@ and `reassessment` have no route/worker importer at all*. So:
 
 Everything remains DARK (`SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED = false`, engine + app),
 `main` untouched, GATE B intact. **Remaining ENGINEERING work (not operator/ledger):**
-applicability/evidence read routes (R4) + views (R5), exec-dashboard stats endpoint + UI
-(R6), 7 connector adapters (R7). ~~S6 dispatcher (R2)~~ / ~~S7 worker + enqueue (R3)~~ —
-delivered (Items 5 + 6 DONE). Operator-only items stay in the ledger
-(L-2/L-4/L-5.x/L-6/L-8/L-9).
+applicability + evidence views (R5), exec-dashboard stats endpoint + UI (R6), 7 connector
+adapters (R7). ~~R2~~ / ~~R3~~ / ~~R4 read routes~~ — delivered (Items 5 + 6 DONE; Item 7's
+engine prerequisite met). Operator-only items stay in the ledger (L-2/L-4/L-5.x/L-6/L-8/L-9).
 
 ---
 
@@ -394,11 +393,22 @@ which are NOT yet built — see the "remaining" note below.
   in render.yaml (runtime, restart-applied). +5 nav tests incl. dark-by-default on the real
   NAV_ITEMS.
 
-**Remaining for Item 7 (the three named views, NOT yet built):**
-- **Applicability view + evidence view (R5)** — read the persisted decision + reasoning chain
-  (reuse `explainability.ts`) + evidence used/missing + reproducibility. Needs the engine read
-  routes first (**R4** — no GET endpoint exposes an applicability assessment today; the 4b
-  tables have no reader).
+**Remaining for Item 7 (named views):**
+- ~~**R4 (engine read routes)**~~ — **DELIVERED 2026-07-05**: `GET /api/applicability-assessments`
+  (CURRENT decisions only — latest per (signal,target) by `seq` — org-scoped, paginated,
+  decision/target_type/signal_id filters, per-row blast-radius count) + `GET /api/applicability-assessments/:id`
+  (full record: header + blast radius + by-value evidence + the S5 `explainAssessment` rendering
+  incl. the AD-16 #4 reproducibility block). Standard ECL chain (flag-404 → auth → capability →
+  asTenant), read-only, mounted in routes/index.ts. **Includes a latent-defect fix surfaced by
+  building the first reader:** `captured_value` is JSONB, whose text rendering differs from the
+  caller's raw JSON string — the 4c writer hashed the RAW string, so read-back reproducibility
+  could never verify. The writer now canonicalizes evidence values to the jsonb text rendering
+  BEFORE hashing (safe: WORM tables empty in every environment). Proven by a real-PG test seeding
+  deliberately non-canonical JSON and asserting `reproduces === true` from read-back rows.
+  Tests: 10 unit (guards, validation, SQL shape, hash-consistent explanation) + 4 isolation
+  (current-only list + filter-on-current, reproducibility, cross-org 404/empty).
+- **Applicability view + evidence view (R5)** — dark app views over the R4 routes: decision +
+  reasoning chain + evidence used/missing + reproducibility.
 - **Exec dashboard (R6)** — needs a first-class engine ECL stats/rollup endpoint (counts by
   type/criticality/decision/blast-radius); a dashboard built over the page-capped list API
   today would be the ad-hoc aggregation the governing docs prohibit, so the endpoint is a

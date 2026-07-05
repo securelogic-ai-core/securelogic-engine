@@ -59,8 +59,26 @@ export async function persistApplicabilityAssessment(
   db: Queryable,
   args: PersistApplicabilityArgs
 ): Promise<PersistApplicabilityResult> {
-  const { identity, result, evidence } = args;
+  const { identity, result } = args;
   const orgId = identity.organization_id;
+
+  // R4 canonicalization fix (latent 4b/4c defect surfaced by the first reader):
+  // captured_value is stored as JSONB, whose text rendering differs from most
+  // caller-produced JSON strings (jsonb reorders keys and inserts spaces). The
+  // hash used to bind the ORIGINAL string, so a reader re-deriving the hash from
+  // read-back rows (S5 reproducibility, AD-16 #4) could never verify. Fix:
+  // canonicalize every captured_value to the Postgres jsonb text rendering
+  // BEFORE hashing, and store that same canonical string — write-hash and
+  // read-back are now byte-identical. Safe to change here: the WORM tables are
+  // empty in every environment (dark since creation; this writer's first live
+  // caller landed dark in R3).
+  const evidence: EvidenceSnapshot[] = [];
+  for (const e of args.evidence) {
+    const norm = await db.query("SELECT ($1::jsonb)::text AS v", [e.captured_value]);
+    const normRow = norm.rows[0];
+    if (!normRow) throw new Error("captured_value jsonb canonicalization returned no row");
+    evidence.push({ ...e, captured_value: String(normRow.v) });
+  }
 
   // Serialize per-org chain appends: the advisory lock is held to COMMIT, so a
   // concurrent writer for the same org waits and then reads our committed tail.
