@@ -55,6 +55,8 @@ import { withTenant, requireTenantContext } from "../infra/postgres.js";
 import { createSavepointClient } from "../infra/tenantContext.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "./auditLog.js";
+import { assetRegistryEnabled } from "./assetRegistryFeatureFlag.js";
+import { registerAsset } from "./assetRegistrar.js";
 import {
   FRAMEWORK_REFS,
   TEMPLATES,
@@ -186,8 +188,14 @@ export async function loadTemplate(
            RETURNING id`,
           [organizationId, v.name, v.criticality, v.category, v.description, industryId, flagsJson]
         );
-        if ((result.rowCount ?? 0) > 0) inserted.vendors += 1;
-        else skipped.vendors += 1;
+        if ((result.rowCount ?? 0) > 0) {
+          inserted.vendors += 1;
+          // EAR Phase 1: registry upsert (flag-gated, dark by default).
+          // registerAsset uses pg.query → routes to this same tenant tx.
+          if (assetRegistryEnabled()) {
+            await registerAsset(organizationId, "vendor", "vendors", (result.rows[0] as { id: string }).id);
+          }
+        } else skipped.vendors += 1;
       }
 
       // ─── 2. AI systems ──────────────────────────────────────────────
@@ -211,8 +219,12 @@ export async function loadTemplate(
             industryId,
           ]
         );
-        if ((result.rowCount ?? 0) > 0) inserted.ai_systems += 1;
-        else skipped.ai_systems += 1;
+        if ((result.rowCount ?? 0) > 0) {
+          inserted.ai_systems += 1;
+          if (assetRegistryEnabled()) {
+            await registerAsset(organizationId, "ai_system", "ai_systems", (result.rows[0] as { id: string }).id);
+          }
+        } else skipped.ai_systems += 1;
       }
 
       // ─── 3. Obligations ─────────────────────────────────────────────

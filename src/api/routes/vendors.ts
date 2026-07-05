@@ -23,9 +23,11 @@
  */
 
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
+import { registerAsset } from "../lib/assetRegistrar.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { enforceEntityLimit } from "../lib/entityLimit.js";
@@ -113,35 +115,44 @@ router.post(
 
       let result;
       try {
-        result = await pg.query(
-          `
-          INSERT INTO vendors (
-            organization_id,
-            name,
-            service_description,
-            category,
-            criticality,
-            data_sensitivity,
-            access_level,
-            website,
-            owner_user_id,
-            status
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active')
-          RETURNING ${VENDOR_SELECT}
-          `,
-          [
-            organizationId,
-            input.name,
-            input.service_description ?? null,
-            input.category ?? null,
-            input.criticality ?? null,
-            input.data_sensitivity ?? null,
-            input.access_level ?? null,
-            input.website ?? null,
-            input.owner_user_id ?? (req as any).autoUserId ?? null
-          ]
-        );
+        // withTenant: single tx so the EAR registry upsert (flag-gated, dark
+        // by default) is atomic with the vendor INSERT. No behavior change
+        // while SECURELOGIC_ASSET_REGISTRY_ENABLED is off.
+        result = await withTenant(organizationId, async () => {
+          const created = await pg.query(
+            `
+            INSERT INTO vendors (
+              organization_id,
+              name,
+              service_description,
+              category,
+              criticality,
+              data_sensitivity,
+              access_level,
+              website,
+              owner_user_id,
+              status
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active')
+            RETURNING ${VENDOR_SELECT}
+            `,
+            [
+              organizationId,
+              input.name,
+              input.service_description ?? null,
+              input.category ?? null,
+              input.criticality ?? null,
+              input.data_sensitivity ?? null,
+              input.access_level ?? null,
+              input.website ?? null,
+              input.owner_user_id ?? (req as any).autoUserId ?? null
+            ]
+          );
+          if (assetRegistryEnabled()) {
+            await registerAsset(organizationId, "vendor", "vendors", (created.rows[0] as { id: string }).id);
+          }
+          return created;
+        });
       } catch (err: any) {
         if (err?.code === "23505") {
           res.status(409).json({

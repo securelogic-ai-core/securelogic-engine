@@ -106,15 +106,20 @@ describe("validateEnterpriseRelationshipCreate", () => {
     }
   });
 
-  it("rejects 'asset' endpoints at the route layer while the registry is schema-dark", () => {
-    // The DB CHECK admits 'asset' (20260801 migration), but the route gate must
-    // NOT until the Tier-0 `assets` table exists for the same-org pre-flight.
-    expect(
+  it("accepts 'asset' endpoints at the route layer (live since registry Phase 1)", () => {
+    // Item 0 shipped 'asset' schema-dark (DB CHECK only); Phase 1 (20260803)
+    // shipped the Tier-0 `assets` table and flipped the route gate on — the
+    // same-org pre-flight now dispatches to it via NODE_TYPE_TABLE.
+    expect("input" in
       validateEnterpriseRelationshipCreate({ from_type: "asset", from_id: A, to_type: "vendor", to_id: B, relationship_type: "managed_by" })
-    ).toMatchObject({ error: "from_type_invalid" });
-    expect(
+    ).toBe(true);
+    expect("input" in
       validateEnterpriseRelationshipCreate({ from_type: "enterprise_entity", from_id: A, to_type: "asset", to_id: B, relationship_type: "hosted_on" })
-    ).toMatchObject({ error: "to_type_invalid" });
+    ).toBe(true);
+    // Unknown types are still rejected.
+    expect(
+      validateEnterpriseRelationshipCreate({ from_type: "cloud_resource", from_id: A, to_type: "vendor", to_id: B, relationship_type: "hosted_on" })
+    ).toMatchObject({ error: "from_type_invalid" });
   });
 
   it("bounds the note", () => {

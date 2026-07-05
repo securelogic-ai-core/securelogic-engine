@@ -16,14 +16,13 @@ const UUID_RE =
 const MAX_NOTE = 500;
 
 /**
- * Node types an edge endpoint may reference AT THE ROUTE LAYER. The DB CHECK
- * (20260801_enterprise_relationships_asset_expansion.sql) additionally admits
- * 'asset' — Tier-0 asset registry endpoints (EAR-AD-4) — which stays schema-dark
- * here until the `assets` table ships (registry Phase 1): the two-endpoint
- * same-org pre-flight has no table to dispatch to before then. Flip it on by
- * adding 'asset' here + to NODE_TYPE_TABLE; no migration needed.
+ * Node types an edge endpoint may reference AT THE ROUTE LAYER. Must match the
+ * DB CHECK (20260801_enterprise_relationships_asset_expansion.sql). 'asset' —
+ * Tier-0 registry endpoints (EAR-AD-4) — went live in registry Phase 1
+ * (20260803 ships the `assets` table the two-endpoint same-org pre-flight
+ * dispatches to); no edge-table migration was needed, exactly as planned.
  */
-export const NODE_TYPES = ["enterprise_entity", "vendor", "ai_system", "user"] as const;
+export const NODE_TYPES = ["enterprise_entity", "vendor", "ai_system", "user", "asset"] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Relationship types. Must match the migration CHECK. The second group is the
@@ -129,5 +128,6 @@ export const NODE_TYPE_TABLE: Record<NodeType, string> = {
   enterprise_entity: "enterprise_entities",
   vendor: "vendors",
   ai_system: "ai_systems",
-  user: "users"
+  user: "users",
+  asset: "assets"
 };

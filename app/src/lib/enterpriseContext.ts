@@ -51,7 +51,9 @@ export const DATA_CLASSIFICATIONS = [
 ] as const;
 export type DataClassification = (typeof DATA_CLASSIFICATIONS)[number];
 
-export const NODE_TYPES = ["enterprise_entity", "vendor", "ai_system", "user"] as const;
+// 'asset' = Tier-0 asset registry endpoint (EAR Phase 1) — mirrors the engine
+// route layer (enterpriseRelationshipValidation.ts).
+export const NODE_TYPES = ["enterprise_entity", "vendor", "ai_system", "user", "asset"] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 export const RELATIONSHIP_TYPES = [
