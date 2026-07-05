@@ -24,6 +24,7 @@ import {
   type ApplicabilityAssessmentRow,
   type ApplicabilityAssessmentDetail,
   type ApplicabilityExplanation,
+  type EnterpriseContextStats,
 } from "./enterpriseContext";
 
 const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
@@ -4861,6 +4862,23 @@ export async function getApplicabilityAssessment(
       applicability_assessment: ApplicabilityAssessmentDetail;
       explanation: ApplicabilityExplanation;
     };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+// ── Stats rollup (R6 — exec dashboard) ─────────────────────────────────────────
+
+export async function getEnterpriseContextStats(
+  token: string,
+): Promise<ReadResult<{ stats: EnterpriseContextStats }>> {
+  try {
+    const res = await engineFetch(`/api/enterprise-context/stats`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as { stats: EnterpriseContextStats };
     return { ok: true, ...body };
   } catch {
     return { ok: false, disabled: false, error: "network_error" };

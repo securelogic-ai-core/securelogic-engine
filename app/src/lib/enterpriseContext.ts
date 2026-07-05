@@ -232,6 +232,28 @@ export interface ApplicabilityExplanation {
   };
 }
 
+/** The first-class ECL stats rollup (GET /api/enterprise-context/stats — R6). */
+export interface EnterpriseContextStats {
+  entities: {
+    total: number;
+    by_type: Record<string, number>;
+    by_criticality: Record<string, number>;
+  };
+  relationships: { total: number };
+  applicability: {
+    current_total: number;
+    by_decision: Record<ApplicabilityDecision, number>;
+    affected_high_confidence: number;
+    total_assessments: number;
+    blast_radius_nodes: number;
+  };
+  workflow: {
+    pending_suggestions: number;
+    open_findings: number;
+    open_actions: number;
+  };
+}
+
 /** A single row of the import dry-run/commit plan (engine `planImport` output). */
 export interface ImportRow {
   status: string;
