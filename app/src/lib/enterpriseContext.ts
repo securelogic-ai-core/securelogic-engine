@@ -64,13 +64,14 @@ export const RELATIONSHIP_TYPES = [
 ] as const;
 export type RelationshipType = (typeof RELATIONSHIP_TYPES)[number];
 
-/** Entity types the CSV/XLSX importer accepts (subset of ENTITY_TYPES + vendor/ai_system). */
+/** Entity types the CSV/XLSX importer accepts (subset of ENTITY_TYPES + vendor/ai_system; `identity` added in R7 for the IdP connector). */
 export const IMPORT_ENTITY_TYPES = [
   "asset",
   "application",
   "data_store",
   "vendor",
   "ai_system",
+  "identity",
 ] as const;
 export type ImportEntityType = (typeof IMPORT_ENTITY_TYPES)[number];
 

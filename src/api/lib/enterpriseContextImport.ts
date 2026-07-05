@@ -29,13 +29,21 @@ import {
 import { validateVendorCreate, type VendorCreateInput } from "./vendorValidation.js";
 import { validateAiSystemCreate, type AiSystemCreateInput } from "./aiSystemValidation.js";
 
-/** The five importable entity types (the no-integration onboarding set). */
+/**
+ * The importable entity types. asset/application/data_store/vendor/ai_system =
+ * the original no-integration onboarding set (Slice 3); `identity` added in R7
+ * for the identity-provider connector (connectors reuse THIS import path, and
+ * IdP users normalize to `identity` entities). identity rows flow through the
+ * same enterprise-entity branch below — the manual-create validator already
+ * accepts entity_type 'identity'.
+ */
 export const IMPORT_ENTITY_TYPES = [
   "asset",
   "application",
   "data_store",
   "vendor",
-  "ai_system"
+  "ai_system",
+  "identity"
 ] as const;
 export type ImportEntityType = (typeof IMPORT_ENTITY_TYPES)[number];
 
