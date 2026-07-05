@@ -83,7 +83,9 @@ describe("EAR Phase 0 — asset_registry_v", () => {
     const byName = new Map(r.rows.map((row) => [row.name as string, row]));
     expect(byName.get("Acme Cloud")).toMatchObject({
       asset_type: "vendor", backing_kind: "vendors", status: "active",
-      criticality: "high", lifecycle_status: null
+      // Phase 1 (20260803) repointed the view: lifecycle_status is now
+      // COALESCE(assets.lifecycle_status, 'active') — never NULL.
+      criticality: "high", lifecycle_status: "active"
     });
     expect(byName.get("Fraud Model")).toMatchObject({
       asset_type: "ai_system", backing_kind: "ai_systems", status: "production",
