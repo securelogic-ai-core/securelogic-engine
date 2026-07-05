@@ -14,12 +14,14 @@ enablement is out of scope (GATE B).
 at the time, pre-goal). From Slice 3 onward, feature PRs **squash-merge + delete branch**
 per the goal.
 
-Last updated: 2026-07-04 (RESUME reconciliation). Items 1–9 DONE **and merged** to `develop`
-(4c #471 `cb15c788`, S5 #472 `cb1c2be2`, S6 #473 `b82bd4cb`, S7 #474 `33f4a929`, S8 #475
-`d0351c1c`, GATE-A memo #476, S9 #477 `c495dc0c`). Item 10 (Scale) **merged** #478 (squash
-`d3ad01ed`) — the interruption point, resolved. Item 11 (governance docs → as-built) **DONE**
-(this branch). **Item 7 (UI/CX) is the only remaining item** — intentionally sequenced last
-(needs L-4 app CI build); not started.
+Last updated: 2026-07-05 (RESUME reconciliation #2). Items 1–6 and 8–11 DONE **and merged**
+to `develop` (4c #471 `cb15c788`, S5 #472 `cb1c2be2`, S6 #473 `b82bd4cb`, S7 #474
+`33f4a929`, S8 #475 `d0351c1c`, GATE-A memo #476, S9 #477 `c495dc0c`, S10 #478 `d3ad01ed`,
+Item 11 #479 `b4765f79`). **Item 7 (UI/CX) is IN PROGRESS** — the second interruption point,
+resolved on resume: 7A.0 (app `tsc` folded into the required CI `typecheck` job) merged #480
+`4b566bad`; 7A.1 (Tier-1 UI api client + Next mutation proxies, dark) was left as open PR #481
+with CI 8/8 green and was squash-merged on reconciliation → `228f8f11`, branch deleted.
+Next: 7A.2+ — Tier-1 screens/nav (pure view/form work), then graph view + dashboards.
 
 ---
 
@@ -31,13 +33,13 @@ Last updated: 2026-07-04 (RESUME reconciliation). Items 1–9 DONE **and merged*
 | 2 | Slice 3 — CSV/spreadsheet import (assets, vendors, apps, AI systems, data stores) | **DONE** | #467 (squash `17627ac7`) + prereq dep-fix #468 (squash `205c39ef`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared in render.yaml, off) | L-3 |
 | 3 | Slice 4 — Applicability Engine (deterministic decision fn) | **DONE** — 4a pure fn (`2a9e4b96`) + 4b WORM persistence (`e4b63b5e`) + 4c writer (#471 `cb15c788`). Reproducible + test-locked. Live enqueue/fan-out worker (4d) delivered under S7/Item 6 (reassessment). | #469 (4a); #470 (4b); #471 (4c, squash `cb15c788`) | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared, off) | — |
 | 4 | Slice 5 — Explainability surface | **DONE** — pure render layer over stored decision | #472 (squash `cb1c2be2`); branch deleted | none (pure, inert — no callers) | — |
-| 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | **core DONE (pending merge)** — pure recommendation-derivation + idempotency; live dispatcher adapter TODO | #473 (squash `b82bd4cb`); branch deleted | none (pure, inert — no callers) | — |
-| 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | **core DONE (pending merge)** — pure reassessment triggers + drift detection; live worker adapter TODO | #474 (squash `33f4a929`); branch deleted | none (pure, inert — no callers) | — |
-| 7 | UI/CX — context screens, graph view, dashboards | TODO | — | — | L-4 (app build via CI) |
-| 8 | Connectors (ServiceNow/Defender/CrowdStrike/Wiz/Tenable/cloud/identity) — dark, mock-tested | **framework + reference adapter DONE (pending merge)** — ServiceNow CMDB implemented; 7 planned (config schemas registered) | #475 (squash `d0351c1c`); branch deleted | per-connector flags (at eventual call site) | L-5.1..L-5.9 |
+| 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | **core DONE (merged)** — pure recommendation-derivation + idempotency; live dispatcher adapter TODO | #473 (squash `b82bd4cb`); branch deleted | none (pure, inert — no callers) | — |
+| 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | **core DONE (merged)** — pure reassessment triggers + drift detection; live worker adapter TODO | #474 (squash `33f4a929`); branch deleted | none (pure, inert — no callers) | — |
+| 7 | UI/CX — context screens, graph view, dashboards | **IN PROGRESS** — 7A.0 app-typecheck CI lane DONE; 7A.1 api client + mutation proxies DONE (dark, no screens/nav yet); 7A.2+ screens/nav/graph/dashboards TODO | 7A.0 #480 (squash `4b566bad`); 7A.1 #481 (squash `228f8f11`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (off — every ECL engine route 404s; no UI entry point) | L-4 (partially resolved: app `tsc` is now a required PR-CI job; no CI `next build` lane yet) |
+| 8 | Connectors (ServiceNow/Defender/CrowdStrike/Wiz/Tenable/cloud/identity) — dark, mock-tested | **framework + reference adapter DONE (merged)** — ServiceNow CMDB implemented; 7 planned (config schemas registered) | #475 (squash `d0351c1c`); branch deleted | per-connector flags (at eventual call site) | L-5.1..L-5.9 |
 | 9 | Enterprise gating (GATE A ruled 2026-07-04) | **DONE** — capability gate + edge cap + entity default | GATE-A memo #476 (`572961b8`); gating #477 (squash `c495dc0c`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` + `enterprise_context` capability | L-1 (RESOLVED), L-7 |
 | 10 | Scale validation (recursive load, EXPLAIN, partitioning) | **DONE** — harness + EXPLAIN numbers + written findings/decisions | #478 (squash `d3ad01ed`); branch deleted | — | L-6 (staging load env) |
-| 11 | Governance docs → as-built (CANONICAL, arch, runbooks, rollback) | **DONE** — this PR | `BUILD_SEQUENCE.md` active-workstream note; `CANONICAL_DOMAIN_MODEL.md` build-status rows (4c/5/6/7 + capability/caps + connectors); `ENTERPRISE_CONTEXT_ARCHITECTURE.md` as-built banner; new `docs/runbooks/enterprise-context-enable-rollback.md` | — | — |
+| 11 | Governance docs → as-built (CANONICAL, arch, runbooks, rollback) | **DONE** — #479 (squash `b4765f79`) | `BUILD_SEQUENCE.md` active-workstream note; `CANONICAL_DOMAIN_MODEL.md` build-status rows (4c/5/6/7 + capability/caps + connectors); `ENTERPRISE_CONTEXT_ARCHITECTURE.md` as-built banner; new `docs/runbooks/enterprise-context-enable-rollback.md` | — | — |
 
 ### Decision gates
 - **GATE A** — **RULED 2026-07-04 (operator).** (1) Access = **Platform Professional + Enterprise** (ECL is core, not Enterprise-only). (2) Grant = **capability-based** (`requireCapability("enterprise_context")`, not hard-coded tier checks); Platform plans get it by default; per-org controllable. (3) Caps = conservative **10k entities / 50k edges**, separate from `max_monitored_entities`, `enforceEntityLimit` untouched; Enterprise higher configurable later. Implemented in Item 9 (this PR). Memo: `enterprise-context-gate-a-memo.md`.
@@ -270,3 +272,29 @@ Reconciled the governing docs to shipped reality (Slices 1–10 dark on `develop
   flag-off-inert rollback (WORM tables must not be TRUNCATEd as rollback).
 
 Prod enablement stays **GATE B** (out of scope). No code/schema changed in Item 11 — docs only.
+
+## Item 7 — UI/CX (IN PROGRESS)
+
+Sequenced last by design (needs the L-4 app CI story). Sliced so every PR is dark and
+independently mergeable; the flag keeps every ECL engine route 404ing, and no nav entry
+exists until the final wiring slice.
+
+- **7A.0 — app typecheck CI lane (DONE, #480 squash `4b566bad`).** `app/` `tsc --noEmit`
+  folded into the required PR-CI `typecheck` job (the app has no local test runner and the
+  sandbox SIGTERMs on `next build` — L-4). Partially resolves L-4: types are CI-gated;
+  there is still no CI `next build` lane (pre-existing gap, unchanged).
+- **7A.1 — Tier-1 api client + mutation proxies (DONE, #481 squash `228f8f11`).** Data
+  plumbing only, no screens/nav: pure `app/src/lib/enterpriseContext.ts` (vocabularies,
+  bounds — graph depth hard-capped at 5, row shapes, query builders, 404→disabled /
+  403→capability inference, error-code→copy map); gate-aware readers + client mutations in
+  `app/src/lib/api.ts`; five Next proxy routes under `app/src/app/api/enterprise-context/**`
+  (session token → Bearer, engine status passed through), mirroring the risk-lifecycle
+  proxy precedent. 20 database-free unit tests. Consumes only existing engine APIs.
+- **7A.2+ (TODO):** Tier-1 screens + nav (entity list/detail/forms, relationships, CSV
+  import flow), graph view, dashboards — pure view/form work over the 7A.1 client. Tier-2
+  surfaces (applicability/explainability/workflow/drift) need engine read routes that do
+  not exist yet and are explicitly out of Tier-1 scope.
+
+**Interruption record (2026-07-05 resume):** the prior session ended after pushing 7A.1 and
+opening PR #481 (CI completed 8/8 green after the interruption). Reconciliation verified the
+PR clean/unreviewed and squash-merged it per governance; branch deleted; this tracker synced.
