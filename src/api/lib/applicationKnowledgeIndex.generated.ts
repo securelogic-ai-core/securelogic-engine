@@ -421,6 +421,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "all"
     },
     {
+      "path": "/enterprise-context/graph",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
       "path": "/findings",
       "dynamic": false,
       "navLabel": "Findings",
