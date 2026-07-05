@@ -14,14 +14,15 @@ enablement is out of scope (GATE B).
 at the time, pre-goal). From Slice 3 onward, feature PRs **squash-merge + delete branch**
 per the goal.
 
-Last updated: 2026-07-05 (RESUME reconciliation #2). Items 1–6 and 8–11 DONE **and merged**
-to `develop` (4c #471 `cb15c788`, S5 #472 `cb1c2be2`, S6 #473 `b82bd4cb`, S7 #474
-`33f4a929`, S8 #475 `d0351c1c`, GATE-A memo #476, S9 #477 `c495dc0c`, S10 #478 `d3ad01ed`,
-Item 11 #479 `b4765f79`). **Item 7 (UI/CX) is IN PROGRESS** — the second interruption point,
-resolved on resume: 7A.0 (app `tsc` folded into the required CI `typecheck` job) merged #480
-`4b566bad`; 7A.1 (Tier-1 UI api client + Next mutation proxies, dark) was left as open PR #481
-with CI 8/8 green and was squash-merged on reconciliation → `228f8f11`, branch deleted.
-Next: 7A.2+ — Tier-1 screens/nav (pure view/form work), then graph view + dashboards.
+Last updated: 2026-07-05 (Item 7 complete). **ALL ITEMS 1–11 DONE and merged to `develop`.**
+Item 7 (UI/CX) shipped in five dark slices: 7A.0 CI lane #480 `4b566bad`; 7A.1 api client
+#481 `228f8f11` (left open at the session interruption, merged on the 2026-07-05 resume);
+7A.2 entity screens #484 `d3ccad1e`; 7A.3 relationships + graph view #485 `cca10015`;
+7A.4 CSV import UI + fail-closed nav #486 `15ffac4d`. The goal's build scope is complete:
+everything remains DARK (`SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED = false` on both engine
+and app services), `main` untouched, prod enablement stays GATE B (operator). Remaining
+work is operator-side (L-2/L-4/L-5.x/L-6/L-8) plus recorded engine follow-ups (§Item 7
+dashboards note; live adapters for S6/S7 cores).
 
 ---
 
@@ -35,7 +36,7 @@ Next: 7A.2+ — Tier-1 screens/nav (pure view/form work), then graph view + dash
 | 4 | Slice 5 — Explainability surface | **DONE** — pure render layer over stored decision | #472 (squash `cb1c2be2`); branch deleted | none (pure, inert — no callers) | — |
 | 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | **core DONE (merged)** — pure recommendation-derivation + idempotency; live dispatcher adapter TODO | #473 (squash `b82bd4cb`); branch deleted | none (pure, inert — no callers) | — |
 | 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | **core DONE (merged)** — pure reassessment triggers + drift detection; live worker adapter TODO | #474 (squash `33f4a929`); branch deleted | none (pure, inert — no callers) | — |
-| 7 | UI/CX — context screens, graph view, dashboards | **IN PROGRESS** — 7A.0 app-typecheck CI lane DONE; 7A.1 api client + mutation proxies DONE (dark, no screens/nav yet); 7A.2+ screens/nav/graph/dashboards TODO | 7A.0 #480 (squash `4b566bad`); 7A.1 #481 (squash `228f8f11`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (off — every ECL engine route 404s; no UI entry point) | L-4 (partially resolved: app `tsc` is now a required PR-CI job; no CI `next build` lane yet) |
+| 7 | UI/CX — context screens, graph view, dashboards | **DONE** — 7A.0 CI lane + 7A.1 api client + 7A.2 entity screens + 7A.3 relationships/graph + 7A.4 import UI + fail-closed nav. Rollup dashboards deliberately deferred to an engine stats endpoint (see Item 7 section) | 7A.0 #480 (`4b566bad`); 7A.1 #481 (`228f8f11`); 7A.2 #484 (`d3ccad1e`); 7A.3 #485 (`cca10015`); 7A.4 #486 (`15ffac4d`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` off on BOTH switches: engine (routes 404) + app (`securelogic-app` env — nav hidden, fail-closed) | L-4 (partial: app `tsc` + unit lanes; no CI `next build` lane), L-8 (staging app nav env) |
 | 8 | Connectors (ServiceNow/Defender/CrowdStrike/Wiz/Tenable/cloud/identity) — dark, mock-tested | **framework + reference adapter DONE (merged)** — ServiceNow CMDB implemented; 7 planned (config schemas registered) | #475 (squash `d0351c1c`); branch deleted | per-connector flags (at eventual call site) | L-5.1..L-5.9 |
 | 9 | Enterprise gating (GATE A ruled 2026-07-04) | **DONE** — capability gate + edge cap + entity default | GATE-A memo #476 (`572961b8`); gating #477 (squash `c495dc0c`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` + `enterprise_context` capability | L-1 (RESOLVED), L-7 |
 | 10 | Scale validation (recursive load, EXPLAIN, partitioning) | **DONE** — harness + EXPLAIN numbers + written findings/decisions | #478 (squash `d3ad01ed`); branch deleted | — | L-6 (staging load env) |
@@ -273,11 +274,11 @@ Reconciled the governing docs to shipped reality (Slices 1–10 dark on `develop
 
 Prod enablement stays **GATE B** (out of scope). No code/schema changed in Item 11 — docs only.
 
-## Item 7 — UI/CX (IN PROGRESS)
+## Item 7 — UI/CX (DONE)
 
 Sequenced last by design (needs the L-4 app CI story). Sliced so every PR is dark and
-independently mergeable; the flag keeps every ECL engine route 404ing, and no nav entry
-exists until the final wiring slice.
+independently mergeable; the flag keeps every ECL engine route 404ing, and the nav entry
+(final slice) is fail-closed behind the app-side env flag.
 
 - **7A.0 — app typecheck CI lane (DONE, #480 squash `4b566bad`).** `app/` `tsc --noEmit`
   folded into the required PR-CI `typecheck` job (the app has no local test runner and the
@@ -290,11 +291,41 @@ exists until the final wiring slice.
   `app/src/lib/api.ts`; five Next proxy routes under `app/src/app/api/enterprise-context/**`
   (session token → Bearer, engine status passed through), mirroring the risk-lifecycle
   proxy precedent. 20 database-free unit tests. Consumes only existing engine APIs.
-- **7A.2+ (TODO):** Tier-1 screens + nav (entity list/detail/forms, relationships, CSV
-  import flow), graph view, dashboards — pure view/form work over the 7A.1 client. Tier-2
-  surfaces (applicability/explainability/workflow/drift) need engine read routes that do
-  not exist yet and are explicitly out of Tier-1 scope.
+- **7A.2 — entity screens (DONE, #484 squash `d3ccad1e`).** `/enterprise-context` list
+  (all-8-types filter chips, offset pagination — no engine totals, so "Next" only on a full
+  page), detail (full field set + data-store attrs), shared create/edit form
+  (contract-faithful PATCH: full form state, cleared enums as explicit `null`, `data_store`
+  block always whole — replace semantics), confirm-delete. Gate-aware failure panel
+  (404→disabled / 403→capability affordance / else shared copy). New pure
+  `enterpriseContextFormat.ts` (labels, pageNav, readFailure) + 18 unit tests. Also
+  regenerated the application knowledge index (its staleness guard fails CI on any new app
+  route — recurring gotcha).
+- **7A.3 — relationships + graph view (DONE, #485 squash `cca10015`).** Detail-page
+  relationship management (direction toggle, engine vocab, page-capped pickers + paste-an-ID
+  fallback, per-row confirm-remove) and `/enterprise-context/graph` — server-rendered SVG
+  neighborhood (depth 1–5, per-type legend, deep links). Pure deterministic layered layout
+  `enterpriseGraphLayout.ts` (+8 tests): columns per BFS depth, 40-node column cap,
+  omitted nodes/edges counted and surfaced, never silently dropped. Names batch-resolved
+  from page-capped lists with honest short-id fallback (resolver returns ids only).
+- **7A.4 — import UI + nav (DONE, #486 squash `15ffac4d`).** Two-step import flow
+  (preview plan → commit `ok` rows) over the Slice-3 route: summary chips, problems-first
+  row table with validator details, truncation notice, per-type expected-columns hint.
+  Fail-closed nav: `filterNav` gains `featureFlag` support (flagged items hidden unless the
+  flag is passed `true`); "Context" link flagged `enterprise_context`; server layout resolves
+  the env and threads it to the client Header; flag declared `"false"` on `securelogic-app`
+  in render.yaml (runtime, restart-applied). +5 nav tests incl. dark-by-default on the real
+  NAV_ITEMS.
+
+**Dashboards scoping decision (recorded):** the engine has no ECL rollup/stats endpoint and
+the list API returns no totals — a "dashboard" today would be an ad-hoc UI aggregation over
+one page-capped sample (the exact outputs-assembled-ad-hoc pattern the governing docs
+prohibit). Tier-1's visual surface is the graph view + filterable context screens; a
+first-class engine stats/rollup endpoint (and a dashboard card over it) is the recorded
+engine-side follow-up, alongside Tier-2 read routes
+(applicability/explainability/workflow/drift surfaces) and the S6/S7 live adapters.
 
 **Interruption record (2026-07-05 resume):** the prior session ended after pushing 7A.1 and
 opening PR #481 (CI completed 8/8 green after the interruption). Reconciliation verified the
-PR clean/unreviewed and squash-merged it per governance; branch deleted; this tracker synced.
+PR clean/unreviewed and squash-merged it per governance; branch deleted; tracker synced
+(#483 `bdc97db1`); 7A.2–7A.4 then built and merged in-session, completing the item and the
+goal's build scope.

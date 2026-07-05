@@ -6,7 +6,7 @@ NOT performed by the build agent** — they are recorded here for Simmee/operato
 Each slice's report reproduces this ledger. Nothing here is a prerequisite to *building*
 (dark) code; several gate *enablement* (which is out of scope — GATE B).
 
-Last updated: 2026-07-05.
+Last updated: 2026-07-05 (Item 7 complete — L-8 added).
 
 | ID | Action | Service / where | Exact value / steps | Needed by | Status |
 |---|---|---|---|---|---|
@@ -26,6 +26,7 @@ Last updated: 2026-07-05.
 | **L-5.8** | Cloud inventory credentials | AWS/Azure/GCP + Render env | `provider` + `account_id` + assumed-role ARN / credential ref (least-priv read-only inventory role). Adapter PLANNED | when cloud adapter built | PENDING |
 | **L-5.9** | Identity provider credentials | Okta/Entra + Render env | IdP `base_url` + `api_token` (read users/groups). Adapter PLANNED | when identity adapter built | PENDING |
 | **L-6** | Staging load-test environment for the recursive graph resolver | staging DB + seed | A staging org seeded with a dense/large graph (10⁴–10⁵ entities, high fan-out) so H2 `EXPLAIN`/load numbers are real. Agent writes the harness; operator provisions the data volume if not synthesizable in CI | Slice 10 (scale validation) | PENDING |
+| **L-8** | App-side nav flag for staging UI validation | Render dashboard (`securelogic-app-staging`) | Set `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED = true` on the **staging app** service (dashboard-only — not in render.yaml) to reveal the "Context" header item, and the same var on the **staging engine** so the routes answer. Runtime var: restart applies, no rebuild. Prod app flip = part of L-2 / GATE B. Nav is presentation-only — the engine flag + capability still gate all data | Item 7 staging validation | PENDING |
 
 ## Standing reminders
 - **`render.yaml` flag declaration** (`SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED = false`) is a
