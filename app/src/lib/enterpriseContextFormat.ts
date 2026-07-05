@@ -65,6 +65,36 @@ export function pageNav(
   return { prevOffset, nextOffset };
 }
 
+// ─── Applicability display helpers (R5) ─────────────────────────────────────────
+
+const DECISION_LABELS: Record<string, string> = {
+  affected: "Affected",
+  potentially_affected: "Potentially Affected",
+  not_affected: "Not Affected",
+  needs_review: "Needs Review",
+  unknown: "Unknown",
+};
+
+export function decisionLabel(decision: string): string {
+  return DECISION_LABELS[decision] ?? titleFromSnake(decision);
+}
+
+/** "vendor" → "Vendor", "ai_system" → "AI System" — applicability target labels. */
+export function matchTargetLabel(type: string): string {
+  if (type === "ai_system") return "AI System";
+  return titleFromSnake(type);
+}
+
+/** First 12 hex chars of a chain hash for compact display ("" stays ""). */
+export function shortHash(hash: string): string {
+  return hash.length > 12 ? `${hash.slice(0, 12)}…` : hash;
+}
+
+/** "graph_reachability" → "Graph Reachability" etc. for evidence categories. */
+export function evidenceCategoryLabel(category: string): string {
+  return titleFromSnake(category);
+}
+
 export type ReadFailureKind = "disabled" | "capability" | "error";
 
 /**

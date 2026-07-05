@@ -5,7 +5,7 @@
  */
 
 import Link from "next/link";
-import { entityTypeLabel, type ReadFailureKind } from "@/lib/enterpriseContextFormat";
+import { decisionLabel, entityTypeLabel, type ReadFailureKind } from "@/lib/enterpriseContextFormat";
 
 // ─── Badges / chips (visual language mirrors ai-systems + vendors) ────────────
 
@@ -56,6 +56,42 @@ export function MetaChip({ label, value }: { label: string; value: string | null
     <span className="inline-flex items-center gap-1 text-xs">
       <span style={{ color: "#94a3b8" }}>{label}:</span>
       <span style={{ color: "#cbd5e1" }}>{value}</span>
+    </span>
+  );
+}
+
+// ─── Applicability decision badge (R5) ─────────────────────────────────────────
+
+const DECISION_BADGE_STYLES: Record<string, React.CSSProperties> = {
+  affected:              { background: "rgba(239,68,68,0.15)",   color: "#fca5a5" },
+  potentially_affected:  { background: "rgba(249,115,22,0.15)",  color: "#fdba74" },
+  needs_review:          { background: "rgba(245,158,11,0.15)",  color: "#fcd34d" },
+  not_affected:          { background: "rgba(34,197,94,0.15)",   color: "#86efac" },
+  unknown:               { background: "rgba(148,163,184,0.15)", color: "#94a3b8" },
+};
+
+export function DecisionBadge({ value }: { value: string }) {
+  const style =
+    DECISION_BADGE_STYLES[value] ?? { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold" style={style}>
+      {decisionLabel(value)}
+    </span>
+  );
+}
+
+/** AD-16 #4: green when the re-derived hash reproduces; red = tamper-evident. */
+export function ReproducibilityBadge({ reproduces }: { reproduces: boolean }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold"
+      style={
+        reproduces
+          ? { background: "rgba(34,197,94,0.15)", color: "#86efac" }
+          : { background: "rgba(239,68,68,0.15)", color: "#fca5a5" }
+      }
+    >
+      {reproduces ? "✓ Verified — hash reproduces" : "✕ Does NOT reproduce — record may be tampered"}
     </span>
   );
 }
