@@ -6,7 +6,7 @@ NOT performed by the build agent** — they are recorded here for Simmee/operato
 Each slice's report reproduces this ledger. Nothing here is a prerequisite to *building*
 (dark) code; several gate *enablement* (which is out of scope — GATE B).
 
-Last updated: 2026-07-03.
+Last updated: 2026-07-05.
 
 | ID | Action | Service / where | Exact value / steps | Needed by | Status |
 |---|---|---|---|---|---|
@@ -14,7 +14,7 @@ Last updated: 2026-07-03.
 | **L-7** | Per-org ECL capability grant/revoke + cap tuning (operational) | prod DB (organizations) | Grant/deny a specific org: `UPDATE organizations SET enterprise_context_capability = true/false WHERE id = …` (NULL = inherit the Platform default). Raise a specific org's caps (Enterprise): `UPDATE … SET max_enterprise_entities = …, max_enterprise_edges = … WHERE id = …`. No DDL, no code deploy. Still gated by the feature flag (GATE B) until prod enable. | post-enable, per customer | PENDING (operational, as needed) |
 | **L-2** | Prod enablement of `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` | Render env (prod ECL-serving services) | Set `= true` ONLY after: AD-17 grant shipped + H1 edge cap + H2 load test pass + staging soak green. **Out of scope for this goal (GATE B).** | GA (post-goal) | **PENDING — GATE B (do not perform under this goal)** |
 | **L-3** | Decide the CSV/bulk-import per-org row-limit value | commercial/operator | Slice 3 reuses the S1 `max_enterprise_entities` cap mechanism; the import hard row-limit *value* is an operator decision (blueprint §24 Q1). Ship a conservative default; operator tunes via `UPDATE` (no DDL) | Slice 3 (tunable post-merge) | PENDING |
-| **L-4** | Validate the ECL UI build in CI (app has no local test runner; sandbox SIGTERMs on app build) | CI (GitHub Actions) | Rely on the CI `build`/`typecheck`/`lint` lanes for the `app/` surface when the sandbox cannot build it locally | Slice 7 (UI/CX) | PENDING |
+| **L-4** | Validate the ECL UI build in CI (app has no local test runner; sandbox SIGTERMs on app build) | CI (GitHub Actions) | Rely on the CI `build`/`typecheck`/`lint` lanes for the `app/` surface when the sandbox cannot build it locally. **Update 2026-07-05:** app `tsc --noEmit` is now a required PR-CI job (7A.0 #480) and root Vitest runs `app/src/**/__tests__`; there is still NO CI `next build` lane for `app/` (pre-existing gap) — a real `next build` remains operator/CI-infra work if wanted before enablement | Slice 7 (UI/CX) | **PARTIALLY RESOLVED** (typecheck + unit lanes; no `next build` lane) |
 | **L-5** | Connector credentials + tenant setup (per connector) | external SaaS + Render env | ServiceNow CMDB / Defender / CrowdStrike / Wiz / Tenable / Qualys / Rapid7 / cloud / identity — API tokens, instance URLs, OAuth apps. Agent builds adapters + mock-backed tests only; real-credential round-trips are operator work. Per-connector rows below (L-5.1..L-5.9) | Slice 8 (connectors) | PENDING (details per connector) |
 | **L-5.1** | ServiceNow CMDB credentials (REFERENCE adapter — the only fetch/normalize implemented) | external SaaS + Render env | `instance_url` (https), integration `username` + `password` (read on `cmdb_ci`). Adapter `servicenow_cmdb` is dark; a real fetch round-trip is operator validation | Slice 8 done; enablement post-GATE B | PENDING |
 | **L-5.2** | Microsoft Defender credentials | Azure + Render env | `tenant_id`, app-registration `client_id` + `client_secret` (Defender API). Adapter PLANNED (config schema only) | when defender adapter built | PENDING |
