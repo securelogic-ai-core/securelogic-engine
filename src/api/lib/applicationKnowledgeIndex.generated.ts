@@ -415,6 +415,24 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "platform"
     },
     {
+      "path": "/enterprise-context/applicability",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/enterprise-context/applicability/[id]",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/enterprise-context/applicability/[id]/evidence",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
       "path": "/enterprise-context/entities/[id]",
       "dynamic": true,
       "navLabel": null,

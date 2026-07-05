@@ -74,11 +74,30 @@ export const IMPORT_ENTITY_TYPES = [
 ] as const;
 export type ImportEntityType = (typeof IMPORT_ENTITY_TYPES)[number];
 
+// ─── Applicability decisions (mirror src/engine/applicability/v1/types.ts) ─────
+
+export const APPLICABILITY_DECISIONS = [
+  "affected",
+  "potentially_affected",
+  "not_affected",
+  "needs_review",
+  "unknown",
+] as const;
+export type ApplicabilityDecision = (typeof APPLICABILITY_DECISIONS)[number];
+
+export const CONFIDENCE_BANDS = ["low", "medium", "high"] as const;
+export type ConfidenceBand = (typeof CONFIDENCE_BANDS)[number];
+
+/** Applicability target types (mirror MATCH_TARGET_TYPES on the engine). */
+export const MATCH_TARGET_TYPES = ["vendor", "ai_system", "control", "obligation"] as const;
+export type MatchTargetType = (typeof MATCH_TARGET_TYPES)[number];
+
 // ─── Pagination / depth bounds (mirror the engine) ─────────────────────────────
 
 export const ENTITY_PAGE = { defaultLimit: 25, maxLimit: 100, maxOffset: 100_000 } as const;
 export const RELATIONSHIP_PAGE = { defaultLimit: 50, maxLimit: 200, maxOffset: 100_000 } as const;
 export const GRAPH_DEPTH = { min: 1, default: 3, max: 5 } as const;
+export const APPLICABILITY_PAGE = { defaultLimit: 25, maxLimit: 100, maxOffset: 100_000 } as const;
 
 // ─── Row shapes (mirror the engine response JSON) ──────────────────────────────
 
@@ -145,6 +164,72 @@ export interface GraphNeighborhood {
   depth: number;
   nodes: GraphNode[];
   edges: GraphEdge[];
+}
+
+// ─── Applicability read-route shapes (mirror routes/applicabilityAssessments.ts) ─
+
+export interface ApplicabilityAssessmentRow {
+  id: string;
+  organization_id: string;
+  signal_id: string;
+  target_type: MatchTargetType;
+  target_id: string;
+  decision: ApplicabilityDecision;
+  confidence: number;
+  confidence_band: ConfidenceBand;
+  engine_version: string;
+  schema_version: string;
+  content_hash: string;
+  prev_hash: string;
+  created_at: string;
+  /** LIST only: blast-radius size for the row. */
+  affected_count?: number;
+}
+
+export interface ApplicabilityReasoningStep {
+  rule_id: string;
+  inputs_considered: string;
+  outcome: string;
+}
+
+export interface ApplicabilityAffectedEntity {
+  node_type: string;
+  node_id: string;
+  min_depth: number;
+  via_target_type: MatchTargetType;
+  via_target_id: string;
+}
+
+export interface ApplicabilityEvidenceItem {
+  evidence_type: string;
+  ref_table: string;
+  ref_id: string | null;
+  captured_value: string;
+  weight: number | null;
+}
+
+export interface ApplicabilityAssessmentDetail extends ApplicabilityAssessmentRow {
+  reasoning_steps: ApplicabilityReasoningStep[];
+  affected_entities: ApplicabilityAffectedEntity[];
+  evidence: ApplicabilityEvidenceItem[];
+}
+
+/** The S5 explainability rendering the GET-one route returns alongside the record. */
+export interface ApplicabilityExplanation {
+  headline: string;
+  decision_statement: string;
+  reasoning_chain: string[];
+  evidence_used: Array<{ category: string; count: number; types: string[] }>;
+  evidence_missing: string[];
+  blast_radius: Array<{ node_type: string; count: number; min_depth: number }>;
+  affected_count: number;
+  reproducibility: {
+    engine_version: string;
+    schema_version: string;
+    content_hash: string;
+    prev_hash: string;
+    reproduces: boolean;
+  };
 }
 
 /** A single row of the import dry-run/commit plan (engine `planImport` output). */
@@ -245,6 +330,23 @@ export function graphQuery(params: {
   q.set("node_type", params.node_type);
   q.set("node_id", params.node_id);
   q.set("depth", String(clampDepth(params.depth)));
+  return q.toString();
+}
+
+/** Build the query string for GET /api/applicability-assessments. */
+export function applicabilityQuery(params: {
+  decision?: ApplicabilityDecision;
+  target_type?: MatchTargetType;
+  signal_id?: string;
+  limit?: number;
+  offset?: number;
+}): string {
+  const q = new URLSearchParams();
+  if (params.decision) q.set("decision", params.decision);
+  if (params.target_type) q.set("target_type", params.target_type);
+  if (params.signal_id) q.set("signal_id", params.signal_id);
+  q.set("limit", String(clampLimit(params.limit, APPLICABILITY_PAGE)));
+  q.set("offset", String(clampOffset(params.offset, APPLICABILITY_PAGE.maxOffset)));
   return q.toString();
 }
 

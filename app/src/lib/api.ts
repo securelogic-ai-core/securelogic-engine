@@ -10,6 +10,7 @@ import {
   relationshipsQuery,
   graphQuery,
   importQuery,
+  applicabilityQuery,
   isFeatureDisabledStatus,
   type EntityType,
   type NodeType,
@@ -18,6 +19,11 @@ import {
   type GraphNeighborhood,
   type ImportEntityType,
   type ImportPlan,
+  type ApplicabilityDecision,
+  type MatchTargetType,
+  type ApplicabilityAssessmentRow,
+  type ApplicabilityAssessmentDetail,
+  type ApplicabilityExplanation,
 } from "./enterpriseContext";
 
 const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
@@ -4801,6 +4807,60 @@ export async function getEnterpriseGraph(
       return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
     }
     const body = (await res.json()) as { enterprise_graph: GraphNeighborhood };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+// ── Applicability decision reads (R5 — over the R4 engine routes) ──────────────
+
+export async function getApplicabilityAssessments(
+  token: string,
+  params: {
+    decision?: ApplicabilityDecision;
+    target_type?: MatchTargetType;
+    signal_id?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<
+  ReadResult<{ applicability_assessments: ApplicabilityAssessmentRow[]; limit: number; offset: number }>
+> {
+  try {
+    const res = await engineFetch(`/api/applicability-assessments?${applicabilityQuery(params)}`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as {
+      applicability_assessments: ApplicabilityAssessmentRow[];
+      limit: number;
+      offset: number;
+    };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function getApplicabilityAssessment(
+  token: string,
+  id: string,
+): Promise<
+  ReadResult<{
+    applicability_assessment: ApplicabilityAssessmentDetail;
+    explanation: ApplicabilityExplanation;
+  }>
+> {
+  try {
+    const res = await engineFetch(`/api/applicability-assessments/${encodeURIComponent(id)}`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as {
+      applicability_assessment: ApplicabilityAssessmentDetail;
+      explanation: ApplicabilityExplanation;
+    };
     return { ok: true, ...body };
   } catch {
     return { ok: false, disabled: false, error: "network_error" };

@@ -407,8 +407,17 @@ which are NOT yet built — see the "remaining" note below.
   deliberately non-canonical JSON and asserting `reproduces === true` from read-back rows.
   Tests: 10 unit (guards, validation, SQL shape, hash-consistent explanation) + 4 isolation
   (current-only list + filter-on-current, reproducibility, cross-org 404/empty).
-- **Applicability view + evidence view (R5)** — dark app views over the R4 routes: decision +
-  reasoning chain + evidence used/missing + reproducibility.
+- ~~**Applicability view + evidence view (R5)**~~ — **DELIVERED 2026-07-05** (dark, fail-closed like
+  every 7A screen): `/enterprise-context/applicability` (list of CURRENT decisions, decision filter
+  chips, blast-radius counts, offset pagination), `/enterprise-context/applicability/[id]` (the
+  **applicability view**: headline + decision statement + ordered reasoning chain + blast radius
+  grouped by node type + affected-entity list) and `/enterprise-context/applicability/[id]/evidence`
+  (the **evidence view**: reproducibility badge + hash-chain block, evidence used grouped by auditor
+  category, honest evidence-missing gaps, raw by-value snapshots). Server-component reads via the
+  gate-aware `getApplicabilityAssessment(s)` readers (no new proxies — read-only); lib additions
+  (`applicabilityQuery`, decision vocab/types) + display helpers (decisionLabel/matchTargetLabel/
+  shortHash/evidenceCategoryLabel) + `DecisionBadge`/`ReproducibilityBadge`; "Applicability" link on
+  the Context landing page; knowledge index regenerated. 7 pure unit tests.
 - **Exec dashboard (R6)** — needs a first-class engine ECL stats/rollup endpoint (counts by
   type/criticality/decision/blast-radius); a dashboard built over the page-capped list API
   today would be the ad-hoc aggregation the governing docs prohibit, so the endpoint is a
