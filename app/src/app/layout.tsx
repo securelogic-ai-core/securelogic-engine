@@ -44,6 +44,13 @@ export default async function RootLayout({
     entitlementLevel === "standard";
   const isAdminUser = session.userRole === "admin";
 
+  // Feature-flagged nav items (fail-closed). Runtime env — a restart applies it, no
+  // rebuild. The engine's own flag still 404s every ECL route independently, so nav
+  // visibility is presentation only; this is the app half of the two-switch model.
+  const navFlags = {
+    enterprise_context: process.env.SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED === "true",
+  };
+
   return (
     <html lang="en">
       <body className="min-h-screen flex flex-col bg-brand-bg text-slate-100" suppressHydrationWarning>
@@ -53,6 +60,7 @@ export default async function RootLayout({
           isPremiumUser={isPremiumUser}
           isAdminUser={isAdminUser}
           isSsoEligible={isSsoEligible}
+          navFlags={navFlags}
           organizationName={session.organizationName}
           userName={session.name}
           userEmail={session.email}
