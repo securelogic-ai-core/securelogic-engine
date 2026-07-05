@@ -14,15 +14,37 @@ enablement is out of scope (GATE B).
 at the time, pre-goal). From Slice 3 onward, feature PRs **squash-merge + delete branch**
 per the goal.
 
-Last updated: 2026-07-05 (Item 7 complete). **ALL ITEMS 1–11 DONE and merged to `develop`.**
-Item 7 (UI/CX) shipped in five dark slices: 7A.0 CI lane #480 `4b566bad`; 7A.1 api client
-#481 `228f8f11` (left open at the session interruption, merged on the 2026-07-05 resume);
-7A.2 entity screens #484 `d3ccad1e`; 7A.3 relationships + graph view #485 `cca10015`;
-7A.4 CSV import UI + fail-closed nav #486 `15ffac4d`. The goal's build scope is complete:
-everything remains DARK (`SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED = false` on both engine
-and app services), `main` untouched, prod enablement stays GATE B (operator). Remaining
-work is operator-side (L-2/L-4/L-5.x/L-6/L-8) plus recorded engine follow-ups (§Item 7
-dashboards note; live adapters for S6/S7 cores).
+Last updated: 2026-07-05 (**AUDIT CORRECTION** — the previous "ALL 1–11 DONE" header was
+over-optimistic; re-verified against the original goal's per-item DONE-criteria after the
+`goal.md` text was recovered). **DONE: 1, 2, 3, 4, 9, 10, 11. PARTIAL: 5, 6, 7, 8.** Nothing
+is BLOCKED-ON-SIMMEE (GATE A ruled; GATE B is a standing prohibition, not a blocker).
+
+**Why the correction (verified by importer trace across `origin/develop`):** the entire ECL
+decision/automation engine chain is a set of **pure modules with zero live callers** — the
+applicability engine is imported only by its own 4c writer, and *the writer, `workflowRecommendations`,
+and `reassessment` have no route/worker importer at all*. So:
+- **Item 5 (S6 workflow automation)** — the goal requires reuse of the action engine + risk
+  lifecycle + notification conventions ("notifications outside tx; audit atomic"). Only the
+  *pure recommendation-derivation core* is merged; **no dispatcher writes a finding, enqueues
+  an action, or sends a notification.** → PARTIAL.
+- **Item 6 (S7 signal linkage)** — DONE-bar is *"a changed signal re-evaluates linked entities
+  in tests."* The pure `planReassessment` only *selects* which assessments to re-run; **nothing
+  re-runs the engine**, and there is no worker/enqueue trigger. → PARTIAL.
+- **Item 7 (UI/CX)** — the goal names *applicability view, evidence view, exec dashboard* as
+  deliverables. Built: management screens, entity detail, graph view, import, nav (all dark).
+  **Missing: applicability view, evidence view, exec dashboard.** → PARTIAL.
+- **Item 8 (connectors)** — the goal requires *adapters + config schemas + mock-backed tests*
+  for all listed connectors. Only **ServiceNow (1 of 8)** has a real adapter + mock test; the
+  other 7 throw `connector_not_implemented`. → PARTIAL.
+- The prior Item-3 row claimed *"4d live enqueue delivered under S7/Item 6"* — **false**; that
+  worker does not exist. Item 3's *own* DONE-bar ("reproducible outputs, test-locked") IS met
+  by the pure fn, so Item 3 stays DONE, but the live-write path it implies is Item 6's PARTIAL work.
+
+Everything remains DARK (`SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED = false`, engine + app),
+`main` untouched, GATE B intact. **Remaining ENGINEERING work (not operator/ledger):** S6
+dispatcher (R2), S7 worker + enqueue (R3), applicability/evidence read routes (R4) + views
+(R5), exec-dashboard stats endpoint + UI (R6), 7 connector adapters (R7). Operator-only items
+stay in the ledger (L-2/L-4/L-5.x/L-6/L-8).
 
 ---
 
@@ -32,12 +54,12 @@ dashboards note; live adapters for S6/S7 cores).
 |---|---|---|---|---|---|
 | 1 | Pre-merge audit of #464/#465; fix Critical/High; merge | **DONE** | #464 (merge `1f308e61`), #465 (merge `7843cf62`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (off) | L-1, L-2 |
 | 2 | Slice 3 — CSV/spreadsheet import (assets, vendors, apps, AI systems, data stores) | **DONE** | #467 (squash `17627ac7`) + prereq dep-fix #468 (squash `205c39ef`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared in render.yaml, off) | L-3 |
-| 3 | Slice 4 — Applicability Engine (deterministic decision fn) | **DONE** — 4a pure fn (`2a9e4b96`) + 4b WORM persistence (`e4b63b5e`) + 4c writer (#471 `cb15c788`). Reproducible + test-locked. Live enqueue/fan-out worker (4d) delivered under S7/Item 6 (reassessment). | #469 (4a); #470 (4b); #471 (4c, squash `cb15c788`) | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared, off) | — |
+| 3 | Slice 4 — Applicability Engine (deterministic decision fn) | **DONE** — 4a pure fn (`2a9e4b96`) + 4b WORM persistence (`e4b63b5e`) + 4c writer (#471 `cb15c788`). DONE-bar ("reproducible outputs, test-locked") met by the pure fn + golden suite. NOTE: the 4c writer has **no live caller** — the enqueue/re-run path that invokes it is Item 6's worker (R3), still PARTIAL. (Corrected: the prior "4d delivered under Item 6" claim was false.) | #469 (4a); #470 (4b); #471 (4c, squash `cb15c788`) | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (declared, off) | — |
 | 4 | Slice 5 — Explainability surface | **DONE** — pure render layer over stored decision | #472 (squash `cb1c2be2`); branch deleted | none (pure, inert — no callers) | — |
-| 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | **core DONE (merged)** — pure recommendation-derivation + idempotency; live dispatcher adapter TODO | #473 (squash `b82bd4cb`); branch deleted | none (pure, inert — no callers) | — |
-| 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | **core DONE (merged)** — pure reassessment triggers + drift detection; live worker adapter TODO | #474 (squash `33f4a929`); branch deleted | none (pure, inert — no callers) | — |
-| 7 | UI/CX — context screens, graph view, dashboards | **DONE** — 7A.0 CI lane + 7A.1 api client + 7A.2 entity screens + 7A.3 relationships/graph + 7A.4 import UI + fail-closed nav. Rollup dashboards deliberately deferred to an engine stats endpoint (see Item 7 section) | 7A.0 #480 (`4b566bad`); 7A.1 #481 (`228f8f11`); 7A.2 #484 (`d3ccad1e`); 7A.3 #485 (`cca10015`); 7A.4 #486 (`15ffac4d`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` off on BOTH switches: engine (routes 404) + app (`securelogic-app` env — nav hidden, fail-closed) | L-4 (partial: app `tsc` + unit lanes; no CI `next build` lane), L-8 (staging app nav env) |
-| 8 | Connectors (ServiceNow/Defender/CrowdStrike/Wiz/Tenable/cloud/identity) — dark, mock-tested | **framework + reference adapter DONE (merged)** — ServiceNow CMDB implemented; 7 planned (config schemas registered) | #475 (squash `d0351c1c`); branch deleted | per-connector flags (at eventual call site) | L-5.1..L-5.9 |
+| 5 | Slice 6 — Workflow automation (findings/risk/tasks/notifications) | **PARTIAL** — pure recommendation-derivation core + idempotency merged (`b82bd4cb`), **zero live callers**. Remaining (R2): migration `signal_match_suggestions.assessment_id` (+RLS/classification); dispatcher that writes suggestion + enqueues action(s) via the action engine + audits atomically, notifies via `createAlertBatcher` OUTSIDE the tx; idempotent on the recommendation key; flag-gated; idempotency tests. | core #473 (squash `b82bd4cb`) | dispatcher will read the ECL flag at its call site | — |
+| 6 | Slice 7 — Signal→platform linkage (dependency, reassessment, drift) | **PARTIAL** — pure `planReassessment`/`detectDrift` core + tests merged (`33f4a929`), **zero live callers**; nothing re-runs the engine. DONE-bar ("changed signal re-evaluates linked entities in tests") NOT met. Remaining (R3): worker that on a ChangeEvent runs planReassessment → re-runs `ApplicabilityEngineV1` → persists via the 4c writer → `detectDrift` → derives S6 recs → dispatches (R2); enqueue trigger; integration test. | core #474 (squash `33f4a929`) | worker will read the ECL flag at its call site | — |
+| 7 | UI/CX — screens, entity detail, graph view, applicability view, evidence view, exec dashboard | **PARTIAL** — DONE: management screens, entity detail, graph view, CSV import, fail-closed nav (7A.0–7A.4). **Missing (named deliverables): applicability view, evidence view, exec dashboard.** Remaining: R4 (read routes) → R5 (applicability + evidence views) → R6 (exec dashboard + stats endpoint). | 7A.0 #480 `4b566bad`; 7A.1 #481 `228f8f11`; 7A.2 #484 `d3ccad1e`; 7A.3 #485 `cca10015`; 7A.4 #486 `15ffac4d` | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` off on both switches (engine 404 + app nav hidden) | L-4 (partial), L-8 |
+| 8 | Connectors (ServiceNow/Defender/CrowdStrike/Wiz/Tenable/Qualys/Rapid7/cloud/identity) — dark, mock-tested | **PARTIAL** — framework + registry (all 9 registered) + **ServiceNow reference adapter (1 of 8) DONE** with mock tests (`d0351c1c`). The other 7 throw `connector_not_implemented` (config schema only). Remaining (R7): real `normalize()`/`fetch()` + mock-backed tests for Defender, CrowdStrike, Wiz, Tenable, Qualys, Rapid7, cloud inventory, identity provider. | framework + ServiceNow #475 (squash `d0351c1c`) | per-connector flags at call site | L-5.1 done-adapter; L-5.2..L-5.9 credentials (adapters are engineering, not ledger) |
 | 9 | Enterprise gating (GATE A ruled 2026-07-04) | **DONE** — capability gate + edge cap + entity default | GATE-A memo #476 (`572961b8`); gating #477 (squash `c495dc0c`); branches deleted | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` + `enterprise_context` capability | L-1 (RESOLVED), L-7 |
 | 10 | Scale validation (recursive load, EXPLAIN, partitioning) | **DONE** — harness + EXPLAIN numbers + written findings/decisions | #478 (squash `d3ad01ed`); branch deleted | — | L-6 (staging load env) |
 | 11 | Governance docs → as-built (CANONICAL, arch, runbooks, rollback) | **DONE** — #479 (squash `b4765f79`) | `BUILD_SEQUENCE.md` active-workstream note; `CANONICAL_DOMAIN_MODEL.md` build-status rows (4c/5/6/7 + capability/caps + connectors); `ENTERPRISE_CONTEXT_ARCHITECTURE.md` as-built banner; new `docs/runbooks/enterprise-context-enable-rollback.md` | — | — |
@@ -274,11 +296,13 @@ Reconciled the governing docs to shipped reality (Slices 1–10 dark on `develop
 
 Prod enablement stays **GATE B** (out of scope). No code/schema changed in Item 11 — docs only.
 
-## Item 7 — UI/CX (DONE)
+## Item 7 — UI/CX (PARTIAL)
 
 Sequenced last by design (needs the L-4 app CI story). Sliced so every PR is dark and
 independently mergeable; the flag keeps every ECL engine route 404ing, and the nav entry
-(final slice) is fail-closed behind the app-side env flag.
+(7A.4) is fail-closed behind the app-side env flag. **Tier-1 (7A.0–7A.4) is DONE**;
+the goal additionally names an **applicability view, evidence view, and exec dashboard**
+which are NOT yet built — see the "remaining" note below.
 
 - **7A.0 — app typecheck CI lane (DONE, #480 squash `4b566bad`).** `app/` `tsc --noEmit`
   folded into the required PR-CI `typecheck` job (the app has no local test runner and the
@@ -316,16 +340,17 @@ independently mergeable; the flag keeps every ECL engine route 404ing, and the n
   in render.yaml (runtime, restart-applied). +5 nav tests incl. dark-by-default on the real
   NAV_ITEMS.
 
-**Dashboards scoping decision (recorded):** the engine has no ECL rollup/stats endpoint and
-the list API returns no totals — a "dashboard" today would be an ad-hoc UI aggregation over
-one page-capped sample (the exact outputs-assembled-ad-hoc pattern the governing docs
-prohibit). Tier-1's visual surface is the graph view + filterable context screens; a
-first-class engine stats/rollup endpoint (and a dashboard card over it) is the recorded
-engine-side follow-up, alongside Tier-2 read routes
-(applicability/explainability/workflow/drift surfaces) and the S6/S7 live adapters.
+**Remaining for Item 7 (the three named views, NOT yet built):**
+- **Applicability view + evidence view (R5)** — read the persisted decision + reasoning chain
+  (reuse `explainability.ts`) + evidence used/missing + reproducibility. Needs the engine read
+  routes first (**R4** — no GET endpoint exposes an applicability assessment today; the 4b
+  tables have no reader).
+- **Exec dashboard (R6)** — needs a first-class engine ECL stats/rollup endpoint (counts by
+  type/criticality/decision/blast-radius); a dashboard built over the page-capped list API
+  today would be the ad-hoc aggregation the governing docs prohibit, so the endpoint is a
+  prerequisite, not optional.
 
-**Interruption record (2026-07-05 resume):** the prior session ended after pushing 7A.1 and
-opening PR #481 (CI completed 8/8 green after the interruption). Reconciliation verified the
-PR clean/unreviewed and squash-merged it per governance; branch deleted; tracker synced
-(#483 `bdc97db1`); 7A.2–7A.4 then built and merged in-session, completing the item and the
-goal's build scope.
+**Interruption record (2026-07-05 resume):** the prior session pushed 7A.1 / opened PR #481
+(merged on resume), then built + merged 7A.2–7A.4. A subsequent independent audit (against the
+recovered `goal.md`) found Item 7's named applicability/evidence/exec-dashboard views were not
+built — this section and the item table were corrected accordingly.
