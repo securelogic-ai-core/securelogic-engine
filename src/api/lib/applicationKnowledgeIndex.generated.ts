@@ -397,6 +397,30 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "all"
     },
     {
+      "path": "/enterprise-context",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/enterprise-context/entities/[id]",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/enterprise-context/entities/[id]/edit",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/enterprise-context/entities/new",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
       "path": "/findings",
       "dynamic": false,
       "navLabel": "Findings",
