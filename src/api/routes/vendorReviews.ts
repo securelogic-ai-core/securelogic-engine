@@ -41,6 +41,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import {
   validateVendorReviewCreate,
@@ -120,7 +121,7 @@ router.post(
   "/vendor-reviews",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requirePremiumOrCorePlatform,
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -232,7 +233,7 @@ router.get(
   "/vendor-reviews",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requirePremiumOrCorePlatform,
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -344,7 +345,7 @@ router.get(
   "/vendor-reviews/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requirePremiumOrCorePlatform,
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -427,7 +428,7 @@ router.patch(
   "/vendor-reviews/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requirePremiumOrCorePlatform,
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;

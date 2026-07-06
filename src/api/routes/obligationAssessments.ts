@@ -41,6 +41,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import {
   validateObligationAssessmentCreate,
@@ -120,7 +121,7 @@ router.post(
   "/obligation-assessments",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requirePremiumOrCorePlatform,
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -241,7 +242,7 @@ router.get(
   "/obligation-assessments",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requirePremiumOrCorePlatform,
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -357,7 +358,7 @@ router.get(
   "/obligation-assessments/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requirePremiumOrCorePlatform,
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -442,7 +443,7 @@ router.patch(
   "/obligation-assessments/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requirePremiumOrCorePlatform,
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;

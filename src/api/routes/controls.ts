@@ -23,6 +23,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { requireAdminRole } from "../middleware/requireRole.js";
 import { validateControlCreate, validateControlPatch } from "../lib/controlValidation.js";
@@ -94,7 +95,7 @@ router.post(
   "/controls",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requirePremiumOrCorePlatform,
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -217,7 +218,7 @@ router.get(
   "/controls",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requirePremiumOrCorePlatform,
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -327,7 +328,7 @@ router.get(
   "/controls/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requirePremiumOrCorePlatform,
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -384,7 +385,7 @@ router.patch(
   "/controls/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requirePremiumOrCorePlatform,
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -524,7 +525,7 @@ router.delete(
   "/controls/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requirePremiumOrCorePlatform,
   requireAdminRole,
   requireAuth,
   asTenant(async (req, res) => {
