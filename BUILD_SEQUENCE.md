@@ -62,6 +62,27 @@ The commercial model that all future product and packaging work must respect is:
 Billing note:
 - Platform Annual is not a product tier; it is the annual billing option for Platform Professional
 
+## Active governing program (2026-07-06): Enterprise Risk Intelligence Platform (ERIP)
+
+> **Program update (2026-07-06 — supersedes the workstream updates below as the statement of
+> what is ACTIVE; prior entries are preserved as dated history, not erased.)**
+> The **Enterprise Asset Registry (EAR) goal is COMPLETE** — P0–P11 shipped dark to `develop`
+> as PRs #496–#510 (develop `7a81f857`; record: `docs/validation/enterprise-asset-registry-tracker.md`
+> + `docs/validation/enterprise-asset-registry-final-report.md`; those documents are the
+> preserved historical record and must not be rewritten). The **Enterprise Risk Intelligence
+> Platform (ERIP)** is now the **active governing engineering program**, with the completed
+> EAR recorded as its **Epic 1 ✅**. Authoritative roadmap:
+> **`docs/architecture/enterprise-risk-intelligence-platform.md`** — Epics: 1 EAR ✅ ·
+> 2 Enterprise Discovery & Connectors · 3 Enterprise Risk Intelligence · 4 Executive
+> Intelligence · 5 Predictive Intelligence · 6 Autonomous Operations · 7 Enterprise Knowledge
+> Graph / Digital Twin. Living tracker: `docs/validation/erip-tracker.md`. Every future
+> implementation must reference that roadmap. Governance unchanged: develop-only (`main`
+> frozen), dark launches (flags default off, no production enablement — GATE B), additive
+> migrations only, tenant scoping everywhere, reuse before rewrite, per-epic design memo
+> before implementation, operator actions ledgered never executed. The two pre-declared
+> product decisions from Epic 1 (GATE B prod enablement; P9 entitlement-leg cutover) remain
+> reserved for the operator and are NOT part of ERIP.
+
 ## Active package
 `Priority 4 — Signal Ingestion Hardening` — **status: ACTIVE — IMPLEMENTATION AUTHORIZED & UNDERWAY (2026-06-26).**
 
