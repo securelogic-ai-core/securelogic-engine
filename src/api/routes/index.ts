@@ -88,6 +88,7 @@ import enterpriseContextImportRouter from "./enterpriseContextImport.js";
 import applicabilityAssessmentsRouter from "./applicabilityAssessments.js";
 import enterpriseContextStatsRouter from "./enterpriseContextStats.js";
 import assetsRouter from "./assets.js";
+import connectorsRouter from "./connectors.js";
 import templatesRouter from "./templates.js";
 import aiSystemVendorDependenciesRouter from "./aiSystemVendorDependencies.js";
 import riskScoringWeightsRouter from "./riskScoringWeights.js";
@@ -479,6 +480,9 @@ router.use("/api", riskApprovalsRouter);
   // OWN flag (SECURELOGIC_ASSET_REGISTRY_ENABLED, default off → 404 before
   // auth) gates the surface in-router.
   router.use("/api", assetsRouter);
+  // EAR Phase 3b: connector config + sync. Double-fenced in-router (ECL flag
+  // AND registry flag, both default off → 404 before auth).
+  router.use("/api", connectorsRouter);
   router.use("/api", templatesRouter);
   router.use("/api", aiSystemVendorDependenciesRouter);
   router.use("/api", riskScoringWeightsRouter);

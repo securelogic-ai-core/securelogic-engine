@@ -55,22 +55,28 @@ export async function createDetailAsset(
   ];
   const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
 
-  let inserted;
-  try {
-    inserted = await pg.query(
-      `INSERT INTO ${spec.table} (${cols.join(", ")})
-       VALUES (${placeholders})
-       RETURNING *`,
-      params
-    );
-  } catch (err: unknown) {
-    if ((err as { code?: string })?.code === "23505") {
-      const constraint = (err as { constraint?: string })?.constraint ?? "";
-      return constraint.includes("extref")
-        ? { error: "external_ref_already_exists" }
-        : { error: "name_already_exists" };
+  // ON CONFLICT DO NOTHING (covers both the (org,name) UNIQUE and the partial
+  // (org,external_ref) unique index) instead of catch-23505: a thrown unique
+  // violation would ABORT the caller's transaction, and the Phase-3b sync
+  // worker persists many assets in ONE tenant tx — the conflict must be a
+  // classified return value, never an aborted tx. Zero rows → classify which
+  // key collided (same-tx read; the route's 409 vocabulary is unchanged).
+  const inserted = await pg.query(
+    `INSERT INTO ${spec.table} (${cols.join(", ")})
+     VALUES (${placeholders})
+     ON CONFLICT DO NOTHING
+     RETURNING *`,
+    params
+  );
+  if ((inserted.rowCount ?? 0) === 0) {
+    if (input.external_ref !== null) {
+      const ref = await pg.query(
+        `SELECT 1 FROM ${spec.table} WHERE organization_id = $1 AND external_ref = $2 LIMIT 1`,
+        [orgId, input.external_ref]
+      );
+      if ((ref.rowCount ?? 0) > 0) return { error: "external_ref_already_exists" };
     }
-    throw err;
+    return { error: "name_already_exists" };
   }
 
   const row = inserted.rows[0] as Record<string, unknown> & { id: string };

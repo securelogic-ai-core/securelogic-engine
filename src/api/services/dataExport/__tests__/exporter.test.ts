@@ -45,6 +45,7 @@ const PROJECTION_COLUMNS: Record<string, string[]> = {
   org_invites: ["id", "organization_id", "email", "token"],
   organizations: ["id", "name", "entitlement_level", "stripe_customer_id"],
   webhook_endpoints: ["id", "organization_id", "url", "secret"],
+  enterprise_connectors: ["id", "organization_id", "connector_id", "config_encrypted", "enabled"],
 };
 
 // Fixture rows keyed by table; tables without a fixture stream empty.
