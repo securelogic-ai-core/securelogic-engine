@@ -26,9 +26,18 @@ import {
   approvalAllowed,
   isProposalType,
   validateProposalPayload,
+  validatePlaybookSteps,
   type ProposalType,
   type ProposalStatus
 } from "../lib/orchestrationPolicy.js";
+import {
+  createPlaybook,
+  listPlaybooks,
+  getPlaybook,
+  updatePlaybook,
+  deletePlaybook,
+  runPlaybook
+} from "../lib/orchestrationPlaybookStore.js";
 import { dispatchExecutor } from "../lib/orchestrationExecutors.js";
 import {
   listIntegrationRows,
@@ -354,6 +363,149 @@ export async function deleteIntegration(req: Request, res: Response): Promise<vo
   res.status(200).json({ deleted: true });
 }
 
+// ─── E6b: playbook framework + scheduled instantiation ────────────────────────
+
+const SCHEDULE_MIN_MINUTES = 60;
+
+function parseSchedule(v: unknown): number | null | undefined {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  if (typeof v !== "number" || !Number.isInteger(v) || v < SCHEDULE_MIN_MINUTES) return undefined;
+  return v;
+}
+
+export async function createPlaybookHandler(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const body = req.body as { name?: unknown; steps?: unknown; schedule_interval_minutes?: unknown; enabled?: unknown } | null;
+  if (body === null || typeof body !== "object") {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (name.length === 0 || name.length > 120) {
+    res.status(400).json({ error: "invalid_name" });
+    return;
+  }
+  const validated = validatePlaybookSteps(body.steps);
+  if ("error" in validated) {
+    res.status(400).json(validated);
+    return;
+  }
+  const schedule = body.schedule_interval_minutes === undefined ? null : parseSchedule(body.schedule_interval_minutes);
+  if (schedule === undefined) {
+    res.status(400).json({ error: "invalid_schedule" });
+    return;
+  }
+  const enabled = body.enabled === true;
+  const row = await createPlaybook(orgId, name, validated.steps, schedule, enabled, getUserId(req));
+  writeAuditEvent({
+    organizationId: orgId,
+    ...auditActor(req),
+    eventType: "orchestration.playbook_created",
+    resourceType: "orchestration_playbook",
+    resourceId: row.id,
+    payload: { name, step_count: validated.steps.length, scheduled: schedule !== null }
+  });
+  res.status(201).json({ playbook: row });
+}
+
+export async function listPlaybooksHandler(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  res.status(200).json({ playbooks: await listPlaybooks(orgId) });
+}
+
+export async function updatePlaybookHandler(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = req.params.id;
+  if (typeof id !== "string" || !UUID_RE.test(id)) {
+    res.status(400).json({ error: "invalid_id" });
+    return;
+  }
+  const body = req.body as { enabled?: unknown; schedule_interval_minutes?: unknown } | null;
+  if (body === null || typeof body !== "object") {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  if (body.enabled !== undefined && typeof body.enabled !== "boolean") {
+    res.status(400).json({ error: "enabled_must_be_boolean" });
+    return;
+  }
+  const schedule = parseSchedule(body.schedule_interval_minutes);
+  if (body.schedule_interval_minutes !== undefined && schedule === undefined) {
+    res.status(400).json({ error: "invalid_schedule" });
+    return;
+  }
+  const updated = await updatePlaybook(orgId, id, {
+    enabled: body.enabled as boolean | undefined,
+    scheduleIntervalMinutes: schedule
+  });
+  if (!updated) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.status(200).json({ playbook: updated });
+}
+
+export async function deletePlaybookHandler(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = req.params.id;
+  if (typeof id !== "string" || !UUID_RE.test(id)) {
+    res.status(400).json({ error: "invalid_id" });
+    return;
+  }
+  const removed = await deletePlaybook(orgId, id);
+  if (!removed) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.status(200).json({ deleted: true });
+}
+
+/** Instantiate a playbook now → creates proposals (each still needs approval). */
+export async function runPlaybookHandler(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = req.params.id;
+  if (typeof id !== "string" || !UUID_RE.test(id)) {
+    res.status(400).json({ error: "invalid_id" });
+    return;
+  }
+  const pb = await getPlaybook(orgId, id);
+  if (!pb) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const result = await runPlaybook(orgId, pb, getUserId(req));
+  writeAuditEvent({
+    organizationId: orgId,
+    ...auditActor(req),
+    eventType: "orchestration.playbook_run",
+    resourceType: "orchestration_playbook",
+    resourceId: id,
+    payload: { proposals_created: result.proposal_ids.length }
+  });
+  res.status(202).json({ proposal_ids: result.proposal_ids, proposals_created: result.proposal_ids.length });
+}
+
 const chain = [
   autonomousOperationsFeatureFlag,
   requireApiKey,
@@ -368,5 +520,10 @@ router.post("/orchestration/proposals/:id/reject", ...chain, asTenant(rejectProp
 router.get("/orchestration/integrations", ...chain, asTenant(listIntegrations));
 router.put("/orchestration/integrations/:id", ...chain, asTenant(putIntegration));
 router.delete("/orchestration/integrations/:id", ...chain, asTenant(deleteIntegration));
+router.post("/orchestration/playbooks", ...chain, asTenant(createPlaybookHandler));
+router.get("/orchestration/playbooks", ...chain, asTenant(listPlaybooksHandler));
+router.put("/orchestration/playbooks/:id", ...chain, asTenant(updatePlaybookHandler));
+router.delete("/orchestration/playbooks/:id", ...chain, asTenant(deletePlaybookHandler));
+router.post("/orchestration/playbooks/:id/run", ...chain, asTenant(runPlaybookHandler));
 
 export default router;

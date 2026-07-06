@@ -111,3 +111,38 @@ export function validateProposalPayload(type: ProposalType, raw: unknown): Paylo
   }
   return { payload: out };
 }
+
+// ─── E6b: playbook step validation (pure) ─────────────────────────────────────
+
+export interface PlaybookStep {
+  proposal_type: ProposalType;
+  title: string;
+  payload: ValidatedPayload;
+}
+
+export type PlaybookStepsValidation =
+  | { steps: PlaybookStep[] }
+  | { error: string; detail?: string };
+
+/**
+ * Validate a playbook's ordered steps. Each step must name a known proposal
+ * type and carry a payload that passes that type's validation. Returns the
+ * normalized steps or a typed error. 1–20 steps.
+ */
+export function validatePlaybookSteps(raw: unknown): PlaybookStepsValidation {
+  if (!Array.isArray(raw)) return { error: "steps_must_be_array" };
+  if (raw.length === 0 || raw.length > 20) return { error: "steps_invalid", detail: "1–20 steps required" };
+  const steps: PlaybookStep[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const s = raw[i] as { proposal_type?: unknown; payload?: unknown };
+    if (!isProposalType(s?.proposal_type)) {
+      return { error: "steps_invalid", detail: `step ${i}: unknown proposal_type` };
+    }
+    const validated = validateProposalPayload(s.proposal_type, s.payload);
+    if ("error" in validated) return { error: "steps_invalid", detail: `step ${i}: ${validated.error}` };
+    const title = validated.payload.title;
+    if (!title) return { error: "steps_invalid", detail: `step ${i}: title is required` };
+    steps.push({ proposal_type: s.proposal_type, title, payload: validated.payload });
+  }
+  return { steps };
+}
