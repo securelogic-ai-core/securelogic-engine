@@ -20,6 +20,9 @@ import { qualysAdapter } from "./qualys.js";
 import { rapid7Adapter } from "./rapid7.js";
 import { cloudInventoryAdapter } from "./cloudInventory.js";
 import { identityProviderAdapter } from "./identityProvider.js";
+import { awsAdapter } from "./aws.js";
+import { azureAdapter } from "./azure.js";
+import { gcpAdapter } from "./gcp.js";
 
 const ALL: ConnectorAdapter[] = [
   serviceNowCmdbAdapter,
@@ -30,7 +33,11 @@ const ALL: ConnectorAdapter[] = [
   qualysAdapter,
   rapid7Adapter,
   cloudInventoryAdapter,
-  identityProviderAdapter
+  identityProviderAdapter,
+  // ERIP E2.P5 — native cloud adapters
+  awsAdapter,
+  azureAdapter,
+  gcpAdapter
 ];
 
 const BY_ID: ReadonlyMap<string, ConnectorAdapter> = new Map(ALL.map((c) => [c.id, c]));
@@ -55,5 +62,9 @@ export const REQUIRED_CONNECTOR_IDS = [
   "qualys",
   "rapid7",
   "cloud_inventory",
-  "identity_provider"
+  "identity_provider",
+  // ERIP E2.P5 — native cloud adapters
+  "aws",
+  "azure",
+  "gcp"
 ] as const;

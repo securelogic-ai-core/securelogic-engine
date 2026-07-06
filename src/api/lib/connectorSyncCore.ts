@@ -37,6 +37,13 @@ export const MAX_ENTITIES_PER_SYNC = 5000;
 
 const CLOUD_PROVIDERS = new Set(["aws", "azure", "gcp"]);
 
+/**
+ * E2.P5: native cloud adapters stamp their provider from the adapter id (the
+ * provider is implicit in the connector), overriding config.provider. The
+ * generic `cloud_inventory` adapter keeps reading config.provider.
+ */
+const ADAPTER_PROVIDER: Record<string, string> = { aws: "aws", azure: "azure", gcp: "gcp" };
+
 export interface ConnectorSyncPlan {
   /** Tier-1 detail assets to create via createDetailAsset (Phase 3a shared path). */
   detailInputs: AssetDetailCreateInput[];
@@ -142,7 +149,7 @@ export function planConnectorSync(
   }
 
   const rawProvider = (config.provider ?? "").trim().toLowerCase();
-  const provider = CLOUD_PROVIDERS.has(rawProvider) ? rawProvider : "other";
+  const provider = ADAPTER_PROVIDER[adapter.id] ?? (CLOUD_PROVIDERS.has(rawProvider) ? rawProvider : "other");
 
   for (const e of entities) {
     if (e.entity_type === "asset" && (adapter.category === "endpoint" || adapter.category === "vulnerability")) {
