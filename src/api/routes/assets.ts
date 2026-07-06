@@ -42,6 +42,8 @@ import {
   deleteDetailAsset
 } from "../lib/assetDetailPersistence.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { getConnector } from "../lib/connectors/registry.js";
+import { summarizeDiscovery, type ObservationFact } from "../lib/discoveryConfidence.js";
 
 const router = Router();
 
@@ -196,6 +198,109 @@ export async function getAsset(req: Request, res: Response): Promise<void> {
   res.status(200).json({ asset: header.rows[0], detail });
 }
 
+// ─── ERIP E2.P3: connector-discovery view for one asset ───────────────────────
+//
+// Read-only, derived: gathers the connector observations that map to this asset
+// — its own backing external_ref plus any other connector that observed the
+// same normalized name — and returns the pure conflict-resolution + confidence
+// summary (ERIP-AD-12). Never mutates canonical stores (ERIP-AD-8). Only
+// connector-sourceable backings carry an external_ref (the 4 detail tables +
+// enterprise_entities); vendor/ai_system-backed assets simply yield an empty
+// discovery set.
+
+/** Backing tables that carry a connector external_ref (safe SQL identifiers). */
+const OBSERVABLE_BACKINGS: ReadonlySet<string> = new Set<string>([
+  ...Object.values(DETAIL_TABLE_SPEC).map((s) => s.table),
+  "enterprise_entities"
+]);
+
+interface ObservationRow {
+  connector_id: string;
+  external_ref: string;
+  entity_type: string;
+  name: string;
+  stale: boolean;
+  last_seen_at: Date | string;
+}
+
+export async function getAssetDiscovery(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = req.params.id;
+  if (typeof id !== "string" || !UUID_RE.test(id)) {
+    res.status(400).json({ error: "invalid_id" });
+    return;
+  }
+
+  const header = await pg.query(
+    `SELECT name, backing_kind, backing_id FROM asset_registry_v
+      WHERE organization_id = $1 AND asset_id = $2 LIMIT 1`,
+    [orgId, id]
+  );
+  if (header.rowCount === 0) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const { name, backing_kind, backing_id } = header.rows[0] as {
+    name: string;
+    backing_kind: string;
+    backing_id: string;
+  };
+
+  // Resolve the backing external_ref only from tables known to carry one; the
+  // interpolated identifier is a member of our own allowlist, never raw input.
+  let externalRef: string | null = null;
+  if (OBSERVABLE_BACKINGS.has(backing_kind)) {
+    const b = await pg.query(
+      `SELECT external_ref FROM ${backing_kind} WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [backing_id, orgId]
+    );
+    externalRef = (b.rows[0] as { external_ref: string | null } | undefined)?.external_ref ?? null;
+  }
+
+  // Observations that map to this asset: own external_ref OR same normalized
+  // name (cross-connector identity — different connectors mint different refs).
+  const obs = await pg.query<ObservationRow>(
+    `SELECT connector_id, external_ref, entity_type, name, stale, last_seen_at
+       FROM connector_asset_observations
+      WHERE organization_id = $1
+        AND ( ($2::text IS NOT NULL AND external_ref = $2) OR lower(name) = lower($3) )`,
+    [orgId, externalRef, name]
+  );
+
+  const facts: ObservationFact[] = [];
+  for (const r of obs.rows) {
+    const adapter = getConnector(r.connector_id);
+    if (!adapter) continue; // an unranked source cannot participate in precedence
+    facts.push({
+      connector_id: r.connector_id,
+      category: adapter.category,
+      external_ref: r.external_ref,
+      entity_type: r.entity_type,
+      name: r.name,
+      stale: r.stale,
+      last_seen_at: r.last_seen_at instanceof Date ? r.last_seen_at.toISOString() : String(r.last_seen_at)
+    });
+  }
+
+  res.status(200).json({
+    asset_id: id,
+    discovery: summarizeDiscovery(facts, new Date()),
+    observations: facts.map((f) => ({
+      connector_id: f.connector_id,
+      category: f.category,
+      external_ref: f.external_ref,
+      entity_type: f.entity_type,
+      name: f.name,
+      stale: f.stale,
+      last_seen_at: f.last_seen_at
+    }))
+  });
+}
+
 // ─── EAR P6: update / delete for detail-backed assets ─────────────────────────
 //
 // The unified surface is the CRUD home for the four detail-backed types ONLY
@@ -304,6 +409,7 @@ const chain = [
 ];
 
 router.get("/assets", ...chain, asTenant(listAssets));
+router.get("/assets/:id/discovery", ...chain, asTenant(getAssetDiscovery));
 router.get("/assets/:id", ...chain, asTenant(getAsset));
 router.post("/assets", ...chain, asTenant(createAsset));
 router.patch("/assets/:id", ...chain, asTenant(updateAsset));
