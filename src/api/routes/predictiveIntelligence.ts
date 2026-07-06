@@ -18,6 +18,7 @@ import { predictiveIntelligenceFeatureFlag } from "../lib/predictiveIntelligence
 import { forecastLinear, type ForecastPoint } from "../lib/forecastEngine.js";
 import { readForecasts } from "../lib/riskForecastStore.js";
 import { FORECAST_HORIZON_DAYS } from "../workers/predictiveForecastWorker.js";
+import { generatePredictiveInsights } from "../lib/predictiveNarrative.js";
 
 const router = Router();
 
@@ -116,8 +117,25 @@ const chain = [
   requireCapability("enterprise_context")
 ];
 
+/**
+ * ERIP E5b: LLM-assisted executive predictive insights over the org's
+ * forecasts. LLM-assisted when ANTHROPIC_API_KEY is set; otherwise the
+ * deterministic narrative. Always grounded in the persisted forecasts.
+ */
+export async function getPredictiveInsights(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const forecasts = await readForecasts(orgId);
+  const insights = await generatePredictiveInsights(forecasts);
+  res.status(200).json({ horizon_days: FORECAST_HORIZON_DAYS, insights });
+}
+
 router.get("/predictive/posture-forecast", ...chain, asTenant(getPostureForecast));
 router.get("/predictive/forecasts", ...chain, asTenant(getRiskForecasts));
 router.get("/predictive/forecasts/:dimension", ...chain, asTenant(getRiskForecastForDimension));
+router.get("/predictive/insights", ...chain, asTenant(getPredictiveInsights));
 
 export default router;
