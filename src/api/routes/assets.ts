@@ -44,8 +44,27 @@ import {
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { getConnector } from "../lib/connectors/registry.js";
 import { summarizeDiscovery, type ObservationFact } from "../lib/discoveryConfidence.js";
+import { riskIntelligenceFeatureFlag } from "../lib/riskIntelligenceFeatureFlag.js";
+import { resolveNeighborhood, DEFAULT_DEPTH, MAX_DEPTH } from "../lib/enterpriseGraphResolver.js";
+import { ownRiskForNodes } from "../lib/assetOwnRisk.js";
+import { propagateRisk, type RiskNode } from "../lib/graphRiskPropagation.js";
 
 const router = Router();
+
+/** Map an asset's backing table to its graph node identity (EAR-AD-4). */
+function graphNodeForBacking(backingKind: string, backingId: string, assetId: string): { node_type: string; node_id: string } {
+  switch (backingKind) {
+    case "vendors":
+      return { node_type: "vendor", node_id: backingId };
+    case "ai_systems":
+      return { node_type: "ai_system", node_id: backingId };
+    case "enterprise_entities":
+      return { node_type: "enterprise_entity", node_id: backingId };
+    default:
+      // The four detail tables are Tier-0 'asset' graph nodes keyed by registry id.
+      return { node_type: "asset", node_id: assetId };
+  }
+}
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
@@ -325,6 +344,66 @@ export async function getAssetDiscovery(req: Request, res: Response): Promise<vo
   });
 }
 
+// ─── ERIP E3.P1: graph-aware risk propagation for one asset ───────────────────
+//
+// Read-only, derived (ERIP-AD-15): resolve the asset's outbound neighbourhood,
+// seed each node's own-risk from its CURRENT applicability decisions
+// (ERIP-AD-16), and run the pure propagation engine (ERIP-AD-17). Returns the
+// seed's direct / inherited / total risk with a full contributor trace. Never
+// mutates canonical stores.
+
+export async function getAssetRiskPropagation(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = req.params.id;
+  if (typeof id !== "string" || !UUID_RE.test(id)) {
+    res.status(400).json({ error: "invalid_id" });
+    return;
+  }
+  const depth = parseBoundedInt(req.query.depth, DEFAULT_DEPTH, MAX_DEPTH);
+  if (depth === null) {
+    res.status(400).json({ error: "invalid_depth" });
+    return;
+  }
+
+  const header = await pg.query(
+    `SELECT backing_kind, backing_id FROM asset_registry_v
+      WHERE organization_id = $1 AND asset_id = $2 LIMIT 1`,
+    [orgId, id]
+  );
+  if (header.rowCount === 0) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const { backing_kind, backing_id } = header.rows[0] as { backing_kind: string; backing_id: string };
+  const seed = graphNodeForBacking(backing_kind, backing_id, id);
+
+  const neighbourhood = await resolveNeighborhood(orgId, seed.node_type, seed.node_id, depth);
+  const ownRisk = await ownRiskForNodes(
+    orgId,
+    neighbourhood.nodes.map((n) => ({ node_type: n.node_type, node_id: n.node_id }))
+  );
+  const riskNodes: RiskNode[] = neighbourhood.nodes.map((n) => ({
+    node_type: n.node_type,
+    node_id: n.node_id,
+    own_risk: ownRisk.get(`${n.node_type}:${n.node_id}`) ?? 0,
+    depth: n.depth
+  }));
+
+  const risk = propagateRisk(seed, riskNodes);
+
+  res.status(200).json({
+    asset_id: id,
+    seed_node: seed,
+    depth: neighbourhood.depth,
+    neighbourhood_size: neighbourhood.nodes.length,
+    risk
+  });
+}
+
 // ─── EAR P6: update / delete for detail-backed assets ─────────────────────────
 //
 // The unified surface is the CRUD home for the four detail-backed types ONLY
@@ -434,6 +513,8 @@ const chain = [
 
 router.get("/assets", ...chain, asTenant(listAssets));
 router.get("/assets/:id/discovery", ...chain, asTenant(getAssetDiscovery));
+// E3.P1: additionally fenced on the Risk Intelligence flag (404s independently).
+router.get("/assets/:id/risk-propagation", riskIntelligenceFeatureFlag, ...chain, asTenant(getAssetRiskPropagation));
 router.get("/assets/:id", ...chain, asTenant(getAsset));
 router.post("/assets", ...chain, asTenant(createAsset));
 router.patch("/assets/:id", ...chain, asTenant(updateAsset));
