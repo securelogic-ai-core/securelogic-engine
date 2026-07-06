@@ -15,6 +15,10 @@
  *                    affected count
  *   workflow       — pending match suggestions; open dispatcher-generated
  *                    findings/actions (source_type 'applicability_assessment')
+ *   assets         — EAR Phase 5: registry-wide rollup over asset_registry_v
+ *                    (total + by asset_type + by criticality across ALL asset
+ *                    types). Present ONLY while SECURELOGIC_ASSET_REGISTRY_ENABLED
+ *                    is on — response unchanged for existing consumers otherwise.
  *
  * Read-only, four aggregate queries, all org-scoped by parameter inside the
  * asTenant transaction. Route chain mirrors every ECL route: flag FIRST
@@ -28,6 +32,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireCapability } from "../lib/enterpriseContextCapability.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { enterpriseContextFeatureFlag } from "../lib/enterpriseContextFeatureFlag.js";
+import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
 
 const router = Router();
 
@@ -111,8 +116,32 @@ export async function getEnterpriseContextStats(req: Request, res: Response): Pr
   );
   const wf = workflow.rows[0] as Record<string, unknown>;
 
+  // 5. EAR Phase 5: registry-wide asset rollup over asset_registry_v — the
+  // exec-dashboard asset-totals surface across ALL asset types (vendors,
+  // AI systems, entities, and the Phase-3a native types). Flag-gated: the
+  // key is ABSENT while SECURELOGIC_ASSET_REGISTRY_ENABLED is off, so the
+  // response stays byte-identical for existing consumers.
+  let assets:
+    | { total: number; by_type: Record<string, number>; by_criticality: Record<string, number> }
+    | undefined;
+  if (assetRegistryEnabled()) {
+    const registry = await pg.query(
+      `SELECT asset_type, criticality, count(*)::int AS n
+         FROM asset_registry_v
+        WHERE organization_id = $1
+        GROUP BY asset_type, criticality`,
+      [orgId]
+    );
+    assets = {
+      total: registry.rows.reduce((s, r) => s + Number((r as Record<string, unknown>).n), 0),
+      by_type: tally(registry.rows as Array<Record<string, unknown>>, "asset_type"),
+      by_criticality: tally(registry.rows as Array<Record<string, unknown>>, "criticality")
+    };
+  }
+
   res.status(200).json({
     stats: {
+      ...(assets ? { assets } : {}),
       entities: {
         total: entityTotal,
         by_type: tally(entities.rows as Array<Record<string, unknown>>, "entity_type"),

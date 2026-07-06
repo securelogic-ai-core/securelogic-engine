@@ -109,4 +109,44 @@ describe("getEnterpriseContextStats", () => {
     const edgeSql = q.mock.calls[1][0] as string;
     expect(edgeSql).toContain("deleted_at IS NULL");
   });
+
+  it("EAR Phase 5: no assets key and no fifth query while the registry flag is off", async () => {
+    for (let i = 0; i < 4; i++) q.mockResolvedValueOnce({ rows: i === 0 ? [] : [{}], rowCount: 1 });
+    const res = mockRes();
+    await getEnterpriseContextStats(reqFor(), res);
+    expect(res._status).toBe(200);
+    expect((res._json as { stats: Record<string, unknown> }).stats).not.toHaveProperty("assets");
+    expect(q).toHaveBeenCalledTimes(4);
+  });
+
+  it("EAR Phase 5: registry flag on → org-scoped asset_registry_v rollup in stats.assets", async () => {
+    const prev = process.env.SECURELOGIC_ASSET_REGISTRY_ENABLED;
+    process.env.SECURELOGIC_ASSET_REGISTRY_ENABLED = "true";
+    try {
+      for (let i = 0; i < 4; i++) q.mockResolvedValueOnce({ rows: i === 0 ? [] : [{}], rowCount: 1 });
+      q.mockResolvedValueOnce({
+        rows: [
+          { asset_type: "vendor", criticality: "high", n: 3 },
+          { asset_type: "endpoint", criticality: null, n: 5 },
+          { asset_type: "endpoint", criticality: "critical", n: 1 }
+        ],
+        rowCount: 3
+      });
+      const res = mockRes();
+      await getEnterpriseContextStats(reqFor(), res);
+      expect(res._status).toBe(200);
+      expect((res._json as { stats: { assets: unknown } }).stats.assets).toEqual({
+        total: 9,
+        by_type: { vendor: 3, endpoint: 6 },
+        by_criticality: { high: 3, critical: 1 }
+      });
+      expect(q).toHaveBeenCalledTimes(5);
+      const registrySql = q.mock.calls[4][0] as string;
+      expect(registrySql).toContain("asset_registry_v");
+      expect(q.mock.calls[4][1]).toEqual([ORG_A]);
+    } finally {
+      if (prev === undefined) delete process.env.SECURELOGIC_ASSET_REGISTRY_ENABLED;
+      else process.env.SECURELOGIC_ASSET_REGISTRY_ENABLED = prev;
+    }
+  });
 });
