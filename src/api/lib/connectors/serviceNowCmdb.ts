@@ -10,10 +10,12 @@
 import {
   type ConnectorAdapter,
   type ConnectorConfigField,
+  type ConnectorWriteback,
   type HttpClient,
   type NormalizedInventory,
   type NormalizedEntity,
   type NormalizedRelationship,
+  requirePatchJson,
   validateAgainstFields
 } from "./types.js";
 import type { ImportEntityType } from "../enterpriseContextImport.js";
@@ -87,12 +89,86 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
 }
 
+/**
+ * ERIP-AD-12 (E2a): the CMDB CI columns SecureLogic is allowed to write back.
+ * This whitelist is the ONLY admission gate for outbound mutation — an intent
+ * for any other field is rejected before it is enqueued. Deliberately narrow:
+ * the fields an enterprise would let an external risk platform assert on a CI.
+ */
+const WRITEBACK_FIELDS = ["business_criticality", "owned_by", "short_description", "comments"] as const;
+
+function snBase(config: Record<string, string>): { base: string; auth: string } {
+  const instance = config.instance_url;
+  const username = config.username;
+  const password = config.password;
+  if (!instance || !username || !password) {
+    throw new Error("servicenow_cmdb: incomplete config (validateConfig must pass first)");
+  }
+  return {
+    base: instance.replace(/\/+$/, ""),
+    auth: Buffer.from(`${username}:${password}`).toString("base64")
+  };
+}
+
+const serviceNowWriteback: ConnectorWriteback = {
+  fields: WRITEBACK_FIELDS,
+
+  /**
+   * Batch-read the current external values of the writeback fields for the
+   * given sys_ids. Reference fields are returned as raw sys_id strings
+   * (exclude_reference_link) so comparisons are exact-string; absent fields map
+   * to null. Records not returned by ServiceNow are simply absent from the map.
+   */
+  async readCurrent(config, http: HttpClient, externalRefs) {
+    const out = new Map<string, Record<string, string | null>>();
+    const refs = [...new Set(externalRefs)].filter((r) => r.length > 0);
+    if (refs.length === 0) return out;
+    const { base, auth } = snBase(config);
+    const params = new URLSearchParams({
+      sysparm_query: `sys_idIN${refs.join(",")}`,
+      sysparm_fields: ["sys_id", ...WRITEBACK_FIELDS].join(","),
+      sysparm_display_value: "false",
+      sysparm_exclude_reference_link: "true",
+      sysparm_limit: String(refs.length)
+    });
+    const url = `${base}/api/now/table/cmdb_ci?${params.toString()}`;
+    const raw = await http.getJson(url, { Authorization: `Basic ${auth}`, Accept: "application/json" });
+    const result = (raw as { result?: unknown } | null)?.result;
+    if (!Array.isArray(result)) return out;
+    for (const row of result as Array<Record<string, unknown>>) {
+      const sysId = typeof row.sys_id === "string" ? row.sys_id : undefined;
+      if (!sysId) continue;
+      const fields: Record<string, string | null> = {};
+      for (const f of WRITEBACK_FIELDS) {
+        const v = row[f];
+        fields[f] = typeof v === "string" && v.length > 0 ? v : null;
+      }
+      out.set(sysId, fields);
+    }
+    return out;
+  },
+
+  /** Assert the given field values on one CI (PATCH the CMDB table row). */
+  async writeField(config, http: HttpClient, externalRef, values) {
+    const patchJson = requirePatchJson(http, "servicenow_cmdb");
+    const { base, auth } = snBase(config);
+    const body: Record<string, string> = {};
+    for (const [k, v] of Object.entries(values)) {
+      if ((WRITEBACK_FIELDS as readonly string[]).includes(k)) body[k] = v;
+    }
+    if (Object.keys(body).length === 0) return;
+    const url = `${base}/api/now/table/cmdb_ci/${encodeURIComponent(externalRef)}`;
+    await patchJson(url, { Authorization: `Basic ${auth}`, Accept: "application/json" }, body);
+  }
+};
+
 export const serviceNowCmdbAdapter: ConnectorAdapter = {
   id: "servicenow_cmdb",
   displayName: "ServiceNow CMDB",
   status: "reference",
   category: "cmdb",
   configFields: CONFIG_FIELDS,
+  writeback: serviceNowWriteback,
 
   validateConfig(raw) {
     return validateAgainstFields(raw, CONFIG_FIELDS);

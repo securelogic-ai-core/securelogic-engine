@@ -83,6 +83,12 @@ export interface HttpClient {
   postForm?(url: string, headers: Record<string, string>, form: Record<string, string>): Promise<unknown>;
   /** POST application/json (GraphQL-style APIs — Wiz). Optional, same contract as postForm. */
   postJson?(url: string, headers: Record<string, string>, body: unknown): Promise<unknown>;
+  /**
+   * PATCH application/json — the writeback leg (ERIP-AD-12, E2a). The ONLY
+   * external-mutation method; optional so read-only fakes stay valid. Adapters
+   * that write throw a typed error when the injected client lacks it.
+   */
+  patchJson?(url: string, headers: Record<string, string>, body: unknown): Promise<unknown>;
 }
 
 /** Typed guard for adapters that need the optional POST legs. */
@@ -93,6 +99,10 @@ export function requirePostForm(http: HttpClient, connectorId: string): NonNulla
 export function requirePostJson(http: HttpClient, connectorId: string): NonNullable<HttpClient["postJson"]> {
   if (!http.postJson) throw new Error(`connector_http_client_missing_post_json: ${connectorId}`);
   return http.postJson.bind(http);
+}
+export function requirePatchJson(http: HttpClient, connectorId: string): NonNullable<HttpClient["patchJson"]> {
+  if (!http.patchJson) throw new Error(`connector_http_client_missing_patch_json: ${connectorId}`);
+  return http.patchJson.bind(http);
 }
 
 /**
@@ -112,6 +122,38 @@ export interface DeltaFetchResult {
   raw: unknown;
   /** Watermark for the NEXT run; null = leave the stored cursor unchanged. */
   next_cursor: ConnectorCursor | null;
+}
+
+/**
+ * ERIP-AD-12 (E2a): the OPTIONAL bidirectional-writeback capability. An adapter
+ * that supports pushing selected fields back to the source system implements
+ * this. Both methods are I/O (injected client only); the conflict decision is
+ * pure and lives in connectorWritebackCore, so the adapter stays a thin
+ * external-field read/write pair over a fixed whitelist.
+ *
+ *   fields      — the EXTERNAL column names this adapter is allowed to mutate.
+ *                 The only admission gate for outbound writes; an intent for a
+ *                 field not in this list is rejected before it is ever enqueued.
+ *   readCurrent — batch-read the current external values of `fields` for the
+ *                 given external_refs. Returns ref → { field → value|null }.
+ *                 A missing record / missing field maps to null (not present).
+ *   writeField  — assert `values` (subset of `fields`) on ONE external record.
+ *                 Literal string values; the caller has already resolved the
+ *                 optimistic-concurrency decision to "apply".
+ */
+export interface ConnectorWriteback {
+  fields: readonly string[];
+  readCurrent(
+    config: Record<string, string>,
+    http: HttpClient,
+    externalRefs: readonly string[]
+  ): Promise<Map<string, Record<string, string | null>>>;
+  writeField(
+    config: Record<string, string>,
+    http: HttpClient,
+    externalRef: string,
+    values: Record<string, string>
+  ): Promise<void>;
 }
 
 export interface ConnectorAdapter {
@@ -138,6 +180,12 @@ export interface ConnectorAdapter {
   ): Promise<DeltaFetchResult>;
   /** Map raw inventory → the ECL import shape. Pure, deterministic. */
   normalize(raw: unknown): NormalizedInventory;
+  /**
+   * OPTIONAL bidirectional writeback (ERIP-AD-12). Present only on adapters
+   * whose source system supports mutation (e.g. ServiceNow CMDB). Absent =
+   * read-only connector; the writeback route/worker reject writeback for it.
+   */
+  writeback?: ConnectorWriteback;
 }
 
 /** Shared config validator: checks required fields are present non-empty strings. */
