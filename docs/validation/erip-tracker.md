@@ -9,7 +9,7 @@ behind flags (default off), additive-only migrations, backward compatibility, br
 `dataClassification` on every new table, operator actions ledgered never executed, **no
 production enablement (GATE B)**.
 
-Last updated: 2026-07-06 (program established).
+Last updated: 2026-07-06 (program established #511; Epic 2 memo ratified; E2.P1 built).
 
 ## Program rulings / decision gates
 
@@ -25,7 +25,7 @@ production enablement; P9 entitlement-leg cutover.
 | Epic | Scope | Status | Evidence |
 |---|---|---|---|
 | 1 — Enterprise Asset Registry | P0–P11 per EAR tracker | **COMPLETE ✅ (2026-07-06)** | PRs #496–#510; develop `7a81f857`; `enterprise-asset-registry-final-report.md` |
-| 2 — Enterprise Discovery & Connectors | E2.P0–P6 (memo → sync state/scheduling → incremental+reconciliation+drift → conflict/confidence → owner/metadata → adapters wave 1 (AWS/Azure/GCP) → wave 2 (MS Graph/Google Workspace/GitHub/Jamf/Okta-generalized)) | PENDING — memo first | — |
+| 2 — Enterprise Discovery & Connectors | E2.P0–P6 (memo → sync state/scheduling → incremental+reconciliation+drift → conflict/confidence → owner/metadata → adapters wave 1 (AWS/Azure/GCP) → wave 2 (MS Graph/Google Workspace/GitHub/Jamf/Okta-generalized)) | **IN PROGRESS** — memo ratified (ERIP-AD-8…14); E2.P1 built | `docs/architecture/erip/E2-DISCOVERY-CONNECTORS-MEMO.md` |
 | 3 — Enterprise Risk Intelligence | E3.P0–P4 (memo → continuous correlation → graph risk propagation → business impact → dimensional reporting) | PENDING | — |
 | 4 — Executive Intelligence | E4.P0–P3 (memo → reporting API → surfaces → board reports) | PENDING | — |
 | 5 — Predictive Intelligence | E5.P0–P3 (memo → pure engine → persistence/API → recommendations) | PENDING | — |
@@ -37,7 +37,9 @@ production enablement; P9 entitlement-leg cutover.
 
 | Item | Status | PR / squash | Notes |
 |---|---|---|---|
-| Program establishment (this roadmap + tracker + BUILD_SEQUENCE amendment) | IN PR | — | docs-only |
+| Program establishment (roadmap + tracker + BUILD_SEQUENCE amendment) | **DONE** | #511, squash `c85c612d` | docs-only |
+| E2.P0 — Epic 2 design memo (ERIP-AD-8…14) | IN PR | — | `docs/architecture/erip/E2-DISCOVERY-CONNECTORS-MEMO.md`; memo+first-phase share a PR (EAR P10 precedent) |
+| E2.P1 — sync state + scheduled sync + retry/backoff | IN PR | — | Migration `20260811` (interval CHECK ≥15, next_sync_at, consecutive_failures, partial due-index); `connectorScheduleCore.ts` (pure backoff/validation); `connectorScheduledSyncFlag.ts`; worker `runScheduleScan` (elevated due-scan → per-org tenant-tx deduped enqueue + schedule advance; terminal failure = streak+backoff, success resets); PUT accepts `sync_interval_minutes`; flag `SECURELOGIC_CONNECTOR_SCHEDULED_SYNC_ENABLED` default "false" ×4 render.yaml. Unit (core/lockstep/dark-posture + handlers) + isolation `connectorScheduling.test.ts` |
 
 ## Deferred / follow-up register
 

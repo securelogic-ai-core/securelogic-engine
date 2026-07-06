@@ -22,10 +22,14 @@ export interface ConnectorRow {
   last_sync_at: string | null;
   last_sync_status: string | null;
   last_sync_summary: Record<string, unknown> | null;
+  /** E2.P1 scheduling state (20260811). NULL interval = manual-only. */
+  sync_interval_minutes: number | null;
+  next_sync_at: string | null;
+  consecutive_failures: number;
 }
 
 const ROW_COLS =
-  "id, organization_id, connector_id, config_encrypted, enabled, last_sync_at, last_sync_status, last_sync_summary";
+  "id, organization_id, connector_id, config_encrypted, enabled, last_sync_at, last_sync_status, last_sync_summary, sync_interval_minutes, next_sync_at, consecutive_failures";
 
 export async function getConnectorRow(orgId: string, connectorId: string): Promise<ConnectorRow | null> {
   const r = await pg.query(
@@ -65,6 +69,29 @@ export async function upsertConnectorConfig(
   return r.rows[0] as ConnectorRow;
 }
 
+/**
+ * Set (or clear, with null) the sync schedule for a configured connector.
+ * Resets next_sync_at so a newly-set interval is due on the next scheduler
+ * tick; clearing the interval leaves the row manual-only. Returns the updated
+ * row, or null when the connector is not configured for this org.
+ */
+export async function updateConnectorSchedule(
+  orgId: string,
+  connectorId: string,
+  intervalMinutes: number | null
+): Promise<ConnectorRow | null> {
+  const r = await pg.query(
+    `UPDATE enterprise_connectors
+        SET sync_interval_minutes = $3,
+            next_sync_at = NULL,
+            updated_at = now()
+      WHERE organization_id = $1 AND connector_id = $2
+      RETURNING ${ROW_COLS}`,
+    [orgId, connectorId, intervalMinutes]
+  );
+  return (r.rows[0] as ConnectorRow | undefined) ?? null;
+}
+
 export async function deleteConnectorConfig(orgId: string, connectorId: string): Promise<boolean> {
   const r = await pg.query(
     `DELETE FROM enterprise_connectors WHERE organization_id = $1 AND connector_id = $2`,
@@ -97,6 +124,9 @@ export function redactConnectorRow(row: ConnectorRow): {
   last_sync_at: string | null;
   last_sync_status: string | null;
   last_sync_summary: Record<string, unknown> | null;
+  sync_interval_minutes: number | null;
+  next_sync_at: string | null;
+  consecutive_failures: number;
 } {
   const config = decryptConnectorConfig(row);
   return {
@@ -106,6 +136,9 @@ export function redactConnectorRow(row: ConnectorRow): {
     enabled: row.enabled,
     last_sync_at: row.last_sync_at,
     last_sync_status: row.last_sync_status,
-    last_sync_summary: row.last_sync_summary
+    last_sync_summary: row.last_sync_summary,
+    sync_interval_minutes: row.sync_interval_minutes,
+    next_sync_at: row.next_sync_at,
+    consecutive_failures: row.consecutive_failures
   };
 }

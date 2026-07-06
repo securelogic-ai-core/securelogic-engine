@@ -37,6 +37,8 @@ import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { enterpriseContextEnabled } from "../lib/enterpriseContextFeatureFlag.js";
 import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
+import { connectorScheduledSyncEnabled } from "../lib/connectorScheduledSyncFlag.js";
+import { scheduleBackoffMinutes } from "../lib/connectorScheduleCore.js";
 import {
   LOCK_TIMEOUT_MS,
   NonRetryableJobError,
@@ -309,12 +311,41 @@ async function recordFailure(job: JobRow, err: unknown, now: Date): Promise<void
     // Best-effort status surface; the failure state on the job row is the truth.
     const connectorId = typeof job.payload?.connector_id === "string" ? job.payload.connector_id : null;
     if (connectorId) {
-      await pg.query(
-        `UPDATE enterprise_connectors
-            SET last_sync_at = now(), last_sync_status = 'failed', updated_at = now()
+      // E2.P1 (ERIP-AD-9): a terminal run failure bumps the failure streak and,
+      // when the connector is on a schedule, pushes next_sync_at out by the
+      // pure backoff policy. Job-level retries (status 'queued') are NOT a run
+      // failure yet — they stay on the jobs machinery's own backoff.
+      const terminal = decision.status !== "queued";
+      const row = await pg.query<{ sync_interval_minutes: number | null; consecutive_failures: number }>(
+        `SELECT sync_interval_minutes, consecutive_failures FROM enterprise_connectors
           WHERE organization_id = $1 AND connector_id = $2`,
         [job.organization_id, connectorId]
       );
+      const sched = row.rows[0];
+      if (terminal && sched) {
+        const failures = sched.consecutive_failures + 1;
+        const backoffMin =
+          sched.sync_interval_minutes !== null
+            ? scheduleBackoffMinutes(sched.sync_interval_minutes, failures)
+            : null;
+        await pg.query(
+          `UPDATE enterprise_connectors
+              SET last_sync_at = now(), last_sync_status = 'failed',
+                  consecutive_failures = $3,
+                  next_sync_at = CASE WHEN $4::int IS NULL THEN next_sync_at
+                                      ELSE now() + make_interval(mins => $4::int) END,
+                  updated_at = now()
+            WHERE organization_id = $1 AND connector_id = $2`,
+          [job.organization_id, connectorId, failures, backoffMin]
+        );
+      } else if (sched) {
+        await pg.query(
+          `UPDATE enterprise_connectors
+              SET last_sync_at = now(), last_sync_status = 'failed', updated_at = now()
+            WHERE organization_id = $1 AND connector_id = $2`,
+          [job.organization_id, connectorId]
+        );
+      }
     }
   });
 }
@@ -360,7 +391,9 @@ export async function processClaimedJob(job: JobRow, deps: WorkerDeps = {}): Pro
       await pg.query(
         `UPDATE enterprise_connectors
             SET last_sync_at = now(), last_sync_status = 'succeeded',
-                last_sync_summary = $3::jsonb, updated_at = now()
+                last_sync_summary = $3::jsonb,
+                consecutive_failures = 0,
+                updated_at = now()
           WHERE organization_id = $1 AND connector_id = $2`,
         [orgId, connectorId, JSON.stringify(persisted)]
       );
@@ -413,13 +446,89 @@ export async function processClaimedJob(job: JobRow, deps: WorkerDeps = {}): Pro
   );
 }
 
+// ---------------------------------------------------------------------------
+// E2.P1 (ERIP-AD-9): scheduled synchronization — the due-connector scan
+// ---------------------------------------------------------------------------
+
+/** Bounded per-tick fan-out — a huge estate drains over successive ticks. */
+export const MAX_SCHEDULED_ENQUEUES_PER_TICK = 100;
+
+interface DueConnectorRow {
+  organization_id: string;
+  connector_id: string;
+  sync_interval_minutes: number;
+}
+
+/**
+ * Enqueue one deduped `connector_sync` job per due (org, connector) and
+ * advance its next_sync_at by the configured interval. The scan is cross-org
+ * (elevated channel — the brief-scheduler fan-out precedent); each enqueue +
+ * schedule advance runs inside that org's tenant tx. next_sync_at advances
+ * even when the enqueue dedups against a pending run, so a stuck job cannot
+ * hot-loop the scheduler. Returns the number of jobs actually enqueued.
+ */
+export async function runScheduleScan(): Promise<number> {
+  const due = await pgElevated.query<DueConnectorRow>(
+    `SELECT organization_id, connector_id, sync_interval_minutes
+       FROM enterprise_connectors
+      WHERE enabled
+        AND sync_interval_minutes IS NOT NULL
+        AND (next_sync_at IS NULL OR next_sync_at <= now())
+      ORDER BY next_sync_at ASC NULLS FIRST
+      LIMIT ${MAX_SCHEDULED_ENQUEUES_PER_TICK}`
+  );
+
+  let enqueued = 0;
+  for (const row of due.rows) {
+    const payload = JSON.stringify({ connector_id: row.connector_id });
+    const n = await withTenant(row.organization_id, async () => {
+      // The route's enqueue-dedup shape verbatim: one pending run per (org, connector).
+      const inserted = await pg.query<{ id: string }>(
+        `INSERT INTO jobs (organization_id, requested_by_user_id, job_type, payload)
+         SELECT $1::uuid, NULL, $2, $3::jsonb
+          WHERE NOT EXISTS (
+            SELECT 1 FROM jobs j
+             WHERE j.organization_id = $1::uuid
+               AND j.job_type = $2
+               AND j.status IN ('queued', 'processing')
+               AND j.payload = $3::jsonb
+          )
+         RETURNING id`,
+        [row.organization_id, CONNECTOR_SYNC_JOB_TYPE, payload]
+      );
+      await pg.query(
+        `UPDATE enterprise_connectors
+            SET next_sync_at = now() + make_interval(mins => $3::int), updated_at = now()
+          WHERE organization_id = $1 AND connector_id = $2`,
+        [row.organization_id, row.connector_id, row.sync_interval_minutes]
+      );
+      return inserted.rowCount ?? 0;
+    });
+    enqueued += n;
+  }
+
+  if (due.rows.length > 0) {
+    logger.info(
+      { event: "connector_sync_schedule_scan", due: due.rows.length, enqueued },
+      "connector-sync scheduler: due connectors scanned"
+    );
+  }
+  return enqueued;
+}
+
 /**
  * Drain the queue: claim + process until none claimable (or shutdown).
  * Double-fenced idle-skip: connectors are an ECL surface AND create registry
- * assets, so BOTH flags must be on before a claim runs.
+ * assets, so BOTH flags must be on before a claim runs. The scheduled-sync
+ * scan is additionally fenced on its own flag (triple fence, ERIP-AD-9) —
+ * with it off, this tick is byte-identical to the pre-E2.P1 behavior.
  */
 export async function runOneTick(deps: WorkerDeps = {}): Promise<number> {
   if (!enterpriseContextEnabled() || !assetRegistryEnabled()) return 0;
+
+  if (connectorScheduledSyncEnabled()) {
+    await runScheduleScan();
+  }
 
   const workerId = deps.workerId ?? `connector-sync-${process.pid}`;
   let processed = 0;

@@ -30,10 +30,12 @@ import {
   getConnectorRow,
   listConnectorRows,
   upsertConnectorConfig,
+  updateConnectorSchedule,
   deleteConnectorConfig,
   redactConnectorRow
 } from "../lib/connectorConfigStore.js";
 import { CONNECTOR_SYNC_JOB_TYPE } from "../lib/connectorSyncCore.js";
+import { parseSyncIntervalMinutes } from "../lib/connectorScheduleCore.js";
 
 const router = Router();
 
@@ -83,7 +85,10 @@ export async function listOrgConnectors(req: Request, res: Response): Promise<vo
             enabled: false,
             last_sync_at: null,
             last_sync_status: null,
-            last_sync_summary: null
+            last_sync_summary: null,
+            sync_interval_minutes: null,
+            next_sync_at: null,
+            consecutive_failures: 0
           })
     };
   });
@@ -104,13 +109,20 @@ export async function putConnectorConfig(req: Request, res: Response): Promise<v
     return;
   }
 
-  const body = req.body as { config?: unknown; enabled?: unknown } | null;
+  const body = req.body as { config?: unknown; enabled?: unknown; sync_interval_minutes?: unknown } | null;
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     res.status(400).json({ error: "invalid_body" });
     return;
   }
   if (body.enabled !== undefined && typeof body.enabled !== "boolean") {
     res.status(400).json({ error: "enabled_must_be_boolean" });
+    return;
+  }
+  // E2.P1: optional schedule. undefined = leave unchanged; null = manual-only.
+  const interval =
+    body.sync_interval_minutes !== undefined ? parseSyncIntervalMinutes(body.sync_interval_minutes) : undefined;
+  if (interval !== undefined && "error" in interval) {
+    res.status(400).json(interval);
     return;
   }
 
@@ -120,7 +132,10 @@ export async function putConnectorConfig(req: Request, res: Response): Promise<v
     return;
   }
 
-  const row = await upsertConnectorConfig(orgId, adapter.id, validated.config, body.enabled === true);
+  let row = await upsertConnectorConfig(orgId, adapter.id, validated.config, body.enabled === true);
+  if (interval !== undefined) {
+    row = (await updateConnectorSchedule(orgId, adapter.id, interval.value)) ?? row;
+  }
 
   writeAuditEvent({
     organizationId: orgId,
@@ -129,7 +144,12 @@ export async function putConnectorConfig(req: Request, res: Response): Promise<v
     resourceType: "enterprise_connector",
     resourceId: row.id,
     // Field KEYS only — never config values (they include credentials).
-    payload: { connector_id: adapter.id, config_keys: Object.keys(validated.config).sort(), enabled: row.enabled }
+    payload: {
+      connector_id: adapter.id,
+      config_keys: Object.keys(validated.config).sort(),
+      enabled: row.enabled,
+      sync_interval_minutes: row.sync_interval_minutes
+    }
   });
 
   res.status(200).json({ connector: redactConnectorRow(row) });
