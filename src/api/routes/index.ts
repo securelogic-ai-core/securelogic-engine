@@ -91,6 +91,7 @@ import assetsRouter from "./assets.js";
 import riskIntelligenceRouter from "./riskIntelligence.js";
 import predictiveIntelligenceRouter from "./predictiveIntelligence.js";
 import orchestrationRouter from "./orchestration.js";
+import knowledgeGraphRouter from "./knowledgeGraph.js";
 import assetAssessmentsRouter from "./assetAssessments.js";
 import connectorsRouter from "./connectors.js";
 import templatesRouter from "./templates.js";
@@ -487,6 +488,7 @@ router.use("/api", riskApprovalsRouter);
   router.use("/api", riskIntelligenceRouter);
   router.use("/api", predictiveIntelligenceRouter);
   router.use("/api", orchestrationRouter);
+  router.use("/api", knowledgeGraphRouter);
   // EAR P10: generic asset-assessment service — same registry flag (404
   // before auth, default off).
   router.use("/api", assetAssessmentsRouter);
