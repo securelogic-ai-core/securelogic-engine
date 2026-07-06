@@ -29,7 +29,7 @@ export class ConnectorHttpError extends Error {
 
 async function request(
   url: string,
-  init: { method: "GET" | "POST"; headers: Record<string, string>; body?: string }
+  init: { method: "GET" | "POST" | "PATCH"; headers: Record<string, string>; body?: string }
 ): Promise<unknown> {
   const target = await assertSafeWebhookUrl(url);
   const agent = buildPinnedAgent(target.ip, target.family);
@@ -74,6 +74,13 @@ export function buildConnectorHttpClient(): HttpClient {
     postJson(url, headers, body) {
       return request(url, {
         method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+    },
+    patchJson(url, headers, body) {
+      return request(url, {
+        method: "PATCH",
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify(body)
       });

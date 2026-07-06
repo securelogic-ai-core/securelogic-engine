@@ -14,6 +14,7 @@ import { startScheduler } from "./lib/schedulerRunner.js";
 import { startAccountDeletionReaperEnqueuer } from "./lib/accountDeletionEnqueuer.js";
 import { startApplicabilityReassessmentWorker } from "./workers/applicabilityReassessmentWorker.js";
 import { startConnectorSyncWorker } from "./workers/connectorSyncWorker.js";
+import { startConnectorWritebackWorker } from "./workers/connectorWritebackWorker.js";
 import { startRiskHistoryWorker } from "./workers/riskHistoryWorker.js";
 import { startPredictiveForecastWorker } from "./workers/predictiveForecastWorker.js";
 import { startOrchestrationPlaybookWorker } from "./workers/orchestrationPlaybookWorker.js";
@@ -136,6 +137,10 @@ startApplicabilityReassessmentWorker();
 // self-gates on SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED AND
 // SECURELOGIC_ASSET_REGISTRY_ENABLED (zero DB access while either is off).
 startConnectorSyncWorker();
+// ERIP E2a: bidirectional writeback. Registered always; each tick self-gates on
+// SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED + SECURELOGIC_ASSET_REGISTRY_ENABLED +
+// SECURELOGIC_CONNECTOR_WRITEBACK_ENABLED (the only external-MUTATION path).
+startConnectorWritebackWorker();
 // ERIP F2: daily risk-history snapshot. Registered always; each tick self-gates
 // on SECURELOGIC_RISK_INTELLIGENCE_ENABLED AND SECURELOGIC_ASSET_REGISTRY_ENABLED.
 startRiskHistoryWorker();
