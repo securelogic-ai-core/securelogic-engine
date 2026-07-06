@@ -49,17 +49,18 @@ describe("asset type vocabulary", () => {
 
 describe("assetDetailHref (EAR-AD-1 deep links)", () => {
   it("links the three pre-registry backing kinds to their authoritative pages", () => {
-    expect(assetDetailHref({ backing_kind: "vendors", backing_id: "v1" })).toBe("/vendors/v1");
-    expect(assetDetailHref({ backing_kind: "ai_systems", backing_id: "a1" })).toBe("/ai-systems/a1");
-    expect(assetDetailHref({ backing_kind: "enterprise_entities", backing_id: "e1" })).toBe(
+    expect(assetDetailHref({ backing_kind: "vendors", backing_id: "v1", asset_id: "r1" })).toBe("/vendors/v1");
+    expect(assetDetailHref({ backing_kind: "ai_systems", backing_id: "a1", asset_id: "r2" })).toBe("/ai-systems/a1");
+    expect(assetDetailHref({ backing_kind: "enterprise_entities", backing_id: "e1", asset_id: "r3" })).toBe(
       "/enterprise-context/entities/e1",
     );
   });
 
-  it("detail-backed kinds have no per-type page yet → null (unlinked row)", () => {
+  it("detail-backed kinds are homed on the unified surface (EAR P6)", () => {
     for (const kind of ["cloud_resources", "endpoints", "apis", "identity_systems"]) {
-      expect(assetDetailHref({ backing_kind: kind, backing_id: "x" })).toBeNull();
+      expect(assetDetailHref({ backing_kind: kind, backing_id: "x", asset_id: "reg-9" })).toBe("/assets/reg-9");
     }
+    expect(assetDetailHref({ backing_kind: "mystery", backing_id: "x", asset_id: "r" })).toBeNull();
   });
 });
 

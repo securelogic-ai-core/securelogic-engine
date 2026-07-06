@@ -65,11 +65,13 @@ export interface CanonicalAsset {
 export const ASSET_PAGE = { defaultLimit: 25, maxLimit: 100 } as const;
 
 /**
- * Where an asset's authoritative per-type page lives (EAR-AD-1 — the unified
- * surface never replaces per-type homes). Detail-backed kinds (Phase 3a
- * tables) have no per-type page yet → null (the row renders unlinked).
+ * Where an asset's authoritative page lives (EAR-AD-1 — the unified surface
+ * never replaces per-type homes). Detail-backed kinds (Phase 3a tables) are
+ * homed on the unified surface itself → /assets/[id] (EAR P6).
  */
-export function assetDetailHref(asset: Pick<CanonicalAsset, "backing_kind" | "backing_id">): string | null {
+export function assetDetailHref(
+  asset: Pick<CanonicalAsset, "backing_kind" | "backing_id" | "asset_id">,
+): string | null {
   switch (asset.backing_kind) {
     case "vendors":
       return `/vendors/${asset.backing_id}`;
@@ -77,6 +79,11 @@ export function assetDetailHref(asset: Pick<CanonicalAsset, "backing_kind" | "ba
       return `/ai-systems/${asset.backing_id}`;
     case "enterprise_entities":
       return `/enterprise-context/entities/${asset.backing_id}`;
+    case "cloud_resources":
+    case "endpoints":
+    case "apis":
+    case "identity_systems":
+      return `/assets/${asset.asset_id}`;
     default:
       return null;
   }

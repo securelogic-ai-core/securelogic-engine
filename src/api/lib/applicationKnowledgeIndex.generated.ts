@@ -331,6 +331,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "platform"
     },
     {
+      "path": "/assets/[id]",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
       "path": "/audit-log",
       "dynamic": false,
       "navLabel": "Audit Log",

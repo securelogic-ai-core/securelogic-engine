@@ -11,7 +11,7 @@
  */
 
 import { pg } from "../infra/postgres.js";
-import { registerAsset, type BackingKind } from "./assetRegistrar.js";
+import { registerAsset, deregisterAsset, type BackingKind } from "./assetRegistrar.js";
 import {
   DETAIL_TABLE_SPEC,
   type AssetDetailCreateInput,
@@ -82,4 +82,73 @@ export async function createDetailAsset(
   const row = inserted.rows[0] as Record<string, unknown> & { id: string };
   const assetId = await registerAsset(orgId, spec.assetType, spec.table as BackingKind, row.id);
   return { row: { ...row, asset_id: assetId }, assetId };
+}
+
+export type UpdateDetailAssetResult =
+  | { row: Record<string, unknown> }
+  | { error: "not_found" }
+  | { error: "name_already_exists" }
+  | { error: "external_ref_already_exists" };
+
+/**
+ * EAR P6: partial update of a detail-backed asset's row. Patch keys are the
+ * VALIDATED closed column set (assetDetailValidation) — never raw caller
+ * input. Uniqueness conflicts are pre-checked in the same tx (a thrown 23505
+ * would abort the caller's transaction — the createDetailAsset lesson).
+ */
+export async function updateDetailAsset(
+  orgId: string,
+  assetType: DetailBackedType,
+  backingId: string,
+  patch: Record<string, string | null>
+): Promise<UpdateDetailAssetResult> {
+  const spec = DETAIL_TABLE_SPEC[assetType];
+
+  if (typeof patch.name === "string") {
+    const clash = await pg.query(
+      `SELECT 1 FROM ${spec.table} WHERE organization_id = $1 AND name = $2 AND id <> $3 LIMIT 1`,
+      [orgId, patch.name, backingId]
+    );
+    if ((clash.rowCount ?? 0) > 0) return { error: "name_already_exists" };
+  }
+  if (typeof patch.external_ref === "string") {
+    const clash = await pg.query(
+      `SELECT 1 FROM ${spec.table} WHERE organization_id = $1 AND external_ref = $2 AND id <> $3 LIMIT 1`,
+      [orgId, patch.external_ref, backingId]
+    );
+    if ((clash.rowCount ?? 0) > 0) return { error: "external_ref_already_exists" };
+  }
+
+  const keys = Object.keys(patch);
+  const sets = keys.map((k, i) => `${k} = $${i + 3}`).join(", ");
+  const updated = await pg.query(
+    `UPDATE ${spec.table}
+        SET ${sets}, updated_at = now()
+      WHERE id = $1 AND organization_id = $2
+      RETURNING *`,
+    [backingId, orgId, ...keys.map((k) => patch[k] ?? null)]
+  );
+  const row = updated.rows[0] as Record<string, unknown> | undefined;
+  return row ? { row } : { error: "not_found" };
+}
+
+/**
+ * EAR P6: delete a detail-backed asset — detail row + its registry row in the
+ * caller's tx. FKs already protect references: suggestions/assessments keep
+ * (target_type, target_id) and their asset_id goes NULL (ON DELETE SET NULL,
+ * EAR-AD-3 compat).
+ */
+export async function deleteDetailAsset(
+  orgId: string,
+  assetType: DetailBackedType,
+  backingId: string
+): Promise<{ deleted: boolean }> {
+  const spec = DETAIL_TABLE_SPEC[assetType];
+  const del = await pg.query(
+    `DELETE FROM ${spec.table} WHERE id = $1 AND organization_id = $2`,
+    [backingId, orgId]
+  );
+  if ((del.rowCount ?? 0) === 0) return { deleted: false };
+  await deregisterAsset(orgId, spec.table as BackingKind, backingId);
+  return { deleted: true };
 }
