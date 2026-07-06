@@ -9,9 +9,31 @@
 import { pg } from "../infra/postgres.js";
 import { rollupRiskByDimension, type DimensionRollup } from "./riskDimensionRollup.js";
 import { gatherAssetRisk } from "./riskDimensionData.js";
+import type { HistoryPoint } from "./riskTrends.js";
 
 /** The 'enterprise' dimension key for the org-wide overall rollup. */
 export const ENTERPRISE_DIMENSION = "enterprise";
+
+export interface HistoryRow extends HistoryPoint {
+  dimension: string;
+}
+
+/**
+ * Read an org's risk history for the trailing `days` window (inclusive of
+ * today), date-ascending. Tenant-scoped. `days` is bounded by the caller.
+ */
+export async function readHistoryWindow(orgId: string, days: number): Promise<HistoryRow[]> {
+  const r = await pg.query<HistoryRow>(
+    `SELECT dimension, snapshot_date::text AS snapshot_date,
+            asset_count, at_risk_count, max_risk, avg_risk
+       FROM risk_history
+      WHERE organization_id = $1
+        AND snapshot_date >= (CURRENT_DATE - ($2::int - 1))
+      ORDER BY dimension, snapshot_date ASC`,
+    [orgId, days]
+  );
+  return r.rows;
+}
 
 async function upsertRow(orgId: string, snapshotDate: string, d: DimensionRollup): Promise<void> {
   await pg.query(
