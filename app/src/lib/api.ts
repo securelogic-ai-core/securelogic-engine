@@ -4766,6 +4766,23 @@ export async function getAssets(
   }
 }
 
+/** GET /api/assets/:id — canonical header + typed detail (detail-backed kinds). */
+export async function getAsset(
+  token: string,
+  id: string,
+): Promise<ReadResult<{ asset: CanonicalAsset; detail: Record<string, unknown> | null }>> {
+  try {
+    const res = await engineFetch(`/api/assets/${encodeURIComponent(id)}`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as { asset: CanonicalAsset; detail: Record<string, unknown> | null };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
 export async function getEnterpriseEntities(
   token: string,
   params: { entity_type?: EntityType; limit?: number; offset?: number } = {},

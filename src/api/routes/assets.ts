@@ -30,8 +30,18 @@ import { requireCapability } from "../lib/enterpriseContextCapability.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { assetRegistryFeatureFlag } from "../lib/assetRegistryFeatureFlag.js";
 import { isAssetType } from "../lib/assetRegistry.js";
-import { validateAssetDetailCreate, DETAIL_TABLE_SPEC } from "../lib/assetDetailValidation.js";
-import { createDetailAsset } from "../lib/assetDetailPersistence.js";
+import {
+  validateAssetDetailCreate,
+  validateAssetDetailUpdate,
+  DETAIL_TABLE_SPEC,
+  type DetailBackedType
+} from "../lib/assetDetailValidation.js";
+import {
+  createDetailAsset,
+  updateDetailAsset,
+  deleteDetailAsset
+} from "../lib/assetDetailPersistence.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
 
@@ -186,6 +196,106 @@ export async function getAsset(req: Request, res: Response): Promise<void> {
   res.status(200).json({ asset: header.rows[0], detail });
 }
 
+// ─── EAR P6: update / delete for detail-backed assets ─────────────────────────
+//
+// The unified surface is the CRUD home for the four detail-backed types ONLY
+// (EAR-AD-1 — vendor/ai_system/entity-backed assets are managed on their
+// authoritative per-type routes; mutating them here returns 409).
+
+/** Resolve a registry id to its detail-backed type, or a typed refusal. */
+async function resolveDetailBacked(
+  orgId: string,
+  id: string
+): Promise<
+  | { assetType: DetailBackedType; backingId: string; assetId: string }
+  | { status: 400 | 404 | 409; error: string; detail?: string }
+> {
+  if (!UUID_RE.test(id)) return { status: 400, error: "invalid_id" };
+  const reg = await pg.query(
+    `SELECT id, backing_kind, backing_id FROM assets
+      WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+    [id, orgId]
+  );
+  const row = reg.rows[0] as { id: string; backing_kind: string; backing_id: string } | undefined;
+  if (!row) return { status: 404, error: "not_found" };
+  const spec = Object.entries(DETAIL_TABLE_SPEC).find(([, v]) => v.table === row.backing_kind);
+  if (!spec) {
+    return {
+      status: 409,
+      error: "not_detail_backed",
+      detail: "This asset is managed on its own per-type route (vendors / AI systems / enterprise entities)."
+    };
+  }
+  return { assetType: spec[0] as DetailBackedType, backingId: row.backing_id, assetId: row.id };
+}
+
+function auditActor(req: Request): { actorApiKeyId: string | null; actorUserId: string | null; ipAddress: string | null } {
+  return {
+    actorApiKeyId: (req as { apiKey?: { id?: string } }).apiKey?.id ?? null,
+    actorUserId: (req as { userId?: string }).userId ?? null,
+    ipAddress: req.ip ?? null
+  };
+}
+
+export async function updateAsset(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const resolved = await resolveDetailBacked(orgId, String(req.params.id ?? ""));
+  if ("status" in resolved) {
+    res.status(resolved.status).json({ error: resolved.error, ...(resolved.detail ? { detail: resolved.detail } : {}) });
+    return;
+  }
+  const validated = validateAssetDetailUpdate(resolved.assetType, req.body);
+  if ("error" in validated) {
+    res.status(400).json(validated);
+    return;
+  }
+  const result = await updateDetailAsset(orgId, resolved.assetType, resolved.backingId, validated.input.patch);
+  if ("error" in result) {
+    res.status(result.error === "not_found" ? 404 : 409).json({ error: result.error });
+    return;
+  }
+  writeAuditEvent({
+    organizationId: orgId,
+    ...auditActor(req),
+    eventType: "asset.updated",
+    resourceType: "asset",
+    resourceId: resolved.assetId,
+    payload: { asset_type: resolved.assetType, fields: Object.keys(validated.input.patch).sort() }
+  });
+  res.status(200).json({ asset: { ...result.row, asset_id: resolved.assetId } });
+}
+
+export async function deleteAsset(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const resolved = await resolveDetailBacked(orgId, String(req.params.id ?? ""));
+  if ("status" in resolved) {
+    res.status(resolved.status).json({ error: resolved.error, ...(resolved.detail ? { detail: resolved.detail } : {}) });
+    return;
+  }
+  const result = await deleteDetailAsset(orgId, resolved.assetType, resolved.backingId);
+  if (!result.deleted) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  writeAuditEvent({
+    organizationId: orgId,
+    ...auditActor(req),
+    eventType: "asset.deleted",
+    resourceType: "asset",
+    resourceId: resolved.assetId,
+    payload: { asset_type: resolved.assetType }
+  });
+  res.status(200).json({ deleted: true });
+}
+
 const chain = [
   assetRegistryFeatureFlag,
   requireApiKey,
@@ -196,5 +306,7 @@ const chain = [
 router.get("/assets", ...chain, asTenant(listAssets));
 router.get("/assets/:id", ...chain, asTenant(getAsset));
 router.post("/assets", ...chain, asTenant(createAsset));
+router.patch("/assets/:id", ...chain, asTenant(updateAsset));
+router.delete("/assets/:id", ...chain, asTenant(deleteAsset));
 
 export default router;
