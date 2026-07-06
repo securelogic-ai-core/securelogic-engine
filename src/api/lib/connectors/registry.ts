@@ -23,6 +23,10 @@ import { identityProviderAdapter } from "./identityProvider.js";
 import { awsAdapter } from "./aws.js";
 import { azureAdapter } from "./azure.js";
 import { gcpAdapter } from "./gcp.js";
+import { microsoftGraphAdapter } from "./microsoftGraph.js";
+import { googleWorkspaceAdapter } from "./googleWorkspace.js";
+import { githubAdapter } from "./github.js";
+import { jamfAdapter } from "./jamf.js";
 
 const ALL: ConnectorAdapter[] = [
   serviceNowCmdbAdapter,
@@ -37,7 +41,12 @@ const ALL: ConnectorAdapter[] = [
   // ERIP E2.P5 — native cloud adapters
   awsAdapter,
   azureAdapter,
-  gcpAdapter
+  gcpAdapter,
+  // ERIP E2.P6 — directory / device / repo adapters
+  microsoftGraphAdapter,
+  googleWorkspaceAdapter,
+  githubAdapter,
+  jamfAdapter
 ];
 
 const BY_ID: ReadonlyMap<string, ConnectorAdapter> = new Map(ALL.map((c) => [c.id, c]));
@@ -66,5 +75,10 @@ export const REQUIRED_CONNECTOR_IDS = [
   // ERIP E2.P5 — native cloud adapters
   "aws",
   "azure",
-  "gcp"
+  "gcp",
+  // ERIP E2.P6 — directory / device / repo adapters
+  "microsoft_graph",
+  "google_workspace",
+  "github",
+  "jamf"
 ] as const;

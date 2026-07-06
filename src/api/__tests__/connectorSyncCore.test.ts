@@ -22,8 +22,8 @@ import type { NormalizedEntity, NormalizedInventory } from "../lib/connectors/ty
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CONNECTORS_MIGRATION = path.resolve(HERE, "../../../db/migrations/20260807_enterprise_connectors.sql");
 const JOBS_MIGRATION = path.resolve(HERE, "../../../db/migrations/20260808_jobs_connector_sync.sql");
-// ERIP E2.P5: the current effective connector_id CHECK, widened for native clouds.
-const CLOUD_ADAPTERS_MIGRATION = path.resolve(HERE, "../../../db/migrations/20260813_connectors_cloud_adapters.sql");
+// The current effective connector_id CHECK (widened last by E2.P6, 20260814).
+const CURRENT_CONNECTOR_CHECK_MIGRATION = path.resolve(HERE, "../../../db/migrations/20260814_connectors_directory_adapters.sql");
 
 function inv(entities: NormalizedEntity[], relationships = 0): NormalizedInventory {
   return {
@@ -156,8 +156,8 @@ describe("planConnectorSync — category mapping", () => {
 });
 
 describe("migration lockstep", () => {
-  it("the current connector_id CHECK (20260813) admits exactly REQUIRED_CONNECTOR_IDS", () => {
-    const sql = readFileSync(CLOUD_ADAPTERS_MIGRATION, "utf8");
+  it("the current connector_id CHECK (20260814) admits exactly REQUIRED_CONNECTOR_IDS", () => {
+    const sql = readFileSync(CURRENT_CONNECTOR_CHECK_MIGRATION, "utf8");
     for (const id of REQUIRED_CONNECTOR_IDS) {
       expect(sql, id).toContain(`'${id}'`);
     }
