@@ -97,7 +97,8 @@ truth or warped the architecture around one output.
 - Enablement runbook (staging validation, prod checklist, rollback): `docs/architecture/erip/ENABLEMENT-RUNBOOK.md`
 - Epic-1 (EAR) record: `docs/validation/enterprise-asset-registry-*.md` (preserved, unedited)
 
-**Program status: CORE COMPLETE** — every ERIP epic (1–7) has its defining capability shipped
-dark to develop, tested, additive, backward-compatible. Remaining items are the ruling-backed
+**Program status: CORE COMPLETE** (close docs merged as #524; develop @ `21e84fb4`) — every
+ERIP epic (1–7) has its defining capability shipped dark to develop, tested, additive,
+backward-compatible. Remaining items are the ruling-backed
 deferrals above and the two pre-declared Epic-1 product decisions. No production enablement was
 performed (GATE B intact).
