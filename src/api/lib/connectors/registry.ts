@@ -3,9 +3,11 @@
  * All nine roadmap connectors are now IMPLEMENTED: ServiceNow CMDB is the
  * original fully-worked REFERENCE adapter; the other eight ship real
  * `fetch()`/`normalize()` implementations mirroring it (R7), each mock-tested.
- * All DARK: nothing is wired to a route or worker; behind
- * SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED + a per-connector flag at the eventual
- * call site. Credentials + real-API round-trips are operator-owned (ledger L-5.*).
+ * Wired since EAR Phase 3b: config + sync routes (routes/connectors.ts) and the
+ * connector sync worker (workers/connectorSyncWorker.ts), double-fenced behind
+ * SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED + SECURELOGIC_ASSET_REGISTRY_ENABLED
+ * (both default off) with per-org row-level activation (enterprise_connectors
+ * .enabled). Credentials + real-API round-trips are operator-owned (ledger L-5.*).
  */
 
 import type { ConnectorAdapter } from "./types.js";

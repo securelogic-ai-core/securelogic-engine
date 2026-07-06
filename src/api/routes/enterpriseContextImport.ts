@@ -19,7 +19,6 @@
 
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
-import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -27,18 +26,11 @@ import { requireCapability } from "../lib/enterpriseContextCapability.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { enterpriseContextFeatureFlag } from "../lib/enterpriseContextFeatureFlag.js";
-import { enforceEnterpriseEntityLimit } from "../lib/enterpriseEntityLimit.js";
-import { enforceEntityLimit } from "../lib/entityLimit.js";
 import { parseImportFile } from "../lib/enterpriseImportParser.js";
-import {
-  planImport,
-  isImportEntityType,
-  type ImportEntityType,
-  type NormalizedImportInput
-} from "../lib/enterpriseContextImport.js";
-import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
-import { registerAsset } from "../lib/assetRegistrar.js";
-import { entityTypeToAssetType } from "../lib/assetRegistry.js";
+import { planImport, isImportEntityType } from "../lib/enterpriseContextImport.js";
+// EAR Phase 3b: persistence extracted to the shared module so the connector
+// sync worker reuses the SAME lane (dedup keys, caps, inserts, registry hooks).
+import { existingKeys, capHeadroom, insertImportRow } from "../lib/enterpriseImportPersistence.js";
 
 const router = Router();
 
@@ -47,96 +39,11 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024, files: 1 } // 5 MB
 });
 
-const ENTERPRISE_TYPES: ReadonlySet<ImportEntityType> = new Set(["asset", "application", "data_store"]);
-
 function getOrgId(req: Request): string | null {
   return (
     (req as { organizationContext?: { organizationId?: string | null } })
       .organizationContext?.organizationId ?? null
   );
-}
-
-/** Existing dedup keys (lowercased names) already in the org for this type. */
-async function existingKeys(entityType: ImportEntityType, orgId: string): Promise<Set<string>> {
-  let sql: string;
-  const params: unknown[] = [orgId];
-  if (ENTERPRISE_TYPES.has(entityType)) {
-    sql = `SELECT lower(name) AS k FROM enterprise_entities WHERE organization_id = $1 AND entity_type = $2`;
-    params.push(entityType);
-  } else if (entityType === "vendor") {
-    sql = `SELECT lower(name) AS k FROM vendors WHERE organization_id = $1`;
-  } else {
-    sql = `SELECT lower(name) AS k FROM ai_systems WHERE organization_id = $1`;
-  }
-  const r = await pg.query<{ k: string }>(sql, params);
-  return new Set(r.rows.map((row) => row.k));
-}
-
-/** Remaining capacity headroom (cap - used, floored at 0) for the relevant cap system. */
-async function capHeadroom(entityType: ImportEntityType, orgId: string): Promise<number> {
-  const limit = ENTERPRISE_TYPES.has(entityType)
-    ? await enforceEnterpriseEntityLimit(orgId)
-    : await enforceEntityLimit(orgId); // vendor + ai_system share max_monitored_entities
-  return Math.max(0, limit.cap - limit.used);
-}
-
-/** Persist one normalized row. Returns true if a row was inserted (ON CONFLICT skips dups). */
-async function insertOne(orgId: string, normalized: NormalizedImportInput): Promise<boolean> {
-  if (normalized.kind === "vendor") {
-    const v = normalized.input;
-    const r = await pg.query<{ id: string }>(
-      `INSERT INTO vendors (organization_id, name, service_description, category, criticality,
-                            data_sensitivity, access_level, website, owner_user_id, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, 'active')
-       ON CONFLICT DO NOTHING RETURNING id`,
-      [orgId, v.name, v.service_description, v.category, v.criticality, v.data_sensitivity, v.access_level, v.website]
-    );
-    if ((r.rowCount ?? 0) === 0) return false;
-    // EAR Phase 1: registry upsert, same asTenant tx (flag-gated, dark by default).
-    if (assetRegistryEnabled()) {
-      await registerAsset(orgId, "vendor", "vendors", r.rows[0]!.id);
-    }
-    return true;
-  }
-  if (normalized.kind === "ai_system") {
-    const a = normalized.input;
-    const r = await pg.query<{ id: string }>(
-      `INSERT INTO ai_systems (organization_id, name, use_case, owner_user_id, model_type,
-                               data_classification, deployment_status, criticality, risk_classification)
-       VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, $8)
-       ON CONFLICT DO NOTHING RETURNING id`,
-      [orgId, a.name, a.use_case, a.model_type, a.data_classification, a.deployment_status, a.criticality, a.risk_classification]
-    );
-    if ((r.rowCount ?? 0) === 0) return false;
-    if (assetRegistryEnabled()) {
-      await registerAsset(orgId, "ai_system", "ai_systems", r.rows[0]!.id);
-    }
-    return true;
-  }
-  // enterprise_entity (asset / application / data_store)
-  const e = normalized.input;
-  const r = await pg.query<{ id: string }>(
-    `INSERT INTO enterprise_entities (organization_id, entity_type, name, description, owner_user_id,
-                                      status, criticality, confidence, provenance)
-     VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, 'csv_import')
-     ON CONFLICT DO NOTHING RETURNING id`,
-    [orgId, e.entity_type, e.name, e.description, e.status, e.criticality, e.confidence]
-  );
-  if ((r.rowCount ?? 0) === 0) return false;
-  const id = r.rows[0]!.id;
-  if (assetRegistryEnabled()) {
-    await registerAsset(orgId, entityTypeToAssetType(e.entity_type), "enterprise_entities", id);
-  }
-  if (e.entity_type === "data_store" && e.data_store) {
-    const ds = e.data_store;
-    await pg.query(
-      `INSERT INTO enterprise_data_stores (enterprise_entity_id, organization_id,
-                                           data_classification, residency_region, retention_policy, encryption_at_rest)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [id, orgId, ds.data_classification, ds.residency_region, ds.retention_policy, ds.encryption_at_rest]
-    );
-  }
-  return true;
 }
 
 export async function importEnterpriseContext(req: Request, res: Response): Promise<void> {
@@ -183,7 +90,7 @@ export async function importEnterpriseContext(req: Request, res: Response): Prom
   let committed = 0;
   for (const row of plan.rows) {
     if (row.status === "ok" && row.normalized) {
-      if (await insertOne(orgId, row.normalized)) committed++;
+      if (await insertImportRow(orgId, row.normalized, "csv_import")) committed++;
     }
   }
 

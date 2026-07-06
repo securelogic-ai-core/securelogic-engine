@@ -9,10 +9,13 @@
  * validators + cap + dedup rather than a parallel write path.
  *
  * Layering: `normalize()` is PURE (mock-testable with no network); `fetch()` is the
- * only I/O and takes an injected `HttpClient` so it is testable with a fake. Nothing
- * here writes to the DB or is wired into a route/worker — connectors ship DARK behind
- * `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` + a per-connector flag at the eventual call
- * site. Real credentials are operator-owned (see the operator ledger).
+ * only I/O and takes an injected `HttpClient` so it is testable with a fake (prod =
+ * the SSRF-safe connectorHttpClient). Since EAR Phase 3b, connectors are wired to the
+ * sync route + worker (routes/connectors.ts, workers/connectorSyncWorker.ts), DARK
+ * behind SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED AND SECURELOGIC_ASSET_REGISTRY_ENABLED;
+ * per-connector activation is the org-level `enterprise_connectors.enabled` toggle
+ * (row-level, not env — env flags cannot scale per-org). Real credentials are
+ * operator-owned (see the operator ledger) and encrypted at rest (fieldEncryption).
  */
 
 import type { ImportEntityType } from "../enterpriseContextImport.js";

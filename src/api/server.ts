@@ -13,6 +13,7 @@ import { logger } from "./infra/logger.js";
 import { startScheduler } from "./lib/schedulerRunner.js";
 import { startAccountDeletionReaperEnqueuer } from "./lib/accountDeletionEnqueuer.js";
 import { startApplicabilityReassessmentWorker } from "./workers/applicabilityReassessmentWorker.js";
+import { startConnectorSyncWorker } from "./workers/connectorSyncWorker.js";
 import { createApp } from "./app.js";
 
 /* =========================================================
@@ -128,6 +129,10 @@ startAccountDeletionReaperEnqueuer();
 // self-gates on SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED (zero DB access while
 // off), so this line is inert until the operator enables the ECL.
 startApplicabilityReassessmentWorker();
+// EAR Phase 3b: connector sync worker. Registered always; every tick
+// self-gates on SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED AND
+// SECURELOGIC_ASSET_REGISTRY_ENABLED (zero DB access while either is off).
+startConnectorSyncWorker();
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   logger.info(
