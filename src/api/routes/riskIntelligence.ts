@@ -20,6 +20,7 @@ import { asTenant } from "../middleware/asTenant.js";
 import { assetRegistryFeatureFlag } from "../lib/assetRegistryFeatureFlag.js";
 import { riskIntelligenceFeatureFlag } from "../lib/riskIntelligenceFeatureFlag.js";
 import { rollupRiskByDimension, type AssetRiskRow } from "../lib/riskDimensionRollup.js";
+import { composeExecutiveRiskSummary, type PostureContext } from "../lib/executiveRiskSummary.js";
 
 const router = Router();
 
@@ -46,17 +47,14 @@ interface RegistryRiskRow {
   confidence: number | null;
 }
 
-export async function getRiskDimensions(req: Request, res: Response): Promise<void> {
-  const orgId = getOrgId(req);
-  if (!orgId) {
-    res.status(403).json({ error: "organization_context_missing" });
-    return;
-  }
-
-  // Every registry asset with its CURRENT applicability decision (latest-wins
-  // per asset_id over the WORM ledger). LEFT JOIN so unassessed assets count
-  // as own-risk 0. asset_id is the uniform join key across all backing types
-  // (the matcher resolves vendor/ai_system arms to the registry id too).
+/**
+ * Every registry asset with its own-risk seed from its CURRENT applicability
+ * decision (latest-wins per asset_id over the WORM ledger). LEFT JOIN so
+ * unassessed assets count as own-risk 0. asset_id is the uniform join key
+ * across all backing types (the matcher resolves vendor/ai_system arms to the
+ * registry id too). Runs inside the caller's tenant transaction.
+ */
+async function gatherAssetRisk(orgId: string): Promise<AssetRiskRow[]> {
   const { rows } = await pg.query<RegistryRiskRow>(
     `WITH current_decisions AS (
        SELECT DISTINCT ON (asset_id) asset_id, decision, confidence
@@ -70,14 +68,51 @@ export async function getRiskDimensions(req: Request, res: Response): Promise<vo
       WHERE v.organization_id = $1`,
     [orgId]
   );
-
-  const riskRows: AssetRiskRow[] = rows.map((r) => {
+  return rows.map((r) => {
     const base = r.decision ? DECISION_RISK[r.decision] ?? 0 : 0;
     const conf = r.confidence === null ? 0 : Math.max(0, Math.min(100, r.confidence)) / 100;
     return { asset_type: r.asset_type, criticality: r.criticality, own_risk: Math.round(base * conf) };
   });
+}
 
+export async function getRiskDimensions(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const riskRows = await gatherAssetRisk(orgId);
   res.status(200).json({ risk: rollupRiskByDimension(riskRows) });
+}
+
+/** ERIP Epic 4: board-ready executive risk summary (compose canonical objects). */
+export async function getExecutiveRiskSummary(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+
+  const rollup = rollupRiskByDimension(await gatherAssetRisk(orgId));
+
+  // Latest posture snapshot (as-is; null when the org has none yet).
+  const snap = await pg.query<{ overall_score: number | null; overall_severity: string | null; snapshot_date: string | null }>(
+    `SELECT overall_score, overall_severity, snapshot_date
+       FROM posture_snapshots
+      WHERE organization_id = $1
+      ORDER BY snapshot_date DESC
+      LIMIT 1`,
+    [orgId]
+  );
+  const posture: PostureContext | null = snap.rows[0]
+    ? {
+        overall_score: snap.rows[0].overall_score,
+        overall_severity: snap.rows[0].overall_severity,
+        snapshot_date: snap.rows[0].snapshot_date
+      }
+    : null;
+
+  res.status(200).json({ executive_summary: composeExecutiveRiskSummary(rollup, posture) });
 }
 
 const chain = [
@@ -89,5 +124,6 @@ const chain = [
 ];
 
 router.get("/risk/dimensions", ...chain, asTenant(getRiskDimensions));
+router.get("/executive/risk-summary", ...chain, asTenant(getExecutiveRiskSummary));
 
 export default router;
