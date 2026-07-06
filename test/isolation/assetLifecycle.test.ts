@@ -105,7 +105,7 @@ describe("EAR P6 — detail-backed asset lifecycle", () => {
   });
 
   it("delete removes detail + registry rows; suggestion asset_id NULLs, target ref survives (EAR-AD-3)", async () => {
-    const signalId = await seedCyberSignal(pool, {});
+    const signalId = await seedCyberSignal(pool, { dedup: "lifecycle-p6-signal" });
     await pool.query(
       `INSERT INTO signal_match_suggestions (organization_id, signal_id, target_type, target_id, asset_id, match_reason, match_score)
        VALUES ($1, $2, 'asset', $3, $3, 'lifecycle-test', 0.9)`,
