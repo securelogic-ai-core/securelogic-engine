@@ -21,12 +21,12 @@
  *                             `identity_system` detail asset (§2.3: accounts
  *                             are generic entities, the system is the asset).
  *
- * Relationship persistence is DEFERRED (CSV-import parity — the import path
- * has no relationship lane either); counts are surfaced, never silently
- * dropped. NO I/O here — fully unit-testable.
+ * Relationships (P7): passed through external_ref-keyed for the worker's
+ * resolution + edge persistence (self-edges dropped here — the DB CHECK
+ * would abort the worker's tx). NO I/O here — fully unit-testable.
  */
 
-import type { ConnectorAdapter, NormalizedEntity, NormalizedInventory } from "./connectors/types.js";
+import type { ConnectorAdapter, NormalizedEntity, NormalizedInventory, NormalizedRelationship } from "./connectors/types.js";
 import type { AssetDetailCreateInput } from "./assetDetailValidation.js";
 import type { ImportEntityType, ImportRow } from "./enterpriseContextImport.js";
 
@@ -42,8 +42,11 @@ export interface ConnectorSyncPlan {
   detailInputs: AssetDetailCreateInput[];
   /** Entities for the ECL import path, grouped by import entity type. */
   importGroups: Partial<Record<ImportEntityType, ImportRow[]>>;
-  /** Normalized relationships seen but not persisted (deferred — CSV parity). */
-  relationshipsSkipped: number;
+  /** Normalized intra-inventory relationships, external_ref-keyed. Persisted
+   * since P7 (self-edges dropped here — the DB CHECK would abort the tx). */
+  relationships: NormalizedRelationship[];
+  /** Self-referencing relationships dropped from the plan. */
+  relationshipsSelfDropped: number;
   /** Entities dropped past MAX_ENTITIES_PER_SYNC. */
   truncated: number;
 }
@@ -123,10 +126,12 @@ export function planConnectorSync(
   inventory: NormalizedInventory,
   config: Record<string, string>
 ): ConnectorSyncPlan {
+  const keep = inventory.relationships.filter((r) => r.from_external_ref !== r.to_external_ref);
   const plan: ConnectorSyncPlan = {
     detailInputs: [],
     importGroups: {},
-    relationshipsSkipped: inventory.relationships.length,
+    relationships: keep,
+    relationshipsSelfDropped: inventory.relationships.length - keep.length,
     truncated: 0
   };
 

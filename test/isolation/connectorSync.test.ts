@@ -225,6 +225,73 @@ describe("EAR Phase 3b — connector sync end-to-end", () => {
     expect(endpointsB.rows[0].n).toBe(0);
   });
 
+  it("P7: a CMDB sync persists dependency edges (resolved by external_ref) idempotently", async () => {
+    await withTenant(seed.orgA.id, () =>
+      upsertConnectorConfig(seed.orgA.id, "servicenow_cmdb", {
+        instance_url: "https://corp.service-now.com", username: "svc", password: "pw"
+      }, true)
+    );
+    const cmdbHttp: HttpClient = {
+      async getJson() {
+        return {
+          result: [
+            { sys_id: "ci-app", name: "Order Service", sys_class_name: "cmdb_ci_business_app", depends_on: ["ci-srv", "ci-missing"] },
+            { sys_id: "ci-srv", name: "app-server-01", sys_class_name: "cmdb_ci_server" }
+          ]
+        };
+      }
+    };
+
+    await enqueue(seed.orgA.id, "servicenow_cmdb");
+    await drainOne(cmdbHttp);
+
+    const status = await pool.query(
+      `SELECT last_sync_summary FROM enterprise_connectors
+        WHERE organization_id = $1 AND connector_id = 'servicenow_cmdb'`,
+      [seed.orgA.id]
+    );
+    // ci-app→ci-srv resolves; ci-app→ci-missing cannot (never ingested).
+    expect(status.rows[0].last_sync_summary).toMatchObject({
+      relationships_created: 1,
+      relationships_unresolved: 1
+    });
+
+    const edges = await pool.query(
+      `SELECT r.from_type, r.to_type, r.relationship_type, r.note
+         FROM enterprise_relationships r
+         JOIN enterprise_entities f ON f.id = r.from_id AND f.external_ref = 'ci-app'
+        WHERE r.organization_id = $1 AND r.deleted_at IS NULL`,
+      [seed.orgA.id]
+    );
+    expect(edges.rows).toEqual([
+      expect.objectContaining({
+        from_type: "enterprise_entity",
+        to_type: "enterprise_entity",
+        relationship_type: "depends_on",
+        note: "connector:servicenow_cmdb"
+      })
+    ]);
+
+    // Re-sync: entities dedup by external_ref, the edge dedups by the live unique index.
+    await enqueue(seed.orgA.id, "servicenow_cmdb");
+    await drainOne(cmdbHttp);
+    const again = await pool.query(
+      `SELECT last_sync_summary FROM enterprise_connectors
+        WHERE organization_id = $1 AND connector_id = 'servicenow_cmdb'`,
+      [seed.orgA.id]
+    );
+    expect(again.rows[0].last_sync_summary).toMatchObject({
+      relationships_created: 0,
+      relationships_existing: 1
+    });
+    const count = await pool.query(
+      `SELECT count(*)::int AS n FROM enterprise_relationships
+        WHERE organization_id = $1 AND deleted_at IS NULL AND note = 'connector:servicenow_cmdb'`,
+      [seed.orgA.id]
+    );
+    expect(count.rows[0].n).toBe(1);
+  });
+
   it("runOneTick refuses to claim while either flag is off (double fence)", async () => {
     const jobId = await enqueue(seed.orgA.id, "microsoft_defender");
     try {

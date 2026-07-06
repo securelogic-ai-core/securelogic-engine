@@ -128,7 +128,7 @@ describe("planConnectorSync — category mapping", () => {
     expect(idpSystemDetail(IDP, { base_url: "not a url" })).toBeNull();
   });
 
-  it("truncates past MAX_ENTITIES_PER_SYNC and counts relationships as skipped, never silently", () => {
+  it("truncates past MAX_ENTITIES_PER_SYNC; relationships pass through with self-edges dropped (P7)", () => {
     const entities: NormalizedEntity[] = Array.from({ length: MAX_ENTITIES_PER_SYNC + 7 }, (_, i) => ({
       entity_type: "asset" as const,
       name: `host-${i}`,
@@ -137,7 +137,19 @@ describe("planConnectorSync — category mapping", () => {
     const plan = planConnectorSync(DEFENDER, inv(entities, 3), {});
     expect(plan.truncated).toBe(7);
     expect(plan.detailInputs).toHaveLength(MAX_ENTITIES_PER_SYNC);
-    expect(plan.relationshipsSkipped).toBe(3);
+    expect(plan.relationships).toHaveLength(3);
+
+    const selfy = planConnectorSync(CMDB, {
+      entities: [],
+      relationships: [
+        { from_external_ref: "a", to_external_ref: "a", relationship_type: "depends_on" },
+        { from_external_ref: "a", to_external_ref: "b", relationship_type: "runs_on" }
+      ]
+    }, {});
+    expect(selfy.relationships).toEqual([
+      { from_external_ref: "a", to_external_ref: "b", relationship_type: "runs_on" }
+    ]);
+    expect(selfy.relationshipsSelfDropped).toBe(1);
   });
 });
 
