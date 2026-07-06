@@ -246,7 +246,8 @@ async function persistPlan(
   orgId: string,
   connectorId: string,
   plan: ConnectorSyncPlan,
-  fullSync: boolean
+  fullSync: boolean,
+  inventory: NormalizedInventory
 ): Promise<SyncSummary> {
   const summary: SyncSummary = {
     connector_id: connectorId,
@@ -314,7 +315,7 @@ async function persistPlan(
   // E2.P2 (ERIP-AD-8/11): record discovery facts, then reconcile drift. On a
   // full sync the reappearance count is read BEFORE the upsert clears stale,
   // and drift-stale is marked AFTER (touched rows carry this tx's timestamp).
-  const observations = planObservations(plan);
+  const observations = planObservations(plan, inventory);
   const reconcile: ReconcileSummary = { observed: 0, drift_stale: 0, drift_reappeared: 0 };
   if (fullSync) {
     reconcile.drift_reappeared = await countReappearing(
@@ -444,7 +445,7 @@ export async function processClaimedJob(job: JobRow, deps: WorkerDeps = {}): Pro
     // 3+4. Plan and persist in ONE tenant tx; completion commits with the work.
     summary = await withTenant(orgId, async () => {
       const plan = planConnectorSync(adapter, inventory, config);
-      const persisted = await persistPlan(orgId, connectorId, plan, fullSync);
+      const persisted = await persistPlan(orgId, connectorId, plan, fullSync, inventory);
 
       await pg.query(
         `UPDATE enterprise_connectors

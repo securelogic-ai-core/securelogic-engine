@@ -21,6 +21,10 @@ export interface ObservationFact {
   stale: boolean;
   /** ISO timestamp; newer wins ties within equal precedence. */
   last_seen_at: string;
+  /** E2.P4: discovered owner (suggest-only), or null. */
+  owner_hint?: string | null;
+  /** E2.P4: source-echo metadata, or null. */
+  metadata?: Record<string, string> | null;
 }
 
 export type ConnectorCategory = "cmdb" | "endpoint" | "vulnerability" | "cloud" | "identity";
@@ -58,6 +62,10 @@ export interface DiscoverySummary {
   partially_stale: boolean;
   effective_name: EffectiveField<string> | null;
   effective_entity_type: EffectiveField<string> | null;
+  /** E2.P4 (ERIP-AD-13): the precedence-resolved discovered owner (suggest-only). */
+  effective_owner_hint: EffectiveField<string> | null;
+  /** E2.P4: source-echo metadata merged across sources (higher-precedence keys win). */
+  metadata: Record<string, string>;
 }
 
 /**
@@ -115,9 +123,26 @@ export function computeConfidence(facts: readonly ObservationFact[], now: Date):
   return Math.max(0, Math.min(100, score));
 }
 
+/**
+ * Merge source-echo metadata across facts: iterate low→high precedence so the
+ * highest-precedence source's keys land last and win. Deterministic.
+ */
+function mergeMetadata(facts: readonly ObservationFact[]): Record<string, string> {
+  const ordered = [...facts].sort((a, b) => CATEGORY_RANK[a.category] - CATEGORY_RANK[b.category]);
+  const out: Record<string, string> = {};
+  for (const f of ordered) {
+    if (!f.metadata) continue;
+    for (const [k, v] of Object.entries(f.metadata)) out[k] = v;
+  }
+  return out;
+}
+
 /** Full read-side discovery summary for one asset's observation set. */
 export function summarizeDiscovery(facts: readonly ObservationFact[], now: Date): DiscoverySummary {
   const sources = [...new Set(facts.map((f) => f.connector_id))].sort();
+  const withOwner = facts.filter((f): f is ObservationFact & { owner_hint: string } =>
+    typeof f.owner_hint === "string" && f.owner_hint.length > 0
+  );
   return {
     source_count: sources.length,
     sources,
@@ -125,6 +150,8 @@ export function summarizeDiscovery(facts: readonly ObservationFact[], now: Date)
     fully_stale: facts.length > 0 && facts.every((f) => f.stale),
     partially_stale: facts.some((f) => f.stale),
     effective_name: effectiveField(facts, (f) => f.name),
-    effective_entity_type: effectiveField(facts, (f) => f.entity_type)
+    effective_entity_type: effectiveField(facts, (f) => f.entity_type),
+    effective_owner_hint: effectiveField(withOwner, (f) => f.owner_hint ?? ""),
+    metadata: mergeMetadata(facts)
   };
 }

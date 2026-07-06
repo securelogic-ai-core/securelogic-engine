@@ -33,6 +33,18 @@ export interface NormalizedEntity {
     data_classification?: "public" | "internal" | "confidential" | "restricted";
     residency_region?: string;
   };
+  /**
+   * E2.P4 (ERIP-AD-13): discovered owner, as the source reports it (email or
+   * display). SUGGEST-ONLY — flows to the observation ledger and the discovery
+   * surface; never auto-assigns a canonical owner.
+   */
+  owner_hint?: string;
+  /**
+   * E2.P4: source-echo metadata (e.g. os, last_seen) surfaced read-side. String
+   * values only; NEVER compliance-load-bearing (ECL S0 rule — those must be
+   * typed columns before any workflow consumes them).
+   */
+  metadata?: Record<string, string>;
 }
 
 /** A normalized intra-org relationship, keyed by the endpoints' external_ref. */

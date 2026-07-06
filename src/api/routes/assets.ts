@@ -221,6 +221,8 @@ interface ObservationRow {
   name: string;
   stale: boolean;
   last_seen_at: Date | string;
+  owner_hint: string | null;
+  metadata: Record<string, string> | null;
 }
 
 export async function getAssetDiscovery(req: Request, res: Response): Promise<void> {
@@ -264,7 +266,7 @@ export async function getAssetDiscovery(req: Request, res: Response): Promise<vo
   // Observations that map to this asset: own external_ref OR same normalized
   // name (cross-connector identity — different connectors mint different refs).
   const obs = await pg.query<ObservationRow>(
-    `SELECT connector_id, external_ref, entity_type, name, stale, last_seen_at
+    `SELECT connector_id, external_ref, entity_type, name, stale, last_seen_at, owner_hint, metadata
        FROM connector_asset_observations
       WHERE organization_id = $1
         AND ( ($2::text IS NOT NULL AND external_ref = $2) OR lower(name) = lower($3) )`,
@@ -282,13 +284,33 @@ export async function getAssetDiscovery(req: Request, res: Response): Promise<vo
       entity_type: r.entity_type,
       name: r.name,
       stale: r.stale,
-      last_seen_at: r.last_seen_at instanceof Date ? r.last_seen_at.toISOString() : String(r.last_seen_at)
+      last_seen_at: r.last_seen_at instanceof Date ? r.last_seen_at.toISOString() : String(r.last_seen_at),
+      owner_hint: r.owner_hint,
+      metadata: r.metadata
     });
+  }
+
+  const discovery = summarizeDiscovery(facts, new Date());
+
+  // ERIP-AD-13: owner discovery is SUGGEST-ONLY. Match the resolved owner hint
+  // to an org user by email; the product layer decides whether to assign. Never
+  // auto-assigns. Null when no hint or no matching user in this org.
+  let suggestedOwner: { user_id: string; email: string; name: string | null } | null = null;
+  const hint = discovery.effective_owner_hint?.value;
+  if (hint && hint.includes("@")) {
+    const u = await pg.query<{ id: string; email: string; name: string | null }>(
+      `SELECT id, email, name FROM users
+        WHERE organization_id = $1 AND lower(email) = lower($2) LIMIT 1`,
+      [orgId, hint]
+    );
+    const row = u.rows[0];
+    if (row) suggestedOwner = { user_id: row.id, email: row.email, name: row.name };
   }
 
   res.status(200).json({
     asset_id: id,
-    discovery: summarizeDiscovery(facts, new Date()),
+    discovery,
+    suggested_owner: suggestedOwner,
     observations: facts.map((f) => ({
       connector_id: f.connector_id,
       category: f.category,
@@ -296,7 +318,9 @@ export async function getAssetDiscovery(req: Request, res: Response): Promise<vo
       entity_type: f.entity_type,
       name: f.name,
       stale: f.stale,
-      last_seen_at: f.last_seen_at
+      last_seen_at: f.last_seen_at,
+      owner_hint: f.owner_hint,
+      metadata: f.metadata
     }))
   });
 }

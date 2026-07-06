@@ -59,12 +59,14 @@ export async function upsertObservations(
   summary: ReconcileSummary
 ): Promise<void> {
   for (const o of observations) {
+    // E2.P4: owner_hint/metadata refresh ONLY when this run supplies them —
+    // COALESCE keeps a prior discovery when the current source omits it.
     await pg.query(
       `INSERT INTO connector_asset_observations (
          organization_id, connector_id, external_ref, lane, entity_type, name,
-         last_full_sync_seen_at, stale
+         last_full_sync_seen_at, stale, owner_hint, metadata
        )
-       VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $7 THEN now() ELSE NULL END, FALSE)
+       VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $7 THEN now() ELSE NULL END, FALSE, $8, $9::jsonb)
        ON CONFLICT (organization_id, connector_id, external_ref)
        DO UPDATE SET
          last_seen_at = now(),
@@ -74,8 +76,20 @@ export async function upsertObservations(
          last_full_sync_seen_at = CASE WHEN $7 THEN now()
                                        ELSE connector_asset_observations.last_full_sync_seen_at END,
          stale = CASE WHEN $7 THEN FALSE ELSE connector_asset_observations.stale END,
+         owner_hint = COALESCE(EXCLUDED.owner_hint, connector_asset_observations.owner_hint),
+         metadata = COALESCE(EXCLUDED.metadata, connector_asset_observations.metadata),
          updated_at = now()`,
-      [orgId, connectorId, o.external_ref, o.lane, o.entity_type, o.name, fullSync]
+      [
+        orgId,
+        connectorId,
+        o.external_ref,
+        o.lane,
+        o.entity_type,
+        o.name,
+        fullSync,
+        o.owner_hint,
+        o.metadata === null ? null : JSON.stringify(o.metadata)
+      ]
     );
     summary.observed++;
   }
