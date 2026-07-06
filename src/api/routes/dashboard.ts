@@ -25,6 +25,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { buildEvidenceSummary } from "./evidence.js";
+import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
 
 const router = Router();
 
@@ -591,7 +592,34 @@ router.get(
         else                        vendorByCriticality.uncategorized += n;
       }
 
+      // -------------------------------------------------------
+      // 9. EAR Phase 5: registry-wide asset rollup (asset_registry_v).
+      // Flag-gated ADDITIVE key — while SECURELOGIC_ASSET_REGISTRY_ENABLED is
+      // off the response is byte-identical to today (this is a LIVE route).
+      // -------------------------------------------------------
+      let assetsSummary: { total: number; by_type: Record<string, number> } | undefined;
+      if (assetRegistryEnabled()) {
+        const registryResult = await pg.query<{ asset_type: string; count: string }>(
+          `
+          SELECT asset_type, COUNT(*)::text AS count
+          FROM asset_registry_v
+          WHERE organization_id = $1
+          GROUP BY asset_type
+          `,
+          [organizationId]
+        );
+        const byType: Record<string, number> = {};
+        let assetTotal = 0;
+        for (const row of registryResult.rows) {
+          const n = parseInt(row.count, 10);
+          byType[row.asset_type] = n;
+          assetTotal += n;
+        }
+        assetsSummary = { total: assetTotal, by_type: byType };
+      }
+
       res.status(200).json({
+        ...(assetsSummary ? { assets: assetsSummary } : {}),
         posture: {
           overall_score: snapshotRow?.overall_score ?? null,
           overall_severity: snapshotRow?.overall_severity ?? null,

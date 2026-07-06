@@ -244,6 +244,13 @@ export interface ApplicabilityExplanation {
 
 /** The first-class ECL stats rollup (GET /api/enterprise-context/stats — R6). */
 export interface EnterpriseContextStats {
+  /** EAR Phase 5: registry-wide rollup — present only while the engine's
+   * SECURELOGIC_ASSET_REGISTRY_ENABLED is on (absent otherwise). */
+  assets?: {
+    total: number;
+    by_type: Record<string, number>;
+    by_criticality: Record<string, number>;
+  };
   entities: {
     total: number;
     by_type: Record<string, number>;

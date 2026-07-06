@@ -4,6 +4,7 @@ import { getSession } from "@/lib/session";
 import { getEnterpriseContextStats } from "@/lib/api";
 import { APPLICABILITY_DECISIONS } from "@/lib/enterpriseContext";
 import { decisionLabel, entityTypeLabel, readFailure } from "@/lib/enterpriseContextFormat";
+import { assetTypeLabel } from "@/lib/assetRegistry";
 import { CriticalityBadge, DecisionBadge, ReadFailurePanel } from "../shared";
 
 /**
@@ -174,6 +175,44 @@ export default async function EnterpriseContextDashboardPage() {
                   </div>
                 </section>
               </div>
+
+              {/* EAR Phase 5: registry-wide asset totals (all asset types).
+                  s.assets is only present while the engine's registry flag is
+                  on, so this section is dark with zero UI change otherwise. */}
+              {s.assets && (
+                <section className="mt-8">
+                  <h2 className="text-sm font-semibold mb-3" style={{ color: "#f1f5f9" }}>
+                    Assets by type
+                  </h2>
+                  <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
+                    <div className="flex items-baseline justify-between mb-3">
+                      <span className="text-xs" style={{ color: "#94a3b8" }}>
+                        Across the full asset registry
+                      </span>
+                      <Link href="/assets" className="text-xs underline hover:opacity-80" style={{ color: "#94a3b8" }}>
+                        View all {s.assets.total} asset{s.assets.total === 1 ? "" : "s"} →
+                      </Link>
+                    </div>
+                    <div className="space-y-2.5">
+                      {Object.entries(s.assets.by_type)
+                        .sort(([, a], [, b]) => b - a)
+                        .map(([t, n]) => (
+                          <div key={t} className="flex items-center justify-between text-sm">
+                            <span style={{ color: "#cbd5e1" }}>{assetTypeLabel(t)}</span>
+                            <span className="font-semibold" style={{ color: "#f1f5f9" }}>
+                              {n}
+                            </span>
+                          </div>
+                        ))}
+                      {Object.keys(s.assets.by_type).length === 0 && (
+                        <p className="text-sm" style={{ color: "#94a3b8" }}>
+                          No assets registered yet.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              )}
 
               <p className="mt-8 text-xs" style={{ color: "#475569" }}>
                 {decisionLabel("affected")} = the platform concluded a signal applies to your
