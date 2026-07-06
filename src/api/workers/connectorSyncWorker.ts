@@ -168,7 +168,7 @@ async function persistPlan(orgId: string, connectorId: string, plan: ConnectorSy
 
     for (const row of imported.rows) {
       if (row.status === "ok" && row.normalized) {
-        if (await insertImportRow(orgId, row.normalized, "connector_sync")) summary.imported++;
+        if (await insertImportRow(orgId, row.normalized, "connector")) summary.imported++;
         else summary.import_duplicate++;
       } else if (row.status === "invalid") {
         summary.import_invalid++;

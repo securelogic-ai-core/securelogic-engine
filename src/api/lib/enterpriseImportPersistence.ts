@@ -33,8 +33,9 @@ export const ENTERPRISE_TYPES: ReadonlySet<ImportEntityType> = new Set([
   "identity"
 ]);
 
-/** Provenance stamped on enterprise_entities rows created by each import lane. */
-export type ImportProvenance = "csv_import" | "connector_sync";
+/** Provenance stamped on enterprise_entities rows created by each import lane
+ * (both values pre-exist in the 20260718 enterprise_entities_provenance_chk). */
+export type ImportProvenance = "csv_import" | "connector";
 
 /** Existing dedup keys (lowercased names) already in the org for this type. */
 export async function existingKeys(entityType: ImportEntityType, orgId: string): Promise<Set<string>> {

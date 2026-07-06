@@ -10,7 +10,7 @@
  *     job succeeded + last_sync_* updated — one tenant tx.
  *   - Re-sync idempotency: same inventory → zero new rows, counted as existing.
  *   - Identity-provider sync: accounts land in enterprise_entities
- *     (provenance connector_sync, external_ref persisted) AND the IdP itself
+ *     (provenance 'connector', external_ref persisted) AND the IdP itself
  *     lands once as an identity_system detail asset.
  *   - runOneTick claims nothing while either flag is off (double fence).
  */
@@ -192,7 +192,7 @@ describe("EAR Phase 3b — connector sync end-to-end", () => {
       [seed.orgA.id]
     );
     expect(accounts.rows).toHaveLength(2); // deprovisioned user skipped by the adapter
-    expect(accounts.rows[0]).toMatchObject({ name: "Jane Doe", external_ref: "u-1", provenance: "connector_sync" });
+    expect(accounts.rows[0]).toMatchObject({ name: "Jane Doe", external_ref: "u-1", provenance: "connector" });
 
     const idp = await pool.query(
       `SELECT name, external_ref FROM identity_systems WHERE organization_id = $1`,
