@@ -49,6 +49,13 @@ import {
   ignoreDeadLetter,
   type DeadLetterFilter
 } from "../lib/connectorDeadLetterStore.js";
+import { gatherConnectorHealth, type ConnectorHealthRaw } from "../lib/connectorHealthStore.js";
+import {
+  assessConnectorHealth,
+  rollupHealth,
+  type ConnectorHealthSignals,
+  type ConnectorHealthAssessment
+} from "../lib/connectorHealthCore.js";
 
 const router = Router();
 
@@ -497,6 +504,87 @@ export async function ignoreConnectorDeadLetter(req: Request, res: Response): Pr
   res.status(200).json({ ignored: true });
 }
 
+// ---------------------------------------------------------------------------
+// ERIP E2c: connector health monitoring. Aggregates sync/writeback/drift/dead-
+// letter signals into a per-connector band + org rollup. Behind the connectors
+// chain (ECL + EAR), dark in production.
+// ---------------------------------------------------------------------------
+
+function toSignals(r: ConnectorHealthRaw, now: number): ConnectorHealthSignals {
+  const parse = (v: string | null): number | null => (v ? Date.parse(v) : null);
+  return {
+    configured: true,
+    enabled: r.enabled,
+    last_sync_status: r.last_sync_status,
+    last_sync_at: parse(r.last_sync_at),
+    consecutive_failures: r.consecutive_failures,
+    sync_interval_minutes: r.sync_interval_minutes,
+    next_sync_at: parse(r.next_sync_at),
+    stale_observations: r.stale_observations,
+    writeback_pending: r.writeback_pending,
+    writeback_conflict: r.writeback_conflict,
+    writeback_failed: r.writeback_failed,
+    open_dead_letters: r.open_dead_letters,
+    now
+  };
+}
+
+const UNCONFIGURED_SIGNALS = (now: number): ConnectorHealthSignals => ({
+  configured: false, enabled: false, last_sync_status: null, last_sync_at: null,
+  consecutive_failures: 0, sync_interval_minutes: null, next_sync_at: null,
+  stale_observations: 0, writeback_pending: 0, writeback_conflict: 0, writeback_failed: 0,
+  open_dead_letters: 0, now
+});
+
+/** GET /api/connectors/health — per-connector health band + org rollup. */
+export async function getConnectorHealth(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const raw = await gatherConnectorHealth(orgId);
+  const now = Date.now();
+
+  const configuredAssessments: ConnectorHealthAssessment[] = [];
+  const connectors = listConnectors().map((adapter) => {
+    const r = raw.get(adapter.id);
+    const signals = r ? toSignals(r, now) : UNCONFIGURED_SIGNALS(now);
+    const assessment = assessConnectorHealth(signals);
+    if (r) configuredAssessments.push(assessment);
+    return {
+      connector_id: adapter.id,
+      display_name: adapter.displayName,
+      category: adapter.category,
+      band: assessment.band,
+      reasons: assessment.reasons,
+      severity: assessment.severity,
+      signals: {
+        enabled: r?.enabled ?? false,
+        last_sync_status: r?.last_sync_status ?? null,
+        last_sync_at: r?.last_sync_at ?? null,
+        consecutive_failures: r?.consecutive_failures ?? 0,
+        next_sync_at: r?.next_sync_at ?? null,
+        stale_observations: r?.stale_observations ?? 0,
+        writeback_pending: r?.writeback_pending ?? 0,
+        writeback_conflict: r?.writeback_conflict ?? 0,
+        writeback_failed: r?.writeback_failed ?? 0,
+        open_dead_letters: r?.open_dead_letters ?? 0
+      }
+    };
+  });
+
+  const byBand: Record<string, number> = {};
+  for (const c of connectors) byBand[c.band] = (byBand[c.band] ?? 0) + 1;
+
+  res.status(200).json({
+    overall_band: rollupHealth(configuredAssessments),
+    configured_count: raw.size,
+    by_band: byBand,
+    connectors
+  });
+}
+
 const chain = [
   enterpriseContextFeatureFlag,
   assetRegistryFeatureFlag,
@@ -513,6 +601,7 @@ router.post("/connectors/:id/writeback", ...chain, asTenant(enqueueConnectorWrit
 router.get("/connectors/:id/writeback", ...chain, asTenant(listConnectorWriteback));
 // E2b dead-letter recovery. Literal 'dead-letters' segment — distinct from the
 // :id routes by arity/method, so no route-shadowing.
+router.get("/connectors/health", ...chain, asTenant(getConnectorHealth));
 router.get("/connectors/dead-letters", ...chain, asTenant(listConnectorDeadLetters));
 router.post("/connectors/dead-letters/:id/redrive", ...chain, asTenant(redriveConnectorDeadLetter));
 router.post("/connectors/dead-letters/:id/ignore", ...chain, asTenant(ignoreConnectorDeadLetter));
