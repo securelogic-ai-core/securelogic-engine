@@ -14,6 +14,7 @@ import { startScheduler } from "./lib/schedulerRunner.js";
 import { startAccountDeletionReaperEnqueuer } from "./lib/accountDeletionEnqueuer.js";
 import { startApplicabilityReassessmentWorker } from "./workers/applicabilityReassessmentWorker.js";
 import { startConnectorSyncWorker } from "./workers/connectorSyncWorker.js";
+import { startRiskHistoryWorker } from "./workers/riskHistoryWorker.js";
 import { createApp } from "./app.js";
 
 /* =========================================================
@@ -133,6 +134,9 @@ startApplicabilityReassessmentWorker();
 // self-gates on SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED AND
 // SECURELOGIC_ASSET_REGISTRY_ENABLED (zero DB access while either is off).
 startConnectorSyncWorker();
+// ERIP F2: daily risk-history snapshot. Registered always; each tick self-gates
+// on SECURELOGIC_RISK_INTELLIGENCE_ENABLED AND SECURELOGIC_ASSET_REGISTRY_ENABLED.
+startRiskHistoryWorker();
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   logger.info(
