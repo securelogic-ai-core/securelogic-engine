@@ -25,7 +25,7 @@ no destructive migrations; backward compatibility preserved on every PR.
 | P8 | #506 | Track A: `asTenant` on 46 core-domain endpoints (behavior-identical hardening; inner `withTenant` blocks removed; coverage source-asserted in CI) |
 | P9 | #507 | Track C: capability dual-gate — `requireEntitlementOrCapability` + `organizations.core_platform_capability` (20260809). Flag-off byte-identical; **cutover (entitlement-leg removal) = STOP GATE, not shipped** |
 | P10 | #508 | Track B: `ASSESSMENT_TYPE_SPECS` registry (single source of truth for all 8 assessment lifecycles; 5 legacy modules delegate, lockstep-tested), `asset_assessments` + spec-driven engine + `/api/asset-assessments` (memo: `P10-ASSESSMENT-SERVICE-MEMO.md`, EAR-AD-5/6/7) |
-| P11 | this PR | Brief ↔ applicability citations (serve-time, double-fenced, fail-open), enablement runbook, this report |
+| P11 | #509 | Brief ↔ applicability citations (serve-time, double-fenced, fail-open), enablement runbook, this report |
 
 **Migrations shipped:** `20260801`–`20260810` (all additive; rollback notes in each header).
 **Flags added:** `SECURELOGIC_ASSET_REGISTRY_ENABLED`, `SECURELOGIC_CAPABILITY_GATING_ENABLED`,
@@ -79,6 +79,6 @@ requires — and is one optional read-time consumer, not an architectural center
 - P10 design memo: `P10-ASSESSMENT-SERVICE-MEMO.md`
 - Enablement runbook (staging checklist, prod checklist, rollback map): `ENABLEMENT-RUNBOOK.md`
 
-**Goal status: COMPLETE pending this PR's merge.** Every P0–P11 exit criterion
+**Goal status: COMPLETE** (P11 merged as #509, develop @ 4d6ce060). Every P0–P11 exit criterion
 is met or explicitly deferred with a ruling; no BLOCKED-ON-SIMMEE items remain
 except the two pre-declared product decisions (GATE B enablement; P9 cutover).
