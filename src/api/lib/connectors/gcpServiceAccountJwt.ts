@@ -27,6 +27,11 @@ export interface JwtAssertionInput {
   iat: number;
   /** Lifetime seconds (Google caps at 3600). */
   lifetimeSeconds?: number;
+  /**
+   * Optional impersonation subject for domain-wide delegation (Google Workspace
+   * Admin SDK, E2.P6). When set, becomes the JWT `sub`; else `sub` = clientEmail.
+   */
+  subject?: string;
 }
 
 const DEFAULT_AUD = "https://oauth2.googleapis.com/token";
@@ -39,7 +44,7 @@ export function mintServiceAccountAssertion(input: JwtAssertionInput): string {
   const header = { alg: "RS256", typ: "JWT" };
   const claims = {
     iss: input.clientEmail,
-    sub: input.clientEmail,
+    sub: input.subject ?? input.clientEmail,
     scope: input.scope,
     aud,
     iat: input.iat,
