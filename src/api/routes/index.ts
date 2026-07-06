@@ -89,6 +89,7 @@ import applicabilityAssessmentsRouter from "./applicabilityAssessments.js";
 import enterpriseContextStatsRouter from "./enterpriseContextStats.js";
 import assetsRouter from "./assets.js";
 import riskIntelligenceRouter from "./riskIntelligence.js";
+import predictiveIntelligenceRouter from "./predictiveIntelligence.js";
 import assetAssessmentsRouter from "./assetAssessments.js";
 import connectorsRouter from "./connectors.js";
 import templatesRouter from "./templates.js";
@@ -483,6 +484,7 @@ router.use("/api", riskApprovalsRouter);
   // auth) gates the surface in-router.
   router.use("/api", assetsRouter);
   router.use("/api", riskIntelligenceRouter);
+  router.use("/api", predictiveIntelligenceRouter);
   // EAR P10: generic asset-assessment service — same registry flag (404
   // before auth, default off).
   router.use("/api", assetAssessmentsRouter);
