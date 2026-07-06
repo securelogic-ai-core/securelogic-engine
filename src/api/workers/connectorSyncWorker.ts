@@ -25,9 +25,9 @@
  * BOTH SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED (connectors are an ECL surface)
  * AND SECURELOGIC_ASSET_REGISTRY_ENABLED (syncs create registry assets) —
  * idle-skip, never crash. SCHEDULING: in-process node-cron tick every minute
- * with an overlap guard (the reassessment precedent). Relationship persistence
- * is deferred (CSV parity) — counts are surfaced in the job result, not
- * silently dropped.
+ * with an overlap guard (the reassessment precedent). Relationships are
+ * persisted since P7 (resolution by external_ref; ON CONFLICT-idempotent;
+ * edge-cap-aware) — every skip is counted in the job result, never silent.
  */
 
 import { schedule } from "node-cron";
@@ -63,6 +63,8 @@ import {
   existingExternalRefs,
   insertImportRow
 } from "../lib/enterpriseImportPersistence.js";
+import { enforceEnterpriseEdgeLimit } from "../lib/enterpriseEdgeLimit.js";
+import { DETAIL_TABLE_SPEC } from "../lib/assetDetailValidation.js";
 
 export interface JobRow {
   id: string;
@@ -122,8 +124,107 @@ export interface SyncSummary {
   import_invalid: number;
   import_cap_exceeded: number;
   already_synced: number;
-  relationships_skipped: number;
+  relationships_created: number;
+  relationships_existing: number;
+  relationships_unresolved: number;
+  relationships_cap_skipped: number;
+  relationships_self_dropped: number;
   truncated: number;
+}
+
+// ---------------------------------------------------------------------------
+// P7: relationship persistence — external_ref-keyed edges → enterprise_relationships
+// ---------------------------------------------------------------------------
+
+/** Graph endpoint a synced external_ref resolves to. */
+type GraphRef = { node_type: string; node_id: string };
+
+/**
+ * Resolve external_refs to graph endpoints across every connector-writable
+ * store: enterprise_entities rows ARE graph nodes ('enterprise_entity'); the
+ * four detail tables' graph identity is their Tier-0 registry row
+ * ('asset', asset_id — EAR-AD-4).
+ */
+async function resolveExternalRefs(orgId: string, refs: readonly string[]): Promise<Map<string, GraphRef>> {
+  const out = new Map<string, GraphRef>();
+  if (refs.length === 0) return out;
+  const list = [...new Set(refs)];
+
+  const entities = await pg.query<{ id: string; external_ref: string }>(
+    `SELECT id, external_ref FROM enterprise_entities
+      WHERE organization_id = $1 AND external_ref = ANY($2::text[])`,
+    [orgId, list]
+  );
+  for (const r of entities.rows) out.set(r.external_ref, { node_type: "enterprise_entity", node_id: r.id });
+
+  for (const spec of Object.values(DETAIL_TABLE_SPEC)) {
+    const rows = await pg.query<{ asset_id: string | null; external_ref: string }>(
+      `SELECT asset_id, external_ref FROM ${spec.table}
+        WHERE organization_id = $1 AND external_ref = ANY($2::text[])`,
+      [orgId, list]
+    );
+    for (const r of rows.rows) {
+      if (r.asset_id) out.set(r.external_ref, { node_type: "asset", node_id: r.asset_id });
+    }
+  }
+  return out;
+}
+
+/**
+ * Persist the plan's relationships as enterprise_relationships edges.
+ * Idempotent (ON CONFLICT DO NOTHING against the live-edge unique index — a
+ * thrown 23505 would abort the tx); respects the per-org edge cap (headroom
+ * computed once, remainder counted, never silent); unresolvable endpoints are
+ * counted, never guessed.
+ */
+async function persistRelationships(
+  orgId: string,
+  connectorId: string,
+  plan: ConnectorSyncPlan,
+  summary: SyncSummary
+): Promise<void> {
+  summary.relationships_self_dropped = plan.relationshipsSelfDropped;
+  if (plan.relationships.length === 0) return;
+
+  const refs = plan.relationships.flatMap((r) => [r.from_external_ref, r.to_external_ref]);
+  const resolved = await resolveExternalRefs(orgId, refs);
+
+  const edgeLimit = await enforceEnterpriseEdgeLimit(orgId);
+  let headroom = Math.max(0, edgeLimit.cap - edgeLimit.used);
+
+  for (const rel of plan.relationships) {
+    const from = resolved.get(rel.from_external_ref);
+    const to = resolved.get(rel.to_external_ref);
+    if (!from || !to) {
+      summary.relationships_unresolved++;
+      continue;
+    }
+    if (from.node_type === to.node_type && from.node_id === to.node_id) {
+      // Distinct external_refs can resolve to one node — the CHECK would abort the tx.
+      summary.relationships_self_dropped++;
+      continue;
+    }
+    if (headroom <= 0) {
+      summary.relationships_cap_skipped++;
+      continue;
+    }
+    const inserted = await pg.query(
+      `INSERT INTO enterprise_relationships (
+         organization_id, from_type, from_id, to_type, to_id,
+         relationship_type, note, created_by_user_id
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
+      [orgId, from.node_type, from.node_id, to.node_type, to.node_id, rel.relationship_type, `connector:${connectorId}`]
+    );
+    if ((inserted.rowCount ?? 0) > 0) {
+      summary.relationships_created++;
+      headroom--;
+    } else {
+      summary.relationships_existing++;
+    }
+  }
 }
 
 async function persistPlan(orgId: string, connectorId: string, plan: ConnectorSyncPlan): Promise<SyncSummary> {
@@ -137,7 +238,11 @@ async function persistPlan(orgId: string, connectorId: string, plan: ConnectorSy
     import_invalid: 0,
     import_cap_exceeded: 0,
     already_synced: 0,
-    relationships_skipped: plan.relationshipsSkipped,
+    relationships_created: 0,
+    relationships_existing: 0,
+    relationships_unresolved: 0,
+    relationships_cap_skipped: 0,
+    relationships_self_dropped: 0,
     truncated: plan.truncated
   };
 
@@ -179,6 +284,8 @@ async function persistPlan(orgId: string, connectorId: string, plan: ConnectorSy
       }
     }
   }
+
+  await persistRelationships(orgId, connectorId, plan, summary);
 
   return summary;
 }
@@ -277,7 +384,7 @@ export async function processClaimedJob(job: JobRow, deps: WorkerDeps = {}): Pro
   }
 
   // ---- AFTER COMMIT: audit mirror (+ loud truncation note, never silent). ----
-  if (summary.truncated > 0 || summary.relationships_skipped > 0) {
+  if (summary.truncated > 0 || summary.relationships_unresolved > 0 || summary.relationships_cap_skipped > 0) {
     logger.warn(
       {
         event: "connector_sync_partial_coverage",
@@ -285,9 +392,10 @@ export async function processClaimedJob(job: JobRow, deps: WorkerDeps = {}): Pro
         org_id: orgId,
         connectorId,
         truncated: summary.truncated,
-        relationships_skipped: summary.relationships_skipped
+        relationships_unresolved: summary.relationships_unresolved,
+        relationships_cap_skipped: summary.relationships_cap_skipped
       },
-      "connector-sync: inventory truncated at cap and/or relationships deferred (CSV-import parity)"
+      "connector-sync: inventory truncated and/or some relationships not persisted (unresolved endpoints or edge cap)"
     );
   }
 
