@@ -2,6 +2,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getAiSystems, getGovernanceReviews, type AiSystem } from "@/lib/api";
+// EAR Phase 4: badges come from the cross-domain kit (was a local duplicate).
+// StatusChip stays local — it styles DEPLOYMENT status, a different vocabulary.
+import { CriticalityBadge, MetaChip } from "@/components/assetKit";
 
 export default async function AiSystemsPage() {
   const session = await getSession();
@@ -122,26 +125,6 @@ export default async function AiSystemsPage() {
 // Sub-components
 // ─────────────────────────────────────────────────────────────
 
-const CRITICALITY_BADGE_STYLES: Record<string, React.CSSProperties> = {
-  critical: { background: 'rgba(239,68,68,0.15)',   color: '#fca5a5' },
-  high:     { background: 'rgba(249,115,22,0.15)',  color: '#fdba74' },
-  medium:   { background: 'rgba(245,158,11,0.15)',  color: '#fcd34d' },
-  low:      { background: 'rgba(34,197,94,0.15)',   color: '#86efac' },
-};
-
-function CriticalityBadge({ value }: { value: string | null }) {
-  if (!value) return <span className="text-xs" style={{ color: '#475569' }}>—</span>;
-  const style = CRITICALITY_BADGE_STYLES[value] ?? { background: 'rgba(148,163,184,0.15)', color: '#94a3b8' };
-  return (
-    <span
-      className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold"
-      style={style}
-    >
-      {value.charAt(0).toUpperCase() + value.slice(1)}
-    </span>
-  );
-}
-
 function StatusChip({ value }: { value: string | null }) {
   if (!value) return null;
   const style: React.CSSProperties =
@@ -156,16 +139,6 @@ function StatusChip({ value }: { value: string | null }) {
       style={style}
     >
       {value}
-    </span>
-  );
-}
-
-function MetaChip({ label, value }: { label: string; value: string | null }) {
-  if (!value) return null;
-  return (
-    <span className="inline-flex items-center gap-1 text-xs">
-      <span style={{ color: '#94a3b8' }}>{label}:</span>
-      <span style={{ color: '#cbd5e1' }}>{value}</span>
     </span>
   );
 }

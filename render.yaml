@@ -950,6 +950,15 @@ services:
       - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
         value: "false"
 
+      # EAR Phase 4 nav visibility — DARK (default off). App half of the
+      # two-switch model for the unified Assets surface: this only reveals the
+      # "Asset Registry" header item; the engine's own
+      # SECURELOGIC_ASSET_REGISTRY_ENABLED independently 404s every registry
+      # route. RUNTIME (not NEXT_PUBLIC): a restart applies it, no rebuild.
+      # Prod flip is out of scope for the EAR goal (GATE B posture).
+      - key: SECURELOGIC_ASSET_REGISTRY_ENABLED
+        value: "false"
+
       # Secret used to encrypt the iron-session cookie.
       # Must be at least 32 characters. Generate with: openssl rand -hex 32
       - key: SESSION_SECRET

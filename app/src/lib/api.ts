@@ -26,6 +26,7 @@ import {
   type ApplicabilityExplanation,
   type EnterpriseContextStats,
 } from "./enterpriseContext";
+import { type AssetType, type CanonicalAsset } from "./assetRegistry";
 
 const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
 
@@ -4736,6 +4737,34 @@ export async function uploadVendorAssuranceDocument(
 // The whole surface is dark until SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED is on.
 
 // ── Reads (Server Components) ──────────────────────────────────────────────────
+
+// ─── EAR Phase 4: unified Assets surface ────────────────────────────────────
+
+/** GET /api/assets — the unified cross-type list over asset_registry_v. */
+export async function getAssets(
+  token: string,
+  params: { asset_type?: AssetType; limit?: number; offset?: number } = {},
+): Promise<ReadResult<{ assets: CanonicalAsset[]; total: number; limit: number; offset: number }>> {
+  const q = new URLSearchParams();
+  if (params.asset_type) q.set("asset_type", params.asset_type);
+  if (params.limit !== undefined) q.set("limit", String(params.limit));
+  if (params.offset !== undefined) q.set("offset", String(params.offset));
+  try {
+    const res = await engineFetch(`/api/assets?${q.toString()}`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as {
+      assets: CanonicalAsset[];
+      total: number;
+      limit: number;
+      offset: number;
+    };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
 
 export async function getEnterpriseEntities(
   token: string,

@@ -49,6 +49,7 @@ export default async function RootLayout({
   // visibility is presentation only; this is the app half of the two-switch model.
   const navFlags = {
     enterprise_context: process.env.SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED === "true",
+    asset_registry: process.env.SECURELOGIC_ASSET_REGISTRY_ENABLED === "true",
   };
 
   return (
