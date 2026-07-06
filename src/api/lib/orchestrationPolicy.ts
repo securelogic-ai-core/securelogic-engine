@@ -5,7 +5,15 @@
  */
 
 export type ProposalStatus = "proposed" | "approved" | "rejected" | "executed" | "failed";
-export type ProposalType = "create_action";
+export type ProposalType =
+  | "create_action"
+  | "servicenow_incident"
+  | "jira_issue"
+  | "teams_message"
+  | "slack_message"
+  | "send_email"
+  | "evidence_request"
+  | "escalate";
 
 /** Forward-only transitions (ERIP-AD-26). No backward edges. */
 const ALLOWED: Record<ProposalStatus, ProposalStatus[]> = {
@@ -35,7 +43,16 @@ export function approvalAllowed(
   return { ok: true };
 }
 
-export const PROPOSAL_TYPES: readonly ProposalType[] = ["create_action"];
+export const PROPOSAL_TYPES: readonly ProposalType[] = [
+  "create_action",
+  "servicenow_incident",
+  "jira_issue",
+  "teams_message",
+  "slack_message",
+  "send_email",
+  "evidence_request",
+  "escalate"
+];
 
 export function isProposalType(v: unknown): v is ProposalType {
   return typeof v === "string" && (PROPOSAL_TYPES as readonly string[]).includes(v);
@@ -43,38 +60,54 @@ export function isProposalType(v: unknown): v is ProposalType {
 
 const PRIORITIES = new Set(["immediate", "near_term", "planned", "watch"]);
 
-export interface CreateActionPayload {
-  title: string;
-  description: string | null;
-  priority: string;
-}
+/** A validated proposal payload (normalized, executor-agnostic). */
+export type ValidatedPayload = Record<string, string>;
 
 export type PayloadValidation =
-  | { payload: CreateActionPayload }
+  | { payload: ValidatedPayload }
   | { error: string; detail?: string };
 
+function str(o: Record<string, unknown>, key: string): string {
+  return typeof o[key] === "string" ? (o[key] as string).trim() : "";
+}
+
 /**
- * Validate a proposal's payload for its type. For `create_action`: a non-empty
- * title and a valid canonical priority; description optional.
+ * Validate a proposal's payload for its type. Every type needs a non-empty
+ * `title`; `description` is optional (bounded). Type-specific extras:
+ *   create_action / evidence_request → a canonical `priority`.
+ *   send_email                       → a `to` address containing '@'.
+ * The returned payload is normalized (trimmed, bounded) and executor-ready.
  */
 export function validateProposalPayload(type: ProposalType, raw: unknown): PayloadValidation {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     return { error: "payload_must_be_object" };
   }
   const o = raw as Record<string, unknown>;
-  if (type === "create_action") {
-    const title = typeof o.title === "string" ? o.title.trim() : "";
-    if (title.length === 0) return { error: "payload_invalid", detail: "title is required" };
-    if (title.length > 200) return { error: "payload_invalid", detail: "title too long" };
-    const priority = typeof o.priority === "string" ? o.priority : "";
+  const title = str(o, "title");
+  if (title.length === 0) return { error: "payload_invalid", detail: "title is required" };
+  if (title.length > 200) return { error: "payload_invalid", detail: "title too long" };
+
+  const out: ValidatedPayload = { title };
+  const description = str(o, "description");
+  if (description) out.description = description.slice(0, 2000);
+
+  if (type === "create_action" || type === "evidence_request") {
+    const priority = str(o, "priority") || "near_term";
     if (!PRIORITIES.has(priority)) return { error: "payload_invalid", detail: "priority must be a canonical value" };
-    const description =
-      o.description === undefined || o.description === null
-        ? null
-        : typeof o.description === "string"
-          ? o.description.slice(0, 2000)
-          : null;
-    return { payload: { title, description, priority } };
+    out.priority = priority;
   }
-  return { error: "unknown_proposal_type" };
+  if (type === "send_email") {
+    const to = str(o, "to");
+    if (!to.includes("@")) return { error: "payload_invalid", detail: "to must be an email address" };
+    out.to = to;
+  }
+  if (type === "servicenow_incident") {
+    const urgency = str(o, "urgency");
+    if (urgency) out.urgency = urgency.slice(0, 8);
+  }
+  if (type === "jira_issue") {
+    const issueType = str(o, "issue_type");
+    if (issueType) out.issue_type = issueType.slice(0, 40);
+  }
+  return { payload: out };
 }
