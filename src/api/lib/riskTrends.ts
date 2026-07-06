@@ -13,6 +13,11 @@ export interface HistoryPoint {
   avg_risk: number;
 }
 
+/** A history point tagged with its dimension (the shape rows are read as). */
+export interface HistoryRow extends HistoryPoint {
+  dimension: string;
+}
+
 export type TrendDirection = "up" | "down" | "flat";
 
 export interface DimensionTrend {

@@ -9,14 +9,12 @@
 import { pg } from "../infra/postgres.js";
 import { rollupRiskByDimension, type DimensionRollup } from "./riskDimensionRollup.js";
 import { gatherAssetRisk } from "./riskDimensionData.js";
-import type { HistoryPoint } from "./riskTrends.js";
+import type { HistoryRow } from "./riskTrends.js";
 
 /** The 'enterprise' dimension key for the org-wide overall rollup. */
 export const ENTERPRISE_DIMENSION = "enterprise";
 
-export interface HistoryRow extends HistoryPoint {
-  dimension: string;
-}
+export type { HistoryRow } from "./riskTrends.js";
 
 /**
  * Read an org's risk history for the trailing `days` window (inclusive of
