@@ -27,7 +27,7 @@
  * flag is off. The server layout resolves the env flag and threads it through the
  * (client) Header, since client components can't read non-NEXT_PUBLIC env vars.
  */
-export type NavFeatureFlag = "enterprise_context" | "asset_registry";
+export type NavFeatureFlag = "enterprise_context" | "asset_registry" | "risk_intelligence";
 export type NavFlags = Partial<Record<NavFeatureFlag, boolean>>;
 
 export type NavItem =
@@ -59,6 +59,10 @@ export const NAV_ITEMS: NavItem[] = [
   // Unified Asset Registry (EAR Phase 4) — DARK behind the app-side
   // SECURELOGIC_ASSET_REGISTRY_ENABLED env (same two-switch model as Context).
   { type: "link", label: "Asset Registry", href: "/assets", platform: true, featureFlag: "asset_registry" },
+  // ERIP Executive Risk dashboard — DARK behind the app-side
+  // SECURELOGIC_RISK_INTELLIGENCE_ENABLED env (two-switch model; the engine's
+  // risk/predictive/health routes 404 independently until their own flags flip).
+  { type: "link", label: "Executive", href: "/executive", platform: true, featureFlag: "risk_intelligence" },
   { type: "group", label: "Compliance", platform: true,
     items: [
       { label: "Controls",    href: "/controls" },

@@ -63,6 +63,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "platform"
     },
     {
+      "type": "link",
+      "label": "Executive",
+      "href": "/executive",
+      "access": "platform"
+    },
+    {
       "type": "group",
       "label": "Compliance",
       "access": "platform",
@@ -157,6 +163,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     {
       "label": "Asset Registry",
       "href": "/assets",
+      "access": "platform",
+      "group": null
+    },
+    {
+      "label": "Executive",
+      "href": "/executive",
       "access": "platform",
       "group": null
     },
@@ -490,6 +502,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "path": "/enterprise-context/import",
       "dynamic": false,
       "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/executive",
+      "dynamic": false,
+      "navLabel": "Executive",
       "access": "platform"
     },
     {
