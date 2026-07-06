@@ -227,12 +227,13 @@ describe("ApplicabilityEngineV1 — blast radius", () => {
       candidates: [candidate({ target_type: "asset", target_id: "asset-1", match_score: 95, asset_type: "application" })]
     });
     expect(app.decision).toBe("potentially_affected");
-    // cloud_resource → graphRepresentable=false (no detail table yet) ⇒ R1b.
+    // cloud_resource → graphRepresentable=true since Phase 3a (detail table +
+    // 'asset' node identity) ⇒ strong match without reachability stays R2.
     const cr = ApplicabilityEngineV1.assess({
       signalId: "sig-c5",
       candidates: [candidate({ target_type: "asset", target_id: "asset-2", match_score: 95, asset_type: "cloud_resource" })]
     });
-    expect(cr.decision).toBe("affected");
+    expect(cr.decision).toBe("potentially_affected");
     // unknown asset_type → fail-closed (not graph-representable) ⇒ R1b path.
     const unk = ApplicabilityEngineV1.assess({
       signalId: "sig-c6",

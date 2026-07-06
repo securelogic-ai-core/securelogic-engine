@@ -43,14 +43,17 @@ describe("asset type contract", () => {
   });
 
   it("Phase-2 truth: graph-representability covers every ECL-graph-backed type; risk targets are the matched four", () => {
-    // graphRepresentable: vendors/ai_systems + every enterprise_entities-backed
-    // type (their rows ARE graph nodes); Phase-3 detail-table types stay false
-    // until their tables exist.
-    const graphable = new Set(["vendor", "ai_system", "application", "database", "business_process", "generic"]);
-    // Risk targets (matched by name): the two live branches + the two
-    // enterprise_entities-backed types the generic asset matcher covers
-    // behind SECURELOGIC_ASSET_REGISTRY_ENABLED.
-    const riskTargets = new Set(["vendor", "ai_system", "application", "database"]);
+    // Phase 3a: every type is graph-representable — the old three backing
+    // kinds as their backing node, the four detail-backed types as their
+    // Tier-0 'asset' node (EAR-AD-4 asset endpoints).
+    const graphable = new Set([...ASSET_TYPES]);
+    // Risk targets (matched by name): the two live branches + every
+    // registry-matched type (generic matcher, flag-fenced). Only
+    // business_process/generic stay non-targets (org structure, not products).
+    const riskTargets = new Set([
+      "vendor", "ai_system", "application", "database",
+      "cloud_resource", "endpoint", "api", "identity_system"
+    ]);
     for (const t of ASSET_TYPES) {
       const spec = ASSET_TYPE_SPECS[t];
       expect(spec.graphRepresentable, t).toBe(graphable.has(t));
@@ -66,7 +69,9 @@ describe("asset type contract", () => {
     expect(isGraphRepresentableTarget("control")).toBe(false);
     expect(isGraphRepresentableTarget("obligation")).toBe(false);
     expect(isGraphRepresentableTarget("asset", "application")).toBe(true);
-    expect(isGraphRepresentableTarget("asset", "cloud_resource")).toBe(false);
+    // Phase 3a: detail-backed types are graph-representable via their Tier-0
+    // 'asset' node (EAR-AD-4 endpoints).
+    expect(isGraphRepresentableTarget("asset", "cloud_resource")).toBe(true);
     expect(isGraphRepresentableTarget("asset", null)).toBe(false); // fail-closed
     expect(isGraphRepresentableTarget("asset", "bogus")).toBe(false);
   });

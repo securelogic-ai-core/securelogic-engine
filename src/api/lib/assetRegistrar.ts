@@ -22,11 +22,16 @@
 import { pg } from "../infra/postgres.js";
 import type { AssetType } from "./assetRegistry.js";
 
-/** Closed backing-table vocabulary — NEVER interpolate caller input. */
+/** Closed backing-table vocabulary — NEVER interpolate caller input.
+ * Phase 3a added the four Tier-1 detail tables (20260806). */
 const BACKING_TABLES = {
   vendors: "vendors",
   ai_systems: "ai_systems",
-  enterprise_entities: "enterprise_entities"
+  enterprise_entities: "enterprise_entities",
+  cloud_resources: "cloud_resources",
+  endpoints: "endpoints",
+  apis: "apis",
+  identity_systems: "identity_systems"
 } as const;
 export type BackingKind = keyof typeof BACKING_TABLES;
 
