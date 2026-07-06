@@ -64,6 +64,7 @@ import {
   markDriftStale,
   type ReconcileSummary
 } from "../lib/connectorObservationStore.js";
+import { captureDeadLetter } from "../lib/connectorDeadLetterStore.js";
 import { createDetailAsset } from "../lib/assetDetailPersistence.js";
 import { planImport, type ImportEntityType, type ImportRow } from "../lib/enterpriseContextImport.js";
 import {
@@ -388,6 +389,19 @@ async function recordFailure(job: JobRow, err: unknown, now: Date): Promise<void
             WHERE organization_id = $1 AND connector_id = $2`,
           [job.organization_id, connectorId]
         );
+      }
+      // E2b (ERIP-AD-14): a TERMINAL run failure becomes a dead-letter an
+      // operator can inspect and re-drive. Job-level retries (status 'queued')
+      // are not terminal and are NOT captured.
+      if (terminal) {
+        await captureDeadLetter(job.organization_id, {
+          source: "connector_sync",
+          connectorId,
+          refId: job.id,
+          attempts: job.attempts,
+          error: message,
+          payload: { connector_id: connectorId }
+        });
       }
     }
   });
