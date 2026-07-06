@@ -44,6 +44,7 @@ import {
   recordTerminalFailure,
   type WritebackIntentRow
 } from "../lib/connectorWritebackStore.js";
+import { captureDeadLetter } from "../lib/connectorDeadLetterStore.js";
 
 export interface WritebackWorkerDeps {
   now?: () => Date;
@@ -197,6 +198,18 @@ async function backoffOrFail(
   const message = ((err as Error)?.message ?? String(err)).slice(0, 500);
   if (attempts >= intent.max_attempts) {
     await recordTerminalFailure(orgId, intent.id, attempts, `writeback failed after ${attempts} attempts: ${message}`);
+    // E2b (ERIP-AD-14): a push that exhausts its retry budget becomes a
+    // dead-letter — re-driving flips the intent back to pending.
+    await captureDeadLetter(orgId, {
+      source: "connector_writeback",
+      connectorId: intent.connector_id,
+      refId: intent.id,
+      externalRef: intent.external_ref,
+      field: intent.field,
+      attempts,
+      error: message,
+      payload: { field: intent.field, external_ref: intent.external_ref }
+    });
     summary.failed++;
     return;
   }

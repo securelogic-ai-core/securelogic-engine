@@ -43,6 +43,12 @@ import {
   writebackStatusCounts,
   type WritebackIntentInput
 } from "../lib/connectorWritebackStore.js";
+import {
+  listDeadLetters,
+  redriveDeadLetter,
+  ignoreDeadLetter,
+  type DeadLetterFilter
+} from "../lib/connectorDeadLetterStore.js";
 
 const router = Router();
 
@@ -387,6 +393,110 @@ export async function listConnectorWriteback(req: Request, res: Response): Promi
   });
 }
 
+// ---------------------------------------------------------------------------
+// ERIP E2b: dead-letter recovery — inspect + re-drive terminally-failed
+// connector operations (sync jobs / writeback pushes). Behind the connectors
+// chain (ECL + EAR), dark in production.
+// ---------------------------------------------------------------------------
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DEAD_LETTER_STATUSES = new Set(["open", "redriven", "ignored"]);
+
+/** GET /api/connectors/dead-letters — list terminally-failed operations. */
+export async function listConnectorDeadLetters(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const filter: DeadLetterFilter = {};
+  const status = req.query.status;
+  if (typeof status === "string") {
+    if (!DEAD_LETTER_STATUSES.has(status)) {
+      res.status(400).json({ error: "invalid_status" });
+      return;
+    }
+    filter.status = status as "open" | "redriven" | "ignored";
+  }
+  const connectorId = req.query.connector_id;
+  if (typeof connectorId === "string") filter.connectorId = connectorId;
+
+  const rows = await listDeadLetters(orgId, filter);
+  res.status(200).json({
+    dead_letters: rows.map((r) => ({
+      id: r.id,
+      source: r.source,
+      connector_id: r.connector_id,
+      external_ref: r.external_ref,
+      field: r.field,
+      attempts: r.attempts,
+      error: r.error,
+      status: r.status,
+      created_at: r.created_at,
+      resolved_at: r.resolved_at
+    }))
+  });
+}
+
+/** POST /api/connectors/dead-letters/:id/redrive — re-enqueue a failed op. */
+export async function redriveConnectorDeadLetter(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = req.params.id;
+  if (typeof id !== "string" || !UUID_RE.test(id)) {
+    res.status(400).json({ error: "invalid_id" });
+    return;
+  }
+  const userId = (req as { userId?: string }).userId ?? null;
+  const result = await redriveDeadLetter(orgId, id, userId);
+  if (!result.ok) {
+    const code = result.error === "not_found" ? 404 : 409;
+    res.status(code).json({ error: result.error });
+    return;
+  }
+  writeAuditEvent({
+    organizationId: orgId,
+    ...auditActor(req),
+    eventType: "connector.dead_letter_redriven",
+    resourceType: "connector_dead_letter",
+    resourceId: id,
+    payload: { action: result.action, ...result.detail }
+  });
+  res.status(202).json({ redriven: true, action: result.action, ...result.detail });
+}
+
+/** POST /api/connectors/dead-letters/:id/ignore — dismiss without re-driving. */
+export async function ignoreConnectorDeadLetter(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = req.params.id;
+  if (typeof id !== "string" || !UUID_RE.test(id)) {
+    res.status(400).json({ error: "invalid_id" });
+    return;
+  }
+  const userId = (req as { userId?: string }).userId ?? null;
+  const done = await ignoreDeadLetter(orgId, id, userId);
+  if (!done) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  writeAuditEvent({
+    organizationId: orgId,
+    ...auditActor(req),
+    eventType: "connector.dead_letter_ignored",
+    resourceType: "connector_dead_letter",
+    resourceId: id,
+    payload: {}
+  });
+  res.status(200).json({ ignored: true });
+}
+
 const chain = [
   enterpriseContextFeatureFlag,
   assetRegistryFeatureFlag,
@@ -401,5 +511,10 @@ router.delete("/connectors/:id", ...chain, asTenant(deleteConnector));
 router.post("/connectors/:id/sync", ...chain, asTenant(triggerConnectorSync));
 router.post("/connectors/:id/writeback", ...chain, asTenant(enqueueConnectorWriteback));
 router.get("/connectors/:id/writeback", ...chain, asTenant(listConnectorWriteback));
+// E2b dead-letter recovery. Literal 'dead-letters' segment — distinct from the
+// :id routes by arity/method, so no route-shadowing.
+router.get("/connectors/dead-letters", ...chain, asTenant(listConnectorDeadLetters));
+router.post("/connectors/dead-letters/:id/redrive", ...chain, asTenant(redriveConnectorDeadLetter));
+router.post("/connectors/dead-letters/:id/ignore", ...chain, asTenant(ignoreConnectorDeadLetter));
 
 export default router;
