@@ -89,6 +89,19 @@ export function requirePostJson(http: HttpClient, connectorId: string): NonNulla
  */
 export type ConnectorStatus = "reference" | "implemented" | "planned";
 
+/**
+ * ERIP-AD-10 (E2.P2): the per-(org,connector) incremental watermark. Adapter-
+ * owned shape (opaque to the worker), persisted as enterprise_connectors
+ * .sync_cursor. String values only — no timestamps-as-Date, no nesting.
+ */
+export type ConnectorCursor = Record<string, string>;
+
+export interface DeltaFetchResult {
+  raw: unknown;
+  /** Watermark for the NEXT run; null = leave the stored cursor unchanged. */
+  next_cursor: ConnectorCursor | null;
+}
+
 export interface ConnectorAdapter {
   id: string;
   displayName: string;
@@ -100,6 +113,17 @@ export interface ConnectorAdapter {
   validateConfig(raw: unknown): ConfigValidationResult;
   /** Pull raw inventory from the external system. The only I/O; takes an injected client. */
   fetch(config: Record<string, string>, http: HttpClient): Promise<unknown>;
+  /**
+   * OPTIONAL incremental capability (ERIP-AD-10). Called with the stored
+   * cursor (null = perform a FULL fetch and seed the watermark). Adapters
+   * that don't implement it always full-sync via fetch(). Same I/O contract
+   * as fetch: injected client only.
+   */
+  fetchDelta?(
+    config: Record<string, string>,
+    http: HttpClient,
+    cursor: ConnectorCursor | null
+  ): Promise<DeltaFetchResult>;
   /** Map raw inventory → the ECL import shape. Pure, deterministic. */
   normalize(raw: unknown): NormalizedInventory;
 }

@@ -12,6 +12,7 @@
 
 import { pg } from "../infra/postgres.js";
 import { encryptField, decryptField } from "./fieldEncryption.js";
+import type { ConnectorCursor } from "./connectors/types.js";
 
 export interface ConnectorRow {
   id: string;
@@ -26,10 +27,12 @@ export interface ConnectorRow {
   sync_interval_minutes: number | null;
   next_sync_at: string | null;
   consecutive_failures: number;
+  /** E2.P2 incremental watermark (20260812). NULL = next run is a FULL sync. */
+  sync_cursor: ConnectorCursor | null;
 }
 
 const ROW_COLS =
-  "id, organization_id, connector_id, config_encrypted, enabled, last_sync_at, last_sync_status, last_sync_summary, sync_interval_minutes, next_sync_at, consecutive_failures";
+  "id, organization_id, connector_id, config_encrypted, enabled, last_sync_at, last_sync_status, last_sync_summary, sync_interval_minutes, next_sync_at, consecutive_failures, sync_cursor";
 
 export async function getConnectorRow(orgId: string, connectorId: string): Promise<ConnectorRow | null> {
   const r = await pg.query(

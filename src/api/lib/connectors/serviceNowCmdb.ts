@@ -34,6 +34,26 @@ interface CmdbCi {
   short_description?: unknown;
   business_criticality?: unknown;
   depends_on?: unknown;
+  sys_updated_on?: unknown;
+}
+
+/**
+ * Read the CMDB CI table, optionally filtered to rows updated after `since`
+ * (the incremental watermark). Shared by fetch() (full) and fetchDelta().
+ */
+function fetchCis(config: Record<string, string>, http: HttpClient, since: string | null): Promise<unknown> {
+  const instance = config.instance_url;
+  const username = config.username;
+  const password = config.password;
+  if (!instance || !username || !password) {
+    throw new Error("servicenow_cmdb: incomplete config (validateConfig must pass first)");
+  }
+  const base = instance.replace(/\/+$/, "");
+  const params = new URLSearchParams({ sysparm_limit: String(DEFAULT_LIMIT) });
+  if (since) params.set("sysparm_query", `sys_updated_on>${since}`);
+  const url = `${base}/api/now/table/cmdb_ci?${params.toString()}`;
+  const auth = Buffer.from(`${username}:${password}`).toString("base64");
+  return http.getJson(url, { Authorization: `Basic ${auth}`, Accept: "application/json" });
 }
 
 /** Map a ServiceNow sys_class_name to an ECL import entity type. */
@@ -74,16 +94,29 @@ export const serviceNowCmdbAdapter: ConnectorAdapter = {
   },
 
   async fetch(config, http: HttpClient) {
-    const instance = config.instance_url;
-    const username = config.username;
-    const password = config.password;
-    if (!instance || !username || !password) {
-      throw new Error("servicenow_cmdb: incomplete config (validateConfig must pass first)");
+    return fetchCis(config, http, null);
+  },
+
+  /**
+   * ERIP-AD-10 (E2.P2): incremental fetch. On a cursor with `sys_updated_on`,
+   * fetch only CIs changed since that watermark (ServiceNow encoded query
+   * `sys_updated_on>VALUE`). A null cursor performs a full fetch (seed). The
+   * next watermark is the max `sys_updated_on` seen this run, so a run that
+   * returns nothing leaves the stored cursor unchanged (next_cursor null).
+   */
+  async fetchDelta(config, http: HttpClient, cursor) {
+    const since = cursor?.sys_updated_on ?? null;
+    const raw = await fetchCis(config, http, since);
+    const result = (raw as { result?: unknown } | null)?.result;
+    let maxUpdated = since;
+    if (Array.isArray(result)) {
+      for (const ci of result as Array<{ sys_updated_on?: unknown }>) {
+        const u = typeof ci.sys_updated_on === "string" ? ci.sys_updated_on : null;
+        if (u && (maxUpdated === null || u > maxUpdated)) maxUpdated = u;
+      }
     }
-    const base = instance.replace(/\/+$/, "");
-    const url = `${base}/api/now/table/cmdb_ci?sysparm_limit=${DEFAULT_LIMIT}`;
-    const auth = Buffer.from(`${username}:${password}`).toString("base64");
-    return http.getJson(url, { Authorization: `Basic ${auth}`, Accept: "application/json" });
+    const next_cursor = maxUpdated && maxUpdated !== since ? { sys_updated_on: maxUpdated } : null;
+    return { raw, next_cursor };
   },
 
   normalize(raw): NormalizedInventory {

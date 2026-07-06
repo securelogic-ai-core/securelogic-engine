@@ -45,7 +45,7 @@ import {
   decideFailureState
 } from "../lib/dataRightsWorkerPolicy.js";
 import { getConnector } from "../lib/connectors/registry.js";
-import type { ConnectorAdapter, HttpClient, NormalizedInventory } from "../lib/connectors/types.js";
+import type { ConnectorAdapter, ConnectorCursor, HttpClient, NormalizedInventory } from "../lib/connectors/types.js";
 import { buildConnectorHttpClient } from "../lib/connectorHttpClient.js";
 import {
   getConnectorRow,
@@ -57,6 +57,13 @@ import {
   planConnectorSync,
   type ConnectorSyncPlan
 } from "../lib/connectorSyncCore.js";
+import { planObservations } from "../lib/connectorObservationCore.js";
+import {
+  countReappearing,
+  upsertObservations,
+  markDriftStale,
+  type ReconcileSummary
+} from "../lib/connectorObservationStore.js";
 import { createDetailAsset } from "../lib/assetDetailPersistence.js";
 import { planImport, type ImportEntityType, type ImportRow } from "../lib/enterpriseContextImport.js";
 import {
@@ -118,6 +125,8 @@ export async function claimNextJob(workerId: string): Promise<JobRow | null> {
 
 export interface SyncSummary {
   connector_id: string;
+  /** E2.P2: 'full' saw the complete inventory (reconciles drift); 'delta' saw only changes. */
+  sync_mode: "full" | "delta";
   detail_created: number;
   detail_existing: number;
   detail_cap_exceeded: number;
@@ -132,6 +141,10 @@ export interface SyncSummary {
   relationships_cap_skipped: number;
   relationships_self_dropped: number;
   truncated: number;
+  /** E2.P2 discovery-ledger reconciliation (ERIP-AD-8/11). */
+  observed: number;
+  drift_stale: number;
+  drift_reappeared: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -229,9 +242,15 @@ async function persistRelationships(
   }
 }
 
-async function persistPlan(orgId: string, connectorId: string, plan: ConnectorSyncPlan): Promise<SyncSummary> {
+async function persistPlan(
+  orgId: string,
+  connectorId: string,
+  plan: ConnectorSyncPlan,
+  fullSync: boolean
+): Promise<SyncSummary> {
   const summary: SyncSummary = {
     connector_id: connectorId,
+    sync_mode: fullSync ? "full" : "delta",
     detail_created: 0,
     detail_existing: 0,
     detail_cap_exceeded: 0,
@@ -245,7 +264,10 @@ async function persistPlan(orgId: string, connectorId: string, plan: ConnectorSy
     relationships_unresolved: 0,
     relationships_cap_skipped: 0,
     relationships_self_dropped: 0,
-    truncated: plan.truncated
+    truncated: plan.truncated,
+    observed: 0,
+    drift_stale: 0,
+    drift_reappeared: 0
   };
 
   for (const input of plan.detailInputs) {
@@ -288,6 +310,26 @@ async function persistPlan(orgId: string, connectorId: string, plan: ConnectorSy
   }
 
   await persistRelationships(orgId, connectorId, plan, summary);
+
+  // E2.P2 (ERIP-AD-8/11): record discovery facts, then reconcile drift. On a
+  // full sync the reappearance count is read BEFORE the upsert clears stale,
+  // and drift-stale is marked AFTER (touched rows carry this tx's timestamp).
+  const observations = planObservations(plan);
+  const reconcile: ReconcileSummary = { observed: 0, drift_stale: 0, drift_reappeared: 0 };
+  if (fullSync) {
+    reconcile.drift_reappeared = await countReappearing(
+      orgId,
+      connectorId,
+      observations.map((o) => o.external_ref)
+    );
+  }
+  await upsertObservations(orgId, connectorId, observations, fullSync, reconcile);
+  if (fullSync) {
+    reconcile.drift_stale = await markDriftStale(orgId, connectorId);
+  }
+  summary.observed = reconcile.observed;
+  summary.drift_stale = reconcile.drift_stale;
+  summary.drift_reappeared = reconcile.drift_reappeared;
 
   return summary;
 }
@@ -379,23 +421,40 @@ export async function processClaimedJob(job: JobRow, deps: WorkerDeps = {}): Pro
     if (!config) throw new NonRetryableJobError(`connector ${connectorId} config could not be decrypted`);
 
     // 2. Fetch + normalize — network I/O outside any transaction.
+    //    E2.P2 (ERIP-AD-10): adapters that implement fetchDelta run incrementally
+    //    once a cursor exists; the seed run (cursor null) fetches everything and
+    //    counts as a FULL sync (it can reconcile drift). Adapters without the
+    //    capability always full-sync via fetch().
     const http = deps.http ?? buildConnectorHttpClient();
-    const raw = await adapter.fetch(config, http);
-    const inventory: NormalizedInventory = adapter.normalize(raw);
+    const storedCursor = row.sync_cursor;
+    let inventory: NormalizedInventory;
+    let nextCursor: ConnectorCursor | null = null;
+    let fullSync: boolean;
+    if (adapter.fetchDelta) {
+      const delta = await adapter.fetchDelta(config, http, storedCursor);
+      inventory = adapter.normalize(delta.raw);
+      nextCursor = delta.next_cursor;
+      fullSync = storedCursor === null;
+    } else {
+      const raw = await adapter.fetch(config, http);
+      inventory = adapter.normalize(raw);
+      fullSync = true;
+    }
 
     // 3+4. Plan and persist in ONE tenant tx; completion commits with the work.
     summary = await withTenant(orgId, async () => {
       const plan = planConnectorSync(adapter, inventory, config);
-      const persisted = await persistPlan(orgId, connectorId, plan);
+      const persisted = await persistPlan(orgId, connectorId, plan, fullSync);
 
       await pg.query(
         `UPDATE enterprise_connectors
             SET last_sync_at = now(), last_sync_status = 'succeeded',
                 last_sync_summary = $3::jsonb,
                 consecutive_failures = 0,
+                sync_cursor = COALESCE($4::jsonb, sync_cursor),
                 updated_at = now()
           WHERE organization_id = $1 AND connector_id = $2`,
-        [orgId, connectorId, JSON.stringify(persisted)]
+        [orgId, connectorId, JSON.stringify(persisted), nextCursor === null ? null : JSON.stringify(nextCursor)]
       );
       await pg.query(
         `UPDATE jobs

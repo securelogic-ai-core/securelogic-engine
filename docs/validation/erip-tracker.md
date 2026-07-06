@@ -9,7 +9,7 @@ behind flags (default off), additive-only migrations, backward compatibility, br
 `dataClassification` on every new table, operator actions ledgered never executed, **no
 production enablement (GATE B)**.
 
-Last updated: 2026-07-06 (program established #511; Epic 2 memo ratified; E2.P1 built).
+Last updated: 2026-07-06 (program established #511; Epic 2 memo ratified; E2.P1 merged #512; E2.P2 built).
 
 ## Program rulings / decision gates
 
@@ -38,8 +38,9 @@ production enablement; P9 entitlement-leg cutover.
 | Item | Status | PR / squash | Notes |
 |---|---|---|---|
 | Program establishment (roadmap + tracker + BUILD_SEQUENCE amendment) | **DONE** | #511, squash `c85c612d` | docs-only |
-| E2.P0 — Epic 2 design memo (ERIP-AD-8…14) | IN PR | — | `docs/architecture/erip/E2-DISCOVERY-CONNECTORS-MEMO.md`; memo+first-phase share a PR (EAR P10 precedent) |
-| E2.P1 — sync state + scheduled sync + retry/backoff | IN PR | — | Migration `20260811` (interval CHECK ≥15, next_sync_at, consecutive_failures, partial due-index); `connectorScheduleCore.ts` (pure backoff/validation); `connectorScheduledSyncFlag.ts`; worker `runScheduleScan` (elevated due-scan → per-org tenant-tx deduped enqueue + schedule advance; terminal failure = streak+backoff, success resets); PUT accepts `sync_interval_minutes`; flag `SECURELOGIC_CONNECTOR_SCHEDULED_SYNC_ENABLED` default "false" ×4 render.yaml. Unit (core/lockstep/dark-posture + handlers) + isolation `connectorScheduling.test.ts` |
+| E2.P0 — Epic 2 design memo (ERIP-AD-8…14) | **DONE** (shipped with E2.P1) | #512, squash `600d22d5` | `docs/architecture/erip/E2-DISCOVERY-CONNECTORS-MEMO.md`; memo+first-phase shared a PR (EAR P10 precedent) |
+| E2.P1 — sync state + scheduled sync + retry/backoff | **DONE** | #512, squash `600d22d5` | Migration `20260811` (interval CHECK ≥15, next_sync_at, consecutive_failures, partial due-index); `connectorScheduleCore.ts` (pure backoff/validation); `connectorScheduledSyncFlag.ts`; worker `runScheduleScan` (elevated due-scan → per-org tenant-tx deduped enqueue + schedule advance; terminal failure = streak+backoff, success resets); PUT accepts `sync_interval_minutes`; flag `SECURELOGIC_CONNECTOR_SCHEDULED_SYNC_ENABLED` default "false" ×4 render.yaml. Unit + isolation `connectorScheduling.test.ts` |
+| E2.P2 — observation ledger + incremental sync + drift reconciliation | IN PR | — | Migration `20260812` (`connector_asset_observations` ledger — RLS, app_request DML, dataClassification entry; `enterprise_connectors.sync_cursor JSONB`); `ConnectorAdapter.fetchDelta?` optional capability + `ConnectorCursor`/`DeltaFetchResult` (ERIP-AD-10); ServiceNow reference `fetchDelta` (`sys_updated_on>` watermark; empty delta → cursor unchanged); `connectorObservationCore.ts` (pure plan→observations) + `connectorObservationStore.ts` (upsert; `countReappearing` before upsert; `markDriftStale` via `transaction_timestamp()` inequality — clock-independent, same-tx); worker: full vs delta branch, cursor persist (COALESCE keeps unchanged on null next_cursor), `sync_mode`/`observed`/`drift_stale`/`drift_reappeared` in summary. Drift is report-only — canonical rows never deleted (isolation-proven). Unit (`connectorObservationCore.test.ts`: planner + fetchDelta + migration lockstep) + isolation (`connectorObservations.test.ts`: full→cursor seed, delta no-stale, full-omit→stale→reappear, canonical survives, RLS) |
 
 ## Deferred / follow-up register
 
