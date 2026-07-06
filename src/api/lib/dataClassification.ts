@@ -129,6 +129,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   requirement_responses: { category: "C", userRefColumns: ["assessed_by"], piiRisk: "high", rlsStatus: "pending" },
   obligations: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "pending" },
   obligation_assessments: { category: "C", userRefColumns: ["reviewer_uuid", "reviewer_id"], piiRisk: "high", rlsStatus: "pending", specialHandling: "Deprecated TEXT reviewer_id may hold a raw email/name." },
+  asset_assessments: { category: "C", userRefColumns: ["reviewer_uuid"], piiRisk: "high", rlsStatus: "enabled" },
   vendors: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "pending" },
   vendor_assessments: { category: "C", userRefColumns: ["reviewer_id"], piiRisk: "high", rlsStatus: "enabled" },
   vendor_reviews: { category: "C", userRefColumns: ["reviewer_uuid", "reviewer_id"], piiRisk: "high", rlsStatus: "pending", specialHandling: "Deprecated TEXT reviewer_id may hold a raw email/name." },
