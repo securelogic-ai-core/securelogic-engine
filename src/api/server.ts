@@ -16,6 +16,7 @@ import { startApplicabilityReassessmentWorker } from "./workers/applicabilityRea
 import { startConnectorSyncWorker } from "./workers/connectorSyncWorker.js";
 import { startRiskHistoryWorker } from "./workers/riskHistoryWorker.js";
 import { startPredictiveForecastWorker } from "./workers/predictiveForecastWorker.js";
+import { startOrchestrationPlaybookWorker } from "./workers/orchestrationPlaybookWorker.js";
 import { createApp } from "./app.js";
 
 /* =========================================================
@@ -141,6 +142,9 @@ startRiskHistoryWorker();
 // ERIP E5: daily predictive forecast inference/retraining. Registered always;
 // self-gates on SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED + asset-registry flag.
 startPredictiveForecastWorker();
+// ERIP E6b: scheduled playbook instantiation (creates proposals; still human-
+// approved). Registered always; self-gates on SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED.
+startOrchestrationPlaybookWorker();
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   logger.info(
