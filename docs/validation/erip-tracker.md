@@ -9,7 +9,7 @@ behind flags (default off), additive-only migrations, backward compatibility, br
 `dataClassification` on every new table, operator actions ledgered never executed, **no
 production enablement (GATE B)**.
 
-Last updated: 2026-07-06 (Epics 2–6 done; Epic 7 built — all epic cores shipped).
+Last updated: 2026-07-06 (**PROGRAM CORE COMPLETE** — Epics 1–7 shipped dark; close docs in PR).
 
 ## Program rulings / decision gates
 
@@ -30,8 +30,8 @@ production enablement; P9 entitlement-leg cutover.
 | 4 — Executive Intelligence | E4.P1 executive risk summary + heatmap | **CORE COMPLETE ✅ (#520)** — memo (ERIP-AD-19 compose-not-store; AD-20 no fabricated trends). `executiveRiskSummary.ts` + `GET /api/executive/risk-summary`. **Deferred by ruling:** time-series trends + board-report generation (need persisted risk history, E3.P3-deferred — not fabricated); exec UI (presentation follow-up). | `docs/architecture/erip/E4-EXECUTIVE-INTELLIGENCE-MEMO.md` |
 | 5 — Predictive Intelligence | E5.P1 forecast engine + posture forecast | **CORE COMPLETE ✅ (#521)** — memo (ERIP-AD-21 deterministic/explainable/reproducible OLS; AD-22 predict only where a real series exists; AD-23 factual direction). `forecastEngine.ts` + `GET /api/predictive/posture-forecast`. **Deferred by ruling:** vendor-deterioration/SLA/audit-readiness/control-degradation forecasts (same engine, their series, as those accrue); recommendation emission into `actions`. | `docs/architecture/erip/E5-PREDICTIVE-INTELLIGENCE-MEMO.md` |
 | 6 — Autonomous Operations | E6.P1 approval-gated orchestration ledger + create_action executor | **CORE COMPLETE ✅ (#522)** — memo (ERIP-AD-24 human approval structural; AD-25 SoD; AD-26 forward-only; AD-27 internal-first). Migration `20260815` + `orchestrationPolicy.ts` + `routes/orchestration.ts`. **Deferred by ruling:** external executors (ServiceNow/Jira), notification/evidence executors, multi-step playbooks, per-org auto-approve. | `docs/architecture/erip/E6-AUTONOMOUS-OPERATIONS-MEMO.md` |
-| 7 — Knowledge Graph / Digital Twin | E7.P1 labelled blast-radius / dependency graph | **CORE COMPLETE** — memo (ERIP-AD-28 one substrate/read-time projection; AD-29 labels from canonical home; AD-30 NL answering deferred behind a safety gate). `blastRadiusSummary.ts` + `graphLabeling.ts` + `GET /api/graph/blast-radius/:assetId`. **Deferred by ruling:** federating signals/risks/findings/evidence/controls/regulations/processes as graph nodes (as edge sources wire); NL question answering (LLM safety gate); graph business-impact scoring. | `docs/architecture/erip/E7-KNOWLEDGE-GRAPH-MEMO.md` |
-| Close — final report, staging validation guide, prod enablement checklist, rollback plan | after Epics 2–7 | PENDING | — |
+| 7 — Knowledge Graph / Digital Twin | E7.P1 labelled blast-radius / dependency graph | **CORE COMPLETE ✅ (#523)** — memo (ERIP-AD-28 one substrate/read-time projection; AD-29 labels from canonical home; AD-30 NL answering deferred behind a safety gate). `blastRadiusSummary.ts` + `graphLabeling.ts` + `GET /api/graph/blast-radius/:assetId`. **Deferred by ruling:** federating signals/risks/findings/evidence/controls/regulations/processes as graph nodes (as edge sources wire); NL question answering (LLM safety gate); graph business-impact scoring. | `docs/architecture/erip/E7-KNOWLEDGE-GRAPH-MEMO.md` |
+| Close — final report, staging validation guide, prod enablement checklist, rollback plan | **IN PR** | — | `docs/validation/erip-final-report.md` + `docs/architecture/erip/ENABLEMENT-RUNBOOK.md` (staging validation §2, prod checklist §3, rollback §4). No enablement executed (GATE B). |
 
 ## Phase/PR ledger
 
