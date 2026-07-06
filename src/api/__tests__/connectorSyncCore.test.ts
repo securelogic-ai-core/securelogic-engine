@@ -22,6 +22,8 @@ import type { NormalizedEntity, NormalizedInventory } from "../lib/connectors/ty
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CONNECTORS_MIGRATION = path.resolve(HERE, "../../../db/migrations/20260807_enterprise_connectors.sql");
 const JOBS_MIGRATION = path.resolve(HERE, "../../../db/migrations/20260808_jobs_connector_sync.sql");
+// ERIP E2.P5: the current effective connector_id CHECK, widened for native clouds.
+const CLOUD_ADAPTERS_MIGRATION = path.resolve(HERE, "../../../db/migrations/20260813_connectors_cloud_adapters.sql");
 
 function inv(entities: NormalizedEntity[], relationships = 0): NormalizedInventory {
   return {
@@ -154,8 +156,8 @@ describe("planConnectorSync — category mapping", () => {
 });
 
 describe("migration lockstep", () => {
-  it("20260807 connector_id CHECK admits exactly REQUIRED_CONNECTOR_IDS", () => {
-    const sql = readFileSync(CONNECTORS_MIGRATION, "utf8");
+  it("the current connector_id CHECK (20260813) admits exactly REQUIRED_CONNECTOR_IDS", () => {
+    const sql = readFileSync(CLOUD_ADAPTERS_MIGRATION, "utf8");
     for (const id of REQUIRED_CONNECTOR_IDS) {
       expect(sql, id).toContain(`'${id}'`);
     }
@@ -163,6 +165,23 @@ describe("migration lockstep", () => {
       .map((m) => m[1]!)
       .filter((v) => (REQUIRED_CONNECTOR_IDS as readonly string[]).includes(v));
     expect(new Set(checkIds).size).toBe(REQUIRED_CONNECTOR_IDS.length);
+  });
+
+  it("20260807 base CHECK admits the original nine connector ids", () => {
+    const sql = readFileSync(CONNECTORS_MIGRATION, "utf8");
+    for (const id of [
+      "servicenow_cmdb",
+      "microsoft_defender",
+      "crowdstrike_falcon",
+      "wiz",
+      "tenable",
+      "qualys",
+      "rapid7",
+      "cloud_inventory",
+      "identity_provider"
+    ]) {
+      expect(sql, id).toContain(`'${id}'`);
+    }
   });
 
   it("20260808 widens the jobs CHECK with connector_sync and keeps every prior value", () => {

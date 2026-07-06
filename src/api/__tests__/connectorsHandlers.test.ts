@@ -26,6 +26,7 @@ import {
   deleteConnector,
   triggerConnectorSync
 } from "../routes/connectors.js";
+import { REQUIRED_CONNECTOR_IDS } from "../lib/connectors/registry.js";
 
 const ORG_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const SECRET = "super-secret-token-value";
@@ -87,13 +88,13 @@ describe("tenant guard", () => {
 });
 
 describe("listOrgConnectors", () => {
-  it("returns all nine registry adapters merged with configured state — never secret values", async () => {
+  it("returns every registry adapter merged with configured state — never secret values", async () => {
     q.mockResolvedValueOnce({ rows: [storedRow()], rowCount: 1 });
     const res = mockRes();
     await listOrgConnectors(reqFor(), res);
     expect(res._status).toBe(200);
     const body = res._json as { connectors: Array<Record<string, unknown>> };
-    expect(body.connectors).toHaveLength(9);
+    expect(body.connectors).toHaveLength(REQUIRED_CONNECTOR_IDS.length);
 
     const idp = body.connectors.find((c) => c.connector_id === "identity_provider")!;
     expect(idp).toMatchObject({ configured: true, enabled: true, config_keys: ["api_token", "base_url"] });
