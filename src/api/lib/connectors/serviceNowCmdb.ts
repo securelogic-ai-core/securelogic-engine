@@ -35,6 +35,11 @@ interface CmdbCi {
   business_criticality?: unknown;
   depends_on?: unknown;
   sys_updated_on?: unknown;
+  // E2.P4 discovery hints:
+  assigned_to?: unknown;
+  owned_by?: unknown;
+  os?: unknown;
+  ip_address?: unknown;
 }
 
 /**
@@ -139,6 +144,15 @@ export const serviceNowCmdbAdapter: ConnectorAdapter = {
       if (desc) entity.description = desc;
       const crit = mapCriticality(rowUnknown.business_criticality);
       if (crit) entity.criticality = crit;
+      // E2.P4 (ERIP-AD-13): owner hint (suggest-only) + source-echo metadata.
+      const owner = str(rowUnknown.assigned_to) ?? str(rowUnknown.owned_by);
+      if (owner) entity.owner_hint = owner;
+      const metadata: Record<string, string> = {};
+      const os = str(rowUnknown.os);
+      if (os) metadata.os = os;
+      const ip = str(rowUnknown.ip_address);
+      if (ip) metadata.ip_address = ip;
+      if (Object.keys(metadata).length > 0) entity.metadata = metadata;
       entities.push(entity);
 
       // Dependency edges: this CI depends_on the listed CIs (by sys_id).

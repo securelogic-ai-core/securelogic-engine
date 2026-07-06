@@ -98,3 +98,32 @@ describe("summarizeDiscovery — conflict resolution (ERIP-AD-12)", () => {
     expect(full.fully_stale).toBe(true);
   });
 });
+
+describe("summarizeDiscovery — owner + metadata (E2.P4, ERIP-AD-13)", () => {
+  it("resolves the owner hint by precedence and merges metadata (higher rank wins keys)", () => {
+    const facts = [
+      fact({
+        connector_id: "servicenow_cmdb",
+        category: "cmdb",
+        owner_hint: "cmdb-owner@corp.com",
+        metadata: { os: "RHEL 9", ip_address: "10.0.0.5" }
+      }),
+      fact({
+        connector_id: "tenable",
+        category: "vulnerability",
+        owner_hint: "scanner-owner@corp.com",
+        metadata: { os: "Linux", cve_count: "3" }
+      })
+    ];
+    const s = summarizeDiscovery(facts, NOW);
+    // cmdb (rank 5) wins the owner + the os key; tenable-only keys still merge in.
+    expect(s.effective_owner_hint).toMatchObject({ value: "cmdb-owner@corp.com", winning_connector: "servicenow_cmdb" });
+    expect(s.metadata).toEqual({ os: "RHEL 9", ip_address: "10.0.0.5", cve_count: "3" });
+  });
+
+  it("effective_owner_hint is null when no source reports an owner", () => {
+    const s = summarizeDiscovery([fact(), fact({ connector_id: "wiz", category: "cloud" })], NOW);
+    expect(s.effective_owner_hint).toBeNull();
+    expect(s.metadata).toEqual({});
+  });
+});
