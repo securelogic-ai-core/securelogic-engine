@@ -27,7 +27,7 @@
  * flag is off. The server layout resolves the env flag and threads it through the
  * (client) Header, since client components can't read non-NEXT_PUBLIC env vars.
  */
-export type NavFeatureFlag = "enterprise_context";
+export type NavFeatureFlag = "enterprise_context" | "asset_registry";
 export type NavFlags = Partial<Record<NavFeatureFlag, boolean>>;
 
 export type NavItem =
@@ -56,6 +56,9 @@ export const NAV_ITEMS: NavItem[] = [
   // Enterprise Context Layer — DARK: featureFlag keeps this hidden until the
   // app-side SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED env is true (GATE B for prod).
   { type: "link", label: "Context", href: "/enterprise-context", platform: true, featureFlag: "enterprise_context" },
+  // Unified Asset Registry (EAR Phase 4) — DARK behind the app-side
+  // SECURELOGIC_ASSET_REGISTRY_ENABLED env (same two-switch model as Context).
+  { type: "link", label: "Asset Registry", href: "/assets", platform: true, featureFlag: "asset_registry" },
   { type: "group", label: "Compliance", platform: true,
     items: [
       { label: "Controls",    href: "/controls" },
