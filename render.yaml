@@ -207,6 +207,8 @@ services:
         value: "false"
       - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
         value: "false"
+      - key: SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED # ERIP E6 (approval-gated orchestration) — DARK (default off); human approval required
+        value: "false"
       - key: SECURELOGIC_CAPABILITY_GATING_ENABLED    # EAR P9 (Track C dual-gate) — DARK (default off); flag on = entitlement OR per-org core_platform grant; entitlement-leg removal is a product STOP GATE, never this flag
         value: "false"
       - key: SECURELOGIC_BRIEF_APPLICABILITY_CITATION_ENABLED # EAR P11 (Brief cites applicability) — DARK (default off); double-fenced: also requires SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
@@ -415,6 +417,8 @@ services:
         value: "false"
       - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
         value: "false"
+      - key: SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED # ERIP E6 (approval-gated orchestration) — DARK (default off); human approval required
+        value: "false"
       - key: SECURELOGIC_CAPABILITY_GATING_ENABLED    # EAR P9 (Track C dual-gate) — DARK (default off); flag on = entitlement OR per-org core_platform grant; entitlement-leg removal is a product STOP GATE, never this flag
         value: "false"
       - key: SECURELOGIC_BRIEF_APPLICABILITY_CITATION_ENABLED # EAR P11 (Brief cites applicability) — DARK (default off); double-fenced: also requires SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
@@ -528,6 +532,8 @@ services:
         value: "false"
       - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
         value: "false"
+      - key: SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED # ERIP E6 (approval-gated orchestration) — DARK (default off); human approval required
+        value: "false"
       - key: SECURELOGIC_CAPABILITY_GATING_ENABLED    # EAR P9 (Track C dual-gate) — DARK (default off); flag on = entitlement OR per-org core_platform grant; entitlement-leg removal is a product STOP GATE, never this flag
         value: "false"
       - key: SECURELOGIC_BRIEF_APPLICABILITY_CITATION_ENABLED # EAR P11 (Brief cites applicability) — DARK (default off); double-fenced: also requires SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
@@ -630,6 +636,8 @@ services:
       - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
         value: "false"
       - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED # ERIP E6 (approval-gated orchestration) — DARK (default off); human approval required
         value: "false"
       - key: SECURELOGIC_CAPABILITY_GATING_ENABLED    # EAR P9 (Track C dual-gate) — DARK (default off); flag on = entitlement OR per-org core_platform grant; entitlement-leg removal is a product STOP GATE, never this flag
         value: "false"
