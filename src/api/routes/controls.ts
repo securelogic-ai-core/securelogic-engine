@@ -21,6 +21,7 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { requireAdminRole } from "../middleware/requireRole.js";
@@ -94,7 +95,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -203,7 +204,7 @@ router.post(
       );
       res.status(500).json({ error: "control_create_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -217,7 +218,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -313,7 +314,7 @@ router.get(
       );
       res.status(500).json({ error: "controls_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -327,7 +328,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -370,7 +371,7 @@ router.get(
       );
       res.status(500).json({ error: "control_get_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -384,7 +385,7 @@ router.patch(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -509,7 +510,7 @@ router.patch(
       );
       res.status(500).json({ error: "control_patch_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -526,7 +527,7 @@ router.delete(
   requireEntitlement("premium"),
   requireAdminRole,
   requireAuth,
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -594,7 +595,7 @@ router.delete(
       logger.error({ event: "control_delete_failed", err }, "DELETE /api/controls/:id failed");
       res.status(500).json({ error: "control_delete_failed" });
     }
-  }
+  })
 );
 
 export default router;

@@ -13,6 +13,7 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { validateActionCreate } from "../lib/actionValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
@@ -60,7 +61,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -130,7 +131,7 @@ router.post(
       );
       res.status(500).json({ error: "action_create_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -144,7 +145,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -278,7 +279,7 @@ router.get(
       );
       res.status(500).json({ error: "actions_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -291,7 +292,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -334,7 +335,7 @@ router.get(
       logger.error({ event: "actions_summary_failed", err }, "GET /api/actions/summary failed");
       res.status(500).json({ error: "actions_summary_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -348,7 +349,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -390,7 +391,7 @@ router.get(
       );
       res.status(500).json({ error: "action_get_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -405,7 +406,7 @@ router.patch(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -535,7 +536,7 @@ router.patch(
       );
       res.status(500).json({ error: "action_patch_failed" });
     }
-  }
+  })
 );
 
 export default router;

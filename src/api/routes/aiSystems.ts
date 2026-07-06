@@ -20,12 +20,13 @@
  */
 
 import { Router } from "express";
-import { pg, withTenant } from "../infra/postgres.js";
+import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
 import { registerAsset, deregisterAsset } from "../lib/assetRegistrar.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { requireAdminRole } from "../middleware/requireRole.js";
@@ -77,7 +78,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -108,10 +109,9 @@ router.post(
 
       let result;
       try {
-        // withTenant: single tx so the EAR registry upsert (flag-gated, dark
-        // by default) is atomic with the INSERT. No behavior change while
-        // SECURELOGIC_ASSET_REGISTRY_ENABLED is off.
-        result = await withTenant(organizationId, async () => {
+        // Single tx via the route's asTenant wrap (P8) — the EAR registry
+        // upsert (flag-gated, dark by default) stays atomic with the INSERT.
+        {
           const created = await pg.query(
             `
             INSERT INTO ai_systems (
@@ -143,8 +143,8 @@ router.post(
           if (assetRegistryEnabled()) {
             await registerAsset(organizationId, "ai_system", "ai_systems", (created.rows[0] as { id: string }).id);
           }
-          return created;
-        });
+          result = created;
+        }
       } catch (err: any) {
         if (err?.code === "23505") {
           res.status(409).json({
@@ -185,7 +185,7 @@ router.post(
       );
       res.status(500).json({ error: "ai_system_create_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -199,7 +199,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -287,7 +287,7 @@ router.get(
       );
       res.status(500).json({ error: "ai_systems_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -301,7 +301,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -344,7 +344,7 @@ router.get(
       );
       res.status(500).json({ error: "ai_system_get_failed" });
     }
-  }
+  })
 );
 
 function isUuid(v: unknown): v is string {
@@ -362,7 +362,7 @@ router.patch(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -504,7 +504,7 @@ router.patch(
       logger.error({ event: "ai_system_patch_failed", err }, "PATCH /api/ai-systems/:id failed");
       res.status(500).json({ error: "ai_system_patch_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -520,7 +520,7 @@ router.delete(
   requireEntitlement("premium"),
   requireAdminRole,
   requireAuth,
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -558,19 +558,16 @@ router.delete(
         return;
       }
 
-      // withTenant: registry deregistration (flag-gated) is atomic with the
-      // DELETE. No behavior change while the EAR flag is off.
-      const result = await withTenant(organizationId, async () => {
-        const del = await pg.query(
-          `DELETE FROM ai_systems
-           WHERE id = $1 AND organization_id = $2`,
-          [aiSystemId, organizationId]
-        );
-        if ((del.rowCount ?? 0) > 0 && assetRegistryEnabled()) {
-          await deregisterAsset(organizationId, "ai_systems", aiSystemId);
-        }
-        return del;
-      });
+      // Single tx via the route's asTenant wrap (P8) — registry
+      // deregistration (flag-gated) stays atomic with the DELETE.
+      const result = await pg.query(
+        `DELETE FROM ai_systems
+         WHERE id = $1 AND organization_id = $2`,
+        [aiSystemId, organizationId]
+      );
+      if ((result.rowCount ?? 0) > 0 && assetRegistryEnabled()) {
+        await deregisterAsset(organizationId, "ai_systems", aiSystemId);
+      }
 
       if ((result.rowCount ?? 0) === 0) {
         res.status(404).json({ error: "ai_system_not_found" });
@@ -593,7 +590,7 @@ router.delete(
       logger.error({ event: "ai_system_delete_failed", err }, "DELETE /api/ai-systems/:id failed");
       res.status(500).json({ error: "ai_system_delete_failed" });
     }
-  }
+  })
 );
 
 export default router;

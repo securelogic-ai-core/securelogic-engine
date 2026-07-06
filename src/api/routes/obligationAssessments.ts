@@ -39,6 +39,7 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import {
@@ -120,7 +121,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -227,7 +228,7 @@ router.post(
     } finally {
       client.release();
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -241,7 +242,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -340,7 +341,7 @@ router.get(
       );
       res.status(500).json({ error: "obligation_assessments_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -357,7 +358,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -419,7 +420,7 @@ router.get(
       );
       res.status(500).json({ error: "obligation_assessment_get_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -442,7 +443,7 @@ router.patch(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -705,7 +706,7 @@ router.patch(
     } finally {
       client.release();
     }
-  }
+  })
 );
 
 export default router;

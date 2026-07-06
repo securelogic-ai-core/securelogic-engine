@@ -23,12 +23,13 @@
  */
 
 import { Router } from "express";
-import { pg, withTenant } from "../infra/postgres.js";
+import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
 import { registerAsset } from "../lib/assetRegistrar.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { enforceEntityLimit } from "../lib/entityLimit.js";
 import {
@@ -84,7 +85,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -115,10 +116,9 @@ router.post(
 
       let result;
       try {
-        // withTenant: single tx so the EAR registry upsert (flag-gated, dark
-        // by default) is atomic with the vendor INSERT. No behavior change
-        // while SECURELOGIC_ASSET_REGISTRY_ENABLED is off.
-        result = await withTenant(organizationId, async () => {
+        // Single tx via the route's asTenant wrap (P8) — the EAR registry
+        // upsert (flag-gated, dark by default) stays atomic with the INSERT.
+        {
           const created = await pg.query(
             `
             INSERT INTO vendors (
@@ -151,8 +151,8 @@ router.post(
           if (assetRegistryEnabled()) {
             await registerAsset(organizationId, "vendor", "vendors", (created.rows[0] as { id: string }).id);
           }
-          return created;
-        });
+          result = created;
+        }
       } catch (err: any) {
         if (err?.code === "23505") {
           res.status(409).json({
@@ -193,7 +193,7 @@ router.post(
       );
       res.status(500).json({ error: "vendor_create_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -208,7 +208,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -312,7 +312,7 @@ router.get(
       );
       res.status(500).json({ error: "vendors_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -325,7 +325,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -419,7 +419,7 @@ router.get(
       logger.error({ event: "vendors_summary_failed", err }, "GET /api/vendors/summary failed");
       res.status(500).json({ error: "vendors_summary_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -554,7 +554,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -593,7 +593,7 @@ router.get(
       );
       res.status(500).json({ error: "vendor_get_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -608,7 +608,7 @@ router.patch(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -733,7 +733,7 @@ router.patch(
       );
       res.status(500).json({ error: "vendor_patch_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -747,7 +747,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -821,7 +821,7 @@ router.get(
       logger.error({ event: "vendor_risk_score_failed", err }, "GET /api/vendors/:id/risk-score failed");
       res.status(500).json({ error: "vendor_risk_score_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -838,7 +838,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -942,7 +942,7 @@ router.get(
       logger.error({ event: "vendor_findings_failed", err }, "GET /api/vendors/:id/findings failed");
       res.status(500).json({ error: "vendor_findings_failed" });
     }
-  }
+  })
 );
 
 export default router;
