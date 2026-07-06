@@ -117,12 +117,30 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "auditLog.ts": 3,
 };
 
+// EAR P9 (Track C): these ten core-domain files mount the DUAL-GATE
+// `requirePremiumOrCorePlatform` (= requireEntitlementOrCapability("premium") —
+// same premium rank; flag-off behavior byte-identical, see
+// corePlatformCapability.ts). Their premium-rank gates are counted via the
+// dual-gate token instead of the bare requireEntitlement("premium").
+const DUAL_GATE_FILES: ReadonlySet<string> = new Set([
+  "vendors.ts", "aiSystems.ts", "controls.ts", "obligations.ts", "actions.ts",
+  "aiGovernanceAssessments.ts", "controlAssessments.ts", "obligationAssessments.ts",
+  "governanceReviews.ts", "vendorReviews.ts"
+]);
+const DUAL = "requirePremiumOrCorePlatform";
+
 describe("entitlement gate — Bucket A (core platform) is premium, never standard", () => {
   for (const [file, expectedPremium] of Object.entries(BUCKET_A_PREMIUM)) {
     it(`${file}: zero standard, ${expectedPremium} premium`, () => {
       const src = readRoute(file);
       expect(count(src, STD)).toBe(0);
-      expect(count(src, PREM)).toBe(expectedPremium);
+      if (DUAL_GATE_FILES.has(file)) {
+        // import + route mounts; the count below excludes the import line.
+        expect(count(src, DUAL) - count(src, `import { ${DUAL} }`)).toBe(expectedPremium);
+        expect(count(src, PREM)).toBe(0);
+      } else {
+        expect(count(src, PREM)).toBe(expectedPremium);
+      }
     });
   }
 });
