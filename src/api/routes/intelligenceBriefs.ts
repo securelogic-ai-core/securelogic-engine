@@ -34,6 +34,7 @@ import {
   type CyberSignalForBrief
 } from "../lib/intelligenceBriefGenerator.js";
 import { personalizeBriefItems } from "../lib/briefPersonalizationService.js";
+import { fetchApplicabilityCitations } from "../lib/briefApplicabilityCitations.js";
 import { sendBrief } from "../lib/briefEmailSender.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { encryptField } from "../lib/fieldEncryption.js";
@@ -903,6 +904,14 @@ router.get("/intelligence-briefs/:id", async (req, res) => {
       [id, orgId]
     );
 
+    // EAR P11 — applicability citations (double-fenced dark, fail-open):
+    // {} unless BOTH the citation flag and the ECL flag are on, so the
+    // response below is byte-identical to today while dark.
+    const citations = await fetchApplicabilityCitations(
+      orgId,
+      itemsResult.rows.map((item) => item.cyber_signal_id)
+    );
+
     return res.status(200).json({
       id: brief.id,
       period_start: brief.period_start,
@@ -915,26 +924,33 @@ router.get("/intelligence-briefs/:id", async (req, res) => {
       generated_at: brief.generated_at,
       published_at: brief.published_at,
       created_at: brief.created_at,
-      items: itemsResult.rows.map((item) => ({
-        id: item.id,
-        category: item.category,
-        relevance: item.relevance,
-        title: item.title,
-        summary: item.summary,
-        affected_cve: item.affected_cve,
-        affected_vendor: item.affected_vendor,
-        source_slug: item.source_slug,
-        source_display: getSourceDisplayName(item.source_slug),
-        signal_type: item.signal_type,
-        severity: item.severity,
-        cyber_signal_id: item.cyber_signal_id,
-        ingestion_timestamp: item.ingestion_timestamp,
-        sort_order: parseInt(item.sort_order, 10),
-        why_it_matters: item.why_it_matters,
-        recommended_actions: item.recommended_actions,
-        analyst_notes: item.analyst_notes,
-        urgency: item.urgency
-      }))
+      items: itemsResult.rows.map((item) => {
+        const itemCitations =
+          item.cyber_signal_id !== null ? citations[item.cyber_signal_id] : undefined;
+        return {
+          id: item.id,
+          category: item.category,
+          relevance: item.relevance,
+          title: item.title,
+          summary: item.summary,
+          affected_cve: item.affected_cve,
+          affected_vendor: item.affected_vendor,
+          source_slug: item.source_slug,
+          source_display: getSourceDisplayName(item.source_slug),
+          signal_type: item.signal_type,
+          severity: item.severity,
+          cyber_signal_id: item.cyber_signal_id,
+          ingestion_timestamp: item.ingestion_timestamp,
+          sort_order: parseInt(item.sort_order, 10),
+          why_it_matters: item.why_it_matters,
+          recommended_actions: item.recommended_actions,
+          analyst_notes: item.analyst_notes,
+          urgency: item.urgency,
+          ...(itemCitations && itemCitations.length > 0
+            ? { applicability_citations: itemCitations }
+            : {})
+        };
+      })
     });
   } catch (err) {
     logger.error(
