@@ -359,9 +359,16 @@ export async function listSignalsForControl(req: Request, res: Response): Promis
          scl.id           AS link_id,
          scl.note         AS link_note,
          scl.created_at   AS link_created_at,
-         ${SIGNAL_SELECT.split(",").map((c) => `cs.${c.trim()}`).join(",\n           ")}
+         ${SIGNAL_SELECT.split(",").map((c) => `cs.${c.trim()}`).join(",\n           ")},
+         ie.id AS intelligence_event_id,
+         ie.canonical_key AS event_canonical_key,
+         ie.status AS event_status,
+         ie.confidence AS event_confidence,
+         COALESCE(ie.executive_summary, cs.normalized_summary) AS event_summary
          FROM signal_control_links scl
          JOIN cyber_signals cs ON cs.id = scl.signal_id
+         LEFT JOIN intelligence_event_sources ies ON ies.cyber_signal_id = cs.id
+         LEFT JOIN intelligence_events ie ON ie.id = ies.event_id
         WHERE scl.organization_id = $1
           AND scl.control_id = $2
           AND scl.deleted_at IS NULL
