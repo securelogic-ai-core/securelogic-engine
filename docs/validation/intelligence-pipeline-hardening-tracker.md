@@ -36,6 +36,7 @@ archived come from the time-based aging pass; never regressed except re-emergenc
 | `20260823_findings_intelligence_event.sql` | findings source_type 'intelligence_event' + partial unique dedup index |
 | `20260824_intelligence_event_notifications.sql` | ORG-scoped notification dedup ledger (RLS + app_request grant) |
 | `20260825_intelligence_event_workflow_triggers.sql` | GLOBAL workflow-trigger dedup ledger (one per event+state) |
+| `20260826_suggestions_intelligence_event.sql` | signal_match_suggestions.intelligence_event_id (event-native matcher linkage) |
 
 ## Goal-item ↔ slice map
 
@@ -63,6 +64,17 @@ archived come from the time-based aging pass; never regressed except re-emergenc
 | Predictive Intelligence (item 6) | **BUILT (dark)** | `eventHistorySeries` (timeline counts, not signal spikes) + `GET /api/intelligence/forecast` |
 | Workflow Automation (item 7) | **BUILT (dark)** | `processEventLifecycleTriggers` — once per event lifecycle transition, fans out findings + notifications |
 | APIs/UI (item 8) | **BUILT (dark)** | `GET /api/intelligence/events[/:id]` + executive-summary + forecast |
+| Matcher linkage (event-native) | **BUILT (dark)** | `eventSignalResolver` + matcher stamps `intelligence_event_id`; accept/dismiss + link-list + vendor-context + recent-feed resolve through events |
+
+### Raw cyber_signal residual (ingestion/forensics/debug only)
+
+Every customer-facing intelligence workflow reads canonical events when enabled. Remaining raw
+`cyber_signal` reads are exempt by the directive: `cyberSignals.ts` (ingestion + raw
+forensics/debug list), `SELECT 1 FROM cyber_signals` existence checks (link/accept integrity),
+and flag-off legacy branches. One internal count in `intelligence.ts` still joins legacy
+`cyber_signal`-sourced findings for a dashboard stat (not a raw-signal display; noted as a
+follow-up to union event-sourced findings). Ingestion boundary unchanged — raw signals remain
+the ingestion record.
 
 ## Slice ledger
 

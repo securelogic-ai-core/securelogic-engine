@@ -20,6 +20,9 @@ Tracker: `docs/validation/intelligence-pipeline-hardening-tracker.md`.
 - Migration `20260825_intelligence_event_workflow_triggers.sql` — GLOBAL workflow-trigger
   dedup ledger (one per event+lifecycle-state) so workflow follow-through fires once per
   transition.
+- Migration `20260826_suggestions_intelligence_event.sql` — additive
+  `signal_match_suggestions.intelligence_event_id` (nullable FK) making the matcher-linkage
+  layer event-native. `signal_id` preserved (backward compat + forensics).
 - **Consumer read-swaps (all flag-gated, flag OFF = byte-identical legacy):** the
   Intelligence Brief reads canonical events (else the legacy cyber_signals query); the
   hourly worker projects signals → events, ages the lifecycle, and fires per-org
@@ -63,6 +66,8 @@ Fully reversible at every stage:
   migration needed — the event tables simply stop being written/read.
 - **Remove (optional):** the tables are additive and referenced by nothing in the legacy path:
   ```sql
+  DROP INDEX IF EXISTS idx_signal_match_suggestions_event;
+  ALTER TABLE signal_match_suggestions DROP COLUMN IF EXISTS intelligence_event_id;
   DROP TABLE IF EXISTS intelligence_event_workflow_triggers;
   DROP TABLE IF EXISTS intelligence_event_notifications;
   DROP INDEX IF EXISTS idx_findings_intelligence_event_unique;
@@ -79,7 +84,7 @@ Fully reversible at every stage:
 
 | # | Action | Owner | Status |
 |---|---|---|---|
-| O-1 | Apply migrations `20260822`–`20260825` in staging then prod (all additive, safe while dark) | operator (DB creds) | NOT DONE |
+| O-1 | Apply migrations `20260822`–`20260826` in staging then prod (all additive, safe while dark) | operator (DB creds) | NOT DONE |
 | O-2 | Staging validation of Intelligence Event projection (§2) | operator | NOT DONE |
 | O-3 | Run `npm run intelligence-events:project` backfill in staging/prod | operator | NOT DONE |
 | O-4 | Production enablement of `SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED` (GATE B) | operator | NOT DONE |

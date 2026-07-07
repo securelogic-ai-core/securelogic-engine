@@ -100,6 +100,23 @@ flag with byte-identical flag-off behavior:
 - **Workflow** (`processEventLifecycleTriggers`) fires per-org findings + notifications ONCE per
   event lifecycle transition (dedup ledger), not per raw signal.
 
+**IE-AD-11 — Event-native matcher-linkage layer (added 2026-07-07).** Raw `cyber_signal` is no
+longer part of any customer-facing intelligence workflow; it remains the INGESTION RECORD only
+(ingestion, forensics, debugging). The bridge is `eventSignalResolver.ts`
+(cyber_signal_id → event via the corroboration ledger, CVE canonical-key fallback):
+- **Matcher** stamps `signal_match_suggestions.intelligence_event_id` (migration `20260826`,
+  additive nullable FK; `signal_id` preserved for compat/forensics) after emitting suggestions —
+  so the **accept/dismiss workflow** and every **linkage service** (vendor / AI system /
+  application / asset / control / obligation) reference the canonical event. Projection runs
+  BEFORE the matcher fan-out so the event exists at match time.
+- **Link-list endpoints** resolve each linked signal through the ledger to the event and display
+  the normalized `event_summary` (COALESCE over raw), lifecycle, confidence, canonical_key.
+- **`vendorSignalContext`, `/intelligence` recent feed, `POST /intelligence-briefs/generate`**
+  source from canonical events when the flag is on; legacy raw query when off.
+- **Exempt (by design):** `cyberSignals.ts` (ingestion + raw forensics/debug list), the
+  `SELECT 1 FROM cyber_signals` existence checks (link/accept integrity validation), and every
+  flag-off legacy branch. Ingestion is unchanged.
+
 **IE-AD-9 — Notification policy replaces event-per-email.**
 Immediate alert **only** for customer-impacting *critical* events (deduped via a notification
 ledger keyed by event + org + channel); the daily digest summarizes events + org risk changes;
