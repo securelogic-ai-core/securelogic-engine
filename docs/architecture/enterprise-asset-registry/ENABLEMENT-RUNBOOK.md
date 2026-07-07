@@ -37,7 +37,44 @@ citation joins should also cover corroborating signals later).
   Exit gate: script prints zero remaining NULL `asset_id` gaps.
 
 **Step 1 — registry read/write surface.**
-Set `SECURELOGIC_ASSET_REGISTRY_ENABLED=true` on the engine service only.
+
+*Prerequisites (in addition to Step 0):* `SECURELOGIC_ASSET_REGISTRY_ENABLED` is
+a ROOT flag — the registry read/write/UI surface depends on NO other flag. The
+ECL flag (Step 2), capability-gating (Step 4), and citation flag (Step 5) are
+independent and are NOT required here. The org used for validation must hold the
+`enterprise_context` capability (see *Capability* below).
+
+*Enable — two staging services (the two-switch model):*
+- `securelogic-engine-staging` — gates every `/api/assets*` route (404-before-auth
+  while off). Its flag lives in `render.yaml` (staging engine block): set that
+  block to `value: "true"` and deploy, or override the env in the Render dashboard
+  for the service. Leave the prod `securelogic-engine` block at `"false"`.
+- `securelogic-app-staging` — gates the "Asset Registry" nav item and the
+  `/assets/new` dark panel. This service is dashboard-only (NOT defined in
+  `render.yaml`), so set `SECURELOGIC_ASSET_REGISTRY_ENABLED=true` in the Render
+  dashboard env for it directly.
+- `securelogic-intelligence-worker-staging` is NOT required for this validation
+  (it only affects background registration + connector sync + the async matcher);
+  leave it dark unless validating those.
+
+*Redeploy/restart:* the flag is RUNTIME env on both sides (the engine reads it
+per request; the app reads it server-side in `layout.tsx` — NOT `NEXT_PUBLIC`, so
+no rebuild). Saving the env in Render auto-triggers a redeploy/restart; wait for
+BOTH services to report "Live" before validating. Order does not matter and there
+is no split-brain window — each side fails closed independently (engine 404s, app
+hides the nav) until its own restart completes.
+
+*Capability:* the registry reuses the `enterprise_context` capability, granted
+automatically to orgs whose entitlement is `platform`, `platform_annual`,
+`premium`, or Enterprise. It is NOT granted to the Brief tiers `professional`
+(Brief Pro) or `teams`/`team` (Brief Team) — a Team-tier org sees the nav but hits
+a `capability_required` (403) wall. Grant it explicitly against the STAGING
+database:
+```sql
+UPDATE organizations SET enterprise_context_capability = TRUE WHERE id = '<staging-org-id>';
+-- NULL = fall back to the entitlement default; FALSE = explicit deny.
+```
+
 - Validate (staging org with API key):
   - `GET /api/assets` → 200, count equals
     `SELECT count(*) FROM asset_registry_v WHERE organization_id = '<org>'`.
@@ -46,10 +83,8 @@ Set `SECURELOGIC_ASSET_REGISTRY_ENABLED=true` on the engine service only.
   - `POST /api/asset-assessments` for that asset; PATCH it
     `in_progress → deficient` with severity → exactly one `findings` row with
     `source_type='asset_assessment'`.
-- Validate (app management UI — set the app service's
-  `SECURELOGIC_ASSET_REGISTRY_ENABLED=true` too; the nav uses the app-side env,
-  the engine gates writes independently). Sign in as a platform user in the same
-  staging org with the `enterprise_context` capability:
+- Validate (app management UI). Sign in as a platform user in the same staging
+  org holding the `enterprise_context` capability:
   - **Nav (canonical surface, P12):** the "Assets" dropdown now leads with
     **Asset Registry** (`/assets`) as its first item, with Vendors / AI Systems
     beneath it as asset types; `/assets` lists rows with type-filter chips and
@@ -70,9 +105,13 @@ Set `SECURELOGIC_ASSET_REGISTRY_ENABLED=true` on the engine service only.
   - **Dark parity:** with the app-side flag `false`, the nav entry is hidden and
     `/assets`, `/assets/new`, `/assets/:id/edit` all render the neutral
     "not available" panel (no form, no leak).
-- Rollback: flag back to `false` — the whole surface 404s before auth again
-  (and the UI returns to the neutral panel); rows written remain (inert,
-  additive).
+- Rollback: set `SECURELOGIC_ASSET_REGISTRY_ENABLED` back to `false` on BOTH
+  `securelogic-engine-staging` (revert the render.yaml staging block if edited)
+  and `securelogic-app-staging` (clear the dashboard env); let both restart. The
+  whole surface 404s before auth again and the UI returns to the neutral panel;
+  rows written remain (inert, additive) — optionally delete test assets via the
+  UI first. Leave `enterprise_context_capability` as set, or reset with
+  `UPDATE organizations SET enterprise_context_capability = NULL WHERE id = '<staging-org-id>'`.
 
 **Step 2 — ECL (if not already on).**
 Set `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED=true`.
