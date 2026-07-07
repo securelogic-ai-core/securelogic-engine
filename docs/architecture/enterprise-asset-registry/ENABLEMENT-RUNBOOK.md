@@ -105,9 +105,25 @@ UPDATE organizations SET enterprise_context_capability = TRUE WHERE id = '<stagi
   - **Federation (EAR-AD-1):** open a *vendor*-backed row → detail shows
     "managed on its own screen" with a deep-link, **no** Edit/Delete; the
     `/assets/new` picker routes Vendors/AI Systems to their own `/new` screens.
-  - **Dark parity:** with the app-side flag `false`, the nav entry is hidden and
-    `/assets`, `/assets/new`, `/assets/:id/edit` all render the neutral
-    "not available" panel (no form, no leak).
+  - **Connect enterprise systems (P13):** `/assets/new` → "Connect enterprise
+    systems" → **`/assets/connect`** lists the connector catalog grouped by
+    category (CMDB / cloud / vulnerability / identity / endpoint) with each
+    connector's live state (Connected / Configured / Not connected) from
+    `GET /api/connectors`. This is **double-fenced** — it also needs the ECL flag
+    (`SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED`); with ECL off it shows the neutral
+    "not available" panel (NOT a "coming soon"). Credentials are operator-owned,
+    so there is no self-serve credential form — configuration is administered via
+    the connectors API.
+  - **Setup Wizard integration (P13):** with the flag on, `/getting-started`
+    step 2 becomes **"Build your asset inventory"** and its CTA launches the
+    SAME canonical registry onboarding (`/assets/new` → create / import /
+    connect) — the wizard owns no onboarding logic. The step completes once the
+    org has ≥1 registry asset. (SOC upload stays in Vendor Management — it is NOT
+    in this flow.)
+  - **Dark parity:** with the app-side flag `false`, the nav entry is hidden;
+    `/assets`, `/assets/new`, `/assets/:id/edit`, `/assets/connect` all render the
+    neutral "not available" panel (no form, no leak); and `/getting-started`
+    step 2 is byte-for-byte the legacy "Add your first vendor".
 - Rollback: set `SECURELOGIC_ASSET_REGISTRY_ENABLED` back to `false` on BOTH
   `securelogic-engine-staging` (revert the render.yaml staging block if edited)
   and `securelogic-app-staging` (clear the dashboard env); let both restart. The

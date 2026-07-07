@@ -171,7 +171,7 @@ export default async function NewAssetPage({
       <h2 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "#94a3b8" }}>
         Bulk import (CSV)
       </h2>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 mb-10">
         {imports.map((s) => (
           <Link
             key={s.href}
@@ -183,6 +183,32 @@ export default async function NewAssetPage({
           </Link>
         ))}
       </div>
+
+      {/* Connect enterprise systems — the canonical connector catalog. One flow,
+          reused by the Setup Wizard; connectors discover assets into the registry. */}
+      <h2 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "#94a3b8" }}>
+        Connect enterprise systems
+      </h2>
+      <Link
+        href="/assets/connect"
+        className="block rounded-xl border p-4 transition-colors hover:opacity-90"
+        style={{ borderColor: "#1e293b", background: "#0f172a" }}
+      >
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
+              Connect a source of truth
+            </div>
+            <div className="text-xs mt-1" style={{ color: "#94a3b8" }}>
+              CMDB, cloud, vulnerability, identity, or endpoint systems auto-discover assets into
+              your registry.
+            </div>
+          </div>
+          <span className="flex-shrink-0 text-xs" style={{ color: "#64748b" }}>
+            Browse connectors →
+          </span>
+        </div>
+      </Link>
     </div>
   );
 }
