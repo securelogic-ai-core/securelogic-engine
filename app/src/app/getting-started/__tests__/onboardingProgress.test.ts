@@ -73,4 +73,43 @@ describe("getOnboardingStepCompletion", () => {
       })[4],
     ).toBe(true);
   });
+
+  describe("step 2 is flag-aware (Asset Registry onboarding, EAR P12/P13)", () => {
+    it("dark default: step 2 stays keyed to vendors (byte-for-byte legacy)", () => {
+      // No options → identical to the legacy vendor behavior.
+      expect(
+        getOnboardingStepCompletion(
+          { frameworks: 0, vendors: 1, controls: 0, control_assessments: 0 },
+          NO_POSTURE,
+        )[1],
+      ).toBe(true);
+      expect(getOnboardingStepCompletion(EMPTY_INVENTORY, NO_POSTURE, { assetRegistryEnabled: false })[1]).toBe(
+        false,
+      );
+    });
+
+    it("flag on: step 2 completes on registry assets, NOT vendors", () => {
+      // Vendors present but no registry assets → step 2 incomplete when enabled.
+      expect(
+        getOnboardingStepCompletion(
+          { frameworks: 0, vendors: 5, controls: 0, control_assessments: 0 },
+          NO_POSTURE,
+          { assetRegistryEnabled: true, assetsTotal: 0 },
+        )[1],
+      ).toBe(false);
+      // ≥1 registry asset (even with zero vendors) → complete.
+      expect(
+        getOnboardingStepCompletion(EMPTY_INVENTORY, NO_POSTURE, {
+          assetRegistryEnabled: true,
+          assetsTotal: 1,
+        })[1],
+      ).toBe(true);
+    });
+
+    it("flag on but no assetsTotal provided → treated as 0 (incomplete)", () => {
+      expect(
+        getOnboardingStepCompletion(EMPTY_INVENTORY, NO_POSTURE, { assetRegistryEnabled: true })[1],
+      ).toBe(false);
+    });
+  });
 });

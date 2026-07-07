@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getDashboardSummary } from "@/lib/api";
+import { getDashboardSummary, getAssets } from "@/lib/api";
 import { completeOnboardingAction } from "./actions";
 import { getOnboardingStepCompletion } from "./onboardingProgress";
 
@@ -16,6 +16,25 @@ type Step = {
   href: string;
 };
 
+// The legacy vendor step (step 2), used while the Asset Registry is dark.
+const VENDOR_STEP: Step = {
+  title: "Add your first vendor",
+  description: "Track the third-party vendors that have access to your systems or data.",
+  cta: "Add Vendor →",
+  href: "/vendors/new",
+};
+
+// The Asset Registry step (step 2) when SECURELOGIC_ASSET_REGISTRY_ENABLED is on.
+// It LAUNCHES the canonical registry onboarding (/assets/new → create manually,
+// import CSV, or connect enterprise systems) — the wizard owns no onboarding
+// logic of its own. Vendors and AI systems are asset types within it.
+const ASSET_INVENTORY_STEP: Step = {
+  title: "Build your asset inventory",
+  description: "Add assets manually, import from CSV, or connect enterprise systems — vendors and AI systems are asset types in your registry.",
+  cta: "Open Asset Registry →",
+  href: "/assets/new",
+};
+
 const STEPS: Step[] = [
   {
     title: "Activate a framework",
@@ -23,12 +42,7 @@ const STEPS: Step[] = [
     cta: "Choose Framework →",
     href: "/frameworks",
   },
-  {
-    title: "Add your first vendor",
-    description: "Track the third-party vendors that have access to your systems or data.",
-    cta: "Add Vendor →",
-    href: "/vendors/new",
-  },
+  VENDOR_STEP,
   {
     title: "Add a security control",
     description: "Define the security controls your organization has in place.",
@@ -79,10 +93,25 @@ export default async function GettingStartedPage() {
     snapshot_date: null,
   };
 
-  const completed = getOnboardingStepCompletion(inventory, posture);
+  // EAR P12/P13: when the Asset Registry is enabled, step 2 becomes the asset
+  // inventory step that launches the canonical registry onboarding. Dark default
+  // → the legacy vendor step, unchanged. The engine 404s /api/assets while the
+  // registry is off, so the extra read only happens when the flag is on.
+  const registryEnabled = process.env.SECURELOGIC_ASSET_REGISTRY_ENABLED === "true";
+  const assetsRead = registryEnabled ? await getAssets(token, { limit: 1 }) : null;
+  const assetsTotal = assetsRead && assetsRead.ok ? assetsRead.total : 0;
+
+  const steps: Step[] = registryEnabled
+    ? STEPS.map((s, i) => (i === 1 ? ASSET_INVENTORY_STEP : s))
+    : STEPS;
+
+  const completed = getOnboardingStepCompletion(inventory, posture, {
+    assetRegistryEnabled: registryEnabled,
+    assetsTotal,
+  });
   const completedCount = completed.filter(Boolean).length;
-  const allDone = completedCount === STEPS.length;
-  const progressPct = (completedCount / STEPS.length) * 100;
+  const allDone = completedCount === steps.length;
+  const progressPct = (completedCount / steps.length) * 100;
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-12">
@@ -100,7 +129,7 @@ export default async function GettingStartedPage() {
       <div className="mb-8">
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs" style={{ color: "#64748b" }}>
-            {completedCount} of {STEPS.length} steps complete
+            {completedCount} of {steps.length} steps complete
           </span>
           {allDone && (
             <span className="text-xs font-semibold" style={{ color: "#00c4b4" }}>
@@ -118,7 +147,7 @@ export default async function GettingStartedPage() {
 
       {/* Checklist */}
       <div className="space-y-3 mb-8">
-        {STEPS.map((step, i) => {
+        {steps.map((step, i) => {
           const isDone = completed[i];
           return (
             <div

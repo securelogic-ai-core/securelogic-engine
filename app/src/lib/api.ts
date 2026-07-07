@@ -27,6 +27,7 @@ import {
   type EnterpriseContextStats,
 } from "./enterpriseContext";
 import { type AssetType, type CanonicalAsset, type DetailBackedType } from "./assetRegistry";
+import { type OrgConnector } from "./connectors";
 import type {
   RiskTrendsResponse,
   RiskKpisResponse,
@@ -5245,6 +5246,25 @@ export async function getConnectorHealth(token: string): Promise<ReadResult<Conn
     const res = await engineFetch(`/api/connectors/health`, token);
     if (!res.ok) return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
     return { ok: true, ...((await res.json()) as ConnectorHealthResponse) };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+/**
+ * GET /api/connectors — the org's connectors merged with the registry catalog
+ * (the "Connect Enterprise Systems" catalog behind /assets/connect). Double-
+ * fenced on the engine (ECL + asset-registry flags) + `enterprise_context`
+ * capability; a 404 → disabled, 403 → capability_required, classified by
+ * connectorsReadFailure.
+ */
+export async function getConnectors(
+  token: string,
+): Promise<ReadResult<{ connectors: OrgConnector[] }>> {
+  try {
+    const res = await engineFetch(`/api/connectors`, token);
+    if (!res.ok) return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    return { ok: true, ...((await res.json()) as { connectors: OrgConnector[] }) };
   } catch {
     return { ok: false, disabled: false, error: "network_error" };
   }
