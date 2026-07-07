@@ -9,7 +9,11 @@ behind flags (default off), additive-only migrations, backward compatibility, br
 `dataClassification` on every new table, operator actions ledgered never executed, **no
 production enablement (GATE B)**.
 
-Last updated: 2026-07-06 (**PROGRAM CORE COMPLETE** — Epics 1–7 shipped dark; close docs merged #524; develop @ `21e84fb4`).
+Last updated: 2026-07-07 (**RAISED-BAR COMPLETE** — the CORE-COMPLETE deferrals that were
+engineering (not operator-runtime) are now built to the raised completion bar; PRs #526–#537
+all merged to develop (backend #526–#536 + executive-dashboard UI #537). See the Raised-Bar
+ledger below and `erip-final-report.md` §Addendum). Prior milestone: PROGRAM CORE COMPLETE
+(Epics 1–7 shipped dark; close docs #524; develop @ `21e84fb4`).
 
 ## Program rulings / decision gates
 
@@ -51,6 +55,35 @@ production enablement; P9 entitlement-leg cutover.
 | E5 — deterministic forecast engine + posture forecast | IN PR | — | `forecastEngine.ts` (PURE OLS: slope/intercept/R², sample-+fit-scaled confidence, factual increasing/decreasing/stable via slope deadband, reasoning trace; guards <2 points + zero x-variance → insufficient_data; optional clamp). `GET /api/predictive/posture-forecast?horizon_days=N` (new flag `SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED` ×4; reads posture_snapshots series, x=days-since-first, y=overall_score clamped [0,100]). Read-only, no migration. Unit `forecastEngine.test.ts` (exact fit, clamp, trends, degenerate guards, confidence scaling, noise) + isolation `postureForecast.test.ts` (rising series → increasing projection >last; single snapshot → insufficient_data; org-scoped; bad horizon → 400) |
 | E6 — approval-gated orchestration ledger + create_action executor | IN PR | — | Migration `20260815` (`orchestration_proposals` — RLS NOT FORCE, app_request DML, dataClassification, forward-only status CHECK, proposal_type CHECK('create_action')). `orchestrationPolicy.ts` (PURE forward-only transition table + SoD rule + per-type payload validation). `routes/orchestration.ts`: POST propose→proposed, GET list, POST :id/approve (SoD-checked; approve→execute create_action [emits an `actions` row, source_type='manual', action_type='orchestration:create_action']→executed\|failed; audited), POST :id/reject. Flag `SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED` ×4. **No auto-execute — approval is structural (ERIP-AD-24); approver ≠ proposer (AD-25).** Unit `orchestrationPolicy.test.ts` (transitions/SoD/payload/lockstep) + isolation `orchestration.test.ts` (propose→self-approve 403→different-human executes real action→re-approve 409; reject terminal; org-isolated + RLS) |
 | E7 — labelled blast-radius / dependency graph | IN PR | — | `blastRadiusSummary.ts` (PURE: reachable count [root excluded], by-type, max depth, edge count; deterministic). `graphLabeling.ts` (batched per-type label lookup from canonical home tables — asset_registry_v/vendors/ai_systems/enterprise_entities/users; ERIP-AD-29). `GET /api/graph/blast-radius/:assetId?depth=N` (new flag `SECURELOGIC_KNOWLEDGE_GRAPH_ENABLED` ×4 + registry chain; maps asset→graph node EAR-AD-4, resolves outbound neighbourhood via the ECL resolver, labels nodes, summarizes). **NL answering deferred (ERIP-AD-30 safety gate).** Read-only, no migration. Unit `blastRadiusSummary.test.ts` + isolation `blastRadius.test.ts` (asset→vendor depends_on; vendor node labelled from vendors, root from registry; summary reachable_count=1; org-scoped 404) |
+
+## Raised-bar ledger (2026-07-07)
+
+Program owner raised the completion standard (a capability is complete only when fully
+engineered and operational immediately after credentials + operator settings + flags +
+customer systems — no framework/mock/deterministic-only/placeholder). Every §-deferred item
+that was *engineering* was built to that bar. Governance unchanged (dark, additive, CI 8/8,
+squash-merge, GATE B).
+
+| Item | Status | PR | Delivered |
+|---|---|---|---|
+| F1 — shared LLM service | **DONE ✅** | #526 | `llmService.ts` (instrumented Anthropic client, text+JSON, graceful degradation) — substrate for all LLM features |
+| F2 — risk history persistence | **DONE ✅** | #527 | `risk_history` (`20260816`) + daily snapshot worker (03:15) |
+| E4 — executive trends/KPIs/exports | **DONE ✅** | #528 | `GET /api/risk/trends`,`/kpis`,`/export`; real historical analysis over persisted snapshots |
+| E5a — predictive pipeline | **DONE ✅** | #529 | `risk_forecasts` (`20260817`); OLS+Holt RMSE-selected; inference worker (03:45) **re-fits each run = retraining**; confidence + explainability |
+| E5b — LLM-assisted insights | **DONE ✅** | #530 | `generatePredictiveInsights` — LLM narrative/recommendations grounded in forecasts; deterministic only as no-key fallback |
+| E6a — real executors | **DONE ✅** | #531 | ServiceNow/Jira/Teams/Slack/Email over SSRF-safe client; encrypted per-org integration config (`20260818`); evidence + escalation |
+| E6b — playbooks + scheduling | **DONE ✅** | #532 | Playbooks (`20260819`) + scheduler; runs create proposals (still human-approved) |
+| E7 — NL querying + graph reasoning | **DONE ✅** | #533 | `POST /api/graph/ask` — LLM-grounded NL answers + blast-radius/dependency/business-impact analysis; injection-safe; deterministic fallback |
+| E2a — bidirectional writeback | **DONE ✅** | #534 | `connector_writeback_intents` (`20260820`) + worker + adapter `writeback` (ServiceNow) + optimistic-concurrency conflict resolution; new flag `SECURELOGIC_CONNECTOR_WRITEBACK_ENABLED` |
+| E2b — dead-letter recovery | **DONE ✅** | #535 | `connector_dead_letters` (`20260821`) — capture + operator re-drive/ignore (`/api/connectors/dead-letters*`) |
+| E2c — connector health monitoring | **DONE ✅** | #536 | `GET /api/connectors/health` — per-connector band + reasons + org rollup |
+| UI — interactive executive dashboard | **DONE ✅** | #537 | Multi-view Next.js dashboard (all dimensions; KPIs/trend/heatmap/comparison/drill-down/export + predictive + connector health); dark behind app-side `SECURELOGIC_RISK_INTELLIGENCE_ENABLED`. App typecheck + knowledge-index drift + full suite (5,504) green |
+
+Raised-bar migrations: `20260816`–`20260821` (all additive, dataClassification-registered).
+Full unit suite **5,504 passing**; new isolation suites for risk history, forecasts, LLM
+narrative, executors + playbooks, graph ask, writeback, dead-letter, and connector health —
+all green. Remaining work is **operator-owned only** (credentials, settings, flags, systems,
+staging validation) — see `erip-final-report.md` §A4.
 
 ## Deferred / follow-up register
 

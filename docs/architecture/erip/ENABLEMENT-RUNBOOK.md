@@ -97,4 +97,58 @@ harmless when the flags are off and can be pruned per normal data-retention if d
 
 - The Epic-1 GATE B production enablement and the P9 entitlement-leg cutover (see the EAR runbook).
 - Orchestration per-org auto-approve (ERIP-AD-24 keeps approval structural until then).
-- Natural-language knowledge-graph answering (ERIP-AD-30 safety gate).
+
+---
+
+## 6. Raised-bar addendum (2026-07-07) — new flags, secrets, and validation
+
+The raised-bar work (final report Addendum, PRs #526–#536 + the executive-dashboard UI branch)
+added surfaces on top of the flags in §1. Enable in this extended order; each is independent
+and additionally gated per-org / per-integration where noted.
+
+### 6.1 New / extended flags & secrets (all default off / unset)
+
+| Flag / secret | Gates | Notes |
+|---|---|---|
+| `SECURELOGIC_RISK_INTELLIGENCE_ENABLED` (extended) | also `/api/risk/trends`, `/kpis`, `/export` (E4) | already in §1 for E3/E4; now also the executive time-series surfaces. |
+| `SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED` (extended) | also `/api/predictive/forecasts`, `/insights` (E5) | reads `risk_forecasts` produced by the inference worker. |
+| `SECURELOGIC_KNOWLEDGE_GRAPH_ENABLED` (extended) | also `POST /api/graph/ask` (E7 NL querying) | NL answering now shipped behind this flag; **injection-safe** (LLM sees only pre-resolved org-scoped graph evidence). |
+| `SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED` (extended) | also real executors + playbooks (E6a/b) | executors run only on a DIFFERENT human's approval (SoD). |
+| **`SECURELOGIC_CONNECTOR_WRITEBACK_ENABLED`** (NEW) | writeback worker + `POST/GET /api/connectors/:id/writeback` (E2a) | the ONLY external-mutation fence; on top of ECL + registry. |
+| **`ANTHROPIC_API_KEY`** (NEW secret) | LLM-assisted predictive insights (E5b) + graph NL answers (E7) | absent → both degrade to grounded deterministic output, never an error. Set on the engine AND worker services. |
+| **`SECURELOGIC_RISK_INTELLIGENCE_ENABLED`** (app-side) | the `/executive` dashboard nav entry | two-switch model: this app-side env reveals the nav item; the engine routes 404 independently until their own flags flip. |
+
+Workers registered but self-gating (zero DB access while off): risk-history snapshot (03:15),
+predictive inference/retraining (03:45), connector writeback (*/1), playbook scheduler (*/5).
+No worker acts until its flag is on.
+
+### 6.2 Per-org / per-integration operator settings (not env)
+
+- **Writeback:** enqueue intents via `POST /api/connectors/:id/writeback` (whitelisted external
+  fields only); the worker applies them only when the connector is `enabled` and the flag is on.
+- **Orchestration integrations:** per-org credentials on `orchestration_integrations`
+  (encrypted at rest); each integration has its own `enabled`.
+- **Playbooks:** per-org definitions + optional schedule; a run creates proposals (still approved).
+
+### 6.3 Staging validation for the new surfaces
+
+- **E4 executive:** with ≥2 `risk_history` snapshots, `GET /api/risk/trends` / `/kpis` return
+  per-dimension series + KPI deltas; `/export?format=csv` streams the history.
+- **E5 predictive:** after the inference worker runs, `GET /api/predictive/forecasts` and
+  `/insights` return RMSE-selected OLS/Holt forecasts + (with `ANTHROPIC_API_KEY`) an
+  LLM-authored, forecast-grounded narrative; re-runs sharpen as history grows.
+- **E6 executors:** approve a `servicenow_incident`/`jira_issue`/… proposal (by a DIFFERENT
+  human) → the real outbound call fires through the SSRF-safe client; audit records every step.
+- **E7 NL graph:** `POST /api/graph/ask {asset_id, question}` returns a grounded answer +
+  impact analysis; without a key the deterministic grounded answer is returned; cross-org 404.
+- **E2a writeback:** enqueue an intent, enable the flag → the worker PATCHes the source record;
+  an externally-drifted field is HELD as a conflict, never overwritten.
+- **E2b recovery:** a terminally-failed op appears in `GET /api/connectors/dead-letters`;
+  re-drive re-enqueues it. **E2c health:** `GET /api/connectors/health` bands the fleet.
+
+### 6.4 Reserved (still need a ruling)
+
+- Natural-language knowledge-graph answering is now SHIPPED behind `SECURELOGIC_KNOWLEDGE_GRAPH_ENABLED`
+  (ERIP-AD-30 satisfied by structured org-scoped grounding); enabling it in production is a
+  standard flag ruling.
+- Orchestration per-org auto-approve remains reserved (approval stays structural).
