@@ -20,6 +20,7 @@ import {
   getIntelligenceEventDetail,
   getExecutiveEventSummary
 } from "../lib/signals/intelligenceEventReader.js";
+import { forecastEventActivity, FORECASTABLE_ENTRY_TYPES } from "../lib/signals/eventHistorySeries.js";
 
 const router = Router();
 
@@ -81,10 +82,25 @@ export async function getExecutiveSummary(req: Request, res: Response): Promise<
   res.status(200).json(summary);
 }
 
+export async function getIntelligenceForecast(req: Request, res: Response): Promise<void> {
+  const entryType = typeof req.query["entry_type"] === "string" ? (req.query["entry_type"] as string) : "exploit_activity";
+  if (!FORECASTABLE_ENTRY_TYPES.has(entryType)) {
+    res.status(400).json({ error: "invalid_entry_type" });
+    return;
+  }
+  const forecast = await forecastEventActivity(
+    entryType,
+    parseDays(req.query["window_days"]) ?? 90,
+    parseDays(req.query["horizon_days"]) ?? 14
+  );
+  res.status(200).json(forecast);
+}
+
 const chain = [intelligenceEventsFeatureFlag, requireApiKey, attachOrganizationContext];
 
 router.get("/intelligence/events", ...chain, getEventsList);
 router.get("/intelligence/executive-summary", ...chain, getExecutiveSummary);
+router.get("/intelligence/forecast", ...chain, getIntelligenceForecast);
 router.get("/intelligence/events/:id", ...chain, getEventDetail);
 
 export default router;
