@@ -85,6 +85,21 @@ the flag, the event path is additive).
 Brief / executive / graph read events only when `SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED` is on.
 Default off ⇒ the projection does zero DB work and every downstream surface is unchanged.
 
+**IE-AD-10 — Authoritative 7-state lifecycle (added 2026-07-07).** The canonical event is THE
+intelligence model. Its lifecycle — `new → corroborating → confirmed → actively_exploited →
+mitigated → resolved → archived` (`intelligenceEventLifecycle.ts`) — is derived deterministically
+from accumulated evidence (distinct sources, authoritative sources, `ever_exploited`,
+`ever_patched`); `resolved`/`archived` come from a time-based aging pass; a new signal re-activates
+an aged event. Every downstream surface migrates to read events (IE-AD-8), each behind the same
+flag with byte-identical flag-off behavior:
+- **Brief** (`eventBriefSource`) maps events into the existing `CyberSignalForBrief` seam.
+- **Executive** (`getExecutiveEventSummary`) + **API/UI** (enriched `/events/:id`: lifecycle,
+  timeline, sources+citations, confidence, related findings, affected assets, recommended actions).
+- **Graph ask** (`eventGraphContext`) supplies neighbourhood events as citable LLM evidence.
+- **Predictive** (`eventHistorySeries`) forecasts event-level timeline counts, not signal spikes.
+- **Workflow** (`processEventLifecycleTriggers`) fires per-org findings + notifications ONCE per
+  event lifecycle transition (dedup ledger), not per raw signal.
+
 **IE-AD-9 — Notification policy replaces event-per-email.**
 Immediate alert **only** for customer-impacting *critical* events (deduped via a notification
 ledger keyed by event + org + channel); the daily digest summarizes events + org risk changes;

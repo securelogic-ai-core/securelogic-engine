@@ -17,6 +17,15 @@ Tracker: `docs/validation/intelligence-pipeline-hardening-tracker.md`.
   (org, event), updated not duplicated. Legacy `cyber_signal` findings untouched.
 - Migration `20260824_intelligence_event_notifications.sql` — ORG-scoped notification
   dedup ledger (RLS NOT FORCE + app_request grant). Prevents duplicate per-event sends.
+- Migration `20260825_intelligence_event_workflow_triggers.sql` — GLOBAL workflow-trigger
+  dedup ledger (one per event+lifecycle-state) so workflow follow-through fires once per
+  transition.
+- **Consumer read-swaps (all flag-gated, flag OFF = byte-identical legacy):** the
+  Intelligence Brief reads canonical events (else the legacy cyber_signals query); the
+  hourly worker projects signals → events, ages the lifecycle, and fires per-org
+  follow-through (findings + notifications) once per lifecycle transition; the executive-
+  summary, forecast, event list/detail, and graph-ask surfaces read events. With the flag
+  OFF none of this runs (zero DB work) and every legacy surface is unchanged.
 - Flag `SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED` (default `"false"` ×4 ingestion services).
   When on, the hourly intelligence-worker projects GLOBAL cyber_signals into events.
 - Flag `SECURELOGIC_BRIEF_CATCHUP_ENABLED` (default `"false"` ×2 engine services).
@@ -54,6 +63,7 @@ Fully reversible at every stage:
   migration needed — the event tables simply stop being written/read.
 - **Remove (optional):** the tables are additive and referenced by nothing in the legacy path:
   ```sql
+  DROP TABLE IF EXISTS intelligence_event_workflow_triggers;
   DROP TABLE IF EXISTS intelligence_event_notifications;
   DROP INDEX IF EXISTS idx_findings_intelligence_event_unique;
   DROP TABLE IF EXISTS intelligence_event_timeline;
@@ -69,7 +79,7 @@ Fully reversible at every stage:
 
 | # | Action | Owner | Status |
 |---|---|---|---|
-| O-1 | Apply migration `20260822` in staging then prod | operator (DB creds) | NOT DONE |
+| O-1 | Apply migrations `20260822`–`20260825` in staging then prod (all additive, safe while dark) | operator (DB creds) | NOT DONE |
 | O-2 | Staging validation of Intelligence Event projection (§2) | operator | NOT DONE |
 | O-3 | Run `npm run intelligence-events:project` backfill in staging/prod | operator | NOT DONE |
 | O-4 | Production enablement of `SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED` (GATE B) | operator | NOT DONE |

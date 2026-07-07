@@ -21,13 +21,21 @@ enablement (GATE B)**.
 | `SECURELOGIC_BRIEF_CATCHUP_ENABLED` | `false` | Boot-time recovery of a missed weekly Tuesday brief send | engine + engine-staging (2 — only services that boot the scheduler) |
 | `SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED` | `false` | Canonical Intelligence Event projection + findings + notifications + downstream reads | 4 ingestion services |
 
+## Lifecycle states (authoritative)
+
+`new → corroborating → confirmed → actively_exploited → mitigated → resolved →
+archived` (`intelligenceEventLifecycle.ts`). Derived from accumulated evidence
+(source count, authoritative sources, ever_exploited, ever_patched); resolved/
+archived come from the time-based aging pass; never regressed except re-emergence.
+
 ## Migrations (additive, dark)
 
 | Migration | Adds |
 |---|---|
-| `20260822_intelligence_events.sql` | 3 GLOBAL tables: events, sources ledger, timeline |
+| `20260822_intelligence_events.sql` | 3 GLOBAL tables: events (7-state lifecycle + ever_exploited/ever_patched), sources ledger, timeline |
 | `20260823_findings_intelligence_event.sql` | findings source_type 'intelligence_event' + partial unique dedup index |
 | `20260824_intelligence_event_notifications.sql` | ORG-scoped notification dedup ledger (RLS + app_request grant) |
+| `20260825_intelligence_event_workflow_triggers.sql` | GLOBAL workflow-trigger dedup ledger (one per event+state) |
 
 ## Goal-item ↔ slice map
 
@@ -39,9 +47,22 @@ enablement (GATE B)**.
 | 4 — Timeline | **BUILT (dark)** | `intelligence_event_timeline` (first_seen/corroborated/exploit/patch/severity/status) |
 | 5 — Executive summaries | **BUILT (dark)** | `buildEventSummary` (normalized, cited, display-safe) on every event + `enhanceEventSummaryLLM` overlay |
 | 6 — Content quality | **BUILT (dark)** | `contentQuality.ts` — never a broken sentence; replaces slice(0,497)+"…" |
-| 7 — Findings from events (dedup) | **BUILT (dark)** | `20260823` dedup index + `eventFinding`/`eventFindingStore` (upsert one finding per org+event) |
-| 8 — Downstream integration | **FOUNDATION BUILT (dark)** | `intelligenceEventReader` + `GET /api/intelligence/events[/:id]`; per-surface brief/exec/graph swap = follow-up on enable |
-| 9 — Notifications | **BUILT (dark)** | reliability (idempotent send + catch-up + delivery health) + policy `decideNotification` + dedup ledger `20260824` |
+| 7 — Findings from events (dedup) | **BUILT (dark)** | `20260823` dedup index + `eventFinding`/`eventFindingStore` (one finding per org+event); fired by lifecycle workflow |
+| 8 — Downstream integration | **BUILT (dark)** | enriched detail API (lifecycle/timeline/sources/confidence/citations/findings/assets/actions); consumers below |
+| 9 — Notifications | **BUILT (dark)** | reliability + policy `decideNotification` + dedup ledger `20260824`; fired by lifecycle workflow |
+
+## Authoritative-model consumer migrations (every downstream reads events when flag ON)
+
+| Consumer | Status | Where |
+|---|---|---|
+| Intelligence Brief (item 1) | **BUILT (dark)** | `eventBriefSource.fetchBriefEventRows` → `generateBrief`; flag OFF = legacy cyber_signals query |
+| Executive dashboards (item 2) | **BUILT (dark)** | `getExecutiveEventSummary` + `GET /api/intelligence/executive-summary` |
+| Knowledge Graph / graph ask (item 3) | **BUILT (dark)** | `eventGraphContext` → `answerGraphQuestion` events evidence in `/api/graph/ask` |
+| Findings (item 4) | **BUILT (dark)** | `reconcileEventFindingForOrg` — one per org+event, update-not-duplicate |
+| Notifications (item 5) | **BUILT (dark)** | `evaluateAndClaimNotification` — policy + dedup ledger |
+| Predictive Intelligence (item 6) | **BUILT (dark)** | `eventHistorySeries` (timeline counts, not signal spikes) + `GET /api/intelligence/forecast` |
+| Workflow Automation (item 7) | **BUILT (dark)** | `processEventLifecycleTriggers` — once per event lifecycle transition, fans out findings + notifications |
+| APIs/UI (item 8) | **BUILT (dark)** | `GET /api/intelligence/events[/:id]` + executive-summary + forecast |
 
 ## Slice ledger
 
