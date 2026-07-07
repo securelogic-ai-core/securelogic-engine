@@ -22,6 +22,7 @@
 
 import { eventCanonicalKey, peakSeverity, severityRank, type EventIdentityInput } from "./intelligenceEventIdentity.js";
 import { assessContent, trimToSentence, type ContentStatus } from "./contentQuality.js";
+import { buildEventSummary } from "./eventExecutiveSummary.js";
 
 /** Max length of the generated event title. */
 const TITLE_MAX = 160;
@@ -175,9 +176,23 @@ export function planEventUpsert(
   }
   const statusChanged = !isNew && status !== existing!.status;
 
-  const q = assessContent(signal.summary);
   const title = buildTitle(signal);
   const confidence = confidenceFor(distinctAfter, singleton);
+
+  // Normalized, citation-preserving executive summary (IE-AD-6): never raw feed
+  // text as the primary field. Sources = the distinct set after this signal.
+  const summarySources = isNew
+    ? [signal.source]
+    : [...existing!.distinctSources, signal.source];
+  const built = buildEventSummary({
+    title,
+    rawSummary: signal.summary,
+    severity,
+    status,
+    affected_vendor: signal.affected_vendor,
+    affected_cve: signal.affected_cve,
+    sources: summarySources
+  });
 
   const event: PlannedEventFields = {
     title,
@@ -185,8 +200,8 @@ export function planEventUpsert(
     severity,
     status,
     // The primary customer field is always a normalized, display-safe summary.
-    executive_summary: q.status === "degraded" ? title : q.displayText,
-    summary_status: q.status,
+    executive_summary: built.summary,
+    summary_status: built.summary_status,
     affected_cve: signal.affected_cve,
     affected_vendor: signal.affected_vendor,
     source_count,

@@ -137,6 +137,9 @@ describe("planEventUpsert — degenerate content", () => {
     );
     expect(p.event.title).toContain("CVE-2026-7007");
     expect(p.event.summary_status).toBe("degraded");
-    expect(p.event.executive_summary).toBe(p.event.title);
+    // Degraded raw → a display-safe STRUCTURED summary (never raw "..."), citing the source.
+    expect(p.event.executive_summary).toContain("CVE-2026-7007");
+    expect(p.event.executive_summary).toContain("Sources:");
+    expect(p.event.executive_summary).not.toContain("...");
   });
 });
