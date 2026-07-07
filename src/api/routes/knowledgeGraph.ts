@@ -27,6 +27,8 @@ import { summarizeBlastRadius } from "../lib/blastRadiusSummary.js";
 import { ownRiskForNodes } from "../lib/assetOwnRisk.js";
 import { analyzeGraphImpact, type EnrichedNode } from "../lib/graphImpactAnalysis.js";
 import { answerGraphQuestion } from "../lib/graphNlAnswer.js";
+import { intelligenceEventsEnabled } from "../lib/signals/intelligenceEventsFeatureFlag.js";
+import { fetchEventsForVendors, vendorNamesFromLabels } from "../lib/signals/eventGraphContext.js";
 
 const router = Router();
 
@@ -183,12 +185,22 @@ export async function askGraph(req: Request, res: Response): Promise<void> {
   }));
 
   const analysis = analyzeGraphImpact(enriched, neighbourhood.edges);
-  const answer = await answerGraphQuestion(rootLabel, question, analysis);
+
+  // Item 3: ground the answer in canonical Intelligence Events for the
+  // neighbourhood's vendors (deduplicated, normalized) when the flag is on.
+  let events: Awaited<ReturnType<typeof fetchEventsForVendors>> = [];
+  if (intelligenceEventsEnabled()) {
+    const vendorNames = vendorNamesFromLabels([rootLabel, ...enriched.map((n) => n.label)]);
+    events = await fetchEventsForVendors(vendorNames);
+  }
+
+  const answer = await answerGraphQuestion(rootLabel, question, analysis, {}, events);
 
   res.status(200).json({
     asset_id: id,
     question,
     answer,
+    intelligence_events: events,
     analysis: {
       business_impact_score: analysis.business_impact_score,
       business_impact_band: analysis.business_impact_band,
