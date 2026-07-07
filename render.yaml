@@ -203,6 +203,8 @@ services:
         value: "false"
       - key: SECURELOGIC_CONNECTOR_SCHEDULED_SYNC_ENABLED # ERIP E2.P1 (scheduled connector sync) — DARK (default off); triple fence: also requires ECL + asset-registry flags
         value: "false"
+      - key: SECURELOGIC_CONNECTOR_WRITEBACK_ENABLED  # ERIP E2a (bidirectional connector writeback) — DARK (default off); only external-mutation fence; also requires ECL + asset-registry flags
+        value: "false"
       - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
         value: "false"
       - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
@@ -415,6 +417,8 @@ services:
         value: "false"
       - key: SECURELOGIC_CONNECTOR_SCHEDULED_SYNC_ENABLED # ERIP E2.P1 (scheduled connector sync) — DARK (default off); triple fence: also requires ECL + asset-registry flags
         value: "false"
+      - key: SECURELOGIC_CONNECTOR_WRITEBACK_ENABLED  # ERIP E2a (bidirectional connector writeback) — DARK (default off); only external-mutation fence; also requires ECL + asset-registry flags
+        value: "false"
       - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
         value: "false"
       - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
@@ -532,6 +536,8 @@ services:
         value: "false"
       - key: SECURELOGIC_CONNECTOR_SCHEDULED_SYNC_ENABLED # ERIP E2.P1 (scheduled connector sync) — DARK (default off); triple fence: also requires ECL + asset-registry flags
         value: "false"
+      - key: SECURELOGIC_CONNECTOR_WRITEBACK_ENABLED  # ERIP E2a (bidirectional connector writeback) — DARK (default off); only external-mutation fence; also requires ECL + asset-registry flags
+        value: "false"
       - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
         value: "false"
       - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
@@ -638,6 +644,8 @@ services:
       - key: SECURELOGIC_ASSET_REGISTRY_ENABLED       # EAR Phase 0 (asset registry) — DARK (default off); GATE B posture, do NOT enable in prod under the EAR goal
         value: "false"
       - key: SECURELOGIC_CONNECTOR_SCHEDULED_SYNC_ENABLED # ERIP E2.P1 (scheduled connector sync) — DARK (default off); triple fence: also requires ECL + asset-registry flags
+        value: "false"
+      - key: SECURELOGIC_CONNECTOR_WRITEBACK_ENABLED  # ERIP E2a (bidirectional connector writeback) — DARK (default off); only external-mutation fence; also requires ECL + asset-registry flags
         value: "false"
       - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
         value: "false"
