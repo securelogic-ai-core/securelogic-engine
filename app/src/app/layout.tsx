@@ -50,6 +50,7 @@ export default async function RootLayout({
   const navFlags = {
     enterprise_context: process.env.SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED === "true",
     asset_registry: process.env.SECURELOGIC_ASSET_REGISTRY_ENABLED === "true",
+    risk_intelligence: process.env.SECURELOGIC_RISK_INTELLIGENCE_ENABLED === "true",
   };
 
   return (

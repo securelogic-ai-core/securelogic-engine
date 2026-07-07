@@ -27,6 +27,13 @@ import {
   type EnterpriseContextStats,
 } from "./enterpriseContext";
 import { type AssetType, type CanonicalAsset } from "./assetRegistry";
+import type {
+  RiskTrendsResponse,
+  RiskKpisResponse,
+  PredictiveInsightsResponse,
+  PostureForecastResponse,
+  ConnectorHealthResponse,
+} from "./executiveRisk";
 
 const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
 
@@ -5103,4 +5110,70 @@ export function commitEnterpriseImport(
   file: File,
 ): Promise<ActionResult<ImportPlan>> {
   return runEnterpriseImport(entity_type, "commit", file);
+}
+
+// =========================================================
+// ERIP Executive Risk dashboard reads (Server Components)
+//
+// All dark behind their engine feature flags (risk-intelligence /
+// predictive-intelligence / knowledge-graph / connectors), so each returns the
+// ReadResult<T> union: { ok:false, disabled:true } == the engine 404'd (feature
+// off / not granted → the page hides the panel); { ok:false, disabled:false }
+// is a real error. Types live in ./executiveRisk (client-safe, shared with the
+// chart components).
+// =========================================================
+
+/** GET /api/risk/trends — per-dimension executive trend lines over risk_history. */
+export async function getRiskTrends(token: string, days = 90): Promise<ReadResult<RiskTrendsResponse>> {
+  try {
+    const res = await engineFetch(`/api/risk/trends?days=${encodeURIComponent(String(days))}`, token);
+    if (!res.ok) return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    return { ok: true, ...((await res.json()) as RiskTrendsResponse) };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+/** GET /api/risk/kpis — executive KPI scorecard (enterprise current vs window start). */
+export async function getRiskKpis(token: string, days = 90): Promise<ReadResult<RiskKpisResponse>> {
+  try {
+    const res = await engineFetch(`/api/risk/kpis?days=${encodeURIComponent(String(days))}`, token);
+    if (!res.ok) return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    return { ok: true, ...((await res.json()) as RiskKpisResponse) };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+/** GET /api/predictive/insights — LLM-assisted (or deterministic) forecast narrative. */
+export async function getPredictiveInsights(token: string): Promise<ReadResult<PredictiveInsightsResponse>> {
+  try {
+    const res = await engineFetch(`/api/predictive/insights`, token);
+    if (!res.ok) return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    return { ok: true, ...((await res.json()) as PredictiveInsightsResponse) };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+/** GET /api/predictive/posture-forecast — posture score observations + projection. */
+export async function getPostureForecast(token: string, horizonDays = 30): Promise<ReadResult<PostureForecastResponse>> {
+  try {
+    const res = await engineFetch(`/api/predictive/posture-forecast?horizon_days=${encodeURIComponent(String(horizonDays))}`, token);
+    if (!res.ok) return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    return { ok: true, ...((await res.json()) as PostureForecastResponse) };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+/** GET /api/connectors/health — per-connector health band + org rollup. */
+export async function getConnectorHealth(token: string): Promise<ReadResult<ConnectorHealthResponse>> {
+  try {
+    const res = await engineFetch(`/api/connectors/health`, token);
+    if (!res.ok) return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    return { ok: true, ...((await res.json()) as ConnectorHealthResponse) };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
 }
