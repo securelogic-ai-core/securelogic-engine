@@ -39,6 +39,7 @@ import {
 // Mirrors processSignal phase 7, which runs the control matcher AFTER its commit.
 import { runLlmControlMatcherForSignal } from "../../../../src/api/lib/llmControlMatcher.js";
 import { buildDedupHash } from "../../../../src/api/lib/cyberSignalNormalizer.js";
+import { projectUnprojectedGlobalSignals } from "../../../../src/api/lib/signals/intelligenceEventStore.js";
 import { createAlertBatcher } from "../../../../src/api/lib/alerting/alertService.js";
 import { matcherAlertsEnabled } from "../../../../src/api/lib/alerting/matcherAlertsFeatureFlag.js";
 
@@ -606,6 +607,31 @@ export async function runPipeline(): Promise<PipelineResult> {
     }
   } catch (err) {
     logger.error({ event: "cyber_signal_bridge_error", err }, "cyber_signals bridge failed");
+  }
+
+  // Canonical Intelligence Event projection (Pipeline Hardening / IE) — DARK.
+  // Self-gates on SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED (zero DB work when
+  // off). Projects the just-bridged GLOBAL cyber_signals into the
+  // intelligence_events layer (corroboration ledger + timeline). Best-effort:
+  // a failure never breaks the pipeline.
+  try {
+    const projection = await projectUnprojectedGlobalSignals();
+    if (projection.skipped !== "disabled") {
+      logger.info(
+        {
+          event: "intelligence_event_projection",
+          projected: projection.projected,
+          created: projection.created,
+          corroborated: projection.corroborated
+        },
+        "Intelligence Event projection pass complete"
+      );
+    }
+  } catch (err) {
+    logger.error(
+      { event: "intelligence_event_projection_error", err },
+      "Intelligence Event projection failed (non-fatal)"
+    );
   }
 
   logger.info({
