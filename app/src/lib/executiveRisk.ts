@@ -240,6 +240,60 @@ export function seriesToPoints(
   });
 }
 
+/**
+ * Per-dimension KPI scorecard — current (last) vs window-start (first) point of
+ * ANY dimension's trend, not just enterprise. Mirrors the engine's
+ * buildKpiScorecard so every executive view (cloud, AI, application, vendor,
+ * operational, …) gets its own scorecard from the shared risk_history series.
+ */
+export function dimensionKpis(trend: DimensionTrend): KpiCard[] {
+  const pts = trend.points;
+  const cur = trend.current ?? pts[pts.length - 1] ?? null;
+  const prior = pts.length > 1 ? pts[0]! : cur;
+  const c = cur ?? { snapshot_date: "", asset_count: 0, at_risk_count: 0, max_risk: 0, avg_risk: 0 };
+  const p = prior ?? c;
+  const card = (key: string, label: string, value: number, priorValue: number): KpiCard => {
+    const change = value - priorValue;
+    const direction: TrendDirection = Math.abs(change) < 2 ? "flat" : change > 0 ? "up" : "down";
+    return { key, label, value, change, direction };
+  };
+  return [
+    card("total_assets", "Total assets", c.asset_count, p.asset_count),
+    card("at_risk_assets", "Assets at risk", c.at_risk_count, p.at_risk_count),
+    card("peak_risk", "Peak risk", c.max_risk, p.max_risk),
+    card("average_risk", "Average risk", c.avg_risk, p.avg_risk),
+  ];
+}
+
+const COMPARISON_METRIC_LABEL: Record<string, string> = {
+  asset_count: "Total assets",
+  at_risk_count: "Assets at risk",
+  max_risk: "Peak risk",
+  avg_risk: "Average risk",
+};
+export function comparisonMetricLabel(metric: string): string {
+  return COMPARISON_METRIC_LABEL[metric] ?? metric.replace(/_/g, " ");
+}
+
+/**
+ * Period-over-period comparison for a dimension: window-start (first) vs current
+ * (last). `a` = current, `b` = prior, `delta` = a − b. Empty when there is < 2
+ * points (nothing to compare).
+ */
+export function dimensionComparison(trend: DimensionTrend): PeriodComparison[] {
+  const pts = trend.points;
+  if (pts.length < 2) return [];
+  const a = pts[pts.length - 1]!;
+  const b = pts[0]!;
+  const row = (metric: string, x: number, y: number): PeriodComparison => ({ metric, a: x, b: y, delta: x - y });
+  return [
+    row("asset_count", a.asset_count, b.asset_count),
+    row("at_risk_count", a.at_risk_count, b.at_risk_count),
+    row("max_risk", a.max_risk, b.max_risk),
+    row("avg_risk", a.avg_risk, b.avg_risk),
+  ];
+}
+
 export function priorityMeta(priority: Recommendation["priority"]): { label: string; color: string } {
   const MAP: Record<Recommendation["priority"], { label: string; color: string }> = {
     immediate: { label: "Immediate", color: "#dc2626" },

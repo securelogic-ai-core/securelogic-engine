@@ -38,7 +38,15 @@ function DirectionCell({ direction }: { direction: DimensionTrend["direction"] }
   );
 }
 
-export function RiskHeatmap({ trends }: { trends: DimensionTrend[] }) {
+export function RiskHeatmap({
+  trends,
+  onSelect,
+  selected,
+}: {
+  trends: DimensionTrend[];
+  onSelect?: (dimension: string) => void;
+  selected?: string;
+}) {
   const rows = trends.filter((t) => t.current !== null);
   if (rows.length === 0) {
     return (
@@ -64,9 +72,19 @@ export function RiskHeatmap({ trends }: { trends: DimensionTrend[] }) {
           {rows.map((t) => {
             const c = t.current!;
             const isEnterprise = t.dimension === "enterprise";
+            const isSelected = selected === t.dimension;
             return (
-              <tr key={t.dimension} className="border-t border-brand-line">
+              <tr
+                key={t.dimension}
+                onClick={onSelect ? () => onSelect(t.dimension) : undefined}
+                className="border-t border-brand-line"
+                style={{
+                  cursor: onSelect ? "pointer" : "default",
+                  background: isSelected ? "rgba(0,196,180,0.08)" : undefined,
+                }}
+              >
                 <td className="px-2 py-2 text-left font-medium" style={{ color: isEnterprise ? "#f1f5f9" : "#cbd5e1" }}>
+                  {isSelected && <span style={{ color: "#00c4b4" }}>› </span>}
                   {dimensionLabel(t.dimension)}
                 </td>
                 <Cell score={c.avg_risk} />

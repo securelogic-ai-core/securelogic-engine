@@ -1,10 +1,11 @@
 "use client";
 
 /**
- * RiskTrendChart.tsx — interactive per-dimension risk trend (avg_risk over the
+ * RiskTrendChart.tsx — one dimension's risk trend (avg_risk over the
  * risk_history window). Hand-rolled SVG (no chart lib, matching the app's
- * PostureTrendChart), with a dimension selector and a 30/60/90-day range toggle.
- * Drill-down: picking a dimension re-scopes the line and the summary deltas.
+ * PostureTrendChart), with a 30/60/90-day range toggle. The dimension is chosen
+ * by the parent ExecutiveDashboard view selector (controlled), so trend, KPIs,
+ * and comparison all move together.
  */
 
 import { useMemo, useState } from "react";
@@ -28,66 +29,29 @@ function formatLabel(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-export function RiskTrendChart({ trends }: { trends: DimensionTrend[] }) {
-  const withHistory = useMemo(() => trends.filter((t) => t.points.length > 0), [trends]);
-  const [dimension, setDimension] = useState<string>(withHistory[0]?.dimension ?? "");
+export function RiskTrendChart({ trend }: { trend: DimensionTrend }) {
   const [days, setDays] = useState<30 | 60 | 90>(90);
 
-  const selected = withHistory.find((t) => t.dimension === dimension) ?? withHistory[0];
-
   const filtered = useMemo(() => {
-    if (!selected) return [];
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - days);
-    return selected.points
+    return trend.points
       .filter((p) => new Date(p.snapshot_date) >= cutoff)
       .sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date));
-  }, [selected, days]);
-
-  if (!selected) {
-    return (
-      <div className="rounded-lg border border-dashed border-brand-line px-4 py-8 text-center">
-        <p className="text-xs" style={{ color: MUTED }}>
-          No history yet. Trends populate after the daily risk snapshot runs.
-        </p>
-      </div>
-    );
-  }
+  }, [trend, days]);
 
   const pts = seriesToPoints(filtered.map((p) => p.avg_risk), { width: W, height: H, padX: PAD_X, padY: PAD_Y });
   const current = filtered[filtered.length - 1];
 
   return (
     <div>
-      {/* Dimension selector */}
-      <div className="mb-3 flex flex-wrap gap-1.5">
-        {withHistory.map((t) => {
-          const active = t.dimension === selected.dimension;
-          return (
-            <button
-              key={t.dimension}
-              onClick={() => setDimension(t.dimension)}
-              className="rounded-full px-2.5 py-1 text-xs font-medium transition-colors"
-              style={{
-                background: active ? "rgba(0,196,180,0.15)" : "transparent",
-                color: active ? "#5eead4" : MUTED,
-                border: `1px solid ${active ? "rgba(0,196,180,0.4)" : LINE}`,
-              }}
-            >
-              {dimensionLabel(t.dimension)}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Header: current value + range toggle */}
       <div className="mb-2 flex items-center justify-between">
         <div className="flex items-baseline gap-2">
           <span className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>
             {current ? round1(current.avg_risk) : "—"}
           </span>
           <span className="text-xs" style={{ color: MUTED }}>
-            avg risk · {filtered.length} {filtered.length === 1 ? "snapshot" : "snapshots"}
+            {dimensionLabel(trend.dimension)} avg risk · {filtered.length} {filtered.length === 1 ? "snapshot" : "snapshots"}
           </span>
         </div>
         <div className="flex gap-1">
@@ -113,8 +77,7 @@ export function RiskTrendChart({ trends }: { trends: DimensionTrend[] }) {
           <p className="text-xs" style={{ color: MUTED }}>No snapshots in this window.</p>
         </div>
       ) : (
-        <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", overflow: "visible" }} aria-label={`${dimensionLabel(selected.dimension)} average risk over time`}>
-          {/* risk band guides at 30/60/80 */}
+        <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", overflow: "visible" }} aria-label={`${dimensionLabel(trend.dimension)} average risk over time`}>
           {[30, 60, 80].map((level) => {
             const y = PAD_Y + (H - PAD_Y * 2) - (level / 100) * (H - PAD_Y * 2);
             return <line key={level} x1={PAD_X} y1={y} x2={W - PAD_X} y2={y} stroke={LINE} strokeWidth="1" strokeDasharray="3 5" />;

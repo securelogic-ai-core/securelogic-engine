@@ -10,7 +10,11 @@ import {
   countRising,
   seriesToPoints,
   priorityMeta,
+  dimensionKpis,
+  dimensionComparison,
+  comparisonMetricLabel,
   type DimensionTrend,
+  type HistoryPoint,
 } from "../executiveRisk";
 
 describe("riskBand", () => {
@@ -112,5 +116,65 @@ describe("priorityMeta", () => {
   it("labels every priority", () => {
     expect(priorityMeta("immediate").label).toBe("Immediate");
     expect(priorityMeta("watch").label).toBe("Watch");
+  });
+});
+
+const pt = (over: Partial<HistoryPoint>): HistoryPoint => ({
+  snapshot_date: "2026-01-01", asset_count: 0, at_risk_count: 0, max_risk: 0, avg_risk: 0, ...over,
+});
+const trendWith = (points: HistoryPoint[]): DimensionTrend => ({
+  dimension: "cloud_resource",
+  points,
+  current: points[points.length - 1] ?? null,
+  avg_risk_change: 0,
+  at_risk_change: 0,
+  direction: "flat",
+});
+
+describe("dimensionKpis", () => {
+  it("scores current vs window-start for ANY dimension (not just enterprise)", () => {
+    const t = trendWith([
+      pt({ snapshot_date: "2026-01-01", asset_count: 10, at_risk_count: 2, max_risk: 40, avg_risk: 20 }),
+      pt({ snapshot_date: "2026-02-01", asset_count: 12, at_risk_count: 5, max_risk: 70, avg_risk: 35 }),
+    ]);
+    const kpis = dimensionKpis(t);
+    const avg = kpis.find((k) => k.key === "average_risk")!;
+    expect(avg.value).toBe(35);
+    expect(avg.change).toBe(15); // 35 − 20
+    expect(avg.direction).toBe("up");
+    const atRisk = kpis.find((k) => k.key === "at_risk_assets")!;
+    expect(atRisk.value).toBe(5);
+    expect(atRisk.change).toBe(3);
+  });
+  it("zero change (single point) → flat, change 0", () => {
+    const kpis = dimensionKpis(trendWith([pt({ avg_risk: 50, asset_count: 3 })]));
+    expect(kpis.every((k) => k.change === 0)).toBe(true);
+    expect(kpis.every((k) => k.direction === "flat")).toBe(true);
+  });
+});
+
+describe("dimensionComparison", () => {
+  it("returns per-metric window-start vs now deltas", () => {
+    const t = trendWith([
+      pt({ asset_count: 10, at_risk_count: 2, max_risk: 40, avg_risk: 20 }),
+      pt({ asset_count: 12, at_risk_count: 5, max_risk: 70, avg_risk: 35 }),
+    ]);
+    const cmp = dimensionComparison(t);
+    const avg = cmp.find((c) => c.metric === "avg_risk")!;
+    expect(avg.a).toBe(35); // now
+    expect(avg.b).toBe(20); // window start
+    expect(avg.delta).toBe(15);
+  });
+  it("empty when < 2 points", () => {
+    expect(dimensionComparison(trendWith([pt({})]))).toEqual([]);
+    expect(dimensionComparison(trendWith([]))).toEqual([]);
+  });
+});
+
+describe("comparisonMetricLabel", () => {
+  it("labels known metrics and degrades", () => {
+    expect(comparisonMetricLabel("avg_risk")).toBe("Average risk");
+    expect(comparisonMetricLabel("at_risk_count")).toBe("Assets at risk");
+    expect(comparisonMetricLabel("weird_metric")).toBe("weird metric");
   });
 });
