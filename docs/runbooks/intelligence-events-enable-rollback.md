@@ -12,6 +12,11 @@ Tracker: `docs/validation/intelligence-pipeline-hardening-tracker.md`.
 - Migration `20260822_intelligence_events.sql` — 3 GLOBAL tables
   (`intelligence_events`, `intelligence_event_sources`, `intelligence_event_timeline`).
   Additive; created empty; nothing reads/writes them until the flag is on.
+- Migration `20260823_findings_intelligence_event.sql` — additive `findings.source_type`
+  value `'intelligence_event'` + a partial unique dedup index. Enables one finding per
+  (org, event), updated not duplicated. Legacy `cyber_signal` findings untouched.
+- Migration `20260824_intelligence_event_notifications.sql` — ORG-scoped notification
+  dedup ledger (RLS NOT FORCE + app_request grant). Prevents duplicate per-event sends.
 - Flag `SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED` (default `"false"` ×4 ingestion services).
   When on, the hourly intelligence-worker projects GLOBAL cyber_signals into events.
 - Flag `SECURELOGIC_BRIEF_CATCHUP_ENABLED` (default `"false"` ×2 engine services).
@@ -49,11 +54,16 @@ Fully reversible at every stage:
   migration needed — the event tables simply stop being written/read.
 - **Remove (optional):** the tables are additive and referenced by nothing in the legacy path:
   ```sql
+  DROP TABLE IF EXISTS intelligence_event_notifications;
+  DROP INDEX IF EXISTS idx_findings_intelligence_event_unique;
   DROP TABLE IF EXISTS intelligence_event_timeline;
   DROP TABLE IF EXISTS intelligence_event_sources;
   DROP TABLE IF EXISTS intelligence_events;
   ```
-  No legacy table, index, or constraint was modified, so removal restores the exact pre-epic schema.
+  The only shared table touched is `findings` (an additive CHECK value + a partial index);
+  event-sourced findings can be dropped with
+  `DELETE FROM findings WHERE source_type='intelligence_event';` — legacy `cyber_signal`
+  findings are untouched. Removal otherwise restores the exact pre-epic schema.
 
 ## 5. Operator ledger (documented, NEVER executed by the program)
 

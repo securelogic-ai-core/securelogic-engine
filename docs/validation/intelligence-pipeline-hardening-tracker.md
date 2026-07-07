@@ -19,7 +19,15 @@ enablement (GATE B)**.
 | Flag | Default | Purpose | Declared |
 |---|---|---|---|
 | `SECURELOGIC_BRIEF_CATCHUP_ENABLED` | `false` | Boot-time recovery of a missed weekly Tuesday brief send | engine + engine-staging (2 — only services that boot the scheduler) |
-| `SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED` | `false` | Canonical Intelligence Event projection + downstream reads | 4 ingestion services |
+| `SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED` | `false` | Canonical Intelligence Event projection + findings + notifications + downstream reads | 4 ingestion services |
+
+## Migrations (additive, dark)
+
+| Migration | Adds |
+|---|---|
+| `20260822_intelligence_events.sql` | 3 GLOBAL tables: events, sources ledger, timeline |
+| `20260823_findings_intelligence_event.sql` | findings source_type 'intelligence_event' + partial unique dedup index |
+| `20260824_intelligence_event_notifications.sql` | ORG-scoped notification dedup ledger (RLS + app_request grant) |
 
 ## Goal-item ↔ slice map
 
@@ -29,11 +37,11 @@ enablement (GATE B)**.
 | 2 — Source corroboration | **BUILT (dark)** | `intelligence_event_sources` ledger (attribution/revisions preserved) |
 | 3 — Deduplication / update-detection | **BUILT (dark)** | total identity + idempotent re-projection (update-not-duplicate) |
 | 4 — Timeline | **BUILT (dark)** | `intelligence_event_timeline` (first_seen/corroborated/exploit/patch/severity/status) |
-| 5 — Executive summaries | **BASELINE BUILT** · LLM enhancement = IE.P5 | `contentQuality` display-safe summary on the event; LLM narrative pending |
+| 5 — Executive summaries | **BUILT (dark)** | `buildEventSummary` (normalized, cited, display-safe) on every event + `enhanceEventSummaryLLM` overlay |
 | 6 — Content quality | **BUILT (dark)** | `contentQuality.ts` — never a broken sentence; replaces slice(0,497)+"…" |
-| 7 — Findings from events (dedup) | **PENDING (IE.P6)** | — |
-| 8 — Downstream integration | **PENDING (IE.P7)** | brief/exec/graph read events when flag on |
-| 9 — Notifications | **RELIABILITY BUILT** · policy = IE.P7 | idempotent send + catch-up + delivery health; immediate/daily/weekly policy pending |
+| 7 — Findings from events (dedup) | **BUILT (dark)** | `20260823` dedup index + `eventFinding`/`eventFindingStore` (upsert one finding per org+event) |
+| 8 — Downstream integration | **FOUNDATION BUILT (dark)** | `intelligenceEventReader` + `GET /api/intelligence/events[/:id]`; per-surface brief/exec/graph swap = follow-up on enable |
+| 9 — Notifications | **BUILT (dark)** | reliability (idempotent send + catch-up + delivery health) + policy `decideNotification` + dedup ledger `20260824` |
 
 ## Slice ledger
 
@@ -45,16 +53,30 @@ enablement (GATE B)**.
 | IE.P2 — content-quality core | **DONE** | `4bb277fb` | `assessContent` / `trimToSentence` |
 | IE.P3 — schema + projection core | **DONE** | `4bb277fb` | 3 global tables (`20260822`) + `planEventUpsert`; dataClassification registered |
 | IE.P4 — store + projection wiring | **DONE** | `814454e1` | store + batch entrypoint + hourly worker wiring + script + isolation test |
-| IE.P5 — LLM-enhanced executive summaries | **PENDING** | — | reuse `llmService`, deterministic fallback, citations preserved |
-| IE.P6 — findings from events (dedup-by-update) | **PENDING** | — | event→finding, update not duplicate |
-| IE.P7 — downstream reads + notification policy | **PENDING** | — | brief/exec read events; immediate-critical + daily digest + weekly separate; notification ledger |
+| IE.P5 — executive summaries (deterministic + LLM overlay) | **DONE** | `0a6bf3a9` | `eventExecutiveSummary` + `eventExecutiveSummaryLlm`; wired into projection |
+| IE.P6 — findings from events (dedup-by-update) | **DONE** | `fa3eb403` | `20260823` + `eventFinding`/`eventFindingStore` + isolation test |
+| IE.P7 — notification policy + dedup ledger | **DONE** | `241023ff` | `eventNotificationPolicy` + `20260824` ledger + `eventNotificationStore` |
+| IE.P7 — canonical event read API (item 8) | **DONE** | `1aa9625a` | `intelligenceEventReader` + `routes/intelligenceEvents` |
+
+## Enablement follow-ups (documented, on-enable)
+
+- Wire `enhanceEventSummaryLLM` into a post-projection summary-refresh pass (deterministic
+  summary is already live; LLM overlay is opt-in on enablement with an ANTHROPIC key).
+- Wire `reconcileOrgEventFindings` + `evaluateAndClaimNotification` into a per-org cadence
+  (worker/cron) once projection is validated in staging.
+- Swap the brief / executive / graph read paths to consume `intelligenceEventReader`
+  (foundation shipped; per-surface swap is incremental and reversible).
 
 ## Tests
 
-- Unit (local, mocked/injected): identity (13), content-quality (13), projection (7),
-  store (4), brief reliability (20) — all green. Full signals + worker suites green (153).
-- Integration (CI isolation lane, real Postgres): `test/isolation/intelligenceEventProjection.test.ts`
-  — multi-source collapse, corroboration ledger, timeline, idempotency, flag-gated batch.
+- Unit (local, mocked/injected): identity, content-quality, projection, store, executive
+  summary + LLM overlay, event-finding, notification policy, event-read route, brief
+  reliability — signals + route + dataClassification suites green (163); worker suite green.
+- Integration (CI isolation lane, real Postgres):
+  `test/isolation/intelligenceEventProjection.test.ts` (multi-source collapse, corroboration
+  ledger, timeline, idempotency, flag-gated batch), `eventFindingReconcile.test.ts`
+  (create→update dedup, org-isolated relevance), `eventNotificationLedger.test.ts`
+  (claim-once/suppress-duplicate, org-isolated).
 
 ## Follow-ups / notes
 
