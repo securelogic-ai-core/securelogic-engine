@@ -49,7 +49,7 @@ export function decideNotification(input: NotificationInput): NotificationDecisi
   if (input.severity === "Critical") {
     return { channel: "immediate", reason: "customer_impacting_critical" };
   }
-  if (input.status === "exploited") {
+  if (input.status === "actively_exploited") {
     return { channel: "immediate", reason: "customer_impacting_exploited" };
   }
   return { channel: "digest", reason: "customer_impacting_digest" };

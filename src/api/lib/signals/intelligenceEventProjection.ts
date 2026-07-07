@@ -23,14 +23,18 @@
 import { eventCanonicalKey, peakSeverity, severityRank, type EventIdentityInput } from "./intelligenceEventIdentity.js";
 import { assessContent, trimToSentence, type ContentStatus } from "./contentQuality.js";
 import { buildEventSummary } from "./eventExecutiveSummary.js";
+import {
+  deriveLifecycleState,
+  isAuthoritativeSource,
+  EXPLOIT_SOURCES,
+  type LifecycleState
+} from "./intelligenceEventLifecycle.js";
 
 /** Max length of the generated event title. */
 const TITLE_MAX = 160;
-/** Sources whose presence means the vulnerability is being actively exploited. */
-const EXPLOIT_SOURCES = new Set(["cisa_kev", "cisa_alerts"]);
 
-export type EventStatus = "new" | "evolving" | "patched" | "exploited";
-const STATUS_RANK: Record<EventStatus, number> = { new: 0, evolving: 1, patched: 2, exploited: 3 };
+/** The event lifecycle state (re-exported from the lifecycle state machine). */
+export type EventStatus = LifecycleState;
 
 export type TimelineEntryType =
   | "first_seen"
@@ -56,6 +60,10 @@ export interface ExistingEventState {
   readonly severity: string;
   readonly source_count: number;
   readonly revision: number;
+  /** Exploitation has ever been reported for this event (accumulated flag). */
+  readonly ever_exploited: boolean;
+  /** A patch/mitigation has ever been reported for this event (accumulated flag). */
+  readonly ever_patched: boolean;
   /** cyber_signal_ids already recorded as contributors (idempotency). */
   readonly contributingSignalIds: ReadonlySet<string>;
   /** distinct source slugs already contributing (drives confidence/source_count). */
@@ -73,6 +81,9 @@ export interface PlannedEventFields {
   readonly affected_vendor: string | null;
   readonly source_count: number;
   readonly confidence: number;
+  /** Accumulated evidence flags, persisted so the lifecycle is reproducible. */
+  readonly ever_exploited: boolean;
+  readonly ever_patched: boolean;
 }
 
 export interface PlannedSourceOp {
@@ -107,16 +118,9 @@ function isExploitSignal(s: IncomingSignal): boolean {
   return EXPLOIT_SOURCES.has(s.source.toLowerCase().trim()) || s.signal_type === "malware";
 }
 
-/** The status this single signal argues for, before precedence merge. */
-function statusContribution(s: IncomingSignal): EventStatus {
-  if (isExploitSignal(s)) return "exploited";
-  if (s.signal_type === "patch") return "patched";
-  return "new";
-}
-
-/** Higher-precedence of two statuses. */
-function maxStatus(a: EventStatus, b: EventStatus): EventStatus {
-  return STATUS_RANK[a] >= STATUS_RANK[b] ? a : b;
+/** Is this signal evidence of a patch / mitigation? */
+function isPatchSignal(s: IncomingSignal): boolean {
+  return s.signal_type === "patch";
 }
 
 /** Deterministic corroboration confidence (0–99) from distinct source count. */
@@ -168,13 +172,23 @@ export function planEventUpsert(
   const severity = isNew ? signal.severity : peakSeverity(existing!.severity, signal.severity);
   const severityRose = !isNew && severityRank(signal.severity) < severityRank(existing!.severity);
 
-  // Status precedence + corroboration promotion.
-  const contribution = statusContribution(signal);
-  let status: EventStatus = isNew ? contribution : maxStatus(existing!.status, contribution);
-  if (!isNew && !alreadyContributed && isNewDistinctSource && status === "new") {
-    status = "evolving"; // a second independent source corroborates → evolving
-  }
+  // Accumulated evidence flags drive the lifecycle state.
+  const everExploited = (existing?.ever_exploited ?? false) || isExploitSignal(signal);
+  const everPatched = (existing?.ever_patched ?? false) || isPatchSignal(signal);
+  const hasAuthoritative =
+    (existing ? [...existing.distinctSources].some(isAuthoritativeSource) : false) ||
+    isAuthoritativeSource(signal.source);
+
+  // Lifecycle state derived from the accumulated evidence (deterministic).
+  const status: EventStatus = deriveLifecycleState({
+    sourceCount: distinctAfter,
+    hasAuthoritative,
+    everExploited,
+    everPatched
+  });
   const statusChanged = !isNew && status !== existing!.status;
+  const newlyExploited = everExploited && !(existing?.ever_exploited ?? false);
+  const newlyPatched = everPatched && !(existing?.ever_patched ?? false);
 
   const title = buildTitle(signal);
   const confidence = confidenceFor(distinctAfter, singleton);
@@ -205,7 +219,9 @@ export function planEventUpsert(
     affected_cve: signal.affected_cve,
     affected_vendor: signal.affected_vendor,
     source_count,
-    confidence
+    confidence,
+    ever_exploited: everExploited,
+    ever_patched: everPatched
   };
 
   // No material change for an already-known signal.
@@ -234,16 +250,12 @@ export function planEventUpsert(
 
   if (isNew) {
     stamp("first_seen", title);
-    if (contribution === "exploited") stamp("exploit_activity", `Active exploitation reported by ${signal.source}.`);
-    if (contribution === "patched") stamp("patch_available", `Patch/mitigation reported by ${signal.source}.`);
+    if (newlyExploited) stamp("exploit_activity", `Active exploitation reported by ${signal.source}.`);
+    if (newlyPatched) stamp("patch_available", `Patch/mitigation reported by ${signal.source}.`);
   } else {
     stamp("corroborated", `Corroborated by ${signal.source}.`);
-    if (isExploitSignal(signal) && existing!.status !== "exploited") {
-      stamp("exploit_activity", `Active exploitation reported by ${signal.source}.`);
-    }
-    if (signal.signal_type === "patch" && existing!.status !== "patched" && status === "patched") {
-      stamp("patch_available", `Patch/mitigation reported by ${signal.source}.`);
-    }
+    if (newlyExploited) stamp("exploit_activity", `Active exploitation reported by ${signal.source}.`);
+    if (newlyPatched) stamp("patch_available", `Patch/mitigation reported by ${signal.source}.`);
     if (severityRose) stamp("severity_change", `Severity raised to ${severity} (source: ${signal.source}).`);
     if (statusChanged) stamp("status_change", `Status changed to ${status}.`);
   }

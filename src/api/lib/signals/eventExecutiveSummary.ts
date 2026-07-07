@@ -16,6 +16,7 @@
 
 import { assessContent, type ContentStatus } from "./contentQuality.js";
 import type { EventStatus } from "./intelligenceEventProjection.js";
+import { lifecycleFraming } from "./intelligenceEventLifecycle.js";
 
 export interface EventSummaryInput {
   readonly title: string;
@@ -74,18 +75,9 @@ function citation(sources: readonly string[]): string {
   return `Sources: ${labels.join(", ")}.`;
 }
 
-/** One-line status framing for the executive reader. */
+/** One-line status framing for the executive reader (lifecycle-aware). */
 function statusFraming(status: EventStatus): string {
-  switch (status) {
-    case "exploited":
-      return "Active exploitation has been reported.";
-    case "patched":
-      return "A patch or mitigation is available.";
-    case "evolving":
-      return "Multiple sources are corroborating this event.";
-    default:
-      return "";
-  }
+  return lifecycleFraming(status);
 }
 
 /** Ensure a fragment ends on terminal punctuation (adds a period if missing). */

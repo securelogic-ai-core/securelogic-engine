@@ -35,10 +35,11 @@ describe("buildEventSummary", () => {
     expect(r.summary).toContain("Sources: NVD, CISA KEV.");
   });
 
-  it("adds status framing for exploited / patched / evolving", () => {
-    expect(buildEventSummary(input({ status: "exploited" })).summary).toContain("Active exploitation");
-    expect(buildEventSummary(input({ status: "patched" })).summary).toContain("patch or mitigation");
-    expect(buildEventSummary(input({ status: "evolving" })).summary).toContain("corroborating");
+  it("adds lifecycle framing for actively_exploited / mitigated / corroborating / confirmed", () => {
+    expect(buildEventSummary(input({ status: "actively_exploited" })).summary).toContain("Active exploitation");
+    expect(buildEventSummary(input({ status: "mitigated" })).summary).toContain("patch or mitigation");
+    expect(buildEventSummary(input({ status: "corroborating" })).summary).toContain("corroborating");
+    expect(buildEventSummary(input({ status: "confirmed" })).summary).toContain("Confirmed by authoritative");
   });
 
   it("never emits raw truncated feed text — degraded raw yields a structured line", () => {

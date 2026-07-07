@@ -86,7 +86,7 @@ describe("IE.P4 — canonical event projection (real Postgres)", () => {
     expect(evtRes.rows).toHaveLength(1);
     const evt = evtRes.rows[0];
     expect(evt.severity).toBe("Critical"); // peak across sources
-    expect(evt.status).toBe("exploited"); // KEV escalated it
+    expect(evt.status).toBe("actively_exploited"); // KEV escalated it
     expect(evt.source_count).toBe(3);
     expect(evt.confidence).toBeGreaterThan(50);
 

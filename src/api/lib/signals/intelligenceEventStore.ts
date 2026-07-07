@@ -27,6 +27,7 @@ import {
 } from "./intelligenceEventProjection.js";
 import { eventCanonicalKey } from "./intelligenceEventIdentity.js";
 import { intelligenceEventsEnabled } from "./intelligenceEventsFeatureFlag.js";
+import { ARCHIVE_AFTER_DAYS, RESOLVE_AFTER_DAYS } from "./intelligenceEventLifecycle.js";
 
 /** Minimal DB surface — a PoolClient satisfies it; a fake satisfies it in tests. */
 export interface EventStoreClient {
@@ -79,6 +80,8 @@ interface EventRow {
   severity: string;
   source_count: number;
   revision: number;
+  ever_exploited: boolean;
+  ever_patched: boolean;
 }
 
 /** Load the current event + its corroboration facts, FOR UPDATE. */
@@ -87,7 +90,7 @@ async function loadExisting(
   canonicalKey: string
 ): Promise<{ eventId: string; state: ExistingEventState } | null> {
   const evt = await client.query<EventRow>(
-    `SELECT id, status, severity, source_count, revision
+    `SELECT id, status, severity, source_count, revision, ever_exploited, ever_patched
        FROM intelligence_events
       WHERE canonical_key = $1
       FOR UPDATE`,
@@ -115,6 +118,8 @@ async function loadExisting(
       severity: row.severity,
       source_count: row.source_count,
       revision: row.revision,
+      ever_exploited: row.ever_exploited,
+      ever_patched: row.ever_patched,
       contributingSignalIds,
       distinctSources
     }
@@ -176,8 +181,9 @@ export async function projectSignalWithClient(
       const ins = await client.query<{ id: string }>(
         `INSERT INTO intelligence_events
            (canonical_key, title, executive_summary, summary_status, event_type, severity, status,
-            affected_cve, affected_vendor, source_count, confidence, first_seen_at, last_seen_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+            affected_cve, affected_vendor, source_count, confidence, ever_exploited, ever_patched,
+            first_seen_at, last_seen_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
          ON CONFLICT (canonical_key) DO NOTHING
          RETURNING id`,
         [
@@ -192,6 +198,8 @@ export async function projectSignalWithClient(
           plan.event.affected_vendor,
           plan.event.source_count,
           plan.event.confidence,
+          plan.event.ever_exploited,
+          plan.event.ever_patched,
           signal.ingestion_timestamp
         ]
       );
@@ -217,7 +225,9 @@ export async function projectSignalWithClient(
                 confidence = $5,
                 affected_cve = COALESCE(affected_cve, $6),
                 affected_vendor = COALESCE(affected_vendor, $7),
-                last_seen_at = $8,
+                ever_exploited = $8,
+                ever_patched = $9,
+                last_seen_at = $10,
                 revision = revision + 1,
                 updated_at = NOW()
           WHERE id = $1`,
@@ -229,6 +239,8 @@ export async function projectSignalWithClient(
           plan.event.confidence,
           plan.event.affected_cve,
           plan.event.affected_vendor,
+          plan.event.ever_exploited,
+          plan.event.ever_patched,
           signal.ingestion_timestamp
         ]
       );
@@ -317,5 +329,52 @@ export async function projectUnprojectedGlobalSignals(
       "Intelligence Event projection pass complete"
     );
     return { projected, created, corroborated };
+  });
+}
+
+/**
+ * Age the lifecycle of quiet events: mitigated → resolved after RESOLVE_AFTER_DAYS,
+ * any non-active → archived after ARCHIVE_AFTER_DAYS, computed from last_seen_at.
+ * Never touches actively_exploited events. A status change appends a timeline
+ * entry. Deterministic in the DB clock; idempotent (only rows whose state would
+ * change are updated). Self-gates on the flag. GLOBAL / elevated.
+ */
+export async function ageIntelligenceEvents(): Promise<{ resolved: number; archived: number; skipped?: string }> {
+  if (!intelligenceEventsEnabled()) return { resolved: 0, archived: 0, skipped: "disabled" };
+
+  return withElevated(async (client) => {
+    // Archive: any non-active event quiet for ARCHIVE_AFTER_DAYS.
+    const archived = await client.query<{ id: string }>(
+      `UPDATE intelligence_events
+          SET status = 'archived', revision = revision + 1, updated_at = NOW()
+        WHERE status NOT IN ('archived', 'actively_exploited')
+          AND last_seen_at < NOW() - ($1 || ' days')::interval
+        RETURNING id`,
+      [String(ARCHIVE_AFTER_DAYS)]
+    );
+    // Resolve: mitigated events quiet for RESOLVE_AFTER_DAYS (but not yet archive-old).
+    const resolved = await client.query<{ id: string }>(
+      `UPDATE intelligence_events
+          SET status = 'resolved', revision = revision + 1, updated_at = NOW()
+        WHERE status = 'mitigated'
+          AND last_seen_at < NOW() - ($1 || ' days')::interval
+        RETURNING id`,
+      [String(RESOLVE_AFTER_DAYS)]
+    );
+
+    for (const r of [...archived.rows, ...resolved.rows]) {
+      const isArchive = archived.rows.some((a) => a.id === r.id);
+      await client.query(
+        `INSERT INTO intelligence_event_timeline (event_id, entry_type, occurred_at, summary, source)
+         VALUES ($1, 'status_change', NOW(), $2, NULL)`,
+        [r.id, isArchive ? "Event archived after prolonged inactivity." : "Event resolved after mitigation and inactivity."]
+      );
+    }
+
+    logger.info(
+      { event: "intelligence_event_aging_complete", resolved: resolved.rowCount ?? 0, archived: archived.rowCount ?? 0 },
+      "Intelligence Event aging pass complete"
+    );
+    return { resolved: resolved.rowCount ?? 0, archived: archived.rowCount ?? 0 };
   });
 }

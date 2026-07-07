@@ -25,7 +25,7 @@ const critical: EventNotificationInput = {
   event_id: "00000000-0000-0000-0000-0000000000aa",
   canonical_key: "cve:CVE-2026-7777",
   severity: "Critical",
-  status: "exploited"
+  status: "actively_exploited"
 };
 
 async function ledgerCount(orgId: string, key: string): Promise<number> {

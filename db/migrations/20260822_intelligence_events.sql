@@ -43,8 +43,12 @@ CREATE TABLE IF NOT EXISTS intelligence_events (
   -- Dominant signal_type (taxonomy) + peak severity across contributors.
   event_type         TEXT        NOT NULL,
   severity           TEXT        NOT NULL,
-  -- Derived lifecycle label: new | evolving | patched | exploited.
+  -- Derived lifecycle state (see intelligenceEventLifecycle.ts):
+  -- new | corroborating | confirmed | actively_exploited | mitigated | resolved | archived.
   status             TEXT        NOT NULL DEFAULT 'new',
+  -- Accumulated evidence flags — persisted so the derived lifecycle is reproducible.
+  ever_exploited     BOOLEAN     NOT NULL DEFAULT FALSE,
+  ever_patched       BOOLEAN     NOT NULL DEFAULT FALSE,
 
   affected_cve       TEXT        NULL,
   affected_vendor    TEXT        NULL,
@@ -63,7 +67,10 @@ CREATE TABLE IF NOT EXISTS intelligence_events (
   CONSTRAINT intelligence_events_severity_check
     CHECK (severity IN ('Critical', 'High', 'Moderate', 'Low')),
   CONSTRAINT intelligence_events_status_check
-    CHECK (status IN ('new', 'evolving', 'patched', 'exploited')),
+    CHECK (status IN (
+      'new', 'corroborating', 'confirmed', 'actively_exploited',
+      'mitigated', 'resolved', 'archived'
+    )),
   CONSTRAINT intelligence_events_summary_status_check
     CHECK (summary_status IN ('complete', 'truncated', 'degraded')),
   CONSTRAINT intelligence_events_confidence_range

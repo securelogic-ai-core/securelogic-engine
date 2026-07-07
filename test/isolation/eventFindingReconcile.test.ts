@@ -24,7 +24,7 @@ async function insertEvent(part: Partial<EventForFinding> & { canonical_key: str
   const e: EventForFinding = {
     event_id: "", title: "Acme Gateway RCE",
     executive_summary: "Acme Gateway has a critical RCE. Sources: NVD.",
-    severity: "High", status: "evolving", event_type: "cve",
+    severity: "High", status: "corroborating", event_type: "cve",
     affected_vendor: "Acme", affected_cve: "CVE-2026-6161", ...part
   };
   const res = await pool.query<{ id: string }>(
@@ -70,7 +70,7 @@ describe("IE.P6 — event→finding reconciliation (real Postgres)", () => {
     expect(await findingCount(seed.orgA.id, event.event_id)).toBe(1);
 
     // Event escalates to Critical — reconcile again: SAME finding, updated.
-    const escalated: EventForFinding = { ...event, severity: "Critical", status: "exploited" };
+    const escalated: EventForFinding = { ...event, severity: "Critical", status: "actively_exploited" };
     const second = await reconcileEventFindingForOrg(seed.orgA.id, escalated);
     expect(second.action).toBe("updated");
     expect(second.findingId).toBe(first.findingId);

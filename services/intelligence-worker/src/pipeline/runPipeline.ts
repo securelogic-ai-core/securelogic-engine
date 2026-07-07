@@ -39,7 +39,7 @@ import {
 // Mirrors processSignal phase 7, which runs the control matcher AFTER its commit.
 import { runLlmControlMatcherForSignal } from "../../../../src/api/lib/llmControlMatcher.js";
 import { buildDedupHash } from "../../../../src/api/lib/cyberSignalNormalizer.js";
-import { projectUnprojectedGlobalSignals } from "../../../../src/api/lib/signals/intelligenceEventStore.js";
+import { projectUnprojectedGlobalSignals, ageIntelligenceEvents } from "../../../../src/api/lib/signals/intelligenceEventStore.js";
 import { createAlertBatcher } from "../../../../src/api/lib/alerting/alertService.js";
 import { matcherAlertsEnabled } from "../../../../src/api/lib/alerting/matcherAlertsFeatureFlag.js";
 
@@ -626,6 +626,8 @@ export async function runPipeline(): Promise<PipelineResult> {
         },
         "Intelligence Event projection pass complete"
       );
+      // Advance the lifecycle of quiet events (mitigated→resolved, →archived).
+      await ageIntelligenceEvents();
     }
   } catch (err) {
     logger.error(

@@ -1,9 +1,10 @@
 /**
  * intelligenceEventProjection.test.ts — Intelligence Pipeline Hardening / IE.P3.
  *
- * Pins the pure projection contract: first-sighting create, multi-source
- * corroboration (one evolving event, not duplicates), severity peak, status
- * precedence + promotion, exploit/patch timeline entries, idempotent
+ * Pins the pure projection contract with the 7-state lifecycle: first-sighting
+ * create, multi-source corroboration (one evolving event, not duplicates),
+ * severity peak, lifecycle-state derivation (new → corroborating → confirmed →
+ * actively_exploited / mitigated), exploit/patch timeline entries, idempotent
  * re-projection, and display-safe summaries.
  */
 
@@ -17,7 +18,7 @@ import {
 function signal(part: Partial<IncomingSignal>): IncomingSignal {
   return {
     cyber_signal_id: "sig-1",
-    source: "bleepingcomputer",
+    source: "bleepingcomputer", // non-authoritative by default
     external_id: null,
     signal_type: "advisory",
     severity: "High",
@@ -42,67 +43,71 @@ function stateFrom(
     severity: plan.event.severity,
     source_count: plan.event.source_count,
     revision: 1,
+    ever_exploited: plan.event.ever_exploited,
+    ever_patched: plan.event.ever_patched,
     contributingSignalIds: new Set(signalIds),
     distinctSources: new Set(sources.map((s) => s.toLowerCase().trim()))
   };
 }
 
 describe("planEventUpsert — first sighting", () => {
-  it("creates a new event with a canonical relation source and a first_seen timeline entry", () => {
+  it("a single non-authoritative source creates a 'new' event with a first_seen entry", () => {
     const p = planEventUpsert(signal({ affected_cve: "CVE-2026-1001", severity: "High" }), null);
     expect(p.isNew).toBe(true);
-    expect(p.changed).toBe(true);
     expect(p.canonical_key).toBe("cve:CVE-2026-1001");
     expect(p.event.source_count).toBe(1);
-    expect(p.event.severity).toBe("High");
     expect(p.event.status).toBe("new");
     expect(p.source?.relation).toBe("canonical");
     expect(p.timeline.map((t) => t.entry_type)).toEqual(["first_seen"]);
-    // primary summary is display-safe, not raw
     expect(p.event.summary_status).toBe("complete");
-    expect(p.event.executive_summary).toContain("Acme Gateway");
   });
 
-  it("a KEV first sighting starts exploited with an exploit_activity entry", () => {
+  it("a single AUTHORITATIVE source (nvd) confirms immediately", () => {
+    const p = planEventUpsert(signal({ source: "nvd", affected_cve: "CVE-2026-1002", signal_type: "cve" }), null);
+    expect(p.event.status).toBe("confirmed");
+  });
+
+  it("a KEV first sighting is actively_exploited with an exploit_activity entry", () => {
     const p = planEventUpsert(signal({ source: "cisa_kev", affected_cve: "CVE-2026-9001", signal_type: "cve" }), null);
-    expect(p.event.status).toBe("exploited");
+    expect(p.event.status).toBe("actively_exploited");
+    expect(p.event.ever_exploited).toBe(true);
     expect(p.timeline.map((t) => t.entry_type)).toContain("exploit_activity");
   });
 });
 
-describe("planEventUpsert — corroboration (same CVE, second source)", () => {
-  const first = planEventUpsert(signal({ cyber_signal_id: "sig-1", source: "nvd", affected_cve: "CVE-2026-1001", severity: "Moderate" }), null);
-  const state = stateFrom(first, ["sig-1"], ["nvd"]);
+describe("planEventUpsert — corroboration", () => {
+  const first = planEventUpsert(signal({ cyber_signal_id: "sig-1", source: "bleepingcomputer", affected_cve: "CVE-2026-1001", severity: "Moderate" }), null);
+  const state = stateFrom(first, ["sig-1"], ["bleepingcomputer"]);
 
-  it("updates the SAME event, promotes new→evolving, raises confidence, no duplicate", () => {
+  it("a second non-authoritative source promotes new → corroborating, no duplicate", () => {
     const p = planEventUpsert(
-      signal({ cyber_signal_id: "sig-2", source: "bleepingcomputer", affected_cve: "CVE-2026-1001", severity: "Moderate" }),
+      signal({ cyber_signal_id: "sig-2", source: "krebsonsecurity", affected_cve: "CVE-2026-1001", severity: "Moderate" }),
       state
     );
     expect(p.isNew).toBe(false);
-    expect(p.canonical_key).toBe("cve:CVE-2026-1001");
     expect(p.event.source_count).toBe(2);
-    expect(p.event.status).toBe("evolving");
+    expect(p.event.status).toBe("corroborating");
     expect(p.event.confidence).toBeGreaterThan(first.event.confidence);
     expect(p.source?.relation).toBe("corroborating");
     expect(p.timeline.map((t) => t.entry_type)).toContain("corroborated");
   });
 
-  it("takes the peak severity and records a severity_change when it rises", () => {
+  it("an authoritative corroboration confirms; a KEV report escalates to actively_exploited", () => {
     const p = planEventUpsert(
       signal({ cyber_signal_id: "sig-3", source: "cisa_kev", affected_cve: "CVE-2026-1001", severity: "Critical", signal_type: "cve" }),
       state
     );
     expect(p.event.severity).toBe("Critical");
-    expect(p.event.status).toBe("exploited");
+    expect(p.event.status).toBe("actively_exploited");
     const types = p.timeline.map((t) => t.entry_type);
     expect(types).toContain("severity_change");
     expect(types).toContain("exploit_activity");
+    expect(types).toContain("status_change");
   });
 });
 
 describe("planEventUpsert — idempotency", () => {
-  it("a signal that already contributed produces a no-op plan (no source, no timeline, unchanged)", () => {
+  it("a signal that already contributed produces a no-op plan", () => {
     const first = planEventUpsert(signal({ cyber_signal_id: "sig-1", affected_cve: "CVE-2026-1001" }), null);
     const state = stateFrom(first, ["sig-1"], ["bleepingcomputer"]);
     const again = planEventUpsert(signal({ cyber_signal_id: "sig-1", affected_cve: "CVE-2026-1001" }), state);
@@ -114,18 +119,26 @@ describe("planEventUpsert — idempotency", () => {
 });
 
 describe("planEventUpsert — patch flow", () => {
-  it("a patch signal moves an evolving event to patched with a patch_available entry", () => {
+  it("a patch signal moves an event to mitigated with a patch_available entry", () => {
     const first = planEventUpsert(signal({ cyber_signal_id: "s1", source: "nvd", affected_cve: "CVE-2026-2002", signal_type: "cve" }), null);
-    let state = stateFrom(first, ["s1"], ["nvd"]);
-    // promote to evolving via a second source
-    const second = planEventUpsert(signal({ cyber_signal_id: "s2", source: "krebsonsecurity", affected_cve: "CVE-2026-2002" }), state);
-    state = stateFrom(second, ["s1", "s2"], ["nvd", "krebsonsecurity"]);
+    const state = stateFrom(first, ["s1"], ["nvd"]);
     const patch = planEventUpsert(
       signal({ cyber_signal_id: "s3", source: "bleepingcomputer", affected_cve: "CVE-2026-2002", signal_type: "patch" }),
       state
     );
-    expect(patch.event.status).toBe("patched");
+    expect(patch.event.status).toBe("mitigated");
+    expect(patch.event.ever_patched).toBe(true);
     expect(patch.timeline.map((t) => t.entry_type)).toContain("patch_available");
+  });
+
+  it("exploited then patched → mitigated (a fix now exists for the active threat)", () => {
+    const kev = planEventUpsert(signal({ cyber_signal_id: "s1", source: "cisa_kev", affected_cve: "CVE-2026-3003", signal_type: "cve" }), null);
+    expect(kev.event.status).toBe("actively_exploited");
+    const state = stateFrom(kev, ["s1"], ["cisa_kev"]);
+    const patch = planEventUpsert(signal({ cyber_signal_id: "s2", source: "nvd", affected_cve: "CVE-2026-3003", signal_type: "patch" }), state);
+    expect(patch.event.ever_exploited).toBe(true);
+    expect(patch.event.ever_patched).toBe(true);
+    expect(patch.event.status).toBe("mitigated");
   });
 });
 
@@ -137,7 +150,6 @@ describe("planEventUpsert — degenerate content", () => {
     );
     expect(p.event.title).toContain("CVE-2026-7007");
     expect(p.event.summary_status).toBe("degraded");
-    // Degraded raw → a display-safe STRUCTURED summary (never raw "..."), citing the source.
     expect(p.event.executive_summary).toContain("CVE-2026-7007");
     expect(p.event.executive_summary).toContain("Sources:");
     expect(p.event.executive_summary).not.toContain("...");

@@ -21,7 +21,7 @@ function event(part: Partial<EventForFinding>): EventForFinding {
     title: "Acme Gateway RCE",
     executive_summary: "Acme Gateway has a critical RCE. Active exploitation has been reported. Sources: CISA KEV.",
     severity: "Critical",
-    status: "exploited",
+    status: "actively_exploited",
     event_type: "cve",
     affected_vendor: "Acme",
     affected_cve: "CVE-2026-5050",

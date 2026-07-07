@@ -27,7 +27,8 @@ interface EventRec {
   id: string; canonical_key: string; title: string; executive_summary: string;
   summary_status: string; event_type: string; severity: string; status: string;
   affected_cve: string | null; affected_vendor: string | null;
-  source_count: number; confidence: number; first_seen_at: unknown; last_seen_at: unknown; revision: number;
+  source_count: number; confidence: number; ever_exploited: boolean; ever_patched: boolean;
+  first_seen_at: unknown; last_seen_at: unknown; revision: number;
 }
 interface SourceRec {
   id: string; event_id: string; cyber_signal_id: string | null; source: string;
@@ -77,7 +78,8 @@ class FakeEventDb implements EventStoreClient {
         summary_status: params[3] as string, event_type: params[4] as string, severity: params[5] as string,
         status: params[6] as string, affected_cve: params[7] as string | null, affected_vendor: params[8] as string | null,
         source_count: params[9] as number, confidence: params[10] as number,
-        first_seen_at: params[11], last_seen_at: params[11], revision: 0
+        ever_exploited: params[11] as boolean, ever_patched: params[12] as boolean,
+        first_seen_at: params[13], last_seen_at: params[13], revision: 0
       });
       return rows([{ id } as unknown]);
     }
@@ -88,13 +90,14 @@ class FakeEventDb implements EventStoreClient {
         ev.source_count = params[3] as number; ev.confidence = params[4] as number;
         ev.affected_cve = ev.affected_cve ?? (params[5] as string | null);
         ev.affected_vendor = ev.affected_vendor ?? (params[6] as string | null);
-        ev.last_seen_at = params[7]; ev.revision += 1;
+        ev.ever_exploited = params[7] as boolean; ev.ever_patched = params[8] as boolean;
+        ev.last_seen_at = params[9]; ev.revision += 1;
       }
       return rows([]);
     }
     if (t.includes("FROM intelligence_events") && t.includes("WHERE canonical_key")) {
       const ev = this.events.find((e) => e.canonical_key === params[0]);
-      return rows(ev ? [{ id: ev.id, status: ev.status, severity: ev.severity, source_count: ev.source_count, revision: ev.revision }] : []);
+      return rows(ev ? [{ id: ev.id, status: ev.status, severity: ev.severity, source_count: ev.source_count, revision: ev.revision, ever_exploited: ev.ever_exploited, ever_patched: ev.ever_patched }] : []);
     }
     if (t.includes("FROM intelligence_event_sources WHERE event_id")) {
       return rows(this.sources.filter((s) => s.event_id === params[0]).map((s) => ({ cyber_signal_id: s.cyber_signal_id, source: s.source })));
@@ -105,7 +108,7 @@ class FakeEventDb implements EventStoreClient {
 
 function csRow(part: Partial<CyberSignalRow>): CyberSignalRow {
   return {
-    id: "cs-1", source: "nvd", signal_type: "cve", severity: "High",
+    id: "cs-1", source: "bleepingcomputer", signal_type: "cve", severity: "High",
     normalized_summary: "Acme Gateway RCE flaw disclosed. Update available soon.",
     affected_vendor: "Acme", affected_cve: "CVE-2026-4242", external_id: null,
     dedup_hash: "d1", ingestion_timestamp: "2026-07-07T10:00:00.000Z", ...part
@@ -128,13 +131,13 @@ describe("intelligenceEventStore — projection", () => {
 
   it("a second source corroborates into the SAME event (no duplicate) and appends timeline", async () => {
     const db = new FakeEventDb();
-    await projectSignalWithClient(db, toIncomingSignal(csRow({ id: "cs-1", source: "nvd", dedup_hash: "d1" })));
-    const out = await projectSignalWithClient(db, toIncomingSignal(csRow({ id: "cs-2", source: "bleepingcomputer", dedup_hash: "d2" })));
+    await projectSignalWithClient(db, toIncomingSignal(csRow({ id: "cs-1", source: "bleepingcomputer", dedup_hash: "d1" })));
+    const out = await projectSignalWithClient(db, toIncomingSignal(csRow({ id: "cs-2", source: "krebsonsecurity", dedup_hash: "d2" })));
     expect(out.isNew).toBe(false);
     expect(out.changed).toBe(true);
     expect(db.events).toHaveLength(1); // still ONE event
     expect(db.events[0].source_count).toBe(2);
-    expect(db.events[0].status).toBe("evolving");
+    expect(db.events[0].status).toBe("corroborating");
     expect(db.sources).toHaveLength(2);
     expect(db.timeline.map((t) => t.entry_type)).toContain("corroborated");
   });
@@ -151,13 +154,14 @@ describe("intelligenceEventStore — projection", () => {
     expect(db.events[0].revision).toBe(before.rev); // no revision bump
   });
 
-  it("a KEV report escalates severity to peak and status to exploited with timeline entries", async () => {
+  it("a KEV report escalates severity to peak and status to actively_exploited", async () => {
     const db = new FakeEventDb();
-    await projectSignalWithClient(db, toIncomingSignal(csRow({ id: "cs-1", source: "nvd", severity: "Moderate", dedup_hash: "d1" })));
+    await projectSignalWithClient(db, toIncomingSignal(csRow({ id: "cs-1", source: "bleepingcomputer", severity: "Moderate", dedup_hash: "d1" })));
     const out = await projectSignalWithClient(db, toIncomingSignal(csRow({ id: "cs-2", source: "cisa_kev", severity: "Critical", dedup_hash: "d2" })));
     expect(out.changed).toBe(true);
     expect(db.events[0].severity).toBe("Critical");
-    expect(db.events[0].status).toBe("exploited");
+    expect(db.events[0].status).toBe("actively_exploited");
+    expect(db.events[0].ever_exploited).toBe(true);
     const types = db.timeline.map((t) => t.entry_type);
     expect(types).toContain("severity_change");
     expect(types).toContain("exploit_activity");
