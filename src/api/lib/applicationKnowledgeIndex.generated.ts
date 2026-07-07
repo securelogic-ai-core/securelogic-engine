@@ -353,6 +353,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "platform"
     },
     {
+      "path": "/assets/connect",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
       "path": "/assets/new",
       "dynamic": false,
       "navLabel": null,
