@@ -42,6 +42,19 @@ describe("filterNav feature flags", () => {
     expect(withFlag.some((i) => "href" in i && i.href === "/enterprise-context")).toBe(true);
   });
 
+  it("the real NAV_ITEMS Executive entry is dark by default and independent of the other flags", () => {
+    const dark = filterNav(NAV_ITEMS, true, true, true);
+    expect(dark.some((i) => "href" in i && i.href === "/executive")).toBe(false);
+    // Neither ECL nor asset-registry alone may reveal it (independent switches).
+    const others = filterNav(NAV_ITEMS, true, true, true, { enterprise_context: true, asset_registry: true });
+    expect(others.some((i) => "href" in i && i.href === "/executive")).toBe(false);
+    const withFlag = filterNav(NAV_ITEMS, true, true, true, { risk_intelligence: true });
+    expect(withFlag.some((i) => "href" in i && i.href === "/executive")).toBe(true);
+    // Flag on but not a platform user → still hidden by the entitlement gate.
+    const notPlatform = filterNav(NAV_ITEMS, false, true, false, { risk_intelligence: true });
+    expect(notPlatform.some((i) => "href" in i && i.href === "/executive")).toBe(false);
+  });
+
   it("the real NAV_ITEMS Asset Registry entry is dark by default and independent of the ECL flag", () => {
     const dark = filterNav(NAV_ITEMS, true, true, true);
     expect(dark.some((i) => "href" in i && i.href === "/assets")).toBe(false);
