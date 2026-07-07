@@ -55,16 +55,44 @@ describe("filterNav feature flags", () => {
     expect(notPlatform.some((i) => "href" in i && i.href === "/executive")).toBe(false);
   });
 
-  it("the real NAV_ITEMS Asset Registry entry is dark by default and independent of the ECL flag", () => {
+  it("the Asset Registry is a dark-by-default CHILD of the Assets group (EAR P12 canonical surface)", () => {
+    // While dark, the Assets dropdown is byte-identical to the legacy menu.
     const dark = filterNav(NAV_ITEMS, true, true, true);
-    expect(dark.some((i) => "href" in i && i.href === "/assets")).toBe(false);
+    expect(assetsGroupChildren(dark)).toEqual(["/vendors", "/ai-systems"]);
+
     // The ECL flag alone must NOT reveal it (two independent switches).
     const eclOnly = filterNav(NAV_ITEMS, true, true, true, { enterprise_context: true });
-    expect(eclOnly.some((i) => "href" in i && i.href === "/assets")).toBe(false);
+    expect(assetsGroupChildren(eclOnly)).toEqual(["/vendors", "/ai-systems"]);
+
+    // With its own flag on, "Asset Registry" appears FIRST — the canonical
+    // destination — with Vendors / AI Systems beneath it as asset types.
     const withFlag = filterNav(NAV_ITEMS, true, true, true, { asset_registry: true });
-    expect(withFlag.some((i) => "href" in i && i.href === "/assets")).toBe(true);
-    // Flag on but not a platform user → still hidden by the entitlement gate.
+    expect(assetsGroupChildren(withFlag)).toEqual(["/assets", "/vendors", "/ai-systems"]);
+
+    // Flag on but not a platform user → the whole Assets group is gated out.
     const notPlatform = filterNav(NAV_ITEMS, false, true, false, { asset_registry: true });
-    expect(notPlatform.some((i) => "href" in i && i.href === "/assets")).toBe(false);
+    expect(notPlatform.some((i) => i.type === "group" && i.label === "Assets")).toBe(false);
+  });
+
+  it("filterNav clones the Assets group and never mutates the shared NAV_ITEMS", () => {
+    filterNav(NAV_ITEMS, true, true, true, { asset_registry: true });
+    filterNav(NAV_ITEMS, true, true, true); // dark
+    const source = NAV_ITEMS.find((i) => i.type === "group" && i.label === "Assets");
+    expect(source && source.type === "group" ? source.items.map((c) => c.href) : []).toEqual([
+      "/assets",
+      "/vendors",
+      "/ai-systems",
+    ]);
+  });
+
+  it("there is no longer a standalone top-level Asset Registry link (folded into the group)", () => {
+    const withFlag = filterNav(NAV_ITEMS, true, true, true, { asset_registry: true });
+    expect(withFlag.some((i) => i.type === "link" && i.href === "/assets")).toBe(false);
   });
 });
+
+/** The visible child hrefs of the "Assets" group in a filtered nav (empty if the group is hidden). */
+function assetsGroupChildren(nav: NavItem[]): string[] {
+  const g = nav.find((i) => i.type === "group" && i.label === "Assets");
+  return g && g.type === "group" ? g.items.map((c) => c.href) : [];
+}

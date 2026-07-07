@@ -41,6 +41,10 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "platform",
       "children": [
         {
+          "label": "Asset Registry",
+          "href": "/assets"
+        },
+        {
           "label": "Vendors",
           "href": "/vendors"
         },
@@ -54,12 +58,6 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "type": "link",
       "label": "Context",
       "href": "/enterprise-context",
-      "access": "platform"
-    },
-    {
-      "type": "link",
-      "label": "Asset Registry",
-      "href": "/assets",
       "access": "platform"
     },
     {
@@ -143,6 +141,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "group": null
     },
     {
+      "label": "Asset Registry",
+      "href": "/assets",
+      "access": "platform",
+      "group": "Assets"
+    },
+    {
       "label": "Vendors",
       "href": "/vendors",
       "access": "platform",
@@ -157,12 +161,6 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     {
       "label": "Context",
       "href": "/enterprise-context",
-      "access": "platform",
-      "group": null
-    },
-    {
-      "label": "Asset Registry",
-      "href": "/assets",
       "access": "platform",
       "group": null
     },
@@ -345,6 +343,18 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     {
       "path": "/assets/[id]",
       "dynamic": true,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/assets/[id]/edit",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/assets/new",
+      "dynamic": false,
       "navLabel": null,
       "access": "platform"
     },

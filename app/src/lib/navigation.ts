@@ -39,7 +39,12 @@ export type NavItem =
       premium?: boolean;
       admin?: boolean;
       featureFlag?: NavFeatureFlag;
-      items: Array<{ label: string; href: string }>;
+      // A child MAY declare its own featureFlag — fail-closed, filtered per-child
+      // by filterNav. This lets a dark destination live inside an always-visible
+      // group (e.g. the Asset Registry under "Assets") without revealing it until
+      // its flag flips. Children with no flag are always visible (subject to the
+      // group's own entitlement).
+      items: Array<{ label: string; href: string; featureFlag?: NavFeatureFlag }>;
     };
 
 export const NAV_ITEMS: NavItem[] = [
@@ -47,18 +52,23 @@ export const NAV_ITEMS: NavItem[] = [
   { type: "link",  label: "Briefs",    href: "/briefs" },
   { type: "link",  label: "Ask",       href: "/ask",       platform: true },
   { type: "link",  label: "Queue",     href: "/queue",     platform: true },
-  { type: "group", label: "Assets",    platform: true,
+  // Assets — the unified Asset Registry is the canonical management surface
+  // (EAR P12). When SECURELOGIC_ASSET_REGISTRY_ENABLED is on, "Asset Registry"
+  // is the primary destination and Vendors / AI Systems are presented as asset
+  // TYPES beneath it — not separate products. Their per-type pages remain for
+  // back-compat and deep-links (EAR-AD-1). While the flag is dark the child is
+  // hidden (fail-closed), so this dropdown is byte-identical to the legacy
+  // [Vendors, AI Systems] menu — the two-switch dark model is preserved.
+  { type: "group", label: "Assets", platform: true,
     items: [
-      { label: "Vendors",    href: "/vendors" },
-      { label: "AI Systems", href: "/ai-systems" },
+      { label: "Asset Registry", href: "/assets", featureFlag: "asset_registry" },
+      { label: "Vendors",        href: "/vendors" },
+      { label: "AI Systems",     href: "/ai-systems" },
     ],
   },
   // Enterprise Context Layer — DARK: featureFlag keeps this hidden until the
   // app-side SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED env is true (GATE B for prod).
   { type: "link", label: "Context", href: "/enterprise-context", platform: true, featureFlag: "enterprise_context" },
-  // Unified Asset Registry (EAR Phase 4) — DARK behind the app-side
-  // SECURELOGIC_ASSET_REGISTRY_ENABLED env (same two-switch model as Context).
-  { type: "link", label: "Asset Registry", href: "/assets", platform: true, featureFlag: "asset_registry" },
   // ERIP Executive Risk dashboard — DARK behind the app-side
   // SECURELOGIC_RISK_INTELLIGENCE_ENABLED env (two-switch model; the engine's
   // risk/predictive/health routes 404 independently until their own flags flip).
@@ -88,13 +98,25 @@ export function filterNav(
   isAdminUser: boolean,
   flags?: NavFlags,
 ): NavItem[] {
-  return items.filter(item => {
-    if (item.featureFlag && flags?.[item.featureFlag] !== true) return false; // fail-closed
-    if (item.platform && !isPlatformUser) return false;
-    if (item.premium  && !isPremiumUser)  return false;
-    if (item.admin    && !isAdminUser)    return false;
-    return true;
-  });
+  const out: NavItem[] = [];
+  for (const item of items) {
+    if (item.featureFlag && flags?.[item.featureFlag] !== true) continue; // fail-closed
+    if (item.platform && !isPlatformUser) continue;
+    if (item.premium  && !isPremiumUser)  continue;
+    if (item.admin    && !isAdminUser)    continue;
+
+    if (item.type === "group") {
+      // Filter dark children (fail-closed); return a cloned group so the shared
+      // NAV_ITEMS array is never mutated. A group whose children are all dark
+      // disappears entirely.
+      const visibleItems = item.items.filter(c => !c.featureFlag || flags?.[c.featureFlag] === true);
+      if (visibleItems.length === 0) continue;
+      out.push(visibleItems.length === item.items.length ? item : { ...item, items: visibleItems });
+    } else {
+      out.push(item);
+    }
+  }
+  return out;
 }
 
 // ─── Secondary navigation (account / settings surfaces) ───────────────────────

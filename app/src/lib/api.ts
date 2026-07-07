@@ -26,7 +26,7 @@ import {
   type ApplicabilityExplanation,
   type EnterpriseContextStats,
 } from "./enterpriseContext";
-import { type AssetType, type CanonicalAsset } from "./assetRegistry";
+import { type AssetType, type CanonicalAsset, type DetailBackedType } from "./assetRegistry";
 import type {
   RiskTrendsResponse,
   RiskKpisResponse,
@@ -5069,6 +5069,78 @@ export async function deleteEnterpriseRelationship(
     });
     if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
     const body = (await res.json()) as { deleted: boolean; id: string };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+// ─── EAR management: unified-surface CRUD for the four detail-backed types ─────
+//
+// Writes run client-side through the Next proxy routes under /api/assets/**,
+// which forward the session token to the engine (POST/PATCH/DELETE /api/assets).
+// The engine 404s the whole surface while SECURELOGIC_ASSET_REGISTRY_ENABLED is
+// off and 403s without the `enterprise_context` capability — statuses pass
+// straight through so the client maps the code via assetErrorMessage. Bodies are
+// FLAT (asset_type + name + criticality + status + external_ref + typed columns
+// as top-level keys), mirroring validateAssetDetailCreate / …Update.
+
+/** Create input: flat body; `asset_type` must be a detail-backed type. */
+export type AssetCreateInput = { asset_type: DetailBackedType; name: string } & Record<
+  string,
+  string | undefined
+>;
+
+/** Partial update: flat patch; explicit null clears a nullable column. */
+export type AssetUpdateInput = Record<string, string | null>;
+
+export async function createAsset(
+  input: AssetCreateInput,
+): Promise<ActionResult<{ asset: CanonicalAsset }>> {
+  try {
+    const res = await fetch(`/api/assets`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as { asset: CanonicalAsset };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function updateAsset(
+  id: string,
+  input: AssetUpdateInput,
+): Promise<ActionResult<{ asset: CanonicalAsset }>> {
+  try {
+    const res = await fetch(`/api/assets/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as { asset: CanonicalAsset };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function deleteAsset(
+  id: string,
+): Promise<ActionResult<{ deleted: boolean }>> {
+  try {
+    const res = await fetch(`/api/assets/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as { deleted: boolean };
     return { ok: true, ...body };
   } catch {
     return { ok: false, error: "network_error", status: 0 };
