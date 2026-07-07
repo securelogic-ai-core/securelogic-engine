@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { intelligenceEventsEnabled } from "../lib/signals/intelligenceEventsFeatureFlag.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
@@ -668,33 +669,69 @@ router.post(
           [organizationId]
         );
 
-        // 5. Cyber signals ingested in the last 7 days, with linked finding context.
-        const recentSignalsResult = await pg.query<RecentSignalRow>(
-          `
-          SELECT
-            cs.id,
-            cs.source,
-            cs.signal_type,
-            cs.severity,
-            cs.normalized_summary,
-            cs.affected_vendor,
-            cs.affected_cve,
-            cs.ingestion_timestamp,
-            cs.linked_finding_id,
-            f.title     AS finding_title,
-            f.severity  AS finding_severity,
-            f.domain    AS finding_domain
-          FROM cyber_signals cs
-          LEFT JOIN findings f
-            ON f.id = cs.linked_finding_id
-           AND f.organization_id = $1
-          WHERE cs.organization_id = $1
-            AND cs.ingestion_timestamp >= NOW() - INTERVAL '7 days'
-          ORDER BY cs.ingestion_timestamp DESC
-          LIMIT 25
-          `,
-          [organizationId]
-        );
+        // 5. Recent intelligence (last 7 days) with linked finding context.
+        //    Event-native (IE-AD-11): when the flag is on, the feed is canonical
+        //    Intelligence Events (normalized, deduplicated) with the org's
+        //    event-sourced finding; flag OFF → the exact legacy raw cyber_signals
+        //    feed, byte-identical.
+        const recentSignalsResult = intelligenceEventsEnabled()
+          ? await pg.query<RecentSignalRow>(
+              `
+              SELECT
+                e.id,
+                COALESCE(
+                  (SELECT s.source FROM intelligence_event_sources s
+                    WHERE s.event_id = e.id AND s.relation = 'canonical' LIMIT 1),
+                  'intelligence_event'
+                ) AS source,
+                e.event_type       AS signal_type,
+                e.severity,
+                e.executive_summary AS normalized_summary,
+                e.affected_vendor,
+                e.affected_cve,
+                e.last_seen_at      AS ingestion_timestamp,
+                f.id                AS linked_finding_id,
+                f.title             AS finding_title,
+                f.severity          AS finding_severity,
+                f.domain            AS finding_domain
+              FROM intelligence_events e
+              LEFT JOIN findings f
+                ON f.organization_id = $1
+               AND f.source_type = 'intelligence_event'
+               AND f.source_id = e.id
+              WHERE e.status <> 'archived'
+                AND e.last_seen_at >= NOW() - INTERVAL '7 days'
+              ORDER BY e.last_seen_at DESC
+              LIMIT 25
+              `,
+              [organizationId]
+            )
+          : await pg.query<RecentSignalRow>(
+              `
+              SELECT
+                cs.id,
+                cs.source,
+                cs.signal_type,
+                cs.severity,
+                cs.normalized_summary,
+                cs.affected_vendor,
+                cs.affected_cve,
+                cs.ingestion_timestamp,
+                cs.linked_finding_id,
+                f.title     AS finding_title,
+                f.severity  AS finding_severity,
+                f.domain    AS finding_domain
+              FROM cyber_signals cs
+              LEFT JOIN findings f
+                ON f.id = cs.linked_finding_id
+               AND f.organization_id = $1
+              WHERE cs.organization_id = $1
+                AND cs.ingestion_timestamp >= NOW() - INTERVAL '7 days'
+              ORDER BY cs.ingestion_timestamp DESC
+              LIMIT 25
+              `,
+              [organizationId]
+            );
 
         // 6. Two most recent posture snapshots for current state and trend comparison.
         const snapshotsResult = await pg.query<PostureSnapshotRow>(

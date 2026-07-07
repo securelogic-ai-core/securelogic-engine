@@ -340,9 +340,16 @@ export async function listSignalsForVendor(req: Request, res: Response): Promise
          svl.id           AS link_id,
          svl.note         AS link_note,
          svl.created_at   AS link_created_at,
-         ${SIGNAL_SELECT.split(",").map((c) => `cs.${c.trim()}`).join(",\n           ")}
+         ${SIGNAL_SELECT.split(",").map((c) => `cs.${c.trim()}`).join(",\n           ")},
+         ie.id AS intelligence_event_id,
+         ie.canonical_key AS event_canonical_key,
+         ie.status AS event_status,
+         ie.confidence AS event_confidence,
+         COALESCE(ie.executive_summary, cs.normalized_summary) AS event_summary
          FROM signal_vendor_links svl
          JOIN cyber_signals cs ON cs.id = svl.signal_id
+         LEFT JOIN intelligence_event_sources ies ON ies.cyber_signal_id = cs.id
+         LEFT JOIN intelligence_events ie ON ie.id = ies.event_id
         WHERE svl.organization_id = $1
           AND svl.vendor_id = $2
           AND svl.deleted_at IS NULL

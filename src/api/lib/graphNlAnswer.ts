@@ -73,11 +73,21 @@ const SYSTEM_PROMPT =
  * when configured; otherwise deterministic. Citations are filtered to labels
  * actually present in the graph (ungrounded citations dropped).
  */
+/** Canonical Intelligence Event context supplied to graph reasoning (item 3). */
+export interface GraphEventContext {
+  canonical_key: string;
+  title: string;
+  severity: string;
+  status: string;
+  confidence: number;
+}
+
 export async function answerGraphQuestion(
   rootLabel: string | null,
   question: string,
   analysis: GraphImpactAnalysis,
-  deps: LlmDeps = {}
+  deps: LlmDeps = {},
+  events: readonly GraphEventContext[] = []
 ): Promise<GraphAnswer> {
   const deterministic = buildDeterministicAnswer(rootLabel, question, analysis);
   const q = typeof question === "string" ? question.slice(0, 500) : "";
@@ -85,12 +95,19 @@ export async function answerGraphQuestion(
   if (deps.client === null || (deps.client === undefined && !llmAvailable())) return deterministic;
 
   const validCitations = new Set(analysisCitations(rootLabel, analysis));
+  // Canonical events become citable evidence for the answer.
+  for (const e of events) {
+    if (e.canonical_key) validCitations.add(e.canonical_key);
+    if (e.title) validCitations.add(e.title);
+  }
   const evidence = {
     root: rootLabel,
     business_impact_score: analysis.business_impact_score,
     business_impact_band: analysis.business_impact_band,
     blast_radius: analysis.blast_radius,
-    dependencies: analysis.dependencies.slice(0, 40).map((d) => ({ label: d.label, node_type: d.node_type, depth: d.depth, own_risk: d.own_risk, criticality: d.criticality }))
+    dependencies: analysis.dependencies.slice(0, 40).map((d) => ({ label: d.label, node_type: d.node_type, depth: d.depth, own_risk: d.own_risk, criticality: d.criticality })),
+    // Deduplicated, normalized canonical Intelligence Events for this neighbourhood.
+    intelligence_events: events.slice(0, 20).map((e) => ({ canonical_key: e.canonical_key, title: e.title, severity: e.severity, status: e.status, confidence: e.confidence }))
   };
 
   const res = await completeJson(

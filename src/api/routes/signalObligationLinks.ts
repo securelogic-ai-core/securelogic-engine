@@ -362,9 +362,16 @@ export async function listSignalsForObligation(req: Request, res: Response): Pro
          sol.id           AS link_id,
          sol.note         AS link_note,
          sol.created_at   AS link_created_at,
-         ${SIGNAL_SELECT.split(",").map((c) => `cs.${c.trim()}`).join(",\n           ")}
+         ${SIGNAL_SELECT.split(",").map((c) => `cs.${c.trim()}`).join(",\n           ")},
+         ie.id AS intelligence_event_id,
+         ie.canonical_key AS event_canonical_key,
+         ie.status AS event_status,
+         ie.confidence AS event_confidence,
+         COALESCE(ie.executive_summary, cs.normalized_summary) AS event_summary
          FROM signal_obligation_links sol
          JOIN cyber_signals cs ON cs.id = sol.signal_id
+         LEFT JOIN intelligence_event_sources ies ON ies.cyber_signal_id = cs.id
+         LEFT JOIN intelligence_events ie ON ie.id = ies.event_id
         WHERE sol.organization_id = $1
           AND sol.obligation_id = $2
           AND sol.deleted_at IS NULL

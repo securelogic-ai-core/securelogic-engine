@@ -1,8 +1,11 @@
 /**
- * briefScheduler.ts — Daily Intelligence Brief pipeline runner.
+ * briefScheduler.ts — Weekly Intelligence Brief pipeline runner.
  *
- * Processes every organization that has at least one active Intelligence Brief
- * subscriber, running the complete pipeline for each:
+ * Runs weekly (Tuesday 07:00 UTC, cron "0 7 * * 2" in schedulerRunner) over a
+ * trailing 7-day signal window. Email delivery is additionally gated by
+ * isBriefSendDay() (Tuesday UTC) so manual/off-day runs generate but do not
+ * email. Processes every organization that has at least one active Intelligence
+ * Brief subscriber, running the complete pipeline for each:
  *
  *   Step 1 — Fetch signals (once per run, shared across all orgs)
  *     - CISA KEV — full catalog, actively exploited CVEs
@@ -71,12 +74,15 @@ import {
 import { recomputeSourceReliability } from "./signals/sourceReliability.js";
 import { signalClusteringEnabled } from "./signals/signalClustering.js";
 import { briefProvenanceEnabled, buildProvenanceRows } from "./signals/briefProvenance.js";
+import { intelligenceEventsEnabled } from "./signals/intelligenceEventsFeatureFlag.js";
+import { fetchBriefEventRows } from "./signals/eventBriefSource.js";
 import {
   runSynthesisSafely,
   fetchPriorBriefContext
 } from "./briefSynthesizer.js";
 import { sendBrief } from "./briefEmailSender.js";
 import { isBriefSendDay } from "./briefSendWindow.js";
+import { maybeAlertBriefDelivery } from "./briefDeliveryHealth.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -287,23 +293,31 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
       );
       const newBriefId = insertBriefResult.rows[0]!.id;
 
-      const signalsResult = await client.query<CyberSignalForBrief>(
-        `SELECT id, signal_type, severity, normalized_summary,
-                affected_cve, affected_vendor, source, ingestion_timestamp,
-                cluster_key, raw_payload
-         FROM cyber_signals
-         WHERE (organization_id = $1 OR organization_id IS NULL)
-           AND ingestion_timestamp >= $2
-           AND ingestion_timestamp < $3
-         ORDER BY ingestion_timestamp DESC`,
-        [orgId, periodStart.toISOString(), periodEnd.toISOString()]
-      );
+      // Intelligence Pipeline Hardening (item 1): when the canonical-event flag
+      // is ON, the Brief reads from canonical Intelligence Events (normalized,
+      // deduplicated, quality-gated) instead of raw cyber_signals. Flag OFF →
+      // the exact legacy query, byte-identical behavior.
+      const briefSourceRows: CyberSignalForBrief[] = intelligenceEventsEnabled()
+        ? await fetchBriefEventRows(client, periodStart.toISOString(), periodEnd.toISOString())
+        : (
+            await client.query<CyberSignalForBrief>(
+              `SELECT id, signal_type, severity, normalized_summary,
+                      affected_cve, affected_vendor, source, ingestion_timestamp,
+                      cluster_key, raw_payload
+               FROM cyber_signals
+               WHERE (organization_id = $1 OR organization_id IS NULL)
+                 AND ingestion_timestamp >= $2
+                 AND ingestion_timestamp < $3
+               ORDER BY ingestion_timestamp DESC`,
+              [orgId, periodStart.toISOString(), periodEnd.toISOString()]
+            )
+          ).rows;
 
       // generateBrief is pure — safe to run inside this transaction.
       // Returns the pre-enrichment shortlist (top ENRICHMENT_SHORTLIST items
       // by composite ranking key); enrichment runs on the shortlist, then
       // capByUrgencyBuckets reduces to BRIEF_MAX_ITEMS.
-      const newBase = generateBrief(signalsResult.rows, {
+      const newBase = generateBrief(briefSourceRows, {
         priorityOf,
         clusteringEnabled: signalClusteringEnabled()
       });
@@ -311,7 +325,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
       // D2: per-signal source + cluster_key, so the persist phase can denormalise
       // them onto provenance edges (incl. corroborating signals not on the item).
       const newSignalMeta = new Map<string, { source: string; cluster_key: string | null }>(
-        signalsResult.rows.map((s) => [s.id, { source: s.source, cluster_key: s.cluster_key ?? null }])
+        briefSourceRows.map((s) => [s.id, { source: s.source, cluster_key: s.cluster_key ?? null }])
       );
 
       await client.query("COMMIT");
@@ -456,7 +470,10 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
           // D2 (flag-gated): write lineage edges (canonical + corroborating) for
           // each persisted item, in THIS tenant transaction so the RLS policy is
           // satisfied and the edges are atomic with the items.
-          if (briefProvenanceEnabled()) {
+          // Signal-provenance edges reference cyber_signals(id); in event-backed
+          // mode the item ids are event ids, and the event IS the provenance, so
+          // the edge write is skipped (guarded by the canonical-event flag).
+          if (briefProvenanceEnabled() && !intelligenceEventsEnabled()) {
             const idBySortOrder = new Map<number, string>(
               insertedItems.rows.map((r) => [r.sort_order, r.id])
             );
@@ -532,11 +549,12 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 /**
- * Run the full daily Intelligence Brief pipeline for every org with active
+ * Run the full weekly Intelligence Brief pipeline for every org with active
  * subscribers.
  *
  * Called by:
- *   - schedulerRunner.ts (node-cron, every day 7AM UTC)
+ *   - schedulerRunner.ts (node-cron, Tuesday 07:00 UTC — "0 7 * * 2")
+ *   - briefCatchup.ts (boot-time recovery of a missed Tuesday send, DARK)
  *   - POST /api/admin/briefs/run-scheduler (manual trigger for testing)
  *
  * @returns  Run summary with per-source signal counts, org counts, email counts.
@@ -586,11 +604,13 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`orgs_query_failed: ${msg}`);
     logger.error({ event: "scheduler_orgs_query_failed", err }, "Failed to query active orgs");
+    await maybeAlertBriefDelivery(summary, isSendDay);
     return summary;
   }
 
   if (orgIds.length === 0) {
     logger.info({ event: "scheduler_no_orgs" }, "No orgs with active subscribers — nothing to do");
+    await maybeAlertBriefDelivery(summary, isSendDay);
     return summary;
   }
 
@@ -1069,7 +1089,8 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
           briefId,
           sent: sendResult.sent,
           failed: sendResult.failed,
-          skipped: sendResult.skipped
+          skipped: sendResult.skipped,
+          already_sent: sendResult.already_sent
         },
         "Brief send completed for org"
       );
@@ -1097,6 +1118,10 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     },
     "Brief scheduler run completed"
   );
+
+  // Turn a silent zero-delivery run into an operator alert (best-effort, no-op
+  // off-day and when no webhook is configured).
+  await maybeAlertBriefDelivery(summary, isSendDay);
 
   return summary;
 }

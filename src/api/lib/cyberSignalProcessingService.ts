@@ -38,6 +38,8 @@
 import type { PoolClient } from "pg";
 import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { intelligenceEventsEnabled } from "./signals/intelligenceEventsFeatureFlag.js";
+import { resolveEventIdForSignal } from "./signals/eventSignalResolver.js";
 import {
   computePosture,
   FALLBACK_CONTEXT,
@@ -966,6 +968,29 @@ export async function runMatcherForSignal(
             "Generated auto_risk_exposure action for exposure-flagged risk"
           );
         }
+      }
+    }
+
+    // Event-native linkage (IE-AD-11): stamp the canonical Intelligence Event on
+    // every suggestion this signal produced, so the accept/dismiss workflow and
+    // all linkage services reference the authoritative model. Flag-gated: NULL
+    // (legacy, signal-only) when off. Best-effort — never blocks the matcher.
+    if (intelligenceEventsEnabled()) {
+      try {
+        const eventId = await resolveEventIdForSignal(client, signalId, signal.affected_cve);
+        if (eventId) {
+          await client.query(
+            `UPDATE signal_match_suggestions
+                SET intelligence_event_id = $1
+              WHERE organization_id = $2 AND signal_id = $3 AND intelligence_event_id IS NULL`,
+            [eventId, orgId, signalId]
+          );
+        }
+      } catch (err) {
+        logger.warn(
+          { event: "matcher_event_link_failed", orgId, signalId, err },
+          "Failed to stamp canonical event on suggestions (non-fatal)"
+        );
       }
     }
 

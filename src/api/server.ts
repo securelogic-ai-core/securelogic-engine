@@ -11,6 +11,7 @@ import { ensureRedisConnected, redisReady } from "./infra/redis.js";
 import { logger } from "./infra/logger.js";
 
 import { startScheduler } from "./lib/schedulerRunner.js";
+import { runBriefCatchupIfMissed } from "./lib/briefCatchup.js";
 import { startAccountDeletionReaperEnqueuer } from "./lib/accountDeletionEnqueuer.js";
 import { startApplicabilityReassessmentWorker } from "./workers/applicabilityReassessmentWorker.js";
 import { startConnectorSyncWorker } from "./workers/connectorSyncWorker.js";
@@ -128,6 +129,12 @@ await connectDatabase();
 await startupCheck();
 
 startScheduler();
+// Missed-week recovery for the weekly Brief cron. Called always; self-gates on
+// SECURELOGIC_BRIEF_CATCHUP_ENABLED (DARK by default → zero DB access, no send).
+// Fire-and-forget so it never blocks boot/listen; it swallows its own errors.
+void runBriefCatchupIfMissed().catch((err) => {
+  logger.error({ event: "brief_catchup_boot_failed", err }, "Brief catch-up failed at boot (non-fatal)");
+});
 startAccountDeletionReaperEnqueuer();
 // ECL R3: in-process reassessment worker. Registered always; every tick
 // self-gates on SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED (zero DB access while

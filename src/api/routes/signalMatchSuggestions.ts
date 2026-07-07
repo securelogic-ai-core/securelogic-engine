@@ -111,6 +111,7 @@ const SUGGESTION_BASE_COLS = `
   id,
   organization_id,
   signal_id,
+  intelligence_event_id,
   target_type,
   target_id,
   match_reason,
@@ -133,6 +134,7 @@ const SUGGESTION_ENRICHED_SELECT = `
   s.id,
   s.organization_id,
   s.signal_id,
+  s.intelligence_event_id,
   s.target_type,
   s.target_id,
   s.match_reason,
@@ -144,7 +146,12 @@ const SUGGESTION_ENRICHED_SELECT = `
   s.dismissed_at,
   s.dismissed_by_user_id,
   s.dismissal_reason,
-  COALESCE(v.name, ai.name, c.name, o.title, ar.name) AS target_name
+  COALESCE(v.name, ai.name, c.name, o.title, ar.name) AS target_name,
+  ie.title      AS event_title,
+  ie.status     AS event_status,
+  ie.severity   AS event_severity,
+  ie.confidence AS event_confidence,
+  ie.canonical_key AS event_canonical_key
 `;
 
 // Reusable LEFT JOIN block paired with SUGGESTION_ENRICHED_SELECT. Each join
@@ -158,6 +165,7 @@ const SUGGESTION_ENRICH_JOIN = `
   LEFT JOIN obligations o  ON s.target_type = 'obligation' AND o.id  = s.target_id
   LEFT JOIN asset_registry_v ar ON s.target_type = 'asset' AND ar.asset_id = s.target_id
                                AND ar.organization_id = s.organization_id
+  LEFT JOIN intelligence_events ie ON ie.id = s.intelligence_event_id
 `;
 
 /**

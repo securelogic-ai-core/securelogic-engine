@@ -39,6 +39,8 @@ import {
 // Mirrors processSignal phase 7, which runs the control matcher AFTER its commit.
 import { runLlmControlMatcherForSignal } from "../../../../src/api/lib/llmControlMatcher.js";
 import { buildDedupHash } from "../../../../src/api/lib/cyberSignalNormalizer.js";
+import { projectUnprojectedGlobalSignals, ageIntelligenceEvents } from "../../../../src/api/lib/signals/intelligenceEventStore.js";
+import { processEventLifecycleTriggers } from "../../../../src/api/lib/signals/eventLifecycleWorkflow.js";
 import { createAlertBatcher } from "../../../../src/api/lib/alerting/alertService.js";
 import { matcherAlertsEnabled } from "../../../../src/api/lib/alerting/matcherAlertsFeatureFlag.js";
 
@@ -591,11 +593,38 @@ export async function runPipeline(): Promise<PipelineResult> {
     );
   }
 
-  // Bridge ingested signals to cyber_signals for the Intelligence Brief pipeline,
-  // then fan out the matcher to every active org for each newly-inserted signal.
-  // Closes the worker→matcher gap (audit doc §6 / §7).
+  // Bridge ingested signals to cyber_signals for the Intelligence Brief pipeline.
+  // Then, DARK (self-gating on SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED): project
+  // the just-bridged GLOBAL signals into canonical Intelligence Events BEFORE the
+  // matcher fans out, so the matcher emits event-linked suggestions (IE-AD-11).
+  // Finally fan the matcher out, then advance the event lifecycle + fire
+  // per-transition workflow follow-through. Each step is best-effort — a failure
+  // never breaks the pipeline. Closes the worker→matcher gap (audit doc §6 / §7).
   try {
     const bridgeResult = await bridgeSignalsToCyberSignals(bridgeableSignals);
+
+    let projectionEnabled = false;
+    try {
+      const projection = await projectUnprojectedGlobalSignals();
+      projectionEnabled = projection.skipped !== "disabled";
+      if (projectionEnabled) {
+        logger.info(
+          {
+            event: "intelligence_event_projection",
+            projected: projection.projected,
+            created: projection.created,
+            corroborated: projection.corroborated
+          },
+          "Intelligence Event projection pass complete"
+        );
+      }
+    } catch (err) {
+      logger.error(
+        { event: "intelligence_event_projection_error", err },
+        "Intelligence Event projection failed (non-fatal)"
+      );
+    }
+
     try {
       await fanOutMatcherToActiveOrgs(bridgeResult.insertedSignals);
     } catch (err) {
@@ -603,6 +632,20 @@ export async function runPipeline(): Promise<PipelineResult> {
         { event: "matcher_fanout_unexpected_error", err },
         "Matcher fan-out raised unexpectedly; continuing pipeline"
       );
+    }
+
+    if (projectionEnabled) {
+      try {
+        // Advance the lifecycle of quiet events (mitigated→resolved, →archived),
+        // then fire per-org follow-through once per lifecycle transition (4/5/7).
+        await ageIntelligenceEvents();
+        await processEventLifecycleTriggers();
+      } catch (err) {
+        logger.error(
+          { event: "intelligence_event_lifecycle_error", err },
+          "Intelligence Event lifecycle/workflow pass failed (non-fatal)"
+        );
+      }
     }
   } catch (err) {
     logger.error({ event: "cyber_signal_bridge_error", err }, "cyber_signals bridge failed");
