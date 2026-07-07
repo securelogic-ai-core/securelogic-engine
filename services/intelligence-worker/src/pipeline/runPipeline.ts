@@ -40,6 +40,7 @@ import {
 import { runLlmControlMatcherForSignal } from "../../../../src/api/lib/llmControlMatcher.js";
 import { buildDedupHash } from "../../../../src/api/lib/cyberSignalNormalizer.js";
 import { projectUnprojectedGlobalSignals, ageIntelligenceEvents } from "../../../../src/api/lib/signals/intelligenceEventStore.js";
+import { processEventLifecycleTriggers } from "../../../../src/api/lib/signals/eventLifecycleWorkflow.js";
 import { createAlertBatcher } from "../../../../src/api/lib/alerting/alertService.js";
 import { matcherAlertsEnabled } from "../../../../src/api/lib/alerting/matcherAlertsFeatureFlag.js";
 
@@ -628,6 +629,9 @@ export async function runPipeline(): Promise<PipelineResult> {
       );
       // Advance the lifecycle of quiet events (mitigated→resolved, →archived).
       await ageIntelligenceEvents();
+      // Workflow automation: fire per-org follow-through (findings + notifications)
+      // once per event lifecycle transition (items 4/5/7).
+      await processEventLifecycleTriggers();
     }
   } catch (err) {
     logger.error(
