@@ -85,11 +85,14 @@ UPDATE organizations SET enterprise_context_capability = TRUE WHERE id = '<stagi
     `source_type='asset_assessment'`.
 - Validate (app management UI). Sign in as a platform user in the same staging
   org holding the `enterprise_context` capability:
-  - **Nav (canonical surface, P12):** the "Assets" dropdown now leads with
-    **Asset Registry** (`/assets`) as its first item, with Vendors / AI Systems
-    beneath it as asset types; `/assets` lists rows with type-filter chips and
-    the "+ Add asset" action. (Flag off → the Asset Registry child disappears and
-    the dropdown is byte-identical to the legacy `[Vendors, AI Systems]` menu.)
+  - **Nav (single canonical entry, P12):** the "Assets" dropdown exposes exactly
+    ONE item — **Asset Registry** (`/assets`). Vendors and AI Systems are NOT
+    separate menu items; they are managed inside the registry as asset
+    types/filters (type-filter chips on `/assets`, which also has the "+ Add
+    asset" action). Their direct routes (`/vendors`, `/ai-systems`) still work
+    for back-compat but are not primary navigation. (Flag off → Asset Registry
+    disappears and the dropdown reverts to the legacy `[Vendors, AI Systems]`
+    menu, byte-identical to before.)
   - **Create:** `/assets/new` → Infrastructure section → pick *Endpoint* →
     submit the form → lands on `/assets/:id` with the typed detail rendered.
     Cross-check one `assets` + one `endpoints` row (same as the API path).

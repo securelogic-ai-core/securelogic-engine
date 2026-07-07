@@ -39,12 +39,21 @@ export type NavItem =
       premium?: boolean;
       admin?: boolean;
       featureFlag?: NavFeatureFlag;
-      // A child MAY declare its own featureFlag — fail-closed, filtered per-child
-      // by filterNav. This lets a dark destination live inside an always-visible
-      // group (e.g. the Asset Registry under "Assets") without revealing it until
-      // its flag flips. Children with no flag are always visible (subject to the
-      // group's own entitlement).
-      items: Array<{ label: string; href: string; featureFlag?: NavFeatureFlag }>;
+      // A child MAY declare per-child flag gating, filtered by filterNav:
+      //   - featureFlag  → SHOW this child only when the flag is on (fail-closed;
+      //     e.g. the Asset Registry under "Assets" stays dark until its flag flips).
+      //   - hiddenByFlag → HIDE this child when the flag is on. Used for LEGACY
+      //     children that a canonical destination replaces: while the flag is off
+      //     they are the menu (back-compat); once it is on they drop out of the
+      //     primary nav entirely (their direct routes still work — EAR-AD-1).
+      // A child with neither flag is always visible (subject to the group's own
+      // entitlement). featureFlag + hiddenByFlag are mutually exclusive per child.
+      items: Array<{
+        label: string;
+        href: string;
+        featureFlag?: NavFeatureFlag;
+        hiddenByFlag?: NavFeatureFlag;
+      }>;
     };
 
 export const NAV_ITEMS: NavItem[] = [
@@ -52,18 +61,20 @@ export const NAV_ITEMS: NavItem[] = [
   { type: "link",  label: "Briefs",    href: "/briefs" },
   { type: "link",  label: "Ask",       href: "/ask",       platform: true },
   { type: "link",  label: "Queue",     href: "/queue",     platform: true },
-  // Assets — the unified Asset Registry is the canonical management surface
-  // (EAR P12). When SECURELOGIC_ASSET_REGISTRY_ENABLED is on, "Asset Registry"
-  // is the primary destination and Vendors / AI Systems are presented as asset
-  // TYPES beneath it — not separate products. Their per-type pages remain for
-  // back-compat and deep-links (EAR-AD-1). While the flag is dark the child is
-  // hidden (fail-closed), so this dropdown is byte-identical to the legacy
-  // [Vendors, AI Systems] menu — the two-switch dark model is preserved.
+  // Assets — the unified Asset Registry is the SINGLE canonical entry point
+  // (EAR P12). When SECURELOGIC_ASSET_REGISTRY_ENABLED is on, the "Assets"
+  // dropdown exposes ONLY "Asset Registry"; Vendors and AI Systems are managed
+  // INSIDE the registry as asset types/filters, not as separate menu items
+  // (hiddenByFlag drops them from the primary nav). Their direct routes
+  // (/vendors, /ai-systems and children) keep working for back-compat and
+  // deep-links (EAR-AD-1). While the flag is dark the Asset Registry child is
+  // hidden (fail-closed) and the two legacy children remain, so the dropdown is
+  // byte-identical to the legacy [Vendors, AI Systems] menu — dark model preserved.
   { type: "group", label: "Assets", platform: true,
     items: [
-      { label: "Asset Registry", href: "/assets", featureFlag: "asset_registry" },
-      { label: "Vendors",        href: "/vendors" },
-      { label: "AI Systems",     href: "/ai-systems" },
+      { label: "Asset Registry", href: "/assets",      featureFlag: "asset_registry" },
+      { label: "Vendors",        href: "/vendors",     hiddenByFlag: "asset_registry" },
+      { label: "AI Systems",     href: "/ai-systems",  hiddenByFlag: "asset_registry" },
     ],
   },
   // Enterprise Context Layer — DARK: featureFlag keeps this hidden until the
@@ -106,10 +117,17 @@ export function filterNav(
     if (item.admin    && !isAdminUser)    continue;
 
     if (item.type === "group") {
-      // Filter dark children (fail-closed); return a cloned group so the shared
-      // NAV_ITEMS array is never mutated. A group whose children are all dark
+      // Per-child flag gating; return a cloned group so the shared NAV_ITEMS
+      // array is never mutated. A group whose children all resolve away
       // disappears entirely.
-      const visibleItems = item.items.filter(c => !c.featureFlag || flags?.[c.featureFlag] === true);
+      //   - featureFlag  → keep only when its flag is on (fail-closed).
+      //   - hiddenByFlag → drop when its flag is on (legacy child a canonical
+      //     destination has replaced).
+      const visibleItems = item.items.filter(c => {
+        if (c.featureFlag && flags?.[c.featureFlag] !== true) return false;
+        if (c.hiddenByFlag && flags?.[c.hiddenByFlag] === true) return false;
+        return true;
+      });
       if (visibleItems.length === 0) continue;
       out.push(visibleItems.length === item.items.length ? item : { ...item, items: visibleItems });
     } else {

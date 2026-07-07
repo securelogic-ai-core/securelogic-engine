@@ -55,19 +55,21 @@ describe("filterNav feature flags", () => {
     expect(notPlatform.some((i) => "href" in i && i.href === "/executive")).toBe(false);
   });
 
-  it("the Asset Registry is a dark-by-default CHILD of the Assets group (EAR P12 canonical surface)", () => {
-    // While dark, the Assets dropdown is byte-identical to the legacy menu.
+  it("Assets exposes ONE canonical entry (Asset Registry) when the flag is on; legacy menu when off (EAR P12)", () => {
+    // Flag OFF — legacy behavior unchanged: the dropdown is exactly [Vendors, AI Systems].
     const dark = filterNav(NAV_ITEMS, true, true, true);
     expect(assetsGroupChildren(dark)).toEqual(["/vendors", "/ai-systems"]);
 
-    // The ECL flag alone must NOT reveal it (two independent switches).
+    // The ECL flag alone must NOT change it (independent switch).
     const eclOnly = filterNav(NAV_ITEMS, true, true, true, { enterprise_context: true });
     expect(assetsGroupChildren(eclOnly)).toEqual(["/vendors", "/ai-systems"]);
 
-    // With its own flag on, "Asset Registry" appears FIRST — the canonical
-    // destination — with Vendors / AI Systems beneath it as asset types.
+    // Flag ON — Assets shows ONLY Asset Registry; Vendors / AI Systems drop out
+    // of the primary nav (managed inside the registry as asset types/filters).
     const withFlag = filterNav(NAV_ITEMS, true, true, true, { asset_registry: true });
-    expect(assetsGroupChildren(withFlag)).toEqual(["/assets", "/vendors", "/ai-systems"]);
+    expect(assetsGroupChildren(withFlag)).toEqual(["/assets"]);
+    expect(assetsGroupChildren(withFlag)).not.toContain("/vendors");
+    expect(assetsGroupChildren(withFlag)).not.toContain("/ai-systems");
 
     // Flag on but not a platform user → the whole Assets group is gated out.
     const notPlatform = filterNav(NAV_ITEMS, false, true, false, { asset_registry: true });
