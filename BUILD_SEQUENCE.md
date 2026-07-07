@@ -83,6 +83,24 @@ Billing note:
 > product decisions from Epic 1 (GATE B prod enablement; P9 entitlement-leg cutover) remain
 > reserved for the operator and are NOT part of ERIP.
 
+> **EAR P12 follow-on — COMPLETE (2026-07-07; additive to the P0–P11 record above, which is
+> preserved unchanged).** The **Enterprise Asset Registry Management UI (P12) is COMPLETE**,
+> shipped dark to `develop`: **#541** (`f2741b01`) management UI — create/edit/archive/delete for
+> the four detail-backed types + federated entry points (EAR-AD-1) — with canonical-surface nav;
+> **#543** (`09239f84`) revising the "Assets" menu to a **single canonical entry**; **#542**
+> (`f926b960`) making the Enablement Runbook Step 1 self-contained. **Final `develop` SHA:
+> `09239f84`.** The **Enterprise Asset Registry is now the canonical asset management experience**:
+> when `SECURELOGIC_ASSET_REGISTRY_ENABLED` is on, the "Assets" nav exposes only **Asset
+> Registry**. **Vendors and AI Systems are managed as asset types/filters INSIDE the registry, not
+> as primary navigation**; their legacy direct routes (`/vendors`, `/ai-systems` and children)
+> remain for backward compatibility (and stay in the knowledge index with their platform access).
+> All of it remains **dark behind `SECURELOGIC_ASSET_REGISTRY_ENABLED`** (default off; flag-off nav
+> is byte-for-byte the legacy `[Vendors, AI Systems]` menu) — **no production enablement; GATE B in
+> effect.** Consistent with: `docs/validation/enterprise-asset-registry-tracker.md` (P12 row →
+> DONE), `docs/validation/erip-tracker.md` (Epic 1 EAR ✅), the Enablement Runbook Step 1, and the
+> EAR/ERIP final reports (P0–P11 records unchanged; P12 is a post-close follow-on, not a rewrite of
+> Epic 1 scope).
+
 ## Active package
 `Priority 4 — Signal Ingestion Hardening` — **status: ACTIVE — IMPLEMENTATION AUTHORIZED & UNDERWAY (2026-06-26).**
 
