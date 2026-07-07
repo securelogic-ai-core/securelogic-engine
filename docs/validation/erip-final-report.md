@@ -130,7 +130,7 @@ additive migrations, CI 8/8, squash-merge, GATE B untouched).
 | Discovery — bidirectional writeback (E2a) | #534 | `connector_writeback_intents` (`20260820`) + writeback worker + `ConnectorAdapter.writeback` capability (ServiceNow CMDB: `readCurrent`/`writeField` over a field whitelist) + optimistic-concurrency conflict resolution (apply / noop-adopt / hold-conflict). Real PATCH to the source system once enabled. |
 | Discovery — dead-letter recovery (E2b) | #535 | `connector_dead_letters` (`20260821`) — terminal sync/writeback failures captured; operator re-drive (re-enqueue sync job / re-pend intent) + ignore, via `GET/POST /api/connectors/dead-letters*`. |
 | Discovery — connector health monitoring (E2c) | #536 | `GET /api/connectors/health` — per-connector band (healthy/degraded/failing/…) + reasons + org rollup, aggregating sync outcome, drift, writeback backlog, and dead-letters. |
-| Executive Intelligence — interactive dashboard (UI) | branch `feat/erip-ui-executive-dashboard` (pushed; pending merge) | Multi-view Next.js executive dashboard: view selector across **every** risk dimension (enterprise + cloud/AI/application/endpoint/API/identity/vendor/…), per-view KPI scorecards, interactive SVG trend chart (range toggle), period comparison, dimensional heatmap with click-to-drill-down, predictive insights + forecast sparkline, connector-fleet health, CSV export. Dark behind the app-side `SECURELOGIC_RISK_INTELLIGENCE_ENABLED` nav flag (two-switch model). |
+| Executive Intelligence — interactive dashboard (UI) | #537 | Multi-view Next.js executive dashboard: view selector across **every** risk dimension (enterprise + cloud/AI/application/endpoint/API/identity/vendor/…), per-view KPI scorecards, interactive SVG trend chart (range toggle), period comparison, dimensional heatmap with click-to-drill-down, predictive insights + forecast sparkline, connector-fleet health, CSV export. Dark behind the app-side `SECURELOGIC_RISK_INTELLIGENCE_ENABLED` nav flag (two-switch model). |
 
 **Migrations added:** `20260816` (risk_history), `20260817` (risk_forecasts), `20260818`
 (orchestration integrations), `20260819` (playbooks), `20260820` (writeback intents),
@@ -174,29 +174,26 @@ plus the app-side nav flag `SECURELOGIC_RISK_INTELLIGENCE_ENABLED` for the dashb
 
 ## A4. Remaining actions — OPERATOR-OWNED ONLY
 
-All engineering is complete. Nothing below is code work; each is an explicit operator
-decision the program is designed to leave untouched (GATE B).
+All engineering is complete and merged to `develop` (the executive-dashboard UI landed as
+#537; this report + runbook + tracker land with the docs PR). Nothing below is code work; each
+is an explicit operator decision the program is designed to leave untouched (GATE B).
 
-1. **Merge the pushed feature work to `develop`.** All raised-bar engineering is merged
-   except the executive-dashboard UI, which is engineered, tested, and pushed on
-   `feat/erip-ui-executive-dashboard` — open/approve its PR to land it. *(Repo action, not a
-   production change.)*
-2. **Configure external credentials** (operator-owned, per connected system):
+1. **Configure external credentials** (operator-owned, per connected system):
    connector credentials on `enterprise_connectors` (per org); orchestration integration
    credentials on `orchestration_integrations` (per org); `ANTHROPIC_API_KEY` on the engine +
    worker services to activate LLM-assisted predictive insights and graph NL answering.
-3. **Apply operator settings:** per-org `enterprise_connectors.enabled` + `sync_interval_minutes`;
+2. **Apply operator settings:** per-org `enterprise_connectors.enabled` + `sync_interval_minutes`;
    per-org writeback intents / integration `enabled`; playbook definitions + schedules.
-4. **Enable production feature flags** (in dependency order — runbook §1), each requiring an
+3. **Enable production feature flags** (in dependency order — runbook §1), each requiring an
    explicit ruling: `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` → `..._ASSET_REGISTRY_ENABLED` →
    `..._CONNECTOR_SCHEDULED_SYNC_ENABLED` → `..._RISK_INTELLIGENCE_ENABLED` →
    `..._PREDICTIVE_INTELLIGENCE_ENABLED` → `..._KNOWLEDGE_GRAPH_ENABLED` →
    `..._AUTONOMOUS_OPERATIONS_ENABLED` → `..._CONNECTOR_WRITEBACK_ENABLED`, plus the app-side
    `SECURELOGIC_RISK_INTELLIGENCE_ENABLED` for the dashboard nav.
-5. **Connect customer systems** and let history accumulate — the snapshot/forecast/inference
+4. **Connect customer systems** and let history accumulate — the snapshot/forecast/inference
    workers activate automatically once flags are on and data exists; forecasts and insights
    sharpen as more history accrues, with no further engineering.
-6. **Run staging validation** (runbook §2) before any production enablement.
+5. **Run staging validation** (runbook §2) before any production enablement.
 
 No production deployment, no feature enablement, no credential configuration, and no
 operator-owned setting was performed by the program. **Every remaining item is operator-owned.**

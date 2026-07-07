@@ -10,10 +10,10 @@ behind flags (default off), additive-only migrations, backward compatibility, br
 production enablement (GATE B)**.
 
 Last updated: 2026-07-07 (**RAISED-BAR COMPLETE** — the CORE-COMPLETE deferrals that were
-engineering (not operator-runtime) are now built to the raised completion bar; PRs #526–#536
-merged + executive-dashboard UI pushed on `feat/erip-ui-executive-dashboard`. See the
-Raised-Bar ledger below and `erip-final-report.md` §Addendum). Prior milestone: PROGRAM CORE
-COMPLETE (Epics 1–7 shipped dark; close docs #524; develop @ `21e84fb4`).
+engineering (not operator-runtime) are now built to the raised completion bar; PRs #526–#537
+all merged to develop (backend #526–#536 + executive-dashboard UI #537). See the Raised-Bar
+ledger below and `erip-final-report.md` §Addendum). Prior milestone: PROGRAM CORE COMPLETE
+(Epics 1–7 shipped dark; close docs #524; develop @ `21e84fb4`).
 
 ## Program rulings / decision gates
 
@@ -77,7 +77,7 @@ squash-merge, GATE B).
 | E2a — bidirectional writeback | **DONE ✅** | #534 | `connector_writeback_intents` (`20260820`) + worker + adapter `writeback` (ServiceNow) + optimistic-concurrency conflict resolution; new flag `SECURELOGIC_CONNECTOR_WRITEBACK_ENABLED` |
 | E2b — dead-letter recovery | **DONE ✅** | #535 | `connector_dead_letters` (`20260821`) — capture + operator re-drive/ignore (`/api/connectors/dead-letters*`) |
 | E2c — connector health monitoring | **DONE ✅** | #536 | `GET /api/connectors/health` — per-connector band + reasons + org rollup |
-| UI — interactive executive dashboard | **PUSHED (pending merge)** | branch `feat/erip-ui-executive-dashboard` | Multi-view Next.js dashboard (all dimensions; KPIs/trend/heatmap/comparison/drill-down/export + predictive + connector health); dark behind app-side `SECURELOGIC_RISK_INTELLIGENCE_ENABLED`. App typecheck + knowledge-index drift + full suite (5,504) green |
+| UI — interactive executive dashboard | **DONE ✅** | #537 | Multi-view Next.js dashboard (all dimensions; KPIs/trend/heatmap/comparison/drill-down/export + predictive + connector health); dark behind app-side `SECURELOGIC_RISK_INTELLIGENCE_ENABLED`. App typecheck + knowledge-index drift + full suite (5,504) green |
 
 Raised-bar migrations: `20260816`–`20260821` (all additive, dataClassification-registered).
 Full unit suite **5,504 passing**; new isolation suites for risk history, forecasts, LLM
