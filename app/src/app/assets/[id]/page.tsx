@@ -14,7 +14,14 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getAsset } from "@/lib/api";
-import { assetTypeLabel, assetsReadFailure } from "@/lib/assetRegistry";
+import {
+  assetTypeLabel,
+  assetsReadFailure,
+  assetDetailHref,
+  assetGraphHref,
+  isDetailBackedType,
+  type CanonicalAsset,
+} from "@/lib/assetRegistry";
 import {
   CriticalityBadge,
   StatusChip,
@@ -22,6 +29,7 @@ import {
   MetaChip,
   ReadFailurePanel,
 } from "@/components/assetKit";
+import { AssetManageActions } from "./AssetManageActions";
 
 /** Header columns are rendered explicitly; everything else in the detail row is typed payload. */
 const NON_TYPED_DETAIL_KEYS = new Set([
@@ -55,6 +63,7 @@ export default async function AssetDetailPage({
 
   const { id } = await params;
   const result = await getAsset(token, id);
+  const eclEnabled = process.env.SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED === "true";
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-12">
@@ -93,6 +102,34 @@ export default async function AssetDetailPage({
             </div>
           </div>
 
+          {/* Management actions (EAR-AD-1): unified-surface CRUD for detail-backed
+              types; everything else is edited on its authoritative screen. */}
+          {isDetailBackedType(result.asset.asset_type) ? (
+            <div className="mb-8">
+              <AssetManageActions
+                assetId={result.asset.asset_id}
+                assetName={result.asset.name}
+                status={result.asset.status}
+              />
+            </div>
+          ) : (
+            <ManagedElsewhereNote asset={result.asset} />
+          )}
+
+          {/* Relationship management entry point — the enterprise graph is the
+              shared relationship surface (dark behind the ECL flag). */}
+          {eclEnabled && (
+            <div className="mb-8">
+              <Link
+                href={assetGraphHref(result.asset)}
+                className="inline-flex items-center gap-1.5 text-sm font-medium transition-colors hover:opacity-80"
+                style={{ color: "#00c4b4" }}
+              >
+                View relationships in the enterprise graph →
+              </Link>
+            </div>
+          )}
+
           {result.detail && (
             <section>
               <h2 className="text-sm font-semibold mb-3" style={{ color: "#f1f5f9" }}>
@@ -117,6 +154,34 @@ export default async function AssetDetailPage({
             </section>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * EAR-AD-1: vendor / AI-system / enterprise-entity-backed assets are managed on
+ * their own screens, not the unified surface. Point the user there instead of
+ * offering an Edit/Delete the engine would 409.
+ */
+function ManagedElsewhereNote({ asset }: { asset: CanonicalAsset }) {
+  const href = assetDetailHref(asset);
+  return (
+    <div
+      className="mb-8 rounded-xl border px-5 py-4 flex flex-wrap items-center justify-between gap-3"
+      style={{ borderColor: "#1e293b", background: "#0f172a" }}
+    >
+      <p className="text-xs" style={{ color: "#94a3b8" }}>
+        This {assetTypeLabel(asset.asset_type).toLowerCase()} is managed on its own screen.
+      </p>
+      {href && (
+        <Link
+          href={href}
+          className="text-sm font-semibold transition-opacity hover:opacity-80"
+          style={{ color: "#00c4b4" }}
+        >
+          Manage →
+        </Link>
       )}
     </div>
   );

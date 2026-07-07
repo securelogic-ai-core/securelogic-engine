@@ -81,14 +81,25 @@ export default async function AssetsPage({
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>
-          Assets
-        </h1>
-        <p className="text-sm mt-1" style={{ color: "#94a3b8" }}>
-          Every asset your organization tracks — vendors, AI systems, applications,
-          infrastructure — in one registry view.
-        </p>
+      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>
+            Assets
+          </h1>
+          <p className="text-sm mt-1" style={{ color: "#94a3b8" }}>
+            Every asset your organization tracks — vendors, AI systems, applications,
+            infrastructure — in one registry view.
+          </p>
+        </div>
+        {result.ok && (
+          <Link
+            href="/assets/new"
+            className="flex-shrink-0 px-4 py-2 rounded-lg text-sm font-semibold transition-opacity hover:opacity-90"
+            style={{ background: "#00c4b4", color: "#0a0f1a" }}
+          >
+            + Add asset
+          </Link>
+        )}
       </div>
 
       {!result.ok ? (
@@ -118,6 +129,21 @@ export default async function AssetsPage({
                   ? `No ${assetTypeLabel(typeFilter).toLowerCase()} assets yet.`
                   : "No assets registered yet."}
               </p>
+              <p className="text-xs mt-1 mb-4" style={{ color: "#64748b" }}>
+                Add cloud resources, endpoints, APIs, and identity systems here — or import from an
+                existing source.
+              </p>
+              <Link
+                href={
+                  typeFilter && isAssetType(typeFilter)
+                    ? `/assets/new?type=${typeFilter}`
+                    : "/assets/new"
+                }
+                className="inline-block px-4 py-2 rounded-lg text-sm font-semibold transition-opacity hover:opacity-90"
+                style={{ background: "#00c4b4", color: "#0a0f1a" }}
+              >
+                + Add asset
+              </Link>
             </div>
           ) : (
             <div className="bg-brand-surface border border-brand-line rounded-xl divide-y" style={{ borderColor: "#1e293b" }}>

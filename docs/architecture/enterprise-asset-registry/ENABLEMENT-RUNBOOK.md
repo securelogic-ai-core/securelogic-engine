@@ -16,7 +16,7 @@ defaults `"false"` in all four render.yaml services.
 
 | Flag | Surface | Depends on |
 |---|---|---|
-| `SECURELOGIC_ASSET_REGISTRY_ENABLED` | `/api/assets*` (list/detail/create/patch/delete), `/api/asset-assessments*` (P10), the registry-generic signal matcher branch, registerAsset() writes on vendor/aiSystem/entity creation, `/assets` app surface | — (root flag) |
+| `SECURELOGIC_ASSET_REGISTRY_ENABLED` | `/api/assets*` (list/detail/create/patch/delete), `/api/asset-assessments*` (P10), the registry-generic signal matcher branch, registerAsset() writes on vendor/aiSystem/entity creation, the `/assets` app surface — read list/detail **and** the management UI (`/assets/new`, `/assets/:id/edit`, create/edit/archive/delete for the four detail-backed types, federated create + CSV-import entry points) | — (root flag) |
 | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` | ECL: enterprise graph, applicability engine + read routes, exec dashboard; prerequisite half of the connector + citation double-fences | — (pre-EAR, root flag) |
 | `SECURELOGIC_CAPABILITY_GATING_ENABLED` | P9 dual-gate: core-domain premium routes also accept an explicit per-org `organizations.core_platform_capability = TRUE` grant | — (independent; changes nothing until a grant is written) |
 | `SECURELOGIC_BRIEF_APPLICABILITY_CITATION_ENABLED` | P11: Brief GET `:id` items carry `applicability_citations` | AND `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` |
@@ -46,8 +46,33 @@ Set `SECURELOGIC_ASSET_REGISTRY_ENABLED=true` on the engine service only.
   - `POST /api/asset-assessments` for that asset; PATCH it
     `in_progress → deficient` with severity → exactly one `findings` row with
     `source_type='asset_assessment'`.
-- Rollback: flag back to `false` — the whole surface 404s before auth again;
-  rows written remain (inert, additive).
+- Validate (app management UI — set the app service's
+  `SECURELOGIC_ASSET_REGISTRY_ENABLED=true` too; the nav uses the app-side env,
+  the engine gates writes independently). Sign in as a platform user in the same
+  staging org with the `enterprise_context` capability:
+  - **Nav (canonical surface, P12):** the "Assets" dropdown now leads with
+    **Asset Registry** (`/assets`) as its first item, with Vendors / AI Systems
+    beneath it as asset types; `/assets` lists rows with type-filter chips and
+    the "+ Add asset" action. (Flag off → the Asset Registry child disappears and
+    the dropdown is byte-identical to the legacy `[Vendors, AI Systems]` menu.)
+  - **Create:** `/assets/new` → Infrastructure section → pick *Endpoint* →
+    submit the form → lands on `/assets/:id` with the typed detail rendered.
+    Cross-check one `assets` + one `endpoints` row (same as the API path).
+  - **Cloud resource required field:** create a *Cloud Resource* with no
+    provider → the form blocks submit (provider is required, matching the
+    engine `provider_required`).
+  - **Edit / archive / delete:** on the new asset's detail page → Edit changes a
+    typed field; Archive flips `status → archived` (row retained); Delete (after
+    confirm) removes it and returns to `/assets`.
+  - **Federation (EAR-AD-1):** open a *vendor*-backed row → detail shows
+    "managed on its own screen" with a deep-link, **no** Edit/Delete; the
+    `/assets/new` picker routes Vendors/AI Systems to their own `/new` screens.
+  - **Dark parity:** with the app-side flag `false`, the nav entry is hidden and
+    `/assets`, `/assets/new`, `/assets/:id/edit` all render the neutral
+    "not available" panel (no form, no leak).
+- Rollback: flag back to `false` — the whole surface 404s before auth again
+  (and the UI returns to the neutral panel); rows written remain (inert,
+  additive).
 
 **Step 2 — ECL (if not already on).**
 Set `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED=true`.

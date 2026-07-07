@@ -111,3 +111,173 @@ export function assetsReadFailure(result: { disabled: boolean; error: string }):
     message: "Something went wrong loading assets. Please try again.",
   };
 }
+
+// ─── EAR management UI (create / edit / delete) ─────────────────────────────
+//
+// The unified surface is the CRUD *home* for the four detail-backed types only
+// (mirrors the engine's assetDetailValidation.DETAIL_BACKED_TYPES). Every other
+// type is created/edited on its own authoritative surface — this module encodes
+// the federated routing (EAR-AD-1) so the /assets management shell never
+// duplicates a per-type form.
+
+export const DETAIL_BACKED_TYPES = [
+  "cloud_resource",
+  "endpoint",
+  "api",
+  "identity_system",
+] as const;
+export type DetailBackedType = (typeof DETAIL_BACKED_TYPES)[number];
+
+export function isDetailBackedType(v: unknown): v is DetailBackedType {
+  return typeof v === "string" && (DETAIL_BACKED_TYPES as readonly string[]).includes(v);
+}
+
+/** Criticality / status vocabularies — MUST match the engine validator + 20260806 CHECKs. */
+export const ASSET_CRITICALITIES = ["critical", "high", "medium", "low"] as const;
+export const ASSET_STATUSES = ["active", "archived", "retired"] as const;
+export type AssetStatus = (typeof ASSET_STATUSES)[number];
+
+/**
+ * Typed-column spec per detail-backed type — mirrors the engine's TYPED_VOCAB
+ * and REQUIRED_TYPED (src/api/lib/assetDetailValidation.ts). `options: null`
+ * means a free-text field; a non-null tuple is a closed enum. The forms render
+ * straight from this, so the UI can never offer a value the engine rejects.
+ */
+export interface TypedFieldSpec {
+  field: string;
+  label: string;
+  required?: boolean;
+  options: readonly string[] | null;
+}
+
+export const DETAIL_TYPE_FIELDS: Record<DetailBackedType, readonly TypedFieldSpec[]> = {
+  cloud_resource: [
+    { field: "provider", label: "Provider", required: true, options: ["aws", "azure", "gcp", "other"] },
+    { field: "account_id", label: "Account ID", options: null },
+    { field: "region", label: "Region", options: null },
+    { field: "resource_type", label: "Resource Type", options: null },
+  ],
+  endpoint: [
+    { field: "hostname", label: "Hostname", options: null },
+    { field: "os", label: "Operating System", options: null },
+    { field: "exposure", label: "Exposure", options: ["internal", "internet_facing", "isolated"] },
+  ],
+  api: [
+    { field: "protocol", label: "Protocol", options: ["rest", "graphql", "grpc", "soap", "other"] },
+    { field: "auth_method", label: "Auth Method", options: ["none", "api_key", "oauth2", "mtls", "basic", "other"] },
+    { field: "exposure", label: "Exposure", options: ["internal", "internet_facing", "partner"] },
+  ],
+  identity_system: [
+    { field: "idp_vendor", label: "IdP Vendor", options: null },
+    { field: "protocol", label: "Protocol", options: ["saml", "oidc", "ldap", "radius", "proprietary", "other"] },
+  ],
+};
+
+/**
+ * Where a NEW asset of a given type is created (EAR-AD-1 federation).
+ *   native   → the unified /assets create form (the four detail-backed types).
+ *   external → an authoritative per-type surface; `requiresEcl` marks the ones
+ *              homed on the Enterprise Context surface (dark behind the ECL flag).
+ */
+export type AssetCreateTarget =
+  | { kind: "native"; assetType: DetailBackedType }
+  | { kind: "external"; assetType: AssetType; href: string; requiresEcl: boolean };
+
+export function assetCreateTarget(assetType: AssetType): AssetCreateTarget {
+  if (isDetailBackedType(assetType)) return { kind: "native", assetType };
+  switch (assetType) {
+    case "vendor":
+      return { kind: "external", assetType, href: "/vendors/new", requiresEcl: false };
+    case "ai_system":
+      return { kind: "external", assetType, href: "/ai-systems/new", requiresEcl: false };
+    // application / database / business_process / generic project from ECL
+    // enterprise_entities — created on the Context surface.
+    default:
+      return { kind: "external", assetType, href: "/enterprise-context/entities/new", requiresEcl: true };
+  }
+}
+
+/** Existing CSV importers the registry can hand off to (no unified import API exists). */
+export interface AssetImportSurface {
+  label: string;
+  href: string;
+  requiresEcl: boolean;
+}
+
+export function assetImportSurfaces(): AssetImportSurface[] {
+  return [
+    { label: "Vendors", href: "/vendors/import", requiresEcl: false },
+    { label: "AI Systems", href: "/ai-systems/import", requiresEcl: false },
+    { label: "Applications & data stores", href: "/enterprise-context/import", requiresEcl: true },
+  ];
+}
+
+/** Edit route for a registry asset (only detail-backed kinds have one). */
+export function assetEditHref(asset: Pick<CanonicalAsset, "asset_id" | "asset_type">): string | null {
+  return isDetailBackedType(asset.asset_type) ? `/assets/${asset.asset_id}/edit` : null;
+}
+
+/**
+ * The graph node identity for an asset (mirrors the engine's graphNodeForBacking,
+ * EAR-AD-4). Used to deep-link an asset into the enterprise graph / relationship
+ * surface. Detail-backed kinds are Tier-0 `asset` nodes keyed by registry id;
+ * the three pre-registry backings key by their own node type + backing id.
+ */
+export function assetGraphNode(
+  asset: Pick<CanonicalAsset, "backing_kind" | "backing_id" | "asset_id">,
+): { node_type: "vendor" | "ai_system" | "enterprise_entity" | "asset"; node_id: string } {
+  switch (asset.backing_kind) {
+    case "vendors":
+      return { node_type: "vendor", node_id: asset.backing_id };
+    case "ai_systems":
+      return { node_type: "ai_system", node_id: asset.backing_id };
+    case "enterprise_entities":
+      return { node_type: "enterprise_entity", node_id: asset.backing_id };
+    default:
+      return { node_type: "asset", node_id: asset.asset_id };
+  }
+}
+
+/** Deep-link to view an asset's relationships in the enterprise graph. */
+export function assetGraphHref(
+  asset: Pick<CanonicalAsset, "backing_kind" | "backing_id" | "asset_id">,
+): string {
+  const n = assetGraphNode(asset);
+  return `/enterprise-context/graph?node_type=${n.node_type}&node_id=${encodeURIComponent(n.node_id)}`;
+}
+
+/** Human copy for a management (write) engine error code. Never leak a raw code. */
+const ASSET_ERROR_MESSAGES: Record<string, string> = {
+  // gating
+  capability_required: "The Asset Registry isn't enabled for your organization.",
+  organization_context_missing: "Your session is missing organization context. Sign in again.",
+  not_authenticated: "You're not signed in.",
+  // create / validation
+  invalid_body: "That request was malformed. Try again.",
+  asset_type_invalid: "That asset type can't be created here — use its own screen.",
+  name_required: "Name is required.",
+  name_too_long: "Name is too long (max 200 characters).",
+  criticality_invalid: "Choose a valid criticality.",
+  status_invalid: "Choose a valid status.",
+  external_ref_invalid: "External reference is too long (max 200 characters).",
+  provider_required: "Provider is required for a cloud resource.",
+  asset_cap_exceeded: "You've reached your plan's limit for assets of this type.",
+  // update / delete
+  not_detail_backed:
+    "This asset is managed on its own screen (Vendors, AI Systems, or Enterprise Context).",
+  empty_update: "No changes to save.",
+  not_found: "That asset no longer exists.",
+  invalid_id: "That asset reference is invalid.",
+  // transport
+  engine_unavailable: "The service is temporarily unavailable. Try again.",
+  network_error: "Couldn't reach the server. Try again.",
+  invalid_json: "The server returned an unexpected response.",
+};
+
+export function assetErrorMessage(code: string): string {
+  // Typed-field failures come back as `${field}_invalid` (e.g. protocol_invalid).
+  if (ASSET_ERROR_MESSAGES[code]) return ASSET_ERROR_MESSAGES[code];
+  if (code.endsWith("_invalid")) return "One of the fields has an invalid value.";
+  if (code.endsWith("_required")) return "A required field is missing.";
+  return "Something went wrong. Try again.";
+}
