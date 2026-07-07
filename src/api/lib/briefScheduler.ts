@@ -1,8 +1,11 @@
 /**
- * briefScheduler.ts — Daily Intelligence Brief pipeline runner.
+ * briefScheduler.ts — Weekly Intelligence Brief pipeline runner.
  *
- * Processes every organization that has at least one active Intelligence Brief
- * subscriber, running the complete pipeline for each:
+ * Runs weekly (Tuesday 07:00 UTC, cron "0 7 * * 2" in schedulerRunner) over a
+ * trailing 7-day signal window. Email delivery is additionally gated by
+ * isBriefSendDay() (Tuesday UTC) so manual/off-day runs generate but do not
+ * email. Processes every organization that has at least one active Intelligence
+ * Brief subscriber, running the complete pipeline for each:
  *
  *   Step 1 — Fetch signals (once per run, shared across all orgs)
  *     - CISA KEV — full catalog, actively exploited CVEs
@@ -77,6 +80,7 @@ import {
 } from "./briefSynthesizer.js";
 import { sendBrief } from "./briefEmailSender.js";
 import { isBriefSendDay } from "./briefSendWindow.js";
+import { maybeAlertBriefDelivery } from "./briefDeliveryHealth.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -532,11 +536,12 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 /**
- * Run the full daily Intelligence Brief pipeline for every org with active
+ * Run the full weekly Intelligence Brief pipeline for every org with active
  * subscribers.
  *
  * Called by:
- *   - schedulerRunner.ts (node-cron, every day 7AM UTC)
+ *   - schedulerRunner.ts (node-cron, Tuesday 07:00 UTC — "0 7 * * 2")
+ *   - briefCatchup.ts (boot-time recovery of a missed Tuesday send, DARK)
  *   - POST /api/admin/briefs/run-scheduler (manual trigger for testing)
  *
  * @returns  Run summary with per-source signal counts, org counts, email counts.
@@ -586,11 +591,13 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`orgs_query_failed: ${msg}`);
     logger.error({ event: "scheduler_orgs_query_failed", err }, "Failed to query active orgs");
+    await maybeAlertBriefDelivery(summary, isSendDay);
     return summary;
   }
 
   if (orgIds.length === 0) {
     logger.info({ event: "scheduler_no_orgs" }, "No orgs with active subscribers — nothing to do");
+    await maybeAlertBriefDelivery(summary, isSendDay);
     return summary;
   }
 
@@ -1069,7 +1076,8 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
           briefId,
           sent: sendResult.sent,
           failed: sendResult.failed,
-          skipped: sendResult.skipped
+          skipped: sendResult.skipped,
+          already_sent: sendResult.already_sent
         },
         "Brief send completed for org"
       );
@@ -1097,6 +1105,10 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     },
     "Brief scheduler run completed"
   );
+
+  // Turn a silent zero-delivery run into an operator alert (best-effort, no-op
+  // off-day and when no webhook is configured).
+  await maybeAlertBriefDelivery(summary, isSendDay);
 
   return summary;
 }

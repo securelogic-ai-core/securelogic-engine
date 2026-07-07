@@ -222,6 +222,14 @@ services:
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
 
+      # Intelligence Brief missed-week catch-up (boot-time recovery of a missed
+      # weekly Tuesday send) — DARK (default off). Initiates outbound email, so
+      # operator-owned: enable only after staging validation. Idempotency in
+      # briefEmailSender guarantees it can never double-deliver. Runs in the
+      # engine web service (server boot), not a worker.
+      - key: SECURELOGIC_BRIEF_CATCHUP_ENABLED
+        value: "false"
+
   # =========================================================
   # SECURELOGIC ENGINE — STAGING (web)
   # Tracks the develop branch. Mirrors the production engine
@@ -435,6 +443,12 @@ services:
         value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
+
+      # Intelligence Brief missed-week catch-up — DARK (default off). Lockstep
+      # with the prod engine block. Enable in staging FIRST to validate missed-
+      # week recovery; idempotency prevents any double-delivery.
+      - key: SECURELOGIC_BRIEF_CATCHUP_ENABLED
+        value: "false"
 
       # Sentry error tracking (engine — staging). Kept in lockstep with the
       # production engine block above; set SENTRY_ENV=staging in the dashboard.

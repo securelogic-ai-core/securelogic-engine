@@ -12,14 +12,25 @@
  *
  * FROM ADDRESS
  * ------------
- * Read from BRIEF_FROM_EMAIL env var. Falls back to "briefs@securelogic.ai".
- * This must be a verified sender domain in Resend.
+ * Read from BRIEF_FROM_EMAIL env var. Falls back to
+ * "SecureLogic AI <briefs@securelogicai.com>" — the verified brand domain used
+ * everywhere else in the codebase (see alertPrimitives.getFromAddress /
+ * infra/email). The previous "securelogic.ai" fallback was an unverified domain
+ * that made every send fail Resend HTTP 403 whenever BRIEF_FROM_EMAIL was unset.
  *
  * DELIVERY MODEL
  * --------------
  * One email per subscriber, sent sequentially. Failures are recorded in
  * intelligence_brief_sends with status='failed' but do not abort the batch.
  * The final summary counts sent, failed, and total subscribers.
+ *
+ * IDEMPOTENCY
+ * -----------
+ * Before sending, we read the set of subscribers who already have a 'sent' row
+ * for this briefId and skip them. This makes re-invoking sendBrief for the same
+ * briefId safe (weekly cron + a manual run, or the Tuesday catch-up, targeting
+ * the same brief will never double-deliver). It is an audit-table read, so no
+ * schema change or unique constraint is required.
  *
  * UNSUBSCRIBE URL
  * ---------------
@@ -241,7 +252,7 @@ async function sendViaResend(
   }
 
   const from =
-    process.env["BRIEF_FROM_EMAIL"] ?? "SecureLogic AI <briefs@securelogic.ai>";
+    process.env["BRIEF_FROM_EMAIL"] ?? "SecureLogic AI <briefs@securelogicai.com>";
 
   try {
     const response = await fetch(RESEND_API_URL, {
@@ -376,6 +387,11 @@ export type SendBriefResult = {
   skipped_filtered: number;
   /** Count of subscribers skipped because their email is in email_suppressions. */
   suppressed: number;
+  /**
+   * Count of subscribers skipped because they already have a 'sent' row for
+   * this briefId (idempotency guard — prevents double-delivery on re-invocation).
+   */
+  already_sent: number;
   message?: string;
 };
 
@@ -458,23 +474,46 @@ export async function sendBrief(
     );
     const suppressedEmails = new Set(suppressedResult.rows.map(r => r.email));
 
+    // 6. Idempotency guard — subscribers who already have a 'sent' row for this
+    //    brief. Re-invoking sendBrief for the same briefId (weekly cron + a
+    //    manual run, or the Tuesday catch-up) must never double-deliver. Any
+    //    prior 'sent' row means "already delivered"; a retry re-sends only to
+    //    subscribers not yet reached.
+    const alreadySentResult = await pg.query<{ subscriber_id: string }>(
+      `SELECT DISTINCT subscriber_id FROM intelligence_brief_sends
+       WHERE brief_id = $1 AND status = 'sent'`,
+      [briefId]
+    );
+    const alreadySentIds = new Set(alreadySentResult.rows.map(r => r.subscriber_id));
+
     return {
       brief,
       allItems: itemsResult.rows,
       orgName,
       isFreeTier,
       subscribers: subscribersResult.rows,
-      suppressedEmails
+      suppressedEmails,
+      alreadySentIds
     };
   });
 
   // No active subscribers — nothing to send. Early-return AFTER the read scope
   // has closed; identical shape to before.
   if (bundle.subscribers.length === 0) {
-    return { sent: 0, failed: 0, skipped: true, skipped_filtered: 0, suppressed: 0, message: "no_active_subscribers" };
+    return { sent: 0, failed: 0, skipped: true, skipped_filtered: 0, suppressed: 0, already_sent: 0, message: "no_active_subscribers" };
   }
 
-  const { brief, allItems, orgName, isFreeTier, subscribers, suppressedEmails } = bundle;
+  const { brief, allItems, orgName, isFreeTier, subscribers, suppressedEmails, alreadySentIds } = bundle;
+
+  // Surface a misconfigured sender once per org run: an unset BRIEF_FROM_EMAIL
+  // falls back to the brand domain, which must be a verified Resend sender or
+  // every send 403s. Loud so an operator can catch it before a whole send fails.
+  if (!process.env["BRIEF_FROM_EMAIL"]) {
+    logger.warn(
+      { event: "brief_from_email_unset", orgId, fallbackSender: "briefs@securelogicai.com" },
+      "BRIEF_FROM_EMAIL is not set — using the fallback brand sender; confirm the domain is a verified Resend sender or all sends will fail with HTTP 403"
+    );
+  }
 
   const subject = buildSubject(brief.period_start, brief.period_end);
   const signalCount = parseInt(brief.signal_count, 10) || 0;
@@ -496,9 +535,22 @@ export async function sendBrief(
   let failed = 0;
   let skippedFiltered = 0;
   let suppressed = 0;
+  let alreadySent = 0;
   const auditRows: Array<{ subscriberId: string; status: "sent" | "failed" | "suppressed"; errorMessage: string | null }> = [];
 
   for (const subscriber of subscribers) {
+    // Idempotency: never re-deliver this brief to a subscriber who already has
+    // a 'sent' row. No new audit row is written for the skip (the original
+    // 'sent' row remains the source of truth).
+    if (alreadySentIds.has(subscriber.id)) {
+      alreadySent++;
+      logger.info(
+        { event: "brief_send_skipped_already_sent", briefId, subscriberId: subscriber.id, orgId },
+        "Brief send skipped — subscriber already received this brief (idempotency guard)"
+      );
+      continue;
+    }
+
     // Skip suppressed addresses and record the outcome.
     if (suppressedEmails.has(subscriber.email.toLowerCase())) {
       suppressed++;
@@ -630,5 +682,5 @@ export async function sendBrief(
     });
   }
 
-  return { sent, failed, skipped: false, skipped_filtered: skippedFiltered, suppressed };
+  return { sent, failed, skipped: false, skipped_filtered: skippedFiltered, suppressed, already_sent: alreadySent };
 }

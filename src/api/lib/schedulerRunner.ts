@@ -54,6 +54,57 @@ let isRunning = false;
 let isScanningAuthAnomalies = false;
 
 /**
+ * Run the Brief scheduler under the shared overlap lock.
+ *
+ * Both the weekly cron and the boot-time Tuesday catch-up (briefCatchup) go
+ * through here, so the `isRunning` guard serializes them: a catch-up firing at
+ * boot while the cron is mid-run (or vice-versa) is skipped, not run twice.
+ *
+ * Never throws — a scheduler error is logged and swallowed so it cannot crash
+ * the cron tick or the boot sequence. Exported for briefCatchup.
+ */
+export async function runSchedulerGuarded(trigger: "cron" | "catchup"): Promise<void> {
+  if (isRunning) {
+    logger.warn(
+      { event: "scheduler_overlap_skipped", trigger },
+      "Brief scheduler: previous run still in progress — skipping this trigger"
+    );
+    return;
+  }
+
+  isRunning = true;
+  const startedAt = Date.now();
+
+  logger.info(
+    { event: "scheduler_cron_fired", trigger, firedAt: new Date().toISOString() },
+    "Brief scheduler triggered"
+  );
+
+  try {
+    const summary = await runScheduler();
+    const durationMs = Date.now() - startedAt;
+
+    logger.info(
+      {
+        event: "scheduler_cron_complete",
+        trigger,
+        durationMs,
+        ...summary
+      },
+      "Brief scheduler run completed"
+    );
+  } catch (err) {
+    const durationMs = Date.now() - startedAt;
+    logger.error(
+      { event: "scheduler_cron_error", trigger, durationMs, err },
+      "Brief scheduler threw an unexpected error"
+    );
+  } finally {
+    isRunning = false;
+  }
+}
+
+/**
  * Register the weekly cron job.
  *
  * Safe to call multiple times — node-cron deduplicates by the task handle,
@@ -62,45 +113,7 @@ let isScanningAuthAnomalies = false;
 export function startScheduler(): void {
   schedule(
     "0 7 * * 2",
-    async () => {
-      if (isRunning) {
-        logger.warn(
-          { event: "scheduler_overlap_skipped" },
-          "Brief scheduler: previous run still in progress — skipping this trigger"
-        );
-        return;
-      }
-
-      isRunning = true;
-      const startedAt = Date.now();
-
-      logger.info(
-        { event: "scheduler_cron_fired", firedAt: new Date().toISOString() },
-        "Brief scheduler cron fired"
-      );
-
-      try {
-        const summary = await runScheduler();
-        const durationMs = Date.now() - startedAt;
-
-        logger.info(
-          {
-            event: "scheduler_cron_complete",
-            durationMs,
-            ...summary
-          },
-          "Brief scheduler cron completed"
-        );
-      } catch (err) {
-        const durationMs = Date.now() - startedAt;
-        logger.error(
-          { event: "scheduler_cron_error", durationMs, err },
-          "Brief scheduler cron threw an unexpected error"
-        );
-      } finally {
-        isRunning = false;
-      }
-    },
+    () => runSchedulerGuarded("cron"),
     { timezone: "UTC" }
   );
 
