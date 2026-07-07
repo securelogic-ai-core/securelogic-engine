@@ -89,6 +89,7 @@ import applicabilityAssessmentsRouter from "./applicabilityAssessments.js";
 import enterpriseContextStatsRouter from "./enterpriseContextStats.js";
 import assetsRouter from "./assets.js";
 import riskIntelligenceRouter from "./riskIntelligence.js";
+import intelligenceEventsRouter from "./intelligenceEvents.js";
 import predictiveIntelligenceRouter from "./predictiveIntelligence.js";
 import orchestrationRouter from "./orchestration.js";
 import knowledgeGraphRouter from "./knowledgeGraph.js";
@@ -486,6 +487,9 @@ router.use("/api", riskApprovalsRouter);
   // auth) gates the surface in-router.
   router.use("/api", assetsRouter);
   router.use("/api", riskIntelligenceRouter);
+  // Intelligence Pipeline Hardening / IE.P7: canonical event read surface. OWN
+  // flag (SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED, default off → 404 before auth).
+  router.use("/api", intelligenceEventsRouter);
   router.use("/api", predictiveIntelligenceRouter);
   router.use("/api", orchestrationRouter);
   router.use("/api", knowledgeGraphRouter);

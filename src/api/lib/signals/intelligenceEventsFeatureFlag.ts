@@ -12,8 +12,19 @@
  * OFF by default. Enabled ONLY when SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED
  * === "true". Production enablement is operator-owned (GATE B); staging first.
  */
+import type { Request, Response, NextFunction } from "express";
+
 export function intelligenceEventsEnabled(
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
   return env["SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED"] === "true";
+}
+
+/** Express middleware — bare 404 when the flag is off (surface hidden while dark). */
+export function intelligenceEventsFeatureFlag(_req: Request, res: Response, next: NextFunction): void {
+  if (!intelligenceEventsEnabled()) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  next();
 }
