@@ -21,6 +21,7 @@ import { pg } from "../infra/postgres.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireCapability } from "../lib/enterpriseContextCapability.js";
+import { requireAdminRole } from "../middleware/requireRole.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { enterpriseContextFeatureFlag } from "../lib/enterpriseContextFeatureFlag.js";
 import { assetRegistryFeatureFlag } from "../lib/assetRegistryFeatureFlag.js";
@@ -594,9 +595,13 @@ const chain = [
 ];
 
 router.get("/connectors", ...chain, asTenant(listOrgConnectors));
-router.put("/connectors/:id", ...chain, asTenant(putConnectorConfig));
-router.delete("/connectors/:id", ...chain, asTenant(deleteConnector));
-router.post("/connectors/:id/sync", ...chain, asTenant(triggerConnectorSync));
+// EAR P16: connector credential/config mutations are admin-only. requireAdminRole
+// 403s non-admin JWT users (API keys are admin-level and bypass). The catalog
+// read above stays open to any capable member so analysts/viewers still see
+// live connector status; only configure / disconnect / sync are gated.
+router.put("/connectors/:id", ...chain, requireAdminRole, asTenant(putConnectorConfig));
+router.delete("/connectors/:id", ...chain, requireAdminRole, asTenant(deleteConnector));
+router.post("/connectors/:id/sync", ...chain, requireAdminRole, asTenant(triggerConnectorSync));
 router.post("/connectors/:id/writeback", ...chain, asTenant(enqueueConnectorWriteback));
 router.get("/connectors/:id/writeback", ...chain, asTenant(listConnectorWriteback));
 // E2b dead-letter recovery. Literal 'dead-letters' segment — distinct from the

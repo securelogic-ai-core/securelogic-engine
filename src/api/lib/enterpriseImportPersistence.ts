@@ -30,7 +30,11 @@ export const ENTERPRISE_TYPES: ReadonlySet<ImportEntityType> = new Set([
   "asset",
   "application",
   "data_store",
-  "identity"
+  "identity",
+  // EAR P16: business_process persists to enterprise_entities like the other
+  // enterprise types → its dedup keys + cap read enterprise_entities /
+  // max_enterprise_entities (entityTypeToAssetType maps it to business_process).
+  "business_process"
 ]);
 
 /** Provenance stamped on enterprise_entities rows created by each import lane

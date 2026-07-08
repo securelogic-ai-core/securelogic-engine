@@ -241,7 +241,8 @@ export function assetCreateHref(assetType: AssetType): string {
   return "/enterprise-context/entities/new";
 }
 
-/** Existing CSV importers the registry can hand off to (no unified import API exists). */
+/** Existing CSV importers the registry can hand off to (legacy per-type surfaces,
+ * preserved — the vendor/AI-systems importers keep their own behavior). */
 export interface AssetImportSurface {
   label: string;
   href: string;
@@ -254,6 +255,100 @@ export function assetImportSurfaces(): AssetImportSurface[] {
     { label: "AI Systems", href: "/ai-systems/import", requiresEcl: false },
     { label: "Applications & data stores", href: "/enterprise-context/import", requiresEcl: true },
   ];
+}
+
+// ─── EAR P16: unified Asset Registry import (/assets/import) ─────────────────
+//
+// One import UI for the 10 real canonical asset types, with real server-side
+// preview / dedup / caps. It does NOT re-implement importing: each type routes
+// to an EXISTING engine bulk endpoint —
+//   - the 4 detail-backed types → POST /api/assets/import (the thin P16 route);
+//   - the other 6 → POST /api/enterprise-context/import (the ECL bulk endpoint),
+//     with the asset_type mapped to its importable entity_type.
+// SOC upload is NOT here (stays under Vendor Management). server / network_device
+// / facility are NOT here — they are not real asset types yet (future package).
+
+/** Which engine bulk endpoint an asset_type imports through. */
+export type AssetImportRoute =
+  | { backend: "assets" } // POST /api/assets/import?asset_type=<t>
+  | { backend: "ecl"; entityType: string }; // POST /api/enterprise-context/import?entity_type=<e>
+
+export interface AssetImportOption {
+  assetType: AssetType;
+  label: string;
+  /** Expected CSV/XLSX header columns; the first (`name`) is always required. */
+  columns: string[];
+  /** ECL-backed types are additionally fenced on the Enterprise Context flag. */
+  requiresEcl: boolean;
+  route: AssetImportRoute;
+}
+
+/** Shared header columns every importable type accepts. */
+const BASE_IMPORT_COLUMNS = ["name", "criticality", "status", "external_ref"] as const;
+
+/** The ECL importable entity_type that backs each non-detail asset_type. */
+function assetTypeToImportEntityType(assetType: AssetType): string | null {
+  switch (assetType) {
+    case "vendor":
+      return "vendor";
+    case "ai_system":
+      return "ai_system";
+    case "application":
+      return "application";
+    case "database":
+      return "data_store";
+    case "business_process":
+      return "business_process";
+    case "generic":
+      return "asset";
+    default:
+      return null; // detail-backed types import through /api/assets/import
+  }
+}
+
+/** Extra columns for the ECL-backed types whose sheets carry more than the base set. */
+const ECL_EXTRA_COLUMNS: Partial<Record<AssetType, string[]>> = {
+  vendor: ["service_description", "category", "data_sensitivity", "access_level", "website"],
+  ai_system: ["use_case", "model_type", "data_classification", "deployment_status", "risk_classification"],
+  application: ["description", "confidence"],
+  business_process: ["description", "confidence"],
+  generic: ["description", "confidence"],
+  database: ["description", "confidence", "data_classification", "residency_region", "retention_policy", "encryption_at_rest"],
+};
+
+/**
+ * The 10 real canonical asset types, each mapped to its existing bulk endpoint.
+ * Detail-backed types (native /api/assets/import) come first, then the ECL types.
+ * `custom`/`data_store` in customer language are the canonical `generic`/`database`
+ * types — no separate rows, no aliases.
+ */
+export function assetImportOptions(): AssetImportOption[] {
+  return ASSET_TYPES.map((assetType) => {
+    if (isDetailBackedType(assetType)) {
+      const typed = DETAIL_TYPE_FIELDS[assetType].map((f) => f.field);
+      return {
+        assetType,
+        label: assetTypeLabel(assetType),
+        columns: [...BASE_IMPORT_COLUMNS, ...typed],
+        requiresEcl: false,
+        route: { backend: "assets" as const },
+      };
+    }
+    const entityType = assetTypeToImportEntityType(assetType)!;
+    const extras = ECL_EXTRA_COLUMNS[assetType] ?? [];
+    // Vendor/AI sheets don't use the shared status/external_ref columns; the rest do.
+    const base =
+      assetType === "vendor" || assetType === "ai_system"
+        ? ["name", "criticality"]
+        : [...BASE_IMPORT_COLUMNS];
+    return {
+      assetType,
+      label: assetTypeLabel(assetType),
+      columns: [...base, ...extras],
+      requiresEcl: true,
+      route: { backend: "ecl" as const, entityType },
+    };
+  });
 }
 
 /**

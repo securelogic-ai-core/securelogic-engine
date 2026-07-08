@@ -79,8 +79,8 @@ export default async function ConnectAssetsPage() {
         </h1>
         <p className="text-sm mt-1" style={{ color: "#94a3b8" }}>
           Connect a source of truth — CMDB, cloud, vulnerability, identity, or endpoint — to
-          automatically discover assets into your registry. Credentials are configured by an
-          administrator.
+          automatically discover assets into your registry. Select a connector to add credentials,
+          enable syncing, and run a discovery sync. Configuration is available to administrators.
         </p>
       </div>
 
@@ -121,7 +121,10 @@ function ConnectorRow({ connector }: { connector: OrgConnector }) {
     ? new Date(connector.last_sync_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })
     : null;
   return (
-    <div className="flex items-center justify-between gap-4 px-5 py-4">
+    <Link
+      href={`/assets/connect/${encodeURIComponent(connector.connector_id)}`}
+      className="flex items-center justify-between gap-4 px-5 py-4 transition-colors hover:opacity-80"
+    >
       <div className="min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
@@ -141,11 +144,14 @@ function ConnectorRow({ connector }: { connector: OrgConnector }) {
           )}
           {!connector.configured && (
             <span className="text-xs" style={{ color: "#64748b" }}>
-              An administrator configures credentials to connect.
+              Not connected — an administrator adds credentials to connect.
             </span>
           )}
         </div>
       </div>
-    </div>
+      <span className="flex-shrink-0 text-xs" style={{ color: "#64748b" }}>
+        {connector.configured ? "Manage →" : "Configure →"}
+      </span>
+    </Link>
   );
 }

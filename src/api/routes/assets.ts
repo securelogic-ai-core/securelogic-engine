@@ -23,7 +23,9 @@
  */
 
 import { Router, type Request, type Response } from "express";
+import multer from "multer";
 import { pg } from "../infra/postgres.js";
+import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireCapability } from "../lib/enterpriseContextCapability.js";
@@ -34,6 +36,8 @@ import {
   validateAssetDetailCreate,
   validateAssetDetailUpdate,
   DETAIL_TABLE_SPEC,
+  isDetailBackedType,
+  DETAIL_BACKED_TYPES,
   type DetailBackedType
 } from "../lib/assetDetailValidation.js";
 import {
@@ -41,6 +45,9 @@ import {
   updateDetailAsset,
   deleteDetailAsset
 } from "../lib/assetDetailPersistence.js";
+import { parseImportFile } from "../lib/enterpriseImportParser.js";
+import { planAssetImport } from "../lib/assetImportPlan.js";
+import { assetImportExistingKeys, assetImportCapHeadroom } from "../lib/assetImportPersistence.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { getConnector } from "../lib/connectors/registry.js";
 import { summarizeDiscovery, type ObservationFact } from "../lib/discoveryConfidence.js";
@@ -504,6 +511,95 @@ export async function deleteAsset(req: Request, res: Response): Promise<void> {
   res.status(200).json({ deleted: true });
 }
 
+/**
+ * EAR P16: bulk CSV/XLSX import for the four detail-backed asset types
+ * (cloud_resource / endpoint / api / identity_system). The sibling of
+ * POST /api/enterprise-context/import for the assets spine — same preview/commit
+ * contract, same per-row plan shape — reusing the shared parser (parseImportFile),
+ * the shared dedup/cap precedence (planAssetImport → planRows), the existing
+ * create-validator (validateAssetDetailCreate), and the existing create lane
+ * (createDetailAsset). No new validation, dedup, or cap logic.
+ *
+ *   POST /api/assets/import?asset_type=<t>&mode=preview|commit  (multipart file)
+ *   preview (default): parse → plan → return per-row statuses. Writes nothing.
+ *   commit:            persist the `ok` rows in ONE tenant transaction (asTenant).
+ *
+ * The other six asset types (vendor / ai_system / application / database /
+ * business_process / generic) import through the ECL path (EAR-AD-1 federation);
+ * this route rejects them so there is one home per type.
+ */
+export async function importAssets(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+
+  const assetType = req.query.asset_type;
+  if (!isDetailBackedType(assetType)) {
+    res.status(400).json({
+      error: "invalid_asset_type",
+      detail:
+        `asset_type must be one of: ${DETAIL_BACKED_TYPES.join(", ")}. ` +
+        "vendor / ai_system / application / database / business_process / generic import via /api/enterprise-context/import."
+    });
+    return;
+  }
+
+  const mode = req.query.mode ?? "preview";
+  if (mode !== "preview" && mode !== "commit") {
+    res.status(400).json({ error: "invalid_mode", detail: "mode must be preview or commit" });
+    return;
+  }
+
+  const file = (req as { file?: { buffer: Buffer; originalname: string } }).file;
+  if (!file) {
+    res.status(400).json({ error: "no_file_uploaded" });
+    return;
+  }
+
+  const parsed = await parseImportFile(file.buffer, file.originalname);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const keys = await assetImportExistingKeys(assetType, orgId);
+  const headroom = await assetImportCapHeadroom(assetType, orgId);
+  const plan = planAssetImport({ assetType, rows: parsed.parsed.rows, existingKeys: keys, capHeadroom: headroom });
+
+  if (mode === "preview") {
+    res.status(200).json({ mode: "preview", truncated: parsed.parsed.truncated, ...plan });
+    return;
+  }
+
+  // commit — persist the ok rows in this tenant transaction. createDetailAsset
+  // ON CONFLICT DO NOTHING classifies late collisions as errors we skip (a row
+  // that raced in between preview and commit), never an aborted tx.
+  let committed = 0;
+  for (const row of plan.rows) {
+    if (row.status === "ok" && row.normalized) {
+      const result = await createDetailAsset(orgId, row.normalized);
+      if (!("error" in result)) committed++;
+    }
+  }
+
+  logger.info(
+    { event: "asset_registry_import", organizationId: orgId, assetType, committed, planned: plan.summary.ok },
+    "Asset registry import committed"
+  );
+  writeAuditEvent({
+    organizationId: orgId,
+    ...auditActor(req),
+    eventType: "asset.imported",
+    resourceType: "asset_import",
+    resourceId: null,
+    payload: { asset_type: assetType, committed, summary: plan.summary }
+  });
+
+  res.status(200).json({ mode: "commit", committed, truncated: parsed.parsed.truncated, ...plan });
+}
+
 const chain = [
   assetRegistryFeatureFlag,
   requireApiKey,
@@ -511,7 +607,16 @@ const chain = [
   requireCapability("enterprise_context")
 ];
 
+/** Import upload: in-memory, single file, 5 MB — mirrors the ECL importer. */
+const importUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 }
+});
+
 router.get("/assets", ...chain, asTenant(listAssets));
+// POST /assets/import — literal segment; distinct from POST /assets by path, so
+// no route shadowing. multer parses the multipart body before the tenant tx.
+router.post("/assets/import", ...chain, importUpload.single("file"), asTenant(importAssets));
 router.get("/assets/:id/discovery", ...chain, asTenant(getAssetDiscovery));
 // E3.P1: additionally fenced on the Risk Intelligence flag (404s independently).
 router.get("/assets/:id/risk-propagation", riskIntelligenceFeatureFlag, ...chain, asTenant(getAssetRiskPropagation));

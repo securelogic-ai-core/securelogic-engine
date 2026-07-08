@@ -5185,6 +5185,98 @@ export function commitEnterpriseImport(
   return runEnterpriseImport(entity_type, "commit", file);
 }
 
+// ── EAR P16: detail-backed asset import (unified /assets/import → thin route) ────
+
+async function runAssetImport(
+  asset_type: string,
+  mode: "preview" | "commit",
+  file: File,
+): Promise<ActionResult<ImportPlan>> {
+  try {
+    const fd = new FormData();
+    fd.set("file", file);
+    const q = new URLSearchParams({ asset_type, mode }).toString();
+    const res = await fetch(`/api/assets/import?${q}`, {
+      method: "POST",
+      body: fd,
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as ImportPlan;
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export function previewAssetImport(asset_type: string, file: File): Promise<ActionResult<ImportPlan>> {
+  return runAssetImport(asset_type, "preview", file);
+}
+
+export function commitAssetImport(asset_type: string, file: File): Promise<ActionResult<ImportPlan>> {
+  return runAssetImport(asset_type, "commit", file);
+}
+
+// ── EAR P16: connector configuration mutations (admin-only; /assets/connect/[id]) ─
+//
+// Client → Next proxy (/api/connectors/*) → engine PUT/DELETE/POST. The engine
+// fences these on admin role (requireAdminRole) + the ECL/registry flags + the
+// enterprise_context capability; a 403 surfaces as insufficient_permissions/
+// forbidden, classified by the caller.
+
+export interface ConnectorConfigBody {
+  config?: Record<string, string>;
+  enabled?: boolean;
+  sync_interval_minutes?: number | null;
+}
+
+export async function saveConnectorConfig(
+  id: string,
+  body: ConnectorConfigBody,
+): Promise<ActionResult<{ connector?: unknown }>> {
+  try {
+    const res = await fetch(`/api/connectors/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const data = (await res.json().catch(() => ({}))) as { connector?: unknown };
+    return { ok: true, ...data };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function disconnectConnector(id: string): Promise<ActionResult<{ deleted?: boolean }>> {
+  try {
+    const res = await fetch(`/api/connectors/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const data = (await res.json().catch(() => ({}))) as { deleted?: boolean };
+    return { ok: true, ...data };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function syncConnector(id: string): Promise<ActionResult<{ status?: string }>> {
+  try {
+    const res = await fetch(`/api/connectors/${encodeURIComponent(id)}/sync`, {
+      method: "POST",
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const data = (await res.json().catch(() => ({}))) as { status?: string };
+    return { ok: true, ...data };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
 // =========================================================
 // ERIP Executive Risk dashboard reads (Server Components)
 //

@@ -55,7 +55,7 @@ export async function importEnterpriseContext(req: Request, res: Response): Prom
 
   const entityType = req.query.entity_type;
   if (!isImportEntityType(entityType)) {
-    res.status(400).json({ error: "invalid_entity_type", detail: "entity_type must be asset, application, data_store, vendor, or ai_system" });
+    res.status(400).json({ error: "invalid_entity_type", detail: "entity_type must be asset, application, data_store, business_process, vendor, ai_system, or identity" });
     return;
   }
 

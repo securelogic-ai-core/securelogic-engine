@@ -111,9 +111,29 @@ UPDATE organizations SET enterprise_context_capability = TRUE WHERE id = '<stagi
     connector's live state (Connected / Configured / Not connected) from
     `GET /api/connectors`. This is **double-fenced** — it also needs the ECL flag
     (`SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED`); with ECL off it shows the neutral
-    "not available" panel (NOT a "coming soon"). Credentials are operator-owned,
-    so there is no self-serve credential form — configuration is administered via
-    the connectors API.
+    "not available" panel (NOT a "coming soon").
+  - **Connect config path (P16):** selecting a connector opens
+    **`/assets/connect/[id]`**. As an **admin** you get a credential form
+    (rendered from the connector's `config_fields`) plus Enable / Run-sync-now /
+    Disconnect — driven through `PUT`/`DELETE /api/connectors/:id` and
+    `POST /:id/sync`. Validate: enter test credentials → Save → status flips to
+    *Configured*; toggle Enable + Save → *Connected*; Run sync now → a
+    `connector_sync` job is enqueued (202) and discovered assets appear in
+    `/assets`. As a **non-admin** (analyst/viewer) the same page shows a gated
+    message with the next step, and the engine 403s the mutation routes
+    (`requireAdminRole`) — confirm both. Credentials are encrypted at rest by the
+    engine; the app never stores them.
+  - **Unified bulk upload (P16):** `/assets/new` → "Bulk upload" →
+    **`/assets/import`** — one flow for all 10 real asset types. Validate: pick a
+    detail-backed type (e.g. Cloud Resource) → download its template → upload →
+    **Preview** shows per-row Ready/Invalid/Duplicate/Over-limit with nothing
+    written → **Import** commits only Ready rows (via `POST /api/assets/import`).
+    Repeat for an ECL-backed type (e.g. Application, Business Process) which
+    routes to `POST /api/enterprise-context/import`. With ECL off, only the four
+    detail-backed types are offered (the ECL-backed ones are hidden, not broken).
+    Legacy `/vendors/import` + `/ai-systems/import` still work unchanged; SOC
+    upload remains under Vendor Management (NOT here). `server` / `network_device`
+    / `facility` are intentionally absent (future package — `FUTURE-ASSET-TYPES.md`).
   - **Setup Wizard integration (P13):** with the flag on, `/getting-started`
     step 2 becomes **"Build your asset inventory"** and its CTA launches the
     SAME canonical registry onboarding (`/assets/new` → create / import /

@@ -84,6 +84,9 @@ export const IMPORT_ENTITY_TYPES = [
   "vendor",
   "ai_system",
   "identity",
+  // EAR P16: business_process joined the ECL importable set (mirrors the engine
+  // IMPORT_ENTITY_TYPES). Persists to enterprise_entities → asset_type business_process.
+  "business_process",
 ] as const;
 export type ImportEntityType = (typeof IMPORT_ENTITY_TYPES)[number];
 
