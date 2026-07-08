@@ -31,6 +31,9 @@ export const ENTITY_TYPES = [
   "data_store",
   "data_classification",
   "identity",
+  // First-class canonical asset type (EAR §2.3, migration 20260827) — projects
+  // to asset_type 'business_process'. Mirrors the engine ENTITY_TYPES.
+  "business_process",
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 

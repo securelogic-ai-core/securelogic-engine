@@ -24,6 +24,7 @@ import {
   ASSET_PAGE,
   assetTypeLabel,
   assetDetailHref,
+  assetCreateHref,
   assetsReadFailure,
   isAssetType,
   type AssetType,
@@ -92,12 +93,15 @@ export default async function AssetsPage({
           </p>
         </div>
         {result.ok && (
+          // With a type filter active, "Add" goes straight to that type's Create
+          // screen (type chosen once, on the filter); with no filter it opens the
+          // type picker. Either way the user never re-selects the type downstream.
           <Link
-            href="/assets/new"
+            href={typeFilter ? assetCreateHref(typeFilter) : "/assets/new"}
             className="flex-shrink-0 px-4 py-2 rounded-lg text-sm font-semibold transition-opacity hover:opacity-90"
             style={{ background: "#00c4b4", color: "#0a0f1a" }}
           >
-            + Add asset
+            {typeFilter ? `+ Add ${assetTypeLabel(typeFilter)}` : "+ Add asset"}
           </Link>
         )}
       </div>
@@ -134,15 +138,11 @@ export default async function AssetsPage({
                 existing source.
               </p>
               <Link
-                href={
-                  typeFilter && isAssetType(typeFilter)
-                    ? `/assets/new?type=${typeFilter}`
-                    : "/assets/new"
-                }
+                href={typeFilter ? assetCreateHref(typeFilter) : "/assets/new"}
                 className="inline-block px-4 py-2 rounded-lg text-sm font-semibold transition-opacity hover:opacity-90"
                 style={{ background: "#00c4b4", color: "#0a0f1a" }}
               >
-                + Add asset
+                {typeFilter ? `+ Add ${assetTypeLabel(typeFilter)}` : "+ Add asset"}
               </Link>
             </div>
           ) : (

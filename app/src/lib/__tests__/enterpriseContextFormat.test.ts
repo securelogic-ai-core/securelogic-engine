@@ -34,6 +34,7 @@ describe("entityTypeLabel", () => {
   it("gives AI-free human labels for known types", () => {
     expect(entityTypeLabel("data_store")).toBe("Data Store");
     expect(entityTypeLabel("business_service")).toBe("Business Service");
+    expect(entityTypeLabel("business_process")).toBe("Business Process");
   });
 
   it("falls back to title-case for unknown values", () => {

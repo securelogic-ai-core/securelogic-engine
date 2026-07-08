@@ -8,7 +8,11 @@ import NewVendorClient from "./NewVendorClient";
 // (NewVendorClient); gating here means a rank-2 user gets a clean /dashboard
 // redirect on direct navigation instead of a rendered shell whose submit would
 // 403 against the now-premium POST /api/vendors.
-export default async function NewVendorPage() {
+export default async function NewVendorPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
   const session = await getSession();
 
   const token = session.jwtToken ?? session.apiKey ?? null;
@@ -21,5 +25,13 @@ export default async function NewVendorPage() {
     entitlementLevel === "team";
   if (!isPlatformUser) redirect("/dashboard");
 
-  return <NewVendorClient />;
+  // Framed as a registry asset-type flow when opened from /assets — the back link
+  // returns to the Asset Registry instead of the Vendors list. Form is unchanged.
+  const fromRegistry = (await searchParams).from === "registry";
+
+  return fromRegistry ? (
+    <NewVendorClient backHref="/assets" backLabel="Assets" />
+  ) : (
+    <NewVendorClient />
+  );
 }

@@ -24,6 +24,7 @@ import {
   isDetailBackedType,
   assetTypeLabel,
   assetCreateTarget,
+  assetCreateHref,
   assetImportSurfaces,
   ASSET_TYPES,
 } from "@/lib/assetRegistry";
@@ -127,7 +128,7 @@ export default async function NewAssetPage({
         {DETAIL_BACKED_TYPES.map((t) => (
           <Link
             key={t}
-            href={`/assets/new?type=${t}`}
+            href={assetCreateHref(t)}
             className="block rounded-xl border p-4 transition-colors hover:opacity-90"
             style={{ borderColor: "#1e293b", background: "#0f172a" }}
           >
@@ -146,10 +147,10 @@ export default async function NewAssetPage({
         Managed on their own screens
       </h2>
       <div className="rounded-xl border divide-y mb-10" style={{ borderColor: "#1e293b" }}>
-        {externalTargets.map(({ type, target }) => (
+        {externalTargets.map(({ type }) => (
           <Link
             key={type}
-            href={target.kind === "external" ? target.href : "/assets/new"}
+            href={assetCreateHref(type)}
             className="flex items-center justify-between gap-4 px-5 py-3.5 transition-colors hover:opacity-80"
           >
             <span className="text-sm font-medium" style={{ color: "#f1f5f9" }}>

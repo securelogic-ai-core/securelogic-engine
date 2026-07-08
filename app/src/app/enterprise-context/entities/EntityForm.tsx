@@ -56,12 +56,27 @@ function optionalOrNull(v: FormDataEntryValue | null): string | null {
   return optional(v) ?? null;
 }
 
-export default function EntityForm({ entity }: { entity?: EnterpriseEntity }) {
+export default function EntityForm({
+  entity,
+  presetType,
+  lockType,
+  cancelHref,
+}: {
+  entity?: EnterpriseEntity;
+  /** Preselect the type (e.g. registry routed here for a specific asset type). */
+  presetType?: EntityType;
+  /** Lock the type read-only so it is never re-selected (registry chose it). */
+  lockType?: boolean;
+  /** Where Cancel returns to (defaults to /enterprise-context). */
+  cancelHref?: string;
+}) {
   const router = useRouter();
   const isEdit = !!entity;
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [entityType, setEntityType] = useState<EntityType>(entity?.entity_type ?? "asset");
+  const [entityType, setEntityType] = useState<EntityType>(
+    entity?.entity_type ?? presetType ?? "asset",
+  );
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -139,11 +154,13 @@ export default function EntityForm({ entity }: { entity?: EnterpriseEntity }) {
         {/* Entity type — immutable after creation */}
         <div>
           <FieldLabel required>Type</FieldLabel>
-          {isEdit ? (
+          {isEdit || lockType ? (
             <p className="text-sm py-2" style={{ color: "#cbd5e1" }}>
-              {entityTypeLabel(entity.entity_type)}
+              {entityTypeLabel(isEdit ? entity.entity_type : entityType)}
               <span className="text-xs ml-2" style={{ color: "#64748b" }}>
-                (type can&apos;t be changed after creation)
+                {isEdit
+                  ? "(type can't be changed after creation)"
+                  : "(selected on the Asset Registry)"}
               </span>
             </p>
           ) : (
@@ -370,7 +387,7 @@ export default function EntityForm({ entity }: { entity?: EnterpriseEntity }) {
             href={
               isEdit
                 ? `/enterprise-context/entities/${entity.id}`
-                : "/enterprise-context"
+                : (cancelHref ?? "/enterprise-context")
             }
             className="px-4 py-2 rounded-lg text-sm font-medium border transition-colors hover:opacity-80"
             style={{ borderColor: "#1e293b", color: "#94a3b8" }}

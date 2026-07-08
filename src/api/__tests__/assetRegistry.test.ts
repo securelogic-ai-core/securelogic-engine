@@ -18,9 +18,13 @@ import {
 } from "../lib/assetRegistry.js";
 import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
 
+// The AUTHORITATIVE asset_registry_v definition: each migration that touches the
+// view re-declares it (CREATE OR REPLACE). 20260827 is the current one — it adds
+// the business_process arm to the enterprise_entities CASE and re-declares the
+// defense-in-depth grants + security_invoker. Lockstep asserts against it.
 const MIGRATION = resolve(
   dirname(fileURLToPath(import.meta.url)),
-  "../../../db/migrations/20260802_asset_registry_view.sql"
+  "../../../db/migrations/20260827_business_process_entity_type.sql"
 );
 
 describe("assetRegistryEnabled", () => {
@@ -85,16 +89,17 @@ describe("asset type contract", () => {
     expect(isAssetType(undefined)).toBe(false);
   });
 
-  it("entity_type projection: application→application, data_store→database, rest→generic", () => {
+  it("entity_type projection: application→application, data_store→database, business_process→business_process, rest→generic", () => {
     expect(entityTypeToAssetType("application")).toBe("application");
     expect(entityTypeToAssetType("data_store")).toBe("database");
+    expect(entityTypeToAssetType("business_process")).toBe("business_process");
     for (const et of ["asset", "business_service", "business_unit", "department", "data_classification", "identity"]) {
       expect(entityTypeToAssetType(et), et).toBe("generic");
     }
   });
 });
 
-describe("code ↔ 20260802 migration lockstep", () => {
+describe("code ↔ asset_registry_v migration lockstep", () => {
   const sql = readFileSync(MIGRATION, "utf8");
 
   it("the view CASE mirrors ENTITY_TYPE_TO_ASSET_TYPE", () => {

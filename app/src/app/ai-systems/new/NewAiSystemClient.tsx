@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { CreateFlowBackLink } from "@/components/CreateFlowBackLink";
-import { createVendor, type CreateVendorResult } from "./actions";
+import { createAiSystem, type CreateAiSystemResult } from "./actions";
 
 const inputClass =
   "w-full rounded-lg px-3 py-2 text-sm border outline-none transition-colors";
@@ -24,12 +24,12 @@ function FieldLabel({ children, required }: { children: React.ReactNode; require
   );
 }
 
-export default function NewVendorClient({
-  backHref = "/vendors",
-  backLabel = "Vendors",
+export default function NewAiSystemClient({
+  backHref = "/ai-systems",
+  backLabel = "AI Systems",
 }: {
   /** Where the back/cancel links return to — the registry (Assets) frames this
-   *  as an asset-type flow; defaults to the Vendors list. */
+   *  as an asset-type flow; defaults to the AI Systems list. */
   backHref?: string;
   backLabel?: string;
 } = {}) {
@@ -42,22 +42,22 @@ export default function NewVendorClient({
     setError(null);
 
     const formData = new FormData(e.currentTarget);
-    const result: CreateVendorResult | void = await createVendor(formData);
+    const result: CreateAiSystemResult | void = await createAiSystem(formData);
 
     if (result && "error" in result) {
       setError(result.error);
       setSubmitting(false);
     }
-    // On success createVendor redirects — nothing else to do
+    // On success createAiSystem redirects — nothing else to do
   }
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-12">
-      {/* Back link — shared with the AI System create flow (CreateFlowBackLink) */}
+      {/* Back link — shared with the Vendor create flow (CreateFlowBackLink) */}
       <CreateFlowBackLink href={backHref} label={backLabel} />
 
       <h1 className="text-2xl font-bold mb-8" style={{ color: "#f1f5f9" }}>
-        Add Vendor
+        Add AI System
       </h1>
 
       <div className="bg-brand-surface border border-brand-line rounded-xl p-6">
@@ -69,7 +69,7 @@ export default function NewVendorClient({
               type="text"
               name="name"
               required
-              placeholder="e.g. Stripe, AWS, Okta"
+              placeholder="e.g. Customer Support Bot, Fraud Detection Model"
               className={inputClass}
               style={inputStyle}
               disabled={submitting}
@@ -78,9 +78,10 @@ export default function NewVendorClient({
 
           {/* Criticality */}
           <div>
-            <FieldLabel>Criticality</FieldLabel>
+            <FieldLabel required>Criticality</FieldLabel>
             <select
               name="criticality"
+              required
               className={inputClass}
               style={inputStyle}
               disabled={submitting}
@@ -94,76 +95,65 @@ export default function NewVendorClient({
             </select>
           </div>
 
-          {/* Category */}
+          {/* Use Case */}
           <div>
-            <FieldLabel>Category</FieldLabel>
-            <input
-              type="text"
-              name="category"
-              placeholder="e.g. Cloud Infrastructure, Payment Processing"
-              className={inputClass}
-              style={inputStyle}
-              disabled={submitting}
-            />
-          </div>
-
-          {/* Service Description */}
-          <div>
-            <FieldLabel>Service Description</FieldLabel>
+            <FieldLabel>Use Case</FieldLabel>
             <textarea
-              name="service_description"
+              name="use_case"
               rows={3}
-              placeholder="Brief description of the service this vendor provides…"
+              placeholder="Describe what this AI system does and how it is used"
               className={`${inputClass} resize-none`}
               style={inputStyle}
               disabled={submitting}
             />
           </div>
 
-          {/* Data Sensitivity */}
+          {/* Model Type */}
           <div>
-            <FieldLabel>Data Sensitivity</FieldLabel>
-            <select
-              name="data_sensitivity"
-              className={inputClass}
-              style={inputStyle}
-              disabled={submitting}
-              defaultValue=""
-            >
-              <option value="" style={{ background: "#0a0f1a" }}>Select data sensitivity…</option>
-              <option value="none"         style={{ background: "#0a0f1a" }}>None</option>
-              <option value="internal"     style={{ background: "#0a0f1a" }}>Internal</option>
-              <option value="confidential" style={{ background: "#0a0f1a" }}>Confidential</option>
-              <option value="restricted"   style={{ background: "#0a0f1a" }}>Restricted</option>
-            </select>
-          </div>
-
-          {/* Access Level */}
-          <div>
-            <FieldLabel>Access Level</FieldLabel>
-            <select
-              name="access_level"
-              className={inputClass}
-              style={inputStyle}
-              disabled={submitting}
-              defaultValue=""
-            >
-              <option value="" style={{ background: "#0a0f1a" }}>Select access level…</option>
-              <option value="none"           style={{ background: "#0a0f1a" }}>None</option>
-              <option value="read_only"      style={{ background: "#0a0f1a" }}>Read Only</option>
-              <option value="read_write"     style={{ background: "#0a0f1a" }}>Read / Write</option>
-              <option value="admin"          style={{ background: "#0a0f1a" }}>Admin</option>
-              <option value="network_access" style={{ background: "#0a0f1a" }}>Network Access</option>
-            </select>
-          </div>
-
-          {/* Website */}
-          <div>
-            <FieldLabel>Website</FieldLabel>
+            <FieldLabel>Model Type</FieldLabel>
             <input
               type="text"
-              name="website"
-              placeholder="e.g. https://stripe.com"
+              name="model_type"
+              placeholder="e.g. LLM, Classification, Computer Vision"
+              className={inputClass}
+              style={inputStyle}
+              disabled={submitting}
+            />
+          </div>
+
+          {/* Deployment Status */}
+          <div>
+            <FieldLabel>Deployment Status</FieldLabel>
+            <input
+              type="text"
+              name="deployment_status"
+              placeholder="e.g. production, staging, development, decommissioned"
+              className={inputClass}
+              style={inputStyle}
+              disabled={submitting}
+            />
+          </div>
+
+          {/* Data Classification */}
+          <div>
+            <FieldLabel>Data Classification</FieldLabel>
+            <input
+              type="text"
+              name="data_classification"
+              placeholder="e.g. confidential, internal, public"
+              className={inputClass}
+              style={inputStyle}
+              disabled={submitting}
+            />
+          </div>
+
+          {/* Risk Classification */}
+          <div>
+            <FieldLabel>Risk Classification</FieldLabel>
+            <input
+              type="text"
+              name="risk_classification"
+              placeholder="e.g. High Risk, Limited Risk, Minimal Risk (EU AI Act)"
               className={inputClass}
               style={inputStyle}
               disabled={submitting}
@@ -174,7 +164,11 @@ export default function NewVendorClient({
           {error && (
             <div
               className="rounded-lg px-4 py-3 text-sm"
-              style={{ background: "rgba(239,68,68,0.12)", color: "#fca5a5", border: "1px solid rgba(239,68,68,0.25)" }}
+              style={{
+                background: "rgba(239,68,68,0.12)",
+                color: "#fca5a5",
+                border: "1px solid rgba(239,68,68,0.25)",
+              }}
             >
               {error}
             </div>
@@ -188,7 +182,7 @@ export default function NewVendorClient({
               className="px-6 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-60"
               style={{ background: "#00c4b4", color: "#0a0f1a" }}
             >
-              {submitting ? "Adding…" : "Add Vendor"}
+              {submitting ? "Adding…" : "Add AI System"}
             </button>
             <Link
               href={backHref}

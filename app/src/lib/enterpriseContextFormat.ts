@@ -28,6 +28,7 @@ const ENTITY_TYPE_LABELS: Partial<Record<EntityType, string>> = {
   data_store: "Data Store",
   data_classification: "Data Classification",
   identity: "Identity",
+  business_process: "Business Process",
 };
 
 export function entityTypeLabel(type: string): string {
