@@ -44,6 +44,13 @@ import { signalSanitizeEnabled } from "./signalSanitizeFeatureFlag.js";
 import { briefRelevanceEnabled, refineCategory } from "./briefRelevance.js";
 import { trimToSentence } from "./signals/contentQuality.js";
 import { briefQualityEnabled } from "./briefQualityFeatureFlag.js";
+// IQP Q5: reliability guard + alerting. The grounding guard lives in the
+// PURE signals/actionGrounding module (extracted from briefSynthesizer, which
+// re-exports it) so this no-I/O layer never imports the synthesizer's
+// postgres dependency.
+import { buildAllowedCveSet, validateActionGrounding } from "./signals/actionGrounding.js";
+import { enrichmentReliabilityEnabled } from "./enrichmentReliabilityFeatureFlag.js";
+import { sendSecurityAlert } from "../infra/alerting.js";
 
 function getClient(): Anthropic | null {
   const key = process.env.ANTHROPIC_API_KEY?.trim();
@@ -155,6 +162,15 @@ export type BriefItem = {
    * changes brief output (output-inert).
    */
   contributing_signal_ids?: string[];
+  /**
+   * IQP Q5: whether this item carries real Claude enrichment ("enriched") or
+   * the deterministic template fallback ("fallback"). Pure telemetry — set by
+   * enrichItemWithClaude, counted by enrichBriefItems' per-cycle
+   * brief_enrichment_summary, and INTERNAL: stripped from content_json by
+   * buildContentJson (output-inert; fallback must never be silent, but the
+   * marker itself is operator-facing, not customer-facing).
+   */
+  enrichment_status?: "enriched" | "fallback";
 };
 
 export type BriefCategoryGroup = {
@@ -915,6 +931,8 @@ function buildItemTitle(
 function stripInternalBriefItemFields(item: BriefItem): BriefItem {
   const copy = { ...item };
   delete copy.contributing_signal_ids;
+  // IQP Q5: operator-facing telemetry marker, never serialized to customers.
+  delete copy.enrichment_status;
   return copy;
 }
 
@@ -1129,6 +1147,31 @@ const EnrichmentResponseSchema = z.object({
   urgency: z.string().max(50).optional()
 });
 
+// IQP Q5: an Anthropic auth failure alerts once per process (mirrors
+// providerQuotaAlert's once-per-process semantics) — the most likely April
+// root cause (invalid key → runtime 401 → silent fallback) becomes loud.
+let authFailureAlerted = false;
+
+/** Test hook: reset the once-per-process auth-alert latch. */
+export function resetEnrichmentAuthAlertLatch(): void {
+  authFailureAlerted = false;
+}
+
+function buildFallbackItem(item: BriefItem): BriefItem {
+  return {
+    ...item,
+    analysis: null,
+    why_it_matters: fallbackWhyItMatters(item),
+    recommended_actions: fallbackRecommendedActions(item),
+    analyst_notes: null,
+    urgency: URGENCY_FALLBACK,
+    // IQP Q5: fallback is never indistinguishable — every degraded item is
+    // marked (internal; counted by the per-cycle summary, stripped from
+    // content_json).
+    enrichment_status: "fallback"
+  };
+}
+
 async function enrichItemWithClaude(
   item: BriefItem,
   organizationId: string | null = null
@@ -1139,21 +1182,16 @@ async function enrichItemWithClaude(
       { event: "brief_enrichment_fallback", reason: "ANTHROPIC_API_KEY not set", signal_id: item.cyber_signal_id, organizationId },
       "Brief enrichment falling back to defaults"
     );
-    return {
-      ...item,
-      analysis: null,
-      why_it_matters: fallbackWhyItMatters(item),
-      recommended_actions: fallbackRecommendedActions(item),
-      analyst_notes: null,
-      urgency: URGENCY_FALLBACK
-    };
+    return buildFallbackItem(item);
   }
 
   logger.info(
     {
       event: "llm_call_start",
       purpose: "brief_item_enrichment",
-      model: "claude-haiku-4-5",
+      // IQP Q5: log the model actually sent (was hardcoded "claude-haiku-4-5"
+      // while the call used CLAUDE_MODEL — a telemetry mislabel).
+      model: CLAUDE_MODEL,
       organizationId,
       signal_id: item.cyber_signal_id
     },
@@ -1243,14 +1281,7 @@ async function enrichItemWithClaude(
     // Strip markdown code fences if Claude wrapped the JSON
     const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
 
-    const fallbackItem: BriefItem = {
-      ...item,
-      analysis: null,
-      why_it_matters: fallbackWhyItMatters(item),
-      recommended_actions: fallbackRecommendedActions(item),
-      analyst_notes: null,
-      urgency: URGENCY_FALLBACK
-    };
+    const fallbackItem: BriefItem = buildFallbackItem(item);
 
     let parsedUnknown: unknown;
     try {
@@ -1298,6 +1329,28 @@ async function enrichItemWithClaude(
         ? parsed.recommended_actions.trim()
         : fallbackRecommendedActions(item);
 
+    // IQP Q5 (flag-gated): CVE-grounding guard — built after the PR #25
+    // hallucination incident (briefSynthesizer) but never wired into the live
+    // enrichment call. A response citing a CVE that does not appear anywhere
+    // in THIS item's source fields is contaminated: template fallback, never
+    // shipped. Zero-CVE actions are legitimate and pass.
+    if (enrichmentReliabilityEnabled()) {
+      const allowed = buildAllowedCveSet([item]);
+      const grounding = validateActionGrounding(recommendedActions.split("\n"), allowed);
+      if (grounding.dropped.length > 0) {
+        logger.warn(
+          {
+            event: "brief_enrichment_ungrounded",
+            signal_id: item.cyber_signal_id,
+            organizationId,
+            dropped: grounding.dropped.slice(0, 5)
+          },
+          "Brief enrichment: response cited CVEs absent from the source — using fallback"
+        );
+        return fallbackItem;
+      }
+    }
+
     const urgency: BriefUrgency = isBriefUrgency(parsed.urgency)
       ? parsed.urgency
       : URGENCY_FALLBACK;
@@ -1308,21 +1361,35 @@ async function enrichItemWithClaude(
       why_it_matters: whyItMatters,
       recommended_actions: recommendedActions,
       analyst_notes: null,
-      urgency
+      urgency,
+      enrichment_status: "enriched"
     };
   } catch (err) {
+    // IQP Q5: classify auth failures (invalid/revoked key → 401/403) — the
+    // most likely April root cause. providerQuotaAlert only classifies
+    // quota/429, so without this an invalid key was a fully SILENT fallback.
+    const status = (err as { status?: number } | null)?.status;
+    const isAuthError = status === 401 || status === 403;
     logger.warn(
-      { event: "brief_enrichment_fallback", reason: "Exception during enrichment", signal_id: item.cyber_signal_id, organizationId, err },
+      {
+        event: "brief_enrichment_fallback",
+        reason: isAuthError ? "anthropic_auth_failure" : "Exception during enrichment",
+        status,
+        signal_id: item.cyber_signal_id,
+        organizationId,
+        err
+      },
       "Brief enrichment falling back to defaults"
     );
-    return {
-      ...item,
-      analysis: null,
-      why_it_matters: fallbackWhyItMatters(item),
-      recommended_actions: fallbackRecommendedActions(item),
-      analyst_notes: null,
-      urgency: URGENCY_FALLBACK
-    };
+    if (isAuthError && !authFailureAlerted && enrichmentReliabilityEnabled()) {
+      authFailureAlerted = true;
+      void sendSecurityAlert({
+        kind: "brief_enrichment_auth_failure",
+        summary: `Anthropic API rejected the configured key (HTTP ${status}) — every brief item is degrading to template fallback until the key is fixed.`,
+        detail: { status: status ?? null, organizationId }
+      }).catch(() => { /* alert channel failure never breaks enrichment */ });
+    }
+    return buildFallbackItem(item);
   }
 }
 
@@ -1336,11 +1403,52 @@ async function enrichItemWithClaude(
  * @param items  Items produced by buildBriefItems().
  * @returns      Same items with why_it_matters and recommended_actions populated.
  */
+/** IQP Q5: a batch with ≥ this fraction of fallback items is "degraded" —
+ * the April-incident signature (100% identical template Actions). */
+const ENRICHMENT_DEGRADED_THRESHOLD = 0.5;
+
 export async function enrichBriefItems(
   items: ReadonlyArray<BriefItem>,
   organizationId: string | null = null
 ): Promise<BriefItem[]> {
-  return Promise.all(items.map((item) => enrichItemWithClaude(item, organizationId)));
+  const enriched = await Promise.all(
+    items.map((item) => enrichItemWithClaude(item, organizationId))
+  );
+
+  // IQP Q5: per-cycle enrichment telemetry — fallback is observable and
+  // measurable on EVERY run (log always; warn when anything degraded). The
+  // April incident ran for weeks on scattered per-item warns; this single
+  // summary line is the heartbeat operators grep/alert on.
+  const fallbackCount = enriched.filter((i) => i.enrichment_status === "fallback").length;
+  const total = enriched.length;
+  const summaryPayload = {
+    event: "brief_enrichment_summary",
+    organizationId,
+    total,
+    enriched_count: total - fallbackCount,
+    fallback_count: fallbackCount,
+    fallback_rate: total > 0 ? Number((fallbackCount / total).toFixed(2)) : 0
+  };
+  if (fallbackCount > 0) {
+    logger.warn(summaryPayload, "Brief enrichment cycle completed with fallbacks");
+  } else if (total > 0) {
+    logger.info(summaryPayload, "Brief enrichment cycle completed");
+  }
+
+  // Flag-gated degraded-batch alert (inert without ALERT_WEBHOOK_URL).
+  if (
+    enrichmentReliabilityEnabled() &&
+    total > 0 &&
+    fallbackCount / total >= ENRICHMENT_DEGRADED_THRESHOLD
+  ) {
+    void sendSecurityAlert({
+      kind: "brief_enrichment_degraded",
+      summary: `Brief enrichment degraded: ${fallbackCount}/${total} items fell back to template content this cycle.`,
+      detail: summaryPayload
+    }).catch(() => { /* alert channel failure never breaks the brief */ });
+  }
+
+  return enriched;
 }
 
 // ---------------------------------------------------------------------------

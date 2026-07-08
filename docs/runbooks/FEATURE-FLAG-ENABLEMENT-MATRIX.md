@@ -253,6 +253,17 @@ production (no prod enablement without an explicit operator ruling).
 - **Rollback:** `"false"` (legacy truncation/output returns).
 - **Dependencies:** None (composes with §1.14–1.16). Ledger: OP-5.
 
+### 1.18 `SECURELOGIC_ENRICHMENT_RELIABILITY_ENABLED` (IQP Q5)
+- **Purpose:** Enrichment reliability guard + alerting — the April-incident detectors. When ON: (1) a degraded enrichment batch (≥50% template fallback) fires `brief_enrichment_degraded`; (2) an Anthropic auth failure (401/403 — invalid/revoked key) fires `brief_enrichment_auth_failure` once per process; (3) the CVE-grounding guard (`signals/actionGrounding`, built after PR #25 but previously unwired) rejects enrichment responses citing CVEs absent from the source item → template fallback, never shipped. Per-item `enrichment_status` marking and the per-cycle `brief_enrichment_summary` log are ALWAYS on (pure telemetry, output-inert — the marker is stripped from `content_json`).
+- **Required services:** **Engine only.**
+- **Redeploy/restart:** Yes, Engine; no rebuild.
+- **Default:** `"false"` (OFF everywhere; enrichment output byte-identical to pre-Q5).
+- **Staging order:** engine-staging → validate (see OP-7). Alerts additionally require `ALERT_WEBHOOK_URL` (inert without it — same contract as all alerting).
+- **Production order:** after staging validation passes IQP exit gate G5 → engine.
+- **Validation:** temporarily unset/inject an invalid `ANTHROPIC_API_KEY` in STAGING ONLY → next brief cycle logs `brief_enrichment_summary` with `fallback_rate: 1` and fires both alerts; restore the key → healthy summary at info.
+- **Rollback:** `"false"` (guard + alerts off; telemetry log remains).
+- **Dependencies:** `ANTHROPIC_API_KEY` valid (OP-6); `ALERT_WEBHOOK_URL` set for alerts to be visible. Ledger: OP-6/OP-7.
+
 ---
 
 ## 2. Tier B — Live and operational flags
