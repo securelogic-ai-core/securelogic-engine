@@ -42,6 +42,8 @@ import type { BriefSynthesis } from "./briefSynthesizer.js";
 import { stripHtmlToText } from "./sanitize.js";
 import { signalSanitizeEnabled } from "./signalSanitizeFeatureFlag.js";
 import { briefRelevanceEnabled, refineCategory } from "./briefRelevance.js";
+import { trimToSentence } from "./signals/contentQuality.js";
+import { briefQualityEnabled } from "./briefQualityFeatureFlag.js";
 
 function getClient(): Anthropic | null {
   const key = process.env.ANTHROPIC_API_KEY?.trim();
@@ -686,13 +688,23 @@ export function buildBriefItems(
   // IQP Q3 (#5b): classification correction — an item bucketed `regulatory`
   // by its ARRIVAL FEED re-buckets to `general` unless its visible text
   // carries regulatory intent. Defaults to the flag; OFF ⇒ byte-identical.
-  relevanceEnabled: boolean = briefRelevanceEnabled()
+  relevanceEnabled: boolean = briefRelevanceEnabled(),
+  // IQP Q4 (#1/#2): title/summary quality contract — word/sentence-boundary
+  // title cap (no mid-word "..."), summary must not restate the title, and
+  // duplicate titles collapse. Defaults to the flag; OFF ⇒ byte-identical.
+  qualityEnabled: boolean = briefQualityEnabled()
 ): BriefItem[] {
   const RELEVANCE_RANK: Record<BriefRelevance, number> = { high: 0, medium: 1, low: 2 };
 
   const rawItems: BriefItem[] = signals.map((s) => {
-    const title = buildItemTitle(s, sanitizeEnabled);
-    const summary = sanitizeEnabled ? stripHtmlToText(s.normalized_summary) : s.normalized_summary;
+    const title = buildItemTitle(s, sanitizeEnabled, qualityEnabled);
+    let summary = sanitizeEnabled ? stripHtmlToText(s.normalized_summary) : s.normalized_summary;
+    // IQP Q4 (#2): a summary that merely restates the title (equal, or one is
+    // a prefix of the other, case/whitespace-insensitive) adds no intelligence
+    // — synthesize a deterministic entity-based executive line instead.
+    if (qualityEnabled && restatesTitle(title, summary)) {
+      summary = synthesizeSummaryFromEntities(s);
+    }
     const mappedCategory = mapSignalToCategory(s.signal_type);
     return {
       cyber_signal_id: s.id,
@@ -741,11 +753,77 @@ export function buildBriefItems(
     return b.ingestion_timestamp.localeCompare(a.ingestion_timestamp);
   });
 
+  // IQP Q4 (gate G2): no duplicated titles across one brief. Post-sort, the
+  // FIRST occurrence is the highest-relevance/most-recent — keep it, drop the
+  // rest (same story reported by another source without a shared CVE/cluster).
+  if (qualityEnabled) {
+    const seenTitles = new Set<string>();
+    items = items.filter((item) => {
+      const key = item.title.trim().toLowerCase();
+      if (seenTitles.has(key)) return false;
+      seenTitles.add(key);
+      return true;
+    });
+  }
+
   items.forEach((item, i) => {
     item.sort_order = i;
   });
 
   return items;
+}
+
+// ---------------------------------------------------------------------------
+// IQP Q4 helpers — summary-restates-title detection + entity synthesis
+// ---------------------------------------------------------------------------
+
+/** Case/whitespace-insensitive normalization for title↔summary comparison. */
+function normalizeForCompare(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/**
+ * True when the summary merely restates the title: equal after normalization,
+ * or one is a prefix of the other (the classic feed shape — summary = title,
+ * or title = the summary's truncated head).
+ */
+export function restatesTitle(title: string, summary: string): boolean {
+  const t = normalizeForCompare(title).replace(/\s*(\.{3}|…|\[…\])\s*$/, "");
+  const s = normalizeForCompare(summary).replace(/\s*(\.{3}|…|\[…\])\s*$/, "");
+  if (t === "" || s === "") return false;
+  return t === s || s.startsWith(t) || t.startsWith(s);
+}
+
+const SIGNAL_TYPE_PHRASE: Record<string, string> = {
+  cve: "vulnerability",
+  vulnerability: "attack technique",
+  advisory: "security advisory",
+  patch: "security patch",
+  patch_advisory: "vendor security advisory",
+  breach: "security incident",
+  third_party_breach: "third-party breach disclosure",
+  data_exposure: "data exposure",
+  malware: "malware campaign",
+  threat_actor: "threat-actor activity",
+  regulatory_change: "regulatory development",
+  geopolitical: "geopolitical development"
+};
+
+/**
+ * Deterministic executive summary from the signal's structured entities, for
+ * items whose feed summary just repeats the title. States severity, what kind
+ * of intelligence it is, and who/what it touches — never a copy of the title.
+ */
+export function synthesizeSummaryFromEntities(signal: {
+  signal_type: string;
+  severity: string;
+  affected_cve: string | null;
+  affected_vendor: string | null;
+}): string {
+  const kind = SIGNAL_TYPE_PHRASE[signal.signal_type] ?? "security development";
+  const vendor = signal.affected_vendor ? ` affecting ${signal.affected_vendor}` : "";
+  const cve = signal.affected_cve ? ` (${signal.affected_cve})` : "";
+  return `${signal.severity}-severity ${kind}${vendor}${cve}. Review the source advisory for scope, exposure, and remediation guidance.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -777,7 +855,24 @@ function cleanSummaryForTitle(raw: string): string {
  *      whitespace collapsed, same truncation rule.
  *   3. If both are empty, build from CVE/vendor/signal_type.
  */
-function buildItemTitle(signal: CyberSignalForBrief, sanitizeEnabled = false): string {
+/** IQP Q4: title length budget under the quality contract (≤120 chars,
+ * word/sentence-boundary trim — never a mid-word cut or a bare "..."). */
+const TITLE_MAX_QUALITY = 120;
+
+function capTitle(text: string, qualityEnabled: boolean): string {
+  if (qualityEnabled) {
+    // Word/sentence-safe cap; short titles pass through whole. An over-budget
+    // headline trims at a word boundary with the explicit […] marker.
+    return trimToSentence(text, TITLE_MAX_QUALITY);
+  }
+  return text.length <= 80 ? text : `${text.slice(0, 77)}...`;
+}
+
+function buildItemTitle(
+  signal: CyberSignalForBrief,
+  sanitizeEnabled = false,
+  qualityEnabled = false
+): string {
   // Stage 1 — source-feed title from raw_payload.
   const payloadTitle =
     signal.raw_payload && typeof signal.raw_payload === "object"
@@ -788,7 +883,7 @@ function buildItemTitle(signal: CyberSignalForBrief, sanitizeEnabled = false): s
     // normalizeSignal, so this is its one sanitization point.
     const trimmed = sanitizeEnabled ? stripHtmlToText(payloadTitle) : payloadTitle.trim();
     if (trimmed.length > 0) {
-      return trimmed.length <= 80 ? trimmed : `${trimmed.slice(0, 77)}...`;
+      return capTitle(trimmed, qualityEnabled);
     }
   }
 
@@ -805,7 +900,7 @@ function buildItemTitle(signal: CyberSignalForBrief, sanitizeEnabled = false): s
     parts.push(signal.signal_type.toUpperCase());
     return parts.join(" — ");
   }
-  return summary.length <= 80 ? summary : `${summary.slice(0, 77)}...`;
+  return capTitle(summary, qualityEnabled);
 }
 
 // ---------------------------------------------------------------------------

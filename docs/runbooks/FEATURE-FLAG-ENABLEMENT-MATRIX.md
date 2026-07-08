@@ -242,6 +242,17 @@ production (no prod enablement without an explicit operator ruling).
 - **Rollback:** `"false"` (legacy ungated brief returns).
 - **Dependencies:** None (independent of Q1/Q2 flags; all three compose). Ledger: OP-4.
 
+### 1.17 `SECURELOGIC_BRIEF_QUALITY_ENABLED` (IQP Q4)
+- **Purpose:** Title/summary quality contract on customer-facing brief items: (1) titles cap at 120 chars on a word/sentence boundary via `contentQuality.trimToSentence` (no mid-word cut, no literal `...`); (2) normalizer-derived summaries end on whole sentences; (3) a summary that restates its title is replaced by a deterministic entity-synthesized executive line; (4) duplicate titles across one brief collapse. Fixes Phase 1 audit defects #1/#2 and satisfies gate G2/G3 of the quality contract.
+- **Required services:** **Engine only** (set on the intelligence-worker too if it runs its own env — it shares the canonical normalizer).
+- **Redeploy/restart:** Yes, Engine; no rebuild.
+- **Default:** `"false"` (OFF everywhere; flag-off byte-identical, incl. the legacy 77-char `...` cut).
+- **Staging order:** engine-staging → validate (no brief title ends in a bare `...` or mid-word cut; no item where summary == title; no two items share a title).
+- **Production order:** after staging validation passes IQP exit gate G4 → engine.
+- **Validation:** generate a staging brief from mixed fixtures incl. an over-long headline and a summary==title feed item.
+- **Rollback:** `"false"` (legacy truncation/output returns).
+- **Dependencies:** None (composes with §1.14–1.16). Ledger: OP-5.
+
 ---
 
 ## 2. Tier B — Live and operational flags
