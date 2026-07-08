@@ -256,6 +256,51 @@ export function assetImportSurfaces(): AssetImportSurface[] {
   ];
 }
 
+/**
+ * The three canonical onboarding methods the Asset Registry create surface
+ * MUST expose (EAR P15). Each reuses an existing flow — no duplicate importer or
+ * connector logic:
+ *   - create  → pick a type + fill the per-type form (federated, EAR-AD-1).
+ *   - import  → the existing CSV/XLSX importers (assetImportSurfaces): preview,
+ *               validation, de-duplication, row-level errors, and plan caps are
+ *               all handled by those surfaces — nothing re-implemented here.
+ *   - connect → the existing /assets/connect connector catalog (EAR Phase 3b).
+ * SOC upload is deliberately NOT a method here — it stays under Vendor Management.
+ */
+export type AssetOnboardingKey = "create" | "import" | "connect";
+export interface AssetOnboardingMethod {
+  key: AssetOnboardingKey;
+  title: string;
+  description: string;
+  /** The connect method's fixed destination; create/import fan out in-surface. */
+  href: string | null;
+}
+
+export function assetOnboardingMethods(): AssetOnboardingMethod[] {
+  return [
+    {
+      key: "create",
+      title: "Create manually",
+      description: "Add a single asset by choosing its type and filling in its details.",
+      href: null,
+    },
+    {
+      key: "import",
+      title: "Bulk upload",
+      description:
+        "Import many assets at once from a CSV or XLSX file — with preview, validation, de-duplication, row-level errors, and plan caps.",
+      href: null,
+    },
+    {
+      key: "connect",
+      title: "Connect enterprise systems",
+      description:
+        "Auto-discover assets from your CMDB, cloud, vulnerability, identity, or endpoint systems.",
+      href: "/assets/connect",
+    },
+  ];
+}
+
 /** Edit route for a registry asset (only detail-backed kinds have one). */
 export function assetEditHref(asset: Pick<CanonicalAsset, "asset_id" | "asset_type">): string | null {
   return isDetailBackedType(asset.asset_type) ? `/assets/${asset.asset_id}/edit` : null;

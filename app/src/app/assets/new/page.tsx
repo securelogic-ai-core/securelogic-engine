@@ -1,19 +1,25 @@
 /**
- * /assets/new — the registry's create router (EAR management UI).
+ * /assets/new — the canonical Asset Registry create / onboarding surface.
  *
- * The unified surface is the CRUD home for the four detail-backed types only
- * (cloud_resource / endpoint / api / identity_system): choosing one renders the
- * native AssetForm and POSTs /api/assets. Every other type is created on its
- * authoritative surface (EAR-AD-1 federation) — vendors / AI systems always,
- * and applications / data stores / other entities on the Enterprise Context
- * surface (only surfaced when the ECL flag is on, so we never point at a dark
- * page). A CSV import section hands off to the existing per-surface importers —
- * there is no unified import API, so this is entry points, not a new endpoint.
+ * It exposes the THREE canonical onboarding methods (EAR P15) as co-equal,
+ * first-class options — each REUSES an existing flow, nothing is re-implemented:
+ *   1. Create manually  — the federated per-type create picker (EAR-AD-1): the
+ *      four detail-backed types render the native AssetForm inline; vendors / AI
+ *      systems / applications / data stores / other open their authoritative
+ *      screens (ECL ones only when the ECL flag is on, so we never point at a
+ *      dark page).
+ *   2. Bulk upload      — the existing CSV/XLSX importers (assetImportSurfaces):
+ *      preview, validation, de-duplication, row-level errors and plan caps live
+ *      in those surfaces; this is entry points, not a new importer.
+ *   3. Connect systems  — the existing /assets/connect connector catalog
+ *      (EAR Phase 3b). Not "coming soon" — the route exists.
+ * SOC upload is deliberately absent — it stays under Vendor Management.
  *
- * Dark: unchanged from the read pages — non-platform users redirect to
- * /dashboard, and the nav entry stays hidden until SECURELOGIC_ASSET_REGISTRY_
- * ENABLED is on. A submit still 404s/403s at the engine when the flag/capability
- * is off, surfaced by AssetForm's error copy.
+ * Dark: unchanged. Non-platform users redirect to /dashboard; the whole surface
+ * gates on SECURELOGIC_ASSET_REGISTRY_ENABLED (neutral panel when off), and the
+ * ECL-backed sub-options (applications/data-store import, connectors) are
+ * additionally fenced on SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED. A submit still
+ * 404s/403s at the engine when the flag/capability is off.
  */
 
 import Link from "next/link";
@@ -26,6 +32,7 @@ import {
   assetCreateTarget,
   assetCreateHref,
   assetImportSurfaces,
+  assetOnboardingMethods,
   ASSET_TYPES,
 } from "@/lib/assetRegistry";
 import { ReadFailurePanel } from "@/components/assetKit";
@@ -37,6 +44,8 @@ const TYPE_BLURB: Record<string, string> = {
   api: "Internal or exposed APIs by protocol, auth method, and exposure.",
   identity_system: "IdPs and directories (SAML / OIDC / LDAP).",
 };
+
+const sectionHeading = "text-xs font-semibold uppercase tracking-wide mb-3";
 
 export default async function NewAssetPage({
   searchParams,
@@ -73,7 +82,7 @@ export default async function NewAssetPage({
   const sp = await searchParams;
   const chosen = sp.type;
 
-  // A detail-backed type was chosen → render the native create form.
+  // A detail-backed type was chosen → render the native create form directly.
   if (isDetailBackedType(chosen)) {
     return (
       <div className="max-w-2xl mx-auto px-6 py-12">
@@ -95,13 +104,14 @@ export default async function NewAssetPage({
     );
   }
 
-  // Otherwise: the type picker. Native types get in-surface cards; the rest
-  // federate to their own create screens (ECL ones only when the flag is on).
+  // Otherwise: the onboarding surface — the three canonical methods.
   const externalTargets = ASSET_TYPES.filter((t) => !isDetailBackedType(t))
     .map((t) => ({ type: t, target: assetCreateTarget(t) }))
     .filter((x) => x.target.kind === "external" && (!x.target.requiresEcl || eclEnabled));
 
   const imports = assetImportSurfaces().filter((s) => !s.requiresEcl || eclEnabled);
+  const methods = assetOnboardingMethods();
+  const method = (key: string) => methods.find((m) => m.key === key)!;
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-12">
@@ -113,103 +123,121 @@ export default async function NewAssetPage({
         ← Assets
       </Link>
       <h1 className="text-2xl font-bold mb-2" style={{ color: "#f1f5f9" }}>
-        Add an asset
+        Add assets
       </h1>
-      <p className="text-sm mb-8" style={{ color: "#94a3b8" }}>
-        Pick a type. Infrastructure types are created here; vendors, AI systems, and applications are
-        managed on their own screens.
+      <p className="text-sm mb-10" style={{ color: "#94a3b8" }}>
+        Three ways to add assets to your registry — create one manually, bulk upload a spreadsheet,
+        or connect an enterprise system to auto-discover them.
       </p>
 
-      {/* Native (unified-surface) types */}
-      <h2 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "#94a3b8" }}>
-        Infrastructure
-      </h2>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-10">
-        {DETAIL_BACKED_TYPES.map((t) => (
-          <Link
-            key={t}
-            href={assetCreateHref(t)}
-            className="block rounded-xl border p-4 transition-colors hover:opacity-90"
-            style={{ borderColor: "#1e293b", background: "#0f172a" }}
-          >
-            <div className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
-              {assetTypeLabel(t)}
-            </div>
-            <div className="text-xs mt-1" style={{ color: "#94a3b8" }}>
-              {TYPE_BLURB[t]}
-            </div>
-          </Link>
-        ))}
-      </div>
+      {/* ── 1 · Create manually ─────────────────────────────────────────── */}
+      <section className="mb-12">
+        <h2 className={sectionHeading} style={{ color: "#00c4b4" }}>
+          1 · {method("create").title}
+        </h2>
+        <p className="text-sm mb-4" style={{ color: "#94a3b8" }}>
+          {method("create").description}
+        </p>
 
-      {/* Federated types (managed elsewhere) */}
-      <h2 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "#94a3b8" }}>
-        Managed on their own screens
-      </h2>
-      <div className="rounded-xl border divide-y mb-10" style={{ borderColor: "#1e293b" }}>
-        {externalTargets.map(({ type }) => (
-          <Link
-            key={type}
-            href={assetCreateHref(type)}
-            className="flex items-center justify-between gap-4 px-5 py-3.5 transition-colors hover:opacity-80"
-          >
-            <span className="text-sm font-medium" style={{ color: "#f1f5f9" }}>
-              {assetTypeLabel(type)}
-            </span>
-            <span className="text-xs" style={{ color: "#64748b" }}>
-              Open screen →
-            </span>
-          </Link>
-        ))}
-        {externalTargets.length === 0 && (
-          <p className="px-5 py-3.5 text-xs" style={{ color: "#64748b" }}>
-            Vendors and AI systems are managed on their own screens.
-          </p>
-        )}
-      </div>
-
-      {/* CSV import entry points (existing importers — no unified import API) */}
-      <h2 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "#94a3b8" }}>
-        Bulk import (CSV)
-      </h2>
-      <div className="flex flex-wrap gap-2 mb-10">
-        {imports.map((s) => (
-          <Link
-            key={s.href}
-            href={s.href}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:opacity-80"
-            style={{ borderColor: "#1e293b", color: "#94a3b8" }}
-          >
-            {s.label} →
-          </Link>
-        ))}
-      </div>
-
-      {/* Connect enterprise systems — the canonical connector catalog. One flow,
-          reused by the Setup Wizard; connectors discover assets into the registry. */}
-      <h2 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "#94a3b8" }}>
-        Connect enterprise systems
-      </h2>
-      <Link
-        href="/assets/connect"
-        className="block rounded-xl border p-4 transition-colors hover:opacity-90"
-        style={{ borderColor: "#1e293b", background: "#0f172a" }}
-      >
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <div className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
-              Connect a source of truth
-            </div>
-            <div className="text-xs mt-1" style={{ color: "#94a3b8" }}>
-              CMDB, cloud, vulnerability, identity, or endpoint systems auto-discover assets into
-              your registry.
-            </div>
-          </div>
-          <span className="flex-shrink-0 text-xs" style={{ color: "#64748b" }}>
-            Browse connectors →
-          </span>
+        {/* Native (unified-surface) types */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+          {DETAIL_BACKED_TYPES.map((t) => (
+            <Link
+              key={t}
+              href={assetCreateHref(t)}
+              className="block rounded-xl border p-4 transition-colors hover:opacity-90"
+              style={{ borderColor: "#1e293b", background: "#0f172a" }}
+            >
+              <div className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
+                {assetTypeLabel(t)}
+              </div>
+              <div className="text-xs mt-1" style={{ color: "#94a3b8" }}>
+                {TYPE_BLURB[t]}
+              </div>
+            </Link>
+          ))}
         </div>
-      </Link>
+
+        {/* Federated types (managed on their own screens) */}
+        <div className="rounded-xl border divide-y" style={{ borderColor: "#1e293b" }}>
+          {externalTargets.map(({ type }) => (
+            <Link
+              key={type}
+              href={assetCreateHref(type)}
+              className="flex items-center justify-between gap-4 px-5 py-3.5 transition-colors hover:opacity-80"
+            >
+              <span className="text-sm font-medium" style={{ color: "#f1f5f9" }}>
+                {assetTypeLabel(type)}
+              </span>
+              <span className="text-xs" style={{ color: "#64748b" }}>
+                Open screen →
+              </span>
+            </Link>
+          ))}
+          {externalTargets.length === 0 && (
+            <p className="px-5 py-3.5 text-xs" style={{ color: "#64748b" }}>
+              Vendors and AI systems are managed on their own screens.
+            </p>
+          )}
+        </div>
+      </section>
+
+      {/* ── 2 · Bulk upload ─────────────────────────────────────────────── */}
+      <section className="mb-12">
+        <h2 className={sectionHeading} style={{ color: "#00c4b4" }}>
+          2 · {method("import").title}
+        </h2>
+        <p className="text-sm mb-4" style={{ color: "#94a3b8" }}>
+          {method("import").description}
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {imports.map((s) => (
+            <Link
+              key={s.href}
+              href={s.href}
+              className="flex items-center justify-between gap-4 rounded-xl border p-4 transition-colors hover:opacity-90"
+              style={{ borderColor: "#1e293b", background: "#0f172a" }}
+            >
+              <span className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
+                {s.label}
+              </span>
+              <span className="text-xs" style={{ color: "#64748b" }}>
+                Upload CSV / XLSX →
+              </span>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      {/* ── 3 · Connect enterprise systems ──────────────────────────────── */}
+      <section className="mb-4">
+        <h2 className={sectionHeading} style={{ color: "#00c4b4" }}>
+          3 · {method("connect").title}
+        </h2>
+        <p className="text-sm mb-4" style={{ color: "#94a3b8" }}>
+          {method("connect").description}
+        </p>
+        <Link
+          href={method("connect").href ?? "/assets/connect"}
+          className="block rounded-xl border p-4 transition-colors hover:opacity-90"
+          style={{ borderColor: "#1e293b", background: "#0f172a" }}
+        >
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
+                Connect a source of truth
+              </div>
+              <div className="text-xs mt-1" style={{ color: "#94a3b8" }}>
+                CMDB, cloud, vulnerability, identity, or endpoint systems auto-discover assets into
+                your registry.
+              </div>
+            </div>
+            <span className="flex-shrink-0 text-xs" style={{ color: "#64748b" }}>
+              Browse connectors →
+            </span>
+          </div>
+        </Link>
+      </section>
     </div>
   );
 }

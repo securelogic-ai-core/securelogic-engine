@@ -153,6 +153,49 @@ Billing note:
 > `docs/validation/enterprise-asset-registry-tracker.md` (P13 row → DONE), the Enablement Runbook
 > Step 1 (Connect + Setup-Wizard bullets), and the EAR/ERIP final reports (P0–P11 unchanged).
 
+> **EAR P14 follow-on — COMPLETE (2026-07-08; PR #549, additive to the P0–P13 record above, which is
+> preserved unchanged).** **P14 = one canonical Asset Registry asset-creation flow** — shipped dark
+> to `develop` as **#549** (squash `3fc927ec`; `develop` head now `3fc927ec`; branch deleted).
+> Collapses the prior two/three-step type re-selection into **choose the type once → land on the
+> right Create screen with the type preselected and LOCKED**. A single routing helper
+> (`app/src/lib/assetRegistry.ts` `assetCreateHref`) is used by the `/assets` list "+ Add" button
+> (now carries the active type filter + labels by type) and the `/assets/new` picker: detail-backed
+> types (cloud_resource/endpoint/api/identity_system) render the native inline type-aware form;
+> application/database/business_process open Add-Entity with `entity_type`+`asset_type` preselected
+> and locked, titled by asset type ("Create Database"); vendor/ai_system open their dedicated screens
+> **framed as registry flows** via `?from=registry` + a **shared `CreateFlowBackLink`** breadcrumb
+> (AI System refactored to the Vendor server-wrapper pattern — **token-only gate preserved, no access
+> regression**; no duplicated breadcrumb). **`business_process` promoted to a first-class
+> `enterprise_entities.entity_type`** so a record lands as its own type instead of collapsing to
+> `generic` — **additive, non-destructive migration `20260827`** (widen entity_type CHECK + repoint
+> `asset_registry_v`; `ENTITY_TYPE_TO_ASSET_TYPE` + engine/app `ENTITY_TYPES` + labels in lockstep).
+> **Deferred (documented, not faked):** typed children for `business_process` (rto/rpo/owner_dept)
+> and `application` (tech stack/hosting) — each one detail table + RLS migration per the ECL S0 rule.
+> Stays **dark behind `SECURELOGIC_ASSET_REGISTRY_ENABLED`** (+ `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED`
+> for the ECL-backed types); **flag-off byte-identical; no render.yaml change; GATE B in effect — no
+> production enablement.** EAR-AD-2 preserved (registry spine identity-only). **CI 8/8 green**
+> (incl. cross-org-isolation). Docs: `docs/architecture/enterprise-asset-registry/CANONICAL-ASSET-CREATE-FLOW.md`,
+> `ARCHITECTURE.md` §2.3. Consistent with the P14 row in
+> `docs/validation/enterprise-asset-registry-tracker.md`. **Remaining work is operator-only:
+> staging validation, and the GATE-B production-enablement ruling.**
+
+> **EAR P15 follow-on — COMPLETE (2026-07-08; folded into the P14 PR, additive to P0–P14 which are
+> preserved unchanged).** **P15 = the canonical Asset Registry create surface (`/assets/new`) now
+> exposes the THREE onboarding methods as co-equal, first-class options:** **(1) Create manually**
+> (federated per-type picker — native inline form for the four detail types, `assetCreateHref`
+> federation for the rest), **(2) Bulk upload** (reuses the EXISTING CSV/XLSX importers via
+> `assetImportSurfaces()` — `/vendors/import`, `/ai-systems/import`, ECL-fenced
+> `/enterprise-context/import`; **no duplicate importer** — preview/validation/de-dup/row-errors/plan
+> caps all stay in those surfaces), and **(3) Connect enterprise systems** (reuses the EXISTING
+> `/assets/connect` connector catalog, EAR Phase 3b — **linked directly, never "coming soon"**).
+> Driven by the pure, unit-tested `assetOnboardingMethods()` helper. **SOC upload stays under Vendor
+> Management** — deliberately absent from Asset Registry onboarding. **Flag-off unchanged** (registry
+> off → neutral panel, no sections; ECL importer + connectors additionally ECL-fenced). **UI verified
+> by an SSR render** (all three sections emitted; import + `/assets/connect` hrefs present). No
+> engine/schema/flag/`render.yaml`/operator change; GATE B untouched. Docs:
+> `docs/architecture/enterprise-asset-registry/CANONICAL-ASSET-CREATE-FLOW.md`; P15 row in
+> `docs/validation/enterprise-asset-registry-tracker.md`.
+
 ## Active package
 `Priority 4 — Signal Ingestion Hardening` — **status: ACTIVE — IMPLEMENTATION AUTHORIZED & UNDERWAY (2026-06-26).**
 
