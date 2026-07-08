@@ -3,6 +3,39 @@
 ## Purpose
 This document defines the build order for SecureLogic AI. It exists to stop architectural drift, local optimization, and out-of-sequence package work.
 
+## Governing documentation hierarchy
+These are the controlling operational documents and their scopes. Each owns a
+distinct concern — consult the one that matches the question rather than
+duplicating content across them:
+
+1. **BUILD_SEQUENCE.md** (this file) — program roadmap, build order, and the
+   implementation record (what shipped, in what order, under which PR/SHA).
+2. **EAR / ERIP trackers** (`docs/validation/enterprise-asset-registry-tracker.md`,
+   `docs/validation/erip-tracker.md`) — per-item implementation **status**
+   (built / merged / done) and the evidence trail.
+3. **Enablement Runbooks** (`docs/architecture/enterprise-asset-registry/ENABLEMENT-RUNBOOK.md`,
+   `docs/runbooks/intelligence-events-enable-rollback.md`, and peers) — the
+   step-by-step **operator procedures** to enable, validate, and roll back a
+   specific goal in staging.
+4. **Feature Flag Enablement Matrix** (`docs/runbooks/FEATURE-FLAG-ENABLEMENT-MATRIX.md`)
+   — the authoritative cross-cutting reference for **every feature flag**: its
+   **service ownership** (which of App / Engine / Intelligence Worker requires
+   it, and why), **environment-variable defaults**, **staging enablement**
+   order + exact service names, **validation sequencing**, **rollback
+   guidance**, and the **GATE B operational controls** (dark-by-default posture,
+   no production enablement without an operator ruling). It answers the single
+   question "which service needs this flag?" and is the map that sits above the
+   per-goal runbooks (which own the deep validation detail). Grounded in
+   `render.yaml` + the actual flag reads; it is documentation only and enables
+   nothing.
+5. **Architecture Decision Records / design docs** (`docs/architecture/**`,
+   `ARCHITECTURE_REVIEW.md`, the ratified `*-ARCHITECTURE.md` blueprints) —
+   technical **design decisions** and their rationale.
+
+These sit under the canonical product/build governing set declared in `CLAUDE.md`
+(PRODUCT_VISION → CURRENT_STATE_ARCHITECTURE → CANONICAL_DOMAIN_MODEL →
+TENANT_ISOLATION_STANDARD → BUILD_SEQUENCE → FINAL_PRODUCT_STANDARD → CLAUDE.md).
+
 ## Execution rules
 - Build one package at a time.
 - Do not infer the next package from convenience.
