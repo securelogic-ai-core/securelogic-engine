@@ -211,7 +211,7 @@ interface AssetTypeSpec {
 | **endpoint** | absent (connectors emit `asset`) | new `asset_type` + detail table | **yes** `endpoints` | os/exposure/last_seen |
 | **api** | `dependencies.dependency_type='api'` (weak) | new `asset_type` + detail, or generalize `dependencies` | **yes** `apis` | protocol/auth/exposure |
 | **identity_system** | absent (`identity`=accounts, different concept) | new `asset_type` + detail | **yes** `identity_systems` | idp_vendor/protocol |
-| **business_process** | nearest `business_service`/`unit`/`department` enum | `enterprise_entities` enum add + optional detail | no (v1) | rto/rpo/owner_dept (later) |
+| **business_process** | `enterprise_entities.entity_type='business_process'` (**SHIPPED** — migration `20260827`) | `enterprise_entities` enum add (done) + optional detail | no (v1) | rto/rpo/owner_dept (deferred — see CANONICAL-ASSET-CREATE-FLOW.md) |
 
 New heavy types follow the ECL **S0 rule** (load-bearing attributes are typed columns in a typed
 child, never JSON) — precedent cost = 1 detail table + 1 RLS migration each, exactly like

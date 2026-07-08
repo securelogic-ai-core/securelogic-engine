@@ -197,6 +197,50 @@ export function assetCreateTarget(assetType: AssetType): AssetCreateTarget {
   }
 }
 
+/**
+ * The enterprise_entities `entity_type` that backs a registry asset_type on the
+ * ECL surface — the inverse of the engine's ENTITY_TYPE_TO_ASSET_TYPE. Only the
+ * three ECL-backed types preselect a specific entity_type; `generic` returns
+ * null so the Add-Entity form keeps its full type picker (the one case where the
+ * user is explicitly creating a generic/custom entity).
+ */
+export function assetTypeToEntityType(assetType: AssetType): string | null {
+  switch (assetType) {
+    case "application":
+      return "application";
+    case "database":
+      return "data_store";
+    case "business_process":
+      return "business_process";
+    default:
+      return null;
+  }
+}
+
+/**
+ * The canonical create URL for an asset_type — the single entry that makes the
+ * registry "choose the type once, land on the right Create screen" with the type
+ * preselected (no repeated selection). Federation is unchanged (EAR-AD-1):
+ *   - detail-backed types → the native inline form on the unified surface;
+ *   - vendor / ai_system  → their dedicated screens, framed as a registry flow
+ *                           (?from=registry swaps the breadcrumb back to Assets);
+ *   - application / database / business_process → Add-Entity with entity_type +
+ *                           asset_type preselected and locked;
+ *   - generic             → Add-Entity with its full picker (explicit
+ *                           generic/custom creation).
+ */
+export function assetCreateHref(assetType: AssetType): string {
+  if (isDetailBackedType(assetType)) return `/assets/new?type=${assetType}`;
+  if (assetType === "vendor") return "/vendors/new?from=registry";
+  if (assetType === "ai_system") return "/ai-systems/new?from=registry";
+  const entityType = assetTypeToEntityType(assetType);
+  if (entityType) {
+    const q = new URLSearchParams({ entity_type: entityType, asset_type: assetType });
+    return `/enterprise-context/entities/new?${q.toString()}`;
+  }
+  return "/enterprise-context/entities/new";
+}
+
 /** Existing CSV importers the registry can hand off to (no unified import API exists). */
 export interface AssetImportSurface {
   label: string;

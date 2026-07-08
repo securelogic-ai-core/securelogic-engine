@@ -32,7 +32,10 @@ export const ENTITY_TYPES = [
   "department",
   "data_store",
   "data_classification",
-  "identity"
+  "identity",
+  // First-class canonical asset type (EAR ARCHITECTURE.md §2.3 — additive
+  // enum add, migration 20260827). Projects to asset_type 'business_process'.
+  "business_process"
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 

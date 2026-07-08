@@ -174,7 +174,8 @@ export const ASSET_TYPE_SPECS: Readonly<Record<AssetType, AssetTypeSpec>> = {
  */
 export const ENTITY_TYPE_TO_ASSET_TYPE: Readonly<Record<string, AssetType>> = {
   application: "application",
-  data_store: "database"
+  data_store: "database",
+  business_process: "business_process"
   // every other entity_type (asset, business_service, business_unit,
   // department, data_classification, identity) projects to "generic"
 };

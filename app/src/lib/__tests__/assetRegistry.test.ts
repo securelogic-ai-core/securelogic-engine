@@ -16,6 +16,8 @@ import {
   isDetailBackedType,
   DETAIL_TYPE_FIELDS,
   assetCreateTarget,
+  assetCreateHref,
+  assetTypeToEntityType,
   assetImportSurfaces,
   assetEditHref,
   assetGraphNode,
@@ -156,6 +158,56 @@ describe("assetCreateTarget (EAR-AD-1 federation)", () => {
         requiresEcl: true,
       });
     }
+  });
+});
+
+describe("assetTypeToEntityType (registry asset_type → ECL entity_type)", () => {
+  it("maps the three ECL-backed asset types to their entity_type", () => {
+    expect(assetTypeToEntityType("application")).toBe("application");
+    expect(assetTypeToEntityType("database")).toBe("data_store");
+    expect(assetTypeToEntityType("business_process")).toBe("business_process");
+  });
+
+  it("returns null for generic and for non-ECL-backed types (no preselection)", () => {
+    expect(assetTypeToEntityType("generic")).toBeNull();
+    for (const t of ["vendor", "ai_system", "cloud_resource", "endpoint", "api", "identity_system"] as const) {
+      expect(assetTypeToEntityType(t)).toBeNull();
+    }
+  });
+});
+
+describe("assetCreateHref (canonical single-selection create routing)", () => {
+  it("detail-backed types render the native inline form on the unified surface", () => {
+    for (const t of DETAIL_BACKED_TYPES) {
+      expect(assetCreateHref(t)).toBe(`/assets/new?type=${t}`);
+    }
+  });
+
+  it("vendor / ai_system open their dedicated screens framed as a registry flow", () => {
+    expect(assetCreateHref("vendor")).toBe("/vendors/new?from=registry");
+    expect(assetCreateHref("ai_system")).toBe("/ai-systems/new?from=registry");
+  });
+
+  it("frames vendor and ai_system IDENTICALLY (both ?from=registry → shared breadcrumb back to Assets)", () => {
+    for (const t of ["vendor", "ai_system"] as const) {
+      expect(assetCreateHref(t).endsWith("/new?from=registry")).toBe(true);
+    }
+  });
+
+  it("ECL-backed types open Add-Entity with entity_type + asset_type preselected", () => {
+    expect(assetCreateHref("application")).toBe(
+      "/enterprise-context/entities/new?entity_type=application&asset_type=application",
+    );
+    expect(assetCreateHref("database")).toBe(
+      "/enterprise-context/entities/new?entity_type=data_store&asset_type=database",
+    );
+    expect(assetCreateHref("business_process")).toBe(
+      "/enterprise-context/entities/new?entity_type=business_process&asset_type=business_process",
+    );
+  });
+
+  it("generic opens Add-Entity with its full picker (explicit generic/custom creation)", () => {
+    expect(assetCreateHref("generic")).toBe("/enterprise-context/entities/new");
   });
 });
 

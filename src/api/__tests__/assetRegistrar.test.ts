@@ -92,10 +92,24 @@ describe("backfill ↔ 20260803 migration lockstep", () => {
     }
   });
 
-  it("the entity_type CASE mirrors ENTITY_TYPE_TO_ASSET_TYPE in both places", () => {
+  it("the entity_type CASE mirrors the historical backfill mapping (both places in 20260803)", () => {
+    // 20260803 is a FROZEN snapshot: its backfill INSERT + view CASE only carry
+    // the entity types that existed when it ran (application, data_store). Types
+    // added later — e.g. business_process (migration 20260827) — are NOT
+    // backfilled here (no such rows pre-existed) and must never be spliced into a
+    // shipped migration. The LIVE view-CASE ↔ ENTITY_TYPE_TO_ASSET_TYPE lockstep
+    // against the current asset_registry_v is owned by assetRegistry.test.ts.
     const sql = readFileSync(MIGRATION, "utf8");
-    for (const [entityType, assetType] of Object.entries(ENTITY_TYPE_TO_ASSET_TYPE)) {
-      expect(sql).toMatch(new RegExp(`WHEN '${entityType}'\\s+THEN '${assetType}'`));
+    const HISTORICAL: ReadonlyArray<[string, string]> = [
+      ["application", "application"],
+      ["data_store", "database"],
+    ];
+    for (const [entityType, assetType] of HISTORICAL) {
+      // both places: the backfill INSERT CASE and the repointed view CASE.
+      const occurrences = sql.match(new RegExp(`WHEN '${entityType}'\\s+THEN '${assetType}'`, "g"));
+      expect(occurrences?.length, `${entityType}→${assetType}`).toBe(2);
     }
+    expect(ENTITY_TYPE_TO_ASSET_TYPE.application).toBe("application");
+    expect(ENTITY_TYPE_TO_ASSET_TYPE.data_store).toBe("database");
   });
 });
