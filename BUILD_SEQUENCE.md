@@ -196,8 +196,12 @@ Billing note:
 > `docs/architecture/enterprise-asset-registry/CANONICAL-ASSET-CREATE-FLOW.md`; P15 row in
 > `docs/validation/enterprise-asset-registry-tracker.md`.
 >
-> **EAR P16 follow-on — BUILT, AWAITING REVIEW (2026-07-08; additive to P0–P15, which are preserved
-> unchanged; NOT yet committed).** **P16 finishes the two onboarding methods P13/P15 only stubbed.**
+> **EAR P16 follow-on = Unified Enterprise Asset Import — COMPLETE (2026-07-08; merged to `develop`
+> via PR #551, squash `1bc2ccf3`; additive to P0–P15, which are preserved unchanged).** **P16 finishes
+> the two onboarding methods P13/P15 only stubbed, so the canonical Asset Registry create surface
+> (`/assets/new`) now supports all THREE canonical onboarding methods end-to-end: (1) Create Asset,
+> (2) Bulk Upload / Import Assets (the unified `/assets/import` flow), and (3) Connect Enterprise
+> Systems. The Setup Wizard reuses this SAME onboarding flow (its CTA launches `/assets/new`).**
 > **(1) Connect Enterprise Systems** was a read-only status board — P16 adds the admin-gated config
 > path (`/assets/connect/[id]` + `ConnectorConfigForm`) reusing the EXISTING mutation endpoints
 > (`PUT`/`DELETE /api/connectors/:id`, `POST /:id/sync` — only app wrappers + Next proxies were
@@ -213,12 +217,21 @@ Billing note:
 > / `facility` do NOT exist and are deferred to a future backend package**
 > (`FUTURE-ASSET-TYPES.md`), never aliased or faked. Legacy `/vendors/import` + `/ai-systems/import`
 > preserved unchanged; **SOC upload stays under Vendor Management.** Setup Wizard reuse path unchanged
-> (its CTA still launches `/assets/new`, which now carries the finished flows). **Sequencing note:**
-> this is a deliberate REOPEN of the completed EAR Epic 1 onboarding (recorded as a P13/P15 follow-on),
-> NOT the active `Priority 4 — Signal Ingestion Hardening` package. **Flag-off byte-identical**
-> (`SECURELOGIC_ASSET_REGISTRY_ENABLED` default off; ECL-backed import types + connectors additionally
-> ECL-fenced; connector mutations additionally admin-only). No `render.yaml`/env change; GATE B
-> untouched; no production enablement. Docs: P16 tracker row, `FUTURE-ASSET-TYPES.md`, runbook Step 1,
+> (its CTA still launches `/assets/new`, which now carries the finished flows). **Vendor and AI assets
+> route through the unified importer** (`assetImportOptions()` maps them to the ECL bulk endpoint with
+> `entity_type` `vendor`/`ai_system`), so they onboard through the same one flow as every other type.
+> **`server` / `network_device` / `facility` remain documented as a FUTURE taxonomy package — not
+> implemented, never aliased/faked** (`FUTURE-ASSET-TYPES.md`). **Sequencing note:** this is a
+> deliberate REOPEN of the completed EAR Epic 1 onboarding (recorded as a P13/P15 follow-on), NOT the
+> active `Priority 4 — Signal Ingestion Hardening` package. **Engine-side `requireAdminRole` remains in
+> place for connector management** (`PUT`/`DELETE /api/connectors/:id`, `POST /:id/sync`; catalog read
+> stays open; API keys admin-level bypass). **All functionality remains dark behind the appropriate
+> feature flags — flag-off byte-identical** (`SECURELOGIC_ASSET_REGISTRY_ENABLED` default off; ECL-backed
+> import types + connectors additionally `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED`-fenced; connector
+> mutations additionally admin-only). No `render.yaml`/env/flag change; **GATE B remains intact — no
+> production enablement.** **Remaining work is operator-only:** (1) staging feature-flag enablement,
+> (2) connector credential configuration, (3) staging validation, (4) production enablement after
+> successful validation. Docs synchronized: P16 tracker row, `FUTURE-ASSET-TYPES.md`, runbook Step 1,
 > `CANONICAL-ASSET-CREATE-FLOW.md`, `CANONICAL_DOMAIN_MODEL.md` entity_type list corrected.
 
 ## Active package
