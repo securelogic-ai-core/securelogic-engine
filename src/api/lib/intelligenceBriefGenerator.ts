@@ -39,6 +39,8 @@ import { z } from "zod";
 import { logger } from "../infra/logger.js";
 import { CLUSTER_KEY_FP_PREFIX } from "./signals/clusterKey.js";
 import type { BriefSynthesis } from "./briefSynthesizer.js";
+import { stripHtmlToText } from "./sanitize.js";
+import { signalSanitizeEnabled } from "./signalSanitizeFeatureFlag.js";
 
 function getClient(): Anthropic | null {
   const key = process.env.ANTHROPIC_API_KEY?.trim();
@@ -674,7 +676,12 @@ export function buildBriefItems(
   priorityOf: (source: string) => number = sourcePriority,
   // C3b: when true, collapse CVE-less fingerprint (fp:) clusters and surface
   // corroboration counts. Default false ⇒ byte-identical to pre-C3b.
-  clusteringEnabled = false
+  clusteringEnabled = false,
+  // IQP Q1: sanitize the brief item's customer-facing text at THIS boundary —
+  // title is derived from RAW raw_payload provenance (never ingest-sanitized),
+  // and summary sanitization here also covers pre-flag legacy rows still in
+  // the brief window. Defaults to the flag; OFF ⇒ byte-identical to pre-Q1.
+  sanitizeEnabled: boolean = signalSanitizeEnabled()
 ): BriefItem[] {
   const RELEVANCE_RANK: Record<BriefRelevance, number> = { high: 0, medium: 1, low: 2 };
 
@@ -682,8 +689,8 @@ export function buildBriefItems(
     cyber_signal_id: s.id,
     category: mapSignalToCategory(s.signal_type),
     relevance: scoreRelevance(s.severity, s.affected_cve),
-    title: buildItemTitle(s),
-    summary: s.normalized_summary,
+    title: buildItemTitle(s, sanitizeEnabled),
+    summary: sanitizeEnabled ? stripHtmlToText(s.normalized_summary) : s.normalized_summary,
     affected_cve: s.affected_cve,
     affected_vendor: s.affected_vendor,
     source_slug: s.source,
@@ -758,21 +765,26 @@ function cleanSummaryForTitle(raw: string): string {
  *      whitespace collapsed, same truncation rule.
  *   3. If both are empty, build from CVE/vendor/signal_type.
  */
-function buildItemTitle(signal: CyberSignalForBrief): string {
+function buildItemTitle(signal: CyberSignalForBrief, sanitizeEnabled = false): string {
   // Stage 1 — source-feed title from raw_payload.
   const payloadTitle =
     signal.raw_payload && typeof signal.raw_payload === "object"
       ? (signal.raw_payload as Record<string, unknown>)["title"]
       : null;
   if (typeof payloadTitle === "string") {
-    const trimmed = payloadTitle.trim();
+    // IQP Q1: raw_payload.title is RAW provenance — it never passed through
+    // normalizeSignal, so this is its one sanitization point.
+    const trimmed = sanitizeEnabled ? stripHtmlToText(payloadTitle) : payloadTitle.trim();
     if (trimmed.length > 0) {
       return trimmed.length <= 80 ? trimmed : `${trimmed.slice(0, 77)}...`;
     }
   }
 
   // Stage 2 — fall back to normalized_summary with boilerplate stripped.
-  const summary = cleanSummaryForTitle(signal.normalized_summary);
+  // (Legacy pre-flag rows may still carry markup — same one sanitization point.)
+  const summary = cleanSummaryForTitle(
+    sanitizeEnabled ? stripHtmlToText(signal.normalized_summary) : signal.normalized_summary
+  );
   if (summary.length === 0) {
     // Stage 3 — synthesize from metadata.
     const parts: string[] = [];

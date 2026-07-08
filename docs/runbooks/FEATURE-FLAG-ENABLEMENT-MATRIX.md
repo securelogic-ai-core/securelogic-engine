@@ -206,6 +206,18 @@ production (no prod enablement without an explicit operator ruling).
 - **Rollback:** `"false"` on both.
 - **Dependencies:** Optional companion `RISK_LIFECYCLE_NOTIFICATIONS` (below).
 
+### 1.14 `SECURELOGIC_SIGNAL_SANITIZE_ENABLED` (IQP Q1)
+- **Purpose:** HTML/entity/markdown-artifact sanitization of customer-facing intelligence text at the canonical normalization boundary (`normalizeSignal` stored summary + brief-item title/summary derivation). Fixes Phase 1 audit defect #3 (literal `<b>`/`&nbsp;` visible to customers).
+- **Required services:** **Engine only** (the intelligence-worker KEV poller reuses the same canonical normalizer — set it there too if that service runs with its own env).
+- **Why:** all live signal INSERT paths and brief generation run on the engine.
+- **Redeploy/restart:** Yes, Engine; no rebuild.
+- **Default:** `"false"` (OFF everywhere; flag-off byte-identical).
+- **Staging order:** engine-staging → validate (new `normalized_summary` rows + brief item titles/summaries carry no tag/entity artifacts).
+- **Production order:** after staging validation passes IQP exit gate G1 → engine.
+- **Validation:** ingest an HTML-bearing fixture feed item in staging; confirm stored summary and rendered brief text are plain.
+- **Rollback:** `"false"` (new rows revert to raw pass-through; already-sanitized rows stay clean).
+- **Dependencies:** None. Ledger: `docs/validation/iqp-operator-ledger.md` OP-1.
+
 ---
 
 ## 2. Tier B — Live and operational flags
