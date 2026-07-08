@@ -55,6 +55,7 @@ import {
 import { normalizeSignal } from "./cyberSignalNormalizer.js";
 import {
   processSignal,
+  canonicalizeVendorName,
   type CyberSignalRecord
 } from "./cyberSignalProcessingService.js";
 import {
@@ -76,6 +77,7 @@ import { signalClusteringEnabled } from "./signals/signalClustering.js";
 import { briefProvenanceEnabled, buildProvenanceRows } from "./signals/briefProvenance.js";
 import { intelligenceEventsEnabled } from "./signals/intelligenceEventsFeatureFlag.js";
 import { signalRecencyEnabled } from "./signalRecencyFeatureFlag.js";
+import { briefRelevanceEnabled, filterSignalsByOrgRelevance } from "./briefRelevance.js";
 import { fetchBriefEventRows } from "./signals/eventBriefSource.js";
 import {
   runSynthesisSafely,
@@ -351,11 +353,40 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
         }
       }
 
+      // IQP Q3 (#5a): INTERIM org-relevance gate. Vendor-keyed breach claims
+      // (third_party_breach — the EDGAR shape) render ONLY when their vendor
+      // canonically matches one of this org's ACTIVE vendors — the SAME
+      // canonicalizeVendorName comparison + vendor query the matcher uses.
+      // Everything else (CVE/KEV/advisory/threat intel) passes through.
+      // Flag OFF ⇒ this whole block is skipped ⇒ byte-identical brief.
+      let relevantRows = briefSourceRows;
+      if (briefRelevanceEnabled()) {
+        const vendorResult = await client.query<{ name: string }>(
+          `SELECT name FROM vendors WHERE organization_id = $1 AND status = 'active'`,
+          [orgId]
+        );
+        const canonicalVendorSet = new Set(
+          vendorResult.rows.map((v) => canonicalizeVendorName(v.name))
+        );
+        const { kept, suppressed } = filterSignalsByOrgRelevance(
+          briefSourceRows,
+          canonicalVendorSet,
+          canonicalizeVendorName
+        );
+        relevantRows = kept;
+        if (suppressed.length > 0) {
+          logger.info(
+            { event: "irrelevant_signal_suppressed", organizationId: orgId, count: suppressed.length },
+            "Org-relevance gate suppressed unmatched vendor-keyed signals from the brief"
+          );
+        }
+      }
+
       // generateBrief is pure — safe to run inside this transaction.
       // Returns the pre-enrichment shortlist (top ENRICHMENT_SHORTLIST items
       // by composite ranking key); enrichment runs on the shortlist, then
       // capByUrgencyBuckets reduces to BRIEF_MAX_ITEMS.
-      const newBase = generateBrief(briefSourceRows, {
+      const newBase = generateBrief(relevantRows, {
         priorityOf,
         clusteringEnabled: signalClusteringEnabled()
       });

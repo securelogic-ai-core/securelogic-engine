@@ -41,6 +41,7 @@ import { CLUSTER_KEY_FP_PREFIX } from "./signals/clusterKey.js";
 import type { BriefSynthesis } from "./briefSynthesizer.js";
 import { stripHtmlToText } from "./sanitize.js";
 import { signalSanitizeEnabled } from "./signalSanitizeFeatureFlag.js";
+import { briefRelevanceEnabled, refineCategory } from "./briefRelevance.js";
 
 function getClient(): Anthropic | null {
   const key = process.env.ANTHROPIC_API_KEY?.trim();
@@ -681,27 +682,38 @@ export function buildBriefItems(
   // title is derived from RAW raw_payload provenance (never ingest-sanitized),
   // and summary sanitization here also covers pre-flag legacy rows still in
   // the brief window. Defaults to the flag; OFF ⇒ byte-identical to pre-Q1.
-  sanitizeEnabled: boolean = signalSanitizeEnabled()
+  sanitizeEnabled: boolean = signalSanitizeEnabled(),
+  // IQP Q3 (#5b): classification correction — an item bucketed `regulatory`
+  // by its ARRIVAL FEED re-buckets to `general` unless its visible text
+  // carries regulatory intent. Defaults to the flag; OFF ⇒ byte-identical.
+  relevanceEnabled: boolean = briefRelevanceEnabled()
 ): BriefItem[] {
   const RELEVANCE_RANK: Record<BriefRelevance, number> = { high: 0, medium: 1, low: 2 };
 
-  const rawItems: BriefItem[] = signals.map((s) => ({
-    cyber_signal_id: s.id,
-    category: mapSignalToCategory(s.signal_type),
-    relevance: scoreRelevance(s.severity, s.affected_cve),
-    title: buildItemTitle(s, sanitizeEnabled),
-    summary: sanitizeEnabled ? stripHtmlToText(s.normalized_summary) : s.normalized_summary,
-    affected_cve: s.affected_cve,
-    affected_vendor: s.affected_vendor,
-    source_slug: s.source,
-    signal_type: s.signal_type,
-    severity: s.severity,
-    ingestion_timestamp: new Date(s.ingestion_timestamp).toISOString(),
-    // D2: default lineage = just this signal; merges override the canonical with
-    // the full contributing set. Internal (stripped from content_json).
-    contributing_signal_ids: [s.id],
-    sort_order: 0 // assigned below
-  }));
+  const rawItems: BriefItem[] = signals.map((s) => {
+    const title = buildItemTitle(s, sanitizeEnabled);
+    const summary = sanitizeEnabled ? stripHtmlToText(s.normalized_summary) : s.normalized_summary;
+    const mappedCategory = mapSignalToCategory(s.signal_type);
+    return {
+      cyber_signal_id: s.id,
+      category: relevanceEnabled
+        ? (refineCategory(mappedCategory, title, summary) as BriefCategory)
+        : mappedCategory,
+      relevance: scoreRelevance(s.severity, s.affected_cve),
+      title,
+      summary,
+      affected_cve: s.affected_cve,
+      affected_vendor: s.affected_vendor,
+      source_slug: s.source,
+      signal_type: s.signal_type,
+      severity: s.severity,
+      ingestion_timestamp: new Date(s.ingestion_timestamp).toISOString(),
+      // D2: default lineage = just this signal; merges override the canonical with
+      // the full contributing set. Internal (stripped from content_json).
+      contributing_signal_ids: [s.id],
+      sort_order: 0 // assigned below
+    };
+  });
 
   let items = mergeBriefItemsByCve(rawItems, priorityOf);
 

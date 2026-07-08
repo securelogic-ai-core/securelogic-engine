@@ -230,6 +230,18 @@ production (no prod enablement without an explicit operator ruling).
 - **Rollback:** `"false"` (legacy ingestion-time window returns; column stays, unread).
 - **Dependencies:** Migration `20260828_cyber_signals_published_at.sql` applied first. Backfill-safe: old dates only ever REMOVE rows from the window. Ledger: OP-2/OP-3.
 
+### 1.16 `SECURELOGIC_BRIEF_RELEVANCE_ENABLED` (IQP Q3)
+- **Purpose:** INTERIM org-relevance + classification guard on the customer-facing brief. (a) `third_party_breach` items (the EDGAR shape) render only on a canonical match to an ACTIVE org vendor — the matcher's own `canonicalizeVendorName` comparison; (b) `regulatory` items without regulatory-intent content re-bucket to `general`. Fixes Phase 1 audit defects #5a/#5b. NOT the applicability engine (EAR scope).
+- **Required services:** **Engine only.**
+- **Why:** both brief-source sites (scheduler + on-demand route) and the pure category refinement run on the engine.
+- **Redeploy/restart:** Yes, Engine; no rebuild.
+- **Default:** `"false"` (OFF everywhere; flag-off byte-identical brief).
+- **Staging order:** engine-staging → validate (an unmonitored-filer `third_party_breach` fixture is absent from the generated brief and `irrelevant_signal_suppressed` logs; a news-shaped regulatory item renders under General, a rulemaking item stays under Regulatory & Compliance).
+- **Production order:** after staging validation passes IQP exit gate G3 → engine.
+- **Validation:** generate a staging brief with mixed fixtures; check the two behaviors above.
+- **Rollback:** `"false"` (legacy ungated brief returns).
+- **Dependencies:** None (independent of Q1/Q2 flags; all three compose). Ledger: OP-4.
+
 ---
 
 ## 2. Tier B — Live and operational flags

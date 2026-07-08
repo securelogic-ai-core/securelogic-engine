@@ -35,6 +35,8 @@ import {
 } from "../lib/intelligenceBriefGenerator.js";
 import { intelligenceEventsEnabled } from "../lib/signals/intelligenceEventsFeatureFlag.js";
 import { signalRecencyEnabled } from "../lib/signalRecencyFeatureFlag.js";
+import { briefRelevanceEnabled, filterSignalsByOrgRelevance } from "../lib/briefRelevance.js";
+import { canonicalizeVendorName } from "../lib/cyberSignalProcessingService.js";
 import { fetchBriefEventRows } from "../lib/signals/eventBriefSource.js";
 import { personalizeBriefItems } from "../lib/briefPersonalizationService.js";
 import { fetchApplicabilityCitations } from "../lib/briefApplicabilityCitations.js";
@@ -196,10 +198,37 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
           )
         ).rows;
 
+    // IQP Q3 (#5a): INTERIM org-relevance gate — same rule as the scheduler.
+    // Vendor-keyed breach claims (third_party_breach) render only when their
+    // vendor canonically matches an ACTIVE org vendor (the matcher's own
+    // comparison). Flag OFF ⇒ skipped ⇒ byte-identical.
+    let relevantSignals = signals;
+    if (briefRelevanceEnabled()) {
+      const vendorResult = await client.query<{ name: string }>(
+        `SELECT name FROM vendors WHERE organization_id = $1 AND status = 'active'`,
+        [orgId]
+      );
+      const canonicalVendorSet = new Set(
+        vendorResult.rows.map((v) => canonicalizeVendorName(v.name))
+      );
+      const { kept, suppressed } = filterSignalsByOrgRelevance(
+        signals,
+        canonicalVendorSet,
+        canonicalizeVendorName
+      );
+      relevantSignals = kept;
+      if (suppressed.length > 0) {
+        logger.info(
+          { event: "irrelevant_signal_suppressed", organizationId: orgId, count: suppressed.length },
+          "Org-relevance gate suppressed unmatched vendor-keyed signals from the brief"
+        );
+      }
+    }
+
     // Run pure generation — returns the pre-enrichment shortlist (top
     // ENRICHMENT_SHORTLIST items by composite ranking key). Enrichment runs
     // on the shortlist, then capByUrgencyBuckets reduces to BRIEF_MAX_ITEMS.
-    const base = generateBrief(signals);
+    const base = generateBrief(relevantSignals);
 
     // Enrich items with Claude analyst commentary (non-fatal — always resolves)
     const enrichedItems = await enrichBriefItems(base.shortlist, orgId);
