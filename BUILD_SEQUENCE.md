@@ -101,6 +101,25 @@ Billing note:
 > EAR/ERIP final reports (P0–P11 records unchanged; P12 is a post-close follow-on, not a rewrite of
 > Epic 1 scope).
 
+> **EAR P13 follow-on — COMPLETE (2026-07-07; additive to the P0–P11 / P12 record above, which is
+> preserved unchanged).** **P13 = Setup Wizard ↔ Asset Registry onboarding integration + the
+> canonical "Connect Enterprise Systems" page** — shipped dark to `develop` as **#545**
+> (`03b753d9`). **Create, Import, and Connect Enterprise Systems are all available through the
+> single canonical Asset Registry onboarding flow** (`/assets/new` → create manually / import CSV /
+> connect; the new `/assets/connect` lists the connector catalog with live status from
+> `GET /api/connectors`). The **Setup Wizard (`/getting-started`) reuses that same flow** — when
+> `SECURELOGIC_ASSET_REGISTRY_ENABLED` is on, wizard step 2 becomes "Build your asset inventory"
+> and its CTA launches `/assets/new`; the wizard owns no separate onboarding logic (one canonical
+> implementation, no duplication). **SOC upload and analysis remain under Vendor Management** — they
+> are deliberately NOT in this flow. The feature stays **dark behind
+> `SECURELOGIC_ASSET_REGISTRY_ENABLED`** (connectors additionally double-fenced behind
+> `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED`); flag-off is byte-for-byte the legacy vendor step and
+> the neutral panels — **no production enablement; GATE B in effect.** Remaining work is
+> **operator-only: staging validation (Enablement Runbook Step 1), connector credentials
+> (operator-owned, ledger L-5.*), and the GATE-B production-enablement ruling.** Consistent with:
+> `docs/validation/enterprise-asset-registry-tracker.md` (P13 row → DONE), the Enablement Runbook
+> Step 1 (Connect + Setup-Wizard bullets), and the EAR/ERIP final reports (P0–P11 unchanged).
+
 ## Active package
 `Priority 4 — Signal Ingestion Hardening` — **status: ACTIVE — IMPLEMENTATION AUTHORIZED & UNDERWAY (2026-06-26).**
 
