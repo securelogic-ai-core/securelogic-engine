@@ -243,6 +243,7 @@ object). Additive-only; extend via migration + this list together.
 - data_store
 - data_classification
 - identity
+- business_process  (added via migration 20260827; projects to asset_type `business_process`)
 
 ### Enterprise Data Classification (enterprise_data_stores.data_classification CHECK constraint)
 - public

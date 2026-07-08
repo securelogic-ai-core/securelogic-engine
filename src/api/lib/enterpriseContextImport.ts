@@ -43,7 +43,12 @@ export const IMPORT_ENTITY_TYPES = [
   "data_store",
   "vendor",
   "ai_system",
-  "identity"
+  "identity",
+  // EAR P16: business_process joined the importable set (it is a valid
+  // enterprise_entities entity_type since migration 20260827). It flows through
+  // the same enterprise-entity branch below and persists to enterprise_entities
+  // (see ENTERPRISE_TYPES in enterpriseImportPersistence.ts) — no new validator.
+  "business_process"
 ] as const;
 export type ImportEntityType = (typeof IMPORT_ENTITY_TYPES)[number];
 
@@ -146,7 +151,8 @@ function adaptRow(entityType: ImportEntityType, row: ImportRow): AdaptResult {
     return { ok: true, normalized: { kind: "ai_system", input: r.input }, key: r.input.name.trim().toLowerCase() };
   }
 
-  // asset | application | data_store → enterprise_entities (+ typed child for data_store)
+  // asset | application | data_store | business_process → enterprise_entities
+  // (+ typed child for data_store)
   const body: Record<string, unknown> = {
     entity_type: entityType,
     name,
@@ -192,24 +198,60 @@ export interface PlanImportArgs {
 }
 
 /**
- * Produce the per-row import plan. Order of precedence per row:
- *   invalid  →  duplicate_in_file  →  duplicate_in_db  →  cap_exceeded  →  ok
- * Deterministic: identical inputs yield an identical plan.
+ * A row adapter: map + validate one spreadsheet row into a normalized create
+ * input (with a dedup key), or an error. This is the ONLY per-importer-specific
+ * piece — the dedup/cap precedence is shared (planRows below).
  */
-export function planImport(args: PlanImportArgs): ImportPlan {
-  const { entityType, rows, existingKeys, capHeadroom } = args;
+export type RowAdapter<N> = (
+  row: ImportRow
+) => { ok: true; normalized: N; key: string } | { ok: false; error: string; detail?: string | undefined };
+
+export interface GenericRowPlan<N> {
+  rowNumber: number;
+  status: RowStatus;
+  key?: string;
+  error?: string;
+  detail?: string;
+  normalized?: N;
+}
+
+export interface PlanSummary {
+  total: number;
+  ok: number;
+  invalid: number;
+  duplicate: number;
+  cap_exceeded: number;
+}
+
+export interface GenericPlan<N> {
+  rows: GenericRowPlan<N>[];
+  summary: PlanSummary;
+}
+
+/**
+ * The deterministic dedup/cap precedence, generic over the normalized shape.
+ * Order per row: invalid → duplicate_in_file → duplicate_in_db → cap_exceeded → ok.
+ * Shared by the ECL importer (planImport) and the detail-backed asset importer
+ * (planAssetImport) — one precedence truth, adapters differ. No I/O; deterministic.
+ */
+export function planRows<N>(
+  rows: ImportRow[],
+  adapt: RowAdapter<N>,
+  existingKeys: ReadonlySet<string>,
+  capHeadroom: number
+): GenericPlan<N> {
   const seen = new Set<string>();
   let okCount = 0;
-  const summary = { total: rows.length, ok: 0, invalid: 0, duplicate: 0, cap_exceeded: 0 };
-  const out: RowPlan[] = [];
+  const summary: PlanSummary = { total: rows.length, ok: 0, invalid: 0, duplicate: 0, cap_exceeded: 0 };
+  const out: GenericRowPlan<N>[] = [];
 
   rows.forEach((row, i) => {
     const rowNumber = i + 1;
-    const adapted = adaptRow(entityType, row);
+    const adapted = adapt(row);
 
     if (!adapted.ok) {
       summary.invalid++;
-      const plan: RowPlan = { rowNumber, status: "invalid", error: adapted.error };
+      const plan: GenericRowPlan<N> = { rowNumber, status: "invalid", error: adapted.error };
       if (adapted.detail !== undefined) plan.detail = adapted.detail;
       out.push(plan);
       return;
@@ -239,5 +281,15 @@ export function planImport(args: PlanImportArgs): ImportPlan {
     out.push({ rowNumber, status: "ok", key, normalized: adapted.normalized });
   });
 
-  return { entityType, rows: out, summary };
+  return { rows: out, summary };
+}
+
+/**
+ * Produce the per-row ECL import plan. Delegates the precedence to the shared
+ * `planRows` core; the only ECL-specific piece is `adaptRow`.
+ */
+export function planImport(args: PlanImportArgs): ImportPlan {
+  const { entityType, rows, existingKeys, capHeadroom } = args;
+  const plan = planRows<NormalizedImportInput>(rows, (row) => adaptRow(entityType, row), existingKeys, capHeadroom);
+  return { entityType, rows: plan.rows, summary: plan.summary };
 }

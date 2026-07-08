@@ -20,6 +20,7 @@ import {
   assetTypeToEntityType,
   assetOnboardingMethods,
   assetImportSurfaces,
+  assetImportOptions,
   assetEditHref,
   assetGraphNode,
   assetGraphHref,
@@ -289,6 +290,39 @@ describe("assetGraphNode / assetGraphHref (mirror engine graphNodeForBacking)", 
     expect(assetGraphHref({ backing_kind: "cloud_resources", backing_id: "c1", asset_id: "reg 9" })).toBe(
       "/enterprise-context/graph?node_type=asset&node_id=reg%209",
     );
+  });
+});
+
+describe("assetImportOptions — EAR P16 unified importer routing", () => {
+  const options = assetImportOptions();
+
+  it("covers exactly the ten canonical asset types (no server/network_device/facility)", () => {
+    expect(options.map((o) => o.assetType).sort()).toEqual([...ASSET_TYPES].sort());
+  });
+
+  it("routes the four detail-backed types to /api/assets/import (no ECL fence)", () => {
+    for (const t of DETAIL_BACKED_TYPES) {
+      const o = options.find((x) => x.assetType === t)!;
+      expect(o.route).toEqual({ backend: "assets" });
+      expect(o.requiresEcl).toBe(false);
+    }
+  });
+
+  it("routes the six federated types to the ECL endpoint with the mapped entity_type", () => {
+    const byType = Object.fromEntries(options.map((o) => [o.assetType, o.route]));
+    expect(byType.vendor).toEqual({ backend: "ecl", entityType: "vendor" });
+    expect(byType.ai_system).toEqual({ backend: "ecl", entityType: "ai_system" });
+    expect(byType.application).toEqual({ backend: "ecl", entityType: "application" });
+    expect(byType.database).toEqual({ backend: "ecl", entityType: "data_store" });
+    expect(byType.business_process).toEqual({ backend: "ecl", entityType: "business_process" });
+    expect(byType.generic).toEqual({ backend: "ecl", entityType: "asset" });
+    for (const t of ["vendor", "ai_system", "application", "database", "business_process", "generic"]) {
+      expect(options.find((o) => o.assetType === t)!.requiresEcl).toBe(true);
+    }
+  });
+
+  it("every option lists 'name' as the first (required) column", () => {
+    for (const o of options) expect(o.columns[0]).toBe("name");
   });
 });
 

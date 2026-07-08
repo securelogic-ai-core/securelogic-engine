@@ -31,7 +31,6 @@ import {
   assetTypeLabel,
   assetCreateTarget,
   assetCreateHref,
-  assetImportSurfaces,
   assetOnboardingMethods,
   ASSET_TYPES,
 } from "@/lib/assetRegistry";
@@ -109,7 +108,6 @@ export default async function NewAssetPage({
     .map((t) => ({ type: t, target: assetCreateTarget(t) }))
     .filter((x) => x.target.kind === "external" && (!x.target.requiresEcl || eclEnabled));
 
-  const imports = assetImportSurfaces().filter((s) => !s.requiresEcl || eclEnabled);
   const methods = assetOnboardingMethods();
   const method = (key: string) => methods.find((m) => m.key === key)!;
 
@@ -190,23 +188,26 @@ export default async function NewAssetPage({
         <p className="text-sm mb-4" style={{ color: "#94a3b8" }}>
           {method("import").description}
         </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {imports.map((s) => (
-            <Link
-              key={s.href}
-              href={s.href}
-              className="flex items-center justify-between gap-4 rounded-xl border p-4 transition-colors hover:opacity-90"
-              style={{ borderColor: "#1e293b", background: "#0f172a" }}
-            >
-              <span className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
-                {s.label}
-              </span>
-              <span className="text-xs" style={{ color: "#64748b" }}>
-                Upload CSV / XLSX →
-              </span>
-            </Link>
-          ))}
-        </div>
+        <Link
+          href="/assets/import"
+          className="block rounded-xl border p-4 transition-colors hover:opacity-90"
+          style={{ borderColor: "#1e293b", background: "#0f172a" }}
+        >
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
+                Upload a spreadsheet
+              </div>
+              <div className="text-xs mt-1" style={{ color: "#94a3b8" }}>
+                One import flow for every asset type — pick a type, preview the plan, then commit.
+                Validation, de-duplication, and plan caps are applied for you.
+              </div>
+            </div>
+            <span className="flex-shrink-0 text-xs" style={{ color: "#64748b" }}>
+              Upload CSV / XLSX →
+            </span>
+          </div>
+        </Link>
       </section>
 
       {/* ── 3 · Connect enterprise systems ──────────────────────────────── */}

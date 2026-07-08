@@ -66,15 +66,27 @@ button and the picker both use:
 1. **Create manually** — the federated per-type create picker (the four
    detail-backed types render the native `AssetForm` inline; vendors / AI systems
    / applications / data stores / other open their authoritative screens).
-2. **Bulk upload** — routes to the **existing CSV/XLSX importers**
-   (`assetImportSurfaces()` → `/vendors/import`, `/ai-systems/import`,
-   `/enterprise-context/import`). Preview, validation, de-duplication, row-level
-   errors, and plan caps all live in those surfaces — **no duplicate importer**.
-   The ECL importer is ECL-fenced (hidden with ECL off); the always-available
-   vendor / AI-system importers keep bulk upload usable in every flag state.
+2. **Bulk upload** — routes to the unified **`/assets/import`** surface (P16):
+   one flow for all **10** real canonical asset types. The pure
+   `assetImportOptions()` router sends the four detail-backed types to
+   `POST /api/assets/import` (the thin P16 route) and the other six to the ECL
+   `POST /api/enterprise-context/import`, with the asset_type mapped to its
+   importable `entity_type`. Real server-side preview → commit, in-file + in-DB
+   de-duplication, per-type caps, and row-level errors apply to every type —
+   **no duplicate importer** (the shared parser + the extracted `planRows`
+   precedence + the existing create-validators do the work). Per-type CSV
+   templates download from the surface. The ECL-backed types are ECL-fenced
+   (hidden with ECL off; the four detail-backed types remain). The legacy
+   `/vendors/import` + `/ai-systems/import` surfaces are preserved, unchanged.
+   `server` / `network_device` / `facility` are **not** offered — they are not
+   real asset types yet (`FUTURE-ASSET-TYPES.md`).
 3. **Connect enterprise systems** — routes to the **existing `/assets/connect`**
    connector catalog (EAR Phase 3b). The route exists, so it is linked directly —
-   **never shown as "coming soon."**
+   **never shown as "coming soon."** Selecting a connector opens the P16
+   admin-gated manage page (`/assets/connect/[id]`): admins add credentials,
+   enable syncing, run a discovery sync, or disconnect — reusing the existing
+   `PUT`/`DELETE /api/connectors/:id` + `POST /:id/sync` endpoints (admin-only via
+   `requireAdminRole`); non-admins get a clear gated message with the next step.
 
 **SOC upload is deliberately absent** from Asset Registry onboarding — it stays
 under **Vendor Management**. Flag-off is unchanged: registry off → the neutral

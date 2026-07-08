@@ -195,6 +195,31 @@ Billing note:
 > engine/schema/flag/`render.yaml`/operator change; GATE B untouched. Docs:
 > `docs/architecture/enterprise-asset-registry/CANONICAL-ASSET-CREATE-FLOW.md`; P15 row in
 > `docs/validation/enterprise-asset-registry-tracker.md`.
+>
+> **EAR P16 follow-on — BUILT, AWAITING REVIEW (2026-07-08; additive to P0–P15, which are preserved
+> unchanged; NOT yet committed).** **P16 finishes the two onboarding methods P13/P15 only stubbed.**
+> **(1) Connect Enterprise Systems** was a read-only status board — P16 adds the admin-gated config
+> path (`/assets/connect/[id]` + `ConnectorConfigForm`) reusing the EXISTING mutation endpoints
+> (`PUT`/`DELETE /api/connectors/:id`, `POST /:id/sync` — only app wrappers + Next proxies were
+> missing); non-admins get a clear gated message, and `requireAdminRole` now enforces admin-only
+> config on the engine (catalog read stays open; API keys bypass). **(2) Bulk upload** covered only
+> 4 of 10 real types — P16 adds a unified `/assets/import` (one flow, all 10) via the **hybrid**
+> chosen approach: extend the ECL bulk endpoint for `business_process` (reuses
+> `validateEnterpriseEntityCreate`) + a thin `POST /api/assets/import` for the four detail-backed
+> types that reuses the shared parser, the EXTRACTED generic `planRows` precedence, the existing
+> `validateAssetDetailCreate`, and the existing `createDetailAsset` lane — **no new tables /
+> validators / migrations, no duplicated importer logic.** **Taxonomy is the 10 REAL canonical types
+> only** — `data_store`/`custom` are UI aliases of `database`/`generic`; **`server` / `network_device`
+> / `facility` do NOT exist and are deferred to a future backend package**
+> (`FUTURE-ASSET-TYPES.md`), never aliased or faked. Legacy `/vendors/import` + `/ai-systems/import`
+> preserved unchanged; **SOC upload stays under Vendor Management.** Setup Wizard reuse path unchanged
+> (its CTA still launches `/assets/new`, which now carries the finished flows). **Sequencing note:**
+> this is a deliberate REOPEN of the completed EAR Epic 1 onboarding (recorded as a P13/P15 follow-on),
+> NOT the active `Priority 4 — Signal Ingestion Hardening` package. **Flag-off byte-identical**
+> (`SECURELOGIC_ASSET_REGISTRY_ENABLED` default off; ECL-backed import types + connectors additionally
+> ECL-fenced; connector mutations additionally admin-only). No `render.yaml`/env change; GATE B
+> untouched; no production enablement. Docs: P16 tracker row, `FUTURE-ASSET-TYPES.md`, runbook Step 1,
+> `CANONICAL-ASSET-CREATE-FLOW.md`, `CANONICAL_DOMAIN_MODEL.md` entity_type list corrected.
 
 ## Active package
 `Priority 4 — Signal Ingestion Hardening` — **status: ACTIVE — IMPLEMENTATION AUTHORIZED & UNDERWAY (2026-06-26).**

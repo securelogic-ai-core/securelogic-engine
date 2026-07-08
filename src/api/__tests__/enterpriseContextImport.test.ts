@@ -50,6 +50,13 @@ describe("planImport — valid rows per entity type", () => {
     expect(p.rows[0].status).toBe("ok");
     expect(p.rows[0].normalized).toMatchObject({ kind: "ai_system", input: { name: "Support Copilot" } });
   });
+
+  // EAR P16: business_process joined the importable set → enterprise_entities.
+  it("business_process → enterprise_entity normalized", () => {
+    const p = planImport({ entityType: "business_process", rows: rows({ name: "Payroll Run", criticality: "high" }), existingKeys: NO_EXISTING, capHeadroom: BIG_CAP });
+    expect(p.rows[0].status).toBe("ok");
+    expect(p.rows[0].normalized).toMatchObject({ kind: "enterprise_entity", input: { entity_type: "business_process", name: "Payroll Run" } });
+  });
 });
 
 describe("planImport — malformed rows", () => {
