@@ -99,13 +99,14 @@ export async function runKevPoll(): Promise<void> {
              affected_vendor,
              affected_cve,
              dedup_hash,
+             published_at,
              ingestion_timestamp,
              processed
            ) VALUES (
              NULL, $1, $2, $3,
              $4::jsonb, $5,
              $6, $7,
-             $8, NOW(), FALSE
+             $8, $9, NOW(), FALSE
            )
            ON CONFLICT (dedup_hash) WHERE organization_id IS NULL DO NOTHING
            RETURNING id`,
@@ -117,7 +118,8 @@ export async function runKevPoll(): Promise<void> {
             normalized.normalized_summary,
             normalized.affected_vendor,
             normalized.affected_cve,
-            normalized.dedup_hash
+            normalized.dedup_hash,
+            normalized.published_at
           ]
         );
 

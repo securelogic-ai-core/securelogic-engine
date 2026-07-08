@@ -55,6 +55,15 @@ export type NormalizedCyberSignal = {
   external_id: string | null;
   dedup_hash: string;
   /**
+   * IQP Q2: SOURCE-AUTHORITATIVE event date (ISO string), derived from the
+   * raw_payload's known date keys (KEV dateAdded, NVD published, RSS pubDate,
+   * Federal Register publication_date, EDGAR file_date). null = unknown →
+   * consumers fall back to ingestion_timestamp. The write is unconditional
+   * (an unread nullable column is behavior-neutral); READING it is gated on
+   * SECURELOGIC_SIGNAL_RECENCY_ENABLED.
+   */
+  published_at: string | null;
+  /**
    * C2 (P4/4C): soft corroboration grouping from clusterKey() — BESIDE
    * dedup_hash, never part of it. null ⇒ singleton. Computed here as the single
    * source of truth; persistence to cyber_signals.cluster_key is handled by the
@@ -157,6 +166,44 @@ export function deriveSummaryFromPayload(
 }
 
 // ---------------------------------------------------------------------------
+// derivePublishedAt
+// ---------------------------------------------------------------------------
+
+/** raw_payload date keys, in priority order, per source family. */
+const PUBLISHED_AT_KEYS = [
+  "dateAdded",         // CISA KEV
+  "published",         // NVD
+  "pubDate",           // RSS/Atom
+  "publication_date",  // Federal Register
+  "file_date",         // SEC EDGAR
+  "date"               // generic
+] as const;
+
+/**
+ * IQP Q2: derive the source-authoritative event date from the raw payload.
+ *
+ * Returns an ISO-8601 string, or null when no key parses to a plausible date.
+ * Bounds guard mirrors the 20260828 backfill migration: dates before 1990 or
+ * more than 1 day in the future are treated as unknown (null). Pure —
+ * `now` is injectable for deterministic tests.
+ */
+export function derivePublishedAt(
+  payload: Record<string, unknown>,
+  now: Date = new Date()
+): string | null {
+  for (const key of PUBLISHED_AT_KEYS) {
+    const val = payload[key];
+    if (typeof val !== "string" || val.trim() === "") continue;
+    const parsed = new Date(val.trim());
+    if (Number.isNaN(parsed.getTime())) continue;
+    if (parsed.getTime() < Date.UTC(1990, 0, 1)) continue;
+    if (parsed.getTime() > now.getTime() + 24 * 60 * 60 * 1000) continue;
+    return parsed.toISOString();
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // normalizeSignal
 // ---------------------------------------------------------------------------
 
@@ -228,6 +275,9 @@ export function normalizeSignal(
     affected_cve: input.affected_cve,
     external_id: externalId,
     dedup_hash: dedupHash,
-    cluster_key: clusterKeyValue
+    cluster_key: clusterKeyValue,
+    // IQP Q2: source-authoritative event date (write unconditional; read
+    // gated on SECURELOGIC_SIGNAL_RECENCY_ENABLED).
+    published_at: derivePublishedAt(input.raw_payload, at)
   };
 }

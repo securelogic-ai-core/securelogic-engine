@@ -34,6 +34,7 @@ import {
   type CyberSignalForBrief
 } from "../lib/intelligenceBriefGenerator.js";
 import { intelligenceEventsEnabled } from "../lib/signals/intelligenceEventsFeatureFlag.js";
+import { signalRecencyEnabled } from "../lib/signalRecencyFeatureFlag.js";
 import { fetchBriefEventRows } from "../lib/signals/eventBriefSource.js";
 import { personalizeBriefItems } from "../lib/briefPersonalizationService.js";
 import { fetchApplicabilityCitations } from "../lib/briefApplicabilityCitations.js";
@@ -153,25 +154,44 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
     // Event-native (IE-AD-11): when the flag is on, build the brief from canonical
     // Intelligence Events (normalized, deduplicated, quality-gated); flag OFF →
     // the exact legacy raw cyber_signals query, byte-identical.
+    // IQP Q2 (audit defect #4): recency flag ON → window on the EFFECTIVE
+    // event date COALESCE(published_at, ingestion_timestamp), so source-dated
+    // old items are suppressed. Flag OFF → the exact legacy query.
     const signals: CyberSignalForBrief[] = intelligenceEventsEnabled()
       ? await fetchBriefEventRows(client, periodStart.toISOString(), periodEnd.toISOString())
       : (
           await client.query<CyberSignalForBrief>(
-            `SELECT
-               id,
-               signal_type,
-               severity,
-               normalized_summary,
-               affected_cve,
-               affected_vendor,
-               source,
-               ingestion_timestamp,
-               raw_payload
-             FROM cyber_signals
-             WHERE (organization_id = $1 OR organization_id IS NULL)
-               AND ingestion_timestamp >= $2
-               AND ingestion_timestamp < $3
-             ORDER BY ingestion_timestamp DESC`,
+            signalRecencyEnabled()
+              ? `SELECT
+                   id,
+                   signal_type,
+                   severity,
+                   normalized_summary,
+                   affected_cve,
+                   affected_vendor,
+                   source,
+                   ingestion_timestamp,
+                   raw_payload
+                 FROM cyber_signals
+                 WHERE (organization_id = $1 OR organization_id IS NULL)
+                   AND COALESCE(published_at, ingestion_timestamp) >= $2
+                   AND COALESCE(published_at, ingestion_timestamp) < $3
+                 ORDER BY ingestion_timestamp DESC`
+              : `SELECT
+                   id,
+                   signal_type,
+                   severity,
+                   normalized_summary,
+                   affected_cve,
+                   affected_vendor,
+                   source,
+                   ingestion_timestamp,
+                   raw_payload
+                 FROM cyber_signals
+                 WHERE (organization_id = $1 OR organization_id IS NULL)
+                   AND ingestion_timestamp >= $2
+                   AND ingestion_timestamp < $3
+                 ORDER BY ingestion_timestamp DESC`,
             [orgId, periodStart.toISOString(), periodEnd.toISOString()]
           )
         ).rows;

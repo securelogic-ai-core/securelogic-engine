@@ -75,6 +75,7 @@ import { recomputeSourceReliability } from "./signals/sourceReliability.js";
 import { signalClusteringEnabled } from "./signals/signalClustering.js";
 import { briefProvenanceEnabled, buildProvenanceRows } from "./signals/briefProvenance.js";
 import { intelligenceEventsEnabled } from "./signals/intelligenceEventsFeatureFlag.js";
+import { signalRecencyEnabled } from "./signalRecencyFeatureFlag.js";
 import { fetchBriefEventRows } from "./signals/eventBriefSource.js";
 import {
   runSynthesisSafely,
@@ -171,9 +172,9 @@ async function ingestSignalsForOrg(
           `INSERT INTO cyber_signals (
              organization_id, source, signal_type, severity, raw_payload,
              normalized_summary, affected_vendor, affected_cve, external_id,
-             dedup_hash, ingestion_timestamp, processed
+             dedup_hash, published_at, ingestion_timestamp, processed
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), FALSE)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), FALSE)
            ON CONFLICT (organization_id, dedup_hash) DO NOTHING
            RETURNING id, source, signal_type, severity, normalized_summary,
                      affected_vendor, affected_cve, organization_id`,
@@ -187,7 +188,8 @@ async function ingestSignalsForOrg(
             normalized.affected_vendor,
             normalized.affected_cve,
             normalized.external_id,
-            normalized.dedup_hash
+            normalized.dedup_hash,
+            normalized.published_at
           ]
         );
 
@@ -297,21 +299,57 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
       // is ON, the Brief reads from canonical Intelligence Events (normalized,
       // deduplicated, quality-gated) instead of raw cyber_signals. Flag OFF →
       // the exact legacy query, byte-identical behavior.
+      // IQP Q2 (audit defect #4): with the recency flag ON, the window filters
+      // on the EFFECTIVE event date COALESCE(published_at, ingestion_timestamp)
+      // — a source-dated old item (ancient KEV entry, historical backfill)
+      // falls OUTSIDE the window and is suppressed; unknown-date rows keep the
+      // ingestion-time behavior. Flag OFF → the exact legacy query.
+      const recencyOn = signalRecencyEnabled();
       const briefSourceRows: CyberSignalForBrief[] = intelligenceEventsEnabled()
         ? await fetchBriefEventRows(client, periodStart.toISOString(), periodEnd.toISOString())
         : (
             await client.query<CyberSignalForBrief>(
-              `SELECT id, signal_type, severity, normalized_summary,
-                      affected_cve, affected_vendor, source, ingestion_timestamp,
-                      cluster_key, raw_payload
-               FROM cyber_signals
-               WHERE (organization_id = $1 OR organization_id IS NULL)
-                 AND ingestion_timestamp >= $2
-                 AND ingestion_timestamp < $3
-               ORDER BY ingestion_timestamp DESC`,
+              recencyOn
+                ? `SELECT id, signal_type, severity, normalized_summary,
+                          affected_cve, affected_vendor, source, ingestion_timestamp,
+                          cluster_key, raw_payload
+                   FROM cyber_signals
+                   WHERE (organization_id = $1 OR organization_id IS NULL)
+                     AND COALESCE(published_at, ingestion_timestamp) >= $2
+                     AND COALESCE(published_at, ingestion_timestamp) < $3
+                   ORDER BY ingestion_timestamp DESC`
+                : `SELECT id, signal_type, severity, normalized_summary,
+                          affected_cve, affected_vendor, source, ingestion_timestamp,
+                          cluster_key, raw_payload
+                   FROM cyber_signals
+                   WHERE (organization_id = $1 OR organization_id IS NULL)
+                     AND ingestion_timestamp >= $2
+                     AND ingestion_timestamp < $3
+                   ORDER BY ingestion_timestamp DESC`,
               [orgId, periodStart.toISOString(), periodEnd.toISOString()]
             )
           ).rows;
+
+      // IQP Q2 observability: count what recency enforcement suppressed —
+      // rows inside the ingestion-time window whose source-authoritative date
+      // is older than the window start (the stale-KEV signature).
+      if (recencyOn && !intelligenceEventsEnabled()) {
+        const suppressed = await client.query<{ n: number }>(
+          `SELECT COUNT(*)::int AS n
+           FROM cyber_signals
+           WHERE (organization_id = $1 OR organization_id IS NULL)
+             AND ingestion_timestamp >= $2 AND ingestion_timestamp < $3
+             AND published_at IS NOT NULL AND published_at < $2`,
+          [orgId, periodStart.toISOString(), periodEnd.toISOString()]
+        );
+        const n = suppressed.rows[0]?.n ?? 0;
+        if (n > 0) {
+          logger.info(
+            { event: "stale_signal_suppressed", organizationId: orgId, count: n },
+            "Recency enforcement suppressed stale signals from the brief window"
+          );
+        }
+      }
 
       // generateBrief is pure — safe to run inside this transaction.
       // Returns the pre-enrichment shortlist (top ENRICHMENT_SHORTLIST items
