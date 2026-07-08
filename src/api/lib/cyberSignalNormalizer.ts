@@ -39,6 +39,8 @@ import type { CyberSignalIngestInput } from "./cyberSignalValidation.js";
 import { clusterKey } from "./signals/clusterKey.js";
 import { stripHtmlToText } from "./sanitize.js";
 import { signalSanitizeEnabled } from "./signalSanitizeFeatureFlag.js";
+import { trimToSentence } from "./signals/contentQuality.js";
+import { briefQualityEnabled } from "./briefQualityFeatureFlag.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -134,7 +136,12 @@ export function deriveSummaryFromPayload(
   payload: Record<string, unknown>,
   signalType: string,
   affectedCve: string | null,
-  affectedVendor: string | null
+  affectedVendor: string | null,
+  // IQP Q4 (audit defect #1): when true, the 500-char cap lands on a SENTENCE/
+  // WORD boundary (contentQuality.trimToSentence) instead of the mechanical
+  // slice(0, 497) + "..." that produced broken sentences. Default false ⇒
+  // byte-identical legacy behavior.
+  qualityEnabled = false
 ): string {
   // Field names in priority order, covering known feed formats.
   const candidates = [
@@ -154,6 +161,10 @@ export function deriveSummaryFromPayload(
     if (typeof val === "string" && val.trim().length > 0) {
       // Truncate extremely long descriptions to 500 chars for storage efficiency.
       const trimmed = val.trim();
+      if (qualityEnabled) {
+        // IQP Q4: sentence/word-boundary cap — never a broken sentence.
+        return trimToSentence(trimmed, 500);
+      }
       return trimmed.length > 500 ? `${trimmed.slice(0, 497)}...` : trimmed;
     }
   }
@@ -223,7 +234,10 @@ export function normalizeSignal(
   // IQP Q1: HTML sanitization of the stored summary. Defaults to the feature
   // flag so all existing call sites pick it up unchanged; injectable so tests
   // are deterministic. OFF ⇒ byte-identical to pre-Q1.
-  sanitizeEnabled: boolean = signalSanitizeEnabled()
+  sanitizeEnabled: boolean = signalSanitizeEnabled(),
+  // IQP Q4: sentence-safe summary derivation (see deriveSummaryFromPayload).
+  // Same default-from-flag pattern; OFF ⇒ byte-identical to pre-Q4.
+  qualityEnabled: boolean = briefQualityEnabled()
 ): NormalizedCyberSignal {
   let normalizedSummary =
     input.normalized_summary !== null
@@ -232,7 +246,8 @@ export function normalizeSignal(
           input.raw_payload,
           input.signal_type,
           input.affected_cve,
-          input.affected_vendor
+          input.affected_vendor,
+          qualityEnabled
         );
 
   // IQP Q1 (audit defect #3): the ONE ingest-side sanitization point. Both
