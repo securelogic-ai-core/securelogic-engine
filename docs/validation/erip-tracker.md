@@ -85,9 +85,30 @@ narrative, executors + playbooks, graph ask, writeback, dead-letter, and connect
 all green. Remaining work is **operator-owned only** (credentials, settings, flags, systems,
 staging validation) — see `erip-final-report.md` §A4.
 
+## Enterprise Risk Workspace (presentation-layer program — Packages 1+2)
+
+Post-core ERIP presentation program (audit + memo: `docs/architecture/erip/
+ENTERPRISE-RISK-WORKSPACE-AUDIT.md` + `ERIP-ENTERPRISE-RISK-WORKSPACE-MEMO.md`).
+Operator-approved Packages 1 (Finding-centric / Asset-context IA) and 2 (navigation
+restructuring) on 2026-07-08; Packages 3 (page merges) and 4 (workflow convergence)
+NOT authorized. Same governance: DARK, additive, GATE B.
+
+| Item | Status | Notes |
+|---|---|---|
+| Workspace IA + navigation restructure | **IN PR** | New app nav flag `SECURELOGIC_RISK_WORKSPACE_ENABLED` (default off; render.yaml app declaration). `navigation.ts` gains `WORKSPACE_NAV_ITEMS` + `getNavItems(flags)` + per-child entitlement gating; enterprise-workflow IA (Intelligence / Risk Operations / Assets / Compliance); Approvals + Vendor Assurance surfaced; Ask demoted to the user menu. Flag off = legacy nav byte-for-byte. Knowledge-index unaffected (reads NAV_ITEMS). |
+| Queue → "Review Suggested Links" reskin | **IN PR** | Plain enterprise language, confidence bands, humanized "why matched", Intelligence-Event title (fixes the `event_*`/`signal_*` field-name bug → no raw signal UUIDs). Behind the same flag; engine query unchanged. `components/queue/reviewLanguage.ts` (pure, unit-tested). |
+| Tests | **DONE** | `navigationFlags.test.ts` (+workspace nav: flag-off byte-identity, groups/order, Ask demoted, Approvals/Vendor-Assurance surfaced, EAR asset-registry behavior preserved) + `reviewLanguage.test.ts` (no raw codes/UUIDs, confidence bands). Full suite 5763 green; app+engine typecheck green; no knowledge-index drift. |
+| Operator actions (ledgered, not executed) | **PENDING** | Set `SECURELOGIC_RISK_WORKSPACE_ENABLED=true` on the staging app service → validate nav + Review Links → separate GATE-B ruling for prod. |
+
+**Out of scope (explicitly, Packages 3/4):** `/vendors`+`/vendors/risk` merge,
+Actions→Findings merge, Context-dashboard/Posture demotion, brief-engine convergence,
+finding↔intelligence-event deep linkage, `/ai-systems` entitlement fix.
+
 ## Deferred / follow-up register
 
 Carried from Epic 1 (rulings recorded in the EAR tracker; not blockers):
 - Legacy assessment route-tx collapse, one stack per PR (EAR-AD-7 step 2).
 - vendorAssessments/dependencyAssessments gate normalization (P9-cutover scope).
 - Brief citations for corroborating provenance signals.
+- **Enterprise Risk Workspace Packages 3 & 4** (page merges; workflow/brief
+  convergence) — audited and recommended, awaiting separate operator authorization.

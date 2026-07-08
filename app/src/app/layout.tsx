@@ -51,6 +51,10 @@ export default async function RootLayout({
     enterprise_context: process.env.SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED === "true",
     asset_registry: process.env.SECURELOGIC_ASSET_REGISTRY_ENABLED === "true",
     risk_intelligence: process.env.SECURELOGIC_RISK_INTELLIGENCE_ENABLED === "true",
+    // Enterprise Risk Workspace IA/nav (ERIP Packages 1+2) — DARK (default off).
+    // Flips the header to the enterprise-workflow information architecture and the
+    // "Review Suggested Links" queue reskin. Flag off = legacy nav byte-for-byte.
+    risk_workspace: process.env.SECURELOGIC_RISK_WORKSPACE_ENABLED === "true",
   };
 
   return (

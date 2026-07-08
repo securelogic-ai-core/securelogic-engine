@@ -1061,6 +1061,16 @@ services:
       - key: SECURELOGIC_ASSET_REGISTRY_ENABLED
         value: "false"
 
+      # Enterprise Risk Workspace IA/nav (ERIP Packages 1+2) — DARK (default off).
+      # Flips the app header to the enterprise-workflow information architecture
+      # (Intelligence / Risk Operations / Assets / Compliance) and the "Review
+      # Suggested Links" queue reskin. RUNTIME (not NEXT_PUBLIC): a restart applies
+      # it, no rebuild. Presentation-only — no engine/query/schema change; flag off
+      # is byte-for-byte the legacy nav. The securelogic-app-staging service is
+      # dashboard-only — set it there for staging validation. Prod flip is GATE B.
+      - key: SECURELOGIC_RISK_WORKSPACE_ENABLED
+        value: "false"
+
       # Secret used to encrypt the iron-session cookie.
       # Must be at least 32 characters. Generate with: openssl rand -hex 32
       - key: SESSION_SECRET

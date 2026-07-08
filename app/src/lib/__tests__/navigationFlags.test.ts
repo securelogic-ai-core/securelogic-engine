@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { NAV_ITEMS, filterNav, type NavItem } from "../navigation";
+import {
+  NAV_ITEMS,
+  WORKSPACE_NAV_ITEMS,
+  getNavItems,
+  filterNav,
+  type NavItem,
+} from "../navigation";
 
 const flaggedLink: NavItem = {
   type: "link",
@@ -98,3 +104,105 @@ function assetsGroupChildren(nav: NavItem[]): string[] {
   const g = nav.find((i) => i.type === "group" && i.label === "Assets");
   return g && g.type === "group" ? g.items.map((c) => c.href) : [];
 }
+
+/** Every href reachable in a filtered nav (top-level links + group children). */
+function allHrefs(nav: NavItem[]): string[] {
+  const out: string[] = [];
+  for (const i of nav) {
+    if (i.type === "link") out.push(i.href);
+    else out.push(...i.items.map((c) => c.href));
+  }
+  return out;
+}
+
+/** Visible child hrefs of a named group in a filtered nav. */
+function groupChildren(nav: NavItem[], label: string): string[] {
+  const g = nav.find((i) => i.type === "group" && i.label === label);
+  return g && g.type === "group" ? g.items.map((c) => c.href) : [];
+}
+
+// ─── Enterprise Risk Workspace IA/nav (ERIP Packages 1+2, risk_workspace flag) ──
+
+describe("getNavItems — legacy vs risk-workspace model", () => {
+  it("returns the legacy NAV_ITEMS reference when the flag is off/absent", () => {
+    expect(getNavItems()).toBe(NAV_ITEMS);
+    expect(getNavItems({})).toBe(NAV_ITEMS);
+    expect(getNavItems({ risk_workspace: false })).toBe(NAV_ITEMS);
+  });
+
+  it("returns the workspace model only when risk_workspace is true", () => {
+    expect(getNavItems({ risk_workspace: true })).toBe(WORKSPACE_NAV_ITEMS);
+  });
+
+  it("flag-off nav is byte-for-byte the legacy nav (no regression, GATE B)", () => {
+    // Same entitlement/flag inputs, both nav models resolved through filterNav.
+    const flags = { risk_workspace: false } as const;
+    const legacy = filterNav(NAV_ITEMS, true, true, true);
+    const viaGetter = filterNav(getNavItems(flags), true, true, true, flags);
+    expect(viaGetter).toEqual(legacy);
+  });
+});
+
+describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
+  const ws = (isPlatform: boolean, isAdmin: boolean, extra: Record<string, boolean> = {}) =>
+    filterNav(WORKSPACE_NAV_ITEMS, isPlatform, true, isAdmin, { risk_workspace: true, ...extra });
+
+  it("groups the intelligence funnel: Briefs (all tiers) + Review Links (platform)", () => {
+    // Platform user sees both.
+    expect(groupChildren(ws(true, false), "Intelligence")).toEqual(["/briefs", "/queue"]);
+    // Non-platform (Brief-tier) still sees the Intelligence group with Briefs only —
+    // the wedge must never be gated behind platform.
+    expect(groupChildren(ws(false, false), "Intelligence")).toEqual(["/briefs"]);
+  });
+
+  it("demotes Ask out of the primary nav entirely", () => {
+    expect(allHrefs(ws(true, true))).not.toContain("/ask");
+  });
+
+  it("makes Findings the first Risk Operations item and surfaces Approvals", () => {
+    expect(groupChildren(ws(true, false), "Risk Operations")).toEqual([
+      "/findings",
+      "/actions",
+      "/risks",
+      "/approvals",
+    ]);
+  });
+
+  it("surfaces Vendor Assurance under Assets and preserves EAR asset-registry behavior", () => {
+    // Registry dark: legacy vendor/ai children + Vendor Assurance.
+    expect(assetsGroupChildren(ws(true, false))).toEqual([
+      "/vendors",
+      "/ai-systems",
+      "/vendor-assurance/queue",
+    ]);
+    // Registry on: Vendors/AI drop to the registry; Asset Registry + Vendor Assurance remain.
+    expect(assetsGroupChildren(ws(true, false, { asset_registry: true }))).toEqual([
+      "/assets",
+      "/vendor-assurance/queue",
+    ]);
+  });
+
+  it("keeps Executive and Context dark until their own flags flip", () => {
+    expect(allHrefs(ws(true, true))).not.toContain("/executive");
+    expect(allHrefs(ws(true, true))).not.toContain("/enterprise-context");
+    expect(allHrefs(ws(true, true, { risk_intelligence: true }))).toContain("/executive");
+    expect(allHrefs(ws(true, true, { enterprise_context: true }))).toContain("/enterprise-context");
+  });
+
+  it("gates Audit Log to admins only", () => {
+    expect(allHrefs(ws(true, false))).not.toContain("/audit-log");
+    expect(allHrefs(ws(true, true))).toContain("/audit-log");
+  });
+
+  it("never mutates the shared WORKSPACE_NAV_ITEMS array", () => {
+    filterNav(WORKSPACE_NAV_ITEMS, true, true, true, { risk_workspace: true, asset_registry: true });
+    filterNav(WORKSPACE_NAV_ITEMS, false, false, false, { risk_workspace: true });
+    const assets = WORKSPACE_NAV_ITEMS.find((i) => i.type === "group" && i.label === "Assets");
+    expect(assets && assets.type === "group" ? assets.items.map((c) => c.href) : []).toEqual([
+      "/assets",
+      "/vendors",
+      "/ai-systems",
+      "/vendor-assurance/queue",
+    ]);
+  });
+});

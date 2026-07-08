@@ -50,6 +50,12 @@ import {
 } from "@/app/actions/signalMatchSuggestion";
 import { useTimedNotice } from "@/hooks/useTimedNotice";
 import { Notice } from "./Notice";
+import {
+  confidenceBand,
+  describeMatchReason,
+  signalHeadline,
+  type ConfidenceTone,
+} from "./reviewLanguage";
 
 const UNDO_WINDOW_MS = 5000;
 
@@ -76,17 +82,31 @@ export type EnrichedSuggestion = SignalMatchSuggestion & {
   // Server-rendered enrichments — joined into the row at page-load time
   // so the list itself is dumb. Optional because legacy rows or partial
   // joins may be missing fields.
+  target_name?: string | null;
+  // Legacy field names read by the pre-workspace row layout. The engine list
+  // endpoint does NOT return these (it returns event_* below), so today they are
+  // undefined and the legacy row falls back to a truncated signal UUID. Kept so
+  // the flag-off render path is byte-for-byte unchanged (GATE B).
   signal_title?: string | null;
   signal_severity?: string | null;
   signal_source?: string | null;
   signal_cve?: string | null;
-  target_name?: string | null;
+  // Canonical Intelligence Event enrichment actually returned by the engine
+  // (SUGGESTION_ENRICHED_SELECT: ie.title/severity/confidence/canonical_key).
+  // Populated when the Intelligence Events layer is on; null when dark. The
+  // workspace "Review Suggested Links" layout consumes these.
+  intelligence_event_id?: string | null;
+  event_title?: string | null;
+  event_severity?: string | null;
+  event_confidence?: number | null;
+  event_canonical_key?: string | null;
 };
 
 export function SuggestionList({
   initialSuggestions,
   embeddedRevalidatePath,
   emptyState,
+  workspace = false,
 }: {
   initialSuggestions: EnrichedSuggestion[];
   // Set when the list is mounted on a vendor/ai_system/control/obligation
@@ -95,6 +115,11 @@ export function SuggestionList({
   // Rendered when initialSuggestions is empty. The page decides which
   // empty state copy to show (filtered-empty vs first-time-empty).
   emptyState: React.ReactNode;
+  // When true (risk_workspace flag on), render the "Review Suggested Links"
+  // enterprise layout: business language, confidence bands, intelligence-event
+  // titles — no raw signal IDs or match_reason codes. Off = legacy layout,
+  // byte-for-byte unchanged (GATE B).
+  workspace?: boolean;
 }) {
   const router = useRouter();
   const { notice, show: showNotice, dismiss: dismissNotice } = useTimedNotice(UNDO_WINDOW_MS);
@@ -306,6 +331,7 @@ export function SuggestionList({
             <SuggestionRow
               key={s.id}
               suggestion={s}
+              workspace={workspace}
               onAccept={() => beginPending(s.id, "accept")}
               onDismiss={() => beginPending(s.id, "dismiss")}
             />
@@ -317,17 +343,26 @@ export function SuggestionList({
   );
 }
 
+const CONFIDENCE_COLOR: Record<ConfidenceTone, string> = {
+  high: "#fca5a5",
+  medium: "#fcd34d",
+  low: "#86efac",
+};
+
 function SuggestionRow({
   suggestion,
+  workspace,
   onAccept,
   onDismiss,
 }: {
   suggestion: EnrichedSuggestion;
+  workspace: boolean;
   onAccept: () => void;
   onDismiss: () => void;
 }) {
   const targetHref = `${TARGET_ROUTE[suggestion.target_type]}/${suggestion.target_id}`;
   const score = suggestion.match_score;
+  const band = confidenceBand(score);
 
   return (
     <li
@@ -362,7 +397,23 @@ function SuggestionRow({
           >
             {suggestion.target_name ?? suggestion.target_id}
           </Link>
-          {score !== null ? (
+          {workspace ? (
+            band ? (
+              <span
+                title={`SecureLogic's confidence that this signal applies (match score ${score}/100).`}
+                style={{
+                  marginLeft: "auto",
+                  fontSize: 11,
+                  color: CONFIDENCE_COLOR[band.tone],
+                  padding: "2px 8px",
+                  border: `1px solid ${CONFIDENCE_COLOR[band.tone]}`,
+                  borderRadius: 999,
+                }}
+              >
+                {band.label}
+              </span>
+            ) : null
+          ) : score !== null ? (
             <span
               title="Match score (0–100). Higher = more confidence the signal applies."
               style={{
@@ -377,24 +428,46 @@ function SuggestionRow({
           ) : null}
         </div>
 
-        <div style={{ fontSize: 13, color: "#d1d5db" }}>
-          {suggestion.signal_title ?? `Signal ${suggestion.signal_id.slice(0, 8)}…`}
-        </div>
-
-        <div
-          style={{
-            fontSize: 12,
-            color: "#9ca3af",
-            display: "flex",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
-          {suggestion.signal_source ? <span>Source: {suggestion.signal_source}</span> : null}
-          {suggestion.signal_severity ? <span>Severity: {suggestion.signal_severity}</span> : null}
-          {suggestion.signal_cve ? <span>{suggestion.signal_cve}</span> : null}
-          {suggestion.match_reason ? <span>Match: {suggestion.match_reason}</span> : null}
-        </div>
+        {workspace ? (
+          <>
+            <div style={{ fontSize: 13, color: "#d1d5db" }}>
+              {signalHeadline(suggestion.event_title)}
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: "#9ca3af",
+                display: "flex",
+                gap: 12,
+                flexWrap: "wrap",
+              }}
+            >
+              {suggestion.event_severity ? <span>Severity: {suggestion.event_severity}</span> : null}
+              {suggestion.event_canonical_key ? <span>{suggestion.event_canonical_key}</span> : null}
+              <span>Why: {describeMatchReason(suggestion.match_reason, suggestion.target_type)}</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 13, color: "#d1d5db" }}>
+              {suggestion.signal_title ?? `Signal ${suggestion.signal_id.slice(0, 8)}…`}
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: "#9ca3af",
+                display: "flex",
+                gap: 12,
+                flexWrap: "wrap",
+              }}
+            >
+              {suggestion.signal_source ? <span>Source: {suggestion.signal_source}</span> : null}
+              {suggestion.signal_severity ? <span>Severity: {suggestion.signal_severity}</span> : null}
+              {suggestion.signal_cve ? <span>{suggestion.signal_cve}</span> : null}
+              {suggestion.match_reason ? <span>Match: {suggestion.match_reason}</span> : null}
+            </div>
+          </>
+        )}
       </div>
 
       <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
