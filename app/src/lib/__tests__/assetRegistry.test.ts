@@ -18,6 +18,7 @@ import {
   assetCreateTarget,
   assetCreateHref,
   assetTypeToEntityType,
+  assetOnboardingMethods,
   assetImportSurfaces,
   assetEditHref,
   assetGraphNode,
@@ -221,6 +222,35 @@ describe("assetImportSurfaces", () => {
     ]);
     expect(surfaces.find((s) => s.href === "/enterprise-context/import")?.requiresEcl).toBe(true);
     expect(surfaces.find((s) => s.href === "/vendors/import")?.requiresEcl).toBe(false);
+  });
+});
+
+describe("assetOnboardingMethods (canonical create surface exposes THREE options)", () => {
+  const methods = assetOnboardingMethods();
+
+  it("exposes exactly the three canonical methods, in order", () => {
+    expect(methods.map((m) => m.key)).toEqual(["create", "import", "connect"]);
+  });
+
+  it("labels each option (create manually / bulk upload / connect)", () => {
+    expect(methods.find((m) => m.key === "create")?.title).toBe("Create manually");
+    expect(methods.find((m) => m.key === "import")?.title).toBe("Bulk upload");
+    expect(methods.find((m) => m.key === "connect")?.title).toBe("Connect enterprise systems");
+  });
+
+  it("connect routes to the EXISTING /assets/connect flow; create/import fan out in-surface", () => {
+    expect(methods.find((m) => m.key === "connect")?.href).toBe("/assets/connect");
+    expect(methods.find((m) => m.key === "create")?.href).toBeNull();
+    expect(methods.find((m) => m.key === "import")?.href).toBeNull();
+  });
+
+  it("bulk upload reuses the CSV/XLSX importers (no SOC, no 'coming soon')", () => {
+    // Import targets are the existing per-surface importers — no new importer.
+    expect(assetImportSurfaces().every((s) => s.href.endsWith("/import"))).toBe(true);
+    const allCopy = methods.map((m) => `${m.title} ${m.description}`).join(" ").toLowerCase();
+    expect(allCopy).toContain("csv");
+    expect(allCopy).not.toContain("soc");
+    expect(allCopy).not.toContain("coming soon");
   });
 });
 

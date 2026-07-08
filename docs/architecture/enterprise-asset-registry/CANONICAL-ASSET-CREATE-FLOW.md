@@ -56,6 +56,31 @@ button and the picker both use:
     `isPlatformUser` gate is added; Vendor keeps its premium gate. This mirrors
     the Vendor *structure* without changing AI System's access model.
 
+## The onboarding surface — three canonical methods
+
+`/assets/new` is the canonical create **and** onboarding surface. It exposes the
+**three** onboarding methods as co-equal, numbered, first-class options — each
+**reuses an existing flow; nothing is re-implemented** (driven by the pure
+`assetOnboardingMethods()` helper so the contract is unit-tested):
+
+1. **Create manually** — the federated per-type create picker (the four
+   detail-backed types render the native `AssetForm` inline; vendors / AI systems
+   / applications / data stores / other open their authoritative screens).
+2. **Bulk upload** — routes to the **existing CSV/XLSX importers**
+   (`assetImportSurfaces()` → `/vendors/import`, `/ai-systems/import`,
+   `/enterprise-context/import`). Preview, validation, de-duplication, row-level
+   errors, and plan caps all live in those surfaces — **no duplicate importer**.
+   The ECL importer is ECL-fenced (hidden with ECL off); the always-available
+   vendor / AI-system importers keep bulk upload usable in every flag state.
+3. **Connect enterprise systems** — routes to the **existing `/assets/connect`**
+   connector catalog (EAR Phase 3b). The route exists, so it is linked directly —
+   **never shown as "coming soon."**
+
+**SOC upload is deliberately absent** from Asset Registry onboarding — it stays
+under **Vendor Management**. Flag-off is unchanged: registry off → the neutral
+disabled panel (none of the three sections); ECL-backed sub-options
+(applications/data-store import, connectors) are additionally ECL-fenced.
+
 ## The one schema change — `business_process`
 
 `business_process` was a registry `asset_type` with **no backing store**. Rather
