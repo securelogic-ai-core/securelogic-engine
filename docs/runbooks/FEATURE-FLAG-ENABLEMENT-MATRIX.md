@@ -218,6 +218,18 @@ production (no prod enablement without an explicit operator ruling).
 - **Rollback:** `"false"` (new rows revert to raw pass-through; already-sanitized rows stay clean).
 - **Dependencies:** None. Ledger: `docs/validation/iqp-operator-ledger.md` OP-1.
 
+### 1.15 `SECURELOGIC_SIGNAL_RECENCY_ENABLED` (IQP Q2)
+- **Purpose:** Source-authoritative recency enforcement on the customer-facing brief window — filters on `COALESCE(published_at, ingestion_timestamp)` so old-dated items (ancient KEV entries, historical backfill) are suppressed. Fixes Phase 1 audit defect #4 (CVE-2008-4250 as "this week"). Writing `published_at` is unconditional; only READS are gated.
+- **Required services:** **Engine only.**
+- **Why:** both brief-window queries (scheduler + on-demand route) run on the engine.
+- **Redeploy/restart:** Yes, Engine; no rebuild.
+- **Default:** `"false"` (OFF everywhere; flag-off byte-identical legacy window).
+- **Staging order:** migration `20260828` (adds `published_at` + backfill) → engine-staging flag → validate (`stale_signal_suppressed` log > 0 when old-dated rows are in the ingestion window; no pre-window `published_at` item in the brief).
+- **Production order:** after staging validation passes IQP exit gate G2 → migration → engine.
+- **Validation:** generate a staging brief; confirm no item's `published_at` predates the window.
+- **Rollback:** `"false"` (legacy ingestion-time window returns; column stays, unread).
+- **Dependencies:** Migration `20260828_cyber_signals_published_at.sql` applied first. Backfill-safe: old dates only ever REMOVE rows from the window. Ledger: OP-2/OP-3.
+
 ---
 
 ## 2. Tier B — Live and operational flags
