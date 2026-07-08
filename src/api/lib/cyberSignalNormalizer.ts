@@ -37,6 +37,8 @@
 import { createHash } from "crypto";
 import type { CyberSignalIngestInput } from "./cyberSignalValidation.js";
 import { clusterKey } from "./signals/clusterKey.js";
+import { stripHtmlToText } from "./sanitize.js";
+import { signalSanitizeEnabled } from "./signalSanitizeFeatureFlag.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -170,9 +172,13 @@ export function normalizeSignal(
   input: CyberSignalIngestInput,
   // Ingestion moment for clusterKey()'s CVE-less day-bucket. Injectable for
   // determinism in tests; defaults to now (≈ the INSERT's ingestion_timestamp).
-  at: Date = new Date()
+  at: Date = new Date(),
+  // IQP Q1: HTML sanitization of the stored summary. Defaults to the feature
+  // flag so all existing call sites pick it up unchanged; injectable so tests
+  // are deterministic. OFF ⇒ byte-identical to pre-Q1.
+  sanitizeEnabled: boolean = signalSanitizeEnabled()
 ): NormalizedCyberSignal {
-  const normalizedSummary =
+  let normalizedSummary =
     input.normalized_summary !== null
       ? input.normalized_summary
       : deriveSummaryFromPayload(
@@ -181,6 +187,13 @@ export function normalizeSignal(
           input.affected_cve,
           input.affected_vendor
         );
+
+  // IQP Q1 (audit defect #3): the ONE ingest-side sanitization point. Both
+  // summary routes (caller-supplied and payload-derived) pass through here.
+  // raw_payload itself stays raw — it is the provenance record.
+  if (sanitizeEnabled) {
+    normalizedSummary = stripHtmlToText(normalizedSummary);
+  }
 
   const externalId =
     typeof input.external_id === "string" && input.external_id.trim() !== ""
