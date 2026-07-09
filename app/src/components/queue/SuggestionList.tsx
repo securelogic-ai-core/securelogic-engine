@@ -44,6 +44,7 @@ import type {
   SignalMatchSuggestion,
   SignalMatchTargetType,
 } from "@/lib/api";
+import { queueIntelligenceHref } from "@/lib/intelligenceLinks";
 import {
   acceptSuggestionAction,
   dismissSuggestionAction,
@@ -445,6 +446,14 @@ function SuggestionRow({
               {suggestion.event_severity ? <span>Severity: {suggestion.event_severity}</span> : null}
               {suggestion.event_canonical_key ? <span>{suggestion.event_canonical_key}</span> : null}
               <span>Why: {describeMatchReason(suggestion.match_reason, suggestion.target_type)}</span>
+              {(() => {
+                // Reciprocal drill-through to the canonical intelligence event —
+                // workspace reskin only, and only when the row carries an event id.
+                const href = queueIntelligenceHref(workspace, suggestion.intelligence_event_id);
+                return href ? (
+                  <Link href={href} style={{ color: "#93c5fd" }}>View intelligence</Link>
+                ) : null;
+              })()}
             </div>
           </>
         ) : (

@@ -14,6 +14,7 @@ import { useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Finding, Action, FindingContext, FindingImpactDimension } from "@/lib/api";
+import { intelligenceEventHref, findingEventId } from "@/lib/intelligenceLinks";
 import {
   updateFindingStatusAction,
   updateFindingPriorityAction,
@@ -265,13 +266,30 @@ export function DecisionWorkspace({
             {context.intelligence.events.length === 0 ? (
               <span style={{ fontSize: 12, color: "#475569" }}>No linked intelligence event</span>
             ) : (
-              context.intelligence.events.map((e, i) => (
-                <div key={i} style={{ fontSize: 13, color: "#e5e7eb" }}>
-                  {String(e.title ?? "External intelligence signal")}
-                  {e.severity ? <span style={{ color: "#64748b" }}> · {String(e.severity)}</span> : null}
-                  {e.affected_cve ? <span style={{ color: "#64748b" }}> · {String(e.affected_cve)}</span> : null}
-                </div>
-              ))
+              context.intelligence.events.map((e, i) => {
+                const eventId = findingEventId(e);
+                const label = (
+                  <>
+                    {String(e.title ?? "External intelligence signal")}
+                    {e.severity ? <span style={{ color: "#64748b" }}> · {String(e.severity)}</span> : null}
+                    {e.affected_cve ? <span style={{ color: "#64748b" }}> · {String(e.affected_cve)}</span> : null}
+                  </>
+                );
+                // Drill through to the canonical event when it has an id; carry
+                // the finding so the drill-through can back-link and fall back to
+                // this finding's context. No id → plain text (byte-identical).
+                return eventId ? (
+                  <div key={i} style={{ fontSize: 13 }}>
+                    <Link href={intelligenceEventHref(eventId, finding.id)} style={{ color: "#93c5fd" }}>
+                      {label}
+                    </Link>
+                  </div>
+                ) : (
+                  <div key={i} style={{ fontSize: 13, color: "#e5e7eb" }}>
+                    {label}
+                  </div>
+                );
+              })
             )}
           </div>
           {context.intelligence.sources.length > 0 && (
