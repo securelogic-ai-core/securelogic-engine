@@ -207,6 +207,8 @@ services:
         value: "false"
       - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
         value: "false"
+      - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED   # ERIP Package 3 (Decision Workspace) — DARK (default off); gates GET /api/findings/:id/context (read-only)
+        value: "false"
       - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
         value: "false"
       - key: SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED # ERIP E6 (approval-gated orchestration) — DARK (default off); human approval required
@@ -435,6 +437,8 @@ services:
         value: "false"
       - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
         value: "false"
+      - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED   # ERIP Package 3 (Decision Workspace) — DARK (default off); gates GET /api/findings/:id/context (read-only)
+        value: "false"
       - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
         value: "false"
       - key: SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED # ERIP E6 (approval-gated orchestration) — DARK (default off); human approval required
@@ -566,6 +570,8 @@ services:
         value: "false"
       - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
         value: "false"
+      - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED   # ERIP Package 3 (Decision Workspace) — DARK (default off); gates GET /api/findings/:id/context (read-only)
+        value: "false"
       - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
         value: "false"
       - key: SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED # ERIP E6 (approval-gated orchestration) — DARK (default off); human approval required
@@ -680,6 +686,8 @@ services:
       - key: SECURELOGIC_CONNECTOR_WRITEBACK_ENABLED  # ERIP E2a (bidirectional connector writeback) — DARK (default off); only external-mutation fence; also requires ECL + asset-registry flags
         value: "false"
       - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED   # ERIP Package 3 (Decision Workspace) — DARK (default off); gates GET /api/findings/:id/context (read-only)
         value: "false"
       - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
         value: "false"

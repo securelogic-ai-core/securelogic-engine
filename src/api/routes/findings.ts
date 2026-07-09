@@ -19,6 +19,7 @@ import { validateFindingCreate } from "../lib/findingValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { triggerFindingAlert } from "../lib/findingAlertTrigger.js";
+import { resolveFindingContext } from "../lib/findingContextResolver.js";
 
 const router = Router();
 
@@ -579,6 +580,66 @@ router.get(
         "GET /api/findings/:id failed"
       );
       res.status(500).json({ error: "finding_get_failed" });
+    }
+  })
+);
+
+/* =========================================================
+   GET /api/findings/:id/context
+   ERIP Package 3 (Decision Workspace), Phase 3.0 — DARK.
+   Read-only composition of everything the Decision Workspace needs
+   (affected entities, supporting Intelligence Events + sources +
+   timeline, evidence, related findings, owner, activity, what's
+   changed) so the customer never page-hops. 404s when the finding
+   is not in the org OR the flag is off (two-switch dark launch).
+   ========================================================= */
+
+router.get(
+  "/findings/:id/context",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  asTenant(async (req, res) => {
+    try {
+      // Dark: the whole endpoint 404s until the Decision Workspace flag flips.
+      if (process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED !== "true") {
+        res.status(404).json({ error: "finding_context_not_found" });
+        return;
+      }
+
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const findingId = String(req.params["id"] ?? "").trim();
+      if (!findingId) {
+        res.status(400).json({ error: "finding_id_required" });
+        return;
+      }
+      if (!isUuid(findingId)) {
+        res.status(400).json({ error: "finding_id_must_be_uuid" });
+        return;
+      }
+
+      const sinceRaw = req.query["since"];
+      const since = typeof sinceRaw === "string" && !Number.isNaN(Date.parse(sinceRaw)) ? sinceRaw : null;
+
+      const context = await resolveFindingContext(pg, organizationId, findingId, { since });
+      if (context === null) {
+        res.status(404).json({ error: "finding_not_found" });
+        return;
+      }
+
+      res.status(200).json({ context });
+    } catch (err) {
+      logger.error(
+        { event: "finding_context_failed", err },
+        "GET /api/findings/:id/context failed"
+      );
+      res.status(500).json({ error: "finding_context_failed" });
     }
   })
 );

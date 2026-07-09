@@ -54,8 +54,8 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "vendorReviews.ts": 4,
   "vendorAssessmentAnalysis.ts": 1,
   "vendorSignalContext.ts": 1,
-  // findings family (#244)
-  "findings.ts": 5,
+  // findings family (#244); +1 for GET /findings/:id/context (ERIP P3.0, dark)
+  "findings.ts": 6,
   "findingsExport.ts": 1,
   // risk engine
   "risks.ts": 8,
