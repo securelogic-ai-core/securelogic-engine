@@ -4,11 +4,25 @@ import { useState } from "react";
 import { FindingCard } from "@/components/FindingCard";
 import type { Finding } from "@/lib/api";
 import Link from "next/link";
+import { attentionSummary, groupByUrgency } from "./decisionQueue";
 
 interface Props {
   findings: Finding[];
   hasFilters: boolean;
+  // Enterprise decision-queue mode (ERIP) — DARK, SECURELOGIC_RISK_WORKSPACE_ENABLED.
+  // When on, the list becomes a "what needs action now" queue: attention tiles +
+  // urgency grouping. Off = the unchanged domain-grouped list (byte-identical).
+  workspace?: boolean;
 }
+
+const TILE: React.CSSProperties = {
+  background: "var(--color-brand-surface, #111827)",
+  border: "1px solid #1e293b",
+  borderRadius: 12,
+  padding: "14px 18px",
+  flex: 1,
+  minWidth: 150,
+};
 
 const PILL_ACTIVE: React.CSSProperties = {
   background: "rgba(0,196,180,0.15)", color: "#00c4b4",
@@ -18,12 +32,17 @@ const PILL_INACTIVE: React.CSSProperties = {
   background: "transparent", color: "#94a3b8", border: "1px solid #1e293b",
 };
 
-export function FindingsList({ findings, hasFilters }: Props) {
+export function FindingsList({ findings, hasFilters, workspace = false }: Props) {
   const [hasActionsOnly, setHasActionsOnly] = useState(false);
 
   const visible = hasActionsOnly
     ? findings.filter((f) => f.action_count > 0)
     : findings;
+
+  // Enterprise decision-queue grouping (workspace) vs. legacy domain grouping.
+  const now = Date.now();
+  const attention = workspace ? attentionSummary(visible, now) : null;
+  const urgencyGroups = workspace ? groupByUrgency(visible, now) : null;
 
   const grouped: Record<string, Finding[]> = {};
   for (const f of visible) {
@@ -31,8 +50,36 @@ export function FindingsList({ findings, hasFilters }: Props) {
     (grouped[d] ??= []).push(f);
   }
 
+  // Workspace: urgency sections (most-urgent-first). Legacy: domain sections.
+  const sections: Array<{ key: string; findings: Finding[] }> =
+    workspace && urgencyGroups
+      ? urgencyGroups.map((g) => ({ key: g.label, findings: g.findings }))
+      : Object.entries(grouped).map(([d, fs]) => ({ key: d, findings: fs }));
+
   return (
     <>
+      {/* Attention tiles — "what needs action now" (workspace only). */}
+      {workspace && attention && (
+        <div className="mb-6 flex flex-wrap gap-3">
+          <div style={TILE}>
+            <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b", marginBottom: 6 }}>Overdue</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: attention.overdue > 0 ? "#fca5a5" : "#f1f5f9" }}>{attention.overdue}</div>
+          </div>
+          <div style={TILE}>
+            <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b", marginBottom: 6 }}>Unassigned</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: attention.unassigned > 0 ? "#fcd34d" : "#f1f5f9" }}>{attention.unassigned}</div>
+          </div>
+          <div style={TILE}>
+            <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b", marginBottom: 6 }}>High &amp; Critical open</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: attention.criticalOpen > 0 ? "#fca5a5" : "#f1f5f9" }}>{attention.criticalOpen}</div>
+          </div>
+          <div style={TILE}>
+            <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b", marginBottom: 6 }}>Open total</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: "#f1f5f9" }}>{attention.openTotal}</div>
+          </div>
+        </div>
+      )}
+
       {/* Has Actions filter pill */}
       <div className="mb-4">
         <button
@@ -76,8 +123,8 @@ export function FindingsList({ findings, hasFilters }: Props) {
         </div>
       ) : (
         <div className="space-y-8">
-          {Object.entries(grouped).map(([domain, domainFindings]) => (
-            <div key={domain}>
+          {sections.map((section) => (
+            <div key={section.key}>
               <div
                 className="flex items-center gap-2 mb-3 pb-2"
                 style={{ borderBottom: "1px solid #1e293b" }}
@@ -86,17 +133,17 @@ export function FindingsList({ findings, hasFilters }: Props) {
                   className="text-xs font-semibold uppercase tracking-wide"
                   style={{ color: "#64748b" }}
                 >
-                  {domain}
+                  {section.key}
                 </span>
                 <span
                   className="text-xs px-1.5 py-0.5 rounded"
                   style={{ background: "rgba(148,163,184,0.1)", color: "#64748b" }}
                 >
-                  {domainFindings.length}
+                  {section.findings.length}
                 </span>
               </div>
               <div className="space-y-3">
-                {domainFindings.map((f) => (
+                {section.findings.map((f) => (
                   <FindingCard key={f.id} finding={f} revalidateUrl="/findings" />
                 ))}
               </div>
