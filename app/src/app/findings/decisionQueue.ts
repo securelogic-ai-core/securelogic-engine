@@ -18,6 +18,15 @@ export function isOpenStatus(status: string): boolean {
   return status === "open" || status === "in_progress";
 }
 
+/**
+ * Day-0 / first-time empty: the org has NO findings at all AND no filter is active.
+ * Distinct from filtered-empty ("no findings match your filters") so the new-customer
+ * experience can orient instead of dead-ending. Mirrors the Queue's isFirstTimeEmpty.
+ */
+export function isFirstTimeEmpty(totalCount: number, hasFilters: boolean, hasActionsOnly: boolean): boolean {
+  return totalCount === 0 && !hasFilters && !hasActionsOnly;
+}
+
 /** Overdue = an open finding past its due date. */
 export function isOverdue(f: Finding, nowMs: number): boolean {
   if (!f.due_date || !isOpenStatus(f.status)) return false;
