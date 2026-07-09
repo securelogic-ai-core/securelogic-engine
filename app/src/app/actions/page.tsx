@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
 import { getMe, getActions, type Action } from "@/lib/api";
+import { filterMyActions, myActionsRedirect, isMyActionsView } from "./myActions";
 
 const PRIORITY_STYLES: Record<string, React.CSSProperties> = {
   immediate: { background: "rgba(239,68,68,0.15)",   color: "#fca5a5" },
@@ -174,6 +175,16 @@ export default async function ActionsPage({
   const isPlatformUser = ["premium", "platform", "team"].includes(entitlementLevel);
   if (!isPlatformUser) redirect("/dashboard");
 
+  // ERIP Package 3 (Decision Workspace) — DARK. When on, /actions is the "My
+  // Actions" view (the caller's own actions across findings); a bare /actions
+  // redirects to the canonical ?view=mine form so the route reads as a redirect,
+  // not a standalone org-wide list. Flag-off = the unchanged legacy list
+  // (byte-identical). This is the minimal bridge, NOT the P3.4 saved-views system.
+  const workspace = process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true";
+  const dest = myActionsRedirect(workspace, sp.view);
+  if (dest) redirect(dest);
+  const myActions = isMyActionsView(workspace, sp.view);
+
   const activeStatus   = sp.status   ?? "";
   const activePriority = sp.priority ?? "";
   const activeOverdue  = sp.overdue  === "true";
@@ -185,7 +196,12 @@ export default async function ActionsPage({
     limit: 100,
   });
 
-  const actions = actionsData?.actions ?? [];
+  // My Actions filters to the caller's own actions. Ownership is derived from the
+  // SESSION identity (session.userId), never from request input (R5 isolation);
+  // a missing identity yields an empty list, never the org-wide set.
+  const actions = myActions
+    ? filterMyActions(actionsData?.actions ?? [], session.userId)
+    : (actionsData?.actions ?? []);
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -208,10 +224,12 @@ export default async function ActionsPage({
       <div className="mb-8 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold mb-1" style={{ color: "#f1f5f9" }}>
-            Remediation Actions
+            {myActions ? "My Actions" : "Remediation Actions"}
           </h1>
           <p className="text-sm" style={{ color: "#94a3b8" }}>
-            Open actions across all findings and assessments
+            {myActions
+              ? "Actions assigned to you across all findings"
+              : "Open actions across all findings and assessments"}
           </p>
         </div>
       </div>
