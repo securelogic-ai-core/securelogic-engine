@@ -10,7 +10,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
 
-import { bootstrapTestDb, seedVendor, seedCyberSignal, type TestDbSeed } from "./testDb.js";
+import { bootstrapTestDb, seedVendor, seedCyberSignal, seedUser, type TestDbSeed } from "./testDb.js";
 import { resolveFindingContext } from "../../src/api/lib/findingContextResolver.js";
 
 let seed: TestDbSeed;
@@ -61,6 +61,27 @@ describe("Package 3 Phase 3.0 — finding context resolver (real Postgres)", () 
     expect(typeof ctx!.risk.score).toBe("number");
     expect(ctx!.business_impact.third_party.level).not.toBe("none"); // 1 affected vendor
     expect(ctx!.business_impact.revenue.level).toBe("not_assessed"); // never fabricated
+    // Phase 3.2a — decision_state (business decision) present + defaulted.
+    expect(ctx!.finding.decision_state).toBe("needs_review");
+  });
+
+  it("finding_review_marks (What's-Changed) is org-scoped", async () => {
+    const a = await seedSignalSourcedFinding(seed.orgA.id, "ctx-a-4");
+    const user = await seedUser(pool, seed.orgA.id, {});
+    await pool.query(
+      `INSERT INTO finding_review_marks (organization_id, finding_id, user_id) VALUES ($1, $2, $3)`,
+      [seed.orgA.id, a.findingId, user.id]
+    );
+    const inA = await pool.query(
+      `SELECT 1 FROM finding_review_marks WHERE organization_id = $1 AND finding_id = $2`,
+      [seed.orgA.id, a.findingId]
+    );
+    expect(inA.rowCount).toBe(1);
+    const inB = await pool.query(
+      `SELECT 1 FROM finding_review_marks WHERE organization_id = $1 AND finding_id = $2`,
+      [seed.orgB.id, a.findingId]
+    );
+    expect(inB.rowCount).toBe(0);
   });
 
   it("returns null for another org's finding (no cross-tenant read)", async () => {
