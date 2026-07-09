@@ -100,9 +100,24 @@ NOT authorized. Same governance: DARK, additive, GATE B.
 | Tests | **DONE** | `navigationFlags.test.ts` (+workspace nav: flag-off byte-identity, groups/order, Ask demoted, Approvals/Vendor-Assurance surfaced, EAR asset-registry behavior preserved) + `reviewLanguage.test.ts` (no raw codes/UUIDs, confidence bands). Full suite 5763 green; app+engine typecheck green; no knowledge-index drift. |
 | Operator actions (ledgered, not executed) | **PENDING** | Set `SECURELOGIC_RISK_WORKSPACE_ENABLED=true` on the staging app service → validate nav + Review Links → separate GATE-B ruling for prod. |
 
-**Out of scope (explicitly, Packages 3/4):** `/vendors`+`/vendors/risk` merge,
-Actions→Findings merge, Context-dashboard/Posture demotion, brief-engine convergence,
-finding↔intelligence-event deep linkage, `/ai-systems` entitlement fix.
+**Out of scope for Packages 1/2 (now Package 3+):** finding↔intelligence-event deep
+linkage. **Still out of scope (Package 4 / separate):** `/vendors`+`/vendors/risk` merge,
+brief-engine convergence, Posture consolidation, `/ai-systems` entitlement fix.
+
+### Package 3 — Decision Workspace (approved 2026-07-09 with modifications)
+
+Design: `docs/architecture/erip/PACKAGE-3-DECISION-WORKSPACE-DESIGN.md` (v2 with the six
+operator modifications). Flag `SECURELOGIC_DECISION_WORKSPACE_ENABLED` (default off). Findings
+become the enterprise decision object; Intelligence Events stay drill-through only (no
+customer Intelligence Events page). Phased, each independently dark/shippable/testable.
+
+| Phase | Status | Notes |
+|---|---|---|
+| 3.0 Finding Context Resolver | **IN PR** | `findingContextResolver.ts` (read-only compose: affected vendors/AI/controls/obligations via `signal_*_links`, supporting Intelligence Events + sources + timeline, evidence `source_type='finding'`, related findings, owner, activity from `security_audit_log`, what's-changed). `GET /api/findings/:id/context` — flag-gated 404 when dark. **No schema change.** Unit + cross-org isolation tests. |
+| 3.1 Business Impact + Risk Score | PLANNED | compose-at-read reusing Epic-3 propagation; degrade when `risk_intelligence` off |
+| 3.2 Decision Workspace UI | PLANNED | Zones A–G; `decision_state` additive column (business decision ≠ operational status); What's-Changed marker |
+| 3.3 Intelligence drill-through + Remediation tab + `/actions` redirect | PLANNED | `/intelligence/[id]` drill-through only (no nav) |
+| 3.4 Finding List redesign + saved views | PLANNED | executive/analyst framing |
 
 ## Deferred / follow-up register
 
