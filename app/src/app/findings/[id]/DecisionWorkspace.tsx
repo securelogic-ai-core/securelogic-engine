@@ -16,6 +16,7 @@ import { useRouter } from "next/navigation";
 import type { Finding, Action, FindingContext, FindingImpactDimension } from "@/lib/api";
 import { intelligenceEventHref, findingEventId } from "@/lib/intelligenceLinks";
 import { DECISION_TABS, DEFAULT_DECISION_TAB, type DecisionTab } from "./decisionTabs";
+import { intelligenceEmptyCopy } from "./findingSourceCopy";
 import {
   updateFindingStatusAction,
   updateFindingPriorityAction,
@@ -297,7 +298,7 @@ export function DecisionWorkspace({
           <div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Supporting intelligence events</div>
             {context.intelligence.events.length === 0 ? (
-              <span style={{ fontSize: 12, color: "#475569" }}>No linked intelligence event</span>
+              <span style={{ fontSize: 12, color: "#475569" }}>{intelligenceEmptyCopy(finding.source_type)}</span>
             ) : (
               context.intelligence.events.map((e, i) => {
                 const eventId = findingEventId(e);
