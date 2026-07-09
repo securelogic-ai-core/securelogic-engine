@@ -28,17 +28,26 @@ export function filterMyActions<T extends ActionOwned>(
   return actions.filter((a) => a.owner_user_id !== null && a.owner_user_id === sessionUserId);
 }
 
+/** The remediation-queue scopes the workspace supports. */
+export type ActionScope = "mine" | "team";
+
+/** A view param is a recognized scope only for these values. */
+export function actionScope(view: string | undefined): ActionScope | null {
+  return view === "mine" || view === "team" ? view : null;
+}
+
 /**
  * Redirect target for a bare /actions when the Decision Workspace is on: the
- * canonical My Actions form. Returns null when no redirect is needed (already on
- * ?view=mine, or the workspace is dark → legacy list).
+ * canonical My Actions form. Returns null when no redirect is needed (already on a
+ * recognized scope — ?view=mine (own) or ?view=team (all open) — or the workspace
+ * is dark → legacy list).
  */
 export function myActionsRedirect(workspace: boolean, view: string | undefined): string | null {
-  if (workspace && view !== "mine") return "/actions?view=mine";
+  if (workspace && actionScope(view) === null) return "/actions?view=mine";
   return null;
 }
 
-/** Whether the current render is the My Actions view. */
+/** Whether the current render is the workspace remediation view (either scope). */
 export function isMyActionsView(workspace: boolean, view: string | undefined): boolean {
-  return workspace && view === "mine";
+  return workspace && actionScope(view) !== null;
 }

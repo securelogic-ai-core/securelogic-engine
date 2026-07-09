@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
 import { getMe, getActions, type Action } from "@/lib/api";
-import { filterMyActions, myActionsRedirect, isMyActionsView } from "./myActions";
+import { filterMyActions, myActionsRedirect, actionScope } from "./myActions";
+import MyActionsView from "./MyActionsView";
 
 const PRIORITY_STYLES: Record<string, React.CSSProperties> = {
   immediate: { background: "rgba(239,68,68,0.15)",   color: "#fca5a5" },
@@ -183,7 +184,19 @@ export default async function ActionsPage({
   const workspace = process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true";
   const dest = myActionsRedirect(workspace, sp.view);
   if (dest) redirect(dest);
-  const myActions = isMyActionsView(workspace, sp.view);
+
+  // Workspace remediation queue (§5 depth): SLA framing, ownership, source linkage.
+  // Scope "mine" filters to the SESSION user (R5 — never request input); "team"
+  // shows all open remediation. Flag-off falls through to the unchanged legacy list.
+  const scope = workspace ? actionScope(sp.view) : null;
+  if (scope) {
+    const data = await getActions(token, { limit: 200 });
+    const all = data?.actions ?? [];
+    const scoped = scope === "mine" ? filterMyActions(all, session.userId) : all;
+    return (
+      <MyActionsView actions={scoped} scope={scope} sessionUserId={session.userId} nowMs={Date.now()} />
+    );
+  }
 
   const activeStatus   = sp.status   ?? "";
   const activePriority = sp.priority ?? "";
@@ -196,12 +209,8 @@ export default async function ActionsPage({
     limit: 100,
   });
 
-  // My Actions filters to the caller's own actions. Ownership is derived from the
-  // SESSION identity (session.userId), never from request input (R5 isolation);
-  // a missing identity yields an empty list, never the org-wide set.
-  const actions = myActions
-    ? filterMyActions(actionsData?.actions ?? [], session.userId)
-    : (actionsData?.actions ?? []);
+  // Legacy list (workspace flag off): the org-wide remediation list, unchanged.
+  const actions = actionsData?.actions ?? [];
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -224,12 +233,10 @@ export default async function ActionsPage({
       <div className="mb-8 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold mb-1" style={{ color: "#f1f5f9" }}>
-            {myActions ? "My Actions" : "Remediation Actions"}
+            Remediation Actions
           </h1>
           <p className="text-sm" style={{ color: "#94a3b8" }}>
-            {myActions
-              ? "Actions assigned to you across all findings"
-              : "Open actions across all findings and assessments"}
+            Open actions across all findings and assessments
           </p>
         </div>
       </div>
