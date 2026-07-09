@@ -113,11 +113,17 @@ customer Intelligence Events page). Phased, each independently dark/shippable/te
 
 | Phase | Status | Notes |
 |---|---|---|
-| 3.0 Finding Context Resolver | **IN PR** | `findingContextResolver.ts` (read-only compose: affected vendors/AI/controls/obligations via `signal_*_links`, supporting Intelligence Events + sources + timeline, evidence `source_type='finding'`, related findings, owner, activity from `security_audit_log`, what's-changed). `GET /api/findings/:id/context` — flag-gated 404 when dark. **No schema change.** Unit + cross-org isolation tests. |
-| 3.1 Business Impact + Risk Score | PLANNED | compose-at-read reusing Epic-3 propagation; degrade when `risk_intelligence` off |
-| 3.2 Decision Workspace UI | PLANNED | Zones A–G; `decision_state` additive column (business decision ≠ operational status); What's-Changed marker |
-| 3.3 Intelligence drill-through + Remediation tab + `/actions` redirect | PLANNED | `/intelligence/[id]` drill-through only (no nav) |
-| 3.4 Finding List redesign + saved views | PLANNED | executive/analyst framing |
+| 3.0 Finding Context Resolver | **DONE** (#560) | `findingContextResolver.ts` (read-only compose). `GET /api/findings/:id/context` — flag-gated 404 when dark. No schema change. Unit + cross-org isolation tests. |
+| 3.1 Business Impact + Risk Score | **DONE** (#561) | compose-at-read; `findingRiskScore.ts`; degrades when `risk_intelligence` off |
+| 3.2 Decision Workspace UI | **DONE** (#562/#563) | Zones A–G; `decision_state` additive column; What's-Changed marker |
+| 3.3 Intelligence drill-through + Remediation tab + `/actions` redirect | **DONE** (#565–#569) | `/intelligence/[id]` drill-through only (no nav — guard test). PR-1 fetcher `getIntelligenceEvent`; PR-2 drill-through page (reuses existing engine route, enrichment + honest degrade); PR-3 Finding→event (Zone E) + Queue reciprocal link (**Brief link deferred — D5**); PR-4 Remediation tab; PR-5 `/actions`→My Actions (R5 session-scoped). No new flag/route/schema/render.yaml. |
+| 3.4 Finding List redesign + saved views | PLANNED | executive/analyst framing — NOT in P3.3 scope |
+
+**P3.3 operator actions (ledgered, not executed):** staging is DARK. Full drill-through
+validation needs `SECURELOGIC_RISK_WORKSPACE_ENABLED` + `SECURELOGIC_DECISION_WORKSPACE_ENABLED`
+on the staging **app**, plus `SECURELOGIC_DECISION_WORKSPACE_ENABLED` on the staging **engine**;
+`SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED` (engine) additionally enriches the drill-through
+(degrades honestly when off). No render.yaml change in this package. Prod remains GATE B.
 
 ## Deferred / follow-up register
 
@@ -125,5 +131,12 @@ Carried from Epic 1 (rulings recorded in the EAR tracker; not blockers):
 - Legacy assessment route-tx collapse, one stack per PR (EAR-AD-7 step 2).
 - vendorAssessments/dependencyAssessments gate normalization (P9-cutover scope).
 - Brief citations for corroborating provenance signals.
-- **Enterprise Risk Workspace Packages 3 & 4** (page merges; workflow/brief
-  convergence) — audited and recommended, awaiting separate operator authorization.
+- **Enterprise Risk Workspace Package 4** (workflow/brief convergence) — audited
+  and recommended, awaiting separate operator authorization. (Package 3 —
+  Decision Workspace, phases 3.0–3.3 — is SHIPPED dark; 3.4 list redesign remains.)
+- **Brief → Decision Workspace drill-through link (D5, deferred):** the brief item
+  view carries `cyber_signal_id`, not an intelligence-event id; a dedicated
+  Brief-workflow package should add the `cyber_signal_id → event_id` resolution.
+- **App RTL harness (test follow-up):** the Next app has no React Testing Library
+  harness, so P3.3 DOM/tab-interaction behavior is covered by pure-helper unit
+  tests + manual staging validation. Add an RTL harness to close the gap.
