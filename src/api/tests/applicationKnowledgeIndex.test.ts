@@ -77,6 +77,28 @@ describe("Navigation hierarchy matches the actual UI", () => {
   });
 });
 
+// ERIP Package 3.3 guard: Intelligence Events are a DRILL-THROUGH ONLY surface
+// (reached from a Finding / Review Links), never customer-facing primary
+// navigation (design §6). This test fails the build if anyone adds an
+// /intelligence nav entry or a standalone /intelligence index route.
+describe("Intelligence Events remain drill-through only (ERIP P3.3)", () => {
+  it("registers /intelligence/[id] as a route but NEVER as primary navigation", () => {
+    const route = APPLICATION_KNOWLEDGE_INDEX.routes.find((r) => r.path === "/intelligence/[id]");
+    expect(route, "the drill-through route /intelligence/[id] should exist").toBeTruthy();
+    expect(route?.navLabel, "/intelligence/[id] must not carry a nav label").toBeNull();
+  });
+
+  it("has no /intelligence entry in primary navigation or menu destinations", () => {
+    const inNav = APPLICATION_KNOWLEDGE_INDEX.destinations.some((d) => d.href.startsWith("/intelligence"));
+    expect(inNav, "no /intelligence entry may appear in primary navigation").toBe(false);
+  });
+
+  it("has no standalone /intelligence index route (drill-through only, no list)", () => {
+    const indexRoute = APPLICATION_KNOWLEDGE_INDEX.routes.some((r) => r.path === "/intelligence");
+    expect(indexRoute, "there must be no /intelligence index route").toBe(false);
+  });
+});
+
 describe("Secondary navigation (account / settings surfaces) is drift-locked to real routes", () => {
   it("carries the account/settings surfaces (non-empty)", () => {
     expect(APPLICATION_KNOWLEDGE_INDEX.secondaryNavigation.length).toBe(

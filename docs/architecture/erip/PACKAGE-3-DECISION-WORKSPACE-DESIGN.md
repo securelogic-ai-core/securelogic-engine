@@ -329,15 +329,51 @@ risk-score bits additionally gate on `SECURELOGIC_RISK_INTELLIGENCE_ENABLED` (Ep
 - **Rollout:** dark behind the workspace flag; flag-off byte-identical.
 - **Risks:** progressive-disclosure complexity — keep executive zones always-on.
 
-### Phase 3.3 — Intelligence Event drill-through + Remediation tab
-- **Scope:** `/intelligence/[id]` drill-through view (event + sources + timeline), linked from
-  Zone D, Review Links ("view resulting finding" reciprocal), and Briefs; fold Actions into the
-  Finding "Remediation" tab + a "My actions" saved view; `/actions` → redirect.
-- **Files:** `app/src/app/intelligence/[id]/` (new, drill-through only — NOT a list),
-  `findings/[id]` Remediation tab, `queue`/`briefs` reciprocal links, `/actions` redirect.
-- **Migrations:** none.
-- **Tests:** nav (Actions redirect, no new primary nav item), integration links.
-- **Risks:** ensure `/intelligence` is drill-through only (no nav entry) per §6.
+### Phase 3.3 — Intelligence Event drill-through + Remediation tab — **SHIPPED (dark)**
+
+Delivered on `develop` across PRs **#565–#569** (2026-07-09), all dark. Operator
+decisions D1–D5 (below) and the three-flag reality govern it.
+
+- **Scope delivered:** `/intelligence/[id]` drill-through view (event + sources +
+  timeline + recommended actions + related findings); clickable Finding→event
+  (Zone E) and Queue reciprocal link; Finding **Remediation tab**; `/actions`
+  redirect + minimal **My Actions** view.
+- **Files:** `app/src/app/intelligence/[id]/` (new — drill-through only, **NOT a
+  list**), `app/src/lib/api.ts` (`getIntelligenceEvent`), `app/src/lib/intelligenceLinks.ts`,
+  `findings/[id]/DecisionWorkspace.tsx` + `decisionTabs.ts` (tab), `queue`
+  reciprocal link, `actions/page.tsx` + `myActions.ts`.
+- **Migrations:** none. **No render.yaml, no new flag.**
+
+**Operator decisions (approved 2026-07-09):**
+- **D1 — reuse the existing engine route** `GET /api/intelligence/events/:id`
+  (no new engine route, no migration).
+- **D2 — app gating:** the drill-through surface, Remediation tab, and `/actions`
+  redirect are behind `SECURELOGIC_DECISION_WORKSPACE_ENABLED`; the Queue
+  reciprocal link rides the `SECURELOGIC_RISK_WORKSPACE_ENABLED` reskin branch.
+- **D3 — Remediation is a tab** (re-layout of the existing always-on section; no
+  new remediation logic); executive zones A–C stay always-visible above the tabs.
+- **D4 — minimal My Actions** as the `/actions` redirect destination — a single
+  session-scoped filter, **NOT** the P3.4 saved-views system; no Findings list redesign.
+- **D5 — Brief → drill-through link DEFERRED** (the brief item view carries no
+  event id; resolving the `cyber_signal_id → event_id` bridge is out of P3.3
+  scope, awaiting a dedicated Brief-workflow package).
+
+**Three-flag reality (staging validation):** the app surface needs
+`RISK_WORKSPACE` (queue reskin + IA) **and** `DECISION_WORKSPACE` (finding detail,
+drill-through, Remediation tab, `/actions`). The engine baseline is
+`DECISION_WORKSPACE`; the drill-through enriches from the events route only when
+the pre-existing `SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED` is also on, and
+degrades honestly otherwise (renders from finding-context, or an honest
+"unavailable" state) — it never blocks.
+
+- **Tenant isolation (R5):** My Actions ownership derives from the session
+  identity, never request input; fails closed to empty on missing identity.
+- **Nav guard:** `applicationKnowledgeIndex.test.ts` asserts `/intelligence/[id]`
+  carries `navLabel: null`, appears in no primary-nav destination, and has no
+  `/intelligence` index route — Intelligence Events stay drill-through only (§6).
+- **Test strategy:** pure-helper unit tests (fetcher, resolver, links, tabs, My
+  Actions) + the nav guard. DOM/tab interaction is a documented RTL follow-up —
+  the app has no RTL harness and none was faked.
 
 ### Phase 3.4 — Finding List redesign (executive + analyst framing)
 - **Scope:** executive-framed list (attention tiles: overdue SLA, unassigned, awaiting

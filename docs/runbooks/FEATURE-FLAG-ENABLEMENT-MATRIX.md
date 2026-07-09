@@ -264,7 +264,21 @@ production (no prod enablement without an explicit operator ruling).
 - **Rollback:** `"false"` (guard + alerts off; telemetry log remains).
 - **Dependencies:** `ANTHROPIC_API_KEY` valid (OP-6); `ALERT_WEBHOOK_URL` set for alerts to be visible. Ledger: OP-6/OP-7.
 
+### 1.19 `SECURELOGIC_DECISION_WORKSPACE_ENABLED` (ERIP Package 3 — Decision Workspace)
+- **Purpose:** Gates the Decision Workspace on `/findings/:id` (phases 3.0–3.2b) **and** the P3.3 surfaces: the `/intelligence/[id]` drill-through, the finding→event / Queue reciprocal links, the Remediation tab, and the `/actions`→**My Actions** redirect. Two-switch: the engine gates `GET /api/findings/:id/context` (404 while dark); the app gates the render (flag-off = byte-identical legacy detail + legacy org-wide `/actions` list).
+- **Required services:** **Engine + App** (both must be ON for the workspace to render).
+- **Redeploy/restart:** Yes, Engine + App; no rebuild (runtime var, not `NEXT_PUBLIC`).
+- **Default:** `"false"` (OFF everywhere).
+- **Drill-through dependency (P3.3, three-flag reality):** the **full** app experience additionally needs `SECURELOGIC_RISK_WORKSPACE_ENABLED` ON (the Queue reciprocal link lives in the "Review Suggested Links" reskin branch + the enterprise IA). The `/intelligence/[id]` drill-through renders from finding-context on `DECISION_WORKSPACE` alone, and **enriches** from the canonical event only when the pre-existing `SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED` (§1.3) is ON — degrading honestly (finding-context, or an "unavailable" state) otherwise. It never re-gates or requires that flag.
+- **Staging order:** engine-staging + app-staging (dashboard) → validate per `docs/validation/decision-workspace-staging-validation.md` §P3.3. Optionally add `INTELLIGENCE_EVENTS` for the enriched drill-through.
+- **Production order:** GATE B — after staging validation; not in scope for this package.
+- **Isolation (R5):** My Actions ownership derives from the session identity, never request input.
+- **Guarantee:** Intelligence Events remain **drill-through only** — no primary-nav entry, no `/intelligence` index route (enforced by `applicationKnowledgeIndex.test.ts`).
+- **Rollback:** `"false"` on either service → legacy behavior restored (no data reversal; no migration in P3.3).
+
 ---
+
+> **Note (app flag reads):** §0 row for the App lists the three *legacy* nav flags; the app also reads `SECURELOGIC_RISK_WORKSPACE_ENABLED` (Packages 1/2 nav + queue reskin) and `SECURELOGIC_DECISION_WORKSPACE_ENABLED` (§1.19) server-side.
 
 ## 2. Tier B — Live and operational flags
 

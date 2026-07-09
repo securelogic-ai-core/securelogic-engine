@@ -1,7 +1,8 @@
 # Decision Workspace — Staging Validation Checklist (ERIP Package 3, phases 3.0–3.2b)
 
-Scope: the **Decision Workspace only** (`/findings/:id` with the flag on). Not P3.3/P3.4
-(no `/actions` redirect, no dedicated `/intelligence/[id]` page, no list redesign yet).
+Scope: the **Decision Workspace only** (`/findings/:id` with the flag on). P3.3
+(drill-through, Remediation tab, `/actions`→My Actions) is now SHIPPED dark — see
+**§P3.3** at the end of this doc for its validation steps. P3.4 (list redesign) not yet.
 No code changes — this is an operator checklist. Success criteria at the end.
 
 Subject: `develop` @ `44e963bc` (PRs #560/#561/#562/#563). Behind
@@ -326,3 +327,42 @@ zone + severity (P0 blocker / P1 major / P2 minor / P3 polish).
 
 *Checklist only — no code changed. After staging validation, the operator decides: proceed
 to P3.3, adjust the Decision Workspace, or authorize Package 4.*
+
+---
+
+## §P3.3 — Intelligence drill-through + Remediation tab + /actions (SHIPPED dark, PRs #565–#569)
+
+Subject: `develop` @ P3.3 merge. All dark. No render.yaml change in this package.
+
+### P3.3.0 Flag preconditions (three-flag reality)
+- [ ] **App:** set `SECURELOGIC_RISK_WORKSPACE_ENABLED=true` **and**
+  `SECURELOGIC_DECISION_WORKSPACE_ENABLED=true` on the staging **app** service; restart.
+- [ ] **Engine:** set `SECURELOGIC_DECISION_WORKSPACE_ENABLED=true` on the staging **engine**
+  service; restart. (Baseline — the drill-through renders from finding-context.)
+- [ ] **Optional enrichment:** set `SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED=true` (engine) to
+  serve the fuller canonical event (executive summary, recommended actions, related findings).
+  With it OFF the drill-through must still render (finding-context) or show the honest
+  "intelligence detail unavailable" state — never blank/crash.
+
+### P3.3.1 Drill-through page (`/intelligence/[id]`)
+- [ ] From a signal-sourced finding's **Evidence & intelligence** (Overview tab), the supporting
+  event is a **link** → opens `/intelligence/[id]` with header + sources + timeline.
+- [ ] Flag-OFF control: with `DECISION_WORKSPACE` off, `/intelligence/<any-id>` returns **404**.
+- [ ] There is **no** `/intelligence` index page and **no** "Intelligence" item in the top nav.
+
+### P3.3.2 Clickable Finding→event + Queue reciprocal
+- [ ] Finding Zone E event links carry `?finding=<id>` (back link + fallback work).
+- [ ] In **Review Suggested Links** (queue, workspace on), a row with an intelligence event shows
+  **View intelligence** → the drill-through. Flag-OFF queue is unchanged (no such link).
+
+### P3.3.3 Remediation tab
+- [ ] The finding detail shows **Overview | Remediation** tabs; zones A–C stay above; "Mark
+  reviewed" stays visible. Remediation tab hosts the recommendation + add-action form.
+
+### P3.3.4 /actions → My Actions (R5)
+- [ ] Flag-ON: visiting `/actions` redirects to `/actions?view=mine`; the header reads
+  **My Actions** and lists only actions owned by the signed-in user.
+- [ ] Confirm a second user sees only THEIR actions (no cross-user leak).
+- [ ] Flag-OFF: `/actions` is the unchanged org-wide "Remediation Actions" list.
+
+*Checklist only — no code changed.*
