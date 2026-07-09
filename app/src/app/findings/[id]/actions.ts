@@ -129,6 +129,57 @@ export async function createRemediationAction(
   return {};
 }
 
+// ERIP Package 3 (Decision Workspace) — the BUSINESS DECISION, distinct from the
+// operational status. Flag-gated on the engine; a no-op error when dark.
+export async function updateFindingDecisionStateAction(
+  findingId: string,
+  decisionState: string
+): Promise<{ error?: string }> {
+  const token = await getToken();
+  if (!token) return { error: "Not authenticated" };
+
+  try {
+    const res = await fetch(`${ENGINE_URL}/api/findings/${findingId}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ decision_state: decisionState }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { error: body.error ?? "Failed to update decision" };
+    }
+  } catch {
+    return { error: "Network error" };
+  }
+
+  revalidatePath(`/findings/${findingId}`);
+  return {};
+}
+
+// Records the current user's "last reviewed" marker so the What's-Changed zone
+// shows changes since their previous visit.
+export async function markFindingReviewedAction(findingId: string): Promise<{ error?: string }> {
+  const token = await getToken();
+  if (!token) return { error: "Not authenticated" };
+
+  try {
+    const res = await fetch(`${ENGINE_URL}/api/findings/${findingId}/review`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { error: body.error ?? "Failed to mark reviewed" };
+    }
+  } catch {
+    return { error: "Network error" };
+  }
+
+  revalidatePath(`/findings/${findingId}`);
+  return {};
+}
+
 export async function updateActionStatusAction(
   findingId: string,
   actionId: string,

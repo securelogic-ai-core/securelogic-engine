@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
-import { getFinding, getActionsForFinding, type Finding, type Action } from "@/lib/api";
+import { getFinding, getActionsForFinding, getFindingContext, type Finding, type Action } from "@/lib/api";
 import { ActionCard } from "@/components/ActionCard";
 import { AddActionForm } from "./AddActionForm";
+import { DecisionWorkspace } from "./DecisionWorkspace";
 import {
   updateFindingStatusAction,
   updateFindingPriorityAction,
@@ -338,6 +339,28 @@ export default async function FindingDetailPage({
 
   const finding = findingData.finding;
   const actions = actionsData?.actions ?? [];
+
+  // ERIP Package 3 (Decision Workspace) — DARK. When the flag is on AND the engine
+  // returns a context (its own flag on too — two-switch), render the Decision
+  // Workspace. Otherwise fall through to the unchanged legacy detail below
+  // (byte-identical flag-off).
+  if (process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true") {
+    const context = await getFindingContext(token, id);
+    if (context) {
+      return (
+        <div className="max-w-6xl mx-auto px-6 py-12">
+          <DecisionWorkspace finding={finding} context={context}>
+            {finding.recommendation && (
+              <p className="text-sm mb-4" style={{ color: "#cbd5e1", whiteSpace: "pre-wrap" }}>
+                {finding.recommendation}
+              </p>
+            )}
+            <RemediationActionsSection finding={finding} actions={actions} />
+          </DecisionWorkspace>
+        </div>
+      );
+    }
+  }
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-12">
