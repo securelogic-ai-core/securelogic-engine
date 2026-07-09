@@ -140,3 +140,30 @@ Carried from Epic 1 (rulings recorded in the EAR tracker; not blockers):
 - **App RTL harness (test follow-up):** the Next app has no React Testing Library
   harness, so P3.3 DOM/tab-interaction behavior is covered by pure-helper unit
   tests + manual staging validation. Add an RTL harness to close the gap.
+
+### ERIP Launch Readiness — deferred customer-facing UX (SHIPPED dark, 2026-07-09)
+
+Operator-directed closure of the deferred customer-facing ERIP UX so the platform
+reads as enterprise decision support, not raw lists/queues. All dark; flag-off
+byte-identical. No schema/migration/render.yaml; no new engine routes (all reuse
+existing endpoints).
+
+| Item | Status | PR | Flag | Notes |
+|---|---|---|---|---|
+| Findings → decision queue | **DONE (dark)** | #571 | `RISK_WORKSPACE` | Attention tiles (overdue SLA / unassigned / High&Critical open / open total) + urgency grouping; header reframe. Rows link into the Decision Workspace. Pure `decisionQueue.ts`. |
+| Brief → Decision flow | **DONE (dark)** | #572 | `DECISION_WORKSPACE` | Brief item resolves the org's finding for its `cyber_signal_id` via existing `getFindings({source_id})` (tenant-safe); links to the Workspace or "Review suggested links". Closes D5 without the signal→event bridge. |
+| Source-aware Workspace empty states + recommendations | **DONE (dark)** | #573 | `DECISION_WORKSPACE` | Zone E + recommendation copy now explain absence by finding source. Pure `findingSourceCopy.ts`. |
+| Review Suggested Links (plain language, confidence, why-matched, no raw IDs, accept/dismiss) | **DONE (dark)** | Pkg 1/2 (#559) | `RISK_WORKSPACE` | Already shipped. Raw IDs / matcher terms remain ONLY in the flag-OFF legacy branch (removing them there would break byte-identity) — removed by enabling the flag. |
+| Queue bulk accept/dismiss | **DEFERRED (optional)** | — | — | "If practical" — would need a bulk engine endpoint; not built (no engine change). |
+| Actions integrated into Findings | **DONE (dark)** | #568/#569 | `DECISION_WORKSPACE` | Remediation tab + `/actions`→My Actions (session-scoped). |
+| Intelligence Events drill-through only | **DONE + guarded** | #566/#570 | `DECISION_WORKSPACE` | Nav guard test; no primary-nav, no index route. |
+
+**Operator actions to make launch-readiness VISIBLE (ledgered, NOT executed — dark by governance):**
+staging-first, then GATE B for prod:
+- **App:** `SECURELOGIC_RISK_WORKSPACE_ENABLED=true` (Findings decision queue, nav IA,
+  Review Suggested Links) **and** `SECURELOGIC_DECISION_WORKSPACE_ENABLED=true`
+  (Decision Workspace, Brief→decision, source-aware states).
+- **Engine:** `SECURELOGIC_DECISION_WORKSPACE_ENABLED=true`; optionally
+  `SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED=true` to enrich the drill-through.
+- Until these are enabled, every surface stays byte-identical to today (dark-launch
+  design) — the code is complete; visibility is an operator flag flip.
