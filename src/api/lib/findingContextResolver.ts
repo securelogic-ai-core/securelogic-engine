@@ -37,7 +37,7 @@ export interface FindingAffectedEntity {
 }
 
 export interface FindingContext {
-  finding: { id: string; source_type: string; source_id: string | null };
+  finding: { id: string; source_type: string; source_id: string | null; decision_state: string };
   risk: FindingRiskScore;
   business_impact: BusinessImpact;
   owner: { id: string; email: string } | null;
@@ -116,7 +116,7 @@ export async function resolveFindingContext(
   opts: { since?: string | null } = {}
 ): Promise<FindingContext | null> {
   const f = await client.query(
-    `SELECT id, source_type, source_id, owner_user_id, severity, priority, confidence
+    `SELECT id, source_type, source_id, owner_user_id, severity, priority, confidence, decision_state
        FROM findings
       WHERE id = $1 AND organization_id = $2`,
     [findingId, organizationId]
@@ -286,7 +286,12 @@ export async function resolveFindingContext(
     : [];
 
   return {
-    finding: { id: finding.id, source_type: finding.source_type, source_id: finding.source_id },
+    finding: {
+      id: finding.id,
+      source_type: finding.source_type,
+      source_id: finding.source_id,
+      decision_state: finding.decision_state,
+    },
     risk,
     business_impact,
     owner,

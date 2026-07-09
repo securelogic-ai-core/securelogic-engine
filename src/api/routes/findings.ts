@@ -42,6 +42,14 @@ const VALID_SOURCE_TYPES = new Set([
 ]);
 const VALID_PRIORITIES = new Set(["immediate", "near_term", "planned", "watch"]);
 const VALID_PATCH_STATUSES = new Set(["open", "in_progress", "closed", "accepted"]);
+// ERIP P3.2a — the BUSINESS DECISION, distinct from the operational status above.
+const VALID_DECISION_STATES = new Set([
+  "needs_review",
+  "accepted_risk",
+  "in_progress",
+  "mitigating",
+  "resolved",
+]);
 
 function parseLimit(value: unknown): number {
   const parsed = Number(String(value ?? "").trim());
@@ -625,7 +633,19 @@ router.get(
       }
 
       const sinceRaw = req.query["since"];
-      const since = typeof sinceRaw === "string" && !Number.isNaN(Date.parse(sinceRaw)) ? sinceRaw : null;
+      let since = typeof sinceRaw === "string" && !Number.isNaN(Date.parse(sinceRaw)) ? sinceRaw : null;
+
+      // What's-Changed (P3.2a): default the marker to THIS user's last review of
+      // this finding when the caller didn't pass an explicit ?since.
+      const userId = (req.userId as string | undefined) ?? null;
+      if (since === null && userId) {
+        const mark = await pg.query(
+          `SELECT last_reviewed_at FROM finding_review_marks
+            WHERE organization_id = $1 AND finding_id = $2 AND user_id = $3`,
+          [organizationId, findingId, userId]
+        );
+        if ((mark.rowCount ?? 0) > 0) since = new Date(mark.rows[0].last_reviewed_at).toISOString();
+      }
 
       const context = await resolveFindingContext(pg, organizationId, findingId, { since });
       if (context === null) {
@@ -640,6 +660,74 @@ router.get(
         "GET /api/findings/:id/context failed"
       );
       res.status(500).json({ error: "finding_context_failed" });
+    }
+  })
+);
+
+/* =========================================================
+   POST /api/findings/:id/review
+   ERIP Package 3 (Decision Workspace), Phase 3.2a — DARK.
+   Upserts the current user's "last reviewed" marker for this
+   finding so the What's-Changed zone can show changes since the
+   user's own previous review. 404s when the finding is not in the
+   org OR the flag is off. Requires a user identity (JWT); API-key-
+   only callers get 400 (no user to mark for).
+   ========================================================= */
+
+router.post(
+  "/findings/:id/review",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  asTenant(async (req, res) => {
+    try {
+      if (process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED !== "true") {
+        res.status(404).json({ error: "finding_review_not_found" });
+        return;
+      }
+
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const findingId = String(req.params["id"] ?? "").trim();
+      if (!isUuid(findingId)) {
+        res.status(400).json({ error: "finding_id_must_be_uuid" });
+        return;
+      }
+
+      const userId = (req.userId as string | undefined) ?? null;
+      if (!userId) {
+        res.status(400).json({ error: "review_requires_user_identity" });
+        return;
+      }
+
+      // Pre-flight: the finding must be in this org (avoids marking a foreign id).
+      const exists = await pg.query(
+        `SELECT 1 FROM findings WHERE id = $1 AND organization_id = $2`,
+        [findingId, organizationId]
+      );
+      if ((exists.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "finding_not_found" });
+        return;
+      }
+
+      const upsert = await pg.query(
+        `INSERT INTO finding_review_marks (organization_id, finding_id, user_id, last_reviewed_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (organization_id, finding_id, user_id)
+         DO UPDATE SET last_reviewed_at = NOW(), updated_at = NOW()
+         RETURNING last_reviewed_at`,
+        [organizationId, findingId, userId]
+      );
+
+      res.status(200).json({ reviewed_at: upsert.rows[0].last_reviewed_at });
+    } catch (err) {
+      logger.error({ event: "finding_review_failed", err }, "POST /api/findings/:id/review failed");
+      res.status(500).json({ error: "finding_review_failed" });
     }
   })
 );
@@ -726,6 +814,18 @@ router.patch(
         updates.push(`due_date = $${values.length}`);
       }
 
+      // ERIP P3.2a — decision_state (business decision). Dark: only accepted when
+      // the Decision Workspace flag is on, so flag-off PATCH behaviour is unchanged.
+      if (process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true" && "decision_state" in body) {
+        const ds = body["decision_state"];
+        if (!isNonEmptyString(ds) || !VALID_DECISION_STATES.has(ds)) {
+          res.status(400).json({ error: "invalid_decision_state", allowed: [...VALID_DECISION_STATES] });
+          return;
+        }
+        values.push(ds);
+        updates.push(`decision_state = $${values.length}`);
+      }
+
       if (updates.length === 0) {
         res.status(400).json({
           error: "no_updateable_fields",
@@ -747,7 +847,7 @@ router.patch(
           AND organization_id = $${orgParam}
         RETURNING
           id, organization_id, source_type, title, severity,
-          domain, priority, status, owner_user_id, updated_at
+          domain, priority, status, decision_state, owner_user_id, updated_at
         `,
         values
       );

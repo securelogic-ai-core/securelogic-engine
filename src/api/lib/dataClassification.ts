@@ -145,6 +145,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   dependency_assessments: { category: "C", userRefColumns: ["reviewer_uuid", "reviewer_id"], piiRisk: "high", rlsStatus: "enabled", specialHandling: "Deprecated TEXT reviewer_id may hold a raw email/name." },
   assessments: { category: "C", userRefColumns: ["created_by"], piiRisk: "high", rlsStatus: "enabled" },
   findings: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "enabled" },
+  finding_review_marks: { category: "C", userRefColumns: ["user_id"], piiRisk: "low", rlsStatus: "enabled", specialHandling: "Per-user 'last reviewed' marker for the Decision Workspace What's-Changed zone (ERIP P3.2a). CASCADE on finding + user delete." },
   actions: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "pending" },
   signal_match_suggestions: { category: "C", userRefColumns: ["accepted_by_user_id", "dismissed_by_user_id"], piiRisk: "medium", rlsStatus: "enabled", specialHandling: "assessment_id (nullable, 20260730) links a suggestion to the WORM applicability_assessments decision that produced it (ECL R2 dispatcher); matcher-written rows leave it NULL. No user data in the new column." },
   signal_vendor_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
