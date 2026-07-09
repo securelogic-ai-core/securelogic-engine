@@ -124,16 +124,23 @@ export default async function FindingsPage({
     (sp.status && sp.status !== "all")
   );
 
+  // Enterprise decision-queue framing (ERIP) — DARK, SECURELOGIC_RISK_WORKSPACE_ENABLED.
+  // When on, Findings reads as a "what requires action now" decision queue
+  // (attention tiles + urgency grouping in FindingsList). Off = unchanged list.
+  const workspace = process.env.SECURELOGIC_RISK_WORKSPACE_ENABLED === "true";
+
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 mb-8 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold mb-1" style={{ color: "#f1f5f9" }}>
-            Findings
+            {workspace ? "Risk Findings" : "Findings"}
           </h1>
           <p className="text-sm" style={{ color: "#94a3b8" }}>
-            All findings across your organization
+            {workspace
+              ? "Your decision queue — what requires action now, most urgent first"
+              : "All findings across your organization"}
           </p>
         </div>
         <Link
@@ -267,7 +274,7 @@ export default async function FindingsPage({
       </div>
 
       {/* Findings list */}
-      <FindingsList findings={findings} hasFilters={hasFilters} />
+      <FindingsList findings={findings} hasFilters={hasFilters} workspace={workspace} />
     </div>
   );
 }
