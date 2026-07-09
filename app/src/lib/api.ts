@@ -1944,6 +1944,54 @@ export async function getFinding(
   }
 }
 
+// ─── Decision Workspace (ERIP Package 3) ─────────────────────────────────────
+// The engine 404s /api/findings/:id/context while SECURELOGIC_DECISION_WORKSPACE_ENABLED
+// is off, so getFindingContext returns null → the page renders the legacy detail.
+
+export type FindingAffectedEntity = { type: string; id: string; name: string };
+export type FindingImpactDimension = { level: string; note: string };
+export type FindingContext = {
+  finding: { id: string; source_type: string; source_id: string | null; decision_state: string };
+  risk: { score: number; band: string; rationale: string[] };
+  business_impact: {
+    revenue: FindingImpactDimension;
+    operational: FindingImpactDimension;
+    regulatory: FindingImpactDimension;
+    customer: FindingImpactDimension;
+    third_party: FindingImpactDimension;
+  };
+  owner: { id: string; email: string } | null;
+  affected: {
+    vendors: FindingAffectedEntity[];
+    ai_systems: FindingAffectedEntity[];
+    controls: FindingAffectedEntity[];
+    obligations: FindingAffectedEntity[];
+  };
+  intelligence: {
+    events: Array<Record<string, unknown>>;
+    sources: Array<Record<string, unknown>>;
+    timeline: Array<Record<string, unknown>>;
+  };
+  evidence: Array<Record<string, unknown>>;
+  related_findings: Array<{ id: string; title: string; severity: string; status: string }>;
+  activity: Array<{ event_type: string; created_at: string; payload: unknown }>;
+  whats_changed: { since: string | null; changes: Array<{ label: string; at: string }> };
+};
+
+export async function getFindingContext(
+  apiKey: string,
+  id: string
+): Promise<FindingContext | null> {
+  try {
+    const res = await engineFetch(`/api/findings/${encodeURIComponent(id)}/context`, apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { context: FindingContext };
+    return body.context;
+  } catch {
+    return null;
+  }
+}
+
 export async function getActionsForFinding(
   apiKey: string,
   findingId: string
