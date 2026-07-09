@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
 import { getSession } from "@/lib/session";
-import { getIntelligenceBrief } from "@/lib/api";
+import { getIntelligenceBrief, getFindings } from "@/lib/api";
+import { briefDecisionAffordance, shouldResolveBriefDecision, type BriefDecisionAffordance } from "./briefDecision";
 import type {
   IntelligenceBriefDetailResponse,
   IntelligenceBriefItem,
@@ -211,6 +212,18 @@ export default async function SignalDetailPage({ params }: Props) {
   const showSource = hasAnySource(item);
   const analysis = findAnalysisInContentJson(brief.content_json, item);
 
+  // Brief → Decision flow (ERIP) — DARK, SECURELOGIC_DECISION_WORKSPACE_ENABLED.
+  // When on, resolve the org's finding for this item's signal and route the
+  // reader into the Decision Workspace (or Review Suggested Links if none yet).
+  // The lookup is org-scoped by the caller's token (tenant-safe). Flag-off shows
+  // no affordance (byte-identical brief item).
+  const workspace = process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true";
+  let decision: BriefDecisionAffordance | null = null;
+  if (shouldResolveBriefDecision(workspace, item.cyber_signal_id)) {
+    const related = await getFindings(token, { source_id: item.cyber_signal_id!, limit: 1 });
+    decision = briefDecisionAffordance(related?.findings?.[0] ?? null);
+  }
+
   return (
     <div className="min-h-screen bg-brand-bg">
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -272,6 +285,37 @@ export default async function SignalDetailPage({ params }: Props) {
                     </li>
                   ))}
                 </ol>
+              </section>
+            )}
+
+            {/* Brief → Decision (ERIP, dark). Routes the reader into action. */}
+            {decision && (
+              <section className="mb-6">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
+                  Decision
+                </p>
+                {decision.state === "linked" ? (
+                  <Link
+                    href={decision.href}
+                    className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold"
+                    style={{ background: "rgba(0,196,180,0.12)", color: "#00c4b4", border: "1px solid rgba(0,196,180,0.4)" }}
+                  >
+                    Open the Decision Workspace for this finding →
+                  </Link>
+                ) : (
+                  <div className="text-sm text-slate-300 leading-relaxed max-w-prose">
+                    <p className="mb-2">
+                      No finding has been linked to this intelligence for your organization yet.
+                    </p>
+                    <Link
+                      href={decision.href}
+                      className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold"
+                      style={{ background: "rgba(148,163,184,0.1)", color: "#93c5fd", border: "1px solid #334155" }}
+                    >
+                      Review suggested links →
+                    </Link>
+                  </div>
+                )}
               </section>
             )}
 
