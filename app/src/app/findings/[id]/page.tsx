@@ -5,6 +5,7 @@ import { getFinding, getActionsForFinding, getFindingContext, type Finding, type
 import { ActionCard } from "@/components/ActionCard";
 import { AddActionForm } from "./AddActionForm";
 import { DecisionWorkspace } from "./DecisionWorkspace";
+import { recommendationEmptyCopy } from "./findingSourceCopy";
 import {
   updateFindingStatusAction,
   updateFindingPriorityAction,
@@ -350,9 +351,13 @@ export default async function FindingDetailPage({
       return (
         <div className="max-w-6xl mx-auto px-6 py-12">
           <DecisionWorkspace finding={finding} context={context}>
-            {finding.recommendation && (
+            {finding.recommendation ? (
               <p className="text-sm mb-4" style={{ color: "#cbd5e1", whiteSpace: "pre-wrap" }}>
                 {finding.recommendation}
+              </p>
+            ) : (
+              <p className="text-sm mb-4" style={{ color: "#64748b" }}>
+                {recommendationEmptyCopy(finding.source_type)}
               </p>
             )}
             <RemediationActionsSection finding={finding} actions={actions} />
