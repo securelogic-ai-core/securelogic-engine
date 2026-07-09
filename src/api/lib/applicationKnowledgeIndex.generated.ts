@@ -581,6 +581,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "all"
     },
     {
+      "path": "/intelligence/[id]",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
       "path": "/login",
       "dynamic": false,
       "navLabel": null,
