@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { filterMyActions, myActionsRedirect, isMyActionsView } from "../myActions";
+import { filterMyActions, myActionsRedirect, isMyActionsView, actionScope } from "../myActions";
 
 type A = { owner_user_id: string | null; id: string };
 const rows: A[] = [
@@ -41,8 +41,13 @@ describe("myActionsRedirect", () => {
     expect(myActionsRedirect(true, "")).toBe("/actions?view=mine");
   });
 
-  it("does not redirect once already on ?view=mine", () => {
+  it("does not redirect once already on a recognized scope (mine or team)", () => {
     expect(myActionsRedirect(true, "mine")).toBeNull();
+    expect(myActionsRedirect(true, "team")).toBeNull();
+  });
+
+  it("redirects an unrecognized view to the canonical My Actions form", () => {
+    expect(myActionsRedirect(true, "everything")).toBe("/actions?view=mine");
   });
 
   it("never redirects while the workspace is dark (legacy list preserved)", () => {
@@ -51,9 +56,19 @@ describe("myActionsRedirect", () => {
   });
 });
 
+describe("actionScope", () => {
+  it("recognizes mine and team only", () => {
+    expect(actionScope("mine")).toBe("mine");
+    expect(actionScope("team")).toBe("team");
+    expect(actionScope(undefined)).toBeNull();
+    expect(actionScope("nope")).toBeNull();
+  });
+});
+
 describe("isMyActionsView", () => {
-  it("is true only when the workspace is on AND view=mine", () => {
+  it("is true when the workspace is on AND view is a recognized scope", () => {
     expect(isMyActionsView(true, "mine")).toBe(true);
+    expect(isMyActionsView(true, "team")).toBe(true);
     expect(isMyActionsView(true, undefined)).toBe(false);
     expect(isMyActionsView(false, "mine")).toBe(false);
   });
