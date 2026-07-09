@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LogoutButton } from "./LogoutButton";
 import UserMenu from "./UserMenu";
-import { NAV_ITEMS, filterNav, type NavFlags, type NavItem } from "@/lib/navigation";
+import { getNavItems, filterNav, type NavFlags } from "@/lib/navigation";
 import { getSiteBaseUrl } from "@/lib/siteUrl";
 
 // Marketing-site base for the logo/home link. Env-aware + build-time — see
@@ -14,9 +14,10 @@ const SITE_URL = getSiteBaseUrl();
 
 // ─── Nav config ───────────────────────────────────────────────────────────────
 
-// NAV_ITEMS, filterNav, and the NavItem type are imported from
-// `@/lib/navigation` (the single source of truth shared with the Application
-// Knowledge Index generator).
+// getNavItems (legacy vs risk-workspace model), filterNav, and the NavItem type
+// come from `@/lib/navigation` (the single source of truth shared with the
+// Application Knowledge Index generator). getNavItems picks the workspace IA when
+// the risk_workspace flag is on; otherwise the legacy menu, byte-for-byte.
 
 // ─── Inline chevron (no icon-lib dependency) ──────────────────────────────────
 
@@ -186,7 +187,10 @@ export function Header({
     return () => document.removeEventListener("click", handleClick);
   }, [mobileOpen]);
 
-  const visibleNav = filterNav(NAV_ITEMS, isPlatformUser, isPremiumUser, isAdminUser, navFlags);
+  const visibleNav = filterNav(getNavItems(navFlags), isPlatformUser, isPremiumUser, isAdminUser, navFlags);
+  // When the workspace IA is on, Ask leaves the primary nav and lives in the user
+  // menu (demoted, not removed). Ask is a platform-tier surface.
+  const showAskInMenu = navFlags?.risk_workspace === true && isPlatformUser;
 
   return (
     <header className="relative sticky top-0 z-50 bg-navy-900/95 backdrop-blur-md border-b border-slate-800 shadow-[0_1px_0_rgba(255,255,255,0.06),0_4px_24px_rgba(0,0,0,0.5)]">
@@ -232,6 +236,7 @@ export function Header({
                   organizationName={organizationName}
                   isPlatformUser={isPlatformUser}
                   isSsoEligible={isSsoEligible}
+                  showAskLink={showAskInMenu}
                 />
               ) : (
                 <>
@@ -316,6 +321,11 @@ export function Header({
                   );
                 })}
                 <div className="mt-2 pt-2" style={{ borderTop: "1px solid #1e293b" }}>
+                  {showAskInMenu && (
+                    <Link href="/ask" onClick={closeMobile} className="block py-2 px-3 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors">
+                      Ask SecureLogic
+                    </Link>
+                  )}
                   <Link href="/account" onClick={closeMobile} className="block py-2 px-3 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors">
                     Account
                   </Link>

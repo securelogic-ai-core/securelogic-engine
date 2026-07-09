@@ -27,7 +27,15 @@
  * flag is off. The server layout resolves the env flag and threads it through the
  * (client) Header, since client components can't read non-NEXT_PUBLIC env vars.
  */
-export type NavFeatureFlag = "enterprise_context" | "asset_registry" | "risk_intelligence";
+export type NavFeatureFlag =
+  | "enterprise_context"
+  | "asset_registry"
+  | "risk_intelligence"
+  // Enterprise Risk Workspace IA/nav (ERIP Packages 1+2) — DARK (default off).
+  // When on, `getNavItems` returns WORKSPACE_NAV_ITEMS (the enterprise-workflow
+  // information architecture: Intelligence / Risk Operations / Assets / Compliance)
+  // instead of the legacy NAV_ITEMS. Flag off is byte-for-byte the legacy header.
+  | "risk_workspace";
 export type NavFlags = Partial<Record<NavFeatureFlag, boolean>>;
 
 export type NavItem =
@@ -53,6 +61,13 @@ export type NavItem =
         href: string;
         featureFlag?: NavFeatureFlag;
         hiddenByFlag?: NavFeatureFlag;
+        // Optional per-child entitlement gating, mirroring the link-level flags.
+        // Legacy NAV_ITEMS children set none of these (so behavior is unchanged);
+        // WORKSPACE_NAV_ITEMS uses them to keep, e.g., "Review Links" platform-only
+        // inside an Intelligence group that must stay visible to Brief-tier users.
+        platform?: boolean;
+        premium?: boolean;
+        admin?: boolean;
       }>;
     };
 
@@ -102,6 +117,74 @@ export const NAV_ITEMS: NavItem[] = [
   { type: "link", label: "Audit Log", href: "/audit-log", admin: true },
 ];
 
+// ─── Enterprise Risk Workspace nav (ERIP Packages 1+2) ────────────────────────
+//
+// The Finding-centric / Asset-context information architecture, organized around
+// the enterprise workflow (Intelligence → Risk Operations → Assets → Compliance)
+// rather than the implementation surface. Selected by `getNavItems` ONLY when the
+// `risk_workspace` flag is on; otherwise the legacy NAV_ITEMS above is returned
+// byte-for-byte (GATE B — flag-off is unchanged).
+//
+// Design decisions realized here (see ENTERPRISE-RISK-WORKSPACE-AUDIT.md §5.3):
+//   - "Intelligence" gathers the funnel INTO findings: Briefs (ungated — the
+//     wedge, must stay visible to Brief-tier) + "Review Links" (the reskinned
+//     matcher queue, platform-only via per-child gating).
+//   - "Risk Operations" is the Finding work hub (Findings first) and surfaces
+//     Approvals, which is otherwise reachable only from a /risks back-link.
+//   - "Assets" surfaces Vendor Assurance (otherwise nav-orphaned) and keeps the
+//     EAR asset_registry canonical-entry behavior (EAR-AD-1) unchanged.
+//   - Ask is NOT here — it is demoted to the user menu (Header → UserMenu) until
+//     it becomes a core workflow. Its /ask route stays fully reachable.
+// NOTE: Package 3 (page merges) and Package 4 (workflow convergence) are NOT in
+// scope — Actions and both Vendor pages remain distinct items.
+export const WORKSPACE_NAV_ITEMS: NavItem[] = [
+  { type: "link", label: "Dashboard", href: "/dashboard" },
+  { type: "link", label: "Executive", href: "/executive", platform: true, featureFlag: "risk_intelligence" },
+  { type: "group", label: "Intelligence",
+    items: [
+      { label: "Briefs",       href: "/briefs" },
+      { label: "Review Links", href: "/queue", platform: true },
+    ],
+  },
+  { type: "group", label: "Risk Operations", platform: true,
+    items: [
+      { label: "Findings",      href: "/findings" },
+      { label: "Actions",       href: "/actions" },
+      { label: "Risk Register", href: "/risks" },
+      { label: "Approvals",     href: "/approvals" },
+    ],
+  },
+  { type: "group", label: "Assets", platform: true,
+    items: [
+      { label: "Asset Registry",   href: "/assets",                   featureFlag: "asset_registry" },
+      { label: "Vendors",          href: "/vendors",                  hiddenByFlag: "asset_registry" },
+      { label: "AI Systems",       href: "/ai-systems",               hiddenByFlag: "asset_registry" },
+      { label: "Vendor Assurance", href: "/vendor-assurance/queue" },
+    ],
+  },
+  { type: "group", label: "Compliance", platform: true,
+    items: [
+      { label: "Controls",    href: "/controls" },
+      { label: "Frameworks",  href: "/frameworks" },
+      { label: "Policies",    href: "/policies" },
+      { label: "Obligations", href: "/obligations" },
+    ],
+  },
+  { type: "link", label: "Context", href: "/enterprise-context", platform: true, featureFlag: "enterprise_context" },
+  { type: "link", label: "Audit Log", href: "/audit-log", admin: true },
+];
+
+/**
+ * The nav model to render. Returns the enterprise workspace IA when the
+ * `risk_workspace` flag is on, else the legacy NAV_ITEMS byte-for-byte.
+ * `filterNav` (entitlement + per-item feature flags) is still applied on top by
+ * the caller. The Application Knowledge Index generator reads NAV_ITEMS directly
+ * (the live, flag-off menu), so it is intentionally unaffected while dark.
+ */
+export function getNavItems(flags?: NavFlags): NavItem[] {
+  return flags?.risk_workspace ? WORKSPACE_NAV_ITEMS : NAV_ITEMS;
+}
+
 export function filterNav(
   items: NavItem[],
   isPlatformUser: boolean,
@@ -126,6 +209,11 @@ export function filterNav(
       const visibleItems = item.items.filter(c => {
         if (c.featureFlag && flags?.[c.featureFlag] !== true) return false;
         if (c.hiddenByFlag && flags?.[c.hiddenByFlag] === true) return false;
+        // Per-child entitlement gating (optional; legacy children set none of
+        // these so this is a no-op for the legacy nav).
+        if (c.platform && !isPlatformUser) return false;
+        if (c.premium && !isPremiumUser) return false;
+        if (c.admin && !isAdminUser) return false;
         return true;
       });
       if (visibleItems.length === 0) continue;

@@ -11,6 +11,11 @@ interface Props {
   isPlatformUser?: boolean;
   /** Show SSO settings link for professional+ orgs */
   isSsoEligible?: boolean;
+  /**
+   * Show an "Ask SecureLogic" link. Set when the risk-workspace IA is on, which
+   * demotes Ask out of the primary header into this menu (still reachable).
+   */
+  showAskLink?: boolean;
 }
 
 function RoleBadge({ role }: { role: string }) {
@@ -37,7 +42,7 @@ function RoleBadge({ role }: { role: string }) {
   );
 }
 
-export default function UserMenu({ name, email, role, organizationName, isPlatformUser, isSsoEligible }: Props) {
+export default function UserMenu({ name, email, role, organizationName, isPlatformUser, isSsoEligible, showAskLink }: Props) {
   const [open, setOpen]   = useState(false);
   const menuRef           = useRef<HTMLDivElement>(null);
   const initial           = (name || email || "?").charAt(0).toUpperCase();
@@ -108,6 +113,11 @@ export default function UserMenu({ name, email, role, organizationName, isPlatfo
 
           {/* Nav links */}
           <div style={{ padding: "6px 0" }}>
+            {showAskLink && (
+              <MenuLink href="/ask" onClick={() => setOpen(false)}>
+                Ask SecureLogic
+              </MenuLink>
+            )}
             <MenuLink href="/account" onClick={() => setOpen(false)}>
               Account
             </MenuLink>

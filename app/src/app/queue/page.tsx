@@ -33,6 +33,12 @@ const SORT_LABEL: Record<"created-desc" | "score-desc", string> = {
   "score-desc":   "Highest score first",
 };
 
+// Workspace reskin avoids the raw "score" term in favor of "confidence".
+const WORKSPACE_SORT_LABEL: Record<"created-desc" | "score-desc", string> = {
+  "created-desc": "Newest first",
+  "score-desc":   "Highest confidence first",
+};
+
 function isTargetType(v: string | undefined): v is SignalMatchTargetType {
   return v !== undefined && (TARGET_TYPES as readonly string[]).includes(v);
 }
@@ -60,6 +66,12 @@ export default async function QueuePage({
   const isPlatformUser = ["premium", "platform", "team"].includes(entitlementLevel);
   if (!isPlatformUser) redirect("/dashboard");
 
+  // Enterprise Risk Workspace reskin (ERIP Package 1/2) — DARK (default off).
+  // When on, this page presents as "Review Suggested Links" in plain business
+  // language (no "matcher", no raw signal IDs or match_reason codes). Off = the
+  // legacy "Matcher queue", byte-for-byte. The engine query is unchanged either way.
+  const workspace = process.env.SECURELOGIC_RISK_WORKSPACE_ENABLED === "true";
+
   const sp = await searchParams;
   const targetFilter = isTargetType(sp.target_type) ? sp.target_type : undefined;
   const sort = isSort(sp.sort) ? sp.sort : "created-desc";
@@ -78,9 +90,12 @@ export default async function QueuePage({
     getSignalMatchSuggestionCounts(token),
   ]);
 
-  // The list/counts endpoints don't (yet) join entity-name or signal-title.
-  // We pass the raw rows through as EnrichedSuggestion-compatible shapes;
-  // when a future package adds server-side enrichment, replace this map.
+  // The engine list endpoint already enriches each row with target_name and the
+  // canonical Intelligence Event fields (event_title/severity/confidence/
+  // canonical_key) via SUGGESTION_ENRICHED_SELECT. Those extra keys ride through
+  // this spread at runtime; the workspace "Review Suggested Links" layout consumes
+  // them (the legacy layout ignores them and still reads the absent signal_* names,
+  // preserving its byte-for-byte flag-off behavior).
   const suggestions: EnrichedSuggestion[] = (listData?.suggestions ?? []).map(
     (s) => ({ ...s })
   );
@@ -111,12 +126,12 @@ export default async function QueuePage({
       }}
     >
       <h2 style={{ fontSize: 18, color: "#e5e7eb", marginBottom: 8 }}>
-        No suggestions yet
+        {workspace ? "Nothing to review yet" : "No suggestions yet"}
       </h2>
       <p style={{ fontSize: 14, lineHeight: 1.6, maxWidth: 480, margin: "0 auto" }}>
-        The matcher hasn&apos;t produced any suggested links between external
-        signals and your vendors, AI systems, controls, or obligations yet.
-        New suggestions appear here as the matcher runs.
+        {workspace
+          ? "SecureLogic hasn't found any links between external intelligence and your vendors, AI systems, controls, or obligations yet. Suggested links appear here as new intelligence arrives."
+          : "The matcher hasn't produced any suggested links between external signals and your vendors, AI systems, controls, or obligations yet. New suggestions appear here as the matcher runs."}
       </p>
     </div>
   ) : (
@@ -130,7 +145,9 @@ export default async function QueuePage({
       }}
     >
       <p style={{ fontSize: 14 }}>
-        No pending suggestions match the current filters.
+        {workspace
+          ? "No suggested links match the current filters."
+          : "No pending suggestions match the current filters."}
         {filtersActive ? (
           <>
             {" "}
@@ -162,12 +179,17 @@ export default async function QueuePage({
       <div className="mb-6 flex items-baseline justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>
-            Matcher queue
+            {workspace ? "Review Suggested Links" : "Matcher queue"}
           </h1>
           <p className="text-sm mt-1" style={{ color: "#94a3b8" }}>
-            Pending suggested links between external signals and your
-            entities. Accept to create the link, dismiss to ignore.
-            {totalPending > 0 ? ` ${totalPending} pending.` : ""}
+            {workspace
+              ? "SecureLogic found possible links between external intelligence and your vendors, AI systems, controls, and obligations. Accept to confirm a link, or dismiss it."
+              : "Pending suggested links between external signals and your entities. Accept to create the link, dismiss to ignore."}
+            {totalPending > 0
+              ? workspace
+                ? ` ${totalPending} to review.`
+                : ` ${totalPending} pending.`
+              : ""}
           </p>
         </div>
       </div>
@@ -240,7 +262,7 @@ export default async function QueuePage({
                   background: sort === key ? "rgba(255,255,255,0.06)" : "transparent",
                 }}
               >
-                {SORT_LABEL[key]}
+                {(workspace ? WORKSPACE_SORT_LABEL : SORT_LABEL)[key]}
               </Link>
             );
           })}
@@ -250,6 +272,7 @@ export default async function QueuePage({
       <SuggestionList
         initialSuggestions={suggestions}
         emptyState={emptyState}
+        workspace={workspace}
       />
 
       {totalPending > PAGE_SIZE && (
