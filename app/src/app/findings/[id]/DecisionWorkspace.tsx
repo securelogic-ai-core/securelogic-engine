@@ -10,11 +10,12 @@
  * the flag-off page is the unchanged legacy detail (byte-identical).
  */
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Finding, Action, FindingContext, FindingImpactDimension } from "@/lib/api";
 import { intelligenceEventHref, findingEventId } from "@/lib/intelligenceLinks";
+import { DECISION_TABS, DEFAULT_DECISION_TAB, type DecisionTab } from "./decisionTabs";
 import {
   updateFindingStatusAction,
   updateFindingPriorityAction,
@@ -133,6 +134,7 @@ export function DecisionWorkspace({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const [tab, setTab] = useState<DecisionTab>(DEFAULT_DECISION_TAB);
   const run = (fn: () => Promise<{ error?: string }>) =>
     start(async () => {
       const r = await fn();
@@ -240,12 +242,43 @@ export function DecisionWorkspace({
         </div>
       </div>
 
-      {/* ZONE F — Recommendation & action (always visible; composed server-side) */}
-      <div style={CARD}>
-        <div style={H}>Recommendation & action</div>
-        {children}
+      {/* Tab strip — executive zones A–C stay above; the detail body splits into
+          Overview (context) and Remediation (recommendation + actions). */}
+      <div role="tablist" style={{ display: "flex", gap: 4, borderBottom: "1px solid #1e293b" }}>
+        {DECISION_TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            onClick={() => setTab(t.id)}
+            style={{
+              background: "transparent",
+              border: "none",
+              borderBottom: tab === t.id ? "2px solid #93c5fd" : "2px solid transparent",
+              color: tab === t.id ? "#f1f5f9" : "#94a3b8",
+              padding: "8px 14px",
+              fontSize: 14,
+              fontWeight: tab === t.id ? 600 : 400,
+              cursor: "pointer",
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
+      {/* REMEDIATION TAB — Zone F (recommendation & action; composed server-side) */}
+      {tab === "remediation" && (
+        <div style={CARD}>
+          <div style={H}>Recommendation & action</div>
+          {children}
+        </div>
+      )}
+
+      {/* OVERVIEW TAB — Zones D, E, G (analyst context) */}
+      {tab === "overview" && (
+        <>
       {/* ZONE D — Affected context (analyst, collapsible) */}
       <details style={CARD} open={affectedTotal > 0}>
         <summary style={{ ...H, cursor: "pointer", marginBottom: 0 }}>Affected context ({affectedTotal})</summary>
@@ -338,7 +371,10 @@ export function DecisionWorkspace({
           )}
         </div>
       </div>
+        </>
+      )}
 
+      {/* Mark reviewed — always visible below the tabs (executive review action). */}
       <div>
         <button
           type="button"
