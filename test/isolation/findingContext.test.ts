@@ -57,6 +57,10 @@ describe("Package 3 Phase 3.0 — finding context resolver (real Postgres)", () 
     expect(ctx!.affected.vendors.map((v) => v.id)).toContain(a.vendorId);
     expect(ctx!.evidence.length).toBe(1);
     expect(ctx!.finding.source_type).toBe("cyber_signal");
+    // Phase 3.1 — risk score + business impact composed from real data.
+    expect(typeof ctx!.risk.score).toBe("number");
+    expect(ctx!.business_impact.third_party.level).not.toBe("none"); // 1 affected vendor
+    expect(ctx!.business_impact.revenue.level).toBe("not_assessed"); // never fabricated
   });
 
   it("returns null for another org's finding (no cross-tenant read)", async () => {
