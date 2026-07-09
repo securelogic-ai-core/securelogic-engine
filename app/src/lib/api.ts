@@ -5409,3 +5409,96 @@ export async function getConnectors(
     return { ok: false, disabled: false, error: "network_error" };
   }
 }
+
+// ─── Intelligence Event drill-through (ERIP Package 3.3) ──────────────────────
+// Read one canonical Intelligence Event for the drill-through page
+// (/intelligence/[id]). The engine route GET /api/intelligence/events/:id is
+// gated by its OWN pre-existing flag (SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED)
+// and returns a bare 404 while dark — so this fetcher fail-softs to null on any
+// non-200, exactly like getFindingContext. The drill-through page treats null as
+// "no canonical enrichment available" and renders from the finding-context
+// payload (or the honest-unavailable state); it never blocks on this call.
+//
+// These types mirror the engine reader's IntelligenceEventDetail
+// (src/api/lib/signals/intelligenceEventReader.ts) field-for-field. The engine
+// responds with the detail object directly (not wrapped), matching getEventDetail.
+
+export type IntelligenceEventRow = {
+  id: string;
+  canonical_key: string;
+  title: string;
+  executive_summary: string;
+  summary_status: string;
+  event_type: string;
+  severity: string;
+  status: string;
+  affected_cve: string | null;
+  affected_vendor: string | null;
+  source_count: number;
+  confidence: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  revision: number;
+};
+
+/** A corroborating source (citation = attribution + timestamps; no URL field). */
+export type IntelligenceEventSource = {
+  source: string;
+  external_id: string | null;
+  relation: string;
+  first_contributed_at: string;
+  last_contributed_at: string;
+};
+
+export type IntelligenceEventTimelineEntry = {
+  entry_type: string;
+  occurred_at: string;
+  summary: string;
+  source: string | null;
+};
+
+export type IntelligenceRelatedFinding = {
+  id: string;
+  title: string;
+  severity: string;
+  status: string;
+  domain: string | null;
+};
+
+export type IntelligenceAffectedAsset = {
+  kind: "vendor";
+  id: string;
+  name: string;
+};
+
+export type IntelligenceRecommendedAction = {
+  action: string;
+  urgency: "immediate" | "near_term" | "planned" | "watch";
+};
+
+export type IntelligenceEventDetail = {
+  event: IntelligenceEventRow;
+  sources: IntelligenceEventSource[];
+  timeline: IntelligenceEventTimelineEntry[];
+  related_findings: IntelligenceRelatedFinding[];
+  affected_assets: IntelligenceAffectedAsset[];
+  recommended_actions: IntelligenceRecommendedAction[];
+};
+
+/**
+ * Fetch one canonical Intelligence Event by id. Returns null when the event is
+ * not found OR the engine's Intelligence Events surface is dark (bare 404) OR
+ * the request errors — the caller degrades honestly and never throws.
+ */
+export async function getIntelligenceEvent(
+  apiKey: string,
+  id: string,
+): Promise<IntelligenceEventDetail | null> {
+  try {
+    const res = await engineFetch(`/api/intelligence/events/${encodeURIComponent(id)}`, apiKey);
+    if (!res.ok) return null;
+    return (await res.json()) as IntelligenceEventDetail;
+  } catch {
+    return null;
+  }
+}
