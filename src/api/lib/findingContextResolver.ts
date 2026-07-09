@@ -66,14 +66,189 @@ export interface IntelRefs {
 /**
  * PURE: the direct intelligence references a finding's source points at, before
  * any DB expansion. `cyber_signal`/`signal` → a cyber_signals id; `intelligence_event`
- * → an intelligence_events id; everything else (assessment-sourced findings) → none
- * (their affected-entity resolution is a later phase, documented in the design).
+ * → an intelligence_events id. Assessment-sourced findings carry no intelligence ref
+ * here — their affected entities are resolved from the assessment record instead
+ * (see `resolveAssessmentAffected`); `applicability_assessment` additionally bridges to
+ * its signal for supporting intelligence (handled in `resolveFindingContext`).
  */
 export function directIntelRefs(sourceType: string, sourceId: string | null): IntelRefs {
   if (!sourceId) return { signalIds: [], eventIds: [] };
   if (sourceType === "intelligence_event") return { signalIds: [], eventIds: [sourceId] };
   if (sourceType === "cyber_signal" || sourceType === "signal") return { signalIds: [sourceId], eventIds: [] };
   return { signalIds: [], eventIds: [] };
+}
+
+/** Single-entity affected-context resolution for assessment-family findings. */
+export interface AssessmentAffectedSpec {
+  assessmentTable: string;
+  entityFk: string;
+  entityTable: string;
+  nameCol: string;
+  type: AffectedEntityType;
+}
+
+/**
+ * PURE map: for assessment-sourced findings, the finding's `source_id` points at an
+ * assessment row whose FK identifies the entity the assessment is ABOUT. That entity
+ * is the finding's primary affected context. Keys are `findings.source_type` values;
+ * table/column names are constants (never request input) — same interpolation
+ * discipline as the signal-link `affected()` helper below.
+ */
+export const ASSESSMENT_AFFECTED_MAP: Record<string, AssessmentAffectedSpec> = {
+  vendor_review: { assessmentTable: "vendor_assessments", entityFk: "vendor_id", entityTable: "vendors", nameCol: "name", type: "vendor" },
+  vendor_cycle_review: { assessmentTable: "vendor_reviews", entityFk: "vendor_id", entityTable: "vendors", nameCol: "name", type: "vendor" },
+  control_test: { assessmentTable: "control_assessments", entityFk: "control_id", entityTable: "controls", nameCol: "name", type: "control" },
+  ai_review: { assessmentTable: "governance_reviews", entityFk: "ai_system_id", entityTable: "ai_systems", nameCol: "name", type: "ai_system" },
+  ai_governance_review: { assessmentTable: "ai_governance_assessments", entityFk: "ai_system_id", entityTable: "ai_systems", nameCol: "name", type: "ai_system" },
+  obligation_review: { assessmentTable: "obligation_assessments", entityFk: "obligation_id", entityTable: "obligations", nameCol: "title", type: "obligation" },
+  assessment: { assessmentTable: "assessments", entityFk: "vendor_id", entityTable: "vendors", nameCol: "name", type: "vendor" },
+};
+
+/** PURE: per-affected-type name lookup, used to resolve applicability via_target ids. */
+const ENTITY_NAME_SOURCE: Record<AffectedEntityType, { table: string; nameCol: string }> = {
+  vendor: { table: "vendors", nameCol: "name" },
+  ai_system: { table: "ai_systems", nameCol: "name" },
+  control: { table: "controls", nameCol: "name" },
+  obligation: { table: "obligations", nameCol: "title" },
+};
+
+interface AffectedBuckets {
+  vendors: FindingAffectedEntity[];
+  ai_systems: FindingAffectedEntity[];
+  controls: FindingAffectedEntity[];
+  obligations: FindingAffectedEntity[];
+}
+
+const EMPTY_AFFECTED: () => AffectedBuckets = () => ({ vendors: [], ai_systems: [], controls: [], obligations: [] });
+
+const BUCKET_OF: Record<AffectedEntityType, keyof AffectedBuckets> = {
+  vendor: "vendors",
+  ai_system: "ai_systems",
+  control: "controls",
+  obligation: "obligations",
+};
+
+/** PURE: merge two affected sets, de-duplicating by (type, id). */
+export function mergeAffected(a: AffectedBuckets, b: AffectedBuckets): AffectedBuckets {
+  const dedup = (xs: FindingAffectedEntity[]): FindingAffectedEntity[] => {
+    const seen = new Set<string>();
+    const out: FindingAffectedEntity[] = [];
+    for (const x of xs) {
+      const k = `${x.type}:${x.id}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        out.push(x);
+      }
+    }
+    return out;
+  };
+  return {
+    vendors: dedup([...a.vendors, ...b.vendors]),
+    ai_systems: dedup([...a.ai_systems, ...b.ai_systems]),
+    controls: dedup([...a.controls, ...b.controls]),
+    obligations: dedup([...a.obligations, ...b.obligations]),
+  };
+}
+
+/**
+ * Resolve the affected entities for an assessment-family finding by walking the
+ * finding's `source_id` to its assessment record and the entity that record is about.
+ * Org-scoped on every predicate (org comes from the caller, never request input).
+ * Returns empty buckets for intelligence/manual sources (nothing to resolve here).
+ */
+export async function resolveAssessmentAffected(
+  client: Queryable,
+  organizationId: string,
+  sourceType: string,
+  sourceId: string | null
+): Promise<AffectedBuckets> {
+  const out = EMPTY_AFFECTED();
+  if (!sourceId) return out;
+
+  // 1. Simple single-entity assessment families (vendor / control / AI / obligation).
+  const spec = ASSESSMENT_AFFECTED_MAP[sourceType];
+  if (spec) {
+    const r = await client.query(
+      `SELECT e.id AS id, e.${spec.nameCol} AS name
+         FROM ${spec.assessmentTable} a
+         JOIN ${spec.entityTable} e ON e.id = a.${spec.entityFk} AND e.organization_id = a.organization_id
+        WHERE a.id = $1 AND a.organization_id = $2`,
+      [sourceId, organizationId]
+    );
+    for (const x of r.rows) out[BUCKET_OF[spec.type]].push({ type: spec.type, id: x.id, name: x.name });
+    return out;
+  }
+
+  // 2. dependency_review → the dependency's vendor (when the dependency has one).
+  if (sourceType === "dependency_review") {
+    const r = await client.query(
+      `SELECT v.id AS id, v.name AS name
+         FROM dependency_assessments da
+         JOIN dependencies d ON d.id = da.dependency_id AND d.organization_id = da.organization_id
+         JOIN vendors v ON v.id = d.vendor_id AND v.organization_id = d.organization_id
+        WHERE da.id = $1 AND da.organization_id = $2`,
+      [sourceId, organizationId]
+    );
+    for (const x of r.rows) out.vendors.push({ type: "vendor", id: x.id, name: x.name });
+    return out;
+  }
+
+  // 3. risk → the controls and obligations linked to the risk (soft-delete aware).
+  if (sourceType === "risk") {
+    const [c, o] = await Promise.all([
+      client.query(
+        `SELECT c.id AS id, c.name AS name
+           FROM risk_control_links l
+           JOIN controls c ON c.id = l.control_id AND c.organization_id = l.organization_id
+          WHERE l.organization_id = $1 AND l.risk_id = $2 AND l.deleted_at IS NULL
+          ORDER BY c.name`,
+        [organizationId, sourceId]
+      ),
+      client.query(
+        `SELECT o.id AS id, o.title AS name
+           FROM risk_obligation_links l
+           JOIN obligations o ON o.id = l.obligation_id AND o.organization_id = l.organization_id
+          WHERE l.organization_id = $1 AND l.risk_id = $2 AND l.deleted_at IS NULL
+          ORDER BY o.title`,
+        [organizationId, sourceId]
+      ),
+    ]);
+    for (const x of c.rows) out.controls.push({ type: "control", id: x.id, name: x.name });
+    for (const x of o.rows) out.obligations.push({ type: "obligation", id: x.id, name: x.name });
+    return out;
+  }
+
+  // 4. applicability_assessment → the affected entities the applicability decision reached.
+  if (sourceType === "applicability_assessment") {
+    const r = await client.query(
+      `SELECT DISTINCT via_target_type AS ttype, via_target_id AS tid
+         FROM applicability_affected_entities
+        WHERE organization_id = $1 AND assessment_id = $2`,
+      [organizationId, sourceId]
+    );
+    const idsByType = new Map<AffectedEntityType, string[]>();
+    for (const x of r.rows) {
+      const t = x.ttype as AffectedEntityType;
+      if (!BUCKET_OF[t]) continue;
+      idsByType.set(t, [...(idsByType.get(t) ?? []), x.tid]);
+    }
+    await Promise.all(
+      Array.from(idsByType.entries()).map(async ([type, ids]) => {
+        const src = ENTITY_NAME_SOURCE[type];
+        const rows = (
+          await client.query(
+            `SELECT id, ${src.nameCol} AS name FROM ${src.table}
+              WHERE organization_id = $1 AND id = ANY($2::uuid[]) ORDER BY ${src.nameCol}`,
+            [organizationId, uniq(ids)]
+          )
+        ).rows;
+        for (const x of rows) out[BUCKET_OF[type]].push({ type, id: x.id, name: x.name });
+      })
+    );
+    return out;
+  }
+
+  return out;
 }
 
 /**
@@ -135,6 +310,15 @@ export async function resolveFindingContext(
   const refs = directIntelRefs(finding.source_type, finding.source_id);
   let signalIds = refs.signalIds;
   let eventIds = refs.eventIds;
+  // applicability_assessment findings point at an applicability decision, which is
+  // ABOUT a signal — bridge to it so the workspace surfaces the supporting intelligence.
+  if (finding.source_type === "applicability_assessment" && finding.source_id) {
+    const a = await client.query(
+      `SELECT signal_id FROM applicability_assessments WHERE id = $1 AND organization_id = $2`,
+      [finding.source_id, organizationId]
+    );
+    signalIds = uniq([...signalIds, ...a.rows.map((x) => x.signal_id)]);
+  }
   if (signalIds.length > 0) {
     const r = await client.query(
       `SELECT DISTINCT event_id FROM intelligence_event_sources WHERE cyber_signal_id = ANY($1::uuid[])`,
@@ -173,12 +357,25 @@ export async function resolveFindingContext(
     return r.rows.map((x) => ({ type, id: x.id, name: x.name }));
   }
 
-  const [vendors, ai_systems, controls, obligations] = await Promise.all([
+  const [sv, sa, sc, so] = await Promise.all([
     affected("signal_vendor_links", "vendor_id", "vendors", "name", "vendor"),
     affected("signal_ai_system_links", "ai_system_id", "ai_systems", "name", "ai_system"),
     affected("signal_control_links", "control_id", "controls", "name", "control"),
     affected("signal_obligation_links", "obligation_id", "obligations", "title", "obligation"),
   ]);
+  // Intelligence findings resolve affected entities from signal links; assessment /
+  // risk / applicability findings resolve them from their source record. A finding has
+  // one source_type, so only one path yields rows — merge (dedup) is safe either way.
+  const assessmentAffected = await resolveAssessmentAffected(
+    client,
+    organizationId,
+    finding.source_type,
+    finding.source_id
+  );
+  const { vendors, ai_systems, controls, obligations } = mergeAffected(
+    { vendors: sv, ai_systems: sa, controls: sc, obligations: so },
+    assessmentAffected
+  );
 
   // Business-impact assessment (Phase 3.1) from the affected-entity mix + severity band.
   const business_impact = assessBusinessImpact(
