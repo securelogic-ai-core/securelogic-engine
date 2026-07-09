@@ -38,6 +38,23 @@ async function seedSignalSourcedFinding(orgId: string, dedup: string) {
   return { signalId, vendorId, findingId };
 }
 
+async function seedVendorReviewFinding(orgId: string, dedup: string) {
+  const vendorId = await seedVendor(pool, orgId, { name: `AsmtVendor-${dedup}` });
+  const va = await pool.query<{ id: string }>(
+    `INSERT INTO vendor_assessments (organization_id, vendor_id, assessment_type, overall_severity)
+     VALUES ($1, $2, 'security', 'High') RETURNING id`,
+    [orgId, vendorId]
+  );
+  const assessmentId = va.rows[0].id;
+  const f = await pool.query<{ id: string }>(
+    `INSERT INTO findings (organization_id, title, severity, description, source_type, source_id)
+     VALUES ($1, 'Vendor review finding', 'high', 'ctx', 'vendor_review', $2)
+     RETURNING id`,
+    [orgId, assessmentId]
+  );
+  return { vendorId, assessmentId, findingId: f.rows[0].id };
+}
+
 beforeAll(async () => {
   seed = await bootstrapTestDb();
   const url = process.env.TEST_DATABASE_URL;
@@ -82,6 +99,24 @@ describe("Package 3 Phase 3.0 — finding context resolver (real Postgres)", () 
       [seed.orgB.id, a.findingId]
     );
     expect(inB.rowCount).toBe(0);
+  });
+
+  it("resolves the affected vendor for an assessment-sourced (vendor_review) finding", async () => {
+    // §6 source-consistency: assessment-sourced findings resolve affected context too.
+    const a = await seedVendorReviewFinding(seed.orgA.id, "asmt-a-1");
+    const ctx = await resolveFindingContext(pool, seed.orgA.id, a.findingId);
+    expect(ctx).not.toBeNull();
+    expect(ctx!.finding.source_type).toBe("vendor_review");
+    expect(ctx!.affected.vendors.map((v) => v.id)).toEqual([a.vendorId]);
+  });
+
+  it("never leaks another org's vendor via an assessment-sourced finding", async () => {
+    const a = await seedVendorReviewFinding(seed.orgA.id, "asmt-a-2");
+    await seedVendorReviewFinding(seed.orgB.id, "asmt-b-2");
+    const ctxA = await resolveFindingContext(pool, seed.orgA.id, a.findingId);
+    expect(ctxA!.affected.vendors.every((v) => v.id === a.vendorId)).toBe(true);
+    // Another org cannot read this finding's context at all.
+    expect(await resolveFindingContext(pool, seed.orgB.id, a.findingId)).toBeNull();
   });
 
   it("returns null for another org's finding (no cross-tenant read)", async () => {

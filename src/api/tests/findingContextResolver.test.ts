@@ -1,5 +1,35 @@
 import { describe, it, expect } from "vitest";
-import { directIntelRefs, describeChange } from "../lib/findingContextResolver.js";
+import {
+  directIntelRefs,
+  describeChange,
+  mergeAffected,
+  resolveAssessmentAffected,
+  ASSESSMENT_AFFECTED_MAP,
+  type Queryable,
+} from "../lib/findingContextResolver.js";
+
+/**
+ * Fake queryable: records every (sql, params) and returns canned rows for the first
+ * matching SQL fragment. Lets us assert affected-entity resolution per source_type
+ * and that every query is org-scoped — with no database.
+ */
+function fakeClient(routes: Array<{ match: RegExp; rows: any[] }>): {
+  client: Queryable;
+  calls: Array<{ sql: string; params: unknown[] }>;
+} {
+  const calls: Array<{ sql: string; params: unknown[] }> = [];
+  const client: Queryable = {
+    async query(text: string, params: unknown[] = []) {
+      calls.push({ sql: text, params });
+      const hit = routes.find((r) => r.match.test(text));
+      const rows = hit ? hit.rows : [];
+      return { rows, rowCount: rows.length };
+    },
+  };
+  return { client, calls };
+}
+
+const ORG = "11111111-1111-1111-1111-111111111111";
 
 describe("directIntelRefs (pure)", () => {
   it("maps an intelligence_event source to eventIds", () => {
@@ -29,5 +59,91 @@ describe("describeChange (pure)", () => {
   });
   it("humanizes unknown finding event types", () => {
     expect(describeChange("finding.escalated", null)).toBe("escalated");
+  });
+});
+
+describe("mergeAffected (pure)", () => {
+  it("de-duplicates by (type, id) across the two resolution paths", () => {
+    const a = {
+      vendors: [{ type: "vendor" as const, id: "v1", name: "Acme" }],
+      ai_systems: [],
+      controls: [],
+      obligations: [],
+    };
+    const b = {
+      vendors: [
+        { type: "vendor" as const, id: "v1", name: "Acme" }, // dup
+        { type: "vendor" as const, id: "v2", name: "DataCo" },
+      ],
+      ai_systems: [],
+      controls: [],
+      obligations: [],
+    };
+    expect(mergeAffected(a, b).vendors.map((x) => x.id)).toEqual(["v1", "v2"]);
+  });
+});
+
+describe("resolveAssessmentAffected (assessment-family findings)", () => {
+  it("covers every finding-triggering assessment source_type in the map", () => {
+    // Guards against a new assessment workflow shipping without workspace context.
+    for (const st of ["vendor_review", "vendor_cycle_review", "control_test", "ai_review", "ai_governance_review", "obligation_review"]) {
+      expect(ASSESSMENT_AFFECTED_MAP[st]).toBeTruthy();
+    }
+  });
+
+  it("resolves a vendor_review finding to its vendor and stays org-scoped", async () => {
+    const { client, calls } = fakeClient([
+      { match: /FROM vendor_assessments a\s+JOIN vendors e/i, rows: [{ id: "v1", name: "Acme" }] },
+    ]);
+    const out = await resolveAssessmentAffected(client, ORG, "vendor_review", "va1");
+    expect(out.vendors).toEqual([{ type: "vendor", id: "v1", name: "Acme" }]);
+    expect(out.ai_systems).toEqual([]);
+    // org is the second bound param on the single query; never sourced from request input.
+    expect(calls[0].params).toEqual(["va1", ORG]);
+  });
+
+  it("resolves a control_test finding to its control", async () => {
+    const { client } = fakeClient([
+      { match: /FROM control_assessments a\s+JOIN controls e/i, rows: [{ id: "c1", name: "MFA everywhere" }] },
+    ]);
+    const out = await resolveAssessmentAffected(client, ORG, "control_test", "ca1");
+    expect(out.controls).toEqual([{ type: "control", id: "c1", name: "MFA everywhere" }]);
+  });
+
+  it("resolves a risk finding to its linked controls and obligations", async () => {
+    const { client } = fakeClient([
+      { match: /FROM risk_control_links/i, rows: [{ id: "c1", name: "Backups" }] },
+      { match: /FROM risk_obligation_links/i, rows: [{ id: "o1", name: "PCI-DSS 6.2" }] },
+    ]);
+    const out = await resolveAssessmentAffected(client, ORG, "risk", "r1");
+    expect(out.controls).toEqual([{ type: "control", id: "c1", name: "Backups" }]);
+    expect(out.obligations).toEqual([{ type: "obligation", id: "o1", name: "PCI-DSS 6.2" }]);
+  });
+
+  it("resolves an applicability_assessment finding via its affected-entity targets", async () => {
+    const { client } = fakeClient([
+      { match: /FROM applicability_affected_entities/i, rows: [{ ttype: "vendor", tid: "v9" }] },
+      { match: /FROM vendors\s+WHERE organization_id/i, rows: [{ id: "v9", name: "Ivanti" }] },
+    ]);
+    const out = await resolveAssessmentAffected(client, ORG, "applicability_assessment", "aa1");
+    expect(out.vendors).toEqual([{ type: "vendor", id: "v9", name: "Ivanti" }]);
+  });
+
+  it("returns empty for manual findings or a missing source_id (nothing to resolve)", async () => {
+    const { client, calls } = fakeClient([]);
+    expect(await resolveAssessmentAffected(client, ORG, "manual", "m1")).toEqual({
+      vendors: [],
+      ai_systems: [],
+      controls: [],
+      obligations: [],
+    });
+    expect(await resolveAssessmentAffected(client, ORG, "vendor_review", null)).toEqual({
+      vendors: [],
+      ai_systems: [],
+      controls: [],
+      obligations: [],
+    });
+    // manual issues no query; null source_id short-circuits before any query.
+    expect(calls.length).toBe(0);
   });
 });
