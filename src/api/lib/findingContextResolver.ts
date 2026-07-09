@@ -17,6 +17,13 @@
  * carries `organization_id = $org` regardless of the client.
  */
 
+import {
+  computeFindingRiskScore,
+  assessBusinessImpact,
+  type FindingRiskScore,
+  type BusinessImpact,
+} from "./findingRiskScore.js";
+
 export interface Queryable {
   query(text: string, params?: unknown[]): Promise<{ rows: any[]; rowCount: number | null }>;
 }
@@ -31,6 +38,8 @@ export interface FindingAffectedEntity {
 
 export interface FindingContext {
   finding: { id: string; source_type: string; source_id: string | null };
+  risk: FindingRiskScore;
+  business_impact: BusinessImpact;
   owner: { id: string; email: string } | null;
   affected: {
     vendors: FindingAffectedEntity[];
@@ -107,13 +116,20 @@ export async function resolveFindingContext(
   opts: { since?: string | null } = {}
 ): Promise<FindingContext | null> {
   const f = await client.query(
-    `SELECT id, source_type, source_id, owner_user_id
+    `SELECT id, source_type, source_id, owner_user_id, severity, priority, confidence
        FROM findings
       WHERE id = $1 AND organization_id = $2`,
     [findingId, organizationId]
   );
   if ((f.rowCount ?? 0) === 0) return null;
   const finding = f.rows[0];
+
+  // Deterministic, explainable risk score (Phase 3.1) from the finding's own fields.
+  const risk = computeFindingRiskScore({
+    severity: finding.severity ?? null,
+    priority: finding.priority ?? null,
+    confidence: finding.confidence ?? null,
+  });
 
   // Expand intelligence references across the signal↔event bridge.
   const refs = directIntelRefs(finding.source_type, finding.source_id);
@@ -163,6 +179,17 @@ export async function resolveFindingContext(
     affected("signal_control_links", "control_id", "controls", "name", "control"),
     affected("signal_obligation_links", "obligation_id", "obligations", "title", "obligation"),
   ]);
+
+  // Business-impact assessment (Phase 3.1) from the affected-entity mix + severity band.
+  const business_impact = assessBusinessImpact(
+    {
+      vendors: vendors.length,
+      ai_systems: ai_systems.length,
+      controls: controls.length,
+      obligations: obligations.length,
+    },
+    risk.band
+  );
 
   // Supporting Intelligence Events (GLOBAL) + their sources + timeline.
   const events = eventIds.length
@@ -260,6 +287,8 @@ export async function resolveFindingContext(
 
   return {
     finding: { id: finding.id, source_type: finding.source_type, source_id: finding.source_id },
+    risk,
+    business_impact,
     owner,
     affected: { vendors, ai_systems, controls, obligations },
     intelligence: { events, sources, timeline },
