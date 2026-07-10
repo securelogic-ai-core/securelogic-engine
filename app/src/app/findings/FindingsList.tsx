@@ -4,7 +4,7 @@ import { useState } from "react";
 import { FindingCard } from "@/components/FindingCard";
 import type { Finding } from "@/lib/api";
 import Link from "next/link";
-import { attentionSummary, groupByUrgency } from "./decisionQueue";
+import { attentionSummary, groupByUrgency, isFirstTimeEmpty } from "./decisionQueue";
 
 interface Props {
   findings: Finding[];
@@ -94,7 +94,36 @@ export function FindingsList({ findings, hasFilters, workspace = false }: Props)
         </button>
       </div>
 
-      {visible.length === 0 ? (
+      {visible.length === 0 && workspace && isFirstTimeEmpty(findings.length, hasFilters, hasActionsOnly) ? (
+        // Day-0 / first-time empty (no findings at all, no filters): orient the new
+        // customer instead of the misleading "no findings match your filters". Only
+        // under the workspace flag — flag-off keeps the legacy empty state byte-identical.
+        <div
+          className="rounded-xl border p-10 text-center"
+          style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(0,196,180,0.2)" }}
+        >
+          <p className="text-base font-semibold mb-2" style={{ color: "#f1f5f9" }}>
+            No findings yet
+          </p>
+          <p className="text-sm mb-5 mx-auto" style={{ color: "#94a3b8", maxWidth: 520, lineHeight: 1.6 }}>
+            Findings appear here when SecureLogic connects external intelligence, assessments, and
+            reviews to your vendors, AI systems, controls, and obligations. As new intelligence
+            matches your monitored context, it becomes a finding to triage and decide.
+          </p>
+          <div className="flex items-center justify-center gap-4">
+            <Link
+              href="/queue"
+              className="inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium"
+              style={{ background: "rgba(0,196,180,0.15)", color: "#00c4b4", border: "1px solid rgba(0,196,180,0.4)" }}
+            >
+              Review suggested links →
+            </Link>
+            <Link href="/getting-started" className="text-sm font-medium" style={{ color: "#94a3b8" }}>
+              Set up monitored context
+            </Link>
+          </div>
+        </div>
+      ) : visible.length === 0 ? (
         <div
           className="rounded-xl border p-10 text-center"
           style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}

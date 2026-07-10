@@ -12,6 +12,7 @@ import {
   urgencyBucket,
   attentionSummary,
   groupByUrgency,
+  isFirstTimeEmpty,
   URGENCY_ORDER,
 } from "../decisionQueue";
 import type { Finding } from "@/lib/api";
@@ -98,5 +99,18 @@ describe("groupByUrgency — exclusive, ordered, non-empty", () => {
   it("keeps URGENCY_ORDER as the canonical ordering", () => {
     expect(URGENCY_ORDER[0]).toBe("overdue");
     expect(URGENCY_ORDER[URGENCY_ORDER.length - 1]).toBe("resolved");
+  });
+});
+
+describe("isFirstTimeEmpty (Day-0 orientation vs filtered-empty)", () => {
+  it("is true only when there are no findings AND no active filter", () => {
+    expect(isFirstTimeEmpty(0, false, false)).toBe(true);
+  });
+  it("is false when a filter is active (that is filtered-empty, not first-time)", () => {
+    expect(isFirstTimeEmpty(0, true, false)).toBe(false);
+    expect(isFirstTimeEmpty(0, false, true)).toBe(false);
+  });
+  it("is false when findings exist", () => {
+    expect(isFirstTimeEmpty(3, false, false)).toBe(false);
   });
 });
