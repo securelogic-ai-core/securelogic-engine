@@ -1,10 +1,12 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getMe, getFindings, getFindingsSummary, getFindingSavedViews } from "@/lib/api";
+import { getMe, getFindings, getFindingsSummary, getFindingSavedViews, getFindingsByEntity } from "@/lib/api";
 import { FindingsList } from "./FindingsList";
 import SavedViewsBar from "./SavedViewsBar";
 import { currentViewFilters } from "./savedViews";
+import WorkFirstFindings from "./WorkFirstFindings";
+import { WORK_QUEUES, workQueueFromParam, queueCounts, queueMembers, nextUp } from "./workQueues";
 
 const SOURCE_TYPE_LABELS: Record<string, string> = {
   vendor_review:        "Vendor Assessment",
@@ -136,6 +138,26 @@ export default async function FindingsPage({
   const savedViewsEnabled = process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true";
   const savedViews = savedViewsEnabled ? await getFindingSavedViews(token) : [];
 
+  // Work-first interaction model (ERIP goal): under the workspace flag the DEFAULT
+  // view is operational queues + decision buckets + entity search — work completion,
+  // not record browsing. Individual findings are supporting objects reached by
+  // drilling into a queue (?queue=<id>), an entity search (?entity=<name>), or the
+  // browse escape hatch (?queue=all / any legacy filter, which keeps deep links from
+  // posture & dashboard working). Flag-off renders the unchanged legacy page.
+  const queueParam = workspace ? workQueueFromParam(sp.queue) : null;
+  const entityQuery =
+    workspace && typeof sp.entity === "string" && sp.entity.trim().length >= 2 ? sp.entity.trim() : "";
+  const browse = sp.queue === "all" || hasFilters;
+  const workFirstMode: "home" | "queue" | "entity" | null =
+    !workspace || browse ? null : entityQuery ? "entity" : queueParam && queueParam !== "all" ? "queue" : "home";
+  const nowMs = Date.now();
+  const wfCounts = workspace ? queueCounts(summary, findings, nowMs) : null;
+  const wfQueueDef = workFirstMode === "queue" ? WORK_QUEUES.find((q) => q.id === queueParam) : undefined;
+  const wfMembers =
+    workFirstMode === "queue" && queueParam ? queueMembers(findings, queueParam, nowMs) : undefined;
+  const wfNext = workFirstMode === "home" ? nextUp(findings, nowMs) : [];
+  const entityResult = workFirstMode === "entity" ? await getFindingsByEntity(token, entityQuery) : null;
+
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">
       {/* Header */}
@@ -185,6 +207,18 @@ export default async function FindingsPage({
         </a>
       </div>
 
+      {workFirstMode && wfCounts ? (
+        <WorkFirstFindings
+          mode={workFirstMode}
+          counts={wfCounts}
+          next={wfNext}
+          queue={wfQueueDef}
+          queueFindings={wfMembers}
+          entityQuery={entityQuery}
+          entityResult={entityResult}
+        />
+      ) : (
+        <>
       {/* Summary stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
         <div style={STAT_CARD_STYLE}>
@@ -285,6 +319,8 @@ export default async function FindingsPage({
         <SavedViewsBar views={savedViews} currentFilters={currentViewFilters(sp)} />
       )}
       <FindingsList findings={findings} hasFilters={hasFilters} workspace={workspace} />
+        </>
+      )}
     </div>
   );
 }

@@ -481,6 +481,10 @@ export type Finding = {
   time_sensitivity: string | null;
   scoring_rationale: string | null;
   status: string;
+  // ERIP Decision Workspace business decision (needs_review | accepted_risk |
+  // in_progress | mitigating | resolved). Returned by the list since the
+  // work-first engine PR; may be absent on older cached payloads.
+  decision_state?: string;
   owner_user_id: string | null;
   due_date: string | null;
   action_count: number;
@@ -548,6 +552,13 @@ export type FindingsSummary = {
   immediate_priority: number;
   vendor_sourced: number;
   signal_sourced: number;
+  // Work-queue counts (ERIP work-first Findings page) — additive; optional so the
+  // page degrades if an older engine build omits them.
+  overdue_open?: number;
+  unassigned_open?: number;
+  needs_review_open?: number;
+  mitigating_open?: number;
+  accepted_risk_total?: number;
 };
 
 export type Risk = {
@@ -2011,6 +2022,29 @@ export async function getFindingSavedViews(apiKey: string): Promise<FindingSaved
     return body.views ?? [];
   } catch {
     return [];
+  }
+}
+
+// Reverse entity→findings search (work-first Findings page). The engine route 404s
+// while SECURELOGIC_DECISION_WORKSPACE_ENABLED is off → null (search UI not shown).
+export type EntityFindingsResponse = {
+  query: string;
+  entities: Array<{ type: "vendor" | "ai_system" | "control" | "obligation"; id: string; name: string }>;
+  count: number;
+  findings: Finding[];
+};
+
+export async function getFindingsByEntity(
+  apiKey: string,
+  q: string
+): Promise<EntityFindingsResponse | null> {
+  try {
+    const qs = new URLSearchParams({ q });
+    const res = await engineFetch(`/api/findings/by-entity?${qs.toString()}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<EntityFindingsResponse>;
+  } catch {
+    return null;
   }
 }
 
