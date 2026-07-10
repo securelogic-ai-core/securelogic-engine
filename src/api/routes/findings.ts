@@ -934,6 +934,22 @@ router.post(
         [organizationId, findingId, userId]
       );
 
+      // Mark-Reviewed is a per-user acknowledgement (it advances THIS user's
+      // "What's changed since your last review" baseline), NOT a status/decision
+      // transition. It was previously unaudited — an invisible action. Record it
+      // so the audit trail shows who reviewed a finding and when, without
+      // implying any lifecycle change.
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        actorUserId: userId,
+        eventType: "finding.reviewed",
+        resourceType: "finding",
+        resourceId: findingId,
+        payload: { reviewed_at: upsert.rows[0].last_reviewed_at },
+        ipAddress: req.ip ?? null,
+      });
+
       res.status(200).json({ reviewed_at: upsert.rows[0].last_reviewed_at });
     } catch (err) {
       logger.error({ event: "finding_review_failed", err }, "POST /api/findings/:id/review failed");
