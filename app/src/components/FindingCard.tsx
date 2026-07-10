@@ -48,9 +48,13 @@ function daysUntil(dateStr: string): number {
 type Props = {
   finding: Finding;
   revalidateUrl: string;
+  // ERIP decision-queue framing (RISK_WORKSPACE). When true, the row surfaces
+  // owner (assigned/unassigned) and an explicit Decision-Workspace drill-through.
+  // Off = the legacy card, byte-for-byte unchanged.
+  workspace?: boolean;
 };
 
-export function FindingCard({ finding, revalidateUrl }: Props) {
+export function FindingCard({ finding, revalidateUrl, workspace = false }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [optimisticStatus, setOptimisticStatus] = useState(finding.status);
@@ -124,6 +128,23 @@ export function FindingCard({ finding, revalidateUrl }: Props) {
               {finding.action_count} action{finding.action_count !== 1 ? "s" : ""}
             </span>
           )}
+          {workspace && (
+            finding.owner_user_id ? (
+              <span
+                className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                style={{ background: "rgba(148,163,184,0.12)", color: "#94a3b8" }}
+              >
+                Assigned
+              </span>
+            ) : (
+              <span
+                className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                style={{ background: "rgba(245,158,11,0.15)", color: "#fcd34d" }}
+              >
+                Unassigned
+              </span>
+            )
+          )}
         </div>
         <span className="text-xs shrink-0" style={{ color: "#64748b" }}>
           {fmt(finding.created_at)}
@@ -158,7 +179,8 @@ export function FindingCard({ finding, revalidateUrl }: Props) {
         <p className="text-xs mb-2" style={{ color: "#fca5a5" }}>{error}</p>
       )}
 
-      {transitions.length > 0 && (
+      {/* Legacy (flag-off): status transitions only, byte-for-byte unchanged. */}
+      {!workspace && transitions.length > 0 && (
         <div
           className="flex items-center gap-2 flex-wrap mt-2"
           onClick={(e) => e.stopPropagation()}
@@ -174,6 +196,34 @@ export function FindingCard({ finding, revalidateUrl }: Props) {
               {t.label}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Workspace (RISK_WORKSPACE): transitions + an explicit Decision-Workspace
+          drill-through. The card is already clickable; this labels the entry point
+          into where business impact, affected assets/vendors/AI, evidence &
+          intelligence, and what's-changed live. */}
+      {workspace && (
+        <div className="flex items-center justify-between gap-2 flex-wrap mt-2">
+          <div
+            className="flex items-center gap-2 flex-wrap"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {transitions.map((t) => (
+              <button
+                key={t.value}
+                onClick={(e) => { e.stopPropagation(); handleStatusChange(t.value); }}
+                disabled={isPending}
+                className="px-3 py-1 rounded text-xs font-medium transition-colors disabled:opacity-50"
+                style={{ background: "rgba(148,163,184,0.08)", color: "#94a3b8", border: "1px solid #1e293b" }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <span className="text-xs font-medium" style={{ color: "#00c4b4" }}>
+            Open decision →
+          </span>
         </div>
       )}
     </div>

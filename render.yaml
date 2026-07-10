@@ -1193,10 +1193,18 @@ services:
         value: "false"
       - key: SECURELOGIC_ASSET_REGISTRY_ENABLED
         value: "false"
+      # ENABLED on STAGING (Option B) so a Blueprint sync activates the Findings
+      # decision queue, the "Review Suggested Links" queue reskin + bulk select, and
+      # the enterprise nav IA — durably (dashboard edits get reverted on sync; the
+      # Blueprint must own the "true"). STAGING ONLY — production securelogic-app
+      # keeps these "false" (GATE B). RUNTIME env: a restart applies, no rebuild.
       - key: SECURELOGIC_RISK_WORKSPACE_ENABLED
-        value: "false"
+        value: "true"
+      # ENABLED on STAGING (Option B): Decision Workspace on /findings/:id (also needs
+      # the engine flag on — two-switch), Findings saved-views bar, My Actions depth,
+      # Brief -> Decision/Event. STAGING ONLY; prod stays "false" (GATE B).
       - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED
-        value: "false"
+        value: "true"
 
       # STAGING session secret — a distinct 32+ char value, NEVER the prod secret.
       - key: SESSION_SECRET
