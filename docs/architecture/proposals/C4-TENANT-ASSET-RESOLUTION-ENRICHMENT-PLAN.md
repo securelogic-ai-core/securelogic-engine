@@ -79,6 +79,19 @@ nothing.
 
 ---
 
+## Refinement (2026-07-10) — Decision-value proof (DESIGN ONLY; authorizes nothing)
+
+This refinement **does not change the approved C4 architecture**; it raises the bar for
+what may live in the Resolved Asset Context. SecureLogic is an **Enterprise Intelligence
+Platform** — tenant-asset enrichment exists **only** to improve intelligence quality and
+operational decision making. **Availability of data is not a justification.** Every
+enrichment must earn its place by improving an explicit customer decision. The proof is in
+**Deliverables 11–16** below (Decision Value Matrix, Customer Decision Mapping,
+Canonical-vs-Derived principle, over-enrichment review, customer lens, measurable success
+criteria). Two enrichments are **reclassified** by that proof and the changes are recorded
+there; they **supersede** the corresponding rows in Deliverables 3 and 4. Nothing here
+authorizes implementation (CL-5).
+
 ## Deliverable 1 — Current-state asset capability inventory (as merged)
 
 | Capability | Where it lives today | Evidence |
@@ -170,6 +183,13 @@ never persisted.)
 **Enterprise Context** ×7, **Finding** ×2, **Decision Workspace** ×1, **Derived only**
 ×5. Anything implemented as an asset-owned column (outside the two Asset-Registry
 `EXTENDS` input facts) folds into DO-NOT-BUILD.
+
+*Refined 2026-07-10 (Deliverables 11–16): under the customer-decision lens, (a) the
+**non-detail-type** portion of "internet exposure" is reclassified from EXTENDS to
+**SHOULD LIVE ELSEWHERE** (Enterprise Context / third-party risk) for `vendor` and
+`ai_system`, and (b) the **customer-impact derivation** is reclassified from a C4
+deliverable to **OPTIONAL / DERIVED-ONLY**, conditional on an upstream customer-facing
+attribute existing first. Those two reclassifications supersede the matching rows above.*
 
 ## Deliverable 5 — Proposed enrichment architecture
 
@@ -283,6 +303,167 @@ EXTENDS gaps.
 Each phase is additive, dark, reversible; preserves one canonical asset model, one
 Decision Workspace, one Finding model, EAR, IQP, ERIP, tenant isolation, and WORM; and
 requires **no cutover and no retirement**.
+
+---
+
+## Deliverable 11 — Decision Value Matrix
+
+Every enrichment considered for the Resolved Asset Context, tested against the question
+"**does this materially improve a customer decision?**" Column key: **Reuse?** = surface
+existing canonical data by composition; **Build?** = requires a genuinely new stored fact
+or derived view. **Outcome** ∈ {REQUIRED, OPTIONAL, ALREADY EXISTS, DERIVED ONLY, DO NOT
+BUILD}. "ALREADY EXISTS" and "DERIVED ONLY" are surfaced (Reuse) not built; only
+**REQUIRED/OPTIONAL EXTENDS** carry Build = yes.
+
+| Attribute | Canonical owner | Existing source | Proposed source | Customer decision improved | Workflow improved | Dashboard/report improved | Decision Workspace improvement | Business Impact improvement | Reuse? | Build? | Outcome | Rationale |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Resolved Asset Context (composition) | Derived (read-side) | none (identity only) | compose-at-read builder | "Do I have enough context to act on this asset now?" | one read replaces N lookups | powers every asset roll-up | turns a bare `asset_id` into a decision-grade object | supplies all impact inputs in one call | yes (all inputs) | no (compose) | REQUIRED | The core C4 deliverable; a composition, not storage |
+| technical owner | Asset Registry | `owner_user_id` | same (composed) | "Who do I route remediation to?" | auto-assign remediation | ownership coverage | shows accountable owner inline | none (routing, not impact) | yes | no | ALREADY EXISTS | Surface via `asset_registry_v` |
+| business owner / business-unit ownership | Enterprise Context | `owned_by` edge | same (composed) | "Who signs off on business risk acceptance?" | routes approvals to the BU | roll-up by business unit | shows business accountable party | scopes impact to a BU | yes | no | ALREADY EXISTS | Graph edge, never copied |
+| criticality | Asset Registry | backing → view | same (composed) | "How high should this rank today?" | drives triage order | criticality heatmap | ranks the affected panel | primary impact input | yes | no | ALREADY EXISTS | Never copied to spine (EAR-AD-2) |
+| business service | Enterprise Context | `serves`/`part_of` edge | same (composed) | "Which critical services are affected?" | groups findings by service | service-impact view | shows blast-radius service | raises operational impact | yes | no | ALREADY EXISTS | Graph traversal |
+| application | Enterprise Context | `application` entity + `runs_on` | same (composed) | "Which app must be patched?" | groups by app | app inventory view | shows hosting app | context for impact | yes | no | ALREADY EXISTS | Graph edge |
+| lifecycle | Asset Registry | `lifecycle_status` | same (composed) | "Is this even live — worth acting on?" | suppresses retired assets | active-vs-retired split | de-prioritizes retired | filters non-live from impact | yes | no | ALREADY EXISTS | On spine (identity) |
+| data classification / residency / retention / encryption | Enterprise Context | `enterprise_data_stores` | same (composed) | "Does the data here raise the stakes?" | flags regulated data | data-sensitivity view | shows data at risk | raises regulatory impact | yes | no | ALREADY EXISTS | Via `processes_data_in` edge |
+| internet exposure (detail-backed) | Asset Registry | `endpoints`/`apis.exposure` | same (composed) | "Should this jump to the top of today's queue?" | reorders queue by exposure | exposure heatmap | flags internet-facing | raises operational impact | yes | no | ALREADY EXISTS | Already on detail tables |
+| internet exposure (non-detail types: vendor/ai_system) | — | none | *(none — see Part 4)* | vendor/AI "exposure" is third-party risk, not asset exposure | none on the asset | none | none (wrong axis) | belongs to third-party risk | no | no | DO NOT BUILD (→ elsewhere) | Reclassified: lives in Enterprise Context / third-party risk, not as an asset column |
+| environment / production-vs-non-production | Asset Registry | none (gap) | additive field on **backing** table | "Is this production — act now vs. schedule?" | prod-first triage | prod-vs-non-prod split | separates prod incidents | materially changes impact & priority | no | yes (additive) | REQUIRED (EXTENDS) | Genuine gap; not derivable; a stored INPUT fact on the backing, not the spine |
+| regulatory scope | Derived (Compliance) | `obligation_mappings` + applicability | same (composed) | "Does this trigger a compliance review?" | opens compliance workflow | obligation-coverage view | shows obligations in scope | raises regulatory impact | yes | no | DERIVED ONLY | Composed at read; never stored on asset |
+| control mappings | Derived (Compliance) | `control_mappings`, `signal_control_links` | same (composed) | "Which control is failing here?" | links to control owner | control-coverage view | shows controls implicated | context for impact | yes | no | DERIVED ONLY | Composed at read |
+| obligation mappings | Derived (Compliance) | `obligation_mappings` | same (composed) | "Which obligation is exposed?" | compliance routing | obligation view | shows obligations | regulatory impact input | yes | no | DERIVED ONLY | Composed at read |
+| vendor relationships | Enterprise Context | typed edges + `ai_system_vendor_dependencies` | same (composed) | "Is a third party implicated?" | opens TPRM workflow | vendor-exposure view | shows vendor dependency | raises third-party impact | yes | no | ALREADY EXISTS | Typed edges (EAR-AD-4/AD-13) |
+| AI system relationships | Enterprise Context | typed edges + dependencies | same (composed) | "Is an AI system implicated?" | AI-governance routing | AI-dependency view | shows AI dependency | AI-risk impact input | yes | no | ALREADY EXISTS | Typed edges |
+| historical findings | Finding | `findings` linkage | same (composed) | "Has this asset burned us before?" | shows prior history | recurrence view | history inline | pattern context | yes | no | ALREADY EXISTS | Never copied |
+| remediation history | Finding | `actions` | same (composed) | "Did we already try to fix this?" | avoids duplicate work | remediation-throughput view | shows prior fixes | trend context | yes | no | ALREADY EXISTS | Via Finding model |
+| exploit history | Derived (Intelligence) | `intelligence_events.ever_exploited`/KEV | same (composed) | "Is this weaponized in the wild?" | escalates KEV-linked | exploit-exposure view | flags active exploitation | raises operational impact | yes | no | DERIVED ONLY | Composed at read from Intelligence |
+| historical incident frequency | Derived (read-side view) | none (computable) | computed view over `findings`+`cyber_signals` | "Is this becoming systemic?" | flags recurring assets | trend/systemic view | shows frequency trend | trend input to impact | yes (compute) | no (no stored counter) | DERIVED ONLY | Computed, never a stored counter |
+| customer-impact derivation | Decision Workspace | `customer` dim = `not_assessed` | derived path `serves`→business_service→customer-facing flag | "Does this touch customers?" | flags customer-facing | customer-impact view | fills a blank impact dim | fills `customer` dimension | conditional | no (derived) | OPTIONAL / DERIVED ONLY | Reclassified: valuable, but blocked on an upstream customer-facing attribute; do not build the derivation until that fact exists |
+
+**Distribution:** REQUIRED ×2 (composition; environment) · ALREADY EXISTS ×11 · DERIVED
+ONLY ×5 · OPTIONAL/DERIVED (conditional) ×1 · DO-NOT-BUILD / elsewhere ×1. **Only two
+enrichments carry Build = yes**, and only one of those (`environment`) is a stored fact;
+everything else is surfaced by composition. This is the proof that C4 is overwhelmingly
+reuse, not new storage.
+
+## Deliverable 12 — Customer Decision Mapping (REQUIRED enrichments)
+
+Each REQUIRED enrichment maps to exactly one explicit decision. No vague answers.
+
+| REQUIRED enrichment | The single decision it makes better | Without it, the analyst must… |
+|---|---|---|
+| **Resolved Asset Context (composition)** | "Do I have enough to act on this affected asset **now**, or must I go dig?" — the decision to act vs. investigate. | manually stitch registry + graph + mappings + history across 5+ screens before deciding. |
+| **environment (production vs non-production)** | "Should this Finding **move to the top of today's queue** (production) or be **scheduled** (non-production)?" — the prioritization decision. | guess prod-vs-non-prod from names, mis-prioritizing non-prod noise over live risk. |
+
+Supporting (surfaced, not built) enrichments and their decisions, for completeness:
+- **business owner** → *"Who owns remediation / who accepts the risk?"*
+- **business service** → *"Which critical services are affected?"*
+- **internet exposure (detail)** → *"Should this Finding jump the queue today?"*
+- **regulatory scope / obligations** → *"Does this require immediate compliance review?"*
+- **exploit history (KEV)** → *"Is this weaponized — escalate now?"*
+- **historical incident frequency** → *"Is this asset becoming systemic — fix the pattern, not the instance?"*
+
+If any enrichment cannot name a decision in this form, it does not belong in C4.
+
+## Deliverable 13 — Architectural principle: canonical objects store facts; derived services compute intelligence
+
+**Rule (applies throughout C4):**
+
+> **Canonical objects store facts. Derived services compute intelligence. Consumers
+> render intelligence; they neither store nor recompute the facts.**
+
+Applied to the platform layers:
+
+| Layer | Role | Stores | Computes | Must NOT |
+|---|---|---|---|---|
+| **Asset Registry** | fact of record for the asset | ownership, lifecycle, business service (via graph), **environment**, technology, relationships | nothing derived | compute impact or hold a denormalized profile |
+| **Enterprise Context** | fact of record for relationships/data | edges (owns/serves/runs_on/processes_data_in), data classification | nothing derived | be re-modeled or re-stored by C4 |
+| **Business Impact Engine** | derived intelligence | nothing canonical | operational / financial / regulatory / third-party impact, prioritization, executive summaries | persist its outputs back as canonical facts (CL-2, CL-3) |
+| **Decision Workspace** | consumer of derived intelligence | human decision state only | nothing (it consumes) | compute impact or duplicate asset metadata |
+| **Findings** | reference + human decision | `decision_state`, links to asset + derived intelligence | nothing about the asset | duplicate asset metadata (owner, criticality, exposure…) |
+
+**Why this separation matters:**
+
+- **Maintainability** — a fact changes in exactly one place; consumers pick it up on the
+  next read. No dual-write, no fan-out migration when criticality moves.
+- **Correctness** — one owner per fact means no two stores can disagree (EAR-AD-1/AD-2).
+  Derived intelligence is always computed from current facts, never from a stale copy.
+- **Scalability** — read-side composition scales by caching/materialized reads without
+  touching the systems of record; storage does not balloon with every new consumer.
+- **Avoiding "god objects"** — the asset never becomes an "asset 360" that owns ownership
+  **and** impact **and** compliance **and** history. Each concern stays with its owner;
+  the asset stays a thin identity + facts spine. A god object is the single most common
+  way this design fails, so C4 forbids it explicitly (Deliverable 9).
+
+C4 is the embodiment of this rule: it **computes** a Resolved Asset Context from facts it
+**does not own**, and stores exactly one new fact (`environment`) with its rightful owner
+(the Asset Registry backing).
+
+## Deliverable 14 — Over-enrichment review (ALIGNS / EXTENDS / CONTRADICTS / SHOULD LIVE ELSEWHERE)
+
+| Enrichment | Verdict | If "elsewhere," exactly where |
+|---|---|---|
+| Resolved Asset Context (composition) | **ALIGNS** | — (read-side derived service; the intended C4 shape) |
+| technical owner, criticality, lifecycle | **ALIGNS** (surface) | — (already Asset Registry) |
+| business owner, business service, application, data classification, vendor/AI relationships | **ALIGNS** (surface) | — (already Enterprise Context) |
+| regulatory scope, control/obligation mappings, exploit history | **ALIGNS** (derived surface) | — (Compliance / Intelligence, composed at read) |
+| historical findings, remediation history | **ALIGNS** (surface) | — (Finding model) |
+| **environment / production-vs-non-production** | **EXTENDS** | — (genuine additive stored INPUT fact on the **Asset Registry backing** table; never the spine, never a new table) |
+| historical incident frequency | **EXTENDS** (derived metric) | — (a read-side computed view; never a stored counter) |
+| **internet exposure for vendor / ai_system** | **SHOULD LIVE ELSEWHERE** | **Enterprise Context / third-party risk** — a vendor's or AI system's exposure is a property of the third-party relationship, not an asset column. Bolting `exposure` onto these backings would model the wrong axis and duplicate third-party-risk semantics. (Reclassified from the Deliverable-3/4 EXTENDS.) |
+| **customer-impact derivation** | **SHOULD LIVE ELSEWHERE (for now)** | **Decision Workspace / Business Impact Engine**, and blocked on a **customer-facing attribute on `business_service` in Enterprise Context** that does not yet exist. Until that upstream fact exists, C4 must not invent a derivation — doing so would guess customer impact, violating IQP precision-over-recall. |
+| any asset-owned copy of criticality/owner/classification/relationships/history | **CONTRADICTS** | — (breaks EAR-AD-1/AD-2; already DO-NOT-BUILD in Deliverable 9) |
+
+**No enrichment is added as a duplicate of canonical data.** Two items previously treated
+as C4 build candidates are pushed out of asset scope (exposure-on-vendor/AI → third-party
+risk; customer-impact derivation → deferred to its rightful owner pending an upstream
+fact).
+
+## Deliverable 15 — Customer lens ("if this disappeared tomorrow…")
+
+Test: *"If this attribute disappeared tomorrow, what customer decision becomes harder?"*
+If there is no meaningful answer, remove it.
+
+| Enrichment | Decision that becomes harder if it disappears | Keep? |
+|---|---|---|
+| Resolved Asset Context | Every affected-asset decision reverts to manual multi-screen investigation | **Keep** |
+| environment (prod/non-prod) | Cannot separate act-now from schedule-later; prod risk buried under non-prod noise | **Keep** |
+| criticality / business service / exposure (detail) | Cannot rank today's queue; triage order collapses | **Keep (surface)** |
+| business owner / technical owner | Cannot route remediation or risk acceptance | **Keep (surface)** |
+| regulatory scope / obligations | Cannot decide if compliance review is triggered | **Keep (surface)** |
+| exploit history (KEV) | Cannot escalate weaponized risk | **Keep (surface)** |
+| historical incident frequency | Cannot tell a recurring/systemic asset from a one-off | **Keep (derived)** |
+| data classification | Cannot judge whether sensitive data raises the stakes | **Keep (surface)** |
+| **internet exposure on vendor/ai_system** | *No asset-level decision becomes harder* — the third-party-risk view answers it better | **Remove from C4** (→ third-party risk) |
+| **customer-impact derivation (as guessed today)** | The decision is real, but a **guessed** flag makes it *worse*, not easier | **Remove until the upstream customer-facing fact exists** |
+
+The lens confirms the two reclassifications in Deliverable 14: both fail "does removing it
+make a **customer** decision harder in a way C4 can honestly fix now?"
+
+## Deliverable 16 — Measurable success criteria
+
+Success is measured, not asserted. If implemented later (separate approval — CL-5), C4 is
+successful only if it moves these:
+
+- **Fewer analyst clicks / screens per affected-asset triage** — target: the context an
+  analyst needs is available in **one** Resolved Asset Context read instead of N manual
+  lookups (baseline: count screens/queries per triage today).
+- **Fewer manual owner/BU assignments** — remediation routing pre-filled from composed
+  ownership; measure the drop in manually reassigned findings.
+- **More accurate business-impact** — measurable rise in impact assessments backed by
+  evidence (criticality + environment + data-class inputs present) vs. `not_assessed`;
+  measure the reduction in `not_assessed` operational/regulatory dimensions.
+- **Better prioritization** — measurable increase in production / internet-facing /
+  KEV-linked findings ranked ahead of non-prod/isolated ones (queue-order correlation).
+- **Fewer false-positive "affected" assets** — enrichment must **not** raise this;
+  precision-over-recall (IQP/R2) means the false-positive rate stays flat or drops.
+- **Fewer repeat incidents on the same asset** — via the systemic-frequency signal
+  surfacing recurring assets for pattern-level fixes.
+- **Better executive reporting** — roll-ups by business unit / service / environment /
+  data classification become producible from existing edges (coverage %: assets that
+  resolve to a BU/service/environment).
+
+Each criterion has an observable baseline and target; none is a subjective "feels
+richer." An enrichment that cannot move at least one of these does not belong in C4.
 
 ---
 
