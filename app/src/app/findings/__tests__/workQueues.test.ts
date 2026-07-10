@@ -28,6 +28,7 @@ const SUMMARY: FindingsSummary = {
   open_count: 40, critical_open: 4, high_open: 6, medium_open: 10, low_open: 20, closed_count: 5,
   immediate_priority: 3, vendor_sourced: 8, signal_sourced: 12,
   overdue_open: 7, unassigned_open: 5, needs_review_open: 9, mitigating_open: 2, accepted_risk_total: 3,
+  ready_for_decision_open: 6,
   regulatory_open: 4, ai_governance_open: 6, vendor_risk_open: 11, exploited_open: 2,
   pending_risk_approvals: 1,
 };
@@ -36,7 +37,7 @@ describe("bucket registry", () => {
   it("covers the operations-center buckets across the three groups", () => {
     const ids = OPS_BUCKETS.map((b) => b.id);
     for (const required of [
-      "needs_assignment", "sla_breached", "needs_decision", "awaiting_approval", "review_links",
+      "needs_assignment", "sla_breached", "needs_decision", "ready_to_close", "awaiting_approval", "review_links",
       "active_exploitation", "regulatory", "ai_risk", "third_party",
     ] as OpsBucketId[]) {
       expect(ids).toContain(required);
@@ -68,6 +69,9 @@ describe("bucket targets — server-side filters, never client filtering", () =>
       active: true,
       ...P,
     });
+    // Ready-for-decision queue (spec §1.3): a server-side QUERY over the derived
+    // operational axis — never an automated decision write.
+    expect(bucketListParams(opsBucket("ready_to_close")!)).toEqual({ ready_for_decision: true, ...P });
   });
 
   it("a cursor is threaded into the bucket page params", () => {
@@ -98,6 +102,7 @@ describe("opsCounts — server truth with honest unknowns", () => {
     expect(counts.sla_breached).toBe(7);
     expect(counts.needs_assignment).toBe(5);
     expect(counts.needs_decision).toBe(9);
+    expect(counts.ready_to_close).toBe(6);
     expect(counts.awaiting_approval).toBe(1);
     expect(counts.review_links).toBe(13);
     expect(counts.active_exploitation).toBe(2);
@@ -120,8 +125,8 @@ describe("opsCounts — server truth with honest unknowns", () => {
 describe("dueWorkCount", () => {
   it("sums only urgent buckets (tracking buckets never count as due work)", () => {
     const { counts } = opsCounts(SUMMARY, 13);
-    // urgent: sla 7 + assignment 5 + decision 9 + approval 1 + links 13 + exploitation 2 = 37
-    expect(dueWorkCount(counts)).toBe(37);
+    // urgent: sla 7 + assignment 5 + decision 9 + ready-to-close 6 + approval 1 + links 13 + exploitation 2 = 43
+    expect(dueWorkCount(counts)).toBe(43);
   });
 });
 

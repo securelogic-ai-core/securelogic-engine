@@ -278,10 +278,15 @@ export function DomainPostureBars({ domains }: { domains: DomainScore[] }) {
 export function ActionsRing({ actions }: { actions: DashboardSummary["actions"] }) {
   const openCount       = actions.open        ?? 0;
   const inProgressCount = actions.in_progress ?? 0;
+  const blockedCount    = actions.blocked     ?? 0;
   const overdueCount    = actions.overdue      ?? 0;
-  const total = openCount + inProgressCount;
+  // Metric Contract: the ring total is ACTIVE work (open|in_progress|blocked) —
+  // the SAME number the destination page's Open tile shows (blocked work is
+  // still work; it was previously invisible here and the totals diverged).
+  const total = actions.active ?? openCount + inProgressCount + blockedCount;
   const openArc        = total > 0 ? (openCount        / total) * DONUT_CIRC : 0;
   const inProgressArc  = total > 0 ? (inProgressCount  / total) * DONUT_CIRC : 0;
+  const blockedArc     = total > 0 ? (blockedCount     / total) * DONUT_CIRC : 0;
 
   return (
     <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
@@ -314,6 +319,16 @@ export function ActionsRing({ actions }: { actions: DashboardSummary["actions"] 
                     strokeLinecap="butt"
                   />
                 )}
+                {blockedCount > 0 && (
+                  <circle
+                    cx={DONUT_C} cy={DONUT_C} r={DONUT_R}
+                    fill="none" stroke="#94a3b8" strokeWidth={DONUT_STROKE}
+                    strokeDasharray={`${blockedArc} ${DONUT_CIRC - blockedArc}`}
+                    strokeDashoffset={-(openArc + inProgressArc)}
+                    transform={`rotate(-90 ${DONUT_C} ${DONUT_C})`}
+                    strokeLinecap="butt"
+                  />
+                )}
               </>
             ) : (
               <circle
@@ -342,6 +357,13 @@ export function ActionsRing({ actions }: { actions: DashboardSummary["actions"] 
             <span style={{ color: "#94a3b8" }}>In Progress</span>
             <span className="ml-auto font-bold tabular-nums" style={{ color: "#f1f5f9" }}>{inProgressCount}</span>
           </Link>
+          {blockedCount > 0 && (
+            <Link href={orgActionsHref({ status: "blocked" })} className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity">
+              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: "#94a3b8" }} />
+              <span style={{ color: "#94a3b8" }}>Blocked</span>
+              <span className="ml-auto font-bold tabular-nums" style={{ color: "#f1f5f9" }}>{blockedCount}</span>
+            </Link>
+          )}
           {overdueCount > 0 && (
             <Link href={orgActionsHref({ overdue: true })} className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity">
               <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 bg-red-500" />
@@ -442,7 +464,9 @@ export function OpenItemsAging({
   actions:  DashboardSummary["actions"];
 }) {
   const findingsOpen = findings.open;
-  const actionsOpen  = (actions.open ?? 0) + (actions.in_progress ?? 0);
+  // Metric Contract: active = open|in_progress|blocked (same total as the ring
+  // and the destination page); fallback for older engine payloads.
+  const actionsOpen  = actions.active ?? (actions.open ?? 0) + (actions.in_progress ?? 0) + (actions.blocked ?? 0);
   const bothEmpty    = findingsOpen === 0 && actionsOpen === 0;
 
   return (

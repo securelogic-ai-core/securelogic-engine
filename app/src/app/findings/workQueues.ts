@@ -22,6 +22,7 @@ export type OpsBucketId =
   | "needs_assignment"
   | "sla_breached"
   | "needs_decision"
+  | "ready_to_close"
   | "awaiting_approval"
   | "review_links"
   | "active_exploitation"
@@ -55,6 +56,10 @@ export const OPS_BUCKETS: readonly OpsBucketDef[] = [
   { id: "sla_breached", label: "SLA Breached", ask: "Past the committed date — act or renegotiate", group: "decisions", urgent: true, target: { kind: "findings", params: { overdue: true } } },
   { id: "needs_assignment", label: "Needs Assignment", ask: "No accountable owner yet", group: "decisions", urgent: true, target: { kind: "findings", params: { unassigned: true } } },
   { id: "needs_decision", label: "Needs Decision", ask: "No business decision recorded — triage", group: "decisions", urgent: true, target: { kind: "findings", params: { decision_state: "needs_review", active: true } } },
+  // Ready-for-decision queue (finding-lifecycle-spec §1.3): remediation work is
+  // DERIVED complete (operational_status=remediated) but leadership hasn't made
+  // the governance call. A query, never an automated decision (R3).
+  { id: "ready_to_close", label: "Ready to Close", ask: "Remediation complete — make the governance call", group: "decisions", urgent: true, target: { kind: "findings", params: { ready_for_decision: true } } },
   { id: "awaiting_approval", label: "Awaiting Approval", ask: "Risk treatments pending executive sign-off", group: "decisions", urgent: true, target: { kind: "href", href: "/approvals" } },
   { id: "review_links", label: "Review Suggested Links", ask: "Intelligence matched your entities — confirm or dismiss", group: "decisions", urgent: true, target: { kind: "href", href: "/queue" } },
   // ── Risk domains ──────────────────────────────────────────────
@@ -136,6 +141,7 @@ export function opsCounts(
   take("sla_breached", summary?.overdue_open);
   take("needs_assignment", summary?.unassigned_open);
   take("needs_decision", summary?.needs_review_open);
+  take("ready_to_close", summary?.ready_for_decision_open);
   take("awaiting_approval", summary?.pending_risk_approvals);
   take("review_links", pendingSuggestions);
   take("active_exploitation", summary?.exploited_open);

@@ -196,12 +196,14 @@ export default async function ActionsPage({
     // with the dashboard ring. `total` drives the honest "Showing N of M"
     // disclosure. "mine" stays a personal, slice-derived view (no org summary).
     //
-    // Metric Contract: honour ?status=… in the team view — a dashboard tile
-    // that says "Open" must land on a list filtered to open (previously the
-    // param was silently dropped and every tile landed on the same list).
+    // Metric Contract: honour ?status=… and ?overdue=true in the team view — a
+    // dashboard tile that says "Open" (or "Overdue") must land on a list
+    // filtered the same way (previously both params were silently dropped and
+    // every tile landed on the same unfiltered list).
     const statusFilter = scope === "team" && sp.status ? sp.status : undefined;
+    const overdueFilter = scope === "team" && sp.overdue === "true" ? true : undefined;
     const [data, summary] = await Promise.all([
-      getActions(token, { limit: 200, status: statusFilter }),
+      getActions(token, { limit: 200, status: statusFilter, overdue: overdueFilter }),
       scope === "team" ? getActionsSummary(token) : Promise.resolve(null),
     ]);
     const all = data?.actions ?? [];
@@ -214,7 +216,7 @@ export default async function ActionsPage({
         nowMs={Date.now()}
         summary={summary}
         total={scope === "team" ? data?.total : undefined}
-        statusFilter={statusFilter}
+        statusFilter={overdueFilter ? `${statusFilter ? `${statusFilter} · ` : ""}overdue` : statusFilter}
       />
     );
   }
