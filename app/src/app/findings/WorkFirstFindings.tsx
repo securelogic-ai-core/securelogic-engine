@@ -129,7 +129,7 @@ export default function WorkFirstFindings({
   unknownCounts,
   bucket,
   bucketFindings,
-  bucketTotal,
+  bucketPage,
   entityQuery,
   entityResult,
 }: {
@@ -138,13 +138,19 @@ export default function WorkFirstFindings({
   unknownCounts: OpsBucketId[];
   bucket?: OpsBucketDef;
   bucketFindings?: Finding[];
-  bucketTotal?: number;
+  bucketPage?: {
+    total: number;
+    range: { start: number; end: number };
+    hrefs: { nextHref: string | null; prevHref: string | null };
+  };
   entityQuery?: string;
   entityResult?: EntityFindingsResponse | null;
 }) {
   if (mode === "bucket" && bucket) {
     const members = bucketFindings ?? [];
-    const total = bucketTotal ?? members.length;
+    const total = bucketPage?.total ?? members.length;
+    const range = bucketPage?.range ?? { start: members.length > 0 ? 1 : 0, end: members.length };
+    const hrefs = bucketPage?.hrefs ?? { nextHref: null, prevHref: null };
     return (
       <>
         <div className="mb-6">
@@ -156,23 +162,75 @@ export default function WorkFirstFindings({
           <h2 className="text-lg font-bold" style={{ color: "#f1f5f9" }}>
             {bucket.label}
             <span className="ml-2 text-sm font-normal" style={{ color: "#64748b" }}>
-              {total} in queue{members.length < total ? ` · showing ${members.length}` : ""}
+              {members.length === 0
+                ? `${total} in queue`
+                : `showing ${range.start}–${range.end} of ${total}`}
             </span>
           </h2>
           <p className="text-sm" style={{ color: "#94a3b8" }}>{bucket.ask}</p>
         </div>
         {members.length === 0 ? (
           <div className="rounded-xl border p-10 text-center" style={{ ...CARD, borderColor: "rgba(34,197,94,0.2)" }}>
-            <p className="text-sm font-semibold" style={{ color: "#86efac" }}>
-              Queue clear — nothing waiting here.
-            </p>
+            {bucket.id === "my_work" ? (
+              <>
+                <p className="text-sm font-semibold mb-1" style={{ color: "#86efac" }}>
+                  Nothing is assigned to you right now.
+                </p>
+                <p className="text-xs mb-4" style={{ color: "#64748b" }}>
+                  Pick up work from the queues — assign a finding to yourself from its Decision Workspace.
+                </p>
+                <Link href="/findings" className="text-sm font-medium" style={{ color: "#00c4b4" }}>
+                  Go to the operations center →
+                </Link>
+              </>
+            ) : hrefs.prevHref !== null ? (
+              <>
+                <p className="text-sm font-semibold mb-2" style={{ color: "#94a3b8" }}>
+                  No more items on this page.
+                </p>
+                <Link href={hrefs.prevHref} className="text-sm font-medium" style={{ color: "#00c4b4" }}>
+                  ← Back a page
+                </Link>
+              </>
+            ) : (
+              <p className="text-sm font-semibold" style={{ color: "#86efac" }}>
+                Queue clear — nothing waiting here.
+              </p>
+            )}
           </div>
         ) : (
-          <div className="space-y-3">
-            {members.map((f) => (
-              <FindingCard key={f.id} finding={f} revalidateUrl={`/findings?bucket=${bucket.id}`} workspace />
-            ))}
-          </div>
+          <>
+            <div className="space-y-3 mb-6">
+              {members.map((f) => (
+                <FindingCard key={f.id} finding={f} revalidateUrl={`/findings?bucket=${bucket.id}`} workspace />
+              ))}
+            </div>
+            {(hrefs.prevHref !== null || hrefs.nextHref !== null) && (
+              <div className="flex items-center justify-between gap-4">
+                {hrefs.prevHref ? (
+                  <Link href={hrefs.prevHref} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ border: "1px solid #1e293b", color: "#94a3b8" }}>
+                    ← Previous
+                  </Link>
+                ) : (
+                  <span className="px-3 py-1.5 rounded-lg text-sm" style={{ border: "1px solid #131c2e", color: "#334155" }}>
+                    ← Previous
+                  </span>
+                )}
+                <span className="text-xs" style={{ color: "#475569" }}>
+                  {range.start}–{range.end} of {total}
+                </span>
+                {hrefs.nextHref ? (
+                  <Link href={hrefs.nextHref} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ border: "1px solid #1e293b", color: "#94a3b8" }}>
+                    Next →
+                  </Link>
+                ) : (
+                  <span className="px-3 py-1.5 rounded-lg text-sm" style={{ border: "1px solid #131c2e", color: "#334155" }}>
+                    Next →
+                  </span>
+                )}
+              </div>
+            )}
+          </>
         )}
       </>
     );

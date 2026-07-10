@@ -13,7 +13,7 @@ import { FindingsList } from "./FindingsList";
 import SavedViewsBar from "./SavedViewsBar";
 import { currentViewFilters } from "./savedViews";
 import WorkFirstFindings from "./WorkFirstFindings";
-import { opsBucket, bucketListParams, opsCounts } from "./workQueues";
+import { opsBucket, bucketListParams, opsCounts, decodeCursor, parseTrail, bucketPageHrefs, pageRange, BUCKET_PAGE_SIZE } from "./workQueues";
 
 const SOURCE_TYPE_LABELS: Record<string, string> = {
   vendor_review:        "Vendor Assessment",
@@ -160,9 +160,29 @@ export default async function FindingsPage({
   const workFirstMode: "home" | "bucket" | "entity" | null =
     !workspace || browse ? null : entityQuery ? "entity" : bucket ? "bucket" : "home";
 
-  // Bucket members come from a SERVER-filtered fetch (never client-filtering a page).
-  const bucketParams = workFirstMode === "bucket" && bucket ? bucketListParams(bucket) : null;
+  // Bucket members come from a SERVER-filtered, SERVER-paged fetch (never
+  // client-filtering a page). Keyset cursor + bounded prev-trail live in the URL;
+  // invalid pagination input fails safe to the first page (decodeCursor → null).
+  const afterToken = typeof sp.after === "string" && decodeCursor(sp.after) ? sp.after : null;
+  const trail = parseTrail(typeof sp.trail === "string" ? sp.trail : undefined);
+  const bucketParams =
+    workFirstMode === "bucket" && bucket ? bucketListParams(bucket, decodeCursor(afterToken)) : null;
   const bucketData = bucketParams ? await getFindings(token, bucketParams) : null;
+  const bucketPage =
+    workFirstMode === "bucket" && bucket && bucketData
+      ? {
+          total: bucketData.total ?? bucketData.findings.length,
+          range: pageRange(afterToken, trail, bucketData.findings.length),
+          // A partial page is by definition the last one — never offer a Next
+          // that can only land on an empty page.
+          hrefs: bucketPageHrefs(
+            bucket.id,
+            afterToken,
+            trail,
+            bucketData.findings.length === BUCKET_PAGE_SIZE ? bucketData.nextCursor : null
+          ),
+        }
+      : null;
   // Review-links pending total (home only); null on failure → honest "—", never 0.
   const suggestionCounts = workFirstMode === "home" ? await getSignalMatchSuggestionCounts(token) : null;
   const { counts: wfCounts, unknown: wfUnknown } = opsCounts(
@@ -227,7 +247,7 @@ export default async function FindingsPage({
           unknownCounts={wfUnknown}
           bucket={bucket ?? undefined}
           bucketFindings={bucketData?.findings ?? undefined}
-          bucketTotal={bucket ? wfCounts[bucket.id] : undefined}
+          bucketPage={bucketPage ?? undefined}
           entityQuery={entityQuery}
           entityResult={entityResult}
         />
