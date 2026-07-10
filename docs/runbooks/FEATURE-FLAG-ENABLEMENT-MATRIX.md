@@ -282,6 +282,33 @@ production (no prod enablement without an explicit operator ruling).
 - **Guarantee:** Intelligence Events remain **drill-through only** — no primary-nav entry, no `/intelligence` index route (enforced by `applicationKnowledgeIndex.test.ts`).
 - **Rollback:** `"false"` on either service → legacy behavior restored (no data reversal; no migration in P3.3).
 
+### 1.20 `SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED` (Enterprise Risk Graph convergence — C3/C3b shadow)
+- **Purpose:** DARK shadow that runs the new product→tenant-asset applicability
+  resolution (Canonical Product → `ApplicabilityEngineV1` resolver) ALONGSIDE the legacy
+  signal→vendor / →ai_system / →asset match and emits counts-only
+  `signal_applicability_shadow` telemetry (with a `grain` field: asset/vendor/ai_system)
+  to measure convergence. **Measure-only** — writes nothing to authoritative
+  applicability / vendor links / ai-system links / findings / asset-registry records; the
+  legacy linkage stays authoritative. See `docs/architecture/proposals/CONVERGENCE-REPORT.md`.
+- **Required services:** **Engine only** (read in the matcher, `cyberSignalProcessingService`).
+- **Sub-mode:** `SECURELOGIC_SIGNAL_APPLICABILITY_MODE` ∈ `shadow` (default) | `surface`
+  (surface is **unbuilt** — reserved for a post-convergence, ratified cutover).
+- **Redeploy/restart:** Yes, Engine; no rebuild.
+- **Default:** `"false"` (OFF everywhere; strict `=== "true"`; **flag-off byte-identical** —
+  verified by matcher regression + snapshot tests).
+- **Staging order:** engine-staging → enable → run a representative ingestion window →
+  aggregate the `signal_applicability_shadow` telemetry grouped by `grain`.
+- **Production order:** **GATE B — untouched.** No production enablement; no cutover; no
+  retirement of the legacy path without an explicit, ratified decision after convergence
+  is measured.
+- **Validation:** enable in staging; confirm `signal_applicability_shadow` events emit and
+  no authoritative applicability/link/finding rows are written by the shadow.
+- **Rollback:** `"false"` → shadow stops (it is try/catch-isolated and writes nothing, so
+  rollback is immediate and lossless).
+- **Dependencies:** reads the org's asset registry (best with `ENTERPRISE_CONTEXT` +
+  `ASSET_REGISTRY` populated); degrades to `no_match`/`needs_review` otherwise. Introduced
+  by ERG convergence C3 (PR #602) / C3b (PR #603).
+
 ---
 
 > **Note (app flag reads):** §0 row for the App lists the three *legacy* nav flags; the app also reads `SECURELOGIC_RISK_WORKSPACE_ENABLED` (Packages 1/2 nav + queue reskin) and `SECURELOGIC_DECISION_WORKSPACE_ENABLED` (§1.19) server-side.

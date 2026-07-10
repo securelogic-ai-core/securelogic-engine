@@ -1,6 +1,22 @@
 # Enterprise Risk Graph — Executable Convergence Roadmap
 
 - **Status:** RATIFIED direction (2026-07-10). Governs the convergence program.
+- **Shipped status (2026-07-10):** **C0–C3b COMPLETE on `develop`, dark.** The
+  measured phases diverged from this plan's original numbering (reconciled here, plan
+  text below preserved as the ratified intent):
+  - **C0** governance — PR #597. **C1** Canonical Product core — PR #598; **C1b**
+    migration — PR #599.
+  - **C2 was RE-SCOPED** — the `asset` applicability target was **already shipped**
+    (migration `20260804`), so C2 (PR #600) **reused** it and added only the route
+    read-set + a WORM-safe `asset_id` FK fix; it did **not** rebuild the Canonical
+    Product or the resolver.
+  - **C2b** Canonical Product → Tenant Asset Resolver (organization-scoped; ambiguous →
+    `needs_review`) — PR #601.
+  - **C3** applicability(asset) vs legacy shadow — PR #602. **C3b** (new; not in the
+    original table) extended the same shadow to the **vendor → asset** and
+    **ai_system → asset** grains — PR #603.
+  - **C4–C9 NOT started.** No retirement, no cutover, no production enablement.
+  Metrics live only in `CONVERGENCE-REPORT.md` (not duplicated).
 - **Companion:** `ENTERPRISE-RISK-GRAPH.md` (architecture + rulings R1–R3).
 - **Prime directive:** converge the legacy live signal→vendor path onto the existing
   `ApplicabilityEngineV1`; **no** second applicability engine, **no** vendor-specific

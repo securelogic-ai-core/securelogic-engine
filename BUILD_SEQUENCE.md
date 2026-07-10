@@ -234,6 +234,63 @@ Billing note:
 > successful validation. Docs synchronized: P16 tracker row, `FUTURE-ASSET-TYPES.md`, runbook Step 1,
 > `CANONICAL-ASSET-CREATE-FLOW.md`, `CANONICAL_DOMAIN_MODEL.md` entity_type list corrected.
 
+> **Enterprise Risk Graph (ERG) convergence — C0–C3b COMPLETE (2026-07-10; merged to
+> `develop`, additive to all records above which are preserved unchanged).** A dark,
+> additive convergence program that routes external intelligence toward canonical
+> **tenant assets** via the **existing** `ApplicabilityEngineV1` — *convergence and
+> measurement, NOT a rebuild, NOT a retirement.* Authoritative design + measurement
+> docs: `docs/architecture/proposals/ENTERPRISE-RISK-GRAPH.md` (rulings R1–R3),
+> `CONVERGENCE-ROADMAP.md`, and `CONVERGENCE-REPORT.md` (**the single source of the
+> convergence metrics — not duplicated here**); `docs/specs/finding-lifecycle-spec.md`
+> (ratified two-axis lifecycle, no implementation yet).
+>
+> **Shipped phases (all on `develop`, all dark, flag-off byte-identical):**
+> - **C0 — governance (PR #597, `c4b0d719`):** ratified the ERG architecture, rulings
+>   R1–R3, roadmap, finding-lifecycle spec, and canonical-model doc-sync. Foundational.
+> - **C1 — Canonical Product normalization core (PR #598, `ffc1cd0c`) + C1b migration
+>   (PR #599, `6ca79325`):** the global, organization-neutral Canonical Product
+>   reference (identity + aliases + external ids + versions), pure normalizer.
+>   Foundational.
+> - **C2 — asset applicability target (re-scoped) (PR #600, `3c4378f4`):** the `asset`
+>   applicability target was **already shipped** (migration `20260804`), so C2
+>   **reused** it rather than duplicating — adding only the route read-set + a WORM-safe
+>   `asset_id` FK fix. No Canonical Product rebuild.
+> - **C2b — Canonical Product → Tenant Asset Resolver (PR #601, `2c9cdd33`):** a
+>   reusable, **organization-scoped**, source-agnostic resolver. Ambiguous matches
+>   resolve to **`needs_review`** (never guessed); vendor-only / no-product-name inputs
+>   also `needs_review` (R2). Writes nothing.
+> - **C3 — applicability(asset) vs legacy shadow (PR #602, `d3d6f83b`):** the shadow
+>   comparison of the product→asset resolution against the legacy asset match, behind
+>   `SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED`; counts-only `signal_applicability_shadow`
+>   telemetry; surfaces nothing.
+> - **C3b — vendor/ai_system → asset grain (PR #603, `83340aff`):** extended the SAME
+>   shadow framework (same comparator, resolver, flag; telemetry gained a `grain`
+>   field — no parallel framework, no schema) to **vendor → asset** and
+>   **ai_system → asset**.
+>
+> **Architectural outcome:** the **legacy vendor linkage and legacy AI-system linkage
+> remain AUTHORITATIVE.** The shadow implementation is **dark, read-only, additive,
+> try/catch-isolated, and flag-off byte-identical** — it writes nothing to authoritative
+> applicability / vendor links / ai-system links / findings / asset-registry records.
+> **No retirement occurred. No cutover occurred. No production enablement occurred.**
+>
+> **Deployment state — `SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED`:** default **false**;
+> **shadow-only** (sub-mode `SECURELOGIC_SIGNAL_APPLICABILITY_MODE` defaults to
+> `shadow`; `surface` unbuilt). A **staging operator MAY enable it on engine-staging for
+> telemetry collection**; **production is untouched** and **GATE B is unchanged** — no
+> `render.yaml`/env/flag change was made by this program.
+>
+> **Remaining work.** *Operator-owned:* enable the shadow on **engine-staging** → execute
+> a representative ingestion window → collect the `signal_applicability_shadow` telemetry
+> (grouped by `grain`) → produce the convergence report from `CONVERGENCE-REPORT.md`.
+> *Architecture-owned:* an **explicit retirement decision after convergence is measured**
+> — **no implementation is implied** by these records; the legacy path stays authoritative
+> until a ratified cutover.
+>
+> **Sequencing note:** ERG convergence is a **dark, additive program distinct from** the
+> active `Priority 4 — Signal Ingestion Hardening` package below; it did not change the
+> active package.
+
 ## Active package
 `Priority 4 — Signal Ingestion Hardening` — **status: ACTIVE — IMPLEMENTATION AUTHORIZED & UNDERWAY (2026-06-26).**
 
