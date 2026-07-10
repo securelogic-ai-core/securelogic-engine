@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { FindingCard } from "@/components/FindingCard";
-import type { Finding } from "@/lib/api";
+import type { Finding, FindingsSummary } from "@/lib/api";
 import Link from "next/link";
 import { attentionSummary, groupByUrgency, isFirstTimeEmpty } from "./decisionQueue";
 
@@ -13,6 +13,12 @@ interface Props {
   // When on, the list becomes a "what needs action now" queue: attention tiles +
   // urgency grouping. Off = the unchanged domain-grouped list (byte-identical).
   workspace?: boolean;
+  // Metric Contract: authoritative org-wide summary for the attention tiles.
+  // When present, tiles read server COUNT(*)s (same definitions as
+  // decisionQueue's predicates) instead of scanning the capped ≤100-row slice.
+  orgSummary?: FindingsSummary;
+  // True filtered total (server) for the honest "Showing N of M" disclosure.
+  total?: number;
 }
 
 const TILE: React.CSSProperties = {
@@ -32,7 +38,7 @@ const PILL_INACTIVE: React.CSSProperties = {
   background: "transparent", color: "#94a3b8", border: "1px solid #1e293b",
 };
 
-export function FindingsList({ findings, hasFilters, workspace = false }: Props) {
+export function FindingsList({ findings, hasFilters, workspace = false, orgSummary, total }: Props) {
   const [hasActionsOnly, setHasActionsOnly] = useState(false);
 
   const visible = hasActionsOnly
@@ -43,6 +49,21 @@ export function FindingsList({ findings, hasFilters, workspace = false }: Props)
   const now = Date.now();
   const attention = workspace ? attentionSummary(visible, now) : null;
   const urgencyGroups = workspace ? groupByUrgency(visible, now) : null;
+
+  // Metric Contract: attention tiles prefer authoritative org-wide counts (same
+  // definitions as the client predicates) over the capped-slice scan; fall back
+  // to the slice when the engine build predates the summary fields.
+  const tileOverdue = orgSummary?.overdue_open ?? attention?.overdue ?? 0;
+  const tileUnassigned = orgSummary?.unassigned_open ?? attention?.unassigned ?? 0;
+  const tileCriticalHigh = orgSummary?.critical_high_active ?? attention?.criticalOpen ?? 0;
+  const tileActiveTotal = orgSummary?.active_total ?? attention?.openTotal ?? 0;
+
+  // Honest pagination disclosure: the slice is capped (≤100) — say so instead
+  // of letting a truncated list sit under org-wide tiles.
+  const truncationNote =
+    typeof total === "number" && total > findings.length
+      ? `Showing ${findings.length} of ${total} findings${workspace ? " — tiles reflect the full org total." : "."}`
+      : null;
 
   const grouped: Record<string, Finding[]> = {};
   for (const f of visible) {
@@ -58,26 +79,32 @@ export function FindingsList({ findings, hasFilters, workspace = false }: Props)
 
   return (
     <>
-      {/* Attention tiles — "what needs action now" (workspace only). */}
+      {/* Attention tiles — "what needs action now" (workspace only). Org-wide
+          server truth (Metric Contract), never a scan of the capped slice. */}
       {workspace && attention && (
         <div className="mb-6 flex flex-wrap gap-3">
           <div style={TILE}>
             <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b", marginBottom: 6 }}>Overdue</div>
-            <div style={{ fontSize: 26, fontWeight: 700, color: attention.overdue > 0 ? "#fca5a5" : "#f1f5f9" }}>{attention.overdue}</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: tileOverdue > 0 ? "#fca5a5" : "#f1f5f9" }}>{tileOverdue}</div>
           </div>
           <div style={TILE}>
             <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b", marginBottom: 6 }}>Unassigned</div>
-            <div style={{ fontSize: 26, fontWeight: 700, color: attention.unassigned > 0 ? "#fcd34d" : "#f1f5f9" }}>{attention.unassigned}</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: tileUnassigned > 0 ? "#fcd34d" : "#f1f5f9" }}>{tileUnassigned}</div>
           </div>
           <div style={TILE}>
             <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b", marginBottom: 6 }}>High &amp; Critical open</div>
-            <div style={{ fontSize: 26, fontWeight: 700, color: attention.criticalOpen > 0 ? "#fca5a5" : "#f1f5f9" }}>{attention.criticalOpen}</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: tileCriticalHigh > 0 ? "#fca5a5" : "#f1f5f9" }}>{tileCriticalHigh}</div>
           </div>
           <div style={TILE}>
             <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b", marginBottom: 6 }}>Open total</div>
-            <div style={{ fontSize: 26, fontWeight: 700, color: "#f1f5f9" }}>{attention.openTotal}</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: "#f1f5f9" }}>{tileActiveTotal}</div>
           </div>
         </div>
+      )}
+
+      {/* Honest truncation disclosure (both modes). */}
+      {truncationNote && (
+        <p className="mb-4 text-xs" style={{ color: "#64748b" }}>{truncationNote}</p>
       )}
 
       {/* Has Actions filter pill */}

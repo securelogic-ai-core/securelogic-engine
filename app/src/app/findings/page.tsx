@@ -120,7 +120,10 @@ export default async function FindingsPage({
   const highCount       = summary?.high_open ?? findings.filter((f) => f.severity === "High").length;
   const moderateCount   = summary?.medium_open ?? findings.filter((f) => f.severity === "Moderate" && f.status === "open").length;
   const lowCount        = summary?.low_open ?? findings.filter((f) => f.severity === "Low" && f.status === "open").length;
-  const inProgressCount = findings.filter((f) => f.status === "in_progress").length;
+  // Metric Contract: org truth from the summary — previously the ONLY tile in
+  // this row computed from the capped ≤100-row slice while its neighbors used
+  // org-wide counts (one tile row, two sources of truth).
+  const inProgressCount = summary?.in_progress_open ?? findings.filter((f) => f.status === "in_progress").length;
 
   const currentSp: Params = {
     ...(sp.status      ? { status:      sp.status }      : {}),
@@ -352,7 +355,13 @@ export default async function FindingsPage({
       {savedViewsEnabled && (
         <SavedViewsBar views={savedViews} currentFilters={currentViewFilters(sp)} />
       )}
-      <FindingsList findings={findings} hasFilters={hasFilters} workspace={workspace} />
+      <FindingsList
+        findings={findings}
+        hasFilters={hasFilters}
+        workspace={workspace}
+        orgSummary={summary}
+        total={findingsData?.total}
+      />
         </>
       )}
     </div>

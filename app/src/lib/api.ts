@@ -317,6 +317,11 @@ export type DashboardSummary = {
   actions: {
     open: number;
     in_progress: number;
+    // Metric Contract (optional: absent on older engine builds): `active` =
+    // open|in_progress|blocked — the SAME number the destination page's
+    // open_count shows, so the ring and its click-through reconcile exactly.
+    active?: number;
+    blocked?: number;
     overdue: number;
     avg_age_days?:  number | null;
     max_age_days?:  number | null;
@@ -587,6 +592,13 @@ export type FindingsParams = {
 
 export type FindingsSummary = {
   open_count: number;
+  // Metric Contract org-truth fields (optional: absent on older engine builds).
+  // active_total / critical_high_active use the SAME definitions as
+  // decisionQueue.isOpenStatus/isCriticalOpen, so the workspace attention tiles
+  // are server truth instead of a capped-slice scan.
+  in_progress_open?: number;
+  active_total?: number;
+  critical_high_active?: number;
   critical_open: number;
   high_open: number;
   medium_open: number;

@@ -575,6 +575,10 @@ router.get(
         SELECT
           COUNT(*) FILTER (WHERE status = 'open')                                   AS open_count,
           COUNT(*) FILTER (WHERE status = 'in_progress')                            AS in_progress_open,
+          -- Metric Contract: org-truth for the workspace attention tiles (same
+          -- ACTIVE definition as decisionQueue.isOpenStatus client-side).
+          COUNT(*) FILTER (WHERE ${sqlFindingActive()})                             AS active_total,
+          COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND severity IN ('Critical','High')) AS critical_high_active,
           COUNT(*) FILTER (WHERE status = 'open' AND severity = 'Critical')         AS critical_open,
           COUNT(*) FILTER (WHERE status = 'open' AND severity = 'High')             AS high_open,
           COUNT(*) FILTER (WHERE status = 'open' AND severity = 'Moderate')         AS medium_open,
@@ -637,6 +641,8 @@ router.get(
         summary: {
           open_count:         parseInt(row?.open_count ?? "0", 10),
           in_progress_open:   parseInt((row as any)?.in_progress_open ?? "0", 10),
+          active_total:       parseInt((row as any)?.active_total ?? "0", 10),
+          critical_high_active: parseInt((row as any)?.critical_high_active ?? "0", 10),
           critical_open:      parseInt(row?.critical_open ?? "0", 10),
           high_open:          parseInt(row?.high_open ?? "0", 10),
           medium_open:        parseInt(row?.medium_open ?? "0", 10),
