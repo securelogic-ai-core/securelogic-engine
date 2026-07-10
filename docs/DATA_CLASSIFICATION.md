@@ -186,8 +186,11 @@ org-FK CASCADE never fires).
 `intelligence_briefs`, `intelligence_brief_items`, `intelligence_brief_sends`,
 `intelligence_brief_sources`, `newsletter_issues`, `newsletter_issue_insights`,
 `published_artifacts`, `worker_runs`, `auth_anomaly_alerts`, `risk_scale_presets`,
-`webhook_events_processed`, **`jobs`** (new), **`data_export_files`** (new), plus
-the special-handling tables below.
+`webhook_events_processed`, **`jobs`** (new), **`data_export_files`** (new),
+**`canonical_products`** + **`canonical_product_aliases`** +
+**`canonical_product_external_ids`** + **`canonical_product_versions`** (new — the
+GLOBAL, org-neutral Canonical Product reference; ERG convergence C1b; no
+organization_id, no RLS, no PII), plus the special-handling tables below.
 
 ### F — Billing / financial
 `api_keys` — carries legacy Stripe mirror fields (`stripe_customer_id`,
