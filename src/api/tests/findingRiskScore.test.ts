@@ -51,3 +51,57 @@ describe("assessBusinessImpact (never fabricates)", () => {
     expect(bi.operational.level).toBe("none");
   });
 });
+
+describe("assessBusinessImpact — Context Contract honesty (resolution-aware)", () => {
+  const zero = { vendors: 0, ai_systems: 0, controls: 0, obligations: 0 };
+
+  it("zero + path ran = honest 'none'", () => {
+    const bi = assessBusinessImpact(zero, "High", {
+      vendors: "none_found", ai_systems: "none_found", controls: "none_found", obligations: "none_found",
+    });
+    expect(bi.third_party.level).toBe("none");
+    expect(bi.third_party.note).toBe("No affected vendors");
+    expect(bi.regulatory.level).toBe("none");
+    expect(bi.operational.level).toBe("none");
+  });
+
+  it("zero + no path = not_assessed, and never claims 'No affected vendors'", () => {
+    const bi = assessBusinessImpact(zero, "High", {
+      vendors: "not_applicable", ai_systems: "not_applicable", controls: "not_applicable", obligations: "not_applicable",
+    });
+    expect(bi.third_party.level).toBe("not_assessed");
+    expect(bi.third_party.note).not.toContain("No affected vendors");
+    expect(bi.third_party.note).toContain("not resolvable");
+    expect(bi.regulatory.level).toBe("not_assessed");
+    expect(bi.operational.level).toBe("not_assessed");
+  });
+
+  it("operational is honest-zero if EITHER contributing bucket ran", () => {
+    const bi = assessBusinessImpact(zero, "High", {
+      vendors: "not_applicable", ai_systems: "none_found", controls: "not_applicable", obligations: "not_applicable",
+    });
+    expect(bi.operational.level).toBe("none");
+  });
+
+  it("positive counts resolve to levels regardless of resolution bookkeeping", () => {
+    const bi = assessBusinessImpact({ vendors: 1, ai_systems: 0, controls: 0, obligations: 0 }, "Low", {
+      vendors: "resolved", ai_systems: "not_applicable", controls: "not_applicable", obligations: "not_applicable",
+    });
+    expect(bi.third_party.level).toBe("low");
+    expect(bi.third_party.note).toContain("1 affected vendor");
+  });
+
+  it("omitting resolution preserves the legacy count-only behaviour", () => {
+    const bi = assessBusinessImpact(zero, "High");
+    expect(bi.third_party.level).toBe("none");
+    expect(bi.third_party.note).toBe("No affected vendors");
+  });
+
+  it("revenue and customer stay not_assessed in all cases", () => {
+    const bi = assessBusinessImpact({ vendors: 3, ai_systems: 3, controls: 3, obligations: 3 }, "Critical", {
+      vendors: "resolved", ai_systems: "resolved", controls: "resolved", obligations: "resolved",
+    });
+    expect(bi.revenue.level).toBe("not_assessed");
+    expect(bi.customer.level).toBe("not_assessed");
+  });
+});

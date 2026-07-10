@@ -5,6 +5,8 @@ import {
   mergeAffected,
   resolveAssessmentAffected,
   ASSESSMENT_AFFECTED_MAP,
+  affectedPathsRan,
+  bucketResolution,
   type Queryable,
 } from "../lib/findingContextResolver.js";
 
@@ -145,5 +147,62 @@ describe("resolveAssessmentAffected (assessment-family findings)", () => {
     });
     // manual issues no query; null source_id short-circuits before any query.
     expect(calls.length).toBe(0);
+  });
+});
+
+// ── Context Contract: per-bucket resolution status (pure) ────────────────────
+
+describe("affectedPathsRan (Context Contract — which paths ran)", () => {
+  it("manual finding with no intel refs: no path runs anywhere", () => {
+    expect(affectedPathsRan("manual", false, false)).toEqual({
+      vendors: false, ai_systems: false, controls: false, obligations: false,
+    });
+  });
+
+  it("signal-linked finding: link path runs for all four buckets", () => {
+    expect(affectedPathsRan("cyber_signal", true, false)).toEqual({
+      vendors: true, ai_systems: true, controls: true, obligations: true,
+    });
+  });
+
+  it("event finding with NO bridged signals: only the event-native vendor path runs", () => {
+    expect(affectedPathsRan("intelligence_event", false, true)).toEqual({
+      vendors: true, ai_systems: false, controls: false, obligations: false,
+    });
+  });
+
+  it("assessment families run only their own bucket", () => {
+    expect(affectedPathsRan("vendor_review", false, false).vendors).toBe(true);
+    expect(affectedPathsRan("vendor_review", false, false).obligations).toBe(false);
+    expect(affectedPathsRan("control_test", false, false).controls).toBe(true);
+    expect(affectedPathsRan("ai_governance_review", false, false).ai_systems).toBe(true);
+    expect(affectedPathsRan("obligation_review", false, false).obligations).toBe(true);
+    expect(affectedPathsRan("dependency_review", false, false).vendors).toBe(true);
+  });
+
+  it("risk findings run controls + obligations", () => {
+    const ran = affectedPathsRan("risk", false, false);
+    expect(ran.controls).toBe(true);
+    expect(ran.obligations).toBe(true);
+    expect(ran.vendors).toBe(false);
+  });
+
+  it("applicability findings run all four (affected entities may be any type)", () => {
+    expect(affectedPathsRan("applicability_assessment", true, false)).toEqual({
+      vendors: true, ai_systems: true, controls: true, obligations: true,
+    });
+  });
+});
+
+describe("bucketResolution (empty ≠ zero ≠ unknowable)", () => {
+  it("resolved when rows exist regardless of path bookkeeping", () => {
+    expect(bucketResolution(true, 2)).toBe("resolved");
+    expect(bucketResolution(false, 1)).toBe("resolved");
+  });
+  it("none_found only when a path ran and found nothing (honest zero)", () => {
+    expect(bucketResolution(true, 0)).toBe("none_found");
+  });
+  it("not_applicable when no path could run", () => {
+    expect(bucketResolution(false, 0)).toBe("not_applicable");
   });
 });
