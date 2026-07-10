@@ -89,14 +89,20 @@ export function compareApplicabilityShadow(
   };
 }
 
+/** The legacy grain a shadow comparison measures against. */
+export type ShadowGrain = "asset" | "vendor" | "ai_system";
+
 /**
  * Shape the comparison into a flat telemetry payload (counts only — no asset ids
  * beyond counts, so aggregation carries no tenant identifiers). Emitted to the
  * structured log during the shadow period; consumed to build the convergence report.
+ * `grain` distinguishes the legacy match set compared against (asset / vendor /
+ * ai_system) so the report can break the convergence down per grain.
  */
-export function shadowTelemetry(cmp: ShadowComparison): Record<string, string | number | boolean> {
+export function shadowTelemetry(cmp: ShadowComparison, grain: ShadowGrain): Record<string, string | number | boolean> {
   return {
     event: "signal_applicability_shadow",
+    grain,
     agreement: cmp.agreement,
     shadow_status: cmp.shadow_status,
     shadow_reason: cmp.shadow_reason,
