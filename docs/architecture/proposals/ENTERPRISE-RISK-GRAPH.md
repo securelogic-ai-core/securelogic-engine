@@ -1,6 +1,10 @@
 # SecureLogic — Enterprise Risk Graph: Architecture Proposal
 
-- **Status:** PROPOSED — for approval. No implementation, no PR, no production change.
+- **Status:** APPROVED & realized dark (2026-07-10). The convergence program **C0–C3b**
+  is COMPLETE on `develop` (PRs #597–#603) — dark, additive, flag-off byte-identical;
+  **convergence + shadow measurement only, no retirement/cutover/production enablement.**
+  Later phases (C4–C9) are not started. See `CONVERGENCE-ROADMAP.md` (shipped status),
+  `CONVERGENCE-REPORT.md` (metrics), and BUILD_SEQUENCE.md (ERG record).
 - **Author role:** Principal Product Architect
 - **Date:** 2026-07-10
 - **Scope:** the 5-year canonical architecture. Existing code is treated as *evidence*, not authority.
