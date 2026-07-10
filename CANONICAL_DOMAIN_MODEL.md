@@ -106,19 +106,36 @@ These are the single source of truth. Do not redefine them anywhere else.
 - `in_progress`
 - `closed`
 
-> **Two-axis model (shipped #562 + ratified 2026-07-10).** The legacy single
-> `status` above is being generalized into two orthogonal axes, per
+> **Two-axis model (ratified 2026-07-10; C6 SHIPPED #607).** The legacy single
+> `status` above is generalized into two orthogonal axes, per
 > `docs/specs/finding-lifecycle-spec.md` (RATIFIED):
-> - **`operational_status`** — SYSTEM-DERIVED from workflow evidence (Actions/Evidence):
->   `open | in_progress | remediated`. Never hand-set.
-> - **`decision_state`** — HUMAN-GOVERNED (shipped #562): `needs_review | mitigating |
->   accepted_risk | resolved`. The system writes only its *initial* value (R3).
-> - Legacy `status` is retained as a **derived projection** of the two axes for
->   backward-compatible readers (posture/exports/dashboard).
+> - **`operational_status`** — SYSTEM-DERIVED from linked Actions (shipped #607,
+>   migration `20260901`): `open | in_progress | remediated`. Never hand-set;
+>   the ONLY writer is `findingLifecycle.recomputeFindingOperationalStatus`,
+>   invoked in the SAME tenant transaction as any Action create/status write
+>   (spec §5 cascade). `remediated` is not closure — it routes the finding into
+>   the **ready-for-decision queue** (a query: `operational_status='remediated'
+>   AND decision_state NOT IN ('resolved','accepted_risk')`; summary field
+>   `ready_for_decision_open`; ops-center bucket "Ready to Close").
+> - **`decision_state`** — HUMAN-GOVERNED (shipped #562; transitions GUARDED
+>   #607): `needs_review | mitigating | accepted_risk | resolved`. The system
+>   writes only its *initial* value (R3). PATCH transitions run through the pure
+>   state machine (`findingLifecycleMachine.evaluateFindingDecisionTransition`):
+>   accept-plan, accept-risk (audited override from any state), close (ONLY when
+>   `operational_status='remediated'` or from `accepted_risk`), reopen. Illegal
+>   moves are 409s. The pre-ratification `in_progress` decision value was
+>   normalized to `mitigating` (`20260901`).
+> - **`finding_lifecycle_events`** (shipped #607) — the append-only,
+>   in-transaction, RLS'd audit stream of BOTH axes (mirrors
+>   `risk_lifecycle_events`); `security_audit_log` remains the fire-and-forget
+>   projection with spec event names (`finding.operational.advanced`,
+>   `finding.remediated`, `finding.decision.*`, `finding.reopened`).
+> - Legacy `status` is still hand-set today; it becomes a **derived projection**
+>   of the two axes (spec §3) in a later reader-migration package.
 > - `finding_review_marks` is a per-user "last reviewed" cursor — NOT a lifecycle state.
 >
 > Invariant: *operational_status is never hand-set; decision_state is never computed
-> except its initial value.* Implementation lands in convergence Phase C6 (dark).
+> except its initial value.*
 
 ### Status (actions)
 - `open`
@@ -126,6 +143,51 @@ These are the single source of truth. Do not redefine them anywhere else.
 - `blocked`
 - `closed`
 - `accepted`
+
+### The Action Contract (authoritative — operational-architecture goal, Contract 4)
+
+**"Action" and "remediation item" are the SAME object** — one row in `actions`.
+There is no `remediation_plans`, `remediation_items`, or `tasks` table, and none
+may be created. UI copy ("Remediation Actions", "Add Remediation Action") always
+refers to an Action with `source_type='finding'`. A finding's "remediation" =
+its `recommendation` column (guidance TEXT) + its child Actions. Nothing else.
+
+The authoritative chain:
+
+```
+Finding
+  ├─ recommendation (guidance text on the finding — not a work object)
+  └─ Actions (source_type='finding', source_id=finding.id)   ← the remediation items
+       ├─ assignee: actions.owner_user_id (independent of the finding's owner)
+       ├─ SLA: actions.due_date; overdue = ACTIVE AND due_date < CURRENT_DATE
+       ├─ completion: status → closed|accepted (sets completed_at)
+       │    └─ CASCADE (spec §5, shipped #607): every Action create/status write
+       │       recomputes the parent finding's operational_status in the SAME
+       │       transaction — all children terminal ⇒ parent 'remediated'
+       ├─ validation: 'remediated' surfaces the finding in the ready-for-decision
+       │    queue; the system NEVER closes it (R3)
+       └─ closure: a HUMAN sets decision_state='resolved' (guarded: requires
+            remediated or accepted_risk) — the only path to closed
+```
+
+Metric derivation (Contract 1): every count of this chain — dashboard tiles,
+My Work, queues, summaries — derives from `src/api/lib/metricDefinitions.ts`:
+ACTIVE action = `open|in_progress|blocked` (blocked work is still work); ACTIVE
+finding = `open|in_progress`; OVERDUE = active AND `due_date < CURRENT_DATE`.
+"My Work" resolves ONLY the literal `owner=me` from the session — never a
+client-supplied user id. Do not hand-roll these predicates.
+
+### Review / Validation / Approval / Acceptance / Closure (distinct concepts — Contract 5)
+
+These five words are NOT interchangeable. Each has exactly one meaning:
+
+| Concept | Object / state | Actor | Effect |
+|---|---|---|---|
+| **Review** (Mark Reviewed) | `finding_review_marks` upsert + `finding.reviewed` audit event | any user (per-user) | advances THAT user's "What's Changed" baseline in the Decision Workspace. A personal read-cursor — never changes `status`, `decision_state`, or any queue. **Ruling: KEEP** — it has actor, timestamp, persisted state, audit event, and a defined workflow effect. |
+| **Validation** | the human check of completed remediation — operationally, working the **ready-for-decision queue** (`operational_status='remediated'`, bucket "Ready to Close") | finding owner / leadership | ends in a governance decision (close or send back by adding work, which regresses the derived axis) |
+| **Approval** | `risk_approvals` (risk-lifecycle treatments pending executive sign-off; separation-of-duties) | approver ≠ proposer | gates the RISK lifecycle's pending_approval → mitigation transition. Findings have no approval object; the ops-center "Awaiting Approval" bucket cross-links to `/approvals`. |
+| **Acceptance** | `decision_state='accepted_risk'` (finding) / risk acceptance (register) | entitled human | an explicit, audited governance override — permits closure without remediation |
+| **Closure** | `decision_state='resolved'` — human-only, guarded (requires `operational_status='remediated'` OR current `accepted_risk`) | entitled human | the ONLY path to derived legacy `status='closed'`; reopen = `resolved → needs_review` |
 
 ### Source Type (findings)
 DB-canonical (findings.source_type CHECK constraint — authoritative):
