@@ -40,7 +40,7 @@ import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { canonicalizeVendorName } from "./vendorNameCanonical.js";
 import { signalApplicabilityEnabled } from "./signalApplicabilityFeatureFlag.js";
-import { runSignalApplicabilityShadow } from "./signalApplicabilityShadowRunner.js";
+import { runSignalApplicabilityShadow, backingAssetIds } from "./signalApplicabilityShadowRunner.js";
 import { intelligenceEventsEnabled } from "./signals/intelligenceEventsFeatureFlag.js";
 import { resolveEventIdForSignal } from "./signals/eventSignalResolver.js";
 import {
@@ -742,16 +742,52 @@ export async function runMatcherForSignal(
             await runSignalApplicabilityShadow(
               client,
               orgId,
-              { affected_vendor: signal.affected_vendor, affected_cve: signal.affected_cve },
+              { productHint: signal.affected_vendor, cve: signal.affected_cve, grain: "asset" },
               assetMatches.map((m) => m.asset_id)
             );
           } catch (err) {
             logger.warn(
-              { event: "signal_applicability_shadow_failed", organizationId: orgId, signalId, err },
+              { event: "signal_applicability_shadow_failed", organizationId: orgId, signalId, grain: "asset", err },
               "signal applicability shadow failed (non-fatal — legacy path authoritative)"
             );
           }
         }
+      }
+    }
+
+    // ERG convergence C3b — SHADOW at the vendor / ai_system → tenant-asset grain
+    // (SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED, default off). Measures whether the
+    // legacy vendor/ai_system match resolves to the SAME canonical tenant asset(s)
+    // as the product→asset resolver. legacy side = the matched entity's Tier-0
+    // backing asset(s); shadow side = resolve the entity's own name product→asset.
+    // Read-only, writes NOTHING (no applicability, vendor/ai links, findings, or
+    // registry writes); try/catch-isolated; flag-off byte-identical; legacy
+    // linkage stays authoritative. Unresolved/ambiguous are recorded, never guessed.
+    if (signalApplicabilityEnabled()) {
+      try {
+        if (matchedVendorId !== null && matchedVendorName !== null) {
+          const legacy = await backingAssetIds(client, orgId, "vendors", matchedVendorId);
+          await runSignalApplicabilityShadow(
+            client,
+            orgId,
+            { productHint: matchedVendorName, cve: signal.affected_cve, grain: "vendor" },
+            legacy
+          );
+        }
+        if (matchedAiSystemId !== null && matchedAiSystemName !== null) {
+          const legacy = await backingAssetIds(client, orgId, "ai_systems", matchedAiSystemId);
+          await runSignalApplicabilityShadow(
+            client,
+            orgId,
+            { productHint: matchedAiSystemName, cve: signal.affected_cve, grain: "ai_system" },
+            legacy
+          );
+        }
+      } catch (err) {
+        logger.warn(
+          { event: "signal_applicability_shadow_failed", organizationId: orgId, signalId, grain: "vendor_ai", err },
+          "vendor/ai-system applicability shadow failed (non-fatal — legacy path authoritative)"
+        );
       }
     }
 

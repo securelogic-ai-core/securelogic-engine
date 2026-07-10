@@ -67,8 +67,9 @@ describe("compareApplicabilityShadow", () => {
     expect(c.legacy_only).toEqual(["a"]);   // still a false-negative candidate for the new path
   });
 
-  it("telemetry carries counts only (no tenant asset ids)", () => {
-    const t = shadowTelemetry(compareApplicabilityShadow(["a", "b"], resolved(["a"])));
+  it("telemetry carries the grain + counts only (no tenant asset ids)", () => {
+    const t = shadowTelemetry(compareApplicabilityShadow(["a", "b"], resolved(["a"])), "vendor");
+    expect(t.grain).toBe("vendor");
     expect(t.legacy_count).toBe(2);
     expect(t.shadow_count).toBe(1);
     expect(t.agreed_count).toBe(1);

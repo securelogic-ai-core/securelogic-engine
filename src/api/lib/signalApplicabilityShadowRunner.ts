@@ -13,41 +13,67 @@ import type { PoolClient } from "pg";
 import { logger } from "../infra/logger.js";
 import { canonicalProductIdentity } from "./canonicalProduct.js";
 import { resolveTenantAssets } from "./tenantAssetResolver.js";
-import { compareApplicabilityShadow, shadowTelemetry, type ShadowComparison } from "./signalApplicabilityShadow.js";
+import {
+  compareApplicabilityShadow,
+  shadowTelemetry,
+  type ShadowComparison,
+  type ShadowGrain,
+} from "./signalApplicabilityShadow.js";
 
-export interface ShadowSignalInput {
-  affected_vendor: string | null;
-  affected_cve: string | null;
+export interface ShadowGrainInput {
+  /**
+   * The name to treat as a product-name HYPOTHESIS. Intelligence feeds conflate
+   * vendor and product (KEV "Microsoft", but also "Exchange Server"), and a
+   * legacy vendor/ai_system match resolves to that entity's own name — so for
+   * MEASUREMENT we resolve product→asset from this hint. R2 is NOT violated: the
+   * resolver only produces CANDIDATES; establishing `affected` remains an engine
+   * decision the shadow never makes (see CONVERGENCE-REPORT.md).
+   */
+  productHint: string | null;
+  cve: string | null;
+  /** Which legacy grain `legacyAssetIds` came from (asset / vendor / ai_system). */
+  grain: ShadowGrain;
 }
 
 /**
- * Run one shadow comparison for a (signal, org). Returns the comparison (for
- * tests); the durable output is the emitted telemetry log. Never writes to
- * customer tables. Read-only against the org's assets.
+ * Run one shadow comparison for a (signal, org) at a given grain. Returns the
+ * comparison (for tests); the durable output is the emitted telemetry log. Never
+ * writes to customer tables. Read-only against the org's assets.
  */
 export async function runSignalApplicabilityShadow(
   client: PoolClient,
   organizationId: string,
-  signal: ShadowSignalInput,
+  input: ShadowGrainInput,
   legacyAssetIds: string[]
 ): Promise<ShadowComparison> {
-  // Intelligence feeds conflate vendor and product in `affected_vendor` (KEV
-  // "Microsoft", NVD "microsoft", but also "Exchange Server"). For MEASUREMENT we
-  // treat it as a product-name HYPOTHESIS so the resolver can attempt a
-  // product→asset match and the shadow yields a real agreement rate. R2 is NOT
-  // violated: the resolver only produces CANDIDATES; establishing `affected`
-  // remains an engine decision the shadow never makes. The residual
-  // needs_review/ambiguous quantifies the genuine gap (see CONVERGENCE-REPORT.md).
   const identity = canonicalProductIdentity({
-    vendor: signal.affected_vendor,
-    product: signal.affected_vendor,
-    cve: signal.affected_cve,
+    vendor: input.productHint,
+    product: input.productHint,
+    cve: input.cve,
   });
   const resolution = await resolveTenantAssets(client, organizationId, identity);
   const cmp = compareApplicabilityShadow(legacyAssetIds, resolution);
   logger.info(
-    { ...shadowTelemetry(cmp), organizationId },
+    { ...shadowTelemetry(cmp, input.grain), organizationId },
     "signal applicability shadow comparison"
   );
   return cmp;
+}
+
+/**
+ * The Tier-0 asset id(s) backing a legacy vendor/ai_system match — the legacy
+ * side of the vendor/ai_system-grain comparison. Org-scoped; read-only. Returns
+ * `[]` when the entity is not registered as an asset (→ honest no_match/both_empty).
+ */
+export async function backingAssetIds(
+  client: PoolClient,
+  organizationId: string,
+  backingKind: "vendors" | "ai_systems",
+  backingId: string
+): Promise<string[]> {
+  const r = await client.query<{ id: string }>(
+    `SELECT id FROM assets WHERE organization_id = $1 AND backing_kind = $2 AND backing_id = $3`,
+    [organizationId, backingKind, backingId]
+  );
+  return r.rows.map((x) => x.id);
 }
