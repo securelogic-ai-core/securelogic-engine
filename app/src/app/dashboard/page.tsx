@@ -10,6 +10,7 @@ import { PostureDashboard } from "./PostureDashboard";
 import { LastLoginBanner } from "./LastLoginBanner";
 import { IndustryTemplatesBanner } from "./IndustryTemplatesBanner";
 import { CompactEmptyState } from "./DashboardCharts";
+import { dashboardPanel } from "./dashboardState";
 
 export const revalidate = 0;
 
@@ -218,23 +219,48 @@ export default async function DashboardPage({
         </div>
       )}
 
-      {/* Posture Dashboard — platform subscribers only */}
-      {isPlatformUser ? (
-        dashboardSummary && (
+      {/* Posture Dashboard — platform subscribers only.
+          A failed summary fetch (null) must render an EXPLICIT error, not
+          silently drop the panel — otherwise a load failure is indistinguishable
+          from an org that genuinely has no data (a zeros object still renders). */}
+      {(() => {
+        const panel = dashboardPanel(isPlatformUser, dashboardSummary !== null);
+        if (panel === "sample") {
+          return (
+            <div className="mt-10">
+              <SamplePostureDashboard />
+            </div>
+          );
+        }
+        if (panel === "error") {
+          return (
+            <div className="mt-10">
+              <div
+                className="rounded-xl border p-8 text-center"
+                style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(239,68,68,0.25)" }}
+              >
+                <p className="text-sm font-semibold mb-1" style={{ color: "#fca5a5" }}>
+                  We couldn&apos;t load your posture data.
+                </p>
+                <p className="text-xs" style={{ color: "#64748b" }}>
+                  This is a temporary problem loading your dashboard — it does not mean your
+                  posture is clear. Refresh to try again.
+                </p>
+              </div>
+            </div>
+          );
+        }
+        return (
           <div className="mt-10">
             <PostureDashboard
-              summary={dashboardSummary}
+              summary={dashboardSummary!}
               frameworkPairs={frameworkReadinessPairs}
               postureSnapshots={postureHistory?.snapshots ?? []}
               userRole={session.userRole ?? "viewer"}
             />
           </div>
-        )
-      ) : (
-        <div className="mt-10">
-          <SamplePostureDashboard />
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
