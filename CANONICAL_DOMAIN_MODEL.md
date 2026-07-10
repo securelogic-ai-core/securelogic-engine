@@ -105,6 +105,20 @@ These are the single source of truth. Do not redefine them anywhere else.
 - `in_progress`
 - `closed`
 
+> **Two-axis model (shipped #562 + ratified 2026-07-10).** The legacy single
+> `status` above is being generalized into two orthogonal axes, per
+> `docs/specs/finding-lifecycle-spec.md` (RATIFIED):
+> - **`operational_status`** — SYSTEM-DERIVED from workflow evidence (Actions/Evidence):
+>   `open | in_progress | remediated`. Never hand-set.
+> - **`decision_state`** — HUMAN-GOVERNED (shipped #562): `needs_review | mitigating |
+>   accepted_risk | resolved`. The system writes only its *initial* value (R3).
+> - Legacy `status` is retained as a **derived projection** of the two axes for
+>   backward-compatible readers (posture/exports/dashboard).
+> - `finding_review_marks` is a per-user "last reviewed" cursor — NOT a lifecycle state.
+>
+> Invariant: *operational_status is never hand-set; decision_state is never computed
+> except its initial value.* Implementation lands in convergence Phase C6 (dark).
+
 ### Status (actions)
 - `open`
 - `in_progress`
@@ -407,6 +421,31 @@ These must always be structured records. Never store as free text:
 - Posture Snapshots
 
 If a future module is tempted to store these as JSON blobs in a publication object, that is a domain model violation.
+
+---
+
+## Ratified architecture direction — Enterprise Risk Graph convergence (2026-07-10)
+
+The canonical **noun is the tenant Asset as a node in an Enterprise Risk Graph** — not
+the Vendor (one asset type) and not the Finding (a work-queue projection of an Observed
+Condition). Vulnerability/threat intelligence **resolves to canonical tenant assets via
+the single `ApplicabilityEngineV1`** (EAR-AD-3), never directly to vendors. This is a
+**convergence** program onto existing (currently dark) machinery — there is exactly ONE
+applicability engine, ONE evidence model (WORM by-value `applicability_evidence`), ONE
+risk model, ONE lifecycle (the two-axis Finding/Risk model), ONE graph, ONE asset model.
+No vendor-specific resolver, no second applicability engine, no parallel affected-vendor
+contract.
+
+Governing documents (authoritative for this direction):
+- `docs/architecture/proposals/ENTERPRISE-RISK-GRAPH.md` — architecture + rulings R1–R3.
+- `docs/architecture/proposals/CONVERGENCE-ROADMAP.md` — executable phases C0–C9, flags,
+  gates, deprecation/deletion criteria.
+- `docs/specs/finding-lifecycle-spec.md` — the ratified two-axis Finding lifecycle.
+
+**Status:** direction ratified; implementation is dark behind existing flags (+ the new
+engine-only `SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED`), flag-off byte-identical, GATE-B
+for production. The legacy signal→vendor path (`signal_vendor_links` as affected-truth)
+is retained for compatibility until the operator-approved cutover gate, then retired.
 
 ---
 
