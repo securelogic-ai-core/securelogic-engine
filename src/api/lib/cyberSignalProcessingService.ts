@@ -39,6 +39,8 @@ import type { PoolClient } from "pg";
 import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { canonicalizeVendorName } from "./vendorNameCanonical.js";
+import { signalApplicabilityEnabled } from "./signalApplicabilityFeatureFlag.js";
+import { runSignalApplicabilityShadow } from "./signalApplicabilityShadowRunner.js";
 import { intelligenceEventsEnabled } from "./signals/intelligenceEventsFeatureFlag.js";
 import { resolveEventIdForSignal } from "./signals/eventSignalResolver.js";
 import {
@@ -728,6 +730,27 @@ export async function runMatcherForSignal(
             { event: "signal_asset_suggestions_created", organizationId: orgId, signalId, count: assetMatches.length },
             "Generic asset matcher wrote registry-target suggestions"
           );
+        }
+
+        // ERG convergence C3 — SHADOW (SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED,
+        // default off). Runs the NEW product→tenant-asset resolution ALONGSIDE the
+        // legacy asset match and records counts-only convergence telemetry. It
+        // writes nothing customer-visible and is fully try/catch-isolated, so the
+        // authoritative legacy path is unaffected; flag-off is byte-identical.
+        if (signalApplicabilityEnabled()) {
+          try {
+            await runSignalApplicabilityShadow(
+              client,
+              orgId,
+              { affected_vendor: signal.affected_vendor, affected_cve: signal.affected_cve },
+              assetMatches.map((m) => m.asset_id)
+            );
+          } catch (err) {
+            logger.warn(
+              { event: "signal_applicability_shadow_failed", organizationId: orgId, signalId, err },
+              "signal applicability shadow failed (non-fatal — legacy path authoritative)"
+            );
+          }
         }
       }
     }
