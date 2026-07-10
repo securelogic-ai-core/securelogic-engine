@@ -22,6 +22,11 @@ import { triggerFindingAlert } from "../lib/findingAlertTrigger.js";
 import { resolveFindingContext } from "../lib/findingContextResolver.js";
 import { normalizeEntityQuery, searchFindingsByEntity } from "../lib/findingEntitySearch.js";
 import { resolveOwnerMeFilter } from "../lib/findingListFilters.js";
+import {
+  DECISION_STATES,
+  evaluateFindingDecisionTransition,
+} from "../lib/findingLifecycleMachine.js";
+import { writeFindingLifecycleEvent } from "../lib/findingLifecycle.js";
 
 const router = Router();
 
@@ -44,14 +49,10 @@ const VALID_SOURCE_TYPES = new Set([
 ]);
 const VALID_PRIORITIES = new Set(["immediate", "near_term", "planned", "watch"]);
 const VALID_PATCH_STATUSES = new Set(["open", "in_progress", "closed", "accepted"]);
-// ERIP P3.2a — the BUSINESS DECISION, distinct from the operational status above.
-const VALID_DECISION_STATES = new Set([
-  "needs_review",
-  "accepted_risk",
-  "in_progress",
-  "mitigating",
-  "resolved",
-]);
+// The HUMAN-GOVERNED decision axis (finding-lifecycle-spec §1.2, ratified set —
+// 'in_progress' was pre-ratification drift, normalized away by 20260901).
+// Transitions are guarded by findingLifecycle.evaluateFindingDecisionTransition.
+const VALID_DECISION_STATES = new Set<string>(DECISION_STATES);
 
 function parseLimit(value: unknown): number {
   const parsed = Number(String(value ?? "").trim());
@@ -382,6 +383,16 @@ router.get(
         conditions.push(`f.status IN ('open', 'in_progress')`);
       }
 
+      // ready_for_decision=true — the spec §1.3 "ready for decision" queue: all
+      // remediation work is done (operational_status derived to 'remediated')
+      // but leadership has not yet made the governance call. A QUERY, never a
+      // decision_state write — the system only exposes the prompt (R3).
+      if (req.query.ready_for_decision === "true") {
+        conditions.push(
+          `f.operational_status = 'remediated' AND f.decision_state NOT IN ('resolved', 'accepted_risk')`
+        );
+      }
+
       // owner=me — the caller's own assigned work ("My Work" bucket). The ONLY
       // accepted value is the literal "me"; the user id resolves SERVER-SIDE from
       // the session (req.userId). Any other value is rejected — assignments can
@@ -462,6 +473,7 @@ router.get(
           f.scoring_rationale,
           f.status,
           f.decision_state,
+          f.operational_status,
           f.owner_user_id,
           f.due_date,
           f.created_at,
@@ -575,6 +587,8 @@ router.get(
           COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND decision_state = 'needs_review')                  AS needs_review_open,
           COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND decision_state = 'mitigating')                    AS mitigating_open,
           COUNT(*) FILTER (WHERE decision_state = 'accepted_risk')                                                      AS accepted_risk_total,
+          -- Ready for decision (spec §1.3): work derived complete, governance pending.
+          COUNT(*) FILTER (WHERE operational_status = 'remediated' AND decision_state NOT IN ('resolved','accepted_risk')) AS ready_for_decision_open,
           -- Ops-center domain buckets (server truth at any scale) — additive.
           COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND domain = 'Regulatory')                            AS regulatory_open,
           COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND domain = 'AI Governance')                         AS ai_governance_open,
@@ -634,6 +648,7 @@ router.get(
           needs_review_open:   parseInt((row as any)?.needs_review_open ?? "0", 10),
           mitigating_open:     parseInt((row as any)?.mitigating_open ?? "0", 10),
           accepted_risk_total: parseInt((row as any)?.accepted_risk_total ?? "0", 10),
+          ready_for_decision_open: parseInt((row as any)?.ready_for_decision_open ?? "0", 10),
           // Ops-center buckets (ERIP work-first) — additive.
           regulatory_open:        parseInt((row as any)?.regulatory_open ?? "0", 10),
           ai_governance_open:     parseInt((row as any)?.ai_governance_open ?? "0", 10),
@@ -696,7 +711,7 @@ router.get(
           f.id, f.organization_id, f.assessment_id, f.source_type, f.source_id,
           f.title, f.severity, f.description, f.recommendation, f.framework_control_id,
           f.domain, f.priority, f.likelihood, f.confidence, f.time_sensitivity,
-          f.scoring_rationale, f.status, f.decision_state, f.owner_user_id, f.due_date,
+          f.scoring_rationale, f.status, f.decision_state, f.operational_status, f.owner_user_id, f.due_date,
           f.created_at, f.updated_at,
           (SELECT COUNT(*)::integer FROM actions a
             WHERE a.source_type = 'finding' AND a.source_id = f.id
@@ -769,6 +784,8 @@ router.get(
           f.time_sensitivity,
           f.scoring_rationale,
           f.status,
+          f.decision_state,
+          f.operational_status,
           f.owner_user_id,
           f.due_date,
           f.created_at,
@@ -1040,12 +1057,45 @@ router.patch(
         updates.push(`due_date = $${values.length}`);
       }
 
-      // ERIP P3.2a — decision_state (business decision). Dark: only accepted when
-      // the Decision Workspace flag is on, so flag-off PATCH behaviour is unchanged.
+      // decision_state — the HUMAN-GOVERNED axis (finding-lifecycle-spec §1.2/§4).
+      // Dark: only accepted when the Decision Workspace flag is on, so flag-off
+      // PATCH behaviour is unchanged. NOT a free write: the requested value is a
+      // TRANSITION, guarded by the pure state machine (close requires derived
+      // remediation or an accepted-risk override), and every allowed transition
+      // appends a finding_lifecycle_events row in this same tenant transaction.
+      let decisionTransition:
+        | ReturnType<typeof evaluateFindingDecisionTransition>
+        | null = null;
       if (process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true" && "decision_state" in body) {
         const ds = body["decision_state"];
         if (!isNonEmptyString(ds) || !VALID_DECISION_STATES.has(ds)) {
           res.status(400).json({ error: "invalid_decision_state", allowed: [...VALID_DECISION_STATES] });
+          return;
+        }
+        const current = await pg.query<{ decision_state: string; operational_status: string }>(
+          `SELECT decision_state, operational_status FROM findings
+            WHERE id = $1 AND organization_id = $2
+            FOR UPDATE`,
+          [findingId, organizationId]
+        );
+        const currentRow = current.rows[0];
+        if (!currentRow) {
+          res.status(404).json({ error: "finding_not_found" });
+          return;
+        }
+        decisionTransition = evaluateFindingDecisionTransition(
+          currentRow.decision_state,
+          ds,
+          { operationalStatus: currentRow.operational_status }
+        );
+        if (!decisionTransition.allowed) {
+          res.status(409).json({
+            error: "invalid_decision_transition",
+            reason: decisionTransition.reason,
+            from: currentRow.decision_state,
+            to: ds,
+            operational_status: currentRow.operational_status,
+          });
           return;
         }
         values.push(ds);
@@ -1073,7 +1123,8 @@ router.patch(
           AND organization_id = $${orgParam}
         RETURNING
           id, organization_id, source_type, title, severity,
-          domain, priority, status, decision_state, owner_user_id, updated_at
+          domain, priority, status, decision_state, operational_status,
+          owner_user_id, due_date, updated_at
         `,
         values
       );
@@ -1081,6 +1132,38 @@ router.patch(
       if ((result.rowCount ?? 0) === 0) {
         res.status(404).json({ error: "finding_not_found" });
         return;
+      }
+
+      // Governance transition: append the in-transaction lifecycle event (spec
+      // §6.2) and project the spec-named audit event. No-op re-selects write
+      // nothing (idempotent).
+      if (decisionTransition?.allowed && !decisionTransition.noop && decisionTransition.transition) {
+        await writeFindingLifecycleEvent({
+          organizationId,
+          findingId,
+          axis: "decision",
+          fromState: decisionTransition.fromState ?? null,
+          toState: decisionTransition.toState as string,
+          transition: decisionTransition.transition,
+          actor: {
+            actorUserId: (req.userId as string | undefined) ?? null,
+            actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+          },
+        });
+        writeAuditEvent({
+          organizationId,
+          actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+          actorUserId: req.userId ?? null,
+          eventType: decisionTransition.auditEvent ?? "finding.decision_changed",
+          resourceType: "finding",
+          resourceId: result.rows[0].id as string,
+          payload: {
+            from: decisionTransition.fromState ?? null,
+            to: decisionTransition.toState ?? null,
+            operational_status: result.rows[0].operational_status ?? null,
+          },
+          ipAddress: req.ip ?? null,
+        });
       }
 
       writeAuditEvent({
@@ -1091,8 +1174,16 @@ router.patch(
         resourceType: "finding",
         resourceId: result.rows[0].id as string,
         payload: {
+          // The full mutation set — owner and due-date changes were previously
+          // invisible in the audit payload (workflow-audit gap).
           status: result.rows[0].status ?? null,
-          priority: result.rows[0].priority ?? null
+          priority: result.rows[0].priority ?? null,
+          decision_state: result.rows[0].decision_state ?? null,
+          owner_user_id: result.rows[0].owner_user_id ?? null,
+          due_date: result.rows[0].due_date ?? null,
+          changed_fields: Object.keys(body).filter((k) =>
+            ["status", "priority", "owner_user_id", "due_date", "decision_state"].includes(k)
+          ),
         },
         ipAddress: req.ip ?? null
       });

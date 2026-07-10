@@ -481,10 +481,14 @@ export type Finding = {
   time_sensitivity: string | null;
   scoring_rationale: string | null;
   status: string;
-  // ERIP Decision Workspace business decision (needs_review | accepted_risk |
-  // in_progress | mitigating | resolved). Returned by the list since the
+  // The HUMAN decision axis (needs_review | mitigating | accepted_risk |
+  // resolved — finding-lifecycle-spec §1.2). Returned by the list since the
   // work-first engine PR; may be absent on older cached payloads.
   decision_state?: string;
+  // The SYSTEM-DERIVED operational axis (open | in_progress | remediated —
+  // spec §1.1). Derived from linked Actions; never hand-set. Optional: absent
+  // on older cached payloads.
+  operational_status?: string;
   owner_user_id: string | null;
   due_date: string | null;
   action_count: number;
@@ -565,6 +569,9 @@ export type FindingsParams = {
   owner?: "me";
   // Still-requires-work statuses only (open / in_progress).
   active?: boolean;
+  // Ready-for-decision queue (spec §1.3): all remediation work derived complete
+  // (operational_status=remediated) but no governance decision yet.
+  ready_for_decision?: boolean;
   // Stable keyset ordering for paged views (created_at DESC, id DESC).
   sort?: "created";
   // Keyset cursor from the previous page's nextCursor.
@@ -589,6 +596,9 @@ export type FindingsSummary = {
   needs_review_open?: number;
   mitigating_open?: number;
   accepted_risk_total?: number;
+  // Ready-for-decision queue (spec §1.3): operational_status=remediated, no
+  // governance decision yet.
+  ready_for_decision_open?: number;
   regulatory_open?: number;
   ai_governance_open?: number;
   vendor_risk_open?: number;
@@ -1964,6 +1974,7 @@ export async function getFindings(
     if (params?.exploited) qs.set("exploited", "true");
     if (params?.owner) qs.set("owner", params.owner);
     if (params?.active) qs.set("active", "true");
+    if (params?.ready_for_decision) qs.set("ready_for_decision", "true");
     if (params?.sort) qs.set("sort", params.sort);
     if (params?.before) {
       qs.set("before_created_at", params.before.created_at);
@@ -2010,7 +2021,14 @@ export async function getFinding(
 export type FindingAffectedEntity = { type: string; id: string; name: string };
 export type FindingImpactDimension = { level: string; note: string };
 export type FindingContext = {
-  finding: { id: string; source_type: string; source_id: string | null; decision_state: string };
+  finding: {
+    id: string;
+    source_type: string;
+    source_id: string | null;
+    decision_state: string;
+    // System-derived operational axis (spec §1.1); optional on older payloads.
+    operational_status?: string;
+  };
   risk: { score: number; band: string; rationale: string[] };
   business_impact: {
     revenue: FindingImpactDimension;

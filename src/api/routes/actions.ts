@@ -18,6 +18,7 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import { validateActionCreate } from "../lib/actionValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { recomputeFindingOperationalStatus } from "../lib/findingLifecycle.js";
 
 const router = Router();
 
@@ -123,6 +124,33 @@ router.post(
         payload: { priority: input.priority, source_type: input.source_type },
         ipAddress: req.ip ?? null,
       });
+
+      // Child→parent cascade (finding-lifecycle-spec §5): a new remediation
+      // Action recomputes the parent Finding's derived operational_status in
+      // THIS same tenant transaction (e.g. a remediated finding regresses to
+      // open when new work is added). Org-scoped inside the recompute.
+      if (input.source_type === "finding" && input.source_id) {
+        const recompute = await recomputeFindingOperationalStatus(
+          organizationId,
+          input.source_id,
+          {
+            actorUserId: ((req as any).userId as string | undefined) ?? null,
+            actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+          }
+        );
+        if (recompute.changed && recompute.auditEvent) {
+          writeAuditEvent({
+            organizationId,
+            actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+            actorUserId: (req as any).userId ?? null,
+            eventType: recompute.auditEvent,
+            resourceType: "finding",
+            resourceId: input.source_id,
+            payload: { from: recompute.fromState ?? null, to: recompute.toState ?? null, trigger: "action.created" },
+            ipAddress: req.ip ?? null,
+          });
+        }
+      }
 
       res.status(201).json({ action: result.rows[0] });
     } catch (err) {
@@ -518,7 +546,7 @@ router.patch(
         WHERE id = $${idParam}
           AND organization_id = $${orgParam}
         RETURNING
-          id, organization_id, title, source_type, priority,
+          id, organization_id, title, source_type, source_id, priority,
           status, owner_user_id, due_date, updated_at, completed_at
         `,
         values
@@ -540,9 +568,47 @@ router.patch(
         eventType,
         resourceType: "action",
         resourceId: actionId,
-        payload: { status: updatedStatus ?? null },
+        payload: {
+          status: updatedStatus ?? null,
+          owner_user_id: result.rows[0].owner_user_id ?? null,
+          due_date: result.rows[0].due_date ?? null,
+        },
         ipAddress: req.ip ?? null,
       });
+
+      // Child→parent cascade (finding-lifecycle-spec §5): ANY status write on a
+      // finding-sourced Action recomputes the parent Finding's derived
+      // operational_status in THIS same tenant transaction — the direct fix for
+      // "closed remediation on an open finding". The parent surfaces in the
+      // ready-for-decision queue when all work is terminal; the system never
+      // writes decision_state (R3).
+      if (
+        "status" in body &&
+        result.rows[0].source_type === "finding" &&
+        result.rows[0].source_id
+      ) {
+        const parentFindingId = String(result.rows[0].source_id);
+        const recompute = await recomputeFindingOperationalStatus(
+          organizationId,
+          parentFindingId,
+          {
+            actorUserId: ((req as any).userId as string | undefined) ?? null,
+            actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+          }
+        );
+        if (recompute.changed && recompute.auditEvent) {
+          writeAuditEvent({
+            organizationId,
+            actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+            actorUserId: (req as any).userId ?? null,
+            eventType: recompute.auditEvent,
+            resourceType: "finding",
+            resourceId: parentFindingId,
+            payload: { from: recompute.fromState ?? null, to: recompute.toState ?? null, trigger: "action.status_changed" },
+            ipAddress: req.ip ?? null,
+          });
+        }
+      }
 
       res.status(200).json({ action: result.rows[0] });
     } catch (err) {
