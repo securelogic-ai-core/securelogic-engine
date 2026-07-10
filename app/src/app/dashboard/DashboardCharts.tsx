@@ -770,6 +770,10 @@ export function RisksBreakdown({
     { label: "High",     count: ratings.High,     color: "#f97316" },
     { label: "Moderate", count: ratings.Moderate, color: "#f59e0b" },
     { label: "Low",      count: ratings.Low,      color: "#22c55e" },
+    // Metric Contract: open risks without a residual rating are shown, not
+    // silently excluded — the bars always sum to the headline, and the
+    // headline always matches the /risks destination list.
+    ...(ratings.Unscored ? [{ label: "Unscored", count: ratings.Unscored, color: "#94a3b8" }] : []),
   ];
 
   return (

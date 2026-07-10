@@ -335,17 +335,21 @@ router.get(
       // -------------------------------------------------------
       // 5a. Open risk counts by RESIDUAL rating (Decision §4)
       // -------------------------------------------------------
+      // Metric Contract: the headline counts ALL open risks — the same
+      // population the /risks destination page shows. Risks without a residual
+      // rating land in an explicit 'Unscored' bucket instead of being silently
+      // excluded (the old IS-NOT-NULL filter made the tile total diverge from
+      // its click-through list whenever any open risk was unscored).
       const riskCountResult = await pg.query<{
         residual_rating: string;
         count: string;
       }>(
         `
-        SELECT residual_rating, COUNT(*)::text AS count
+        SELECT COALESCE(residual_rating, 'Unscored') AS residual_rating, COUNT(*)::text AS count
         FROM risks
         WHERE organization_id = $1
           AND status NOT IN ('closed', 'transferred')
-          AND residual_rating IS NOT NULL
-        GROUP BY residual_rating
+        GROUP BY COALESCE(residual_rating, 'Unscored')
         `,
         [organizationId]
       );
@@ -354,7 +358,8 @@ router.get(
         Critical: 0,
         High: 0,
         Moderate: 0,
-        Low: 0
+        Low: 0,
+        Unscored: 0
       };
       let totalOpenRisks = 0;
       for (const row of riskCountResult.rows) {

@@ -188,6 +188,12 @@ export default async function PosturePage() {
             <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: "#64748b" }}>
               Domain Breakdown
             </h2>
+            {/* Metric Contract honesty: these counts are frozen at snapshot
+                time; the links open the LIVE findings list, which may differ.
+                Say so instead of letting the two look contradictory. */}
+            <p className="text-xs mt-1" style={{ color: "#475569" }}>
+              Counts are from this snapshot — links open the live findings list, which may have changed since.
+            </p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">

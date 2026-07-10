@@ -332,6 +332,9 @@ export type DashboardSummary = {
     overdue: number;
   };
   risks_summary?: {
+    // Metric Contract: ALL open risks (status NOT IN closed/transferred) —
+    // the same population the /risks destination shows. Unscored risks are
+    // no longer silently excluded from the headline.
     open: number;
     // Legacy keys — populated from residual after Phase 1 backfill.
     // Retained so older dashboard code paths continue to work; new
@@ -342,12 +345,15 @@ export type DashboardSummary = {
       High: number;
       Moderate: number;
       Low: number;
+      // Open risks without a residual rating yet (optional: absent on older engines).
+      Unscored?: number;
     };
     by_residual_rating?: {
       Critical: number;
       High: number;
       Moderate: number;
       Low: number;
+      Unscored?: number;
     };
     by_inherent_rating?: {
       Critical: number;
