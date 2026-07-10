@@ -45,7 +45,11 @@ const MAX_OFFSET = 100_000;
 const INTEGER_RE = /^-?\d+$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const TARGET_TYPES = new Set(["vendor", "ai_system", "control", "obligation"]);
+// Includes 'asset' (EAR-AD-3 / ERG convergence C2): the target_type CHECK already
+// admits 'asset' (20260804) and the WORM writer persists asset-target assessments,
+// so the read/filter surface must accept it too — otherwise asset-target rows are
+// stored but unreadable via ?target_type=asset. Quartet unchanged.
+const TARGET_TYPES = new Set(["vendor", "ai_system", "control", "obligation", "asset"]);
 const DECISIONS = new Set<string>(APPLICABILITY_DECISIONS);
 
 function getOrgId(req: Request): string | null {
