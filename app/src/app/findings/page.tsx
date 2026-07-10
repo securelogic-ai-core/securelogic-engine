@@ -1,12 +1,19 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getMe, getFindings, getFindingsSummary, getFindingSavedViews, getFindingsByEntity } from "@/lib/api";
+import {
+  getMe,
+  getFindings,
+  getFindingsSummary,
+  getFindingSavedViews,
+  getFindingsByEntity,
+  getSignalMatchSuggestionCounts,
+} from "@/lib/api";
 import { FindingsList } from "./FindingsList";
 import SavedViewsBar from "./SavedViewsBar";
 import { currentViewFilters } from "./savedViews";
 import WorkFirstFindings from "./WorkFirstFindings";
-import { WORK_QUEUES, workQueueFromParam, queueCounts, queueMembers, nextUp } from "./workQueues";
+import { opsBucket, bucketListParams, opsCounts } from "./workQueues";
 
 const SOURCE_TYPE_LABELS: Record<string, string> = {
   vendor_review:        "Vendor Assessment",
@@ -138,24 +145,30 @@ export default async function FindingsPage({
   const savedViewsEnabled = process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true";
   const savedViews = savedViewsEnabled ? await getFindingSavedViews(token) : [];
 
-  // Work-first interaction model (ERIP goal): under the workspace flag the DEFAULT
-  // view is operational queues + decision buckets + entity search — work completion,
-  // not record browsing. Individual findings are supporting objects reached by
-  // drilling into a queue (?queue=<id>), an entity search (?entity=<name>), or the
-  // browse escape hatch (?queue=all / any legacy filter, which keeps deep links from
-  // posture & dashboard working). Flag-off renders the unchanged legacy page.
-  const queueParam = workspace ? workQueueFromParam(sp.queue) : null;
+  // Operations-center interaction model (ERIP goal): under the workspace flag the
+  // landing view organizes WORK into decision buckets + risk domains + tracking —
+  // no finding rows. Clicking a bucket opens a SUBORDINATE, SERVER-FILTERED
+  // findings view (?bucket=<id>, fetched with engine-side filters so it is correct
+  // at 20k findings) or the surface owning that work (/approvals, /queue). Entity
+  // search (?entity=<name>) and the browse escape hatch (?queue=all / any legacy
+  // filter — keeps posture/dashboard deep links working) are subordinate views too.
+  // Flag-off renders the unchanged legacy page.
+  const bucket = workspace ? opsBucket(sp.bucket) : null;
   const entityQuery =
     workspace && typeof sp.entity === "string" && sp.entity.trim().length >= 2 ? sp.entity.trim() : "";
   const browse = sp.queue === "all" || hasFilters;
-  const workFirstMode: "home" | "queue" | "entity" | null =
-    !workspace || browse ? null : entityQuery ? "entity" : queueParam && queueParam !== "all" ? "queue" : "home";
-  const nowMs = Date.now();
-  const wfCounts = workspace ? queueCounts(summary, findings, nowMs) : null;
-  const wfQueueDef = workFirstMode === "queue" ? WORK_QUEUES.find((q) => q.id === queueParam) : undefined;
-  const wfMembers =
-    workFirstMode === "queue" && queueParam ? queueMembers(findings, queueParam, nowMs) : undefined;
-  const wfNext = workFirstMode === "home" ? nextUp(findings, nowMs) : [];
+  const workFirstMode: "home" | "bucket" | "entity" | null =
+    !workspace || browse ? null : entityQuery ? "entity" : bucket ? "bucket" : "home";
+
+  // Bucket members come from a SERVER-filtered fetch (never client-filtering a page).
+  const bucketParams = workFirstMode === "bucket" && bucket ? bucketListParams(bucket) : null;
+  const bucketData = bucketParams ? await getFindings(token, bucketParams) : null;
+  // Review-links pending total (home only); null on failure → honest "—", never 0.
+  const suggestionCounts = workFirstMode === "home" ? await getSignalMatchSuggestionCounts(token) : null;
+  const { counts: wfCounts, unknown: wfUnknown } = opsCounts(
+    summary,
+    workFirstMode === "home" ? (suggestionCounts ? suggestionCounts.total : null) : 0
+  );
   const entityResult = workFirstMode === "entity" ? await getFindingsByEntity(token, entityQuery) : null;
 
   return (
@@ -207,13 +220,14 @@ export default async function FindingsPage({
         </a>
       </div>
 
-      {workFirstMode && wfCounts ? (
+      {workFirstMode ? (
         <WorkFirstFindings
           mode={workFirstMode}
           counts={wfCounts}
-          next={wfNext}
-          queue={wfQueueDef}
-          queueFindings={wfMembers}
+          unknownCounts={wfUnknown}
+          bucket={bucket ?? undefined}
+          bucketFindings={bucketData?.findings ?? undefined}
+          bucketTotal={bucket ? wfCounts[bucket.id] : undefined}
           entityQuery={entityQuery}
           entityResult={entityResult}
         />

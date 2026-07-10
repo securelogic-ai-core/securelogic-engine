@@ -1,95 +1,108 @@
 /**
- * workQueues.test.ts — pure work-first queue logic (ERIP). Queues/buckets are the
- * primary interface; these tests cover membership, param parsing, server-truth
- * counts with honest fallback, and the next-up urgency ordering.
+ * workQueues.test.ts — pure operations-center bucket logic (ERIP). Buckets are the
+ * primary interface; these tests cover the bucket registry, href/server-filter
+ * mapping, server-truth counts with honest unknowns, and the due-work rollup.
  */
 
 import { describe, it, expect } from "vitest";
 import {
-  WORK_QUEUES,
-  workQueueFromParam,
-  inWorkQueue,
-  queueMembers,
-  queueCounts,
-  nextUp,
-  openWorkCount,
+  OPS_BUCKETS,
+  OPS_GROUP_LABELS,
+  opsBucket,
+  bucketsInGroup,
+  bucketHref,
+  bucketListParams,
+  opsCounts,
+  dueWorkCount,
+  type OpsBucketId,
 } from "../workQueues";
-import type { Finding, FindingsSummary } from "@/lib/api";
+import type { FindingsSummary } from "@/lib/api";
 
-const NOW = Date.parse("2026-07-10T00:00:00.000Z");
-const past = "2026-07-01T00:00:00.000Z";
+const SUMMARY: FindingsSummary = {
+  open_count: 40, critical_open: 4, high_open: 6, medium_open: 10, low_open: 20, closed_count: 5,
+  immediate_priority: 3, vendor_sourced: 8, signal_sourced: 12,
+  overdue_open: 7, unassigned_open: 5, needs_review_open: 9, mitigating_open: 2, accepted_risk_total: 3,
+  regulatory_open: 4, ai_governance_open: 6, vendor_risk_open: 11, exploited_open: 2,
+  pending_risk_approvals: 1,
+};
 
-function f(partial: Partial<Finding>): Finding {
-  return {
-    id: "f", organization_id: "o", assessment_id: null, source_type: "manual", source_id: null,
-    title: "t", severity: "Low", description: "", recommendation: null, framework_control_id: null,
-    domain: null, priority: null, likelihood: null, confidence: null, time_sensitivity: null,
-    scoring_rationale: null, status: "open", decision_state: "needs_review", owner_user_id: "u1",
-    due_date: null, action_count: 0, created_at: past, updated_at: past, ...partial,
-  };
-}
+describe("bucket registry", () => {
+  it("covers the operations-center buckets across the three groups", () => {
+    const ids = OPS_BUCKETS.map((b) => b.id);
+    for (const required of [
+      "needs_assignment", "sla_breached", "needs_decision", "awaiting_approval", "review_links",
+      "active_exploitation", "regulatory", "ai_risk", "third_party",
+    ] as OpsBucketId[]) {
+      expect(ids).toContain(required);
+    }
+    expect(Object.keys(OPS_GROUP_LABELS).sort()).toEqual(["decisions", "domains", "tracking"]);
+    // every bucket belongs to a labeled group and groups partition the registry
+    const grouped = (["decisions", "domains", "tracking"] as const).flatMap((g) => bucketsInGroup(g));
+    expect(grouped.length).toBe(OPS_BUCKETS.length);
+  });
 
-describe("workQueueFromParam", () => {
-  it("accepts every defined queue id plus 'all'; rejects unknowns", () => {
-    for (const q of WORK_QUEUES) expect(workQueueFromParam(q.id)).toBe(q.id);
-    expect(workQueueFromParam("all")).toBe("all");
-    expect(workQueueFromParam("nope")).toBeNull();
-    expect(workQueueFromParam(undefined)).toBeNull();
+  it("opsBucket parses ids and rejects unknowns", () => {
+    expect(opsBucket("sla_breached")?.label).toBe("SLA Breached");
+    expect(opsBucket("nope")).toBeNull();
+    expect(opsBucket(undefined)).toBeNull();
   });
 });
 
-describe("inWorkQueue membership", () => {
-  it("overdue / unassigned / critical_open reuse the decision-queue predicates", () => {
-    expect(inWorkQueue(f({ due_date: past }), "overdue", NOW)).toBe(true);
-    expect(inWorkQueue(f({ owner_user_id: null }), "unassigned", NOW)).toBe(true);
-    expect(inWorkQueue(f({ severity: "Critical" }), "critical_open", NOW)).toBe(true);
-    expect(inWorkQueue(f({ severity: "Critical", status: "closed" }), "critical_open", NOW)).toBe(false);
+describe("bucket targets — server-side filters, never client filtering", () => {
+  it("findings buckets map to engine-side list params", () => {
+    expect(bucketListParams(opsBucket("sla_breached")!)).toEqual({ overdue: true, limit: 100 });
+    expect(bucketListParams(opsBucket("needs_assignment")!)).toEqual({ unassigned: true, limit: 100 });
+    expect(bucketListParams(opsBucket("active_exploitation")!)).toEqual({ exploited: true, limit: 100 });
+    expect(bucketListParams(opsBucket("regulatory")!)).toEqual({ domain: "Regulatory", limit: 100 });
+    expect(bucketListParams(opsBucket("ai_risk")!)).toEqual({ domain: "AI Governance", limit: 100 });
+    expect(bucketListParams(opsBucket("third_party")!)).toEqual({ domain: "Vendor Risk", limit: 100 });
+    expect(bucketListParams(opsBucket("needs_decision")!)).toEqual({
+      decision_state: "needs_review",
+      status: "open",
+      limit: 100,
+    });
   });
-  it("decision buckets read decision_state", () => {
-    expect(inWorkQueue(f({ decision_state: "needs_review" }), "needs_review", NOW)).toBe(true);
-    expect(inWorkQueue(f({ decision_state: "mitigating" }), "mitigating", NOW)).toBe(true);
-    expect(inWorkQueue(f({ decision_state: "accepted_risk", status: "accepted" }), "accepted_risk", NOW)).toBe(true);
-    expect(inWorkQueue(f({ decision_state: "mitigating" }), "needs_review", NOW)).toBe(false);
+
+  it("cross-surface work opens the surface that owns it", () => {
+    expect(bucketHref(opsBucket("awaiting_approval")!)).toBe("/approvals");
+    expect(bucketHref(opsBucket("review_links")!)).toBe("/queue");
+    expect(bucketListParams(opsBucket("awaiting_approval")!)).toBeNull();
   });
-  it("a finding with no decision_state (older payload) defaults into needs_review", () => {
-    expect(inWorkQueue(f({ decision_state: undefined }), "needs_review", NOW)).toBe(true);
-  });
-  it("'all' admits everything", () => {
-    expect(inWorkQueue(f({ status: "closed" }), "all", NOW)).toBe(true);
-  });
-  it("queueMembers filters and preserves order", () => {
-    const rows = [f({ id: "a", due_date: past }), f({ id: "b" }), f({ id: "c", due_date: past })];
-    expect(queueMembers(rows, "overdue", NOW).map((x) => x.id)).toEqual(["a", "c"]);
+
+  it("findings buckets open the subordinate view URL", () => {
+    expect(bucketHref(opsBucket("sla_breached")!)).toBe("/findings?bucket=sla_breached");
   });
 });
 
-describe("queueCounts", () => {
-  const base: FindingsSummary = {
-    open_count: 9, critical_open: 2, high_open: 3, medium_open: 1, low_open: 3, closed_count: 4,
-    immediate_priority: 1, vendor_sourced: 2, signal_sourced: 3,
-    overdue_open: 4, unassigned_open: 2, needs_review_open: 6, mitigating_open: 1, accepted_risk_total: 5,
-  };
-  it("uses server-truth counts when present (critical = Critical + High)", () => {
-    const c = queueCounts(base, [], NOW);
-    expect(c).toEqual({ overdue: 4, unassigned: 2, needs_review: 6, critical_open: 5, mitigating: 1, accepted_risk: 5 });
-    expect(openWorkCount(c)).toBe(4 + 2 + 6 + 5 + 1);
+describe("opsCounts — server truth with honest unknowns", () => {
+  it("maps every bucket to its summary/suggestions count", () => {
+    const { counts, unknown } = opsCounts(SUMMARY, 13);
+    expect(counts.sla_breached).toBe(7);
+    expect(counts.needs_assignment).toBe(5);
+    expect(counts.needs_decision).toBe(9);
+    expect(counts.awaiting_approval).toBe(1);
+    expect(counts.review_links).toBe(13);
+    expect(counts.active_exploitation).toBe(2);
+    expect(counts.regulatory).toBe(4);
+    expect(counts.ai_risk).toBe(6);
+    expect(counts.third_party).toBe(11);
+    expect(counts.in_mitigation).toBe(2);
+    expect(counts.accepted_risk).toBe(3);
+    expect(unknown).toEqual([]);
   });
-  it("falls back to counting the fetched page when a count is absent", () => {
-    const c = queueCounts(undefined, [f({ due_date: past }), f({ owner_user_id: null })], NOW);
-    expect(c.overdue).toBe(1);
-    expect(c.unassigned).toBe(1);
+
+  it("reports missing counts as UNKNOWN instead of a lying zero", () => {
+    const { counts, unknown } = opsCounts(undefined, null);
+    expect(counts.sla_breached).toBe(0);
+    expect(unknown).toContain("sla_breached");
+    expect(unknown).toContain("review_links");
   });
 });
 
-describe("nextUp", () => {
-  it("orders by urgency bucket (overdue → unassigned → critical …), excludes resolved, caps", () => {
-    const rows = [
-      f({ id: "open-low" }),
-      f({ id: "closed", status: "closed" }),
-      f({ id: "crit", severity: "Critical" }),
-      f({ id: "unassigned", owner_user_id: null }),
-      f({ id: "overdue", due_date: past }),
-    ];
-    expect(nextUp(rows, NOW, 3).map((x) => x.id)).toEqual(["overdue", "unassigned", "crit"]);
+describe("dueWorkCount", () => {
+  it("sums only urgent buckets (tracking buckets never count as due work)", () => {
+    const { counts } = opsCounts(SUMMARY, 13);
+    // urgent: sla 7 + assignment 5 + decision 9 + approval 1 + links 13 + exploitation 2 = 37
+    expect(dueWorkCount(counts)).toBe(37);
   });
 });
