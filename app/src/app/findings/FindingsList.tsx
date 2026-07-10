@@ -173,7 +173,7 @@ export function FindingsList({ findings, hasFilters, workspace = false }: Props)
               </div>
               <div className="space-y-3">
                 {section.findings.map((f) => (
-                  <FindingCard key={f.id} finding={f} revalidateUrl="/findings" />
+                  <FindingCard key={f.id} finding={f} revalidateUrl="/findings" workspace={workspace} />
                 ))}
               </div>
             </div>
