@@ -195,8 +195,13 @@ export default async function ActionsPage({
     // org-wide COUNTs — not a scan of the ≤100 fetched slice — so they reconcile
     // with the dashboard ring. `total` drives the honest "Showing N of M"
     // disclosure. "mine" stays a personal, slice-derived view (no org summary).
+    //
+    // Metric Contract: honour ?status=… in the team view — a dashboard tile
+    // that says "Open" must land on a list filtered to open (previously the
+    // param was silently dropped and every tile landed on the same list).
+    const statusFilter = scope === "team" && sp.status ? sp.status : undefined;
     const [data, summary] = await Promise.all([
-      getActions(token, { limit: 200 }),
+      getActions(token, { limit: 200, status: statusFilter }),
       scope === "team" ? getActionsSummary(token) : Promise.resolve(null),
     ]);
     const all = data?.actions ?? [];
@@ -209,6 +214,7 @@ export default async function ActionsPage({
         nowMs={Date.now()}
         summary={summary}
         total={scope === "team" ? data?.total : undefined}
+        statusFilter={statusFilter}
       />
     );
   }

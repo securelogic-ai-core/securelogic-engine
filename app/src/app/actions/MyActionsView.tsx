@@ -183,6 +183,7 @@ export default function MyActionsView({
   nowMs,
   summary = null,
   total,
+  statusFilter,
 }: {
   actions: Action[];
   scope: ActionScope;
@@ -194,6 +195,10 @@ export default function MyActionsView({
   summary?: ActionsSummary | null;
   // True org-wide total for the current scope, for the "Showing N of M" note.
   total?: number;
+  // Active ?status filter (team scope): the list below is narrowed to this
+  // status while the tiles stay org-wide. Disclosed so the two never look
+  // contradictory (Metric Contract).
+  statusFilter?: string;
 }) {
   const att = actionAttention(actions, nowMs);
   const noSla = actions.filter((a) => isActiveStatus(a.status) && slaState(a, nowMs) === "none").length;
@@ -230,6 +235,18 @@ export default function MyActionsView({
       {truncationNote && (
         <p className="mb-4 text-xs" style={{ color: "#64748b" }}>
           {truncationNote} open remediation actions — tiles reflect the full org total.
+        </p>
+      )}
+
+      {/* Active status filter disclosure — the list is narrowed, the tiles are
+          org-wide; say so instead of letting them look contradictory. */}
+      {statusFilter && (
+        <p className="mb-4 text-xs" style={{ color: "#94a3b8" }}>
+          Filtered to status: <strong>{statusFilter.replace("_", " ")}</strong>
+          {" · "}
+          <Link href="/actions?view=team" style={{ color: "#93c5fd" }}>
+            Clear filter
+          </Link>
         </p>
       )}
 

@@ -26,6 +26,7 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { buildEvidenceSummary } from "./evidence.js";
 import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
+import { sqlActionActive, sqlActionOverdue, sqlFindingActive } from "../lib/metricDefinitions.js";
 
 const router = Router();
 
@@ -229,19 +230,19 @@ router.get(
         `
         SELECT
           ROUND(AVG(
-            CASE WHEN status NOT IN ('resolved', 'closed', 'accepted')
+            CASE WHEN ${sqlFindingActive()}
             THEN EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
             ELSE NULL END
           ))::text AS avg_age_days,
           MAX(
-            CASE WHEN status NOT IN ('resolved', 'closed', 'accepted')
+            CASE WHEN ${sqlFindingActive()}
             THEN EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
             ELSE NULL END
           )::int::text AS max_age_days,
-          COUNT(CASE WHEN status NOT IN ('resolved', 'closed', 'accepted')
+          COUNT(CASE WHEN ${sqlFindingActive()}
             AND created_at < NOW() - INTERVAL '30 days'
             THEN 1 END)::text AS older_than_30,
-          COUNT(CASE WHEN status NOT IN ('resolved', 'closed', 'accepted')
+          COUNT(CASE WHEN ${sqlFindingActive()}
             AND created_at <  NOW() - INTERVAL '7 days'
             AND created_at >= NOW() - INTERVAL '30 days'
             THEN 1 END)::text AS older_than_7
@@ -260,9 +261,15 @@ router.get(
       // -------------------------------------------------------
       // 4. Action counts — open, overdue, and aging
       // -------------------------------------------------------
+      // Metric Contract: predicates from metricDefinitions — the SAME ones the
+      // /api/actions/summary destination uses, so the dashboard tile and its
+      // click-through page reconcile exactly. ACTIVE = open|in_progress|blocked
+      // (blocked work is still work); overdue = active AND date-before-today.
       const actionCountResult = await pg.query<{
+        active_count: string;
         open_count: string;
         in_progress_count: string;
+        blocked_count: string;
         overdue_count: string;
         avg_age_days: string | null;
         max_age_days: string | null;
@@ -271,38 +278,34 @@ router.get(
       }>(
         `
         SELECT
+          COUNT(*)::text                                            AS active_count,
           COUNT(CASE WHEN status = 'open' THEN 1 END)::text        AS open_count,
           COUNT(CASE WHEN status = 'in_progress' THEN 1 END)::text AS in_progress_count,
-          COUNT(CASE WHEN due_date < CURRENT_DATE
-            AND status NOT IN ('closed', 'accepted')
-            THEN 1 END)::text AS overdue_count,
+          COUNT(CASE WHEN status = 'blocked' THEN 1 END)::text     AS blocked_count,
+          COUNT(CASE WHEN ${sqlActionOverdue()} THEN 1 END)::text  AS overdue_count,
           ROUND(AVG(
-            CASE WHEN status NOT IN ('closed', 'accepted')
-            THEN EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
-            ELSE NULL END
+            EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
           ))::text AS avg_age_days,
           MAX(
-            CASE WHEN status NOT IN ('closed', 'accepted')
-            THEN EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
-            ELSE NULL END
+            EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
           )::int::text AS max_age_days,
-          COUNT(CASE WHEN status NOT IN ('closed', 'accepted')
-            AND created_at < NOW() - INTERVAL '30 days'
+          COUNT(CASE WHEN created_at < NOW() - INTERVAL '30 days'
             THEN 1 END)::text AS older_than_30,
-          COUNT(CASE WHEN status NOT IN ('closed', 'accepted')
-            AND created_at <  NOW() - INTERVAL '7 days'
+          COUNT(CASE WHEN created_at <  NOW() - INTERVAL '7 days'
             AND created_at >= NOW() - INTERVAL '30 days'
             THEN 1 END)::text AS older_than_7
         FROM actions
         WHERE organization_id = $1
-          AND status NOT IN ('closed', 'accepted')
+          AND ${sqlActionActive()}
         `,
         [organizationId]
       );
 
       const actionRow = actionCountResult.rows[0];
+      const activeActionCount      = actionRow ? parseInt(actionRow.active_count, 10)      : 0;
       const openActionCount        = actionRow ? parseInt(actionRow.open_count, 10)        : 0;
       const inProgressActionCount  = actionRow ? parseInt(actionRow.in_progress_count, 10) : 0;
+      const blockedActionCount     = actionRow ? parseInt(actionRow.blocked_count, 10)     : 0;
       const overdueActionCount     = actionRow ? parseInt(actionRow.overdue_count, 10)      : 0;
       const actionsAvgAge          = actionRow?.avg_age_days != null ? parseFloat(actionRow.avg_age_days) : null;
       const actionsMaxAge          = actionRow?.max_age_days != null ? parseInt(actionRow.max_age_days, 10) : null;
@@ -635,8 +638,13 @@ router.get(
           older_than_7:  findingsOlderThan7,
         },
         actions: {
+          // Metric Contract: `active` (open|in_progress|blocked) is the
+          // authoritative "work remaining" total and equals the destination
+          // page's open_count; open/in_progress/blocked are its exact parts.
+          active:        activeActionCount,
           open:          openActionCount,
           in_progress:   inProgressActionCount,
+          blocked:       blockedActionCount,
           overdue:       overdueActionCount,
           avg_age_days:  actionsAvgAge,
           max_age_days:  actionsMaxAge,

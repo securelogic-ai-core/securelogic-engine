@@ -527,8 +527,14 @@ export type ActionsResponse = {
 // Authoritative org-wide action counts (server-computed COUNT(*) FILTER), the
 // single source of truth for the workspace attention tiles so they cannot drift
 // from a client-side scan of a truncated page slice.
+// Metric Contract: open_count = ACTIVE work (open | in_progress | blocked) —
+// the same definition the dashboard uses; open_only/in_progress/blocked are
+// its exact parts. overdue compares DATE against CURRENT_DATE everywhere.
 export type ActionsSummary = {
   open_count: number;
+  // Exact parts of open_count (optional: absent on older engine builds).
+  open_only_count?: number;
+  in_progress_count?: number;
   blocked_count: number;
   overdue_count: number;
   immediate_count: number;
