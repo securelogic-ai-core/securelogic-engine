@@ -54,9 +54,11 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "vendorReviews.ts": 4,
   "vendorAssessmentAnalysis.ts": 1,
   "vendorSignalContext.ts": 1,
-  // findings family (#244); +2 for GET /findings/:id/context (P3.0) and
-  // POST /findings/:id/review (P3.2a), both dark ERIP Decision Workspace routes
-  "findings.ts": 7,
+  // findings family (#244); +3 for GET /findings/:id/context (P3.0),
+  // POST /findings/:id/review (P3.2a), and GET /findings/by-entity (#587,
+  // work-first entity search) — all dark ERIP Decision Workspace routes, each
+  // premium-gated (never standard; the STD==0 assertion below still holds).
+  "findings.ts": 8,
   "findingsExport.ts": 1,
   // risk engine
   "risks.ts": 8,
