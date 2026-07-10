@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { DashboardSummary, DomainScore, Framework, FrameworkReadiness } from "@/lib/api";
+import { orgActionsHref } from "@/app/actions/myActions";
 
 const CRIT_COLORS: Record<string, { bar: string; badge: string; text: string }> = {
   critical:      { bar: "#ef4444", badge: "rgba(239,68,68,0.15)",   text: "#fca5a5" },
@@ -331,18 +332,18 @@ export function ActionsRing({ actions }: { actions: DashboardSummary["actions"] 
           </svg>
         </div>
         <div className="flex-1 space-y-2">
-          <Link href="/actions?status=open" className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity">
+          <Link href={orgActionsHref({ status: "open" })} className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity">
             <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: TEAL }} />
             <span style={{ color: "#94a3b8" }}>Open</span>
             <span className="ml-auto font-bold tabular-nums" style={{ color: "#f1f5f9" }}>{openCount}</span>
           </Link>
-          <Link href="/actions?status=in_progress" className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity">
+          <Link href={orgActionsHref({ status: "in_progress" })} className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity">
             <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: AMBER }} />
             <span style={{ color: "#94a3b8" }}>In Progress</span>
             <span className="ml-auto font-bold tabular-nums" style={{ color: "#f1f5f9" }}>{inProgressCount}</span>
           </Link>
           {overdueCount > 0 && (
-            <Link href="/actions?overdue=true" className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity">
+            <Link href={orgActionsHref({ overdue: true })} className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity">
               <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 bg-red-500" />
               <span style={{ color: "#fca5a5" }}>Overdue</span>
               <span className="ml-auto font-bold tabular-nums" style={{ color: "#fca5a5" }}>{overdueCount}</span>
@@ -350,8 +351,8 @@ export function ActionsRing({ actions }: { actions: DashboardSummary["actions"] 
           )}
         </div>
       </div>
-      <Link href="/actions" className="block mt-4 text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
-        View all actions →
+      <Link href={orgActionsHref()} className="block mt-4 text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+        View all open actions →
       </Link>
     </div>
   );
@@ -474,7 +475,7 @@ export function OpenItemsAging({
           <div className="hidden sm:block" style={{ width: "1px", background: SLATE_LINE, flexShrink: 0 }} />
           <AgingSection
             label="Actions"
-            href="/actions"
+            href={orgActionsHref()}
             open={actionsOpen}
             avgAge={actions.avg_age_days}
             maxAge={actions.max_age_days}

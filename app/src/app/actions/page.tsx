@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getMe, getActions, type Action } from "@/lib/api";
-import { filterMyActions, myActionsRedirect, actionScope } from "./myActions";
+import { getMe, getActions, getActionsSummary, type Action } from "@/lib/api";
+import { filterMyActions, myActionsRedirect, actionScope, showingOfTotal } from "./myActions";
 import MyActionsView from "./MyActionsView";
 
 const PRIORITY_STYLES: Record<string, React.CSSProperties> = {
@@ -190,11 +190,26 @@ export default async function ActionsPage({
   // shows all open remediation. Flag-off falls through to the unchanged legacy list.
   const scope = workspace ? actionScope(sp.view) : null;
   if (scope) {
-    const data = await getActions(token, { limit: 200 });
+    // "team" (All open) is where the org-wide dashboard Actions counts now land
+    // (orgActionsHref → ?view=team). Its attention tiles must be authoritative
+    // org-wide COUNTs — not a scan of the ≤100 fetched slice — so they reconcile
+    // with the dashboard ring. `total` drives the honest "Showing N of M"
+    // disclosure. "mine" stays a personal, slice-derived view (no org summary).
+    const [data, summary] = await Promise.all([
+      getActions(token, { limit: 200 }),
+      scope === "team" ? getActionsSummary(token) : Promise.resolve(null),
+    ]);
     const all = data?.actions ?? [];
     const scoped = scope === "mine" ? filterMyActions(all, session.userId) : all;
     return (
-      <MyActionsView actions={scoped} scope={scope} sessionUserId={session.userId} nowMs={Date.now()} />
+      <MyActionsView
+        actions={scoped}
+        scope={scope}
+        sessionUserId={session.userId}
+        nowMs={Date.now()}
+        summary={summary}
+        total={scope === "team" ? data?.total : undefined}
+      />
     );
   }
 
@@ -211,6 +226,9 @@ export default async function ActionsPage({
 
   // Legacy list (workspace flag off): the org-wide remediation list, unchanged.
   const actions = actionsData?.actions ?? [];
+  // Honest pagination: the list is capped (≤100). Disclose "Showing N of M"
+  // whenever the true filtered total exceeds the rendered slice.
+  const truncationNote = showingOfTotal(actions.length, actionsData?.total);
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -292,6 +310,13 @@ export default async function ActionsPage({
           <FilterPill label="Watch"     href={filterHref(currentSp, "priority", "watch")}         active={activePriority === "watch"} />
         </div>
       </div>
+
+      {/* Honest pagination disclosure — no silent truncation at 100. */}
+      {truncationNote && (
+        <p className="mb-3 text-xs" style={{ color: "#64748b" }}>
+          {truncationNote} — refine the filters above to narrow the list.
+        </p>
+      )}
 
       {/* Action list */}
       {actions.length === 0 ? (

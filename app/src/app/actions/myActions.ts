@@ -51,3 +51,36 @@ export function myActionsRedirect(workspace: boolean, view: string | undefined):
 export function isMyActionsView(workspace: boolean, view: string | undefined): boolean {
   return workspace && actionScope(view) !== null;
 }
+
+/**
+ * Build the destination for an ORG-WIDE Actions count (the dashboard/posture
+ * "open / in progress / overdue / view all" links). The dashboard counts are
+ * org-wide, so their links must land on the org-wide list — NOT the session
+ * user's "My Actions".
+ *
+ * Appending `view=team` (the recognized "All open" scope) guarantees that:
+ *   - workspace ON  → renders the org-wide "All open" remediation view directly,
+ *     bypassing the bare-/actions → `?view=mine` redirect that otherwise scoped
+ *     an enterprise-wide count down to the caller's own handful of actions;
+ *   - workspace OFF → `view=team` is inert (the legacy list ignores it) while any
+ *     `status`/`overdue` filter is still honored — byte-identical legacy behavior.
+ * So the same URL reconciles the count with its destination in BOTH flag states.
+ */
+export function orgActionsHref(filter?: { status?: string; overdue?: boolean }): string {
+  const params = new URLSearchParams();
+  if (filter?.status) params.set("status", filter.status);
+  if (filter?.overdue) params.set("overdue", "true");
+  params.set("view", "team");
+  return `/actions?${params.toString()}`;
+}
+
+/**
+ * Honest pagination disclosure for a capped list: returns "Showing N of M" when
+ * the rendered slice is smaller than the true total, else null (nothing to
+ * disclose). Kills silent truncation where a page shows ≤100 rows under a header
+ * that claims the full count.
+ */
+export function showingOfTotal(shown: number, total: number | undefined): string | null {
+  if (typeof total !== "number" || total <= shown) return null;
+  return `Showing ${shown} of ${total}`;
+}
