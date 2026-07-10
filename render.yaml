@@ -1045,9 +1045,10 @@ services:
       # so the STAGING app never links users back to the production site.
       # Prod: https://www.securelogicai.com · Staging: the staging website URL.
       # BUILD-TIME (NEXT_PUBLIC_*): a value change requires an app REBUILD.
-      # The securelogic-app-staging service is dashboard-only (not in this file);
-      # set its value there. Code falls back to the prod apex if unset, so an
-      # unset prod build stays correct while an unset staging build leaks prod.
+      # The securelogic-app-staging service is now defined below in this file;
+      # set its staging value on that service. Code falls back to the prod apex if
+      # unset, so an unset prod build stays correct while an unset staging build
+      # leaks prod.
       - key: NEXT_PUBLIC_SITE_URL
         sync: false
 
@@ -1055,8 +1056,8 @@ services:
       # two-switch model: this only reveals the "Context" header item; the engine's
       # own SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED independently 404s every ECL
       # route. RUNTIME (not NEXT_PUBLIC): a restart applies it, no rebuild.
-      # The securelogic-app-staging service is dashboard-only — set it there for
-      # staging validation. Prod flip is GATE B (operator ledger L-2).
+      # The securelogic-app-staging service is defined below in this file — set it
+      # true there for staging validation. Prod flip is GATE B (operator ledger L-2).
       - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
         value: "false"
 
@@ -1075,7 +1076,8 @@ services:
       # Suggested Links" queue reskin. RUNTIME (not NEXT_PUBLIC): a restart applies
       # it, no rebuild. Presentation-only — no engine/query/schema change; flag off
       # is byte-for-byte the legacy nav. The securelogic-app-staging service is
-      # dashboard-only — set it there for staging validation. Prod flip is GATE B.
+      # defined below in this file — set it true there for staging validation. Prod
+      # flip is GATE B.
       - key: SECURELOGIC_RISK_WORKSPACE_ENABLED
         value: "false"
 
@@ -1083,7 +1085,7 @@ services:
       # two-switch model: renders the Decision Workspace on /findings/:id when on
       # AND the engine returns a context (engine flag on too). RUNTIME (not
       # NEXT_PUBLIC): a restart applies it. Flag off = legacy finding detail
-      # byte-for-byte. Staging app is dashboard-only; prod flip is GATE B.
+      # byte-for-byte. Staging app is defined below in this file; prod flip is GATE B.
       - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED
         value: "false"
 
@@ -1120,6 +1122,98 @@ services:
       - key: NEXT_PUBLIC_SENTRY_DSN_APP
         sync: false
 
+      - key: NEXT_PUBLIC_SENTRY_ENV
+        sync: false
+
+  # =========================================================
+  # SECURELOGIC APP — STAGING (Next.js, tracks develop)
+  # Staging peer of securelogic-app. Serves the customer-facing
+  # UI whose workspace/Decision branches are gated by the app-side
+  # SECURELOGIC_*_ENABLED flags below (read by the Next server:
+  # findings/page.tsx, findings/[id]/page.tsx, actions/page.tsx,
+  # queue/page.tsx, layout.tsx). This is where those flags must be
+  # true for staging validation — the engine flags alone change no UI.
+  #
+  # ADOPTION NOTE: a dashboard-managed securelogic-app-staging service
+  # has existed OUTSIDE this file (see the prior prod-app comments).
+  # Render Blueprints match services BY NAME, so syncing this Blueprint
+  # ADOPTS that existing service rather than creating a second one —
+  # PROVIDED the operator reconciles it (operator ledger L-4). No
+  # `domains:` block is declared, so the service keeps its unique
+  # Render-assigned *.onrender.com URL and no custom domain is duplicated.
+  # Nothing here creates or mutates a live Render service; the sync is an
+  # operator action.
+  #
+  # STAGING-SAFE: every secret is `sync: false` (values set on the
+  # staging service in the dashboard — NEVER prod secrets), engine/site
+  # URLs point at the STAGING engine/website (not prod), telemetry is the
+  # staging Sentry env. All four feature flags default OFF (dark).
+  # =========================================================
+
+  - type: web
+    name: securelogic-app-staging
+    region: virginia          # co-located with securelogic-engine-staging
+    env: node
+    plan: starter
+    branch: develop
+    buildCommand: cd app && npm ci --include=dev && rm -rf .next && npm run build
+    startCommand: cd app && npx next start -p $PORT
+    autoDeploy: true
+    healthCheckPath: /login    # public, client-rendered 200; no engine/DB coupling
+    envVars:
+      - key: NODE_ENV
+        value: production      # required for `next start` (prod build); env identity is APP_ENV
+      - key: APP_ENV
+        value: staging
+
+      # STAGING engine URLs — established pattern is `sync: false` (set on the
+      # service in the dashboard). Point ENGINE_API_URL at the securelogic-engine-
+      # staging PRIVATE URL and NEXT_PUBLIC_ENGINE_URL at its PUBLIC URL. NEVER the
+      # production engine. NEXT_PUBLIC_* is build-time — a value change needs a rebuild.
+      - key: ENGINE_API_URL
+        sync: false
+      - key: NEXT_PUBLIC_ENGINE_URL
+        sync: false
+
+      # STAGING marketing site (securelogic-website-staging) — never the prod apex,
+      # so the staging app never links users back to production. Build-time.
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+
+      # Feature flags — DARK (default off). App half of the two-switch model; a
+      # RESTART applies them (RUNTIME, not NEXT_PUBLIC). Set to "true" on THIS
+      # staging service to activate the redesign for staging validation:
+      #   RISK_WORKSPACE     -> /findings decision queue, /queue "Review Suggested
+      #                         Links" reskin + bulk select, enterprise nav IA
+      #   DECISION_WORKSPACE  -> /findings/:id Decision Workspace (needs the engine
+      #                         flag on too), /findings saved-views bar, /actions
+      #                         My Actions depth, Brief -> Decision/Event
+      # Prod enablement stays GATE B (operator ledger).
+      - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
+        value: "false"
+      - key: SECURELOGIC_ASSET_REGISTRY_ENABLED
+        value: "false"
+      - key: SECURELOGIC_RISK_WORKSPACE_ENABLED
+        value: "false"
+      - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED
+        value: "false"
+
+      # STAGING session secret — a distinct 32+ char value, NEVER the prod secret.
+      - key: SESSION_SECRET
+        sync: false
+      - key: SESSION_TIMEOUT_SECONDS
+        sync: false
+      - key: SESSION_IDLE_SECONDS
+        sync: false
+      - key: SESSION_ABSOLUTE_SECONDS
+        sync: false
+
+      # Sentry (app) — STAGING project/env only (never the prod telemetry env).
+      # All optional; unset = Sentry disabled. NEXT_PUBLIC_* are build-time.
+      - key: SENTRY_DSN_APP
+        sync: false
+      - key: NEXT_PUBLIC_SENTRY_DSN_APP
+        sync: false
       - key: NEXT_PUBLIC_SENTRY_ENV
         sync: false
 

@@ -32,10 +32,16 @@ here is inferred from naming.
 1. **There is no separate "connector/risk/predictive/autonomous worker" service.**
    Those loops run **in-process inside the Engine**, so their flags belong on the
    **Engine service**, not a worker.
-2. **`securelogic-app-staging` is NOT in `render.yaml`** (it is dashboard-only).
-   Set the 3 app-side flags for staging in the **Render dashboard**; the engine /
-   worker staging flags live in `render.yaml`'s staging blocks (or a dashboard
-   override).
+2. **`securelogic-app-staging` is now defined in `render.yaml`** (a `type: web`,
+   `branch: develop`, `region: virginia` service; added 2026-07-10). It declares the
+   four app feature flags at `"false"` and every secret/URL as `sync: false` (staging
+   values set on the service in the dashboard — never prod). **Adoption caveat:** a
+   dashboard-managed `securelogic-app-staging` predated this entry; because Render
+   Blueprints match services **by name**, a sync **adopts** that existing service
+   rather than creating a duplicate — the operator must reconcile it (operator ledger
+   **L-4**) before/at sync. No `domains:` are declared, so it keeps its unique
+   Render-assigned URL (no domain collision). Set the app-side flags to `"true"` on
+   this service for staging validation.
 3. **All flags are RUNTIME env** (read per request / per worker cycle; the app
    reads them server-side, **not** `NEXT_PUBLIC`). Changing any flag requires a
    **service restart** — Render auto-redeploys on env save — but **never a
@@ -57,7 +63,7 @@ production (no prod enablement without an explicit operator ruling).
 - **Why each:** *Engine* — gates all registry routes/writes and the in-process connector/risk/predictive workers. *App* — "Asset Registry" nav + `/assets*` page dark-gating + Setup-Wizard step 2.
 - **Redeploy/restart:** Yes, restart Engine + App (auto on env save); no rebuild.
 - **Default:** `"false"` (render.yaml, all blocks).
-- **Staging order:** migrations (Step 0) → `securelogic-engine-staging` → `securelogic-app-staging` (dashboard).
+- **Staging order:** migrations (Step 0) → `securelogic-engine-staging` → `securelogic-app-staging` (IaC service; set flags on the service).
 - **Production order:** GATE B ruling → prod engine → prod app.
 - **Validation:** `GET /api/assets`→200; nav shows "Assets → Asset Registry"; create/import/connect via `/assets/new`; EAR Enablement Runbook Step 1.
 - **Rollback:** set `"false"` on both → routes 404-before-auth, UI shows neutral panel; written rows remain inert.
@@ -69,7 +75,7 @@ production (no prod enablement without an explicit operator ruling).
 - **Why each:** *Engine* — ECL routes (`/api/enterprise-entities`, relationships, graph, import, applicability) + the in-process connector-sync/writeback/applicability-reassessment workers. *App* — "Context" nav + `/assets/new` ECL affordances + `/assets/[id]` graph link + ECL proxy.
 - **Redeploy/restart:** Yes, Engine + App; no rebuild.
 - **Default:** `"false"`.
-- **Staging order:** migrations → `securelogic-engine-staging` → `securelogic-app-staging`.
+- **Staging order:** migrations → `securelogic-engine-staging` → `securelogic-app-staging` (IaC service).
 - **Production order:** GATE B (do **not** enable until AD-17 grant + edge-cap H1 + graph load-test H2) → engine → app.
 - **Validation:** `GET /api/enterprise-entities`→200; "Context" nav appears; enterprise-context tracker validation.
 - **Rollback:** `"false"` on both; ECL routes 404; connector + citation sub-features go dark with it.
@@ -270,7 +276,7 @@ production (no prod enablement without an explicit operator ruling).
 - **Redeploy/restart:** Yes, Engine + App; no rebuild (runtime var, not `NEXT_PUBLIC`).
 - **Default:** `"false"` (OFF everywhere).
 - **Drill-through dependency (P3.3, three-flag reality):** the **full** app experience additionally needs `SECURELOGIC_RISK_WORKSPACE_ENABLED` ON (the Queue reciprocal link lives in the "Review Suggested Links" reskin branch + the enterprise IA). The `/intelligence/[id]` drill-through renders from finding-context on `DECISION_WORKSPACE` alone, and **enriches** from the canonical event only when the pre-existing `SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED` (§1.3) is ON — degrading honestly (finding-context, or an "unavailable" state) otherwise. It never re-gates or requires that flag.
-- **Staging order:** engine-staging + app-staging (dashboard) → validate per `docs/validation/decision-workspace-staging-validation.md` §P3.3. Optionally add `INTELLIGENCE_EVENTS` for the enriched drill-through.
+- **Staging order:** engine-staging + app-staging (IaC service, flags set on the service) → validate per `docs/validation/decision-workspace-staging-validation.md` §P3.3. Optionally add `INTELLIGENCE_EVENTS` for the enriched drill-through.
 - **Production order:** GATE B — after staging validation; not in scope for this package.
 - **Isolation (R5):** My Actions ownership derives from the session identity, never request input.
 - **Guarantee:** Intelligence Events remain **drill-through only** — no primary-nav entry, no `/intelligence` index route (enforced by `applicationKnowledgeIndex.test.ts`).
@@ -324,7 +330,7 @@ production (no prod enablement without an explicit operator ruling).
 2. **Two-switch flags (Engine + App)** — `ASSET_REGISTRY`, `ENTERPRISE_CONTEXT`,
    `RISK_INTELLIGENCE`, `RISK_LIFECYCLE`, `VENDOR_ASSURANCE`, `INDUSTRY_TEMPLATES`:
    set the engine half in `render.yaml`/dashboard and the app half in the Render
-   dashboard for `securelogic-app-staging`. Each side **fails closed
+   the `securelogic-app-staging` service (now IaC-defined). Each side **fails closed
    independently** — no split-brain; order between them does not matter.
 3. **Restart, not rebuild.** Saving an env var in Render redeploys/restarts the
    service, which is sufficient (the app reads flags server-side, not
