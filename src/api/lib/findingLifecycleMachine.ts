@@ -33,17 +33,34 @@ const ACTION_TERMINAL = new Set(["closed", "accepted"]);
 
 /**
  * Pure derivation (spec §1.1): operational_status is a function of the linked
- * Actions' statuses and nothing else.
+ * Actions' statuses and the org's evidence-gate policy, nothing else.
  *
  *   in_progress — ≥1 linked Action is in_progress/blocked
- *   remediated  — every linked Action is terminal (closed/accepted) and ≥1 existed
+ *   remediated  — every linked Action is terminal (closed/accepted) and ≥1
+ *                 existed, AND the evidence gate is satisfied if org-enforced
  *   open        — otherwise (no Actions, or none started)
+ *
+ * Evidence gate (spec §1.1 — the same org policy the Risk lifecycle enforces
+ * via risk_settings.require_evidence_gate): when the org enforces the gate,
+ * completed work WITHOUT attached evidence stays `in_progress` — for a
+ * gate-enforcing org the evidence IS part of the remediation, and validation
+ * (ready-for-decision) must not be offered without it. Omitting `gate` (or
+ * enforced=false) preserves the action-only derivation.
  */
+export interface EvidenceGate {
+  /** org policy: risk_settings.require_evidence_gate (default false) */
+  enforced: boolean;
+  /** ≥1 evidence record with source_type='finding' for this finding */
+  hasEvidence: boolean;
+}
+
 export function deriveOperationalStatus(
-  actionStatuses: readonly string[]
+  actionStatuses: readonly string[],
+  gate?: EvidenceGate
 ): FindingOperationalStatus {
   if (actionStatuses.some((s) => ACTION_ACTIVE.has(s))) return "in_progress";
   if (actionStatuses.length > 0 && actionStatuses.every((s) => ACTION_TERMINAL.has(s))) {
+    if (gate?.enforced && !gate.hasEvidence) return "in_progress";
     return "remediated";
   }
   return "open";

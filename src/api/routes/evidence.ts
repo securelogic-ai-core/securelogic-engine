@@ -35,6 +35,7 @@ import {
   validateEvidenceListQuery
 } from "../lib/evidenceValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { recomputeFindingOperationalStatus } from "../lib/findingLifecycle.js";
 
 const router = Router();
 
@@ -232,6 +233,34 @@ router.post(
       const evidence = evidenceResult.rows[0];
 
       await client.query("COMMIT");
+
+      // Finding evidence participates in the operational derivation when the
+      // org enforces the evidence gate (finding-lifecycle-spec §4: "new
+      // evidence → op recomputed"). Attaching the required evidence to a
+      // finding whose Actions are already terminal advances it to remediated
+      // (→ ready-for-decision) without waiting for another Action write.
+      if (input.source_type === "finding") {
+        const recompute = await recomputeFindingOperationalStatus(
+          organizationId,
+          input.source_id,
+          {
+            actorUserId: (req.userId as string | undefined) ?? null,
+            actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+          }
+        );
+        if (recompute.changed && recompute.auditEvent) {
+          writeAuditEvent({
+            organizationId,
+            actorApiKeyId: (req as any).apiKey?.id ?? null,
+            actorUserId: req.userId ?? null,
+            eventType: recompute.auditEvent,
+            resourceType: "finding",
+            resourceId: input.source_id,
+            payload: { from: recompute.fromState ?? null, to: recompute.toState ?? null, trigger: "evidence.created" },
+            ipAddress: req.ip ?? null,
+          });
+        }
+      }
 
       logger.info(
         {

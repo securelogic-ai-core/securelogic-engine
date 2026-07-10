@@ -90,8 +90,27 @@ export async function recomputeFindingOperationalStatus(
       WHERE organization_id = $1 AND source_type = 'finding' AND source_id = $2`,
     [organizationId, findingId]
   );
+
+  // Evidence gate (spec §1.1): the SAME org policy the Risk lifecycle enforces
+  // (risk_settings.require_evidence_gate, default false). Resolved in this
+  // transaction; when enforced, remediation requires attached evidence.
+  const gateRow = await pg.query<{ enforced: boolean; has_evidence: boolean }>(
+    `SELECT
+       COALESCE((SELECT s.require_evidence_gate FROM risk_settings s
+                  WHERE s.organization_id = $1), FALSE) AS enforced,
+       EXISTS(SELECT 1 FROM evidence e
+               WHERE e.organization_id = $1
+                 AND e.source_type = 'finding' AND e.source_id = $2) AS has_evidence`,
+    [organizationId, findingId]
+  );
+  const gate = {
+    enforced: gateRow.rows[0]?.enforced === true,
+    hasEvidence: gateRow.rows[0]?.has_evidence === true,
+  };
+
   const toState = deriveOperationalStatus(
-    actions.rows.map((r) => String(r.status ?? ""))
+    actions.rows.map((r) => String(r.status ?? "")),
+    gate
   );
 
   if (toState === fromState) return { changed: false };

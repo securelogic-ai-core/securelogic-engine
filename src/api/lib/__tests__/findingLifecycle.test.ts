@@ -167,3 +167,26 @@ describe("evaluateFindingDecisionTransition (spec §4)", () => {
     expect(d.reason).toBe("invalid_decision_state");
   });
 });
+
+describe("evidence gate (spec §1.1 — org-enforced remediation evidence)", () => {
+  const allTerminal = ["closed", "accepted"];
+
+  it("gate off: terminal actions remediate regardless of evidence", () => {
+    expect(deriveOperationalStatus(allTerminal, { enforced: false, hasEvidence: false })).toBe("remediated");
+    expect(deriveOperationalStatus(allTerminal)).toBe("remediated"); // omitted = legacy
+  });
+
+  it("gate on without evidence: completed work stays in_progress (never remediated)", () => {
+    expect(deriveOperationalStatus(allTerminal, { enforced: true, hasEvidence: false })).toBe("in_progress");
+  });
+
+  it("gate on with evidence: remediates", () => {
+    expect(deriveOperationalStatus(allTerminal, { enforced: true, hasEvidence: true })).toBe("remediated");
+  });
+
+  it("gate never manufactures progress: open/in-progress work is unaffected", () => {
+    expect(deriveOperationalStatus([], { enforced: true, hasEvidence: true })).toBe("open");
+    expect(deriveOperationalStatus(["open"], { enforced: true, hasEvidence: true })).toBe("open");
+    expect(deriveOperationalStatus(["in_progress"], { enforced: true, hasEvidence: true })).toBe("in_progress");
+  });
+});
