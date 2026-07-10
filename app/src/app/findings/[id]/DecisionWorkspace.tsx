@@ -383,16 +383,27 @@ export function DecisionWorkspace({
         </>
       )}
 
-      {/* Mark reviewed — always visible below the tabs (executive review action). */}
-      <div>
+      {/* Mark reviewed — a per-USER acknowledgement, not a lifecycle change.
+          Its effect is explicit here so it can't read as a status/decision action:
+          it timestamps YOUR review and resets the "What's changed since your last
+          review" baseline (Zone B) — nothing else. Now also written to the audit
+          trail server-side (finding.reviewed). */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <button
           type="button"
           disabled={pending}
+          title="Records that you reviewed this finding and resets your 'What's changed since your last review' baseline. Does not change the finding's status or decision."
           onClick={() => run(() => markFindingReviewedAction(finding.id))}
           style={{ background: "transparent", border: "1px solid #334155", color: "#94a3b8", borderRadius: 6, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}
         >
           Mark reviewed
         </button>
+        <span style={{ fontSize: 12, color: "#64748b" }}>
+          {context.whats_changed.since
+            ? `You last reviewed this on ${fmt(context.whats_changed.since)}. `
+            : "You haven't marked this reviewed yet. "}
+          Resets your “what’s changed” baseline — it doesn’t change status or decision.
+        </span>
       </div>
     </div>
   );
