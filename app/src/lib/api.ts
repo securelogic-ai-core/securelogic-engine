@@ -512,9 +512,23 @@ export type Action = {
 export type ActionsResponse = {
   count: number;
   limit?: number;
+  // Exact total for the applied filter set (cursor excluded) — pagination truth,
+  // mirroring FindingsResponse so a capped page can disclose "showing N of M".
+  total?: number;
   organizationId?: string;
   nextCursor?: { created_at: string; id: string } | null;
   actions: Action[];
+};
+
+// Authoritative org-wide action counts (server-computed COUNT(*) FILTER), the
+// single source of truth for the workspace attention tiles so they cannot drift
+// from a client-side scan of a truncated page slice.
+export type ActionsSummary = {
+  open_count: number;
+  blocked_count: number;
+  overdue_count: number;
+  immediate_count: number;
+  closed_count: number;
 };
 
 export type ActionsParams = {
@@ -2169,6 +2183,25 @@ export async function getActions(
     const res = await engineFetch(`/api/actions?${qs.toString()}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<ActionsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Org-wide action counts from GET /api/actions/summary. These are authoritative
+ * (server COUNT(*), org-scoped, uncapped) — the workspace attention tiles read
+ * these instead of scanning a paginated slice, so tile numbers reconcile with
+ * the dashboard Actions ring rather than drifting at >100 actions.
+ */
+export async function getActionsSummary(
+  apiKey: string
+): Promise<ActionsSummary | null> {
+  try {
+    const res = await engineFetch(`/api/actions/summary`, apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { summary?: ActionsSummary };
+    return body?.summary ?? null;
   } catch {
     return null;
   }

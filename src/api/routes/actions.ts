@@ -225,6 +225,13 @@ router.get(
         conditions.push(`source_id = $${params.length}::uuid`);
       }
 
+      // Snapshot the filter set BEFORE the cursor + limit params so the total
+      // COUNT reflects the SAME filters (cursor excluded) — pagination truth,
+      // mirroring GET /api/findings so a capped page can honestly disclose
+      // "showing N of <total>" instead of silently truncating at MAX_LIMIT.
+      const preCursorConditions = [...conditions];
+      const preCursorParams = [...params];
+
       if (useCursor) {
         params.push(beforeCreatedAt, beforeId);
         const ci = params.length - 1;
@@ -262,12 +269,20 @@ router.get(
         params
       );
 
+      // Exact total for the SAME filter set (cursor excluded) — pagination truth.
+      const totalRow = await pg.query<{ total: string }>(
+        `SELECT COUNT(*) AS total FROM actions WHERE ${preCursorConditions.join(" AND ")}`,
+        preCursorParams
+      );
+      const total = parseInt(totalRow.rows[0]?.total ?? "0", 10);
+
       const actions = result.rows;
       const last = actions.length > 0 ? actions[actions.length - 1] : null;
 
       res.status(200).json({
         count: actions.length,
         limit,
+        total,
         organizationId,
         nextCursor:
           last != null ? { created_at: last.created_at, id: last.id } : null,

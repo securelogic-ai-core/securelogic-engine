@@ -11,8 +11,9 @@
  */
 
 import Link from "next/link";
-import type { Action } from "@/lib/api";
+import type { Action, ActionsSummary } from "@/lib/api";
 import type { ActionScope } from "./myActions";
+import { showingOfTotal } from "./myActions";
 import {
   slaState,
   actionSourceHref,
@@ -180,15 +181,30 @@ export default function MyActionsView({
   scope,
   sessionUserId,
   nowMs,
+  summary = null,
+  total,
 }: {
   actions: Action[];
   scope: ActionScope;
   sessionUserId: string | undefined;
   nowMs: number;
+  // Authoritative org-wide counts (team scope only). When present, the Open and
+  // Overdue tiles read these server COUNT(*)s so they reconcile with the
+  // dashboard Actions ring instead of scanning the ≤100 fetched slice.
+  summary?: ActionsSummary | null;
+  // True org-wide total for the current scope, for the "Showing N of M" note.
+  total?: number;
 }) {
   const att = actionAttention(actions, nowMs);
   const noSla = actions.filter((a) => isActiveStatus(a.status) && slaState(a, nowMs) === "none").length;
   const groups = groupBySla(actions, nowMs);
+
+  // Prefer authoritative org-wide counts for the tiles that mirror the dashboard
+  // ring (Open, Overdue); fall back to the slice-derived attention counts when no
+  // summary was supplied (e.g. the personal "mine" scope).
+  const openTile = summary ? summary.open_count : att.open;
+  const overdueTile = summary ? summary.overdue_count : att.overdue;
+  const truncationNote = showingOfTotal(actions.length, total);
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">
@@ -210,10 +226,17 @@ export default function MyActionsView({
         </div>
       </div>
 
+      {/* Honest pagination disclosure (team scope can exceed the 100-row page). */}
+      {truncationNote && (
+        <p className="mb-4 text-xs" style={{ color: "#64748b" }}>
+          {truncationNote} open remediation actions — tiles reflect the full org total.
+        </p>
+      )}
+
       {/* Attention tiles */}
       <div className="grid grid-cols-4 gap-4 mb-8">
-        <Tile label="Open" value={att.open} />
-        <Tile label="Overdue" value={att.overdue} warn />
+        <Tile label="Open" value={openTile} />
+        <Tile label="Overdue" value={overdueTile} warn />
         <Tile label="At risk this week" value={att.atRisk} warn />
         {scope === "team" ? (
           <Tile label="Unassigned" value={att.unassigned} warn />
