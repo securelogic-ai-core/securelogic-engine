@@ -41,3 +41,22 @@ export function shouldResolveBriefDecision(
 ): boolean {
   return workspace && typeof cyberSignalId === "string" && cyberSignalId.length > 0;
 }
+
+/**
+ * D5 — Brief → Intelligence Event bridge. Once a brief item is linked to a finding,
+ * the finding context already carries the supporting Intelligence Event(s) (resolved
+ * across the signal↔event bridge). Pick the first resolvable event id so the brief
+ * can offer a direct drill-through, closing the brief → event path without any new
+ * engine route or a signal→event lookup. Returns null → no link (honest degrade:
+ * no finding, no event data, or Intelligence Events dark).
+ */
+export function briefSupportingEventId(
+  context: { intelligence?: { events?: Array<Record<string, unknown>> } } | null | undefined,
+): string | null {
+  const events = context?.intelligence?.events;
+  if (!Array.isArray(events)) return null;
+  for (const e of events) {
+    if (e && typeof e["id"] === "string" && (e["id"] as string).length > 0) return e["id"] as string;
+  }
+  return null;
+}
