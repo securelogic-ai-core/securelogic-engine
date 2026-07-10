@@ -1,8 +1,14 @@
 import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
 import { getSession } from "@/lib/session";
-import { getIntelligenceBrief, getFindings } from "@/lib/api";
-import { briefDecisionAffordance, shouldResolveBriefDecision, type BriefDecisionAffordance } from "./briefDecision";
+import { getIntelligenceBrief, getFindings, getFindingContext } from "@/lib/api";
+import { intelligenceEventHref } from "@/lib/intelligenceLinks";
+import {
+  briefDecisionAffordance,
+  shouldResolveBriefDecision,
+  briefSupportingEventId,
+  type BriefDecisionAffordance,
+} from "./briefDecision";
 import type {
   IntelligenceBriefDetailResponse,
   IntelligenceBriefItem,
@@ -219,9 +225,18 @@ export default async function SignalDetailPage({ params }: Props) {
   // no affordance (byte-identical brief item).
   const workspace = process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true";
   let decision: BriefDecisionAffordance | null = null;
+  let eventHref: string | null = null;
   if (shouldResolveBriefDecision(workspace, item.cyber_signal_id)) {
     const related = await getFindings(token, { source_id: item.cyber_signal_id!, limit: 1 });
     decision = briefDecisionAffordance(related?.findings?.[0] ?? null);
+    // D5 — Brief → Intelligence Event bridge: for a linked item, resolve the finding
+    // context's supporting event and offer a direct drill-through. Reuses the existing
+    // /context resolver (same DECISION_WORKSPACE gate); degrades to no link otherwise.
+    if (decision.state === "linked") {
+      const context = await getFindingContext(token, decision.findingId);
+      const eventId = briefSupportingEventId(context);
+      if (eventId) eventHref = intelligenceEventHref(eventId, decision.findingId);
+    }
   }
 
   return (
@@ -295,13 +310,24 @@ export default async function SignalDetailPage({ params }: Props) {
                   Decision
                 </p>
                 {decision.state === "linked" ? (
-                  <Link
-                    href={decision.href}
-                    className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold"
-                    style={{ background: "rgba(0,196,180,0.12)", color: "#00c4b4", border: "1px solid rgba(0,196,180,0.4)" }}
-                  >
-                    Open the Decision Workspace for this finding →
-                  </Link>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Link
+                      href={decision.href}
+                      className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold"
+                      style={{ background: "rgba(0,196,180,0.12)", color: "#00c4b4", border: "1px solid rgba(0,196,180,0.4)" }}
+                    >
+                      Open the Decision Workspace for this finding →
+                    </Link>
+                    {eventHref && (
+                      <Link
+                        href={eventHref}
+                        className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium"
+                        style={{ background: "rgba(148,163,184,0.1)", color: "#93c5fd", border: "1px solid #334155" }}
+                      >
+                        View supporting intelligence →
+                      </Link>
+                    )}
+                  </div>
                 ) : (
                   <div className="text-sm text-slate-300 leading-relaxed max-w-prose">
                     <p className="mb-2">

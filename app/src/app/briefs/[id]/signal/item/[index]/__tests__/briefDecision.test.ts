@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { briefDecisionAffordance, shouldResolveBriefDecision } from "../briefDecision";
+import { briefDecisionAffordance, shouldResolveBriefDecision, briefSupportingEventId } from "../briefDecision";
 
 describe("briefDecisionAffordance", () => {
   it("deep-links into the Decision Workspace when a finding exists", () => {
@@ -35,5 +35,23 @@ describe("shouldResolveBriefDecision", () => {
     expect(shouldResolveBriefDecision(true, null)).toBe(false);
     expect(shouldResolveBriefDecision(true, "")).toBe(false);
     expect(shouldResolveBriefDecision(true, undefined)).toBe(false);
+  });
+});
+
+describe("briefSupportingEventId (D5 Brief → Event bridge)", () => {
+  it("picks the first resolvable event id from the finding context", () => {
+    const ctx = { intelligence: { events: [{ id: "evt-1", title: "RCE" }, { id: "evt-2" }] } };
+    expect(briefSupportingEventId(ctx)).toBe("evt-1");
+  });
+  it("skips events without a usable id", () => {
+    const ctx = { intelligence: { events: [{ id: "" }, { title: "no id" }, { id: "evt-9" }] } };
+    expect(briefSupportingEventId(ctx)).toBe("evt-9");
+  });
+  it("returns null when there is no context, no events, or none resolvable (honest degrade)", () => {
+    expect(briefSupportingEventId(null)).toBeNull();
+    expect(briefSupportingEventId(undefined)).toBeNull();
+    expect(briefSupportingEventId({})).toBeNull();
+    expect(briefSupportingEventId({ intelligence: { events: [] } })).toBeNull();
+    expect(briefSupportingEventId({ intelligence: { events: [{ title: "x" }] } })).toBeNull();
   });
 });
