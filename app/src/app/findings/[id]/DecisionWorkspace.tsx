@@ -17,6 +17,7 @@ import type { Finding, Action, FindingContext, FindingImpactDimension } from "@/
 import { intelligenceEventHref, findingEventId } from "@/lib/intelligenceLinks";
 import { DECISION_TABS, DEFAULT_DECISION_TAB, type DecisionTab } from "./decisionTabs";
 import { intelligenceEmptyCopy } from "./findingSourceCopy";
+import { topBusinessImpact } from "./businessImpact";
 import {
   updateFindingStatusAction,
   updateFindingPriorityAction,
@@ -146,9 +147,16 @@ export function DecisionWorkspace({
   const affectedTotal =
     affected.vendors.length + affected.ai_systems.length + affected.controls.length + affected.obligations.length;
   const bi = context.business_impact;
-  const topImpact = [bi.third_party, bi.regulatory, bi.operational]
-    .map((d) => d.level)
-    .find((l) => l === "high" || l === "medium") ?? "low";
+  // Headline is a PURE FUNCTION of all five dimension rows rendered in Zone C
+  // below, so the header chip can never contradict the detail. Honest about
+  // none/not_assessed — no "?? low" floor (workflow-consistency Phase 2).
+  const topImpact = topBusinessImpact([
+    bi.revenue.level,
+    bi.operational.level,
+    bi.regulatory.level,
+    bi.customer.level,
+    bi.third_party.level,
+  ]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 1100, margin: "0 auto" }}>
