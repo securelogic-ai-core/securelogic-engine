@@ -29,14 +29,24 @@ operator acts.
 | **Step** | Adopt/sync → set staging env values → confirm the service builds from `develop` and is healthy at `/login` → then L-2. |
 | **Do NOT** | Point any URL at production; copy prod secrets; declare a custom domain (none is in IaC — it keeps its Render-assigned URL). |
 
-## L-2 — Enable the workspace flags on STAGING (app + engine)
+## L-2 — Activate the workspace flags on STAGING (IaC-managed — sync the Blueprint)
+
+> **Updated 2026-07-10:** these staging flags are no longer set by hand in the Render
+> dashboard. They are **declared in `render.yaml`** and **owned by the Render
+> Blueprint** (app-staging RISK+DECISION via the staging-app PR; engine-staging
+> DECISION via PR #585). The operator action is to **sync the Blueprint and let the
+> services redeploy**, not to edit env vars manually — a manual edit is unnecessary
+> and would be reverted on the next sync.
 
 | Field | Value |
 |---|---|
-| **Service** | `securelogic-app-staging`, `securelogic-engine-staging` (Render env) |
-| **Action** | App (`securelogic-app-staging`): `SECURELOGIC_RISK_WORKSPACE_ENABLED=true` **and** `SECURELOGIC_DECISION_WORKSPACE_ENABLED=true`. Engine (`securelogic-engine-staging`): `SECURELOGIC_DECISION_WORKSPACE_ENABLED=true`. Optionally engine `SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED=true` to enrich the Brief→Event drill-through (degrades honestly when off). Both flags are RUNTIME (a restart applies them; no rebuild). |
-| **Step** | Set on staging → validate (see L-3) → hold for a separate GATE-B ruling before prod. |
-| **Depends on** | **L-4** (the staging app service exists, is synced from IaC, and has its staging URLs/secret set) and **L-1** (saved-views table present). Lights up: Findings decision queue + Day-0 empty state (RISK_WORKSPACE); Decision Workspace incl. every-source affected context, Brief→Decision + Brief→Event, My Actions depth, saved views (DECISION_WORKSPACE); Review Suggested Links + bulk select mode (RISK_WORKSPACE). NOTE: `/findings/:id` Decision Workspace needs the **engine** `DECISION_WORKSPACE` flag on too (two-switch) or it falls back to legacy detail. |
+| **Service** | `securelogic-app-staging`, `securelogic-engine-staging` |
+| **Flags (IaC-managed in `render.yaml`, NOT dashboard-set)** | `securelogic-app-staging`: `SECURELOGIC_RISK_WORKSPACE_ENABLED=true` **and** `SECURELOGIC_DECISION_WORKSPACE_ENABLED=true`. `securelogic-engine-staging`: `SECURELOGIC_DECISION_WORKSPACE_ENABLED=true`. All three are declared `value: "true"` in the respective `render.yaml` staging blocks and owned by the Blueprint. |
+| **Operator action** | 1. **Sync the Render Blueprint** so the declared values take effect. 2. Confirm **both** `securelogic-app-staging` **and** `securelogic-engine-staging` **redeploy from `branch: develop`**. 3. After redeploy, **verify each live service reads its flag = `true`** — in particular that `securelogic-engine-staging` reads `SECURELOGIC_DECISION_WORKSPACE_ENABLED=true` (Render → Environment on each service, or the running process). **No manual dashboard flag edits.** Optional: engine `SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED=true` (still `sync:false`/dashboard) to enrich the Brief→Event drill-through (degrades honestly when off). |
+| **Two-switch (`/findings/:id`)** | Requires `DECISION_WORKSPACE=true` on **both** `securelogic-app-staging` **and** `securelogic-engine-staging` (both now IaC-managed). If only the app flag is live, the detail falls back to legacy — verify the engine value after redeploy. |
+| **Step** | Sync Blueprint → confirm both staging services redeploy from `develop` → verify live values `= true` → validate (L-3). |
+| **Production / GATE B** | Production `securelogic-app` and `securelogic-engine` keep `RISK_WORKSPACE`/`DECISION_WORKSPACE` = `"false"` in `render.yaml`. **GATE B remains intact** — no production flag flip; prod enablement is a separate reserved ruling. |
+| **Depends on** | **L-4** (the staging app service adopted/synced from IaC + its `sync:false` staging URLs/secret set) and **L-1** (saved-views table present). Activates: Findings decision queue + Day-0 empty state (RISK_WORKSPACE); Decision Workspace incl. every-source affected context, Brief→Decision + Brief→Event, My Actions depth, saved views (DECISION_WORKSPACE); Review Suggested Links + bulk select mode (RISK_WORKSPACE). |
 
 ## L-3 — Staging validation before any prod enablement
 
