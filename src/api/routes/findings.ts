@@ -20,6 +20,7 @@ import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { triggerFindingAlert } from "../lib/findingAlertTrigger.js";
 import { resolveFindingContext } from "../lib/findingContextResolver.js";
+import { normalizeEntityQuery, searchFindingsByEntity } from "../lib/findingEntitySearch.js";
 
 const router = Router();
 
@@ -383,7 +384,9 @@ router.get(
           f.time_sensitivity,
           f.scoring_rationale,
           f.status,
+          f.decision_state,
           f.owner_user_id,
+          f.due_date,
           f.created_at,
           f.updated_at,
           (SELECT COUNT(*)::integer
@@ -480,7 +483,13 @@ router.get(
           COUNT(*) FILTER (WHERE status != 'open')                                  AS closed_count,
           COUNT(*) FILTER (WHERE status = 'open' AND priority = 'immediate')        AS immediate_priority,
           COUNT(*) FILTER (WHERE source_type = 'vendor_review')                     AS vendor_sourced,
-          COUNT(*) FILTER (WHERE source_type = 'signal')                            AS signal_sourced
+          COUNT(*) FILTER (WHERE source_type = 'signal')                            AS signal_sourced,
+          -- Work-queue counts (ERIP work-first Findings page) — additive.
+          COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND due_date IS NOT NULL AND due_date < CURRENT_DATE) AS overdue_open,
+          COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND owner_user_id IS NULL)                            AS unassigned_open,
+          COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND decision_state = 'needs_review')                  AS needs_review_open,
+          COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND decision_state = 'mitigating')                    AS mitigating_open,
+          COUNT(*) FILTER (WHERE decision_state = 'accepted_risk')                                                      AS accepted_risk_total
         FROM findings
         WHERE organization_id = $1
         `,
@@ -499,11 +508,85 @@ router.get(
           immediate_priority: parseInt(row?.immediate_priority ?? "0", 10),
           vendor_sourced:     parseInt(row?.vendor_sourced ?? "0", 10),
           signal_sourced:     parseInt(row?.signal_sourced ?? "0", 10),
+          // Work-queue counts (ERIP work-first Findings page) — additive.
+          overdue_open:        parseInt((row as any)?.overdue_open ?? "0", 10),
+          unassigned_open:     parseInt((row as any)?.unassigned_open ?? "0", 10),
+          needs_review_open:   parseInt((row as any)?.needs_review_open ?? "0", 10),
+          mitigating_open:     parseInt((row as any)?.mitigating_open ?? "0", 10),
+          accepted_risk_total: parseInt((row as any)?.accepted_risk_total ?? "0", 10),
         },
       });
     } catch (err) {
       logger.error({ event: "findings_summary_failed", err }, "GET /api/findings/summary failed");
       res.status(500).json({ error: "findings_summary_failed" });
+    }
+  })
+);
+
+/* =========================================================
+   GET /api/findings/by-entity?q=<name>
+   ERIP work-first Findings page — DARK behind
+   SECURELOGIC_DECISION_WORKSPACE_ENABLED (404 while off, same
+   posture as /findings/:id/context). Reverse entity search:
+   "which findings belong to <vendor/AI system/control/obligation>".
+   Read-only; resolves through existing signal links, the
+   intelligence-event bridge, and the assessment tables. MUST be
+   registered BEFORE /findings/:id so the path is not captured.
+   ========================================================= */
+
+router.get(
+  "/findings/by-entity",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  asTenant(async (req, res) => {
+    try {
+      if (process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED !== "true") {
+        res.status(404).json({ error: "findings_by_entity_not_found" });
+        return;
+      }
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+      const q = normalizeEntityQuery(req.query["q"]);
+      if (!q) {
+        res.status(400).json({ error: "query_must_be_2_to_120_chars" });
+        return;
+      }
+
+      const { entities, finding_ids } = await searchFindingsByEntity(pg, organizationId, q);
+      if (finding_ids.length === 0) {
+        res.status(200).json({ query: q, entities, count: 0, findings: [] });
+        return;
+      }
+
+      const rows = await pg.query(
+        `
+        SELECT
+          f.id, f.organization_id, f.assessment_id, f.source_type, f.source_id,
+          f.title, f.severity, f.description, f.recommendation, f.framework_control_id,
+          f.domain, f.priority, f.likelihood, f.confidence, f.time_sensitivity,
+          f.scoring_rationale, f.status, f.decision_state, f.owner_user_id, f.due_date,
+          f.created_at, f.updated_at,
+          (SELECT COUNT(*)::integer FROM actions a
+            WHERE a.source_type = 'finding' AND a.source_id = f.id
+              AND a.organization_id = f.organization_id) AS action_count
+        FROM findings f
+        WHERE f.organization_id = $1 AND f.id = ANY($2::uuid[])
+        ORDER BY
+          CASE f.severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Moderate' THEN 3 WHEN 'Low' THEN 4 ELSE 5 END,
+          f.created_at DESC
+        `,
+        [organizationId, finding_ids]
+      );
+
+      res.status(200).json({ query: q, entities, count: rows.rows.length, findings: rows.rows });
+    } catch (err) {
+      logger.error({ event: "findings_by_entity_failed", err }, "GET /api/findings/by-entity failed");
+      res.status(500).json({ error: "findings_by_entity_failed" });
     }
   })
 );
