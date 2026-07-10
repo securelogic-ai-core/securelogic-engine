@@ -146,6 +146,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   assessments: { category: "C", userRefColumns: ["created_by"], piiRisk: "high", rlsStatus: "enabled" },
   findings: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "enabled" },
   finding_review_marks: { category: "C", userRefColumns: ["user_id"], piiRisk: "low", rlsStatus: "enabled", specialHandling: "Per-user 'last reviewed' marker for the Decision Workspace What's-Changed zone (ERIP P3.2a). CASCADE on finding + user delete." },
+  finding_saved_views: { category: "C", userRefColumns: ["user_id"], piiRisk: "low", rlsStatus: "enabled", specialHandling: "Per-user named filter presets for the Findings decision queue (ERIP §1 saved views). filters is a JSONB of whitelisted list-filter strings — no PII, no domain data. CASCADE on org + user delete." },
   actions: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "pending" },
   signal_match_suggestions: { category: "C", userRefColumns: ["accepted_by_user_id", "dismissed_by_user_id"], piiRisk: "medium", rlsStatus: "enabled", specialHandling: "assessment_id (nullable, 20260730) links a suggestion to the WORM applicability_assessments decision that produced it (ECL R2 dispatcher); matcher-written rows leave it NULL. No user data in the new column." },
   signal_vendor_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },

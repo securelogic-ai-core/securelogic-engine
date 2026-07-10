@@ -1992,6 +1992,28 @@ export async function getFindingContext(
   }
 }
 
+// Findings saved views (ERIP §1) — per-user named filter presets. The engine route
+// 404s while SECURELOGIC_DECISION_WORKSPACE_ENABLED is off, so this returns [] and the
+// saved-views bar simply does not render (byte-identical flag-off).
+export type FindingSavedView = {
+  id: string;
+  name: string;
+  filters: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function getFindingSavedViews(apiKey: string): Promise<FindingSavedView[]> {
+  try {
+    const res = await engineFetch(`/api/finding-saved-views`, apiKey);
+    if (!res.ok) return [];
+    const body = (await res.json()) as { views?: FindingSavedView[] };
+    return body.views ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export async function getActionsForFinding(
   apiKey: string,
   findingId: string
