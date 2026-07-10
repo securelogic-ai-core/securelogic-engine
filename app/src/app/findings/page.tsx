@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getMe, getFindings, getFindingsSummary } from "@/lib/api";
+import { getMe, getFindings, getFindingsSummary, getFindingSavedViews } from "@/lib/api";
 import { FindingsList } from "./FindingsList";
+import SavedViewsBar from "./SavedViewsBar";
+import { currentViewFilters } from "./savedViews";
 
 const SOURCE_TYPE_LABELS: Record<string, string> = {
   vendor_review:        "Vendor Assessment",
@@ -128,6 +130,11 @@ export default async function FindingsPage({
   // When on, Findings reads as a "what requires action now" decision queue
   // (attention tiles + urgency grouping in FindingsList). Off = unchanged list.
   const workspace = process.env.SECURELOGIC_RISK_WORKSPACE_ENABLED === "true";
+
+  // Saved views (ERIP §1) — DARK, SECURELOGIC_DECISION_WORKSPACE_ENABLED (the engine
+  // route 404s while off → []). Per-user named filter presets on the decision queue.
+  const savedViewsEnabled = process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true";
+  const savedViews = savedViewsEnabled ? await getFindingSavedViews(token) : [];
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">
@@ -274,6 +281,9 @@ export default async function FindingsPage({
       </div>
 
       {/* Findings list */}
+      {savedViewsEnabled && (
+        <SavedViewsBar views={savedViews} currentFilters={currentViewFilters(sp)} />
+      )}
       <FindingsList findings={findings} hasFilters={hasFilters} workspace={workspace} />
     </div>
   );
