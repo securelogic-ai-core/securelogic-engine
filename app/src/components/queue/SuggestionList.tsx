@@ -48,7 +48,15 @@ import { queueIntelligenceHref } from "@/lib/intelligenceLinks";
 import {
   acceptSuggestionAction,
   dismissSuggestionAction,
+  bulkDecideSuggestionsAction,
 } from "@/app/actions/signalMatchSuggestion";
+import {
+  toggleSelection,
+  isAllSelected,
+  toggleSelectAll,
+  pruneSelection,
+  summarizeBulkResult,
+} from "./bulkSelection";
 import { useTimedNotice } from "@/hooks/useTimedNotice";
 import { Notice } from "./Notice";
 import {
@@ -298,12 +306,87 @@ export function SuggestionList({
     [initialSuggestions, rowState]
   );
 
+  // Bulk "Select mode" (ERIP §3) — an OPT-IN mode, mutually exclusive with the
+  // per-row undo timers above (in select mode the row shows a checkbox, not
+  // Accept/Dismiss). Only offered under the workspace reskin; legacy is untouched.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [bulkPending, startBulk] = useTransition();
+  const visibleIds = useMemo(() => visible.map((s) => s.id), [visible]);
+
+  // Keep the selection to still-visible rows (e.g. after a refresh).
+  useEffect(() => {
+    setSelected((cur) => {
+      const pruned = pruneSelection(cur, visibleIds);
+      return pruned.length === cur.length ? cur : pruned;
+    });
+  }, [visibleIds]);
+
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false);
+    setSelected([]);
+  }, []);
+
+  const runBulk = useCallback(
+    (decision: "accept" | "dismiss") => {
+      if (selected.length === 0) return;
+      const ids = [...selected];
+      startBulk(async () => {
+        const res = await bulkDecideSuggestionsAction(ids, decision, { embeddedRevalidatePath });
+        showNotice({
+          id: `bulk-${decision}-${ids.length}`,
+          message: summarizeBulkResult(decision, res.succeeded.length, res.failed.length),
+        });
+        exitSelectMode();
+        router.refresh();
+      });
+    },
+    [selected, embeddedRevalidatePath, showNotice, exitSelectMode, router]
+  );
+
   if (initialSuggestions.length === 0) {
     return <>{emptyState}</>;
   }
 
+  const allSelected = isAllSelected(selected, visibleIds);
+
   return (
     <>
+      {/* Bulk toolbar — workspace reskin only (legacy queue unchanged). */}
+      {workspace && visible.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
+          {!selectMode ? (
+            <button
+              type="button"
+              onClick={() => setSelectMode(true)}
+              style={{ fontSize: 13, color: "#94a3b8", border: "1px solid #1e293b", borderRadius: 8, padding: "5px 12px", background: "transparent" }}
+            >
+              Select
+            </button>
+          ) : (
+            <>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, color: "#cbd5e1" }}>
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={() => setSelected((cur) => toggleSelectAll(cur, visibleIds))}
+                  aria-label="Select all visible suggestions"
+                />
+                {allSelected ? "Clear all" : `Select all (${visibleIds.length})`}
+              </label>
+              <span style={{ fontSize: 13, color: "#64748b" }}>{selected.length} selected</span>
+              <button
+                type="button"
+                onClick={exitSelectMode}
+                style={{ fontSize: 13, color: "#64748b", border: "1px solid #1e293b", borderRadius: 8, padding: "5px 12px", background: "transparent" }}
+              >
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {visible.length === 0 ? (
         <div
           style={{
@@ -333,12 +416,56 @@ export function SuggestionList({
               key={s.id}
               suggestion={s}
               workspace={workspace}
+              selectMode={selectMode}
+              checked={selected.includes(s.id)}
+              onToggleSelect={() => setSelected((cur) => toggleSelection(cur, s.id))}
               onAccept={() => beginPending(s.id, "accept")}
               onDismiss={() => beginPending(s.id, "dismiss")}
             />
           ))}
         </ul>
       )}
+
+      {/* Sticky bulk action bar when a selection exists. */}
+      {selectMode && selected.length > 0 && (
+        <div
+          style={{
+            position: "sticky",
+            bottom: 16,
+            marginTop: 12,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            padding: "10px 16px",
+            borderRadius: 12,
+            background: "rgba(15,23,42,0.96)",
+            border: "1px solid #1e293b",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+          }}
+        >
+          <span style={{ fontSize: 13, color: "#cbd5e1" }}>{selected.length} selected</span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              disabled={bulkPending}
+              onClick={() => runBulk("dismiss")}
+              style={{ fontSize: 13, fontWeight: 600, color: "#fca5a5", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, padding: "7px 14px", opacity: bulkPending ? 0.6 : 1 }}
+            >
+              {bulkPending ? "Working…" : "Dismiss selected"}
+            </button>
+            <button
+              type="button"
+              disabled={bulkPending}
+              onClick={() => runBulk("accept")}
+              style={{ fontSize: 13, fontWeight: 600, color: "#00c4b4", background: "rgba(0,196,180,0.12)", border: "1px solid rgba(0,196,180,0.4)", borderRadius: 8, padding: "7px 14px", opacity: bulkPending ? 0.6 : 1 }}
+            >
+              {bulkPending ? "Working…" : "Accept selected"}
+            </button>
+          </div>
+        </div>
+      )}
+
       <Notice notice={notice} onDismiss={dismissNotice} />
     </>
   );
@@ -353,11 +480,17 @@ const CONFIDENCE_COLOR: Record<ConfidenceTone, string> = {
 function SuggestionRow({
   suggestion,
   workspace,
+  selectMode = false,
+  checked = false,
+  onToggleSelect,
   onAccept,
   onDismiss,
 }: {
   suggestion: EnrichedSuggestion;
   workspace: boolean;
+  selectMode?: boolean;
+  checked?: boolean;
+  onToggleSelect?: () => void;
   onAccept: () => void;
   onDismiss: () => void;
 }) {
@@ -479,39 +612,51 @@ function SuggestionRow({
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-        <button
-          type="button"
-          onClick={onDismiss}
-          style={{
-            background: "transparent",
-            border: "1px solid rgba(255,255,255,0.16)",
-            color: "#d1d5db",
-            borderRadius: 6,
-            padding: "6px 12px",
-            fontSize: 13,
-            cursor: "pointer",
-          }}
-        >
-          Dismiss
-        </button>
-        <button
-          type="button"
-          onClick={onAccept}
-          style={{
-            background: "#2563eb",
-            border: "1px solid #1d4ed8",
-            color: "white",
-            borderRadius: 6,
-            padding: "6px 12px",
-            fontSize: 13,
-            cursor: "pointer",
-            fontWeight: 500,
-          }}
-        >
-          Accept
-        </button>
-      </div>
+      {selectMode ? (
+        <div style={{ display: "flex", alignItems: "flex-start", paddingTop: 2 }}>
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={onToggleSelect}
+            aria-label={`Select suggested link for ${suggestion.target_name ?? suggestion.target_id}`}
+            style={{ width: 18, height: 18, cursor: "pointer" }}
+          />
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+          <button
+            type="button"
+            onClick={onDismiss}
+            style={{
+              background: "transparent",
+              border: "1px solid rgba(255,255,255,0.16)",
+              color: "#d1d5db",
+              borderRadius: 6,
+              padding: "6px 12px",
+              fontSize: 13,
+              cursor: "pointer",
+            }}
+          >
+            Dismiss
+          </button>
+          <button
+            type="button"
+            onClick={onAccept}
+            style={{
+              background: "#2563eb",
+              border: "1px solid #1d4ed8",
+              color: "white",
+              borderRadius: 6,
+              padding: "6px 12px",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: 500,
+            }}
+          >
+            Accept
+          </button>
+        </div>
+      )}
     </li>
   );
 }
