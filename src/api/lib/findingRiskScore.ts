@@ -89,6 +89,22 @@ export interface AffectedCounts {
   obligations: number;
 }
 
+/**
+ * Per-bucket resolution outcome from the context resolver (Context Contract):
+ *   resolved        — an applicable path ran and found ≥1 entity
+ *   none_found      — an applicable path ran and honestly found nothing
+ *   not_applicable  — NO resolution path exists for this finding's source type
+ *                     (empty ≠ zero: the dimension simply cannot be sourced)
+ */
+export type AffectedResolution = "resolved" | "none_found" | "not_applicable";
+
+export interface AffectedResolutions {
+  vendors: AffectedResolution;
+  ai_systems: AffectedResolution;
+  controls: AffectedResolution;
+  obligations: AffectedResolution;
+}
+
 export interface BusinessImpactDimension {
   level: ImpactLevel;
   note: string;
@@ -117,25 +133,58 @@ function levelFrom(count: number, band: FindingRiskScore["band"]): ImpactLevel {
  * Business-impact assessment. Third-party / regulatory / operational are derived
  * from the affected-entity mix + severity band. Revenue and customer are
  * `not_assessed` — we hold no data for them and will not fabricate one.
+ *
+ * Context Contract honesty rule: a sourceable dimension is `none` ONLY when its
+ * bucket honestly resolved to zero (`none_found`). When no resolution path
+ * exists for this finding's source (`not_applicable`), the dimension is
+ * `not_assessed` — the UI must never assert "No affected vendors" about a
+ * dimension the resolver could not source. Omitting `resolution` preserves the
+ * legacy count-only behaviour.
  */
-export function assessBusinessImpact(counts: AffectedCounts, band: FindingRiskScore["band"]): BusinessImpact {
+export function assessBusinessImpact(
+  counts: AffectedCounts,
+  band: FindingRiskScore["band"],
+  resolution?: AffectedResolutions
+): BusinessImpact {
   const opCount = counts.controls + counts.ai_systems;
+
+  const dim = (
+    count: number,
+    buckets: AffectedResolution[],
+    positive: string,
+    zero: string,
+    unsourced: string
+  ): BusinessImpactDimension => {
+    if (count > 0) return { level: levelFrom(count, band), note: positive };
+    // Zero: honest only if at least one contributing bucket actually ran.
+    const anyRan = resolution === undefined || buckets.some((b) => b !== "not_applicable");
+    return anyRan
+      ? { level: "none", note: zero }
+      : { level: "not_assessed", note: unsourced };
+  };
+
   return {
-    third_party: {
-      level: levelFrom(counts.vendors, band),
-      note: counts.vendors > 0 ? `${counts.vendors} affected vendor(s)` : "No affected vendors",
-    },
-    regulatory: {
-      level: levelFrom(counts.obligations, band),
-      note: counts.obligations > 0 ? `${counts.obligations} affected obligation(s)` : "No affected obligations",
-    },
-    operational: {
-      level: levelFrom(opCount, band),
-      note:
-        opCount > 0
-          ? `${counts.controls} control(s), ${counts.ai_systems} AI system(s) affected`
-          : "No affected controls or AI systems",
-    },
+    third_party: dim(
+      counts.vendors,
+      resolution ? [resolution.vendors] : [],
+      `${counts.vendors} affected vendor(s)`,
+      "No affected vendors",
+      "Vendor impact not resolvable from this finding's source"
+    ),
+    regulatory: dim(
+      counts.obligations,
+      resolution ? [resolution.obligations] : [],
+      `${counts.obligations} affected obligation(s)`,
+      "No affected obligations",
+      "Regulatory impact not resolvable from this finding's source"
+    ),
+    operational: dim(
+      opCount,
+      resolution ? [resolution.controls, resolution.ai_systems] : [],
+      `${counts.controls} control(s), ${counts.ai_systems} AI system(s) affected`,
+      "No affected controls or AI systems",
+      "Operational impact not resolvable from this finding's source"
+    ),
     revenue: { level: "not_assessed", note: "No revenue-impact signal available" },
     customer: { level: "not_assessed", note: "No customer-impact signal available" },
   };

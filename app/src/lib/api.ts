@@ -2019,6 +2019,17 @@ export async function getFinding(
 // is off, so getFindingContext returns null → the page renders the legacy detail.
 
 export type FindingAffectedEntity = { type: string; id: string; name: string };
+// Context Contract: how an affected bucket resolved (empty ≠ zero ≠ unknowable).
+export type AffectedResolution = "resolved" | "none_found" | "not_applicable";
+// A matcher suggestion awaiting human review — a candidate, not certainty.
+export type FindingCandidateEntity = {
+  type: string;
+  id: string;
+  name: string;
+  status: "needs_review";
+  match_reason: string | null;
+  match_score: number | null;
+};
 export type FindingImpactDimension = { level: string; note: string };
 export type FindingContext = {
   finding: {
@@ -2043,6 +2054,18 @@ export type FindingContext = {
     ai_systems: FindingAffectedEntity[];
     controls: FindingAffectedEntity[];
     obligations: FindingAffectedEntity[];
+    // Context Contract: per-bucket resolution outcome — distinguishes an
+    // honest zero ('none_found') from a bucket the resolver has no path for
+    // on this source type ('not_applicable'). Optional on older payloads.
+    resolution?: {
+      vendors: AffectedResolution;
+      ai_systems: AffectedResolution;
+      controls: AffectedResolution;
+      obligations: AffectedResolution;
+    };
+    // Matcher suggestions pending human review — candidate links, never
+    // merged into the buckets above. Optional on older payloads.
+    candidates?: FindingCandidateEntity[];
   };
   intelligence: {
     events: Array<Record<string, unknown>>;

@@ -22,6 +22,8 @@ import {
   assessBusinessImpact,
   type FindingRiskScore,
   type BusinessImpact,
+  type AffectedResolution,
+  type AffectedResolutions,
 } from "./findingRiskScore.js";
 
 export interface Queryable {
@@ -34,6 +36,20 @@ export interface FindingAffectedEntity {
   type: AffectedEntityType;
   id: string;
   name: string;
+}
+
+/**
+ * A matcher suggestion still awaiting human review (pending in
+ * signal_match_suggestions). Surfaced SEPARATELY from `affected` — ambiguity is
+ * shown as ambiguity, never promoted into displayed certainty (IQP / R2).
+ */
+export interface FindingCandidateEntity {
+  type: AffectedEntityType;
+  id: string;
+  name: string;
+  status: "needs_review";
+  match_reason: string | null;
+  match_score: number | null;
 }
 
 export interface FindingContext {
@@ -53,6 +69,17 @@ export interface FindingContext {
     ai_systems: FindingAffectedEntity[];
     controls: FindingAffectedEntity[];
     obligations: FindingAffectedEntity[];
+    /**
+     * Context Contract: per-bucket resolution outcome so the UI can distinguish
+     * an honest zero (`none_found`) from a dimension the resolver has no path
+     * for on this source type (`not_applicable`). Empty ≠ zero ≠ unknowable.
+     */
+    resolution: AffectedResolutions;
+    /**
+     * Matcher suggestions pending human review — candidate links, NOT affected
+     * entities. Never merged into the buckets above.
+     */
+    candidates: FindingCandidateEntity[];
   };
   intelligence: {
     events: Array<Record<string, unknown>>;
@@ -134,6 +161,54 @@ const BUCKET_OF: Record<AffectedEntityType, keyof AffectedBuckets> = {
   control: "controls",
   obligation: "obligations",
 };
+
+/**
+ * PURE (Context Contract): which affected buckets have a resolution path that
+ * actually RAN for this finding. Drives the per-bucket resolution status —
+ * a bucket with no runnable path is `not_applicable` (empty ≠ zero), one that
+ * ran with no rows is an honest `none_found`, one with rows is `resolved`.
+ *
+ * Paths:
+ *  - signal-link path (signal_*_links) — runs for all four buckets when the
+ *    finding reaches ≥1 signal id (directly or via the event bridge);
+ *  - event-native vendor path (intelligence_events.affected_vendor → vendors,
+ *    the SAME lower(trim(name)) match that gated the finding's creation in
+ *    eventFindingStore.isRelevantToOrg) — runs for vendors when ≥1 event id;
+ *  - assessment source-record walk — runs for the bucket(s) the source's
+ *    assessment family is about (ASSESSMENT_AFFECTED_MAP / dependency / risk /
+ *    applicability).
+ */
+export function affectedPathsRan(
+  sourceType: string,
+  hasSignals: boolean,
+  hasEvents: boolean
+): Record<keyof AffectedBuckets, boolean> {
+  const ran: Record<keyof AffectedBuckets, boolean> = {
+    vendors: hasSignals,
+    ai_systems: hasSignals,
+    controls: hasSignals,
+    obligations: hasSignals,
+  };
+  if (hasEvents) ran.vendors = true;
+
+  const spec = ASSESSMENT_AFFECTED_MAP[sourceType];
+  if (spec) ran[BUCKET_OF[spec.type]] = true;
+  if (sourceType === "dependency_review") ran.vendors = true;
+  if (sourceType === "risk") {
+    ran.controls = true;
+    ran.obligations = true;
+  }
+  if (sourceType === "applicability_assessment") {
+    ran.vendors = ran.ai_systems = ran.controls = ran.obligations = true;
+  }
+  return ran;
+}
+
+/** PURE: bucket resolution status from (path ran?, row count). */
+export function bucketResolution(ran: boolean, count: number): AffectedResolution {
+  if (count > 0) return "resolved";
+  return ran ? "none_found" : "not_applicable";
+}
 
 /** PURE: merge two affected sets, de-duplicating by (type, id). */
 export function mergeAffected(a: AffectedBuckets, b: AffectedBuckets): AffectedBuckets {
@@ -370,6 +445,29 @@ export async function resolveFindingContext(
     affected("signal_control_links", "control_id", "controls", "name", "control"),
     affected("signal_obligation_links", "obligation_id", "obligations", "title", "obligation"),
   ]);
+
+  // Event-native vendor resolution (Context Contract): an event-sourced finding
+  // EXISTS because the org tracks the event's affected_vendor (the relevance
+  // gate in eventFindingStore.isRelevantToOrg) — so resolve that same canonical
+  // match at read time. Same lower(trim(name)) equality; org-scoped; composes
+  // existing canonical data (never stored on the finding). Without this branch
+  // a Microsoft-linked event finding rendered "No affected vendors" unless a
+  // human had already accepted a signal-link suggestion.
+  const eventVendors: FindingAffectedEntity[] = eventIds.length
+    ? (
+        await client.query(
+          `SELECT DISTINCT v.id AS id, v.name AS name
+             FROM intelligence_events e
+             JOIN vendors v
+               ON v.organization_id = $1
+              AND lower(trim(v.name)) = lower(trim(e.affected_vendor))
+            WHERE e.id = ANY($2::uuid[]) AND e.affected_vendor IS NOT NULL
+            ORDER BY v.name`,
+          [organizationId, eventIds]
+        )
+      ).rows.map((x) => ({ type: "vendor" as const, id: x.id, name: x.name }))
+    : [];
+
   // Intelligence findings resolve affected entities from signal links; assessment /
   // risk / applicability findings resolve them from their source record. A finding has
   // one source_type, so only one path yields rows — merge (dedup) is safe either way.
@@ -380,11 +478,63 @@ export async function resolveFindingContext(
     finding.source_id
   );
   const { vendors, ai_systems, controls, obligations } = mergeAffected(
-    { vendors: sv, ai_systems: sa, controls: sc, obligations: so },
+    mergeAffected(
+      { vendors: sv, ai_systems: sa, controls: sc, obligations: so },
+      { vendors: eventVendors, ai_systems: [], controls: [], obligations: [] }
+    ),
     assessmentAffected
   );
 
-  // Business-impact assessment (Phase 3.1) from the affected-entity mix + severity band.
+  // Per-bucket resolution status: which paths ran vs. what they found — the UI
+  // can now distinguish an honest zero from "not resolvable from this source".
+  const ran = affectedPathsRan(finding.source_type, signalIds.length > 0, eventIds.length > 0);
+  const resolution: AffectedResolutions = {
+    vendors: bucketResolution(ran.vendors, vendors.length),
+    ai_systems: bucketResolution(ran.ai_systems, ai_systems.length),
+    controls: bucketResolution(ran.controls, controls.length),
+    obligations: bucketResolution(ran.obligations, obligations.length),
+  };
+
+  // Matcher suggestions pending human review (candidate links). Shown as
+  // needs_review candidates — NEVER merged into the affected buckets, so
+  // ambiguity is displayed as ambiguity (IQP / R2). Org-scoped; name resolved
+  // from the canonical entity table for the suggestion's target type.
+  const candidateRows =
+    signalIds.length > 0 || eventIds.length > 0
+      ? (
+          await client.query(
+            `SELECT s.target_type, s.target_id, s.match_reason, s.match_score,
+                    COALESCE(v.name, a.name, c.name, o.title) AS name
+               FROM signal_match_suggestions s
+               LEFT JOIN vendors v     ON s.target_type = 'vendor'     AND v.id = s.target_id AND v.organization_id = s.organization_id
+               LEFT JOIN ai_systems a  ON s.target_type = 'ai_system'  AND a.id = s.target_id AND a.organization_id = s.organization_id
+               LEFT JOIN controls c    ON s.target_type = 'control'    AND c.id = s.target_id AND c.organization_id = s.organization_id
+               LEFT JOIN obligations o ON s.target_type = 'obligation' AND o.id = s.target_id AND o.organization_id = s.organization_id
+              WHERE s.organization_id = $1
+                AND (s.signal_id = ANY($2::uuid[]) OR s.intelligence_event_id = ANY($3::uuid[]))
+                AND s.accepted_at IS NULL AND s.dismissed_at IS NULL
+              ORDER BY s.match_score DESC NULLS LAST, s.created_at DESC
+              LIMIT 20`,
+            [organizationId, signalIds, eventIds]
+          )
+        ).rows
+      : [];
+  const alreadyAffected = new Set(
+    [...vendors, ...ai_systems, ...controls, ...obligations].map((e) => `${e.type}:${e.id}`)
+  );
+  const candidates: FindingCandidateEntity[] = candidateRows
+    .filter((s) => s.name != null && !alreadyAffected.has(`${s.target_type}:${s.target_id}`))
+    .map((s) => ({
+      type: s.target_type as AffectedEntityType,
+      id: s.target_id,
+      name: s.name,
+      status: "needs_review" as const,
+      match_reason: s.match_reason ?? null,
+      match_score: s.match_score == null ? null : Number(s.match_score),
+    }));
+
+  // Business-impact assessment (Phase 3.1) from the affected-entity mix +
+  // severity band, honest about unsourceable dimensions (Context Contract).
   const business_impact = assessBusinessImpact(
     {
       vendors: vendors.length,
@@ -392,7 +542,8 @@ export async function resolveFindingContext(
       controls: controls.length,
       obligations: obligations.length,
     },
-    risk.band
+    risk.band,
+    resolution
   );
 
   // Supporting Intelligence Events (GLOBAL) + their sources + timeline.
@@ -500,7 +651,7 @@ export async function resolveFindingContext(
     risk,
     business_impact,
     owner,
-    affected: { vendors, ai_systems, controls, obligations },
+    affected: { vendors, ai_systems, controls, obligations, resolution, candidates },
     intelligence: { events, sources, timeline },
     evidence,
     related_findings,

@@ -13,7 +13,14 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { Finding, Action, FindingContext, FindingImpactDimension } from "@/lib/api";
+import type {
+  Finding,
+  Action,
+  FindingContext,
+  FindingImpactDimension,
+  AffectedResolution,
+  FindingCandidateEntity,
+} from "@/lib/api";
 import { intelligenceEventHref, findingEventId } from "@/lib/intelligenceLinks";
 import { DECISION_TABS, DEFAULT_DECISION_TAB, type DecisionTab } from "./decisionTabs";
 import { legalDecisionTargets } from "./decisionTransitions";
@@ -92,29 +99,69 @@ function ImpactRow({ label, dim }: { label: string; dim: FindingImpactDimension 
   );
 }
 
-function AffectedGroup({ label, items }: { label: string; items: FindingContext["affected"]["vendors"]; }) {
-  const route: Record<string, string> = {
-    vendor: "/vendors",
-    ai_system: "/ai-systems",
-    control: "/controls",
-    obligation: "/obligations",
-  };
+const ENTITY_ROUTE: Record<string, string> = {
+  vendor: "/vendors",
+  ai_system: "/ai-systems",
+  control: "/controls",
+  obligation: "/obligations",
+};
+
+function AffectedGroup({
+  label,
+  items,
+  resolution,
+}: {
+  label: string;
+  items: FindingContext["affected"]["vendors"];
+  // Context Contract: 'none_found' = an honest zero; 'not_applicable' = this
+  // bucket cannot be sourced for this finding's source type. Distinct copy so
+  // an empty state is never mistaken for a resolver miss (or vice versa).
+  resolution?: AffectedResolution;
+}) {
   return (
     <div style={{ marginBottom: 8 }}>
       <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 2 }}>
         {label} ({items.length})
       </div>
       {items.length === 0 ? (
-        <span style={{ fontSize: 12, color: "#475569" }}>None</span>
+        resolution === "not_applicable" ? (
+          <span style={{ fontSize: 12, color: "#475569", fontStyle: "italic" }}>
+            Not resolvable from this finding&apos;s source
+          </span>
+        ) : (
+          <span style={{ fontSize: 12, color: "#475569" }}>None found</span>
+        )
       ) : (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           {items.map((e) => (
-            <Link key={e.id} href={`${route[e.type] ?? "#"}/${e.id}`} style={{ fontSize: 13, color: "#93c5fd" }}>
+            <Link key={e.id} href={`${ENTITY_ROUTE[e.type] ?? "#"}/${e.id}`} style={{ fontSize: 13, color: "#93c5fd" }}>
               {e.name}
             </Link>
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function CandidateLinks({ candidates }: { candidates: FindingCandidateEntity[] }) {
+  if (candidates.length === 0) return null;
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+      <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>
+        Suggested links pending review ({candidates.length})
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        {candidates.map((c) => (
+          <span key={`${c.type}:${c.id}`} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            <span style={{ fontSize: 13, color: "#cbd5e1" }}>{c.name}</span>
+            <Chip text="Needs review" color="#fcd34d" />
+          </span>
+        ))}
+        <Link href="/queue" style={{ fontSize: 12, color: "#93c5fd" }}>
+          Review in queue →
+        </Link>
+      </div>
     </div>
   );
 }
@@ -305,13 +352,14 @@ export function DecisionWorkspace({
       {tab === "overview" && (
         <>
       {/* ZONE D — Affected context (analyst, collapsible) */}
-      <details style={CARD} open={affectedTotal > 0}>
+      <details style={CARD} open={affectedTotal > 0 || (affected.candidates?.length ?? 0) > 0}>
         <summary style={{ ...H, cursor: "pointer", marginBottom: 0 }}>Affected context ({affectedTotal})</summary>
         <div style={{ marginTop: 12 }}>
-          <AffectedGroup label="Vendors" items={affected.vendors} />
-          <AffectedGroup label="AI systems" items={affected.ai_systems} />
-          <AffectedGroup label="Controls" items={affected.controls} />
-          <AffectedGroup label="Obligations" items={affected.obligations} />
+          <AffectedGroup label="Vendors" items={affected.vendors} resolution={affected.resolution?.vendors} />
+          <AffectedGroup label="AI systems" items={affected.ai_systems} resolution={affected.resolution?.ai_systems} />
+          <AffectedGroup label="Controls" items={affected.controls} resolution={affected.resolution?.controls} />
+          <AffectedGroup label="Obligations" items={affected.obligations} resolution={affected.resolution?.obligations} />
+          <CandidateLinks candidates={affected.candidates ?? []} />
         </div>
       </details>
 
