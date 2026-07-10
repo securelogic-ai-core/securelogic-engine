@@ -193,6 +193,58 @@ describe("finding_lifecycle_events — append-only + RLS", () => {
   });
 });
 
+describe("evidence gate (spec §1.1) — org-enforced remediation evidence", () => {
+  it("gate-enforcing org: terminal actions hold at in_progress until evidence attaches, then remediate", async () => {
+    // Org B enforces the evidence gate (same policy object as the Risk lifecycle).
+    await pool.query(
+      `INSERT INTO risk_settings (organization_id, cadence_by_rating, require_evidence_gate)
+       VALUES ($1, '{}'::jsonb, TRUE)
+       ON CONFLICT (organization_id) DO UPDATE SET require_evidence_gate = TRUE`,
+      [seed.orgB.id]
+    );
+
+    const findingId = await seedFinding(pool, seed.orgB.id);
+    const actionId = await seedAction(seed.orgB.id, findingId, "in_progress");
+
+    await withTenant(seed.orgB.id, async () => {
+      await recomputeFindingOperationalStatus(seed.orgB.id, findingId, ACTOR);
+    });
+    expect(await opStatus(findingId)).toBe("in_progress");
+
+    // All work terminal, but NO evidence: the gate holds it at in_progress —
+    // validation (ready-for-decision) must not be offered without evidence.
+    await pool.query(`UPDATE actions SET status = 'closed' WHERE id = $1`, [actionId]);
+    await withTenant(seed.orgB.id, async () => {
+      const r = await recomputeFindingOperationalStatus(seed.orgB.id, findingId, ACTOR);
+      expect(r.changed).toBe(false);
+    });
+    expect(await opStatus(findingId)).toBe("in_progress");
+
+    // Evidence attaches → recompute advances to remediated.
+    await pool.query(
+      `INSERT INTO evidence (organization_id, source_type, source_id, title, evidence_type)
+       VALUES ($1, 'finding', $2, 'patch-validation.pdf', 'document')`,
+      [seed.orgB.id, findingId]
+    );
+    await withTenant(seed.orgB.id, async () => {
+      const r = await recomputeFindingOperationalStatus(seed.orgB.id, findingId, ACTOR);
+      expect(r).toMatchObject({ changed: true, toState: "remediated" });
+      expect(r.auditEvent).toBe("finding.remediated");
+    });
+    expect(await opStatus(findingId)).toBe("remediated");
+  });
+
+  it("non-enforcing org (default): remediates without evidence — behaviour unchanged", async () => {
+    const findingId = await seedFinding(pool, seed.orgA.id);
+    const actionId = await seedAction(seed.orgA.id, findingId, "in_progress");
+    await pool.query(`UPDATE actions SET status = 'closed' WHERE id = $1`, [actionId]);
+    await withTenant(seed.orgA.id, async () => {
+      const r = await recomputeFindingOperationalStatus(seed.orgA.id, findingId, ACTOR);
+      expect(r).toMatchObject({ changed: true, toState: "remediated" });
+    });
+  });
+});
+
 describe("20260901 migration constraints", () => {
   it("rejects hand-set garbage operational_status (CHECK)", async () => {
     const findingId = await seedFinding(pool, seed.orgA.id);
