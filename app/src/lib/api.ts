@@ -527,6 +527,8 @@ export type ActionsParams = {
 export type FindingsResponse = {
   count: number;
   limit: number;
+  // Exact total for the applied filter set (cursor excluded) — pagination truth.
+  total?: number;
   organizationId: string;
   nextCursor: { created_at: string; id: string } | null;
   findings: Finding[];
@@ -544,6 +546,15 @@ export type FindingsParams = {
   overdue?: boolean;
   unassigned?: boolean;
   exploited?: boolean;
+  // "My Work": only the literal "me" is accepted; the engine resolves the user
+  // from the SESSION identity (never a client-supplied id).
+  owner?: "me";
+  // Still-requires-work statuses only (open / in_progress).
+  active?: boolean;
+  // Stable keyset ordering for paged views (created_at DESC, id DESC).
+  sort?: "created";
+  // Keyset cursor from the previous page's nextCursor.
+  before?: { created_at: string; id: string };
   limit?: number;
 };
 
@@ -569,6 +580,8 @@ export type FindingsSummary = {
   vendor_risk_open?: number;
   exploited_open?: number;
   pending_risk_approvals?: number;
+  // Session-scoped: present only when the caller has a user identity (owner=me contract).
+  my_work_open?: number;
 };
 
 export type Risk = {
@@ -1935,6 +1948,13 @@ export async function getFindings(
     if (params?.overdue) qs.set("overdue", "true");
     if (params?.unassigned) qs.set("unassigned", "true");
     if (params?.exploited) qs.set("exploited", "true");
+    if (params?.owner) qs.set("owner", params.owner);
+    if (params?.active) qs.set("active", "true");
+    if (params?.sort) qs.set("sort", params.sort);
+    if (params?.before) {
+      qs.set("before_created_at", params.before.created_at);
+      qs.set("before_id", params.before.id);
+    }
     qs.set("limit", String(params?.limit ?? 50));
     const res = await engineFetch(`/api/findings?${qs.toString()}`, apiKey);
     if (!res.ok) return null;

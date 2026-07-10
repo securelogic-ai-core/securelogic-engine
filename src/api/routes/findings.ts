@@ -21,6 +21,7 @@ import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { triggerFindingAlert } from "../lib/findingAlertTrigger.js";
 import { resolveFindingContext } from "../lib/findingContextResolver.js";
 import { normalizeEntityQuery, searchFindingsByEntity } from "../lib/findingEntitySearch.js";
+import { resolveOwnerMeFilter } from "../lib/findingListFilters.js";
 
 const router = Router();
 
@@ -375,6 +376,26 @@ router.get(
         conditions.push(`f.status IN ('open', 'in_progress') AND f.owner_user_id IS NULL`);
       }
 
+      // active=true — still requires work (open or in progress). Buckets pass this
+      // so their views exclude closed/resolved items unless the user browses.
+      if (req.query.active === "true") {
+        conditions.push(`f.status IN ('open', 'in_progress')`);
+      }
+
+      // owner=me — the caller's own assigned work ("My Work" bucket). The ONLY
+      // accepted value is the literal "me"; the user id resolves SERVER-SIDE from
+      // the session (req.userId). Any other value is rejected — assignments can
+      // never be enumerated by passing a user id.
+      const ownerFilter = resolveOwnerMeFilter(req.query.owner, (req.userId as string | undefined) ?? null);
+      if (ownerFilter.kind === "error") {
+        res.status(400).json({ error: ownerFilter.error });
+        return;
+      }
+      if (ownerFilter.kind === "me") {
+        params.push(ownerFilter.userId);
+        conditions.push(`f.owner_user_id = $${params.length}`);
+      }
+
       // exploited=true — findings whose supporting intelligence shows active
       // exploitation: the source Intelligence Event has ever_exploited, the source
       // signal bridges to such an event, or the source signal is CISA KEV.
@@ -395,6 +416,11 @@ router.get(
         )`);
       }
 
+      // Exact filtered total for pagination — same conditions/params BEFORE the
+      // cursor predicate (the cursor narrows the page, never the total).
+      const preCursorConditions = [...conditions];
+      const preCursorParams = [...params];
+
       if (useCursor) {
         params.push(beforeCreatedAt, beforeId);
         const ci = params.length - 1;
@@ -402,6 +428,13 @@ router.get(
           `(f.created_at, f.id) < ($${ci}::timestamptz, $${ci + 1}::uuid)`
         );
       }
+
+      // Stable keyset ordering: the cursor predicate compares (created_at, id), so
+      // paged requests MUST sort by (created_at DESC, id DESC) or pages would skip
+      // and duplicate rows as data changes. Cursor requests force it; first pages
+      // opt in via ?sort=created so every page of a paged view shares one order.
+      // The legacy default (priority → severity → created_at) is unchanged.
+      const stableSort = useCursor || req.query.sort === "created";
 
       params.push(limit);
       const limitParam = params.length;
@@ -442,7 +475,7 @@ router.get(
         FROM findings f
         ${whereClause}
         ORDER BY
-          CASE f.priority
+          ${stableSort ? "" : `CASE f.priority
             WHEN 'immediate'  THEN 1
             WHEN 'near_term'  THEN 2
             WHEN 'planned'    THEN 3
@@ -455,13 +488,20 @@ router.get(
             WHEN 'Moderate' THEN 3
             WHEN 'Low'      THEN 4
             ELSE 5
-          END,
+          END,`}
           f.created_at DESC,
           f.id DESC
         LIMIT $${limitParam}
         `,
         params
       );
+
+      // Exact total for the SAME filter set (cursor excluded) — pagination truth.
+      const totalRow = await pg.query<{ total: string }>(
+        `SELECT COUNT(*) AS total FROM findings f WHERE ${preCursorConditions.join(" AND ")}`,
+        preCursorParams
+      );
+      const total = parseInt(totalRow.rows[0]?.total ?? "0", 10);
 
       const findings = result.rows;
       const last =
@@ -470,6 +510,7 @@ router.get(
       res.status(200).json({
         count: findings.length,
         limit,
+        total,
         organizationId,
         nextCursor:
           last != null
@@ -563,6 +604,18 @@ router.get(
         [organizationId]
       );
 
+      // "My Work" — the caller's own open assignments. The user id resolves from
+      // the SESSION identity only (owner=me contract); API-key callers have no
+      // user identity, so the field is omitted → the UI shows an honest unknown.
+      const summaryUserId = (req.userId as string | undefined) ?? null;
+      const myWork = summaryUserId
+        ? await pg.query<{ mine: string }>(
+            `SELECT COUNT(*) AS mine FROM findings
+              WHERE organization_id = $1 AND owner_user_id = $2 AND status IN ('open','in_progress')`,
+            [organizationId, summaryUserId]
+          )
+        : null;
+
       const row = result.rows[0];
       res.status(200).json({
         summary: {
@@ -587,6 +640,7 @@ router.get(
           vendor_risk_open:       parseInt((row as any)?.vendor_risk_open ?? "0", 10),
           exploited_open:         parseInt((row as any)?.exploited_open ?? "0", 10),
           pending_risk_approvals: parseInt(approvals.rows[0]?.pending ?? "0", 10),
+          ...(myWork ? { my_work_open: parseInt(myWork.rows[0]?.mine ?? "0", 10) } : {}),
         },
       });
     } catch (err) {
