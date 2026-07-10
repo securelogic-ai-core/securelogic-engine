@@ -19,6 +19,7 @@ import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import { validateActionCreate } from "../lib/actionValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { recomputeFindingOperationalStatus } from "../lib/findingLifecycle.js";
+import { sqlActionActive, sqlActionOverdue } from "../lib/metricDefinitions.js";
 
 const router = Router();
 
@@ -345,8 +346,15 @@ router.get(
         return;
       }
 
+      // Metric Contract: every predicate comes from metricDefinitions — the
+      // SAME definitions the dashboard uses, so tiles and this destination
+      // page reconcile exactly. open_count = ACTIVE (open|in_progress|blocked);
+      // overdue compares DATE against CURRENT_DATE (a due-today action is not
+      // overdue anywhere).
       const result = await pg.query<{
         open_count: string;
+        open_only_count: string;
+        in_progress_count: string;
         blocked_count: string;
         overdue_count: string;
         immediate_count: string;
@@ -354,11 +362,13 @@ router.get(
       }>(
         `
         SELECT
-          COUNT(*) FILTER (WHERE status IN ('open', 'in_progress', 'blocked'))                      AS open_count,
-          COUNT(*) FILTER (WHERE status = 'blocked')                                                 AS blocked_count,
-          COUNT(*) FILTER (WHERE due_date < NOW() AND status NOT IN ('closed', 'accepted'))          AS overdue_count,
-          COUNT(*) FILTER (WHERE priority = 'immediate' AND status NOT IN ('closed', 'accepted'))    AS immediate_count,
-          COUNT(*) FILTER (WHERE status = 'closed')                                                  AS closed_count
+          COUNT(*) FILTER (WHERE ${sqlActionActive()})                          AS open_count,
+          COUNT(*) FILTER (WHERE status = 'open')                               AS open_only_count,
+          COUNT(*) FILTER (WHERE status = 'in_progress')                        AS in_progress_count,
+          COUNT(*) FILTER (WHERE status = 'blocked')                            AS blocked_count,
+          COUNT(*) FILTER (WHERE ${sqlActionOverdue()})                         AS overdue_count,
+          COUNT(*) FILTER (WHERE priority = 'immediate' AND ${sqlActionActive()}) AS immediate_count,
+          COUNT(*) FILTER (WHERE status = 'closed')                             AS closed_count
         FROM actions
         WHERE organization_id = $1
         `,
@@ -368,11 +378,13 @@ router.get(
       const row = result.rows[0];
       res.status(200).json({
         summary: {
-          open_count:      parseInt(row?.open_count ?? "0", 10),
-          blocked_count:   parseInt(row?.blocked_count ?? "0", 10),
-          overdue_count:   parseInt(row?.overdue_count ?? "0", 10),
-          immediate_count: parseInt(row?.immediate_count ?? "0", 10),
-          closed_count:    parseInt(row?.closed_count ?? "0", 10),
+          open_count:        parseInt(row?.open_count ?? "0", 10),
+          open_only_count:   parseInt(row?.open_only_count ?? "0", 10),
+          in_progress_count: parseInt(row?.in_progress_count ?? "0", 10),
+          blocked_count:     parseInt(row?.blocked_count ?? "0", 10),
+          overdue_count:     parseInt(row?.overdue_count ?? "0", 10),
+          immediate_count:   parseInt(row?.immediate_count ?? "0", 10),
+          closed_count:      parseInt(row?.closed_count ?? "0", 10),
         },
       });
     } catch (err) {

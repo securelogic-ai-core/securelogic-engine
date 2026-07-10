@@ -27,6 +27,7 @@ import {
   evaluateFindingDecisionTransition,
 } from "../lib/findingLifecycleMachine.js";
 import { writeFindingLifecycleEvent } from "../lib/findingLifecycle.js";
+import { sqlFindingActive, sqlFindingOverdue } from "../lib/metricDefinitions.js";
 
 const router = Router();
 
@@ -370,17 +371,17 @@ router.get(
       }
 
       if (req.query.overdue === "true") {
-        conditions.push(`f.status IN ('open', 'in_progress') AND f.due_date IS NOT NULL AND f.due_date < CURRENT_DATE`);
+        conditions.push(`${sqlFindingOverdue("f.status", "f.due_date")}`);
       }
 
       if (req.query.unassigned === "true") {
-        conditions.push(`f.status IN ('open', 'in_progress') AND f.owner_user_id IS NULL`);
+        conditions.push(`${sqlFindingActive("f.status")} AND f.owner_user_id IS NULL`);
       }
 
       // active=true — still requires work (open or in progress). Buckets pass this
       // so their views exclude closed/resolved items unless the user browses.
       if (req.query.active === "true") {
-        conditions.push(`f.status IN ('open', 'in_progress')`);
+        conditions.push(sqlFindingActive("f.status"));
       }
 
       // ready_for_decision=true — the spec §1.3 "ready for decision" queue: all
@@ -573,6 +574,7 @@ router.get(
         `
         SELECT
           COUNT(*) FILTER (WHERE status = 'open')                                   AS open_count,
+          COUNT(*) FILTER (WHERE status = 'in_progress')                            AS in_progress_open,
           COUNT(*) FILTER (WHERE status = 'open' AND severity = 'Critical')         AS critical_open,
           COUNT(*) FILTER (WHERE status = 'open' AND severity = 'High')             AS high_open,
           COUNT(*) FILTER (WHERE status = 'open' AND severity = 'Moderate')         AS medium_open,
@@ -582,20 +584,20 @@ router.get(
           COUNT(*) FILTER (WHERE source_type = 'vendor_review')                     AS vendor_sourced,
           COUNT(*) FILTER (WHERE source_type = 'signal')                            AS signal_sourced,
           -- Work-queue counts (ERIP work-first Findings page) — additive.
-          COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND due_date IS NOT NULL AND due_date < CURRENT_DATE) AS overdue_open,
-          COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND owner_user_id IS NULL)                            AS unassigned_open,
-          COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND decision_state = 'needs_review')                  AS needs_review_open,
-          COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND decision_state = 'mitigating')                    AS mitigating_open,
+          COUNT(*) FILTER (WHERE ${sqlFindingOverdue()}) AS overdue_open,
+          COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND owner_user_id IS NULL)                            AS unassigned_open,
+          COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND decision_state = 'needs_review')                  AS needs_review_open,
+          COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND decision_state = 'mitigating')                    AS mitigating_open,
           COUNT(*) FILTER (WHERE decision_state = 'accepted_risk')                                                      AS accepted_risk_total,
           -- Ready for decision (spec §1.3): work derived complete, governance pending.
           COUNT(*) FILTER (WHERE operational_status = 'remediated' AND decision_state NOT IN ('resolved','accepted_risk')) AS ready_for_decision_open,
           -- Ops-center domain buckets (server truth at any scale) — additive.
-          COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND domain = 'Regulatory')                            AS regulatory_open,
-          COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND domain = 'AI Governance')                         AS ai_governance_open,
-          COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND domain = 'Vendor Risk')                           AS vendor_risk_open,
+          COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND domain = 'Regulatory')                            AS regulatory_open,
+          COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND domain = 'AI Governance')                         AS ai_governance_open,
+          COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND domain = 'Vendor Risk')                           AS vendor_risk_open,
           -- Active exploitation: same predicate as the list's exploited=true filter.
           (SELECT COUNT(*) FROM findings f2
-            WHERE f2.organization_id = $1 AND f2.status IN ('open','in_progress') AND (
+            WHERE f2.organization_id = $1 AND ${sqlFindingActive("f2.status")} AND (
               (f2.source_type = 'intelligence_event' AND EXISTS (
                  SELECT 1 FROM intelligence_events e WHERE e.id = f2.source_id AND e.ever_exploited))
               OR (f2.source_type IN ('cyber_signal', 'signal') AND (
@@ -625,7 +627,7 @@ router.get(
       const myWork = summaryUserId
         ? await pg.query<{ mine: string }>(
             `SELECT COUNT(*) AS mine FROM findings
-              WHERE organization_id = $1 AND owner_user_id = $2 AND status IN ('open','in_progress')`,
+              WHERE organization_id = $1 AND owner_user_id = $2 AND ${sqlFindingActive()}`,
             [organizationId, summaryUserId]
           )
         : null;
@@ -634,6 +636,7 @@ router.get(
       res.status(200).json({
         summary: {
           open_count:         parseInt(row?.open_count ?? "0", 10),
+          in_progress_open:   parseInt((row as any)?.in_progress_open ?? "0", 10),
           critical_open:      parseInt(row?.critical_open ?? "0", 10),
           high_open:          parseInt(row?.high_open ?? "0", 10),
           medium_open:        parseInt(row?.medium_open ?? "0", 10),
