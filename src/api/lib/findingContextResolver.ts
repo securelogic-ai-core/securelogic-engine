@@ -37,7 +37,14 @@ export interface FindingAffectedEntity {
 }
 
 export interface FindingContext {
-  finding: { id: string; source_type: string; source_id: string | null; decision_state: string };
+  finding: {
+    id: string;
+    source_type: string;
+    source_id: string | null;
+    decision_state: string;
+    /** System-derived operational axis (finding-lifecycle-spec §1.1). */
+    operational_status: string;
+  };
   risk: FindingRiskScore;
   business_impact: BusinessImpact;
   owner: { id: string; email: string } | null;
@@ -291,7 +298,7 @@ export async function resolveFindingContext(
   opts: { since?: string | null } = {}
 ): Promise<FindingContext | null> {
   const f = await client.query(
-    `SELECT id, source_type, source_id, owner_user_id, severity, priority, confidence, decision_state
+    `SELECT id, source_type, source_id, owner_user_id, severity, priority, confidence, decision_state, operational_status
        FROM findings
       WHERE id = $1 AND organization_id = $2`,
     [findingId, organizationId]
@@ -488,6 +495,7 @@ export async function resolveFindingContext(
       source_type: finding.source_type,
       source_id: finding.source_id,
       decision_state: finding.decision_state,
+      operational_status: finding.operational_status,
     },
     risk,
     business_impact,

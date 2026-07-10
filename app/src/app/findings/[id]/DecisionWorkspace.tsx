@@ -16,6 +16,7 @@ import { useRouter } from "next/navigation";
 import type { Finding, Action, FindingContext, FindingImpactDimension } from "@/lib/api";
 import { intelligenceEventHref, findingEventId } from "@/lib/intelligenceLinks";
 import { DECISION_TABS, DEFAULT_DECISION_TAB, type DecisionTab } from "./decisionTabs";
+import { legalDecisionTargets } from "./decisionTransitions";
 import { intelligenceEmptyCopy } from "./findingSourceCopy";
 import { topBusinessImpact } from "./businessImpact";
 import {
@@ -28,11 +29,14 @@ import {
 const DECISION_LABELS: Record<string, string> = {
   needs_review: "Needs Review",
   accepted_risk: "Accepted Risk",
-  in_progress: "In Progress",
   mitigating: "Mitigating",
   resolved: "Resolved",
 };
-const DECISION_ORDER = ["needs_review", "accepted_risk", "in_progress", "mitigating", "resolved"];
+const OPERATIONAL_LABELS: Record<string, string> = {
+  open: "Work not started",
+  in_progress: "Work in progress",
+  remediated: "Remediation complete",
+};
 const STATUS_LABELS: Record<string, string> = {
   open: "Open",
   in_progress: "In Progress",
@@ -173,10 +177,22 @@ export function DecisionWorkspace({
               onChange={(e) => run(() => updateFindingDecisionStateAction(finding.id, e.target.value))}
               style={{ background: "#0f172a", color: "#f1f5f9", border: "1px solid #334155", borderRadius: 6, padding: "4px 8px", fontSize: 13 }}
             >
-              {DECISION_ORDER.map((d) => (
+              {/* Only transitions the lifecycle engine allows (spec §4) — the
+                  dropdown never offers a move the server would 409. Closing
+                  requires derived remediation or an accepted-risk override. */}
+              {legalDecisionTargets(
+                context.finding.decision_state,
+                context.finding.operational_status ?? null
+              ).map((d) => (
                 <option key={d} value={d}>{DECISION_LABELS[d]}</option>
               ))}
             </select>
+            {context.finding.operational_status ? (
+              <Chip
+                text={OPERATIONAL_LABELS[context.finding.operational_status] ?? context.finding.operational_status}
+                color={context.finding.operational_status === "remediated" ? "#86efac" : "#94a3b8"}
+              />
+            ) : null}
             <span style={{ fontSize: 12, color: "#94a3b8", marginLeft: 8 }}>Status</span>
             <select
               value={finding.status}
