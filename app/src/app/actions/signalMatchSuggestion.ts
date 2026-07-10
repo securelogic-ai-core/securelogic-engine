@@ -61,3 +61,41 @@ export async function dismissSuggestionAction(
   }
   return { ok: true };
 }
+
+export type BulkDecisionResult = {
+  succeeded: string[];
+  failed: Array<{ id: string; error: string }>;
+};
+
+/**
+ * Bulk accept/dismiss (ERIP §3). Deliberately loops the SAME ratified per-suggestion
+ * engine endpoints — no new engine transaction, no partial-transaction semantics to
+ * get wrong. Each item is independently org-scoped and atomic engine-side; one bad
+ * item never blocks the rest (its error is returned per-id). Sequential to keep
+ * FOR-UPDATE contention low. Capped defensively. Revalidates /queue once at the end.
+ */
+export async function bulkDecideSuggestionsAction(
+  ids: string[],
+  decision: "accept" | "dismiss",
+  options?: { embeddedRevalidatePath?: string }
+): Promise<BulkDecisionResult> {
+  const session = await getSession();
+  const token = session.jwtToken ?? session.apiKey ?? null;
+  if (!token) return { succeeded: [], failed: ids.map((id) => ({ id, error: "Not authenticated" })) };
+
+  const unique = Array.from(new Set(ids)).slice(0, 100);
+  const succeeded: string[] = [];
+  const failed: Array<{ id: string; error: string }> = [];
+  for (const id of unique) {
+    const result =
+      decision === "accept"
+        ? await engineAccept(token, id, { note: null })
+        : await engineDismiss(token, id, { dismissal_reason: null });
+    if ("error" in result) failed.push({ id, error: result.error });
+    else succeeded.push(id);
+  }
+
+  revalidatePath("/queue");
+  if (options?.embeddedRevalidatePath) revalidatePath(options.embeddedRevalidatePath);
+  return { succeeded, failed };
+}
