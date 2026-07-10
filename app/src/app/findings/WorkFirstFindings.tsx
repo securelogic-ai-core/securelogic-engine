@@ -1,24 +1,28 @@
 /**
- * WorkFirstFindings.tsx — the work-first Findings surface (ERIP). Presentational
+ * WorkFirstFindings.tsx — the Findings OPERATIONS CENTER (ERIP). Presentational
  * server component; all logic lives in the pure workQueues.ts helpers.
  *
- * Interaction model: work completion, not record discovery. The default (home)
- * view is organized around operational queues and decision buckets — Overdue SLA,
- * Unassigned, Needs decision, High & Critical, In mitigation, Accepted risk —
- * plus entity search ("findings for Microsoft") and a short "Next up" list.
- * Individual findings are supporting objects reached by drilling into a queue,
- * a search, or the Decision Workspace. Rendered ONLY under
- * SECURELOGIC_RISK_WORKSPACE_ENABLED; flag-off keeps the legacy list page.
+ * Interaction model: customers MANAGE WORK, not browse records. The landing view
+ * renders NO finding rows — it organizes work into decision buckets (Needs
+ * Assignment, SLA Breached, Needs Decision, Awaiting Approval, Review Suggested
+ * Links) and risk domains (Active Exploitation, Regulatory Impact, AI Risk,
+ * Third-Party Risk) plus tracking buckets. Clicking a bucket opens a SUBORDINATE,
+ * SERVER-FILTERED findings view (or the surface owning that work: /approvals,
+ * /queue) — correct at 20,000 findings because counts and filters are engine-side.
+ * Rendered ONLY under SECURELOGIC_RISK_WORKSPACE_ENABLED; flag-off = legacy page.
  */
 
 import Link from "next/link";
 import type { Finding, EntityFindingsResponse } from "@/lib/api";
 import { FindingCard } from "@/components/FindingCard";
 import {
-  WORK_QUEUES,
-  openWorkCount,
-  type WorkQueueId,
-  type WorkQueueDef,
+  OPS_GROUP_LABELS,
+  bucketsInGroup,
+  bucketHref,
+  dueWorkCount,
+  type OpsBucketDef,
+  type OpsBucketId,
+  type OpsBucketGroup,
 } from "./workQueues";
 
 const CARD: React.CSSProperties = {
@@ -63,11 +67,11 @@ function EntitySearchForm({ initial }: { initial?: string }) {
   );
 }
 
-function QueueCard({ def, count }: { def: WorkQueueDef; count: number }) {
+function BucketCard({ def, count, unknown }: { def: OpsBucketDef; count: number; unknown: boolean }) {
   const hot = def.urgent && count > 0;
   return (
     <Link
-      href={`/findings?queue=${def.id}`}
+      href={bucketHref(def)}
       className="block rounded-xl border p-5 transition-colors"
       style={{
         background: "var(--color-brand-surface, #111827)",
@@ -78,54 +82,84 @@ function QueueCard({ def, count }: { def: WorkQueueDef; count: number }) {
         <span className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
           {def.label}
         </span>
-        <span className="text-2xl font-bold" style={{ color: hot ? "#fca5a5" : count > 0 ? "#f1f5f9" : "#334155" }}>
-          {count}
+        <span
+          className="text-2xl font-bold"
+          style={{ color: unknown ? "#334155" : hot ? "#fca5a5" : count > 0 ? "#f1f5f9" : "#334155" }}
+        >
+          {unknown ? "—" : count}
         </span>
       </div>
       <p className="text-xs" style={{ color: "#64748b" }}>
         {def.ask}
       </p>
-      <p className="text-xs mt-2 font-medium" style={{ color: count > 0 ? "#00c4b4" : "#334155" }}>
-        {count > 0 ? "Work the queue →" : "Clear"}
+      <p className="text-xs mt-2 font-medium" style={{ color: !unknown && count > 0 ? "#00c4b4" : "#334155" }}>
+        {unknown ? "Open →" : count > 0 ? "Work the queue →" : "Clear"}
       </p>
     </Link>
+  );
+}
+
+function BucketGroup({
+  group,
+  counts,
+  unknown,
+}: {
+  group: OpsBucketGroup;
+  counts: Record<OpsBucketId, number>;
+  unknown: OpsBucketId[];
+}) {
+  const buckets = bucketsInGroup(group);
+  return (
+    <section className="mb-8">
+      <h2 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "#94a3b8" }}>
+        {OPS_GROUP_LABELS[group]}
+      </h2>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {buckets.map((b) => (
+          <BucketCard key={b.id} def={b} count={counts[b.id] ?? 0} unknown={unknown.includes(b.id)} />
+        ))}
+      </div>
+    </section>
   );
 }
 
 export default function WorkFirstFindings({
   mode,
   counts,
-  next,
-  queue,
-  queueFindings,
+  unknownCounts,
+  bucket,
+  bucketFindings,
+  bucketTotal,
   entityQuery,
   entityResult,
 }: {
-  mode: "home" | "queue" | "entity";
-  counts: Record<Exclude<WorkQueueId, "all">, number>;
-  next: Finding[];
-  queue?: WorkQueueDef;
-  queueFindings?: Finding[];
+  mode: "home" | "bucket" | "entity";
+  counts: Record<OpsBucketId, number>;
+  unknownCounts: OpsBucketId[];
+  bucket?: OpsBucketDef;
+  bucketFindings?: Finding[];
+  bucketTotal?: number;
   entityQuery?: string;
   entityResult?: EntityFindingsResponse | null;
 }) {
-  if (mode === "queue" && queue) {
-    const members = queueFindings ?? [];
+  if (mode === "bucket" && bucket) {
+    const members = bucketFindings ?? [];
+    const total = bucketTotal ?? members.length;
     return (
       <>
         <div className="mb-6">
           <Link href="/findings" className="text-sm font-medium" style={{ color: "#00c4b4" }}>
-            ← Work queues
+            ← Operations center
           </Link>
         </div>
         <div className="mb-6">
           <h2 className="text-lg font-bold" style={{ color: "#f1f5f9" }}>
-            {queue.label}
+            {bucket.label}
             <span className="ml-2 text-sm font-normal" style={{ color: "#64748b" }}>
-              {members.length} shown
+              {total} in queue{members.length < total ? ` · showing ${members.length}` : ""}
             </span>
           </h2>
-          <p className="text-sm" style={{ color: "#94a3b8" }}>{queue.ask}</p>
+          <p className="text-sm" style={{ color: "#94a3b8" }}>{bucket.ask}</p>
         </div>
         {members.length === 0 ? (
           <div className="rounded-xl border p-10 text-center" style={{ ...CARD, borderColor: "rgba(34,197,94,0.2)" }}>
@@ -136,7 +170,7 @@ export default function WorkFirstFindings({
         ) : (
           <div className="space-y-3">
             {members.map((f) => (
-              <FindingCard key={f.id} finding={f} revalidateUrl={`/findings?queue=${queue.id}`} workspace />
+              <FindingCard key={f.id} finding={f} revalidateUrl={`/findings?bucket=${bucket.id}`} workspace />
             ))}
           </div>
         )}
@@ -150,14 +184,14 @@ export default function WorkFirstFindings({
       <>
         <div className="mb-6 flex items-center justify-between gap-4 flex-wrap">
           <Link href="/findings" className="text-sm font-medium" style={{ color: "#00c4b4" }}>
-            ← Work queues
+            ← Operations center
           </Link>
           <EntitySearchForm initial={entityQuery} />
         </div>
         {!res ? (
           <div className="rounded-xl border p-10 text-center" style={CARD}>
             <p className="text-sm" style={{ color: "#94a3b8" }}>
-              Entity search isn&apos;t available right now. Use the work queues, or try again shortly.
+              Entity search isn&apos;t available right now. Use the work buckets, or try again shortly.
             </p>
           </div>
         ) : res.entities.length === 0 ? (
@@ -212,48 +246,30 @@ export default function WorkFirstFindings({
     );
   }
 
-  // HOME — work queues + entity search + next up. No scrolling record list.
-  const totalWork = openWorkCount(counts);
+  // HOME — the operations center. Decision buckets + risk domains + tracking +
+  // entity search. NO finding rows: work is managed from here, records live one
+  // click down in the subordinate views and the Decision Workspace.
+  const due = dueWorkCount(counts);
   return (
     <>
       <div className="mb-6">
         <EntitySearchForm />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-        {WORK_QUEUES.map((q) => (
-          <QueueCard key={q.id} def={q} count={counts[q.id as Exclude<WorkQueueId, "all">]} />
-        ))}
-      </div>
-
-      {totalWork === 0 ? (
-        <div className="rounded-xl border p-10 text-center mb-8" style={{ ...CARD, borderColor: "rgba(34,197,94,0.2)" }}>
+      {due === 0 && unknownCounts.length === 0 && (
+        <div className="rounded-xl border p-6 text-center mb-8" style={{ ...CARD, borderColor: "rgba(34,197,94,0.2)" }}>
           <p className="text-sm font-semibold mb-1" style={{ color: "#86efac" }}>
-            All clear — no findings need a decision right now.
+            All clear — no decision work is due right now.
           </p>
           <p className="text-xs" style={{ color: "#64748b" }}>
             New intelligence, assessments, and reviews land here as work when they affect your organization.
           </p>
         </div>
-      ) : (
-        next.length > 0 && (
-          <section className="mb-8">
-            <div className="flex items-center gap-2 mb-3">
-              <h2 className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
-                Next up
-              </h2>
-              <span className="text-xs" style={{ color: "#475569" }}>
-                most urgent first
-              </span>
-            </div>
-            <div className="space-y-3">
-              {next.map((f) => (
-                <FindingCard key={f.id} finding={f} revalidateUrl="/findings" workspace />
-              ))}
-            </div>
-          </section>
-        )
       )}
+
+      <BucketGroup group="decisions" counts={counts} unknown={unknownCounts} />
+      <BucketGroup group="domains" counts={counts} unknown={unknownCounts} />
+      <BucketGroup group="tracking" counts={counts} unknown={unknownCounts} />
 
       <div className="text-center">
         <Link href="/findings?queue=all" className="text-sm font-medium" style={{ color: "#64748b" }}>

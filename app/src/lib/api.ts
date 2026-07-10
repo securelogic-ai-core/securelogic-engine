@@ -539,6 +539,11 @@ export type FindingsParams = {
   severity?: string;
   source_id?: string;
   priority?: string;
+  // Ops-center work filters (server-side — buckets stay correct at any scale).
+  decision_state?: string;
+  overdue?: boolean;
+  unassigned?: boolean;
+  exploited?: boolean;
   limit?: number;
 };
 
@@ -559,6 +564,11 @@ export type FindingsSummary = {
   needs_review_open?: number;
   mitigating_open?: number;
   accepted_risk_total?: number;
+  regulatory_open?: number;
+  ai_governance_open?: number;
+  vendor_risk_open?: number;
+  exploited_open?: number;
+  pending_risk_approvals?: number;
 };
 
 export type Risk = {
@@ -1921,6 +1931,10 @@ export async function getFindings(
     if (params?.severity) qs.set("severity", params.severity);
     if (params?.source_id) qs.set("source_id", params.source_id);
     if (params?.priority) qs.set("priority", params.priority);
+    if (params?.decision_state) qs.set("decision_state", params.decision_state);
+    if (params?.overdue) qs.set("overdue", "true");
+    if (params?.unassigned) qs.set("unassigned", "true");
+    if (params?.exploited) qs.set("exploited", "true");
     qs.set("limit", String(params?.limit ?? 50));
     const res = await engineFetch(`/api/findings?${qs.toString()}`, apiKey);
     if (!res.ok) return null;

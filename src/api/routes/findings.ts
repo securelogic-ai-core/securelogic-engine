@@ -351,6 +351,50 @@ router.get(
         conditions.push(`f.priority = $${params.length}`);
       }
 
+      // Ops-center work filters (ERIP work-first Findings) — all additive and
+      // server-side so decision buckets stay correct at 20k+ findings (the UI
+      // never client-filters a page to fake a bucket).
+      if (req.query.decision_state !== undefined) {
+        const ds = isNonEmptyString(req.query.decision_state) ? req.query.decision_state : "";
+        if (!VALID_DECISION_STATES.has(ds)) {
+          res.status(400).json({
+            error: "invalid_decision_state_filter",
+            allowed: [...VALID_DECISION_STATES]
+          });
+          return;
+        }
+        params.push(ds);
+        conditions.push(`f.decision_state = $${params.length}`);
+      }
+
+      if (req.query.overdue === "true") {
+        conditions.push(`f.status IN ('open', 'in_progress') AND f.due_date IS NOT NULL AND f.due_date < CURRENT_DATE`);
+      }
+
+      if (req.query.unassigned === "true") {
+        conditions.push(`f.status IN ('open', 'in_progress') AND f.owner_user_id IS NULL`);
+      }
+
+      // exploited=true — findings whose supporting intelligence shows active
+      // exploitation: the source Intelligence Event has ever_exploited, the source
+      // signal bridges to such an event, or the source signal is CISA KEV.
+      if (req.query.exploited === "true") {
+        conditions.push(`(
+          (f.source_type = 'intelligence_event' AND EXISTS (
+             SELECT 1 FROM intelligence_events e
+              WHERE e.id = f.source_id AND e.ever_exploited))
+          OR (f.source_type IN ('cyber_signal', 'signal') AND (
+             EXISTS (
+               SELECT 1 FROM intelligence_event_sources ies
+                 JOIN intelligence_events e ON e.id = ies.event_id
+                WHERE ies.cyber_signal_id = f.source_id AND e.ever_exploited)
+             OR EXISTS (
+               SELECT 1 FROM cyber_signals cs
+                WHERE cs.id = f.source_id AND cs.source = 'cisa-kev')
+          ))
+        )`);
+      }
+
       if (useCursor) {
         params.push(beforeCreatedAt, beforeId);
         const ci = params.length - 1;
@@ -489,10 +533,33 @@ router.get(
           COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND owner_user_id IS NULL)                            AS unassigned_open,
           COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND decision_state = 'needs_review')                  AS needs_review_open,
           COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND decision_state = 'mitigating')                    AS mitigating_open,
-          COUNT(*) FILTER (WHERE decision_state = 'accepted_risk')                                                      AS accepted_risk_total
+          COUNT(*) FILTER (WHERE decision_state = 'accepted_risk')                                                      AS accepted_risk_total,
+          -- Ops-center domain buckets (server truth at any scale) — additive.
+          COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND domain = 'Regulatory')                            AS regulatory_open,
+          COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND domain = 'AI Governance')                         AS ai_governance_open,
+          COUNT(*) FILTER (WHERE status IN ('open','in_progress') AND domain = 'Vendor Risk')                           AS vendor_risk_open,
+          -- Active exploitation: same predicate as the list's exploited=true filter.
+          (SELECT COUNT(*) FROM findings f2
+            WHERE f2.organization_id = $1 AND f2.status IN ('open','in_progress') AND (
+              (f2.source_type = 'intelligence_event' AND EXISTS (
+                 SELECT 1 FROM intelligence_events e WHERE e.id = f2.source_id AND e.ever_exploited))
+              OR (f2.source_type IN ('cyber_signal', 'signal') AND (
+                 EXISTS (SELECT 1 FROM intelligence_event_sources ies
+                           JOIN intelligence_events e ON e.id = ies.event_id
+                          WHERE ies.cyber_signal_id = f2.source_id AND e.ever_exploited)
+                 OR EXISTS (SELECT 1 FROM cyber_signals cs
+                             WHERE cs.id = f2.source_id AND cs.source = 'cisa-kev')))
+            ))                                                                                                          AS exploited_open
         FROM findings
         WHERE organization_id = $1
         `,
+        [organizationId]
+      );
+
+      // Awaiting Approval is risk-lifecycle work (risk_approvals), surfaced on the
+      // ops center alongside finding buckets. Read-only count; org-scoped.
+      const approvals = await pg.query<{ pending: string }>(
+        `SELECT COUNT(*) AS pending FROM risk_approvals WHERE organization_id = $1 AND decision = 'pending'`,
         [organizationId]
       );
 
@@ -514,6 +581,12 @@ router.get(
           needs_review_open:   parseInt((row as any)?.needs_review_open ?? "0", 10),
           mitigating_open:     parseInt((row as any)?.mitigating_open ?? "0", 10),
           accepted_risk_total: parseInt((row as any)?.accepted_risk_total ?? "0", 10),
+          // Ops-center buckets (ERIP work-first) — additive.
+          regulatory_open:        parseInt((row as any)?.regulatory_open ?? "0", 10),
+          ai_governance_open:     parseInt((row as any)?.ai_governance_open ?? "0", 10),
+          vendor_risk_open:       parseInt((row as any)?.vendor_risk_open ?? "0", 10),
+          exploited_open:         parseInt((row as any)?.exploited_open ?? "0", 10),
+          pending_risk_approvals: parseInt(approvals.rows[0]?.pending ?? "0", 10),
         },
       });
     } catch (err) {
