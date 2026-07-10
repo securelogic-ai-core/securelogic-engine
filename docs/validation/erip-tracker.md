@@ -158,6 +158,24 @@ existing endpoints).
 | Actions integrated into Findings | **DONE (dark)** | #568/#569 | `DECISION_WORKSPACE` | Remediation tab + `/actions`→My Actions (session-scoped). |
 | Intelligence Events drill-through only | **DONE + guarded** | #566/#570 | `DECISION_WORKSPACE` | Nav guard test; no primary-nav, no index route. |
 
+### Launch Experience close-out (SHIPPED dark, 2026-07-09/10)
+
+Operator-directed completion goal "Complete the SecureLogic Launch Experience". Closes the
+remaining customer-facing gaps + selected fast-follow. All dark; flag-off byte-identical; no
+schema-visible behavior change; GATE B untouched. Final report:
+`docs/validation/launch-experience-final-report.md`; operator actions:
+`docs/validation/launch-experience-operator-ledger.md`.
+
+| Item | Status | PR | Flag | Notes |
+|---|---|---|---|---|
+| §6 Every-source affected context | **DONE (dark)** | #576 | `DECISION_WORKSPACE` | `findingContextResolver` resolves affected entities for assessment/risk/applicability/legacy sources, not just intelligence. `resolveAssessmentAffected` + `mergeAffected`; +2 real-Postgres isolation cases. No schema change. |
+| §5 My Actions remediation depth | **DONE (dark)** | #577 | `DECISION_WORKSPACE` | SLA framing + ownership (mine/team) + source-finding linkage. Pure `actionQueue.ts` + `MyActionsView`. `myActions.actionScope` (mine\|team) additive. |
+| Day-0 Findings empty state | **DONE (dark)** | #578 | `RISK_WORKSPACE` | first-time-empty vs filtered-empty; `isFirstTimeEmpty`. |
+| §4 D5 Brief → Intelligence Event | **DONE (dark)** | #579 | `DECISION_WORKSPACE` | Linked brief item drill-throughs to its supporting event, resolved from finding context (reuses #576 bridge). Closes D5 for linked items; unlinked-item signal→event lookup still deferred. |
+| §1 Findings saved views | **DONE (dark)** | #580 | `DECISION_WORKSPACE` | New `finding_saved_views` table (org+user, RLS, dataClassification) + `/api/finding-saved-views` + `SavedViewsBar`. Migration `20260710`. Whitelist-sanitized filters. |
+| §3 Review Links bulk accept/dismiss | **DONE (dark)** | #581 | `RISK_WORKSPACE` | Opt-in Select mode reusing the ratified per-item endpoints (no engine-tx change); partial-failure results. Closes the previously-DEFERRED-optional bulk item. |
+| RTL harness + render tests | **DEFERRED (fast-follow)** | — | — | App has no RTL harness; UI covered by pure-helper unit tests + staging validation. Top recommended fast-follow. |
+
 **Operator actions to make launch-readiness VISIBLE (ledgered, NOT executed — dark by governance):**
 staging-first, then GATE B for prod:
 - **App:** `SECURELOGIC_RISK_WORKSPACE_ENABLED=true` (Findings decision queue, nav IA,
