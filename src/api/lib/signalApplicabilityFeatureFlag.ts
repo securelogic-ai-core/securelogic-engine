@@ -14,6 +14,8 @@
  *     explicit cutover is approved. Not consumed yet.
  */
 
+import type { Request, Response, NextFunction } from "express";
+
 export function signalApplicabilityEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env["SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED"] === "true";
 }
@@ -31,9 +33,9 @@ export function signalApplicabilityMode(env: NodeJS.ProcessEnv = process.env): S
  * the route existed.
  */
 export function signalApplicabilityFeatureFlag(
-  _req: import("express").Request,
-  res: import("express").Response,
-  next: import("express").NextFunction
+  _req: Request,
+  res: Response,
+  next: NextFunction
 ): void {
   if (!signalApplicabilityEnabled()) {
     res.status(404).json({ error: "not_found" });
