@@ -210,10 +210,8 @@ export function DecisionWorkspace({
   // below, so the header chip can never contradict the detail. Honest about
   // none/not_assessed — no "?? low" floor (workflow-consistency Phase 2).
   const topImpact = topBusinessImpact([
-    bi.revenue.level,
     bi.operational.level,
     bi.regulatory.level,
-    bi.customer.level,
     bi.third_party.level,
   ]);
 
@@ -319,11 +317,12 @@ export function DecisionWorkspace({
       {/* ZONE C — Business impact */}
       <div style={CARD}>
         <div style={H}>Business impact</div>
+        {/* Revenue and Customer rows removed — they were hardcoded "Not assessed"
+            and could never read anything else. A row that can only ever say one
+            thing is furniture, and it taught the eye to skip the whole panel. */}
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <ImpactRow label="Revenue" dim={bi.revenue} />
           <ImpactRow label="Operational" dim={bi.operational} />
           <ImpactRow label="Regulatory" dim={bi.regulatory} />
-          <ImpactRow label="Customer" dim={bi.customer} />
           <ImpactRow label="Third-party" dim={bi.third_party} />
         </div>
       </div>

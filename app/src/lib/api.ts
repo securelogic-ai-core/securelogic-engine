@@ -2070,11 +2070,12 @@ export type FindingContext = {
     operational_status?: string;
   };
   risk: { score: number; band: string; rationale: string[] };
+  // `revenue` and `customer` were removed: they were hardcoded "not_assessed"
+  // literals with no schema column behind them and no code path that could ever
+  // set them otherwise. See findingRiskScore.ts BusinessImpact.
   business_impact: {
-    revenue: FindingImpactDimension;
     operational: FindingImpactDimension;
     regulatory: FindingImpactDimension;
-    customer: FindingImpactDimension;
     third_party: FindingImpactDimension;
   };
   owner: { id: string; email: string } | null;
