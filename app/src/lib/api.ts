@@ -526,6 +526,13 @@ export type Action = {
   completed_at: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Server-decided, per the Metric Contract (active AND due < CURRENT_DATE).
+   * Never re-derive this on the client: doing so with `new Date()` compares
+   * against NOW() rather than midnight, which made an action due TODAY overdue
+   * on this page and on-time on the dashboard.
+   */
+  is_overdue: boolean;
 };
 
 export type ActionsResponse = {
@@ -560,6 +567,8 @@ export type ActionsParams = {
   status?: string;
   priority?: string;
   overdue?: boolean;
+  /** Metric Contract active set (open|in_progress|blocked) — what an ACTIVE count links to. */
+  active?: boolean;
   limit?: number;
 };
 
@@ -2270,6 +2279,7 @@ export async function getActions(
     if (params?.status) qs.set("status", params.status);
     if (params?.priority) qs.set("priority", params.priority);
     if (params?.overdue) qs.set("overdue", "true");
+    if (params?.active) qs.set("active", "true");
     qs.set("limit", String(params?.limit ?? 100));
     const res = await engineFetch(`/api/actions?${qs.toString()}`, apiKey);
     if (!res.ok) return null;

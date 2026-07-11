@@ -147,6 +147,64 @@ describe("Metric Contract — cross-surface reconciliation (real app, real Postg
     expect(a.overdue).toBe(1);
   });
 
+  it("the ACTIVE tile's own link reproduces the ACTIVE number (tile → destination)", async () => {
+    // The gap this closes: the tests above proved the tile agrees with the
+    // *summary*, but never that it agrees with the LIST THE USER LANDS ON. It did
+    // not. `/api/actions` had only a single exact `status=` filter, so the tile's
+    // link carried no status at all and the destination listed closed and accepted
+    // actions under a heading promising N active. No URL could reproduce N.
+    const [dash, activeList, unfiltered] = await Promise.all([
+      get("/api/dashboard/summary", seed.orgA.apiKey),
+      get("/api/actions?active=true&limit=100", seed.orgA.apiKey),
+      get("/api/actions?limit=100", seed.orgA.apiKey),
+    ]);
+    expect(activeList.status).toBe(200);
+
+    // The number on the tile == the total of the page it links to. This is the
+    // whole acceptance criterion ("dashboard metrics reconcile with destination
+    // pages") for Actions.
+    expect(activeList.body.total).toBe(dash.body.actions.active);
+    expect(activeList.body.total).toBe(4);
+
+    // ...and it is a REAL filter, not a coincidence: the unfiltered list is strictly
+    // bigger, because it still contains the terminal (closed) actions.
+    expect(unfiltered.body.total).toBeGreaterThan(activeList.body.total);
+    const statuses = activeList.body.actions.map((x: { status: string }) => x.status);
+    expect(statuses).not.toContain("closed");
+    expect(statuses).not.toContain("accepted");
+  });
+
+  it("is_overdue ships from the server — a due-TODAY action is not overdue anywhere", async () => {
+    // The client used to re-derive this against NOW() instead of CURRENT_DATE, so
+    // an action due TODAY wore a red 'overdue' badge in the list while being
+    // excluded from the dashboard's overdue count. Same action, two answers. The
+    // field is now decided once, server-side, by the Metric Contract.
+    const list = await get("/api/actions?limit=100", seed.orgA.apiKey);
+    expect(list.status).toBe(200);
+
+    const rows = list.body.actions as Array<{
+      status: string;
+      due_date: string | null;
+      is_overdue: boolean;
+    }>;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) expect(typeof r.is_overdue).toBe("boolean");
+
+    // Exactly one overdue row, and it is the long-past blocked one — never the
+    // due-today one. This equals the dashboard's overdue count by construction.
+    const overdue = rows.filter((r) => r.is_overdue);
+    expect(overdue).toHaveLength(1);
+    expect(overdue[0]!.status).toBe("blocked");
+
+    const today = new Date().toISOString().slice(0, 10);
+    const dueToday = rows.filter((r) => (r.due_date ?? "").slice(0, 10) === today);
+    expect(dueToday).toHaveLength(1);
+    expect(dueToday[0]!.is_overdue).toBe(false);
+
+    const dash = await get("/api/dashboard/summary", seed.orgA.apiKey);
+    expect(overdue.length).toBe(dash.body.actions.overdue);
+  });
+
   it("findings summary counts reconcile exactly with the list totals for the same filters", async () => {
     const sum = await get("/api/findings/summary", seed.orgA.apiKey);
     expect(sum.status).toBe(200);
