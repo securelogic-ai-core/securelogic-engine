@@ -420,7 +420,27 @@ export function DecisionWorkspace({
           <div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Evidence ({context.evidence.length})</div>
             {context.evidence.length === 0 ? (
-              <span style={{ fontSize: 12, color: "#475569" }}>No evidence attached</span>
+              // Overview reports evidence; the Remediation tab is where it is
+              // attached. Without this pointer the empty state is a dead end —
+              // and for a gate-enforcing org it is the thing blocking remediation.
+              <span style={{ fontSize: 12, color: "#475569" }}>
+                No evidence attached — add it in the{" "}
+                <button
+                  type="button"
+                  onClick={() => setTab("remediation")}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    padding: 0,
+                    fontSize: 12,
+                    color: "#93c5fd",
+                    cursor: "pointer",
+                    textDecoration: "underline",
+                  }}
+                >
+                  Remediation tab
+                </button>
+              </span>
             ) : (
               context.evidence.map((ev, i) => (
                 <div key={i} style={{ fontSize: 13, color: "#e5e7eb" }}>{String(ev.title)}</div>
