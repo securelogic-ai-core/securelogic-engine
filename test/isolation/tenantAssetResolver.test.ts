@@ -53,9 +53,16 @@ describe("C2b — resolveTenantAssets", () => {
       const out = await resolveTenantAssets(client, seed.orgA.id, id);
       expect(out.status).toBe("resolved");
       expect(out.candidates).toHaveLength(1);
-      expect(out.candidates[0].confidence).toBe(100);
+      // C4 / ADR-0003 D1: a NAME match is now scored as the weak inference it is.
+      // It was 100 — which meant an asset merely NAMED like the product could assert
+      // `affected`, the exact inference ERG R2 forbids. It is now 60: below
+      // applicabilityPolicy.matchThresholds.high (70), so it can raise
+      // `potentially_affected` and never `affected` without real evidence.
+      expect(out.candidates[0].confidence).toBe(60);
+      expect(out.candidates[0].match_rationale).toContain("inferred");
       expect(out.candidates[0].source_identifiers).toContain("cve:CVE-2021-26855");
-      expect(out.resolver_version).toBe("tar-v1.0.0");
+      expect(out.candidates[0].source_identifiers).toContain("provenance:inferred");
+      expect(out.resolver_version).toBe("tar-v2.0.0");
     } finally { client.release(); }
   });
 

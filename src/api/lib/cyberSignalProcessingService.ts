@@ -41,6 +41,8 @@ import { logger } from "../infra/logger.js";
 import { canonicalizeVendorName } from "./vendorNameCanonical.js";
 import { signalApplicabilityEnabled } from "./signalApplicabilityFeatureFlag.js";
 import { runSignalApplicabilityShadow, backingAssetIds } from "./signalApplicabilityShadowRunner.js";
+import { extractSignalProductEvidence } from "./signalProductEvidence.js";
+import { upsertCanonicalProduct } from "./canonicalProductStore.js";
 import { intelligenceEventsEnabled } from "./signals/intelligenceEventsFeatureFlag.js";
 import { resolveEventIdForSignal } from "./signals/eventSignalResolver.js";
 import {
@@ -839,6 +841,55 @@ export async function runMatcherForSignal(
             );
           }
         }
+      }
+    }
+
+    // ERG convergence C4 (ADR-0003 D1) — persist the PRODUCT the signal is about.
+    //
+    // The product was never lost, only never read: cisaKevAdapter stores the whole feed
+    // entry in `raw_payload` but persists only `vendorProject` as affected_vendor. So the
+    // pipeline had a vendor and no product — and ERG R2 forbids inferring `affected` from
+    // vendor identity alone. That is precisely why the shadow runner had to feed the
+    // vendor name in AS the product just to produce candidates.
+    //
+    // Here the real product token is extracted and upserted into the ORG-NEUTRAL
+    // canonical_products (+ alias) — which is what the tenant-asset resolver's evidence
+    // path joins against. Writes NO tenant data, so ERIP-AD-8 is not engaged. Flag-gated
+    // and try/catch-isolated: a failure here must never break ingestion, and the legacy
+    // path stays authoritative until C8.
+    if (signalApplicabilityEnabled()) {
+      try {
+        // raw_payload is not on CyberSignalRecord (the matcher's narrow view), and
+        // widening it would silently yield NO product evidence for any caller that
+        // forgot to populate it. Read it from the row instead — one query, flag-gated.
+        const payloadRow = await client.query<{ raw_payload: Record<string, unknown> | null }>(
+          `SELECT raw_payload FROM cyber_signals WHERE id = $1::uuid`,
+          [signalId]
+        );
+        const evidence = extractSignalProductEvidence({
+          source: signal.source,
+          affected_vendor: signal.affected_vendor,
+          affected_cve: signal.affected_cve,
+          raw_payload: payloadRow.rows[0]?.raw_payload ?? null,
+        });
+        if (evidence) {
+          await upsertCanonicalProduct(client, {
+            identity: {
+              vendor: evidence.vendor_raw,
+              product: evidence.product_raw,
+              // Deliberately NO cve: a product is a product regardless of which
+              // vulnerability is being assessed today, and canonical_key embeds the cve —
+              // passing it would mint a fresh product row per advisory.
+              cve: null,
+            },
+            aliases: [{ raw: evidence.product_raw, source: evidence.evidence_ref }],
+          });
+        }
+      } catch (err) {
+        logger.warn(
+          { event: "canonical_product_upsert_failed", organizationId: orgId, signalId, err },
+          "canonical product upsert failed (non-fatal — legacy path authoritative)"
+        );
       }
     }
 
