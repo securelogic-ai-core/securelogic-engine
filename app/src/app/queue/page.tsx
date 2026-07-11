@@ -1,7 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
-import { buildQueueHref, isUuid } from "./queueHref";
+import {
+  buildQueueHref,
+  isUuid,
+  isQueueStatus,
+  normalizeQueueQuery,
+  type QueueStatus,
+} from "./queueHref";
 import {
   getMe,
   getSignalMatchSuggestions,
@@ -88,11 +94,17 @@ export default async function QueuePage({
   // degrade to the full queue, not to an error page.
   const signalId = isUuid(sp.signal_id) ? sp.signal_id : undefined;
 
+  // R3 — the queue is searchable and filterable like the Findings page, and lands on
+  // the scope you came from. A raw 4000-row dump is not a work surface.
+  const nameQuery = normalizeQueueQuery(sp.q);
+  const statusFilter: QueueStatus = isQueueStatus(sp.status) ? sp.status : "pending";
+
   const [listData, counts] = await Promise.all([
     getSignalMatchSuggestions(token, {
-      status: "pending",
+      status: statusFilter,
       target_type: targetFilter,
       signal_id: signalId,
+      q: nameQuery,
       sort,
       limit: PAGE_SIZE,
       offset,
@@ -179,7 +191,14 @@ export default async function QueuePage({
   // scope survives paging, sorting and the filter chips. It used to be rebuilt
   // ad hoc in three places, which is how the scope got dropped in the first place.
   function pageHref(nextOffset: number) {
-    return buildQueueHref({ targetType: targetFilter, signalId, sort, offset: nextOffset });
+    return buildQueueHref({
+      targetType: targetFilter,
+      signalId,
+      q: nameQuery,
+      status: statusFilter,
+      sort,
+      offset: nextOffset,
+    });
   }
 
   return (
@@ -222,6 +241,79 @@ export default async function QueuePage({
         </div>
       )}
 
+      {/* R3 — search + review-state, so the queue is a work surface rather than a
+          dump. Search matches the ENTITY the suggestion is about (the same name the
+          row displays) — the thing an operator actually knows: "show me the Microsoft
+          ones", not "show me suggestion 3f2a…". A plain GET form, so results are
+          bookmarkable, shareable and back-button-safe; the finding scope rides along
+          in a hidden field, so searching INSIDE a scoped queue stays scoped. */}
+      <form action="/queue" method="get" className="mb-4 flex gap-2 flex-wrap items-center">
+        {signalId && <input type="hidden" name="signal_id" value={signalId} />}
+        {targetFilter && <input type="hidden" name="target_type" value={targetFilter} />}
+        {statusFilter !== "pending" && <input type="hidden" name="status" value={statusFilter} />}
+        {sort !== "created-desc" && <input type="hidden" name="sort" value={sort} />}
+        <input
+          type="search"
+          name="q"
+          defaultValue={nameQuery ?? ""}
+          placeholder="Search by vendor, AI system, control or obligation…"
+          minLength={2}
+          maxLength={120}
+          className="px-3 py-1.5 rounded-lg text-sm"
+          style={{
+            background: "rgba(15,23,42,0.6)",
+            border: "1px solid #1e293b",
+            color: "#e2e8f0",
+            minWidth: 280,
+            flex: "1 1 280px",
+          }}
+        />
+        <button
+          type="submit"
+          className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+          style={{ background: "#2563eb", color: "#f8fafc", border: "none", cursor: "pointer" }}
+        >
+          Search
+        </button>
+        {nameQuery && (
+          <Link
+            href={buildQueueHref({ signalId, targetType: targetFilter, status: statusFilter, sort })}
+            className="text-xs"
+            style={{ color: "#93c5fd" }}
+          >
+            Clear search
+          </Link>
+        )}
+      </form>
+
+      {/* Review state. Accepted and dismissed suggestions were unreachable from the
+          UI — the queue only ever asked the engine for `pending`, so a decision, once
+          made, vanished with no way to review or audit it. The engine has served all
+          three states since 20260505. */}
+      <div className="mb-4 flex items-center gap-2 flex-wrap">
+        {(["pending", "accepted", "dismissed"] as const).map((st) => {
+          const active = statusFilter === st;
+          return (
+            <Link
+              key={st}
+              href={buildQueueHref({ targetType: targetFilter, signalId, q: nameQuery, status: st, sort })}
+              style={{
+                padding: "4px 12px",
+                borderRadius: 999,
+                fontSize: 12,
+                border: "1px solid",
+                borderColor: active ? "#2563eb" : "rgba(255,255,255,0.12)",
+                color: active ? "#93c5fd" : "#9ca3af",
+                textDecoration: "none",
+                textTransform: "capitalize",
+              }}
+            >
+              {st}
+            </Link>
+          );
+        })}
+      </div>
+
       {/* Filter chips — target_type. Each chip is a server-rendered link
           carrying the active sort/offset reset to 0. */}
       {(totalPending > 0 || filtersActive) && (
@@ -229,7 +321,7 @@ export default async function QueuePage({
           <Link
             // "All types" clears target_type but KEEPS the finding scope. Was a
             // regex strip of pageHref(0), which mangled the query string.
-            href={buildQueueHref({ signalId, sort })}
+            href={buildQueueHref({ signalId, q: nameQuery, status: statusFilter, sort })}
             style={{
               padding: "4px 12px",
               borderRadius: 999,
@@ -247,7 +339,7 @@ export default async function QueuePage({
             return (
               <Link
                 key={t}
-                href={buildQueueHref({ targetType: t, signalId, sort })}
+                href={buildQueueHref({ targetType: t, signalId, q: nameQuery, status: statusFilter, sort })}
                 style={{
                   padding: "4px 12px",
                   borderRadius: 999,

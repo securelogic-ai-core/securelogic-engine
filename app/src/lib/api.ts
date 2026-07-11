@@ -4523,6 +4523,8 @@ export async function getSignalMatchSuggestions(
     status?: SignalMatchSuggestionStatus;
     target_type?: SignalMatchTargetType;
     signal_id?: string;
+    /** Free-text filter on the entity the suggestion is about (R3). */
+    q?: string;
     sort?: "created-desc" | "score-desc";
     limit?: number;
     offset?: number;
@@ -4533,6 +4535,7 @@ export async function getSignalMatchSuggestions(
     if (params.status)      qs.set("status",      params.status);
     if (params.target_type) qs.set("target_type", params.target_type);
     if (params.signal_id)   qs.set("signal_id",   params.signal_id);
+    if (params.q)           qs.set("q",           params.q);
     if (params.sort)        qs.set("sort",        params.sort);
     if (params.limit)       qs.set("limit",       String(params.limit));
     if (params.offset)      qs.set("offset",      String(params.offset));
