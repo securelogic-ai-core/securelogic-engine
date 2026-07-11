@@ -319,9 +319,15 @@ function ExecutiveSummarySection({
                         <span className="text-xs font-bold tabular-nums flex-shrink-0 w-4 text-right" style={{ color: '#94a3b8' }}>
                           {i + 1}.
                         </span>
+                        {/* line-clamp-1 clipped every heading to a single line with
+                            a CSS ellipsis — a RENDER-time truncation that survives
+                            any generation-side fix. The generator caps titles at 120
+                            chars (sentence-safe, IQP Q4), which needs two lines here.
+                            Clamping at 2 keeps the row compact without cutting a
+                            heading that was already trimmed to fit. */}
                         <Link
                           href={href}
-                          className="text-sm font-medium text-slate-800 hover:text-teal-700 transition-colors line-clamp-1"
+                          className="text-sm font-medium text-slate-800 hover:text-teal-700 transition-colors line-clamp-2"
                         >
                           {s.title}
                         </Link>
