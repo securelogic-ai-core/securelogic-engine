@@ -48,7 +48,6 @@ import {
   fetchPriorBriefContext
 } from "../lib/briefSynthesizer.js";
 import { parseContentJson } from "../lib/parseBriefContentJson.js";
-import { getSourceDisplayName } from "../lib/sourceDisplayNames.js";
 
 const router = Router();
 
@@ -991,8 +990,10 @@ router.get("/intelligence-briefs/:id", async (req, res) => {
           summary: item.summary,
           affected_cve: item.affected_cve,
           affected_vendor: item.affected_vendor,
-          source_slug: item.source_slug,
-          source_display: getSourceDisplayName(item.source_slug),
+          // R1: source_slug / source_display are no longer returned on the
+          // CUSTOMER brief payload. Which feed an item arrived through is our
+          // operational detail. Retained internally on brief_items.source_slug and
+          // intelligence_brief_item_provenance for audit and lineage.
           signal_type: item.signal_type,
           severity: item.severity,
           cyber_signal_id: item.cyber_signal_id,

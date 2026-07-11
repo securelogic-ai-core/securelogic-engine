@@ -1033,7 +1033,10 @@ export function buildContentMarkdown(content: BriefContentJson): string {
       const meta: string[] = [];
       if (item.affected_cve) meta.push(`CVE: ${item.affected_cve}`);
       if (item.affected_vendor) meta.push(`Vendor: ${item.affected_vendor}`);
-      meta.push(`Source: ${item.source_slug}`);
+      // R1: the feed slug no longer rides in the customer-facing markdown body.
+      // It used to render literally as "Source: cisa_kev" in the payload returned by
+      // GET /api/intelligence-briefs/:id. Feed attribution is retained internally
+      // (brief_items.source_slug, intelligence_brief_item_provenance) for audit.
       meta.push(`Severity: ${item.severity}`);
 
       lines.push("");

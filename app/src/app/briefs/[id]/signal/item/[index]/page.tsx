@@ -104,13 +104,10 @@ function parseActions(raw: string | null): string[] {
 // Source block — render only when at least one source-bearing field exists
 // ---------------------------------------------------------------------------
 
+// R1: the feed slug is no longer part of what makes a "source" section worth
+// rendering — it is internal plumbing, not something a customer should read.
 function hasAnySource(item: IntelligenceBriefItem): boolean {
-  return Boolean(
-    item.affected_cve ||
-      item.affected_vendor ||
-      item.source_slug ||
-      item.ingestion_timestamp
-  );
+  return Boolean(item.affected_cve || item.affected_vendor || item.ingestion_timestamp);
 }
 
 // ---------------------------------------------------------------------------
@@ -389,12 +386,13 @@ export default async function SignalDetailPage({ params }: Props) {
                       <dd className="text-slate-300">{item.affected_vendor}</dd>
                     </div>
                   )}
-                  {item.source_slug && (
-                    <div>
-                      <dt className="text-xs text-slate-500 uppercase tracking-wide mb-0.5">Feed</dt>
-                      <dd className="text-slate-300">{item.source_display || item.source_slug}</dd>
-                    </div>
-                  )}
+                  {/* R1: the "Feed" row (CISA KEV / NVD / BleepingComputer ...) is
+                      gone. Which pipe an item arrived through is our operational
+                      detail, not the executive's. The CVE, the vendor and the link to
+                      the primary source all remain — the reader can still verify the
+                      claim, which is the part that was ever load-bearing. Feed
+                      attribution is retained internally (intelligence_brief_item_
+                      provenance, cyber_signals.source) for audit. */}
                   {item.ingestion_timestamp && (
                     <div>
                       <dt className="text-xs text-slate-500 uppercase tracking-wide mb-0.5">Ingested</dt>

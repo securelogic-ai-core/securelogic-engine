@@ -443,14 +443,13 @@ function SignalDetail({
               className="inline-flex items-center gap-2 text-sm font-semibold hover:text-teal-300 transition-colors"
               style={{ color: '#00c4b4' }}
             >
-              {signal.source ?? "View source"} →
+              View source →
             </a>
           </section>
-        ) : signal.source ? (
-          <section className="pt-6 border-t border-slate-700">
-            <p className="text-xs font-medium" style={{ color: '#94a3b8' }}>Via {signal.source}</p>
-          </section>
         ) : null}
+        {/* R1: the "Via <feed>" fallback is removed, not replaced. With no link to the
+            primary source there is nothing honest left to show — naming the pipe the
+            item travelled down tells the reader nothing they can act on or verify. */}
 
         {/* Related signals from the same section */}
         {related.length > 0 && (
