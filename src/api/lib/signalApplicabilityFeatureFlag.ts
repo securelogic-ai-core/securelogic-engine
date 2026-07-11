@@ -14,6 +14,8 @@
  *     explicit cutover is approved. Not consumed yet.
  */
 
+import type { Request, Response, NextFunction } from "express";
+
 export function signalApplicabilityEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env["SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED"] === "true";
 }
@@ -22,4 +24,22 @@ export type SignalApplicabilityMode = "shadow" | "surface";
 
 export function signalApplicabilityMode(env: NodeJS.ProcessEnv = process.env): SignalApplicabilityMode {
   return env["SECURELOGIC_SIGNAL_APPLICABILITY_MODE"] === "surface" ? "surface" : "shadow";
+}
+
+/**
+ * Express middleware — short-circuits to a bare 404 when the flag is off, so the
+ * attestation surface (C4 part 2) does not exist while the convergence is dark. Same
+ * shape as riskIntelligenceFeatureFlag; flag-off behaviour is byte-identical to before
+ * the route existed.
+ */
+export function signalApplicabilityFeatureFlag(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  if (!signalApplicabilityEnabled()) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  next();
 }
