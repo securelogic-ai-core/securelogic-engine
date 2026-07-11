@@ -227,7 +227,11 @@ export default async function SignalDetailPage({ params }: Props) {
   let decision: BriefDecisionAffordance | null = null;
   let eventHref: string | null = null;
   if (shouldResolveBriefDecision(workspace, item.cyber_signal_id)) {
-    const related = await getFindings(token, { source_id: item.cyber_signal_id!, limit: 1 });
+    // intel_ref resolves across BOTH intelligence channels — the legacy
+    // per-signal finding AND the event-native finding reached through the
+    // signal→event bridge. Without it, findings created by the event pipeline
+    // (source_type='intelligence_event') were unreachable from the brief.
+    const related = await getFindings(token, { intel_ref: item.cyber_signal_id!, limit: 1 });
     decision = briefDecisionAffordance(related?.findings?.[0] ?? null);
     // D5 — Brief → Intelligence Event bridge: for a linked item, resolve the finding
     // context's supporting event and offer a direct drill-through. Reuses the existing

@@ -384,6 +384,30 @@ router.get(
         conditions.push(sqlFindingActive("f.status"));
       }
 
+      // intel_ref=<cyber_signal_id> — resolve findings across BOTH intelligence
+      // channels for one signal: the legacy per-signal finding (source_type
+      // cyber_signal/signal, source_id = signal) AND the event-native finding
+      // (source_type intelligence_event, source_id = an event the signal
+      // contributed to, via the intelligence_event_sources bridge). The Brief's
+      // decision affordance uses this — a brief item knows only its signal id,
+      // and without the bridge the event-sourced finding the pipeline actually
+      // creates was unreachable from the brief (dead-end).
+      if (req.query.intel_ref !== undefined) {
+        const ref = isNonEmptyString(req.query.intel_ref) ? req.query.intel_ref.trim() : "";
+        if (!isUuid(ref)) {
+          res.status(400).json({ error: "intel_ref_must_be_uuid" });
+          return;
+        }
+        params.push(ref);
+        const refParam = params.length;
+        conditions.push(`(
+          (f.source_type IN ('cyber_signal', 'signal') AND f.source_id = $${refParam}::uuid)
+          OR (f.source_type = 'intelligence_event' AND f.source_id IN (
+            SELECT ies.event_id FROM intelligence_event_sources ies
+             WHERE ies.cyber_signal_id = $${refParam}::uuid))
+        )`);
+      }
+
       // ready_for_decision=true — the spec §1.3 "ready for decision" queue: all
       // remediation work is done (operational_status derived to 'remediated')
       // but leadership has not yet made the governance call. A QUERY, never a

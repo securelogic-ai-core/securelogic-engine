@@ -589,6 +589,10 @@ export type FindingsParams = {
   // Ready-for-decision queue (spec §1.3): all remediation work derived complete
   // (operational_status=remediated) but no governance decision yet.
   ready_for_decision?: boolean;
+  // Resolve findings for one cyber-signal across BOTH intelligence channels
+  // (legacy per-signal AND event-native via the signal→event bridge). Used by
+  // the Brief decision affordance so event-sourced findings are reachable.
+  intel_ref?: string;
   // Stable keyset ordering for paged views (created_at DESC, id DESC).
   sort?: "created";
   // Keyset cursor from the previous page's nextCursor.
@@ -1999,6 +2003,7 @@ export async function getFindings(
     if (params?.owner) qs.set("owner", params.owner);
     if (params?.active) qs.set("active", "true");
     if (params?.ready_for_decision) qs.set("ready_for_decision", "true");
+    if (params?.intel_ref) qs.set("intel_ref", params.intel_ref);
     if (params?.sort) qs.set("sort", params.sort);
     if (params?.before) {
       qs.set("before_created_at", params.before.created_at);
