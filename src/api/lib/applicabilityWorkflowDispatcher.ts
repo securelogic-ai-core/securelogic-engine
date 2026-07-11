@@ -260,7 +260,30 @@ export async function dispatchApplicabilityWorkflow(
 
   // -------------------------------------------------------------
   // 3. Action recommendations → actions (GAP-3 ON CONFLICT pattern).
-  // -------------------------------------------------------------
+  //
+  // THE ACTIONS BELONG TO THE FINDING, NOT THE ASSESSMENT.
+  //
+  // They used to be linked to the assessment — siblings of the finding rather than
+  // its children. That broke the child→parent cascade (finding-lifecycle-spec §5),
+  // which only counts actions with source_type='finding'. The consequence was a
+  // dead-end in the flagship workflow: an operator could close every remediation
+  // action on an applicability finding and the finding would STILL sit at
+  // operational_status='open' forever — never reaching `remediated`, so never
+  // entering the ready-for-decision queue, and (since closure requires `remediated`
+  // or `accepted_risk`) closable only by falsely accepting the risk.
+  //
+  // Anchoring them to the finding makes the existing cascade pick them up with no
+  // new machinery: actions.ts already recomputes the parent on any finding-sourced
+  // status write. When there is NO finding (no finding_draft recommendation), the
+  // action still anchors to the assessment — there is no parent to roll up to.
+  //
+  // The dedupe indexes (20260730) are on the generic (organization_id, source_type,
+  // source_id) columns, so this re-anchoring keeps idempotency: one auto-action of
+  // each action_type per finding, instead of per assessment.
+  const actionAnchor = result.finding
+    ? { sourceType: "finding", sourceId: result.finding.id }
+    : { sourceType: APPLICABILITY_SOURCE_TYPE, sourceId: assessmentId };
+
   const ACTION_MAP: Partial<Record<WorkflowRecommendation["type"], { actionType: string; title: string; description: string }>> = {
     risk_review_recommendation: {
       actionType: APPLICABILITY_RISK_REVIEW_ACTION_TYPE,
@@ -306,8 +329,8 @@ export async function dispatchApplicabilityWorkflow(
         mapped.title,
         mapped.description,
         mapped.actionType,
-        APPLICABILITY_SOURCE_TYPE,
-        assessmentId,
+        actionAnchor.sourceType,
+        actionAnchor.sourceId,
         severityToActionPriority(severity)
       ]
     );

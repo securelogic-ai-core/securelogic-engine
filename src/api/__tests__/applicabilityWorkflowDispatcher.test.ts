@@ -134,10 +134,18 @@ describe("dispatchApplicabilityWorkflow — affected decision", () => {
     const actionTypes = actionCalls.map((c) => c.params[3]);
     expect(actionTypes).toContain(APPLICABILITY_RISK_REVIEW_ACTION_TYPE);
     expect(actionTypes).toContain(APPLICABILITY_EVIDENCE_ACTION_TYPE);
+    // The actions are the FINDING's remediation, so they anchor to the FINDING —
+    // not to the assessment, which would make them the finding's siblings rather
+    // than its children. The child→parent cascade (finding-lifecycle-spec §5) only
+    // counts actions with source_type='finding'; anchored to the assessment, an
+    // operator could close every one of these and the finding would still sit at
+    // operational_status='open' forever, never reaching the ready-for-decision
+    // queue and closable only by falsely accepting the risk.
     for (const c of actionCalls) {
       expect(c.text).toContain(`WHERE action_type = '${String(c.params[3])}'`);
-      expect(c.params).toContain(APPLICABILITY_SOURCE_TYPE);
-      expect(c.params).toContain("assess-1");
+      expect(c.params).toContain("finding");
+      expect(c.params).toContain("finding-1");
+      expect(c.params).not.toContain("assess-1");
     }
     expect(out.actionsCreated).toHaveLength(2);
     expect(out.actionsSkipped).toBe(0);
@@ -222,6 +230,12 @@ describe("dispatchApplicabilityWorkflow — decision coverage", () => {
     expect(actionCalls).toHaveLength(1);
     expect(actionCalls[0].params[3]).toBe(APPLICABILITY_HUMAN_REVIEW_ACTION_TYPE);
     expect(out.alerts).toHaveLength(0);
+
+    // NO finding was created here, so there is no parent to roll up to: the action
+    // correctly falls back to anchoring on the assessment. Re-anchoring to findings
+    // must not invent a parent that does not exist.
+    expect(actionCalls[0].params).toContain(APPLICABILITY_SOURCE_TYPE);
+    expect(actionCalls[0].params).toContain("assess-2");
   });
 
   it("needs_review → human_review action only", async () => {
