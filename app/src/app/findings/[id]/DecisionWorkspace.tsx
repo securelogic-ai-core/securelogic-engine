@@ -144,8 +144,32 @@ function AffectedGroup({
   );
 }
 
-function CandidateLinks({ candidates }: { candidates: FindingCandidateEntity[] }) {
+/**
+ * Suggested (not yet confirmed) entity links for this finding.
+ *
+ * B3: every candidate is now a Link to its entity. It rendered as dead <span>
+ * text while the ACCEPTED entities directly above it — same shape, same
+ * {type, id, name} — were already links via ENTITY_ROUTE. Nothing was missing but
+ * the anchor.
+ *
+ * B4: "Review in queue" was a hardcoded href="/queue", which dropped the user into
+ * the org-wide pending queue (4000+ rows) with no way back to the two suggestions
+ * they were actually looking at. It now carries the finding's signal so the queue
+ * opens scoped to THIS finding. All the plumbing already existed — the engine route
+ * has filtered on signal_id since 20260505 and the API client already sent it; only
+ * the link and the queue page never wired it up.
+ */
+function CandidateLinks({
+  candidates,
+  signalId,
+}: {
+  candidates: FindingCandidateEntity[];
+  signalId: string | null;
+}) {
   if (candidates.length === 0) return null;
+  const queueHref = signalId
+    ? `/queue?signal_id=${encodeURIComponent(signalId)}`
+    : "/queue";
   return (
     <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
       <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>
@@ -154,11 +178,16 @@ function CandidateLinks({ candidates }: { candidates: FindingCandidateEntity[] }
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         {candidates.map((c) => (
           <span key={`${c.type}:${c.id}`} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-            <span style={{ fontSize: 13, color: "#cbd5e1" }}>{c.name}</span>
+            <Link
+              href={`${ENTITY_ROUTE[c.type] ?? "#"}/${c.id}`}
+              style={{ fontSize: 13, color: "#93c5fd" }}
+            >
+              {c.name}
+            </Link>
             <Chip text="Needs review" color="#fcd34d" />
           </span>
         ))}
-        <Link href="/queue" style={{ fontSize: 12, color: "#93c5fd" }}>
+        <Link href={queueHref} style={{ fontSize: 12, color: "#93c5fd" }}>
           Review in queue →
         </Link>
       </div>
@@ -372,7 +401,10 @@ export function DecisionWorkspace({
           <AffectedGroup label="AI systems" items={affected.ai_systems} resolution={affected.resolution?.ai_systems} />
           <AffectedGroup label="Controls" items={affected.controls} resolution={affected.resolution?.controls} />
           <AffectedGroup label="Obligations" items={affected.obligations} resolution={affected.resolution?.obligations} />
-          <CandidateLinks candidates={affected.candidates ?? []} />
+          <CandidateLinks
+            candidates={affected.candidates ?? []}
+            signalId={context.intelligence.signal_ids?.[0] ?? null}
+          />
         </div>
       </details>
 

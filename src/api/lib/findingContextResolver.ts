@@ -85,6 +85,15 @@ export interface FindingContext {
     events: Array<Record<string, unknown>>;
     sources: Array<Record<string, unknown>>;
     timeline: Array<Record<string, unknown>>;
+    /**
+     * The cyber_signals this finding resolves to, after the intelligence_event_sources
+     * bridge has run. Exposed so the UI can scope the suggested-links review queue
+     * to THIS finding — the queue's engine route filters on signal_id, and the
+     * client cannot otherwise derive it: for an `intelligence_event`-sourced
+     * finding the signal id is reachable only through the bridge, and source_id is
+     * the EVENT id, not a signal id.
+     */
+    signal_ids: string[];
   };
   evidence: Array<Record<string, unknown>>;
   related_findings: Array<Record<string, unknown>>;
@@ -652,7 +661,7 @@ export async function resolveFindingContext(
     business_impact,
     owner,
     affected: { vendors, ai_systems, controls, obligations, resolution, candidates },
-    intelligence: { events, sources, timeline },
+    intelligence: { events, sources, timeline, signal_ids: signalIds },
     evidence,
     related_findings,
     activity: activityRows,

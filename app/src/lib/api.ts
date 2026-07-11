@@ -2105,6 +2105,9 @@ export type FindingContext = {
     events: Array<Record<string, unknown>>;
     sources: Array<Record<string, unknown>>;
     timeline: Array<Record<string, unknown>>;
+    // The signals this finding resolves to (post-bridge). Lets the UI scope the
+    // suggested-links queue to THIS finding. Optional: older payloads omit it.
+    signal_ids?: string[];
   };
   evidence: Array<Record<string, unknown>>;
   related_findings: Array<{ id: string; title: string; severity: string; status: string }>;
