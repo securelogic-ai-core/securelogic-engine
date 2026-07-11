@@ -87,7 +87,20 @@ export interface FindingContext {
     timeline: Array<Record<string, unknown>>;
   };
   evidence: Array<Record<string, unknown>>;
+  /**
+   * Tiers 1–4 of the relationship hierarchy, best-tier-first. Each row carries
+   * `relation_tier` (1–4) and `relation`. Tier 5 (vendor) is NEVER here — see
+   * `related_context.same_vendor`.
+   */
   related_findings: Array<Record<string, unknown>>;
+  /**
+   * Tier 5 — supporting context only. Same-vendor findings are summarised as a
+   * COUNT per vendor, never enumerated: vendor must not become the organizing
+   * principle of the workflow.
+   */
+  related_context: {
+    same_vendor: Array<{ vendor_id: string; vendor_name: string; finding_count: number }>;
+  };
   activity: Array<Record<string, unknown>>;
   whats_changed: { since: string | null; changes: Array<{ label: string; at: string }> };
 }
@@ -594,20 +607,210 @@ export async function resolveFindingContext(
     )
   ).rows;
 
-  // Related findings — same source object, same org (v1 heuristic).
-  const related_findings = finding.source_id
-    ? (
-        await client.query(
-          `SELECT id, title, severity, status
-             FROM findings
-            WHERE organization_id = $1 AND id <> $2
-              AND source_id = $3 AND source_type = $4
-            ORDER BY created_at DESC
-            LIMIT 10`,
-          [organizationId, findingId, finding.source_id, finding.source_type]
-        )
-      ).rows
-    : [];
+  /**
+   * RELATED FINDINGS — highest-confidence shared operational context, in
+   * deterministic tier order (ratified relationship hierarchy).
+   *
+   *   Tier 1  Same Intelligence      same CVE / advisory / intelligence event
+   *   Tier 2  Same Technical Target  same product / version / component   [SEE BELOW]
+   *   Tier 3  Same Enterprise Context same control / obligation / AI system / asset
+   *   Tier 4  Same Operational Context same assessment / same owner
+   *   Tier 5  Same Vendor            SUPPORTING CONTEXT ONLY — never a list
+   *
+   * A finding can qualify at several tiers; it is reported at its BEST (lowest)
+   * one, so the strongest true relationship is the one the customer sees.
+   *
+   * WHAT THIS REPLACES: `source_id = $3 AND source_type = $4` — a self-select for
+   * findings on the IDENTICAL source row. That is co-location, not relatedness, and
+   * it was structurally broken for the entire event channel: a partial unique index
+   * (idx_findings_intelligence_event_unique) permits at most ONE finding per
+   * (org, event), so an event-sourced finding could never have a related finding.
+   * A guaranteed zero. The old rule survives, correctly demoted to Tier 4
+   * ("same assessment") — two findings off one control test ARE related, just not
+   * as strongly as two findings about the same CVE.
+   *
+   * TIER 5 IS NOT IN THIS LIST, BY DESIGN. Vendor is supporting context and must
+   * never become the organizing principle of the workflow. A Microsoft CVE in an
+   * org with 1000+ Microsoft findings would otherwise return 1000 rows of unrelated
+   * vulnerabilities — the same uselessness as zero, wearing a different hat. Same-
+   * vendor is returned separately as a COUNT (`related_context.same_vendor`), which
+   * the UI renders as one navigational line, not a list. The customer is guided
+   * toward the affected assets and the operational work, not toward the vendor.
+   *
+   * TIER 2 IS A DELIBERATE, DOCUMENTED HOLE. It cannot be sourced today: findings
+   * carry no product linkage of any kind, and canonical_products is dark (no live
+   * writer). Faking it with vendor identity is precisely what canonicalProduct.ts
+   * forbids — "vendor identity ALONE is not a product identity". R4 fills this seam;
+   * until then the hierarchy honestly skips from 1 to 3 rather than inventing a rung.
+   */
+  const selfControlIds = controls.map((c) => c.id);
+  const selfObligationIds = obligations.map((o) => o.id);
+  const selfAiSystemIds = ai_systems.map((a) => a.id);
+  const selfVendorIds = vendors.map((v) => v.id);
+
+  const related_findings = (
+    await client.query(
+      `
+      WITH self_cve AS (
+        SELECT c.affected_cve AS cve FROM cyber_signals c
+         WHERE c.id = ANY($3::uuid[]) AND c.affected_cve IS NOT NULL
+        UNION
+        SELECT e.affected_cve FROM intelligence_events e
+         WHERE e.id = ANY($4::uuid[]) AND e.affected_cve IS NOT NULL
+      ),
+      -- Every signal/event about the same vulnerability, plus this finding's own.
+      -- cyber_signals is not org-filtered (signals may be global, organization_id
+      -- NULL); tenant safety comes from findings.organization_id on every arm below.
+      kin_signals AS (
+        SELECT c.id FROM cyber_signals c WHERE c.affected_cve IN (SELECT cve FROM self_cve)
+        UNION SELECT unnest($3::uuid[])
+      ),
+      kin_events AS (
+        SELECT e.id FROM intelligence_events e WHERE e.affected_cve IN (SELECT cve FROM self_cve)
+        UNION SELECT unnest($4::uuid[])
+      ),
+      -- Tier 3: signals touching the same enterprise entities this finding touches.
+      ctx_signals AS (
+        SELECT l.signal_id FROM signal_control_links l
+          WHERE l.organization_id = $1 AND l.control_id = ANY($7::uuid[]) AND l.deleted_at IS NULL
+        UNION
+        SELECT l.signal_id FROM signal_obligation_links l
+          WHERE l.organization_id = $1 AND l.obligation_id = ANY($8::uuid[]) AND l.deleted_at IS NULL
+        UNION
+        SELECT l.signal_id FROM signal_ai_system_links l
+          WHERE l.organization_id = $1 AND l.ai_system_id = ANY($9::uuid[]) AND l.deleted_at IS NULL
+      ),
+      ctx_control_assessments AS (
+        SELECT id FROM control_assessments
+         WHERE organization_id = $1 AND control_id = ANY($7::uuid[])
+      ),
+      ctx_obligation_assessments AS (
+        SELECT id FROM obligation_assessments
+         WHERE organization_id = $1 AND obligation_id = ANY($8::uuid[])
+      ),
+      ctx_ai_reviews AS (
+        SELECT id FROM governance_reviews
+         WHERE organization_id = $1 AND ai_system_id = ANY($9::uuid[])
+      ),
+      candidates AS (
+        -- TIER 1 — same intelligence (same CVE, advisory, or event; both channels)
+        SELECT f.id, 1 AS tier, 'same_intelligence'::text AS relation
+          FROM findings f
+         WHERE f.organization_id = $1 AND f.id <> $2
+           AND (
+             (f.source_type IN ('cyber_signal','signal') AND f.source_id IN (SELECT id FROM kin_signals))
+             OR (f.source_type = 'intelligence_event' AND f.source_id IN (SELECT id FROM kin_events))
+           )
+
+        UNION ALL
+        -- TIER 3 — same enterprise context (control / obligation / AI system)
+        SELECT f.id, 3, 'same_enterprise_context'
+          FROM findings f
+         WHERE f.organization_id = $1 AND f.id <> $2
+           AND (
+             (f.source_type IN ('cyber_signal','signal') AND f.source_id IN (SELECT signal_id FROM ctx_signals))
+             OR (f.source_type = 'control_test'      AND f.source_id IN (SELECT id FROM ctx_control_assessments))
+             OR (f.source_type = 'obligation_review' AND f.source_id IN (SELECT id FROM ctx_obligation_assessments))
+             OR (f.source_type = 'ai_review'         AND f.source_id IN (SELECT id FROM ctx_ai_reviews))
+           )
+
+        UNION ALL
+        -- TIER 4 — same operational context: the same assessment record
+        SELECT f.id, 4, 'same_assessment'
+          FROM findings f
+         WHERE f.organization_id = $1 AND f.id <> $2
+           AND $5::uuid IS NOT NULL AND f.source_id = $5::uuid AND f.source_type = $6
+
+        UNION ALL
+        -- TIER 4 — same operational context: the same person is doing the work
+        SELECT f.id, 4, 'same_owner'
+          FROM findings f
+         WHERE f.organization_id = $1 AND f.id <> $2
+           AND $10::uuid IS NOT NULL AND f.owner_user_id = $10::uuid
+           AND f.status IN ('open','in_progress')
+      ),
+      best AS (SELECT id, MIN(tier) AS tier FROM candidates GROUP BY id),
+      ranked AS (
+        SELECT f.id, f.title, f.severity, f.status,
+               b.tier AS relation_tier,
+               (SELECT c.relation FROM candidates c
+                 WHERE c.id = b.id AND c.tier = b.tier LIMIT 1) AS relation,
+               CASE f.severity
+                 WHEN 'Critical' THEN 0 WHEN 'High' THEN 1
+                 WHEN 'Moderate' THEN 2 ELSE 3 END AS sev_rank,
+               f.created_at
+          FROM best b
+          JOIN findings f ON f.id = b.id
+      ),
+      capped AS (
+        SELECT r.*,
+               ROW_NUMBER() OVER (
+                 PARTITION BY r.relation ORDER BY r.sev_rank, r.created_at DESC
+               ) AS rn
+          FROM ranked r
+      )
+      SELECT id, title, severity, status, relation_tier, relation
+        FROM capped
+       -- 'same_owner' is the WEAKEST relation in the hierarchy and the one most
+       -- prone to degenerating into noise: a small team means one person owns most
+       -- open work, so unbounded it asserts that everything is related to
+       -- everything. Capped at 2 so it can inform but never dominate — the same
+       -- down-rank-and-cap discipline applied to vendor at Tier 5. "All of my open
+       -- work" is a real question, but it is My Work's question, not this panel's.
+       WHERE NOT (relation = 'same_owner' AND rn > 2)
+       ORDER BY relation_tier ASC, sev_rank ASC, created_at DESC
+       LIMIT 10
+      `,
+      [
+        organizationId,
+        findingId,
+        signalIds,
+        eventIds,
+        finding.source_id,
+        finding.source_type,
+        selfControlIds,
+        selfObligationIds,
+        selfAiSystemIds,
+        finding.owner_user_id,
+      ]
+    )
+  ).rows;
+
+  /**
+   * TIER 5 — same vendor. A COUNT, never a list.
+   *
+   * Rendered as a single navigational line ("142 other findings affect Microsoft →")
+   * pointing at the vendor page. That keeps the vendor as supporting context and
+   * keeps the Decision Workspace pointed at the assets and the work.
+   */
+  const same_vendor =
+    selfVendorIds.length > 0
+      ? (
+          await client.query(
+            `
+            SELECT v.id AS vendor_id, v.name AS vendor_name, COUNT(DISTINCT f.id)::int AS finding_count
+              FROM vendors v
+              JOIN findings f ON f.organization_id = $1 AND f.id <> $2
+               AND (
+                 f.source_id IN (
+                   SELECT l.signal_id FROM signal_vendor_links l
+                    WHERE l.organization_id = $1 AND l.vendor_id = v.id AND l.deleted_at IS NULL
+                 ) AND f.source_type IN ('cyber_signal','signal')
+                 OR
+                 f.source_id IN (
+                   SELECT a.id FROM vendor_assessments a
+                    WHERE a.organization_id = $1 AND a.vendor_id = v.id
+                 ) AND f.source_type = 'vendor_review'
+               )
+             WHERE v.organization_id = $1 AND v.id = ANY($3::uuid[])
+             GROUP BY v.id, v.name
+             HAVING COUNT(DISTINCT f.id) > 0
+             ORDER BY COUNT(DISTINCT f.id) DESC
+            `,
+            [organizationId, findingId, selfVendorIds]
+          )
+        ).rows
+      : [];
 
   // Owner (org-scoped defensive lookup).
   const owner = finding.owner_user_id
@@ -655,6 +858,7 @@ export async function resolveFindingContext(
     intelligence: { events, sources, timeline },
     evidence,
     related_findings,
+    related_context: { same_vendor },
     activity: activityRows,
     whats_changed: { since, changes },
   };

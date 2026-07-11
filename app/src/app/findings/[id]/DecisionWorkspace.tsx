@@ -26,6 +26,7 @@ import { DECISION_TABS, DEFAULT_DECISION_TAB, type DecisionTab } from "./decisio
 import { legalDecisionTargets } from "./decisionTransitions";
 import { intelligenceEmptyCopy } from "./findingSourceCopy";
 import { topBusinessImpact } from "./businessImpact";
+import { RELATION_LABEL } from "./relationHierarchy";
 import {
   updateFindingStatusAction,
   updateFindingPriorityAction,
@@ -435,15 +436,43 @@ export function DecisionWorkspace({
         <div style={{ ...CARD, flex: 1, minWidth: 260 }}>
           <div style={H}>Related findings</div>
           {context.related_findings.length === 0 ? (
-            <span style={{ fontSize: 12, color: "#475569" }}>None</span>
+            <span style={{ fontSize: 12, color: "#475569" }}>
+              Nothing else is about this vulnerability, asset or assessment
+            </span>
           ) : (
             context.related_findings.map((r) => (
-              <div key={r.id} style={{ fontSize: 13 }}>
+              <div key={r.id} style={{ fontSize: 13, marginBottom: 4 }}>
                 <Link href={`/findings/${r.id}`} style={{ color: "#93c5fd" }}>{r.title}</Link>
                 <span style={{ color: "#64748b" }}> · {r.severity}</span>
+                {/* WHY it is related. Without this the list is an assertion the
+                    customer has to take on trust; with it, it is evidence. */}
+                {r.relation && (
+                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 1 }}>
+                    {RELATION_LABEL[r.relation] ?? r.relation}
+                  </div>
+                )}
               </div>
             ))
           )}
+
+          {/* TIER 5 — vendor is SUPPORTING CONTEXT. One navigational line per
+              vendor, never a list of findings. An org with 1000+ Microsoft
+              findings must not have its Decision Workspace turn into a vendor
+              browser; the work lives with the assets, not the supplier. */}
+          {(context.related_context?.same_vendor ?? []).map((v) => (
+            <div
+              key={v.vendor_id}
+              style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.06)" }}
+            >
+              <Link href={`/vendors/${v.vendor_id}`} style={{ fontSize: 12, color: "#93c5fd" }}>
+                {v.finding_count} other finding{v.finding_count === 1 ? "" : "s"} also affect{" "}
+                {v.vendor_name} →
+              </Link>
+              <div style={{ fontSize: 11, color: "#64748b", marginTop: 1 }}>
+                Same vendor — supporting context, not the same problem
+              </div>
+            </div>
+          ))}
         </div>
         <div style={{ ...CARD, flex: 1, minWidth: 260 }}>
           <div style={H}>Activity</div>

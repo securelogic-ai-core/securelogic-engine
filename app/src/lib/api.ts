@@ -2102,7 +2102,20 @@ export type FindingContext = {
     timeline: Array<Record<string, unknown>>;
   };
   evidence: Array<Record<string, unknown>>;
-  related_findings: Array<{ id: string; title: string; severity: string; status: string }>;
+  // Tiers 1–4 of the relationship hierarchy, best-tier-first. Tier 5 (vendor) is
+  // never in this list — it is a count in `related_context`, so vendor stays
+  // supporting context and never becomes the workflow's organizing principle.
+  related_findings: Array<{
+    id: string;
+    title: string;
+    severity: string;
+    status: string;
+    relation_tier?: number;
+    relation?: string;
+  }>;
+  related_context?: {
+    same_vendor: Array<{ vendor_id: string; vendor_name: string; finding_count: number }>;
+  };
   activity: Array<{ event_type: string; created_at: string; payload: unknown }>;
   whats_changed: { since: string | null; changes: Array<{ label: string; at: string }> };
 };
