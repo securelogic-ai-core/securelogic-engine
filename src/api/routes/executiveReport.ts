@@ -66,6 +66,9 @@ type ExecReportData = {
   generated_at:       string;
   org_name:           string;
   posture:            PostureRow | null;
+  // Comparison snapshot ~90 days back (or the earliest available) — powers the
+  // posture trend line. Null when only one snapshot exists.
+  posture_prior:      PostureRow | null;
   open_actions_count: number;
   risks_by_rating:           Array<{ rating: string; count: number }>;
   risks_by_inherent_rating:  Array<{ rating: string; count: number }>;
@@ -79,6 +82,19 @@ type ExecReportData = {
   }>;
   findings_by_severity: Array<{ severity: string; count: number }>;
   recent_findings:      RecentFinding[];
+  // 90-day decision record, sourced from the immutable lifecycle event
+  // streams (finding_lifecycle_events / risk_lifecycle_events) — the
+  // proof-of-action story: what we decided, closed, accepted, reopened.
+  period: {
+    days: number;
+    findings_closed: number;
+    findings_risk_accepted: number;
+    findings_reopened: number;
+    findings_remediated: number;
+    findings_new: number;
+    risks_closed: number;
+    risk_approvals: number;
+  };
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -175,7 +191,7 @@ async function assembleExecReport(organizationId: string): Promise<ExecReportDat
          FROM frameworks f
          JOIN requirements r ON r.framework_id = f.id
          WHERE f.organization_id = $1
-       );
+       ),
        req_status AS (
          SELECT
            fr.framework_id,
@@ -254,10 +270,78 @@ async function assembleExecReport(organizationId: string): Promise<ExecReportDat
       [organizationId]
     );
 
+    // 8. Posture trend comparison snapshot: latest snapshot at least ~90 days
+    // old; when the program is younger than that, the earliest snapshot.
+    // Only used when it is genuinely a DIFFERENT snapshot than the latest.
+  const priorPostureResult = await pg.query<PostureRow>(
+      `SELECT overall_score, overall_severity, snapshot_date::text AS snapshot_date
+       FROM posture_snapshots
+       WHERE organization_id = $1
+         AND snapshot_date <= CURRENT_DATE - INTERVAL '90 days'
+       ORDER BY snapshot_date DESC
+       LIMIT 1`,
+      [organizationId]
+    );
+  const earliestPostureResult = priorPostureResult.rows.length === 0
+      ? await pg.query<PostureRow>(
+          `SELECT overall_score, overall_severity, snapshot_date::text AS snapshot_date
+           FROM posture_snapshots
+           WHERE organization_id = $1
+           ORDER BY snapshot_date ASC
+           LIMIT 1`,
+          [organizationId]
+        )
+      : null;
+  const latestSnapshotDate = postureResult.rows[0]?.snapshot_date ?? null;
+  const priorCandidate = priorPostureResult.rows[0] ?? earliestPostureResult?.rows[0] ?? null;
+  const posturePrior =
+      priorCandidate && priorCandidate.snapshot_date !== latestSnapshotDate ? priorCandidate : null;
+
+    // 9. 90-day decision record from the immutable lifecycle streams —
+    // "here is what we decided and did", sourced from the audit substrate,
+    // never re-derived from mutable state.
+  const findingEventsResult = await pg.query<{ transition: string; count: string }>(
+      `SELECT transition, COUNT(*)::text AS count
+       FROM finding_lifecycle_events
+       WHERE organization_id = $1
+         AND created_at >= NOW() - INTERVAL '90 days'
+       GROUP BY transition`,
+      [organizationId]
+    );
+  const riskEventsResult = await pg.query<{ transition: string; count: string }>(
+      `SELECT transition, COUNT(*)::text AS count
+       FROM risk_lifecycle_events
+       WHERE organization_id = $1
+         AND created_at >= NOW() - INTERVAL '90 days'
+         AND transition IN ('close', 'approve')
+       GROUP BY transition`,
+      [organizationId]
+    );
+  const newFindingsResult = await pg.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+       FROM findings
+       WHERE organization_id = $1
+         AND created_at >= NOW() - INTERVAL '90 days'`,
+      [organizationId]
+    );
+  const transitionCount = (rows: Array<{ transition: string; count: string }>, t: string): number =>
+      parseInt(rows.find((r) => r.transition === t)?.count ?? "0", 10);
+
   return {
     generated_at:       new Date().toISOString(),
     org_name:           orgResult.rows[0]?.name ?? "Unknown Organization",
     posture:            postureResult.rows[0] ?? null,
+    posture_prior:      posturePrior,
+    period: {
+      days: 90,
+      findings_closed:        transitionCount(findingEventsResult.rows, "close"),
+      findings_risk_accepted: transitionCount(findingEventsResult.rows, "accept_risk"),
+      findings_reopened:      transitionCount(findingEventsResult.rows, "reopen"),
+      findings_remediated:    transitionCount(findingEventsResult.rows, "operational_remediated"),
+      findings_new:           parseInt(newFindingsResult.rows[0]?.count ?? "0", 10),
+      risks_closed:           transitionCount(riskEventsResult.rows, "close"),
+      risk_approvals:         transitionCount(riskEventsResult.rows, "approve"),
+    },
     open_actions_count: parseInt(actionsResult.rows[0]?.count ?? "0", 10),
     // Primary: residual rating per Decision §3. The PDF section
     // labelled "Risks by Rating" shows the post-controls assessment.
@@ -736,6 +820,86 @@ function generateExecutivePDF(data: ExecReportData, res: Response): void {
         );
     }
   }
+
+  // ─── Page 5: 90-Day Review — the proof-of-action story ──────────────────────
+  // Trend + decisions made, sourced from posture history and the immutable
+  // lifecycle event streams. This is the section a board actually asks for:
+  // are we improving, and what did we decide?
+
+  doc.addPage();
+
+  doc
+    .fillColor(TEXT_PRIMARY)
+    .font("Helvetica-Bold")
+    .fontSize(14)
+    .text("90-Day Review — Posture Trend & Decisions", margin, margin);
+  doc.rect(margin, doc.y + 4, contentW, 1.5).fill(TEAL);
+  doc.moveDown(1.2);
+
+  // Posture trend line
+  const curScore   = data.posture?.overall_score ?? null;
+  const priorScore = data.posture_prior?.overall_score ?? null;
+  if (curScore !== null && priorScore !== null) {
+    const delta = curScore - priorScore;
+    const deltaColor = delta > 0 ? GREEN : delta < 0 ? RED : TEXT_MUTED;
+    const deltaLabel = delta > 0 ? `▲ +${delta}` : delta < 0 ? `▼ ${delta}` : "◆ unchanged";
+    doc.fillColor(TEXT_PRIMARY).font("Helvetica-Bold").fontSize(11)
+      .text("Posture Trend", margin, doc.y);
+    doc.moveDown(0.4);
+    doc.fillColor(TEXT_PRIMARY).font("Helvetica").fontSize(10)
+      .text(
+        `Current posture ${curScore}/100 (${fmtDate(data.posture?.snapshot_date)}) vs ` +
+        `${priorScore}/100 (${fmtDate(data.posture_prior?.snapshot_date)}):  `,
+        margin, doc.y, { continued: true }
+      )
+      .fillColor(deltaColor).font("Helvetica-Bold")
+      .text(`${deltaLabel} points`);
+    doc.moveDown(1);
+  } else {
+    doc.fillColor(TEXT_MUTED).font("Helvetica-Oblique").fontSize(9)
+      .text(
+        "Posture trend requires at least two snapshots — the comparison appears once the program has history.",
+        margin, doc.y, { width: contentW }
+      );
+    doc.moveDown(1);
+  }
+
+  // Decisions & progress stat rows
+  doc.fillColor(TEXT_PRIMARY).font("Helvetica-Bold").fontSize(11)
+    .text(`Decisions & Progress (last ${data.period.days} days)`, margin, doc.y);
+  doc.rect(margin, doc.y + 4, contentW, 1).fill(RULE_COLOR);
+  doc.moveDown(0.8);
+
+  const periodRows: Array<{ label: string; value: number; color: string }> = [
+    { label: "Findings closed (governance decision)",     value: data.period.findings_closed,        color: GREEN },
+    { label: "Remediations completed",                    value: data.period.findings_remediated,    color: GREEN },
+    { label: "Risks formally accepted (findings)",        value: data.period.findings_risk_accepted, color: AMBER },
+    { label: "Findings reopened",                         value: data.period.findings_reopened,      color: data.period.findings_reopened > 0 ? RED : TEXT_MUTED },
+    { label: "New findings identified",                   value: data.period.findings_new,           color: TEXT_PRIMARY },
+    { label: "Register risks closed",                     value: data.period.risks_closed,           color: GREEN },
+    { label: "Risk treatments approved",                  value: data.period.risk_approvals,         color: TEXT_PRIMARY },
+  ];
+  let pry = doc.y;
+  for (const row of periodRows) {
+    doc.rect(margin, pry, contentW, 18).fill(periodRows.indexOf(row) % 2 === 0 ? LIGHT_BG : WHITE);
+    doc.fillColor(TEXT_PRIMARY).font("Helvetica").fontSize(9)
+      .text(row.label, margin + 6, pry + 5, { width: contentW - 70, lineBreak: false });
+    doc.fillColor(row.color).font("Helvetica-Bold").fontSize(10)
+      .text(String(row.value), margin, pry + 4, { width: contentW - 8, align: "right", lineBreak: false });
+    pry += 18;
+  }
+  doc.y = pry + 12;
+
+  doc
+    .fillColor(TEXT_MUTED)
+    .font("Helvetica-Oblique")
+    .fontSize(8)
+    .text(
+      "Every decision above is backed by an append-only lifecycle event with actor and timestamp " +
+      "(finding and risk lifecycle streams). The full trail is exportable for audit.",
+      margin, doc.y,
+      { width: contentW, lineGap: 1 }
+    );
 
   // ─── Footer stamp on all pages ────────────────────────────────────────────────
 
