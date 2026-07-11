@@ -6,10 +6,14 @@ import {
   getGovernanceReviewsForSystem,
   getAiGovernanceAssessments,
   getFindings,
+  getAiSystemSignals,
+  getAiSystemVendorDependencies,
   type AiSystem,
   type GovernanceReview,
   type AiGovernanceAssessment,
   type Finding,
+  type AiSystemLinkedSignal,
+  type AiVendorDependency,
 } from "@/lib/api";
 import { FindingCard } from "@/components/FindingCard";
 import { AssessmentStatusCard } from "./AssessmentStatusCard";
@@ -437,6 +441,123 @@ function ActionsCard({ systemId }: { systemId: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Section: External Intelligence (linked signals — W6 read-surface wiring)
+// ─────────────────────────────────────────────────────────────
+
+const SEV_COLOR: Record<string, string> = {
+  critical: "#fca5a5",
+  high: "#fdba74",
+  moderate: "#fcd34d",
+  medium: "#fcd34d",
+  low: "#86efac",
+};
+
+function ExternalIntelligenceSection({ signals }: { signals: AiSystemLinkedSignal[] }) {
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
+          External Intelligence
+        </h2>
+        <span
+          className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
+          style={{
+            background: signals.length > 0 ? "rgba(245,158,11,0.15)" : "rgba(148,163,184,0.12)",
+            color: signals.length > 0 ? "#fcd34d" : "#475569",
+          }}
+        >
+          {signals.length}
+        </span>
+      </div>
+      {signals.length === 0 ? (
+        <p className="text-sm" style={{ color: "#475569" }}>
+          No external signals are linked to this system. New matches appear in the{" "}
+          <Link href="/queue" style={{ color: "#93c5fd" }}>review queue</Link> for confirmation.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {signals.map((s) => (
+            <div
+              key={s.link_id}
+              className="rounded-lg border p-3"
+              style={{ background: "rgba(255,255,255,0.02)", borderColor: "#1e2d45" }}
+            >
+              <div className="flex items-center gap-2 flex-wrap">
+                {s.severity && (
+                  <span className="text-xs font-semibold" style={{ color: SEV_COLOR[s.severity.toLowerCase()] ?? "#94a3b8" }}>
+                    {s.severity}
+                  </span>
+                )}
+                {s.affected_cve && <span className="text-xs" style={{ color: "#94a3b8" }}>{s.affected_cve}</span>}
+                {s.source && <span className="text-xs" style={{ color: "#475569" }}>via {s.source}</span>}
+                <span className="text-xs ml-auto" style={{ color: "#475569" }}>linked {fmt(s.link_created_at)}</span>
+              </div>
+              <p className="text-sm mt-1" style={{ color: "#cbd5e1" }}>
+                {s.event_summary ?? s.normalized_summary ?? "External signal"}
+              </p>
+              {s.intelligence_event_id && (
+                <Link
+                  href={`/intelligence/${encodeURIComponent(s.intelligence_event_id)}`}
+                  className="text-xs"
+                  style={{ color: "#93c5fd" }}
+                >
+                  View intelligence event →
+                </Link>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Section: Vendor Dependencies (supply chain — W6 read-surface wiring)
+// ─────────────────────────────────────────────────────────────
+
+const ROLE_LABELS: Record<string, string> = {
+  model_provider: "Model provider",
+  runtime: "Runtime",
+  registry: "Registry",
+  training_data: "Training data",
+};
+
+function VendorDependenciesCard({ dependencies }: { dependencies: AiVendorDependency[] }) {
+  return (
+    <div className="rounded-xl border p-4" style={{ background: "rgba(255,255,255,0.02)", borderColor: "#1e2d45" }}>
+      <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "#64748b" }}>
+        Vendor Dependencies ({dependencies.length})
+      </h3>
+      {dependencies.length === 0 ? (
+        <p className="text-xs" style={{ color: "#475569" }}>
+          No vendor dependencies recorded. A model provider or runtime dependency lets vendor
+          incidents cascade to this system automatically.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {dependencies.map((d) => (
+            <div key={d.dependency_id} className="flex items-center gap-2 text-sm">
+              <Link href={`/vendors/${d.vendor_id}`} style={{ color: "#93c5fd" }}>
+                {d.vendor_name}
+              </Link>
+              <span className="text-xs" style={{ color: "#64748b" }}>
+                {ROLE_LABELS[d.dependency_role] ?? d.dependency_role}
+              </span>
+              {d.vendor_criticality && (
+                <span className="text-xs ml-auto" style={{ color: SEV_COLOR[d.vendor_criticality.toLowerCase()] ?? "#64748b" }}>
+                  {d.vendor_criticality}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Page
 // ─────────────────────────────────────────────────────────────
 
@@ -451,11 +572,13 @@ export default async function AiSystemDetailPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const [system, reviewsData, assessmentsData, findingsData] = await Promise.all([
+  const [system, reviewsData, assessmentsData, findingsData, linkedSignals, vendorDeps] = await Promise.all([
     getAiSystem(token, id),
     getGovernanceReviewsForSystem(token, id, 20),
     getAiGovernanceAssessments(token, id, 20),
     getFindings(token, { limit: 50 }),
+    getAiSystemSignals(token, id, 10),
+    getAiSystemVendorDependencies(token, id),
   ]);
 
   if (!system) redirect("/ai-systems");
@@ -524,6 +647,7 @@ export default async function AiSystemDetailPage({
         {/* Left: main content */}
         <div className="flex-1 min-w-0 space-y-8">
           <OpenFindingsSection findings={openFindings} systemId={system.id} />
+          <ExternalIntelligenceSection signals={linkedSignals} />
           <GovernanceReviewsSection reviews={reviews} />
           <GovernanceAssessmentsSection
             assessments={assessments}
@@ -534,6 +658,7 @@ export default async function AiSystemDetailPage({
         {/* Right: sidebar */}
         <div className="w-full lg:w-72 flex-shrink-0 space-y-4">
           <SystemDetailsCard system={system} />
+          <VendorDependenciesCard dependencies={vendorDeps} />
           <GovernanceSummaryCard
             openFindings={openFindings}
             reviewCount={reviews.length}

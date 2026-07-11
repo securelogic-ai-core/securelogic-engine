@@ -6,12 +6,16 @@ import {
   getVendorAssessmentsForVendor,
   getVendorReviews,
   getVendorFindings,
+  getVendorSignalContext,
+  getVendorAiDependencies,
   listVendorAssuranceDocuments,
   getVendorAssuranceExtraction,
   type Vendor,
   type VendorAssessment,
   type VendorReview,
   type VendorFinding,
+  type VendorSignalContext,
+  type VendorAiDependency,
   type VendorAssuranceDocument,
   type VendorAssuranceExtractionResponse,
 } from "@/lib/api";
@@ -648,11 +652,17 @@ export default async function VendorDetailPage({
     entitlementLevel === "team";
   if (!isPlatformUser) redirect("/dashboard");
 
-  const [vendor, assessmentsData, reviewsData, vendorFindingsData] = await Promise.all([
+  const [vendor, assessmentsData, reviewsData, vendorFindingsData, signalContext, aiDeps] = await Promise.all([
     getVendor(token, id),
     getVendorAssessmentsForVendor(token, id, 20),
     getVendorReviews(token, id, 20),
     getVendorFindings(token, id),
+    // Live intelligence: matched external signals for this vendor (previously
+    // only fetched on the assess page — the resting detail view answered "how
+    // risky is this vendor NOW" with a stale point-in-time card).
+    getVendorSignalContext(token, id),
+    // Concentration signal: which AI systems depend on this vendor.
+    getVendorAiDependencies(token, id),
   ]);
 
   if (!vendor) redirect("/vendors");
@@ -732,6 +742,7 @@ export default async function VendorDetailPage({
         {/* Left: main content */}
         <div className="flex-1 min-w-0 space-y-8">
           <OpenFindingsSectionClient findings={openFindings} vendorId={vendor.id} />
+          <LiveIntelligenceSection context={signalContext} vendorId={vendor.id} />
           <AssessmentHistorySection
             assessments={assessments}
             assessmentIdsWithFindings={assessmentIdsWithFindings}
@@ -746,6 +757,7 @@ export default async function VendorDetailPage({
         {/* Right: sidebar */}
         <div className="w-full lg:w-72 flex-shrink-0 space-y-4">
           <VendorDetailsCard vendor={vendor} />
+          <DependentAiSystemsCard dependencies={aiDeps} />
           <RiskSummaryCard
             vendor={vendor}
             openFindingCount={openFindings.length}
@@ -761,6 +773,124 @@ export default async function VendorDetailPage({
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Live Intelligence (W5 read-surface wiring): matched external signals for
+// this vendor, on the RESTING detail view — previously fetched only on the
+// assess page, so "how risky is this vendor NOW" had no live answer here.
+// ─────────────────────────────────────────────────────────────
+
+const RELEVANCE_COLOR: Record<string, string> = {
+  high: "#fca5a5",
+  medium: "#fcd34d",
+  low: "#86efac",
+};
+
+function LiveIntelligenceSection({
+  context,
+  vendorId,
+}: {
+  context: VendorSignalContext | null;
+  vendorId: string;
+}) {
+  const matches = context?.matchedSignals ?? [];
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
+          Live Intelligence
+        </h2>
+        <span
+          className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
+          style={{
+            background: matches.length > 0 ? "rgba(245,158,11,0.15)" : "rgba(148,163,184,0.12)",
+            color: matches.length > 0 ? "#fcd34d" : "#475569",
+          }}
+        >
+          {matches.length}
+        </span>
+      </div>
+      {matches.length === 0 ? (
+        <p className="text-sm" style={{ color: "#475569" }}>
+          No external signals currently match this vendor.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {context?.overallRiskSummary && (
+            <p className="text-sm" style={{ color: "#cbd5e1" }}>{context.overallRiskSummary}</p>
+          )}
+          {matches.map((m, i) => (
+            <div
+              key={i}
+              className="rounded-lg border p-3"
+              style={{ background: "rgba(255,255,255,0.02)", borderColor: "#1e2d45" }}
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className="text-xs font-semibold"
+                  style={{ color: RELEVANCE_COLOR[(m.relevance ?? "").toLowerCase()] ?? "#94a3b8" }}
+                >
+                  {m.severity}
+                </span>
+                <span className="text-sm" style={{ color: "#e2e8f0" }}>{m.title}</span>
+              </div>
+            </div>
+          ))}
+          <Link
+            href={`/vendors/${vendorId}/assess`}
+            className="inline-block text-xs font-medium"
+            style={{ color: "#00c4b4" }}
+          >
+            Reassess with this intelligence →
+          </Link>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Dependent AI Systems (W5 read-surface wiring): the reverse supply-chain
+// edge — which AI systems break if this vendor does (concentration risk).
+// ─────────────────────────────────────────────────────────────
+
+const DEP_ROLE_LABELS: Record<string, string> = {
+  model_provider: "Model provider",
+  runtime: "Runtime",
+  registry: "Registry",
+  training_data: "Training data",
+};
+
+function DependentAiSystemsCard({ dependencies }: { dependencies: VendorAiDependency[] }) {
+  return (
+    <div
+      className="rounded-lg border p-4"
+      style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e2d45" }}
+    >
+      <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "#64748b" }}>
+        Dependent AI Systems ({dependencies.length})
+      </h3>
+      {dependencies.length === 0 ? (
+        <p className="text-xs" style={{ color: "#475569" }}>
+          No AI systems record a dependency on this vendor.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {dependencies.map((d) => (
+            <div key={d.dependency_id} className="flex items-center gap-2 text-sm">
+              <Link href={`/ai-systems/${d.ai_system_id}`} style={{ color: "#93c5fd" }}>
+                {d.ai_system_name}
+              </Link>
+              <span className="text-xs ml-auto" style={{ color: "#64748b" }}>
+                {DEP_ROLE_LABELS[d.dependency_role] ?? d.dependency_role}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

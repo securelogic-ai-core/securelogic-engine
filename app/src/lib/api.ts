@@ -2536,6 +2536,106 @@ export async function getVendorSignalContext(
   }
 }
 
+// ── Detail-page linkage reads (W5/W6 read-surface wiring) ──────────────────
+// The DB already connects vendors ↔ signals ↔ AI systems ↔ dependencies; these
+// surface that canonical linkage on the resting detail pages so "how risky is
+// this NOW / what does it depend on" is answered without page-hopping.
+
+// One external signal linked to an AI system (signal_ai_system_links + the
+// event bridge when the signal contributed to a canonical event).
+export type AiSystemLinkedSignal = {
+  link_id: string;
+  link_created_at: string;
+  id: string;
+  source: string | null;
+  signal_type: string | null;
+  severity: string | null;
+  normalized_summary: string | null;
+  affected_vendor: string | null;
+  affected_cve: string | null;
+  ingestion_timestamp: string | null;
+  intelligence_event_id: string | null;
+  event_summary: string | null;
+};
+
+export async function getAiSystemSignals(
+  apiKey: string,
+  aiSystemId: string,
+  limit = 10
+): Promise<AiSystemLinkedSignal[]> {
+  try {
+    const res = await engineFetch(
+      `/api/ai-systems/${encodeURIComponent(aiSystemId)}/signals?limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return [];
+    const body = (await res.json()) as { signals?: AiSystemLinkedSignal[] };
+    return body.signals ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// AI system → vendor dependency (ai_system_vendor_dependencies).
+export type AiVendorDependency = {
+  dependency_id: string;
+  dependency_role: string;
+  notes: string | null;
+  created_at: string;
+  vendor_id: string;
+  vendor_name: string;
+  vendor_criticality: string | null;
+  vendor_status: string | null;
+};
+
+export async function getAiSystemVendorDependencies(
+  apiKey: string,
+  aiSystemId: string,
+  limit = 25
+): Promise<AiVendorDependency[]> {
+  try {
+    const res = await engineFetch(
+      `/api/ai-systems/${encodeURIComponent(aiSystemId)}/vendors?limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return [];
+    const body = (await res.json()) as { dependencies?: AiVendorDependency[] };
+    return body.dependencies ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// Vendor → dependent AI systems (the reverse edge; concentration signal).
+export type VendorAiDependency = {
+  dependency_id: string;
+  dependency_role: string;
+  notes: string | null;
+  created_at: string;
+  ai_system_id: string;
+  ai_system_name: string;
+  ai_system_criticality: string | null;
+  ai_system_deployment_status: string | null;
+};
+
+export async function getVendorAiDependencies(
+  apiKey: string,
+  vendorId: string,
+  limit = 25
+): Promise<VendorAiDependency[]> {
+  try {
+    const res = await engineFetch(
+      `/api/vendors/${encodeURIComponent(vendorId)}/ai-systems?limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return [];
+    const body = (await res.json()) as { dependencies?: VendorAiDependency[] };
+    return body.dependencies ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export async function getControlComplianceContext(
   apiKey: string,
   controlId: string
