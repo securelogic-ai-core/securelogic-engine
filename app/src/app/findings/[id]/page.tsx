@@ -1,7 +1,14 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
-import { getFinding, getActionsForFinding, getFindingContext, type Finding, type Action } from "@/lib/api";
+import {
+  getFinding,
+  getActionsForFinding,
+  getFindingContext,
+  getTeamMembers,
+  type Finding,
+  type Action,
+} from "@/lib/api";
 import { ActionCard } from "@/components/ActionCard";
 import { FindingEvidenceSection } from "@/components/findings/FindingEvidenceSection";
 import { AddActionForm } from "./AddActionForm";
@@ -12,6 +19,7 @@ import {
   updateFindingPriorityAction,
   updateFindingDueDateAction,
   updateActionStatusAction,
+  updateActionAction,
 } from "./actions";
 
 // ─────────────────────────────────────────────────────────────
@@ -279,9 +287,14 @@ function FindingDetailsCard({ finding }: { finding: Finding }) {
 function RemediationActionsSection({
   finding,
   actions,
+  owners,
 }: {
   finding: Finding;
   actions: Action[];
+  // Optional: the legacy (flag-off) detail page renders this section WITHOUT owners,
+  // so it stays byte-identical — no owner chip, no assign control, exactly as before.
+  // Only the Decision Workspace passes them.
+  owners?: { id: string; label: string }[];
 }) {
   return (
     <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
@@ -303,16 +316,21 @@ function RemediationActionsSection({
               key={action.id}
               action={action}
               findingId={finding.id}
+              owners={owners}
               onStatusChange={async (actionId, newStatus) => {
                 "use server";
                 await updateActionStatusAction(finding.id, actionId, newStatus);
               }}
+              onPlanChange={owners ? async (actionId, patch) => {
+                "use server";
+                await updateActionAction(finding.id, actionId, patch);
+              } : undefined}
             />
           ))}
         </div>
       )}
 
-      <AddActionForm findingId={finding.id} />
+      <AddActionForm findingId={finding.id} owners={owners} />
     </div>
   );
 }
@@ -321,10 +339,18 @@ function RemediationActionsSection({
 // requires before the finding may be called remediated. Evidence lives here, not
 // on Overview, because attaching it IS part of doing the work — Overview only
 // reports the resulting count.
-function RemediationTab({ finding, actions }: { finding: Finding; actions: Action[] }) {
+function RemediationTab({
+  finding,
+  actions,
+  owners,
+}: {
+  finding: Finding;
+  actions: Action[];
+  owners: { id: string; label: string }[];
+}) {
   return (
     <>
-      <RemediationActionsSection finding={finding} actions={actions} />
+      <RemediationActionsSection finding={finding} actions={actions} owners={owners} />
       <FindingEvidenceSection findingId={finding.id} />
     </>
   );
@@ -345,15 +371,22 @@ export default async function FindingDetailPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const [findingData, actionsData] = await Promise.all([
+  const [findingData, actionsData, teamData] = await Promise.all([
     getFinding(token, id),
     getActionsForFinding(token, id),
+    // Org members, so remediation work can be ASSIGNED from the finding you are
+    // looking at. Read-only and best-effort: if the team endpoint is unavailable the
+    // owner controls simply do not render, and the tab degrades to what it was.
+    getTeamMembers(token),
   ]);
 
   if (!findingData) redirect("/findings");
 
   const finding = findingData.finding;
   const actions = actionsData?.actions ?? [];
+  const owners = (teamData?.members ?? [])
+    .filter((m) => m.status === "active")
+    .map((m) => ({ id: m.id, label: m.name?.trim() || m.email }));
 
   // ERIP Package 3 (Decision Workspace) — DARK. When the flag is on AND the engine
   // returns a context (its own flag on too — two-switch), render the Decision
@@ -364,7 +397,7 @@ export default async function FindingDetailPage({
     if (context) {
       return (
         <div className="max-w-6xl mx-auto px-6 py-12">
-          <DecisionWorkspace finding={finding} context={context}>
+          <DecisionWorkspace finding={finding} context={context} owners={owners}>
             {finding.recommendation ? (
               <p className="text-sm mb-4" style={{ color: "#cbd5e1", whiteSpace: "pre-wrap" }}>
                 {finding.recommendation}
@@ -374,7 +407,7 @@ export default async function FindingDetailPage({
                 {recommendationEmptyCopy(finding.source_type)}
               </p>
             )}
-            <RemediationTab finding={finding} actions={actions} />
+            <RemediationTab finding={finding} actions={actions} owners={owners} />
           </DecisionWorkspace>
         </div>
       );

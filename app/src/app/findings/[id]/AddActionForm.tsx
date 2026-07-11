@@ -21,17 +21,28 @@ const fieldStyle: React.CSSProperties = {
   outline: "none",
 };
 
-interface Props {
-  findingId: string;
+export interface OwnerOption {
+  id: string;
+  label: string;
 }
 
-export function AddActionForm({ findingId }: Props) {
+interface Props {
+  findingId: string;
+  /** Org members, for assigning the work at the moment you create it. */
+  owners?: OwnerOption[];
+}
+
+export function AddActionForm({ findingId, owners = [] }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState("planned");
   const [dueDate, setDueDate] = useState("");
+  // POST /api/actions has always accepted owner_user_id; the form never sent it, so
+  // every remediation action was born unassigned. Assigning at creation is the
+  // natural moment — it is when you know who is doing the work.
+  const [ownerUserId, setOwnerUserId] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   function reset() {
@@ -39,6 +50,7 @@ export function AddActionForm({ findingId }: Props) {
     setDescription("");
     setPriority("planned");
     setDueDate("");
+    setOwnerUserId("");
     setError(null);
     setIsOpen(false);
   }
@@ -56,6 +68,7 @@ export function AddActionForm({ findingId }: Props) {
         description: description.trim() || undefined,
         priority,
         due_date: dueDate || undefined,
+        owner_user_id: ownerUserId || null,
       });
       if (result.error) {
         setError(result.error);
@@ -117,6 +130,26 @@ export function AddActionForm({ findingId }: Props) {
             style={{ ...fieldStyle, resize: "vertical" }}
           />
         </div>
+
+        {owners.length > 0 && (
+          <div>
+            <label className="block text-xs font-medium mb-1" style={{ color: "#94a3b8" }}>
+              Owner
+            </label>
+            <select
+              value={ownerUserId}
+              onChange={(e) => setOwnerUserId(e.target.value)}
+              style={fieldStyle}
+            >
+              <option value="">Unassigned</option>
+              {owners.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div>
           <label className="block text-xs font-medium mb-2" style={{ color: "#94a3b8" }}>

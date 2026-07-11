@@ -32,6 +32,7 @@ import {
   updateFindingPriorityAction,
   updateFindingDecisionStateAction,
   markFindingReviewedAction,
+  assignFindingOwnerAction,
 } from "./actions";
 
 const DECISION_LABELS: Record<string, string> = {
@@ -207,10 +208,13 @@ const H: React.CSSProperties = { fontSize: 12, textTransform: "uppercase", lette
 export function DecisionWorkspace({
   finding,
   context,
+  owners = [],
   children,
 }: {
   finding: Finding;
   context: FindingContext;
+  /** Org members, for assigning the finding. Empty => owner renders as plain text. */
+  owners?: { id: string; label: string }[];
   // The recommendation + remediation-actions block (Zone F) is composed by the
   // server page (reusing AddActionForm/ActionCard) and passed in as children.
   children: React.ReactNode;
@@ -322,7 +326,40 @@ export function DecisionWorkspace({
           {finding.priority ? <Chip text={finding.priority} color="#fcd34d" /> : null}
         </div>
         <div style={{ fontSize: 13, color: "#94a3b8", display: "flex", gap: 16, flexWrap: "wrap" }}>
-          <span>Owner: {context.owner?.email ?? "Unassigned"}</span>
+          {/* Ownership was read-only text. The engine has accepted owner_user_id on
+              PATCH /api/findings/:id since 20260410; the only way to set it was a
+              bulk op from the LIST that assigned to yourself. From the finding you
+              were actually looking at — the one place you have the context to decide
+              who should own it — you could not. */}
+          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            Owner:
+            {owners.length > 0 ? (
+              <select
+                value={context.owner?.id ?? ""}
+                disabled={pending}
+                onChange={(e) =>
+                  run(() => assignFindingOwnerAction(finding.id, e.target.value || null))
+                }
+                style={{
+                  background: "#0f1722",
+                  border: "1px solid #1e293b",
+                  color: "#e2e8f0",
+                  fontSize: 12,
+                  borderRadius: 6,
+                  padding: "2px 6px",
+                }}
+              >
+                <option value="">Unassigned</option>
+                {owners.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span>{context.owner?.email ?? "Unassigned"}</span>
+            )}
+          </span>
           <span>SLA: {fmt((finding as { due_date?: string | null }).due_date)}</span>
           <span>Confidence: {finding.confidence ?? "—"}</span>
         </div>

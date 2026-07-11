@@ -64,17 +64,54 @@ function daysUntil(dateStr: string): number {
   return Math.ceil((new Date(dateStr).getTime() - now.getTime()) / 86400000);
 }
 
+const PRIORITY_OPTIONS = ["immediate", "near_term", "planned", "watch"] as const;
+
+const FIELD_STYLE: React.CSSProperties = {
+  background: "#0f1722",
+  border: "1px solid #1e293b",
+  color: "#e2e8f0",
+  fontSize: 12,
+  borderRadius: 6,
+  padding: "3px 6px",
+};
+
+export interface ActionOwnerOption {
+  id: string;
+  label: string;
+}
+
 interface Props {
   action: Action;
   findingId: string;
   onStatusChange: (actionId: string, newStatus: Action["status"]) => Promise<void>;
+  /**
+   * Owner/priority/due-date edit. Optional: when omitted the card is exactly the
+   * status-only card it has always been, so any other caller is unaffected.
+   */
+  onPlanChange?: (
+    actionId: string,
+    patch: { owner_user_id?: string | null; priority?: string; due_date?: string | null }
+  ) => Promise<void>;
+  owners?: ActionOwnerOption[];
 }
 
-export function ActionCard({ action, findingId: _findingId, onStatusChange }: Props) {
+export function ActionCard({
+  action,
+  findingId: _findingId,
+  onStatusChange,
+  onPlanChange,
+  owners,
+}: Props) {
   const [isPending, startTransition] = useTransition();
   const [optimisticStatus, setOptimisticStatus] = useState(action.status);
+  // "Start" used to be the end of the road: you could begin a piece of work but not
+  // say who was doing it, how urgent it was, or when it was due — and you could
+  // never change your mind. The engine has accepted all three since 20260410; only
+  // the UI never sent them. Collapsed by default so the card stays scannable.
+  const [planOpen, setPlanOpen] = useState(false);
 
   const transitions = STATUS_TRANSITIONS[optimisticStatus] ?? [];
+  const canPlan = typeof onPlanChange === "function";
 
   function handleTransition(newStatus: Action["status"]) {
     const prev = optimisticStatus;
@@ -87,6 +124,21 @@ export function ActionCard({ action, findingId: _findingId, onStatusChange }: Pr
       }
     });
   }
+
+  function handlePlan(patch: {
+    owner_user_id?: string | null;
+    priority?: string;
+    due_date?: string | null;
+  }) {
+    if (!onPlanChange) return;
+    startTransition(async () => {
+      await onPlanChange(action.id, patch);
+    });
+  }
+
+  const ownerLabel =
+    owners?.find((o) => o.id === action.owner_user_id)?.label ??
+    (action.owner_user_id ? "Assigned" : "Unassigned");
 
   let dueDateNode: React.ReactNode = null;
   if (action.due_date && optimisticStatus !== "closed") {
@@ -143,7 +195,15 @@ export function ActionCard({ action, findingId: _findingId, onStatusChange }: Pr
         </div>
       )}
 
-      {transitions.length > 0 && (
+      {/* Who is doing this. An unowned action is a wish, not a plan — so the owner
+          is stated on the face of the card, not hidden behind the editor. */}
+      {canPlan && (
+        <div className="text-xs mb-2" style={{ color: action.owner_user_id ? "#94a3b8" : "#64748b" }}>
+          {action.owner_user_id ? `Owner: ${ownerLabel}` : "Unassigned"}
+        </div>
+      )}
+
+      {(transitions.length > 0 || canPlan) && (
         <div className="flex items-center gap-2 flex-wrap mt-2">
           {transitions.map((t) => (
             <button
@@ -156,6 +216,63 @@ export function ActionCard({ action, findingId: _findingId, onStatusChange }: Pr
               {t.label}
             </button>
           ))}
+          {canPlan && (
+            <button
+              onClick={() => setPlanOpen((o) => !o)}
+              disabled={isPending}
+              style={BUTTON_STYLE}
+              className="transition-colors disabled:opacity-50 hover:border-slate-500 hover:text-slate-200"
+            >
+              {planOpen ? "Done" : action.owner_user_id ? "Reassign / reschedule" : "Assign"}
+            </button>
+          )}
+        </div>
+      )}
+
+      {canPlan && planOpen && (
+        <div
+          className="mt-3 pt-3 flex flex-wrap gap-3 items-center"
+          style={{ borderTop: "1px solid #1e293b" }}
+        >
+          <label className="flex items-center gap-1.5">
+            <span className="text-xs" style={{ color: "#64748b" }}>Owner</span>
+            <select
+              value={action.owner_user_id ?? ""}
+              disabled={isPending}
+              onChange={(e) => handlePlan({ owner_user_id: e.target.value || null })}
+              style={FIELD_STYLE}
+            >
+              <option value="">Unassigned</option>
+              {(owners ?? []).map((o) => (
+                <option key={o.id} value={o.id}>{o.label}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex items-center gap-1.5">
+            <span className="text-xs" style={{ color: "#64748b" }}>Priority</span>
+            <select
+              value={action.priority}
+              disabled={isPending}
+              onChange={(e) => handlePlan({ priority: e.target.value })}
+              style={FIELD_STYLE}
+            >
+              {PRIORITY_OPTIONS.map((p) => (
+                <option key={p} value={p}>{PRIORITY_LABELS[p]}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex items-center gap-1.5">
+            <span className="text-xs" style={{ color: "#64748b" }}>Due</span>
+            <input
+              type="date"
+              defaultValue={action.due_date ?? ""}
+              disabled={isPending}
+              onChange={(e) => handlePlan({ due_date: e.target.value || null })}
+              style={FIELD_STYLE}
+            />
+          </label>
         </div>
       )}
     </div>
