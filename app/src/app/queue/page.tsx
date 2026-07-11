@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
+import { buildQueueHref, isUuid } from "./queueHref";
 import {
   getMe,
   getSignalMatchSuggestions,
@@ -47,6 +48,7 @@ function isSort(v: string | undefined): v is "created-desc" | "score-desc" {
   return v === "created-desc" || v === "score-desc";
 }
 
+
 export default async function QueuePage({
   searchParams,
 }: {
@@ -79,10 +81,18 @@ export default async function QueuePage({
     ? Math.floor(Number(sp.offset))
     : 0;
 
+  // B4 — arrive scoped to the finding you came from, not in a 4000-row dump.
+  // The engine route has filtered on signal_id since 20260505 and the API client
+  // already sent it; this page was the only place that dropped it. An invalid
+  // value is ignored rather than 400ing the whole queue — a bad deep link should
+  // degrade to the full queue, not to an error page.
+  const signalId = isUuid(sp.signal_id) ? sp.signal_id : undefined;
+
   const [listData, counts] = await Promise.all([
     getSignalMatchSuggestions(token, {
       status: "pending",
       target_type: targetFilter,
+      signal_id: signalId,
       sort,
       limit: PAGE_SIZE,
       offset,
@@ -165,13 +175,11 @@ export default async function QueuePage({
   const hasNext = pageEnd < totalPending;
   const hasPrev = offset > 0;
 
+  // Every /queue link on this page goes through buildQueueHref, so the finding
+  // scope survives paging, sorting and the filter chips. It used to be rebuilt
+  // ad hoc in three places, which is how the scope got dropped in the first place.
   function pageHref(nextOffset: number) {
-    const qs = new URLSearchParams();
-    if (targetFilter) qs.set("target_type", targetFilter);
-    if (sort !== "created-desc") qs.set("sort", sort);
-    if (nextOffset > 0) qs.set("offset", String(nextOffset));
-    const s = qs.toString();
-    return s ? `/queue?${s}` : "/queue";
+    return buildQueueHref({ targetType: targetFilter, signalId, sort, offset: nextOffset });
   }
 
   return (
@@ -194,12 +202,34 @@ export default async function QueuePage({
         </div>
       </div>
 
+      {/* Scoped arrival (B4). Say so plainly, and always offer the way out —
+          a scope the user cannot see or escape is just a differently-shaped trap
+          from the 4000-row dump it replaces. */}
+      {signalId && (
+        <div
+          className="mb-4 px-4 py-3 rounded-lg flex items-baseline justify-between gap-4 flex-wrap"
+          style={{
+            background: "rgba(59,130,246,0.08)",
+            border: "1px solid rgba(59,130,246,0.25)",
+          }}
+        >
+          <p className="text-sm m-0" style={{ color: "#bfdbfe" }}>
+            Showing only the suggested links for the finding you came from.
+          </p>
+          <Link href="/queue" className="text-sm font-medium" style={{ color: "#93c5fd" }}>
+            Show all pending suggestions →
+          </Link>
+        </div>
+      )}
+
       {/* Filter chips — target_type. Each chip is a server-rendered link
           carrying the active sort/offset reset to 0. */}
       {(totalPending > 0 || filtersActive) && (
         <div className="mb-4 flex items-center gap-2 flex-wrap">
           <Link
-            href={pageHref(0).replace(/[?&]target_type=[^&]+/, "") || "/queue"}
+            // "All types" clears target_type but KEEPS the finding scope. Was a
+            // regex strip of pageHref(0), which mangled the query string.
+            href={buildQueueHref({ signalId, sort })}
             style={{
               padding: "4px 12px",
               borderRadius: 999,
@@ -214,13 +244,10 @@ export default async function QueuePage({
           </Link>
           {TARGET_TYPES.map((t) => {
             const active = targetFilter === t;
-            const qs = new URLSearchParams();
-            qs.set("target_type", t);
-            if (sort !== "created-desc") qs.set("sort", sort);
             return (
               <Link
                 key={t}
-                href={`/queue?${qs.toString()}`}
+                href={buildQueueHref({ targetType: t, signalId, sort })}
                 style={{
                   padding: "4px 12px",
                   borderRadius: 999,
