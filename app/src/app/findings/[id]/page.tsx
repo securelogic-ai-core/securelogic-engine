@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getFinding, getActionsForFinding, getFindingContext, type Finding, type Action } from "@/lib/api";
 import { ActionCard } from "@/components/ActionCard";
+import { FindingEvidenceSection } from "@/components/findings/FindingEvidenceSection";
 import { AddActionForm } from "./AddActionForm";
 import { DecisionWorkspace } from "./DecisionWorkspace";
 import { recommendationEmptyCopy } from "./findingSourceCopy";
@@ -316,6 +317,19 @@ function RemediationActionsSection({
   );
 }
 
+// Remediation tab body: the actions list, then the evidence a gate-enforcing org
+// requires before the finding may be called remediated. Evidence lives here, not
+// on Overview, because attaching it IS part of doing the work — Overview only
+// reports the resulting count.
+function RemediationTab({ finding, actions }: { finding: Finding; actions: Action[] }) {
+  return (
+    <>
+      <RemediationActionsSection finding={finding} actions={actions} />
+      <FindingEvidenceSection findingId={finding.id} />
+    </>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────
 // Page
 // ─────────────────────────────────────────────────────────────
@@ -360,7 +374,7 @@ export default async function FindingDetailPage({
                 {recommendationEmptyCopy(finding.source_type)}
               </p>
             )}
-            <RemediationActionsSection finding={finding} actions={actions} />
+            <RemediationTab finding={finding} actions={actions} />
           </DecisionWorkspace>
         </div>
       );

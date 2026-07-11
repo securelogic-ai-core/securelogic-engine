@@ -5,6 +5,10 @@
  * The engine URL and API key never reach the browser.
  */
 
+// Relative, not "@/": the root vitest config runs app/src/lib tests without the
+// Next path aliases, so an aliased import here breaks collection of every test
+// that transitively imports api.ts.
+import { buildFindingEvidencePayload } from "../components/findings/findingEvidencePayload";
 import {
   entitiesQuery,
   relationshipsQuery,
@@ -2868,6 +2872,63 @@ export async function getControlAssessmentsForControl(
     return res.json() as Promise<ControlAssessmentsResponse>;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Browser-side evidence access for a finding, via the /api/evidence Next proxy.
+ *
+ * Distinct from `getEvidence` below, which is the SERVER-side variant taking an
+ * apiKey and calling the engine directly. These two run in the browser from the
+ * Decision Workspace's Remediation tab, so they carry no key — the proxy attaches
+ * the session token.
+ */
+export async function getFindingEvidence(
+  findingId: string
+): Promise<ReadResult<{ evidence: Evidence[] }>> {
+  try {
+    const qs = new URLSearchParams({ source_type: "finding", source_id: findingId });
+    const res = await fetch(`/api/evidence?${qs.toString()}`, { cache: "no-store" });
+    if (!res.ok) {
+      return { ok: false, disabled: res.status === 404, error: await readError(res) };
+    }
+    const body = (await res.json()) as EvidenceResponse;
+    return { ok: true, evidence: body.evidence ?? [] };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+/**
+ * Attach evidence to a finding. On the engine side this also recomputes the
+ * finding's operational_status (routes/evidence.ts:242), so satisfying an org's
+ * evidence gate advances the finding to `remediated` immediately — the caller
+ * should refresh the page to pick that up.
+ */
+export async function attachFindingEvidence(
+  findingId: string,
+  input: {
+    title: string;
+    evidence_type: string;
+    description?: string | null;
+    external_ref?: string | null;
+  }
+): Promise<ActionResult<{ evidence: Evidence }>> {
+  try {
+    const payload = buildFindingEvidencePayload(findingId, input);
+    const res = await fetch(`/api/evidence`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      return { ok: false, error: await readError(res), status: res.status };
+    }
+    const body = (await res.json()) as { evidence: Evidence };
+    return { ok: true, evidence: body.evidence };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
   }
 }
 
