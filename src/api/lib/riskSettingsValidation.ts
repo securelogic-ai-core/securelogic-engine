@@ -23,7 +23,16 @@ const MAX_DAYS = 3650; // 10 years — defensive upper bound
 
 export type RiskSettingsPutInput = {
   cadence_by_rating: Record<string, number>;
+  /** Optional finding SLA policy: severity → days (all-or-nothing map, or explicit null to clear). Absent = leave unchanged. */
+  finding_sla_by_severity?: Record<string, number> | null;
+  /** Optional closure separation-of-duties toggle. Absent = leave unchanged. */
+  require_finding_closure_sod?: boolean;
+  /** Optional remediation evidence-gate toggle. Absent = leave unchanged. */
+  require_evidence_gate?: boolean;
 };
+
+/** Severities the finding SLA policy accepts (matches findings.severity). */
+export const SLA_POLICY_SEVERITIES = ["Critical", "High", "Moderate", "Low"] as const;
 
 export type RiskSettingsPutResult =
   | { input: RiskSettingsPutInput }
@@ -83,5 +92,60 @@ export function validateRiskSettingsPut(body: unknown): RiskSettingsPutResult {
     }
   }
 
-  return { input: { cadence_by_rating: result } };
+  const input: RiskSettingsPutInput = { cadence_by_rating: result };
+
+  // Optional finding-governance policies (20260902/20260903). Absent keys
+  // leave the stored value unchanged; explicit null clears the SLA policy.
+  if ("finding_sla_by_severity" in body) {
+    const sla = body["finding_sla_by_severity"];
+    if (sla === null) {
+      input.finding_sla_by_severity = null;
+    } else {
+      if (!isPlainObject(sla)) {
+        return { error: "finding_sla_by_severity_must_be_object_or_null" };
+      }
+      const slaResult: Record<string, number> = {};
+      for (const sev of SLA_POLICY_SEVERITIES) {
+        if (!(sev in sla)) {
+          return {
+            error: "finding_sla_by_severity_incomplete",
+            detail: `Missing key '${sev}'. All four severities must be supplied (or send null to clear).`
+          };
+        }
+        const v = sla[sev];
+        if (typeof v !== "number" || !Number.isInteger(v) || v <= 0 || v > MAX_DAYS) {
+          return {
+            error: "finding_sla_value_invalid",
+            detail: `finding_sla_by_severity.${sev} must be an integer between 1 and ${MAX_DAYS}.`
+          };
+        }
+        slaResult[sev] = v;
+      }
+      for (const k of Object.keys(sla)) {
+        if (!(SLA_POLICY_SEVERITIES as readonly string[]).includes(k)) {
+          return {
+            error: "finding_sla_by_severity_unknown_key",
+            detail: `Unknown severity '${k}'. Allowed: ${SLA_POLICY_SEVERITIES.join(", ")}.`
+          };
+        }
+      }
+      input.finding_sla_by_severity = slaResult;
+    }
+  }
+
+  if ("require_finding_closure_sod" in body) {
+    if (typeof body["require_finding_closure_sod"] !== "boolean") {
+      return { error: "require_finding_closure_sod_must_be_boolean" };
+    }
+    input.require_finding_closure_sod = body["require_finding_closure_sod"];
+  }
+
+  if ("require_evidence_gate" in body) {
+    if (typeof body["require_evidence_gate"] !== "boolean") {
+      return { error: "require_evidence_gate_must_be_boolean" };
+    }
+    input.require_evidence_gate = body["require_evidence_gate"];
+  }
+
+  return { input };
 }

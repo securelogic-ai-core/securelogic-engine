@@ -28,6 +28,7 @@ import {
 } from "../lib/findingLifecycleMachine.js";
 import { writeFindingLifecycleEvent } from "../lib/findingLifecycle.js";
 import { sqlFindingActive, sqlFindingOverdue } from "../lib/metricDefinitions.js";
+import { resolveSlaDueDate } from "../lib/findingSlaPolicy.js";
 
 const router = Router();
 
@@ -132,6 +133,12 @@ router.post(
 
       const owner_user_id = validation.input.owner_user_id ?? (req as any).autoUserId ?? null;
 
+      // SLA policy (20260903): when the caller sets no due date, default it
+      // from the org's severity→days policy — the SLA Breached queue is only
+      // as real as its due-date source. No policy → null (unchanged).
+      const effective_due_date =
+        due_date ?? (await resolveSlaDueDate(organizationId, severity as string | null));
+
       // When source_type='risk', verify the risk belongs to this org
       if (source_type === "risk" && source_id !== null) {
         const riskCheck = await pg.query(
@@ -185,7 +192,7 @@ router.post(
           time_sensitivity,
           scoring_rationale,
           owner_user_id,
-          due_date
+          effective_due_date
         ]
       );
 
@@ -1260,6 +1267,197 @@ router.patch(
         "PATCH /api/findings/:id failed"
       );
       res.status(500).json({ error: "finding_patch_failed" });
+    }
+  })
+);
+
+/* =========================================================
+   POST /api/findings/bulk
+   Bounded bulk operations over findings — the ops center is only operable at
+   enterprise scale if 200 unassigned findings do not require 200 round trips.
+
+     { "op": "assign", "ids": [...], "owner_user_id": "<uuid>" | null }
+     { "op": "decide", "ids": [...], "decision_state": "<state>" }
+
+   Contract:
+   - ids: 1..100 unique UUIDs, all org-scoped (foreign ids report not_found —
+     never touched, never enumerable).
+   - assign: one set-based UPDATE; reports per-id ok/not_found.
+   - decide: EVERY finding is evaluated INDIVIDUALLY through the same guarded
+     state machine as single PATCH (close guard, evidence gate via derived
+     state, separation of duties) — bulk is a convenience, never a bypass.
+     Guard refusals are per-id results, not errors. Flag-gated like PATCH.
+   - The whole request is one tenant transaction (asTenant): DB failure rolls
+     back everything; guard refusals do not.
+   ========================================================= */
+
+const BULK_MAX_IDS = 100;
+
+router.post(
+  "/findings/bulk",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  asTenant(async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const body =
+        req.body != null && typeof req.body === "object" && !Array.isArray(req.body)
+          ? (req.body as Record<string, unknown>)
+          : {};
+
+      const op = body["op"];
+      if (op !== "assign" && op !== "decide") {
+        res.status(400).json({ error: "invalid_bulk_op", allowed: ["assign", "decide"] });
+        return;
+      }
+
+      const rawIds = body["ids"];
+      if (!Array.isArray(rawIds) || rawIds.length === 0 || rawIds.length > BULK_MAX_IDS) {
+        res.status(400).json({ error: "ids_must_be_1_to_100" });
+        return;
+      }
+      const ids = [...new Set(rawIds.map((v) => String(v)))];
+      if (!ids.every((id) => isUuid(id))) {
+        res.status(400).json({ error: "ids_must_be_uuids" });
+        return;
+      }
+
+      const actorUserId = (req.userId as string | undefined) ?? null;
+      const actorApiKeyId = ((req as any).apiKey?.id as string) ?? null;
+
+      if (op === "assign") {
+        const ownerId = body["owner_user_id"];
+        if (ownerId !== null && !isUuid(ownerId)) {
+          res.status(400).json({ error: "owner_user_id_must_be_uuid_or_null" });
+          return;
+        }
+        const updated = await pg.query<{ id: string }>(
+          `UPDATE findings SET owner_user_id = $1, updated_at = NOW()
+            WHERE organization_id = $2 AND id = ANY($3::uuid[])
+            RETURNING id`,
+          [ownerId ?? null, organizationId, ids]
+        );
+        const updatedSet = new Set(updated.rows.map((r) => r.id));
+        writeAuditEvent({
+          organizationId,
+          actorApiKeyId,
+          actorUserId,
+          eventType: "finding.bulk_assigned",
+          resourceType: "finding",
+          resourceId: null,
+          payload: {
+            owner_user_id: (ownerId as string | null) ?? null,
+            requested: ids.length,
+            updated: updatedSet.size,
+            finding_ids: [...updatedSet],
+          },
+          ipAddress: req.ip ?? null,
+        });
+        res.status(200).json({
+          op,
+          requested: ids.length,
+          updated: updatedSet.size,
+          results: ids.map((id) => ({ id, ok: updatedSet.has(id), ...(updatedSet.has(id) ? {} : { reason: "not_found" }) })),
+        });
+        return;
+      }
+
+      // op === "decide" — flag-gated exactly like the single PATCH decision write.
+      if (process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED !== "true") {
+        res.status(404).json({ error: "findings_bulk_decide_not_found" });
+        return;
+      }
+      const ds = body["decision_state"];
+      if (!isNonEmptyString(ds) || !VALID_DECISION_STATES.has(ds)) {
+        res.status(400).json({ error: "invalid_decision_state", allowed: [...VALID_DECISION_STATES] });
+        return;
+      }
+
+      // Org SoD policy resolved once; the remediator is per-finding.
+      const sodPolicy = await pg.query<{ enforced: boolean }>(
+        `SELECT COALESCE((SELECT s.require_finding_closure_sod FROM risk_settings s
+                           WHERE s.organization_id = $1), FALSE) AS enforced`,
+        [organizationId]
+      );
+      const sodEnforced = sodPolicy.rows[0]?.enforced === true;
+
+      const results: Array<{ id: string; ok: boolean; reason?: string }> = [];
+      let updatedCount = 0;
+
+      for (const findingId of ids) {
+        const current = await pg.query<{ decision_state: string; operational_status: string }>(
+          `SELECT decision_state, operational_status FROM findings
+            WHERE id = $1 AND organization_id = $2
+            FOR UPDATE`,
+          [findingId, organizationId]
+        );
+        const currentRow = current.rows[0];
+        if (!currentRow) {
+          results.push({ id: findingId, ok: false, reason: "not_found" });
+          continue;
+        }
+        const remediatorRow = await pg.query<{ remediator: string | null }>(
+          `SELECT e.actor_user_id AS remediator FROM finding_lifecycle_events e
+            WHERE e.organization_id = $1 AND e.finding_id = $2
+              AND e.axis = 'operational' AND e.to_state = 'remediated'
+            ORDER BY e.created_at DESC, e.id DESC LIMIT 1`,
+          [organizationId, findingId]
+        );
+        const decision = evaluateFindingDecisionTransition(currentRow.decision_state, ds, {
+          operationalStatus: currentRow.operational_status,
+          sod: {
+            enforced: sodEnforced,
+            actorUserId,
+            remediatorUserId: remediatorRow.rows[0]?.remediator ?? null,
+          },
+        });
+        if (!decision.allowed) {
+          results.push({ id: findingId, ok: false, reason: decision.reason ?? "invalid_decision_transition" });
+          continue;
+        }
+        if (decision.noop) {
+          results.push({ id: findingId, ok: true });
+          continue;
+        }
+        await pg.query(
+          `UPDATE findings SET decision_state = $1, updated_at = NOW()
+            WHERE id = $2 AND organization_id = $3`,
+          [ds, findingId, organizationId]
+        );
+        await writeFindingLifecycleEvent({
+          organizationId,
+          findingId,
+          axis: "decision",
+          fromState: decision.fromState ?? null,
+          toState: decision.toState as string,
+          transition: decision.transition!,
+          actor: { actorUserId, actorApiKeyId },
+        });
+        writeAuditEvent({
+          organizationId,
+          actorApiKeyId,
+          actorUserId,
+          eventType: decision.auditEvent ?? "finding.decision_changed",
+          resourceType: "finding",
+          resourceId: findingId,
+          payload: { from: decision.fromState ?? null, to: decision.toState ?? null, bulk: true },
+          ipAddress: req.ip ?? null,
+        });
+        updatedCount++;
+        results.push({ id: findingId, ok: true });
+      }
+
+      res.status(200).json({ op, requested: ids.length, updated: updatedCount, results });
+    } catch (err) {
+      logger.error({ event: "findings_bulk_failed", err }, "POST /api/findings/bulk failed");
+      res.status(500).json({ error: "findings_bulk_failed" });
     }
   })
 );

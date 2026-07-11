@@ -58,7 +58,7 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   // POST /findings/:id/review (P3.2a), and GET /findings/by-entity (#587,
   // work-first entity search) — all dark ERIP Decision Workspace routes, each
   // premium-gated (never standard; the STD==0 assertion below still holds).
-  "findings.ts": 8,
+  "findings.ts": 9,
   "findingsExport.ts": 1,
   // risk engine
   "risks.ts": 8,
