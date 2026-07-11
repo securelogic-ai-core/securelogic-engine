@@ -86,6 +86,7 @@ import {
 } from "./actionRecommendationEngine.js";
 import { runLlmControlMatcherForSignal } from "./llmControlMatcher.js";
 import { enqueueApplicabilityReassessment } from "./applicabilityReassessment.js";
+import { resolveSlaDueDateWith } from "./findingSlaPolicyRules.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -417,6 +418,9 @@ export async function runMatcherForSignal(
           : `Cyber signal (${signalType}): ${entityName} — ${severity} severity`;
       }
 
+      // SLA policy (20260903): automated signal findings get an org-policy
+      // due date at creation (client keeps the read inside this transaction).
+      const slaDueDate = await resolveSlaDueDateWith(client, orgId, severity);
       const findingResult = await client.query(
         `
         INSERT INTO findings (
@@ -429,9 +433,10 @@ export async function runMatcherForSignal(
           severity,
           domain,
           priority,
-          status
+          status,
+          due_date
         )
-        VALUES ($1, NULL, 'cyber_signal', $2::uuid, $3, $4, $5, $6, $7, 'open')
+        VALUES ($1, NULL, 'cyber_signal', $2::uuid, $3, $4, $5, $6, $7, 'open', $8)
         RETURNING
           id,
           organization_id,
@@ -454,7 +459,8 @@ export async function runMatcherForSignal(
           signal.normalized_summary,
           severity,
           domain,
-          priority
+          priority,
+          slaDueDate
         ]
       );
 

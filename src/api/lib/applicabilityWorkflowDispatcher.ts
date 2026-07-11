@@ -46,6 +46,7 @@ import {
 import type { StoredAssessment } from "../../engine/applicability/v1/explainability.js";
 import type { Queryable } from "./applicabilityAssessmentWriter.js";
 import type { AlertItem, AlertSeverity } from "./alerting/alertService.js";
+import { resolveSlaDueDateWith } from "./findingSlaPolicyRules.js";
 
 /** action_type markers. MUST equal the literals in the 20260730 partial unique indexes. */
 export const APPLICABILITY_RISK_REVIEW_ACTION_TYPE = "auto_applicability_risk_review";
@@ -216,12 +217,15 @@ export async function dispatchApplicabilityWorkflow(
       `(${stored.confidence_band} band) for this ${stored.target_type}, with ` +
       `${stored.affected_entities.length} downstream entit${stored.affected_entities.length === 1 ? "y" : "ies"} ` +
       `in the blast radius. Review the decision's reasoning chain and evidence, then confirm or dismiss.`;
+    // SLA policy (20260903): automated applicability findings get an
+    // org-policy due date at creation (conflict = already dispatched, no touch).
+    const slaDueDate = await resolveSlaDueDateWith(db, orgId, severity);
     const findingInsert = await db.query(
       `INSERT INTO findings (
          organization_id, assessment_id, source_type, source_id,
-         title, description, severity, domain, priority, status
+         title, description, severity, domain, priority, status, due_date
        )
-       VALUES ($1, NULL, $2, $3::uuid, $4, $5, $6, $7, $8, 'open')
+       VALUES ($1, NULL, $2, $3::uuid, $4, $5, $6, $7, $8, 'open', $9)
        ON CONFLICT (organization_id, source_id)
          WHERE source_type = 'applicability_assessment'
          DO NOTHING
@@ -234,7 +238,8 @@ export async function dispatchApplicabilityWorkflow(
         description,
         severity,
         domain,
-        severityToActionPriority(severity)
+        severityToActionPriority(severity),
+        slaDueDate
       ]
     );
     const insertedFinding = findingInsert.rows[0];

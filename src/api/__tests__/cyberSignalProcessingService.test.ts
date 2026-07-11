@@ -132,6 +132,7 @@ describe("runMatcherForSignal — vendor match", () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)                                              // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                              // weights SELECT (defaults)
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
@@ -149,7 +150,7 @@ describe("runMatcherForSignal — vendor match", () => {
     // obligation branch does not fire for a 'cve' signal.
     expect(result.obligation_suggestion_ids).toEqual([]);
 
-    const suggestionParams = mockClientQuery.mock.calls[4]![1] as unknown[];
+    const suggestionParams = mockClientQuery.mock.calls[5]![1] as unknown[];
     const parsedMetadata = JSON.parse(suggestionParams[6] as string);
     expect(parsedMetadata).toEqual({
       source: "nvd",
@@ -158,8 +159,8 @@ describe("runMatcherForSignal — vendor match", () => {
     });
     expect(suggestionParams[5]).toBe(56);
 
-    // BEGIN + 4 work queries + phase-5 risks UPDATE + COMMIT = 7 client.query calls.
-    expect(mockClientQuery).toHaveBeenCalledTimes(7);
+    // BEGIN + SLA policy SELECT + 4 work queries + phase-5 risks UPDATE + COMMIT = 8 client.query calls.
+    expect(mockClientQuery).toHaveBeenCalledTimes(8);
     expect(mockClientRelease).toHaveBeenCalledTimes(1);
   });
 
@@ -167,6 +168,7 @@ describe("runMatcherForSignal — vendor match", () => {
     const externalClient = { query: vi.fn(), release: vi.fn() };
     externalClient.query
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })       // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })            // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                            // weights SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] }) // suggestion INSERT
@@ -190,6 +192,7 @@ describe("runMatcherForSignal — vendor match", () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)                                        // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })   // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })        // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                        // weights SELECT
       .mockResolvedValueOnce(EMPTY)                                        // suggestion INSERT — ON CONFLICT
@@ -208,6 +211,7 @@ describe("runMatcherForSignal — vendor match", () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })
       .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })
@@ -215,7 +219,7 @@ describe("runMatcherForSignal — vendor match", () => {
 
     await runMatcherForSignal(makeSignal(), ORG_A);
 
-    const sql = mockClientQuery.mock.calls[4]![0] as string;
+    const sql = mockClientQuery.mock.calls[5]![0] as string;
     expect(sql).toMatch(/ON CONFLICT \(organization_id, signal_id, target_type, target_id\)/);
     expect(sql).toMatch(/WHERE accepted_at IS NULL AND dismissed_at IS NULL/);
     expect(sql).toMatch(/DO NOTHING/);
@@ -232,6 +236,7 @@ describe("runMatcherForSignal — ai_system match", () => {
       .mockResolvedValueOnce(EMPTY)                                              // BEGIN
       .mockResolvedValueOnce(EMPTY)                                              // vendor: no match
       .mockResolvedValueOnce({ rowCount: 1, rows: [aiSystemRow("medium")] })     // ai_system SELECT
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                              // weights SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
@@ -251,7 +256,7 @@ describe("runMatcherForSignal — ai_system match", () => {
     expect(result.match_score).toBe(38);
     expect(result.domain).toBe("AI Governance");
 
-    const params = mockClientQuery.mock.calls[5]![1] as unknown[];
+    const params = mockClientQuery.mock.calls[6]![1] as unknown[];
     expect(params[2]).toBe("ai_system");
     expect(params[3]).toBe(AI_SYSTEM_ID);
   });
@@ -331,6 +336,7 @@ describe("runMatcherForSignal — KEV override", () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("critical")] })
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })
       .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })
@@ -342,7 +348,7 @@ describe("runMatcherForSignal — KEV override", () => {
     );
 
     expect(result.match_score).toBe(100);
-    const params = mockClientQuery.mock.calls[4]![1] as unknown[];
+    const params = mockClientQuery.mock.calls[5]![1] as unknown[];
     const metadata = JSON.parse(params[6] as string);
     expect(metadata.source).toBe("cisa-kev");
   });
@@ -357,6 +363,7 @@ describe("runMatcherForSignal — weights fallback", () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })
       .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })
@@ -375,6 +382,7 @@ describe("runMatcherForSignal — weights fallback", () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [customWeights] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })
@@ -394,6 +402,7 @@ describe("runMatcherForSignal — error propagation", () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockRejectedValueOnce(new Error("simulated findings INSERT fail"))
       .mockResolvedValueOnce(EMPTY); // ROLLBACK
 
@@ -411,6 +420,7 @@ describe("runMatcherForSignal — error propagation", () => {
     const externalClient = { query: vi.fn(), release: vi.fn() };
     externalClient.query
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockRejectedValueOnce(new Error("findings INSERT fail with external client"));
 
     await expect(
@@ -604,6 +614,7 @@ describe("runMatcherForSignal — GAP-1 obligation branch", () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)                                              // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT (match)
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })             // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                             // weights SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] }) // vendor suggestion INSERT
@@ -701,6 +712,7 @@ describe("processSignal — org-scoped signal", () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)                                              // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings
       .mockResolvedValueOnce(EMPTY)                                              // weights
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion
@@ -716,12 +728,13 @@ describe("processSignal — org-scoped signal", () => {
     expect(result.finding).toEqual(findingRow());
 
     // Phase 5 (risks UPDATE) now runs inside runMatcherForSignal, so phase 4
-    // (cyber_signals UPDATE) follows it — index 6 for this 'cve' signal.
-    const phase4Sql = mockClientQuery.mock.calls[6]![0] as string;
+    // (cyber_signals UPDATE) follows it — index 7 for this 'cve' signal (the
+    // SLA-policy SELECT sits before the findings INSERT).
+    const phase4Sql = mockClientQuery.mock.calls[7]![0] as string;
     expect(phase4Sql).toMatch(/UPDATE cyber_signals/);
     expect(phase4Sql).toMatch(/SET processed\s+= TRUE/);
     expect(phase4Sql).toMatch(/linked_finding_id = \$1/);
-    expect((mockClientQuery.mock.calls[6]![1] as unknown[])[0]).toBe(FINDING_ID);
+    expect((mockClientQuery.mock.calls[7]![1] as unknown[])[0]).toBe(FINDING_ID);
   });
 });
 
@@ -758,6 +771,7 @@ describe("dual-write invariant", () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })
       .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })
@@ -833,6 +847,7 @@ describe("runMatcherForSignal — normalized vendor match", () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)                                                                       // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: VENDOR_ID, name: "Data I/O", criticality: "high" }] }) // vendor SELECT (active)
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })                                       // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                                                       // weights
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })                           // suggestion INSERT
@@ -940,6 +955,7 @@ describe("runMatcherForSignal — fuzzy vendor suggestions (Phase 2)", () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)                                                                         // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: VENDOR_ID, name: "Microsoft", criticality: "high" }] }) // vendor SELECT (exact)
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })                                         // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                                                         // weights
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })                             // exact suggestion INSERT
@@ -1001,6 +1017,7 @@ describe("runMatcherForSignal — action recommendation (GAP-3)", () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)                                              // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                              // actions INSERT (ON CONFLICT)
       .mockResolvedValueOnce(EMPTY)                                              // weights SELECT
@@ -1024,6 +1041,7 @@ describe("runMatcherForSignal — action recommendation (GAP-3)", () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)                                              // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                              // weights SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
@@ -1038,6 +1056,7 @@ describe("runMatcherForSignal — action recommendation (GAP-3)", () => {
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)                                              // BEGIN
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT (no policy)
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                              // weights SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT

@@ -21,6 +21,7 @@ import { pg, withTenant } from "../../infra/postgres.js";
 import { logger } from "../../infra/logger.js";
 import { intelligenceEventsEnabled } from "./intelligenceEventsFeatureFlag.js";
 import { planFindingUpsert, type EventForFinding, type ExistingFinding } from "./eventFinding.js";
+import { resolveSlaDueDateWith } from "../findingSlaPolicyRules.js";
 
 export type ReconcileAction = "created" | "updated" | "noop" | "not_relevant" | "disabled";
 
@@ -71,10 +72,15 @@ async function upsertFinding(
     return { action: "noop", findingId: existing?.id };
   }
 
+  // SLA policy (20260903): automated findings get an org-policy due date at
+  // CREATION only — the ON CONFLICT update never touches due_date, so a
+  // human-adjusted SLA is never clobbered by an evolving event.
+  const slaDueDate = existing ? null : await resolveSlaDueDateWith(client, orgId, plan.severity);
+
   const res = await client.query<{ id: string }>(
     `INSERT INTO findings
-       (organization_id, assessment_id, source_type, source_id, title, description, severity, domain, priority, status)
-     VALUES ($1, NULL, 'intelligence_event', $2, $3, $4, $5, $6, $7, 'open')
+       (organization_id, assessment_id, source_type, source_id, title, description, severity, domain, priority, status, due_date)
+     VALUES ($1, NULL, 'intelligence_event', $2, $3, $4, $5, $6, $7, 'open', $8)
      ON CONFLICT (organization_id, source_id) WHERE source_type = 'intelligence_event'
      DO UPDATE SET
        title = EXCLUDED.title,
@@ -84,7 +90,7 @@ async function upsertFinding(
        priority = EXCLUDED.priority,
        updated_at = NOW()
      RETURNING id`,
-    [orgId, event.event_id, plan.title, plan.description, plan.severity, plan.domain, plan.priority]
+    [orgId, event.event_id, plan.title, plan.description, plan.severity, plan.domain, plan.priority, slaDueDate]
   );
 
   return { action: existing ? "updated" : "created", findingId: res.rows[0]?.id };

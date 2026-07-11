@@ -15,6 +15,7 @@
 import Link from "next/link";
 import type { Finding, EntityFindingsResponse } from "@/lib/api";
 import { FindingCard } from "@/components/FindingCard";
+import BulkBucketList from "./BulkBucketList";
 import {
   OPS_GROUP_LABELS,
   bucketsInGroup,
@@ -200,11 +201,9 @@ export default function WorkFirstFindings({
           </div>
         ) : (
           <>
-            <div className="space-y-3 mb-6">
-              {members.map((f) => (
-                <FindingCard key={f.id} finding={f} revalidateUrl={`/findings?bucket=${bucket.id}`} workspace />
-              ))}
-            </div>
+            {/* Selection + bulk actions (W2): assign/decide the visible page in
+                one call — each decision individually guarded engine-side. */}
+            <BulkBucketList findings={members} revalidateUrl={`/findings?bucket=${bucket.id}`} />
             {(hrefs.prevHref !== null || hrefs.nextHref !== null) && (
               <div className="flex items-center justify-between gap-4">
                 {hrefs.prevHref ? (
