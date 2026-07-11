@@ -1116,10 +1116,32 @@ router.patch(
           res.status(404).json({ error: "finding_not_found" });
           return;
         }
+        // Separation of duties on closure (spec §7, org-enforced): resolve the
+        // org policy and the remediator (actor of the latest operational→
+        // remediated lifecycle event) in this same tenant transaction. Only
+        // needed for the close target; resolved unconditionally-cheaply here
+        // because the machine ignores it for every other transition.
+        const sodRow = await pg.query<{ enforced: boolean; remediator: string | null }>(
+          `SELECT
+             COALESCE((SELECT s.require_finding_closure_sod FROM risk_settings s
+                        WHERE s.organization_id = $1), FALSE) AS enforced,
+             (SELECT e.actor_user_id FROM finding_lifecycle_events e
+               WHERE e.organization_id = $1 AND e.finding_id = $2
+                 AND e.axis = 'operational' AND e.to_state = 'remediated'
+               ORDER BY e.created_at DESC, e.id DESC LIMIT 1) AS remediator`,
+          [organizationId, findingId]
+        );
         decisionTransition = evaluateFindingDecisionTransition(
           currentRow.decision_state,
           ds,
-          { operationalStatus: currentRow.operational_status }
+          {
+            operationalStatus: currentRow.operational_status,
+            sod: {
+              enforced: sodRow.rows[0]?.enforced === true,
+              actorUserId: (req.userId as string | undefined) ?? null,
+              remediatorUserId: sodRow.rows[0]?.remediator ?? null,
+            },
+          }
         );
         if (!decisionTransition.allowed) {
           res.status(409).json({

@@ -96,7 +96,9 @@ export type DecisionTransitionReason =
   | "unknown_state"
   | "invalid_decision_state"
   | "invalid_decision_transition"
-  | "close_requires_remediated_or_accepted_risk";
+  | "close_requires_remediated_or_accepted_risk"
+  | "actor_identity_required"
+  | "separation_of_duties";
 
 export interface DecisionTransitionDecision {
   allowed: boolean;
@@ -111,18 +113,39 @@ export interface DecisionTransitionDecision {
 }
 
 /**
+ * Separation-of-duties inputs for the close transition (spec §7 — "separation-
+ * of-duties where the Risk lifecycle requires it"; mirrors the Risk machine's
+ * gate exactly: actor must be identified and must differ from the counterparty).
+ * For findings, the counterparty is the actor who completed the remediation —
+ * the actor of the most recent operational→remediated lifecycle event. When
+ * that actor is unknown (system/API-key remediation), an identified human may
+ * still close — the same null-counterparty semantics as the Risk machine's
+ * proposer gate.
+ */
+export interface ClosureSodGate {
+  /** org policy: risk_settings.require_finding_closure_sod (default false) */
+  enforced: boolean;
+  /** the session actor attempting the close — null on API-key-only calls */
+  actorUserId: string | null;
+  /** actor of the latest operational→remediated lifecycle event (null if unknown) */
+  remediatorUserId: string | null;
+}
+
+/**
  * Pure decision-transition guard (spec §4). No I/O; never throws.
  *
  *   needs_review → mitigating            (accept plan)
  *   any          → accepted_risk         (governance override; always audited)
  *   *            → resolved              (close) — ONLY when operational_status
- *                                        = remediated OR current = accepted_risk
+ *                                        = remediated OR current = accepted_risk;
+ *                                        org-enforced SoD additionally requires
+ *                                        an identified actor ≠ the remediator
  *   resolved     → needs_review          (reopen)
  */
 export function evaluateFindingDecisionTransition(
   currentRaw: string | null | undefined,
   targetRaw: string,
-  gates: { operationalStatus: string | null | undefined }
+  gates: { operationalStatus: string | null | undefined; sod?: ClosureSodGate }
 ): DecisionTransitionDecision {
   const current = typeof currentRaw === "string" && VALID_DECISION.has(currentRaw)
     ? (currentRaw as FindingDecisionState)
@@ -164,6 +187,27 @@ export function evaluateFindingDecisionTransition(
           reason: "close_requires_remediated_or_accepted_risk",
           fromState: current, toState: target,
         };
+      }
+      // Org-enforced separation of duties (spec §7): the closer must be an
+      // identified user and must not be the person who completed the
+      // remediation. Mirrors the Risk machine's actor_identity_required /
+      // separation_of_duties gates.
+      if (gates.sod?.enforced) {
+        if (gates.sod.actorUserId === null) {
+          return {
+            allowed: false, reason: "actor_identity_required",
+            fromState: current, toState: target,
+          };
+        }
+        if (
+          gates.sod.remediatorUserId !== null &&
+          gates.sod.actorUserId === gates.sod.remediatorUserId
+        ) {
+          return {
+            allowed: false, reason: "separation_of_duties",
+            fromState: current, toState: target,
+          };
+        }
       }
       return {
         allowed: true, fromState: current, toState: target,

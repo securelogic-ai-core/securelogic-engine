@@ -190,3 +190,56 @@ describe("evidence gate (spec §1.1 — org-enforced remediation evidence)", () 
     expect(deriveOperationalStatus(["in_progress"], { enforced: true, hasEvidence: true })).toBe("in_progress");
   });
 });
+
+describe("closure separation of duties (spec §7 — org-enforced)", () => {
+  const remediated = { operationalStatus: "remediated" };
+  const sod = (enforced: boolean, actor: string | null, remediator: string | null) => ({
+    ...remediated,
+    sod: { enforced, actorUserId: actor, remediatorUserId: remediator },
+  });
+
+  it("not enforced: the remediator may close (default behaviour unchanged)", () => {
+    const d = evaluateFindingDecisionTransition("mitigating", "resolved", sod(false, "u1", "u1"));
+    expect(d.allowed).toBe(true);
+  });
+
+  it("enforced: an unidentified actor (API-key-only) cannot close", () => {
+    const d = evaluateFindingDecisionTransition("mitigating", "resolved", sod(true, null, "u1"));
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toBe("actor_identity_required");
+  });
+
+  it("enforced: the remediator cannot close their own work", () => {
+    const d = evaluateFindingDecisionTransition("mitigating", "resolved", sod(true, "u1", "u1"));
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toBe("separation_of_duties");
+  });
+
+  it("enforced: a different identified user may close", () => {
+    const d = evaluateFindingDecisionTransition("mitigating", "resolved", sod(true, "u2", "u1"));
+    expect(d.allowed).toBe(true);
+    expect(d.transition).toBe("close");
+  });
+
+  it("enforced with unknown remediator: an identified user may close (null-counterparty, mirrors risk gate)", () => {
+    const d = evaluateFindingDecisionTransition("mitigating", "resolved", sod(true, "u1", null));
+    expect(d.allowed).toBe(true);
+  });
+
+  it("SoD applies to the accepted_risk override close path too", () => {
+    const d = evaluateFindingDecisionTransition("accepted_risk", "resolved", {
+      operationalStatus: "open",
+      sod: { enforced: true, actorUserId: "u1", remediatorUserId: "u1" },
+    });
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toBe("separation_of_duties");
+  });
+
+  it("SoD never affects non-close transitions", () => {
+    const d = evaluateFindingDecisionTransition("needs_review", "mitigating", {
+      operationalStatus: "open",
+      sod: { enforced: true, actorUserId: null, remediatorUserId: null },
+    });
+    expect(d.allowed).toBe(true);
+  });
+});

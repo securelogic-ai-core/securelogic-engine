@@ -188,10 +188,18 @@ export function DecisionWorkspace({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [tab, setTab] = useState<DecisionTab>(DEFAULT_DECISION_TAB);
+  // Guarded transitions can be legitimately refused (close guard, evidence
+  // gate, separation of duties) — show the refusal instead of a silent no-op.
+  const [actionError, setActionError] = useState<string | null>(null);
   const run = (fn: () => Promise<{ error?: string }>) =>
     start(async () => {
       const r = await fn();
-      if (!r?.error) router.refresh();
+      if (!r?.error) {
+        setActionError(null);
+        router.refresh();
+      } else {
+        setActionError(r.error);
+      }
     });
 
   const affected = context.affected;
@@ -271,6 +279,12 @@ export function DecisionWorkspace({
             </button>
           </div>
         </div>
+
+        {actionError && (
+          <p style={{ fontSize: 13, color: "#fca5a5", margin: "10px 0 0", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 6, padding: "6px 10px", background: "rgba(239,68,68,0.08)" }}>
+            {actionError}
+          </p>
+        )}
 
         <h1 style={{ fontSize: 24, fontWeight: 700, color: "#f1f5f9", margin: "14px 0 6px" }}>{finding.title}</h1>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
