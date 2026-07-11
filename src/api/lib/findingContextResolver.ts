@@ -18,6 +18,10 @@
  */
 
 import {
+  resolveFindingEnterpriseContext,
+  type FindingEnterpriseContext,
+} from "./findingEnterpriseContext.js";
+import {
   computeFindingRiskScore,
   assessBusinessImpact,
   type FindingRiskScore,
@@ -110,6 +114,12 @@ export interface FindingContext {
   related_context: {
     same_vendor: Array<{ vendor_id: string; vendor_name: string; finding_count: number }>;
   };
+  /**
+   * C4 part 3 (ADR-0003 D2-A) — the enterprise context this finding is being decided IN:
+   * the org's risk profile and the blast radius of the affected entity, both DERIVED at
+   * read from engines that already existed and were never consumed here. Writes nothing.
+   */
+  enterprise_context: FindingEnterpriseContext;
   activity: Array<Record<string, unknown>>;
   whats_changed: { since: string | null; changes: Array<{ label: string; at: string }> };
 }
@@ -821,6 +831,17 @@ export async function resolveFindingContext(
         ).rows
       : [];
 
+  /**
+   * C4 part 3 (D2-A) — the enterprise context this decision sits in. Composed at READ
+   * from the org profile and the existing graph blast radius. Writes nothing; adds no
+   * canonical data. Rooted at the finding's already-resolved affected entities, so it
+   * inherits their org scoping and does not re-resolve anything.
+   */
+  const enterprise_context = await resolveFindingEnterpriseContext(client, organizationId, {
+    vendors,
+    ai_systems,
+  });
+
   // Owner (org-scoped defensive lookup).
   const owner = finding.owner_user_id
     ? (
@@ -868,6 +889,7 @@ export async function resolveFindingContext(
     evidence,
     related_findings,
     related_context: { same_vendor },
+    enterprise_context,
     activity: activityRows,
     whats_changed: { since, changes },
   };

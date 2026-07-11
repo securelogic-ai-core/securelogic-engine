@@ -22,7 +22,7 @@ import { asTenant } from "../middleware/asTenant.js";
 import { assetRegistryFeatureFlag } from "../lib/assetRegistryFeatureFlag.js";
 import { knowledgeGraphFeatureFlag } from "../lib/knowledgeGraphFeatureFlag.js";
 import { resolveNeighborhood, DEFAULT_DEPTH, MAX_DEPTH } from "../lib/enterpriseGraphResolver.js";
-import { labelNodes } from "../lib/graphLabeling.js";
+import { labelNodes, criticalityForNodes } from "../lib/graphLabeling.js";
 import { summarizeBlastRadius } from "../lib/blastRadiusSummary.js";
 import { ownRiskForNodes } from "../lib/assetOwnRisk.js";
 import { analyzeGraphImpact, type EnrichedNode } from "../lib/graphImpactAnalysis.js";
@@ -111,22 +111,6 @@ export async function getBlastRadius(req: Request, res: Response): Promise<void>
   });
 }
 
-/** Batched criticality per node from the federated view (asset_id OR backing_id). */
-async function criticalityForNodes(orgId: string, nodeIds: readonly string[]): Promise<Map<string, string | null>> {
-  const out = new Map<string, string | null>();
-  if (nodeIds.length === 0) return out;
-  const ids = [...new Set(nodeIds)];
-  const r = await pg.query<{ asset_id: string; backing_id: string; criticality: string | null }>(
-    `SELECT asset_id, backing_id, criticality FROM asset_registry_v
-      WHERE organization_id = $1 AND (asset_id = ANY($2::uuid[]) OR backing_id = ANY($2::uuid[]))`,
-    [orgId, ids]
-  );
-  for (const row of r.rows) {
-    out.set(row.asset_id, row.criticality);
-    out.set(row.backing_id, row.criticality);
-  }
-  return out;
-}
 
 /**
  * ERIP E7: natural-language question answering + impact analysis over an

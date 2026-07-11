@@ -53,7 +53,12 @@ const LABEL_SOURCE: Record<string, { sql: (org: string, ids: string[]) => { text
 };
 
 /** Resolve labels for a set of nodes, batched per type. Org-scoped. */
-export async function labelNodes(orgId: string, nodes: readonly NodeKey[]): Promise<Map<string, string | null>> {
+export interface GraphQueryable {
+  query<T = any>(text: string, params?: unknown[]): Promise<{ rows: T[]; rowCount: number | null }>;
+}
+
+/** `db` defaults to the tenant-aware `pg` proxy — existing callers are unchanged. */
+export async function labelNodes(orgId: string, nodes: readonly NodeKey[], db: GraphQueryable = pg): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>();
   for (const n of nodes) out.set(`${n.node_type}:${n.node_id}`, null);
 
@@ -68,8 +73,36 @@ export async function labelNodes(orgId: string, nodes: readonly NodeKey[]): Prom
   for (const [type, idSet] of byType) {
     const source = LABEL_SOURCE[type]!;
     const { text, values } = source.sql(orgId, [...idSet]);
-    const r = await pg.query<{ id: string; name: string | null }>(text, values);
+    const r = await db.query<{ id: string; name: string | null }>(text, values);
     for (const row of r.rows) out.set(`${type}:${row.id}`, row.name ?? null);
+  }
+  return out;
+}
+
+/**
+ * Batched criticality per node from the federated asset registry view (keyed by BOTH
+ * asset_id and backing_id, because callers hold either).
+ *
+ * Lifted here from knowledgeGraph.ts in C4 part 3: the finding-level enterprise context
+ * needs the same lookup, and copying it would have duplicated a canonical read. One
+ * definition, two callers.
+ */
+export async function criticalityForNodes(
+  orgId: string,
+  nodeIds: readonly string[],
+  db: GraphQueryable = pg
+): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  if (nodeIds.length === 0) return out;
+  const ids = [...new Set(nodeIds)];
+  const r = await db.query<{ asset_id: string; backing_id: string; criticality: string | null }>(
+    `SELECT asset_id, backing_id, criticality FROM asset_registry_v
+      WHERE organization_id = $1 AND (asset_id = ANY($2::uuid[]) OR backing_id = ANY($2::uuid[]))`,
+    [orgId, ids]
+  );
+  for (const row of r.rows) {
+    out.set(row.asset_id, row.criticality);
+    out.set(row.backing_id, row.criticality);
   }
   return out;
 }

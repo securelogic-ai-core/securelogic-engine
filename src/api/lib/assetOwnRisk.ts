@@ -34,7 +34,12 @@ export interface NodeKey {
  * ai_system; `asset`-typed registry nodes resolve via the assessments'
  * `asset_id` pointer (Phase-2 compat column).
  */
-export async function ownRiskForNodes(orgId: string, nodes: readonly NodeKey[]): Promise<Map<string, number>> {
+export interface GraphQueryable {
+  query<T = any>(text: string, params?: unknown[]): Promise<{ rows: T[]; rowCount: number | null }>;
+}
+
+/** `db` defaults to the tenant-aware `pg` proxy — existing callers are unchanged. */
+export async function ownRiskForNodes(orgId: string, nodes: readonly NodeKey[], db: GraphQueryable = pg): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   for (const n of nodes) out.set(`${n.node_type}:${n.node_id}`, 0);
   if (nodes.length === 0) return out;
@@ -43,7 +48,7 @@ export async function ownRiskForNodes(orgId: string, nodes: readonly NodeKey[]):
 
   // Current decision per (target_type, target_id) AND per asset_id, so both the
   // typed-target nodes (vendor/ai_system) and the Tier-0 `asset` nodes resolve.
-  const { rows } = await pg.query<{
+  const { rows } = await db.query<{
     target_type: string;
     target_id: string | null;
     asset_id: string | null;
