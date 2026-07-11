@@ -15,7 +15,33 @@
   - **C3** applicability(asset) vs legacy shadow — PR #602. **C3b** (new; not in the
     original table) extended the same shadow to the **vendor → asset** and
     **ai_system → asset** grains — PR #603.
-  - **C4–C9 NOT started.** No retirement, no cutover, no production enablement.
+  - **C4 COMPLETE on `develop`, dark (2026-07-11).** Evidence-gated `affected` now works
+    end-to-end, still behind `SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED` (off everywhere).
+    Governed by **ADR-0003** (`docs/architecture/decisions/`), which ruled the two questions
+    C4 could not proceed without:
+      - **D1** — how a tenant asset acquires PRODUCT identity. `tenantAssetResolver` matched
+        on EXACT asset-NAME equality, so a realistically-named asset (`EXCH-PROD-01`) NEVER
+        matched product `exchange`; C4 would have shipped and resolved near-zero in any real
+        tenant. Ruled: evidence-fed identity (`asset_product_identities`, migration 20260905:
+        provenance attestation | sbom | connector | inferred), with a human **attestation
+        override** that is supporting evidence only and never redefines canonical
+        relationships.
+      - **D2** — ruled NARROW: finding-level context derivation only (org profile + graph
+        blast radius, read-only). **ERIP-AD-8 / AD-10 stand unamended**; entity
+        auto-derivation is explicitly out of scope.
+    Shipped in four parts: product identity + the evidence gate; the attestation route; the
+    finding-level enterprise context (D2-A); the resolver→engine bridge + proof.
+    **The gate is a number:** the resolver's `confidence` becomes the engine's `match_score`,
+    so evidence (attestation 100 / sbom 95 / connector 85) clears
+    `applicabilityPolicy.matchThresholds.high` (70) and can conclude `affected`, while a bare
+    asset-name coincidence (60) cannot and caps at `potentially_affected`. Vendor-only input
+    still never resolves at all (R2).
+    `resolveNeighborhood` gained an `inbound` direction (default `outbound`, all existing
+    callers byte-identical): edges mean "X depends on Y", so an outbound blast radius from a
+    compromised vendor found nothing and would have reported "nothing depends on Microsoft"
+    with six assets one hop away.
+  - **C5–C9 NOT started.** No Decision Workspace read of applicability assessments, no
+    retirement, no cutover, no production enablement.
   Metrics live only in `CONVERGENCE-REPORT.md` (not duplicated).
 - **Companion:** `ENTERPRISE-RISK-GRAPH.md` (architecture + rulings R1–R3).
 - **Prime directive:** converge the legacy live signal→vendor path onto the existing
