@@ -28,11 +28,26 @@ describe("topBusinessImpact", () => {
     expect(topBusinessImpact(["none", "not_assessed", "none", "none", "none"])).toBe("not_assessed");
   });
 
-  it("considers all five dimensions — revenue/customer are no longer ignored", () => {
-    // Only revenue carries impact; the old 3-of-5 logic would have missed it.
-    expect(topBusinessImpact(["high", "none", "none", "none", "none"])).toBe("high");
-    // Only customer carries impact.
-    expect(topBusinessImpact(["none", "none", "none", "medium", "none"])).toBe("medium");
+  it("considers every dimension it is given, whichever one carries the impact", () => {
+    // Was a five-element case ("revenue/customer are no longer ignored"). Zone C
+    // now renders three dimensions — revenue and customer were removed as
+    // unsourceable placeholders — but the function stays arity-agnostic: it is a
+    // pure function of exactly the rows rendered beneath it, however many those are.
+    expect(topBusinessImpact(["high", "none", "none"])).toBe("high");
+    expect(topBusinessImpact(["none", "medium", "none"])).toBe("medium");
+    expect(topBusinessImpact(["none", "none", "low"])).toBe("low");
+  });
+
+  it("all-assessed-and-none reads 'none', not 'not_assessed'", () => {
+    // The bug that removing revenue/customer incidentally fixed. Those two were
+    // ALWAYS "not_assessed", so the not_assessed branch always won whenever the
+    // three real dimensions were all "none" — a finding we HAD fully assessed, and
+    // honestly found no impact for, still displayed "Business impact: Not assessed".
+    expect(topBusinessImpact(["none", "none", "none"])).toBe("none");
+    // The old five-dimension shape, for contrast: the two placeholders poisoned it.
+    expect(topBusinessImpact(["none", "none", "none", "not_assessed", "not_assessed"])).toBe(
+      "not_assessed"
+    );
   });
 
   it("treats unrecognized/legacy level strings as unknown, never as a real impact", () => {

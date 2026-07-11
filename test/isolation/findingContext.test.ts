@@ -77,7 +77,10 @@ describe("Package 3 Phase 3.0 — finding context resolver (real Postgres)", () 
     // Phase 3.1 — risk score + business impact composed from real data.
     expect(typeof ctx!.risk.score).toBe("number");
     expect(ctx!.business_impact.third_party.level).not.toBe("none"); // 1 affected vendor
-    expect(ctx!.business_impact.revenue.level).toBe("not_assessed"); // never fabricated
+    // `revenue` used to be asserted here as a permanent "not_assessed". It is gone:
+    // an unsourceable dimension earns no row at all rather than a placeholder one.
+    expect(ctx!.business_impact).not.toHaveProperty("revenue");
+    expect(ctx!.business_impact).not.toHaveProperty("customer");
     // Phase 3.2a — decision_state (business decision) present + defaulted.
     expect(ctx!.finding.decision_state).toBe("needs_review");
   });

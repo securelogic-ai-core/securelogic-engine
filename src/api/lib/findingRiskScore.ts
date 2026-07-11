@@ -8,9 +8,12 @@
  * Honesty rules (ERIP-AD-20 — never fabricate):
  *   - The risk score is a bounded, reproducible function of real inputs, and it
  *     carries a rationale trace.
- *   - Business-impact dimensions we cannot source (revenue, customer) are marked
- *     `not_assessed`, never invented. Dimensions we CAN source (third-party,
- *     regulatory, operational) are derived from the affected-entity counts.
+ *   - Business impact reports ONLY the dimensions we can source (third-party,
+ *     regulatory, operational), derived from the affected-entity counts. The two
+ *     we could not source — revenue and customer — used to be shipped as permanent
+ *     `not_assessed` placeholders. They are now removed outright: a dimension we
+ *     have no data for earns no row. Marking it "not_assessed" forever is not
+ *     honesty, it is clutter that trains the reader to ignore the panel.
  */
 
 export type ImpactLevel = "high" | "medium" | "low" | "none" | "not_assessed";
@@ -110,11 +113,28 @@ export interface BusinessImpactDimension {
   note: string;
 }
 
+/**
+ * The business-impact dimensions we can HONESTLY source.
+ *
+ * `revenue` and `customer` were removed. They were hardcoded literals —
+ * `{ level: "not_assessed", note: "No revenue-impact signal available" }` —
+ * returned unconditionally, ignoring every input. They stayed "Not assessed" on a
+ * finding scoring 100/Critical with all four affected buckets resolved, because
+ * no code path could ever set them to anything else, and no revenue or
+ * customer-impact column exists anywhere in the schema to source them from.
+ *
+ * A panel row that can only ever say "Not assessed" is not a measurement, it is
+ * furniture. It taught users to read the whole panel as decorative. Removed
+ * rather than faked.
+ *
+ * They come back when there is something real behind them. graphImpactAnalysis.ts
+ * already computes a criticality-weighted `business_impact_score` and
+ * `blast_radius` over the asset graph and is consumed only by the knowledge-graph
+ * route — wiring that in is the honest way to restore a business-impact reading.
+ */
 export interface BusinessImpact {
-  revenue: BusinessImpactDimension;
   operational: BusinessImpactDimension;
   regulatory: BusinessImpactDimension;
-  customer: BusinessImpactDimension;
   third_party: BusinessImpactDimension;
 }
 
@@ -163,29 +183,37 @@ export function assessBusinessImpact(
       : { level: "not_assessed", note: unsourced };
   };
 
+  // EMPTY-STATE COPY (Q1): an empty dimension must say WHAT WAS CHECKED, so the
+  // reader can tell "we looked and found nothing" from "we couldn't look".
+  //
+  // Deliberately NOT worded as "no vendor has a recorded dependency on the
+  // affected product". That describes a product-level dependency check the
+  // platform does not perform today — the vendor bucket resolves by matching the
+  // signal's affected_vendor against vendor NAMES in the org's inventory (plus an
+  // assessment-record walk). Claiming a dependency check we never ran would be a
+  // more precise-sounding lie than the vague copy it replaces. The wording moves
+  // to dependency language when R4 makes it true.
   return {
     third_party: dim(
       counts.vendors,
       resolution ? [resolution.vendors] : [],
       `${counts.vendors} affected vendor(s)`,
-      "No affected vendors",
+      "No vendor in your inventory matches this finding",
       "Vendor impact not resolvable from this finding's source"
     ),
     regulatory: dim(
       counts.obligations,
       resolution ? [resolution.obligations] : [],
       `${counts.obligations} affected obligation(s)`,
-      "No affected obligations",
+      "No obligation in your register is linked to this finding",
       "Regulatory impact not resolvable from this finding's source"
     ),
     operational: dim(
       opCount,
       resolution ? [resolution.controls, resolution.ai_systems] : [],
       `${counts.controls} control(s), ${counts.ai_systems} AI system(s) affected`,
-      "No affected controls or AI systems",
+      "No control or AI system in your inventory is linked to this finding",
       "Operational impact not resolvable from this finding's source"
     ),
-    revenue: { level: "not_assessed", note: "No revenue-impact signal available" },
-    customer: { level: "not_assessed", note: "No customer-impact signal available" },
   };
 }

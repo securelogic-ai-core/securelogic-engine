@@ -31,10 +31,15 @@ describe("computeFindingRiskScore (pure, deterministic, explainable)", () => {
 });
 
 describe("assessBusinessImpact (never fabricates)", () => {
-  it("marks revenue and customer not_assessed", () => {
+  it("reports ONLY the three sourceable dimensions — no revenue/customer placeholders", () => {
+    // Was: "marks revenue and customer not_assessed". Those two were hardcoded
+    // literals with no schema column behind them and no code path that could ever
+    // set them to anything else. A row that can only say one thing is not a
+    // measurement — it is removed, not faked.
     const bi = assessBusinessImpact({ vendors: 0, ai_systems: 0, controls: 0, obligations: 0 }, "Low");
-    expect(bi.revenue.level).toBe("not_assessed");
-    expect(bi.customer.level).toBe("not_assessed");
+    expect(Object.keys(bi).sort()).toEqual(["operational", "regulatory", "third_party"]);
+    expect(bi).not.toHaveProperty("revenue");
+    expect(bi).not.toHaveProperty("customer");
   });
 
   it("derives third-party / regulatory / operational from affected counts + band", () => {
@@ -60,7 +65,7 @@ describe("assessBusinessImpact — Context Contract honesty (resolution-aware)",
       vendors: "none_found", ai_systems: "none_found", controls: "none_found", obligations: "none_found",
     });
     expect(bi.third_party.level).toBe("none");
-    expect(bi.third_party.note).toBe("No affected vendors");
+    expect(bi.third_party.note).toBe("No vendor in your inventory matches this finding");
     expect(bi.regulatory.level).toBe("none");
     expect(bi.operational.level).toBe("none");
   });
@@ -94,14 +99,13 @@ describe("assessBusinessImpact — Context Contract honesty (resolution-aware)",
   it("omitting resolution preserves the legacy count-only behaviour", () => {
     const bi = assessBusinessImpact(zero, "High");
     expect(bi.third_party.level).toBe("none");
-    expect(bi.third_party.note).toBe("No affected vendors");
+    expect(bi.third_party.note).toBe("No vendor in your inventory matches this finding");
   });
 
-  it("revenue and customer stay not_assessed in all cases", () => {
+  it("never reintroduces an unsourceable dimension, even when everything resolves", () => {
     const bi = assessBusinessImpact({ vendors: 3, ai_systems: 3, controls: 3, obligations: 3 }, "Critical", {
       vendors: "resolved", ai_systems: "resolved", controls: "resolved", obligations: "resolved",
     });
-    expect(bi.revenue.level).toBe("not_assessed");
-    expect(bi.customer.level).toBe("not_assessed");
+    expect(Object.keys(bi).sort()).toEqual(["operational", "regulatory", "third_party"]);
   });
 });
