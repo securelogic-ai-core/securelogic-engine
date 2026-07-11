@@ -136,6 +136,8 @@ describe("runMatcherForSignal — vendor match", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                              // weights SELECT (defaults)
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: suggestion UPDATE -> accepted
       .mockResolvedValueOnce(EMPTY);                                            // COMMIT
 
     const result = await runMatcherForSignal(makeSignal(), ORG_A);
@@ -159,8 +161,9 @@ describe("runMatcherForSignal — vendor match", () => {
     });
     expect(suggestionParams[5]).toBe(56);
 
-    // BEGIN + SLA policy SELECT + 4 work queries + phase-5 risks UPDATE + COMMIT = 8 client.query calls.
-    expect(mockClientQuery).toHaveBeenCalledTimes(8);
+    // BEGIN + SLA policy SELECT + 4 work queries + 2 auto-confirm queries
+    // (3c: link INSERT + suggestion UPDATE) + phase-5 risks UPDATE + COMMIT = 10.
+    expect(mockClientQuery).toHaveBeenCalledTimes(10);
     expect(mockClientRelease).toHaveBeenCalledTimes(1);
   });
 
@@ -172,6 +175,8 @@ describe("runMatcherForSignal — vendor match", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })            // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                            // weights SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] }) // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: suggestion UPDATE -> accepted
       .mockResolvedValueOnce(EMPTY);                                           // phase 5: risks UPDATE (no open risks)
 
     const result = await runMatcherForSignal(
@@ -196,6 +201,8 @@ describe("runMatcherForSignal — vendor match", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })        // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                        // weights SELECT
       .mockResolvedValueOnce(EMPTY)                                        // suggestion INSERT — ON CONFLICT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: suggestion UPDATE -> accepted
       .mockResolvedValueOnce(EMPTY);                                      // COMMIT
 
     const result = await runMatcherForSignal(makeSignal(), ORG_A);
@@ -207,7 +214,17 @@ describe("runMatcherForSignal — vendor match", () => {
     expect(result.finding).toEqual(findingRow());
   });
 
-  it("ON CONFLICT INSERT statement uses the partial-unique WHERE predicate", async () => {
+  it("exact-branch suggestion dedups across ALL states, not just pending", async () => {
+    // This test previously asserted an ON CONFLICT against the PENDING partial
+    // unique index. That guard is now wrong for this branch and was replaced.
+    //
+    // Step 3c auto-accepts the exact-match suggestion. The partial unique index
+    // only constrains rows WHERE accepted_at IS NULL AND dismissed_at IS NULL —
+    // so once accepted, an ON CONFLICT guard stops seeing the row and inserts a
+    // fresh duplicate on every matcher re-run. Verified against a real database:
+    // 3 matcher runs produced 3 suggestion rows. NOT EXISTS over all states is
+    // the correct guard here. (The fuzzy and obligation branches stay pending and
+    // keep ON CONFLICT — see their own tests below.)
     mockClientQuery
       .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })
@@ -215,14 +232,76 @@ describe("runMatcherForSignal — vendor match", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })
       .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: link INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: suggestion UPDATE
       .mockResolvedValueOnce(EMPTY);
 
     await runMatcherForSignal(makeSignal(), ORG_A);
 
     const sql = mockClientQuery.mock.calls[5]![0] as string;
-    expect(sql).toMatch(/ON CONFLICT \(organization_id, signal_id, target_type, target_id\)/);
-    expect(sql).toMatch(/WHERE accepted_at IS NULL AND dismissed_at IS NULL/);
-    expect(sql).toMatch(/DO NOTHING/);
+    expect(sql).toMatch(/INSERT INTO signal_match_suggestions/);
+    expect(sql).toMatch(/WHERE NOT EXISTS/);
+    // Guards on identity alone — no accepted_at/dismissed_at predicate, which is
+    // exactly what makes it survive the auto-accept in 3c.
+    expect(sql).toMatch(/e\.target_type = \$3 AND e\.target_id = \$4::uuid/);
+    expect(sql).not.toMatch(/ON CONFLICT/);
+  });
+
+  it("3c: confirms the deterministic match as a link, and honours a human dismissal", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                             // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })        // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                             // SLA policy SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })             // findings INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // weights SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] }) // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: link INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: suggestion UPDATE
+      .mockResolvedValueOnce(EMPTY)                                             // phase-5 risks UPDATE
+      .mockResolvedValueOnce(EMPTY);                                            // COMMIT
+
+    await runMatcherForSignal(makeSignal(), ORG_A);
+
+    const sqls = mockClientQuery.mock.calls.map((c) => c[0] as string);
+
+    // The vendor the finding is ABOUT is written as a link, not left as a mere
+    // proposal — the resolver and the entity search read links and nothing else.
+    const linkSql = sqls.find((s) => /INSERT INTO signal_vendor_links/.test(s));
+    expect(linkSql).toBeDefined();
+    // A human "no" is final: the matcher must never resurrect a dismissed pairing.
+    expect(linkSql).toMatch(/WHERE NOT EXISTS/);
+    expect(linkSql).toMatch(/d\.dismissed_at IS NOT NULL/);
+    // Machine-asserted, so no acting user is stamped.
+    expect(linkSql).toMatch(/created_by_user_id/);
+    expect(linkSql).toMatch(/NULL::uuid/);
+    // Idempotent against the live partial unique index.
+    expect(linkSql).toMatch(/ON CONFLICT \(organization_id, signal_id, vendor_id\)/);
+    expect(linkSql).toMatch(/DO NOTHING/);
+
+    // The suggestion is kept as the audit trail of how the link came to exist,
+    // and marked accepted so the queue does not ask a human to re-approve it.
+    const acceptSql = sqls.find((s) => /UPDATE signal_match_suggestions/.test(s));
+    expect(acceptSql).toBeDefined();
+    expect(acceptSql).toMatch(/accepted_at = NOW\(\)/);
+    expect(acceptSql).toMatch(/accepted_link_id = l\.id/);
+    expect(acceptSql).toMatch(/s\.accepted_at IS NULL AND s\.dismissed_at IS NULL/);
+    // accepted_by_user_id is never set — NULL is what marks it machine-accepted.
+    expect(acceptSql).not.toMatch(/accepted_by_user_id\s*=/);
+  });
+
+  it("3c does NOT fire when nothing matched (no finding, so nothing to confirm)", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                        // BEGIN
+      .mockResolvedValueOnce(EMPTY)                        // vendor SELECT — no rows
+      .mockResolvedValueOnce(EMPTY)                        // ai_system SELECT — no rows
+      .mockResolvedValueOnce(EMPTY);                       // COMMIT
+
+    await runMatcherForSignal(makeSignal(), ORG_A);
+
+    const sqls = mockClientQuery.mock.calls.map((c) => c[0] as string);
+    expect(sqls.some((s) => /INSERT INTO signal_vendor_links/.test(s))).toBe(false);
+    expect(sqls.some((s) => /INSERT INTO signal_ai_system_links/.test(s))).toBe(false);
+    expect(sqls.some((s) => /UPDATE signal_match_suggestions/.test(s))).toBe(false);
   });
 });
 
@@ -240,6 +319,8 @@ describe("runMatcherForSignal — ai_system match", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                              // weights SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: suggestion UPDATE -> accepted
       .mockResolvedValueOnce(EMPTY);                                            // COMMIT
 
     // affected_vendor must canonicalize to the AI system's name now that
@@ -340,6 +421,8 @@ describe("runMatcherForSignal — KEV override", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })
       .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: suggestion UPDATE -> accepted
       .mockResolvedValueOnce(EMPTY);
 
     const result = await runMatcherForSignal(
@@ -367,6 +450,8 @@ describe("runMatcherForSignal — weights fallback", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })
       .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: suggestion UPDATE -> accepted
       .mockResolvedValueOnce(EMPTY);
 
     const result = await runMatcherForSignal(makeSignal(), ORG_A);
@@ -386,6 +471,8 @@ describe("runMatcherForSignal — weights fallback", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [customWeights] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: suggestion UPDATE -> accepted
       .mockResolvedValueOnce(EMPTY);
 
     const result = await runMatcherForSignal(makeSignal(), ORG_A);
@@ -618,6 +705,8 @@ describe("runMatcherForSignal — GAP-1 obligation branch", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })             // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                             // weights SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] }) // vendor suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: suggestion UPDATE -> accepted
       .mockResolvedValueOnce({ rowCount: 1, rows: [obligationRow("o1", "GDPR Art. 32", "Privacy")] }) // obligations SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "sug-o1" }] })         // obligation INSERT
       .mockResolvedValueOnce(EMPTY);                                            // COMMIT
@@ -667,10 +756,45 @@ describe("GAP-1 wiring — source asserts", () => {
     expect(MATCHING_SRC).not.toMatch(/scoreControlMatch/);
   });
 
-  it("exactly four ON CONFLICT dedup INSERTs remain (vendor exact + obligation + vendor fuzzy + EAR generic asset)", () => {
+  it("exactly three ON CONFLICT dedup INSERTs remain — the SUGGEST-ONLY branches", () => {
+    // Was four. The vendor-exact branch dropped off this list on purpose: it now
+    // auto-accepts its suggestion (step 3c), and the partial unique index behind
+    // ON CONFLICT only constrains PENDING rows — so it would insert a duplicate on
+    // every re-run. That branch uses a NOT EXISTS guard over all states instead.
+    //
+    // The three that remain (obligation + vendor fuzzy + EAR generic asset) are the
+    // branches whose suggestions STAY pending for a human to judge, which is exactly
+    // the condition under which the pending partial index is the right guard. If this
+    // count moves, a branch has changed its suggest-vs-confirm posture — say so
+    // deliberately rather than re-baselining the number.
     const conflictCount =
       (SUT_SRC.match(/ON CONFLICT \(organization_id, signal_id, target_type, target_id\)\s*\n\s*WHERE accepted_at IS NULL AND dismissed_at IS NULL\s*\n\s*DO NOTHING/g) || []).length;
-    expect(conflictCount).toBe(4);
+    expect(conflictCount).toBe(3);
+  });
+
+  it("only the DETERMINISTIC branch confirms a link; fuzzy and obligation stay suggest-only", () => {
+    // The guarantee that keeps a guess from becoming an assertion. Phase 1 matches
+    // by canonical-EXACT equality and IS the precondition of the finding existing,
+    // so it writes a link. Phase 2 (fuzzy) is a token-similarity guess and the
+    // obligation branch is score-based — neither may ever write one.
+    const fuzzyBlock = SUT_SRC.slice(
+      SUT_SRC.indexOf("Phase 2: fuzzy vendor matching"),
+      SUT_SRC.indexOf("EAR Phase 2: generic asset matcher")
+    );
+    expect(fuzzyBlock.length).toBeGreaterThan(0);
+    expect(fuzzyBlock).not.toMatch(/INSERT INTO signal_vendor_links/);
+    expect(fuzzyBlock).not.toMatch(/accepted_link_id/);
+
+    const obligationBlock = SUT_SRC.slice(SUT_SRC.indexOf("GAP-1: obligation suggestion generation"));
+    expect(obligationBlock).not.toMatch(/INSERT INTO signal_obligation_links/);
+    // Note: this block legitimately contains an `UPDATE signal_match_suggestions`
+    // (the event-native intelligence_event_id stamp). What it must never do is
+    // ACCEPT a suggestion — that is the confirm semantic, reserved for the
+    // deterministic branch. So we assert on accepted_link_id, not on UPDATE.
+    expect(obligationBlock).not.toMatch(/accepted_link_id/);
+
+    // Exactly one place in the whole matcher confirms a suggestion into a link.
+    expect((SUT_SRC.match(/accepted_link_id = l\.id/g) || []).length).toBe(1);
   });
 
   it("the EAR generic asset matcher is flag-fenced and suggest-only", () => {
@@ -728,13 +852,14 @@ describe("processSignal — org-scoped signal", () => {
     expect(result.finding).toEqual(findingRow());
 
     // Phase 5 (risks UPDATE) now runs inside runMatcherForSignal, so phase 4
-    // (cyber_signals UPDATE) follows it — index 7 for this 'cve' signal (the
+    // (cyber_signals UPDATE) follows it — index 9 for this 'cve' signal (the
     // SLA-policy SELECT sits before the findings INSERT).
-    const phase4Sql = mockClientQuery.mock.calls[7]![0] as string;
+    // +2 for the step-3c auto-confirm queries (link INSERT + suggestion UPDATE).
+    const phase4Sql = mockClientQuery.mock.calls[9]![0] as string;
     expect(phase4Sql).toMatch(/UPDATE cyber_signals/);
     expect(phase4Sql).toMatch(/SET processed\s+= TRUE/);
     expect(phase4Sql).toMatch(/linked_finding_id = \$1/);
-    expect((mockClientQuery.mock.calls[7]![1] as unknown[])[0]).toBe(FINDING_ID);
+    expect((mockClientQuery.mock.calls[9]![1] as unknown[])[0]).toBe(FINDING_ID);
   });
 });
 
@@ -775,6 +900,8 @@ describe("dual-write invariant", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })
       .mockResolvedValueOnce(EMPTY)
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: suggestion UPDATE -> accepted
       .mockResolvedValueOnce(EMPTY);
 
     await runMatcherForSignal(makeSignal(), ORG_A);
@@ -851,6 +978,8 @@ describe("runMatcherForSignal — normalized vendor match", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })                                       // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                                                       // weights
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })                           // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: suggestion UPDATE -> accepted
       .mockResolvedValueOnce(EMPTY);                                                                      // COMMIT
 
     const result = await runMatcherForSignal(
@@ -959,6 +1088,8 @@ describe("runMatcherForSignal — fuzzy vendor suggestions (Phase 2)", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })                                         // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                                                         // weights
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })                             // exact suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: suggestion UPDATE -> accepted
       .mockResolvedValueOnce(EMPTY);                                                                        // COMMIT
 
     const result = await runMatcherForSignal(makeSignal({ affected_vendor: "Microsoft" }), ORG_A);
@@ -1022,6 +1153,8 @@ describe("runMatcherForSignal — action recommendation (GAP-3)", () => {
       .mockResolvedValueOnce(EMPTY)                                              // actions INSERT (ON CONFLICT)
       .mockResolvedValueOnce(EMPTY)                                              // weights SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: suggestion UPDATE -> accepted
       .mockResolvedValueOnce(EMPTY);                                            // COMMIT
 
     const result = await runMatcherForSignal(makeSignal(), ORG_A); // default severity High
@@ -1045,6 +1178,8 @@ describe("runMatcherForSignal — action recommendation (GAP-3)", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                              // weights SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: suggestion UPDATE -> accepted
       .mockResolvedValueOnce(EMPTY);                                            // COMMIT
 
     await runMatcherForSignal(makeSignal(), ORG_A);
@@ -1060,6 +1195,8 @@ describe("runMatcherForSignal — action recommendation (GAP-3)", () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
       .mockResolvedValueOnce(EMPTY)                                              // weights SELECT
       .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                             // 3c: suggestion UPDATE -> accepted
       .mockResolvedValueOnce(EMPTY);                                            // COMMIT
 
     await runMatcherForSignal(makeSignal({ severity: "Moderate" }), ORG_A);

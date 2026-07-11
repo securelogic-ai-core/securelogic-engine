@@ -562,16 +562,24 @@ export async function runMatcherForSignal(
         matched_string: matchedString
       };
 
+      // NOT EXISTS across ALL states, not ON CONFLICT against the pending partial
+      // unique index. Step 3c below auto-accepts this suggestion, and the partial
+      // index only constrains PENDING rows — so an ON CONFLICT guard would stop
+      // seeing the accepted row and happily insert a fresh duplicate on every
+      // matcher re-run. (The fuzzy and obligation branches stay pending, so they
+      // keep the ON CONFLICT form, which is still correct for them.)
       const suggestionInsert = await client.query<{ id: string }>(
         `
         INSERT INTO signal_match_suggestions (
           organization_id, signal_id, target_type, target_id,
           match_reason, match_score, match_metadata
         )
-        VALUES ($1, $2::uuid, $3, $4::uuid, $5, $6, $7::jsonb)
-        ON CONFLICT (organization_id, signal_id, target_type, target_id)
-          WHERE accepted_at IS NULL AND dismissed_at IS NULL
-          DO NOTHING
+        SELECT $1, $2::uuid, $3, $4::uuid, $5, $6, $7::jsonb
+         WHERE NOT EXISTS (
+           SELECT 1 FROM signal_match_suggestions e
+            WHERE e.organization_id = $1 AND e.signal_id = $2::uuid
+              AND e.target_type = $3 AND e.target_id = $4::uuid
+         )
         RETURNING id
         `,
         [
@@ -593,6 +601,79 @@ export async function runMatcherForSignal(
         // Surface as null suggestion_id; matcher is idempotent.
         matchScore = null;
       }
+
+      // ---------------------------------------------------------------
+      // 3c. Confirm the deterministic match as a LINK.
+      //
+      //     Phase 1 matched by canonical-EXACT equality — not a fuzzy or scored
+      //     guess. That match is the PRECONDITION of this finding existing at
+      //     all: step 3a only creates the finding `if (hasVendorMatch ||
+      //     hasAiMatch)`, and titles it "<CVE> affects vendor: <name>".
+      //
+      //     Recording that association only as a *suggestion* made the product
+      //     contradict itself. findingContextResolver.affected() and
+      //     findingEntitySearch read the signal_*_links tables and nothing else,
+      //     so the Decision Workspace rendered "Vendors (0) — No affected
+      //     vendors" directly beneath a finding whose own title named the vendor,
+      //     and a Risk Findings search for "Microsoft" returned zero against
+      //     1000+ Microsoft findings. Only a human clicking Accept in the queue
+      //     could fix it — for every signal finding ever generated.
+      //
+      //     A proposal is something we might be wrong about. This is not: it is
+      //     the reason the finding exists. So it is written as a link. Genuinely
+      //     uncertain matches — the fuzzy vendor branch (Phase 2) and the scored
+      //     obligation branch (GAP-1) — stay suggest-only below.
+      //
+      //     A human DISMISSAL is final: if someone rejected this pairing we do
+      //     not resurrect it, and no link is written.
+      // ---------------------------------------------------------------
+
+      const linkTable =
+        targetType === "vendor" ? "signal_vendor_links" : "signal_ai_system_links";
+      const linkFk = targetType === "vendor" ? "vendor_id" : "ai_system_id";
+
+      // Write the link. The NOT EXISTS clause is the dismissal guard: if a human
+      // rejected this pairing, no link is ever written. created_by_user_id NULL
+      // marks it machine-asserted (the human accept routes stamp the actor).
+      // ON CONFLICT makes it idempotent against the live partial unique index.
+      await client.query(
+        `
+        INSERT INTO ${linkTable} (organization_id, signal_id, ${linkFk}, note, created_by_user_id)
+        SELECT $1, $2::uuid, $3::uuid, $4, NULL::uuid
+         WHERE NOT EXISTS (
+           SELECT 1 FROM signal_match_suggestions d
+            WHERE d.organization_id = $1 AND d.signal_id = $2::uuid
+              AND d.target_type = $5 AND d.target_id = $3::uuid
+              AND d.dismissed_at IS NOT NULL
+         )
+        ON CONFLICT (organization_id, signal_id, ${linkFk})
+          WHERE deleted_at IS NULL
+          DO NOTHING
+        `,
+        [orgId, signalId, targetId, `Auto-confirmed: ${matchedBranch}`, targetType]
+      );
+
+      // Reflect the confirmation on the suggestion so the review queue does not
+      // ask a human to re-approve what the matcher already asserted. The row is
+      // KEPT (not deleted) as the audit trail of how the link came to exist;
+      // accepted_by_user_id stays NULL to mark it machine-accepted. The join
+      // resolves the link id (whether just inserted or pre-existing), and the
+      // pending-only predicate means a dismissed row is never touched.
+      await client.query(
+        `
+        UPDATE signal_match_suggestions s
+           SET accepted_at = NOW(), accepted_link_id = l.id
+          FROM ${linkTable} l
+         WHERE l.organization_id = s.organization_id
+           AND l.signal_id = s.signal_id
+           AND l.${linkFk} = s.target_id
+           AND l.deleted_at IS NULL
+           AND s.organization_id = $1 AND s.signal_id = $2::uuid
+           AND s.target_type = $3 AND s.target_id = $4::uuid
+           AND s.accepted_at IS NULL AND s.dismissed_at IS NULL
+        `,
+        [orgId, signalId, targetType, targetId]
+      );
     }
 
     // ---------------------------------------------------------------
