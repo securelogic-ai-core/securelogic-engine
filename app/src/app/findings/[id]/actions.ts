@@ -145,8 +145,20 @@ export async function updateFindingDecisionStateAction(
       body: JSON.stringify({ decision_state: decisionState }),
     });
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      return { error: body.error ?? "Failed to update decision" };
+      const body = (await res.json().catch(() => ({}))) as { error?: string; reason?: string };
+      // Guarded transitions 409 with a machine reason — surface it in customer
+      // language instead of a silent no-op (a control that silently fails is a
+      // dead control).
+      const REASON_COPY: Record<string, string> = {
+        close_requires_remediated_or_accepted_risk:
+          "Cannot close: remediation is not complete (or accept the risk first).",
+        actor_identity_required:
+          "Cannot close: your organization requires an identified user to close findings.",
+        separation_of_duties:
+          "Cannot close: your organization requires a different person than the remediator to close this finding.",
+        invalid_decision_transition: "That decision change is not allowed from the current state.",
+      };
+      return { error: (body.reason && REASON_COPY[body.reason]) ?? body.error ?? "Failed to update decision" };
     }
   } catch {
     return { error: "Network error" };

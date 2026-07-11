@@ -187,7 +187,7 @@ These five words are NOT interchangeable. Each has exactly one meaning:
 | **Validation** | the human check of completed remediation — operationally, working the **ready-for-decision queue** (`operational_status='remediated'`, bucket "Ready to Close") | finding owner / leadership | ends in a governance decision (close or send back by adding work, which regresses the derived axis) |
 | **Approval** | `risk_approvals` (risk-lifecycle treatments pending executive sign-off; separation-of-duties) | approver ≠ proposer | gates the RISK lifecycle's pending_approval → mitigation transition. Findings have no approval object; the ops-center "Awaiting Approval" bucket cross-links to `/approvals`. |
 | **Acceptance** | `decision_state='accepted_risk'` (finding) / risk acceptance (register) | entitled human | an explicit, audited governance override — permits closure without remediation |
-| **Closure** | `decision_state='resolved'` — human-only, guarded (requires `operational_status='remediated'` OR current `accepted_risk`) | entitled human | the ONLY path to derived legacy `status='closed'`; reopen = `resolved → needs_review` |
+| **Closure** | `decision_state='resolved'` — human-only, guarded (requires `operational_status='remediated'` OR current `accepted_risk`); org-enforced separation of duties (`risk_settings.require_finding_closure_sod`, migration `20260902`): the closer must be an identified user ≠ the remediator | entitled human | the ONLY path to derived legacy `status='closed'`; reopen = `resolved → needs_review` |
 
 ### Source Type (findings)
 DB-canonical (findings.source_type CHECK constraint — authoritative):
