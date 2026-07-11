@@ -219,6 +219,8 @@ services:
         value: "false"
       - key: SECURELOGIC_BRIEF_APPLICABILITY_CITATION_ENABLED # EAR P11 (Brief cites applicability) — DARK (default off); double-fenced: also requires SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
         value: "false"
+      - key: SECURELOGIC_BRIEF_QUALITY_ENABLED # IQP Q4 title/summary quality contract. OFF = titles are cut mid-word at 77 chars and stored that way. BLOCKED ON STAGING VALIDATION — flip to "true" after staging confirms headings
+        value: "false"
       - key: SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED # ECL R2/S6 dispatcher — DARK (default off); requires ECL flag too
         value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
@@ -449,6 +451,8 @@ services:
         value: "false"
       - key: SECURELOGIC_BRIEF_APPLICABILITY_CITATION_ENABLED # EAR P11 (Brief cites applicability) — DARK (default off); double-fenced: also requires SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
         value: "false"
+      - key: SECURELOGIC_BRIEF_QUALITY_ENABLED # IQP Q4 title/summary quality contract. OFF = titles are cut mid-word at 77 chars and stored that way. ON — staging validates the Q4 title/summary quality contract
+        value: "true"
       - key: SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED # ECL R2/S6 dispatcher — DARK (default off); requires ECL flag too
         value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
@@ -582,6 +586,8 @@ services:
         value: "false"
       - key: SECURELOGIC_BRIEF_APPLICABILITY_CITATION_ENABLED # EAR P11 (Brief cites applicability) — DARK (default off); double-fenced: also requires SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
         value: "false"
+      - key: SECURELOGIC_BRIEF_QUALITY_ENABLED # IQP Q4 title/summary quality contract. OFF = titles are cut mid-word at 77 chars and stored that way. BLOCKED ON STAGING VALIDATION — flip to "true" after staging confirms headings
+        value: "false"
       - key: SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED # ECL R2/S6 dispatcher — DARK (default off); requires ECL flag too
         value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
@@ -699,6 +705,8 @@ services:
         value: "false"
       - key: SECURELOGIC_BRIEF_APPLICABILITY_CITATION_ENABLED # EAR P11 (Brief cites applicability) — DARK (default off); double-fenced: also requires SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
         value: "false"
+      - key: SECURELOGIC_BRIEF_QUALITY_ENABLED # IQP Q4 title/summary quality contract. OFF = titles are cut mid-word at 77 chars and stored that way. ON — staging validates the Q4 title/summary quality contract
+        value: "true"
       - key: SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED # ECL R2/S6 dispatcher — DARK (default off); requires ECL flag too
         value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
