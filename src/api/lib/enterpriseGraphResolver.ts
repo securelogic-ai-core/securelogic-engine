@@ -66,9 +66,26 @@ const UNIFIED_EDGES = `
   )
 `;
 
-// Bounded, cycle-safe outbound traversal. $2 = seed node_type, $3 = seed node_id,
-// $4 = max depth.
-const REACHABLE = `
+/**
+ * Bounded, cycle-safe traversal. $2 = seed node_type, $3 = seed node_id, $4 = max depth.
+ *
+ * DIRECTION (C4 part 3). Edges are directed and mean "X depends on Y" (asset -> vendor,
+ * ai_system -> vendor). So the two directions answer opposite questions:
+ *
+ *   outbound (default, unchanged) — follow from -> to.  "What does X depend ON?"
+ *   inbound  (new)                — follow to -> from.  "What depends ON X?"
+ *
+ * A finding about a compromised VENDOR needs the second one. Rooting a blast radius at
+ * Microsoft and traversing outbound finds nothing — every dependency edge points INTO
+ * the vendor — so it would report "nothing depends on Microsoft" while SharePoint and
+ * Exchange sit one hop away. That is the most dangerous sentence this panel could say:
+ * it reads exactly like "safe to ignore".
+ *
+ * This is an EXTENSION of the single traversal authority (AD-13), not a second one: same
+ * CTE, same cycle guard, same unified edge set, same org scoping. `outbound` remains the
+ * default, so every existing caller is byte-identical.
+ */
+const REACHABLE_OUTBOUND = `
   reachable AS (
     SELECT $2::text AS node_type, $3::uuid AS node_id, 0 AS depth,
            ARRAY[$2 || ':' || ($3::uuid)::text] AS visited
@@ -83,21 +100,53 @@ const REACHABLE = `
   )
 `;
 
+const REACHABLE_INBOUND = `
+  reachable AS (
+    SELECT $2::text AS node_type, $3::uuid AS node_id, 0 AS depth,
+           ARRAY[$2 || ':' || ($3::uuid)::text] AS visited
+    UNION ALL
+    SELECT e.from_type, e.from_id, r.depth + 1,
+           r.visited || (e.from_type || ':' || (e.from_id)::text)
+      FROM reachable r
+      JOIN unified_edges e
+        ON e.to_type = r.node_type AND e.to_id = r.node_id
+     WHERE r.depth < $4
+       AND NOT ((e.from_type || ':' || (e.from_id)::text) = ANY (r.visited))
+  )
+`;
+
+/** Default (`outbound`) preserves the pre-C4 behaviour exactly. */
+export type TraversalDirection = "outbound" | "inbound";
+
 /**
  * Resolve the outbound neighbourhood of (nodeType, nodeId) in `organizationId` to
  * `depth` hops. Runs inside the caller's tenant transaction (asTenant). `depth` is
  * clamped to MAX_DEPTH by the caller; this defends again.
  */
+export interface GraphQueryable {
+  query<T = any>(text: string, params?: unknown[]): Promise<{ rows: T[]; rowCount: number | null }>;
+}
+
+/**
+ * `db` defaults to the tenant-aware `pg` proxy (every existing caller is unchanged).
+ * It is injectable so a caller that already holds a client — e.g. findingContextResolver,
+ * which is injectable precisely so the isolation suite can drive it with a raw Pool —
+ * can compose this read into ITS connection instead of silently opening another. Org
+ * scoping is unaffected: every predicate below carries organization_id = $1 regardless.
+ */
 export async function resolveNeighborhood(
   organizationId: string,
   nodeType: string,
   nodeId: string,
-  depth: number
+  depth: number,
+  db: GraphQueryable = pg,
+  direction: TraversalDirection = "outbound"
 ): Promise<GraphNeighborhood> {
   const d = Math.max(0, Math.min(depth, MAX_DEPTH));
+  const reachableCte = direction === "inbound" ? REACHABLE_INBOUND : REACHABLE_OUTBOUND;
 
-  const nodesResult = await pg.query<GraphNode>(
-    `WITH RECURSIVE ${UNIFIED_EDGES}, ${REACHABLE}
+  const nodesResult = await db.query<GraphNode>(
+    `WITH RECURSIVE ${UNIFIED_EDGES}, ${reachableCte}
      SELECT node_type, node_id, MIN(depth)::int AS depth
        FROM reachable
       GROUP BY node_type, node_id
@@ -105,8 +154,8 @@ export async function resolveNeighborhood(
     [organizationId, nodeType, nodeId, d]
   );
 
-  const edgesResult = await pg.query<GraphEdge>(
-    `WITH RECURSIVE ${UNIFIED_EDGES}, ${REACHABLE},
+  const edgesResult = await db.query<GraphEdge>(
+    `WITH RECURSIVE ${UNIFIED_EDGES}, ${reachableCte},
        nodeset AS (SELECT DISTINCT node_type, node_id FROM reachable)
      SELECT DISTINCT e.from_type, e.from_id, e.to_type, e.to_id,
             e.relationship_type, e.source
