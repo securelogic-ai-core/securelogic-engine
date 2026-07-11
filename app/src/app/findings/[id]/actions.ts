@@ -99,6 +99,10 @@ export async function createRemediationAction(
     description?: string;
     priority: string;
     due_date?: string;
+    // POST /api/actions has always accepted owner_user_id (actions.ts:96,114); the
+    // form never sent it, so every action was born unassigned. Assigning at creation
+    // is the natural moment — it is when you know who is doing the work.
+    owner_user_id?: string | null;
   }
 ): Promise<{ error?: string }> {
   const token = await getToken();
@@ -113,6 +117,7 @@ export async function createRemediationAction(
         description: data.description,
         priority: data.priority,
         due_date: data.due_date,
+        owner_user_id: data.owner_user_id || undefined,
         source_type: "finding",
         source_id: findingId,
       }),
@@ -197,6 +202,31 @@ export async function updateActionStatusAction(
   actionId: string,
   status: string
 ): Promise<{ error?: string }> {
+  return updateActionAction(findingId, actionId, { status });
+}
+
+/**
+ * Update any field of a remediation action the engine already accepts.
+ *
+ * PATCH /api/actions/:id has been `updatable: ["status","priority","owner_user_id",
+ * "due_date"]` since 20260410 (routes/actions.ts:545), but the UI only ever sent
+ * `{status}`. That is what made the Remediation tab a dead end: you could Start a
+ * piece of work, but you could not say WHO was doing it, HOW urgent it was, or WHEN
+ * it was due — and you could not change your mind after creating it. The work item
+ * existed; the plan around it did not.
+ *
+ * No new model, no new route — the capability was already there, unexposed.
+ */
+export async function updateActionAction(
+  findingId: string,
+  actionId: string,
+  patch: {
+    status?: string;
+    priority?: string;
+    owner_user_id?: string | null;
+    due_date?: string | null;
+  }
+): Promise<{ error?: string }> {
   const token = await getToken();
   if (!token) return { error: "Not authenticated" };
 
@@ -204,11 +234,42 @@ export async function updateActionStatusAction(
     const res = await fetch(`${ENGINE_URL}/api/actions/${actionId}`, {
       method: "PATCH",
       headers: authHeaders(token),
-      body: JSON.stringify({ status }),
+      body: JSON.stringify(patch),
     });
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       return { error: body.error ?? "Failed to update action" };
+    }
+  } catch {
+    return { error: "Network error" };
+  }
+
+  revalidatePath(`/findings/${findingId}`);
+  return {};
+}
+
+/**
+ * Assign the FINDING itself to an owner. PATCH /api/findings/:id has accepted
+ * owner_user_id since 20260410 (routes/findings.ts:1170), but the only way to set
+ * it was a bulk operation from the list view that assigned to yourself. From the
+ * finding you were actually looking at, ownership was read-only text.
+ */
+export async function assignFindingOwnerAction(
+  findingId: string,
+  ownerUserId: string | null
+): Promise<{ error?: string }> {
+  const token = await getToken();
+  if (!token) return { error: "Not authenticated" };
+
+  try {
+    const res = await fetch(`${ENGINE_URL}/api/findings/${findingId}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ owner_user_id: ownerUserId }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { error: body.error ?? "Failed to assign owner" };
     }
   } catch {
     return { error: "Network error" };
