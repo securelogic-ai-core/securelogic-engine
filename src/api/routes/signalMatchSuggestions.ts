@@ -364,6 +364,29 @@ export async function listSignalMatchSuggestions(req: Request, res: Response): P
     targetTypeFilter = assetAllowed ? "asset" : (rawTargetType as TargetType);
   }
 
+  // R3 — entity-name search. Same 2..120 bounds as the Findings entity search
+  // (findingEntitySearch.ts) so the two surfaces behave identically, and the same
+  // escaping of LIKE metacharacters so a literal "%" is a literal "%".
+  let nameQuery: string | null = null;
+  const rawQ = req.query.q;
+  if (rawQ !== undefined) {
+    if (typeof rawQ !== "string") {
+      res.status(400).json({ error: "invalid_q", detail: "q must be a string" });
+      return;
+    }
+    const trimmed = rawQ.trim();
+    if (trimmed.length > 0) {
+      if (trimmed.length < 2 || trimmed.length > 120) {
+        res.status(400).json({
+          error: "invalid_q",
+          detail: "q must be between 2 and 120 characters",
+        });
+        return;
+      }
+      nameQuery = `%${trimmed.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+    }
+  }
+
   const stateClause =
     status === "pending"
       ? "accepted_at IS NULL AND dismissed_at IS NULL"
@@ -389,6 +412,18 @@ export async function listSignalMatchSuggestions(req: Request, res: Response): P
   if (targetTypeFilter !== null) {
     params.push(targetTypeFilter);
     sql += ` AND s.target_type = $${params.length}`;
+  }
+  // R3 — free-text filter on the ENTITY the suggestion is about, so the queue is
+  // searchable the way the Findings page is. Matches the same COALESCE the enriched
+  // SELECT already exposes as target_name (vendor / AI system / control name, or an
+  // obligation's title), so a search finds exactly what the row displays.
+  //
+  // The pattern is parameterised and the operand is a fixed column expression, never
+  // interpolated input. LIKE metacharacters in the user's string are escaped so a
+  // query of "100%" means the literal text, not "anything".
+  if (nameQuery !== null) {
+    params.push(nameQuery);
+    sql += ` AND COALESCE(v.name, ai.name, c.name, o.title, ar.name) ILIKE $${params.length}`;
   }
   sql += ` ${SORT_DISPATCH[sort]}`;
   params.push(limit);

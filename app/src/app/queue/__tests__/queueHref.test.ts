@@ -7,7 +7,12 @@
  * chip, sort or page click, or the user is dumped right back into the dump.
  */
 import { describe, it, expect } from "vitest";
-import { buildQueueHref, isUuid } from "../queueHref";
+import {
+  buildQueueHref,
+  isUuid,
+  isQueueStatus,
+  normalizeQueueQuery,
+} from "../queueHref";
 
 const SIGNAL = "a1b2c3d4-e5f6-4789-abcd-ef1234567890";
 
@@ -41,6 +46,57 @@ describe("buildQueueHref", () => {
 
   it("an unscoped queue stays unscoped", () => {
     expect(buildQueueHref({ targetType: "control" })).toBe("/queue?target_type=control");
+  });
+});
+
+describe("R3 — search and review-state survive every other control", () => {
+  it("keeps the search when a target-type chip is applied", () => {
+    const href = buildQueueHref({ q: "Microsoft", targetType: "vendor" });
+    expect(href).toContain("q=Microsoft");
+    expect(href).toContain("target_type=vendor");
+  });
+
+  it("keeps the search AND the finding scope together", () => {
+    // The compound case: arrive scoped from a finding, then search within it.
+    const href = buildQueueHref({ signalId: SIGNAL, q: "Microsoft", status: "dismissed" });
+    expect(href).toContain(`signal_id=${SIGNAL}`);
+    expect(href).toContain("q=Microsoft");
+    expect(href).toContain("status=dismissed");
+  });
+
+  it("omits status when it is the default — the common URL stays clean", () => {
+    expect(buildQueueHref({ status: "pending" })).toBe("/queue");
+    expect(buildQueueHref({ status: "accepted" })).toBe("/queue?status=accepted");
+  });
+
+  it("trims the query and drops it when empty", () => {
+    expect(buildQueueHref({ q: "   " })).toBe("/queue");
+    expect(buildQueueHref({ q: "  Cisco  " })).toBe("/queue?q=Cisco");
+  });
+});
+
+describe("normalizeQueueQuery — a bad search loses the filter, not the page", () => {
+  it("accepts a real query", () => {
+    expect(normalizeQueueQuery("Microsoft")).toBe("Microsoft");
+    expect(normalizeQueueQuery("  Cisco  ")).toBe("Cisco");
+  });
+
+  it("rejects what the engine would 400 on, degrading to no filter", () => {
+    // The engine bounds q at 2..120. A one-character search must not error the page.
+    expect(normalizeQueueQuery("M")).toBeUndefined();
+    expect(normalizeQueueQuery("")).toBeUndefined();
+    expect(normalizeQueueQuery(undefined)).toBeUndefined();
+    expect(normalizeQueueQuery("x".repeat(121))).toBeUndefined();
+  });
+});
+
+describe("isQueueStatus", () => {
+  it("accepts the three real review states", () => {
+    for (const s of ["pending", "accepted", "dismissed"]) expect(isQueueStatus(s)).toBe(true);
+  });
+  it("rejects anything else", () => {
+    expect(isQueueStatus("all")).toBe(false);
+    expect(isQueueStatus(undefined)).toBe(false);
   });
 });
 
