@@ -258,16 +258,26 @@ describe("Metric Contract — cross-surface reconciliation (real app, real Postg
     // (open + in_progress), so the tile disagreed with ITSELF, and the word
     // "findings" meant a smaller number on the dashboard than in the Operations
     // Center. Agreeing with the wrong definition is not reconciliation.
-    const [dash, sum, list] = await Promise.all([
+    const [dash, sum, list, unfiltered] = await Promise.all([
       get("/api/dashboard/summary", seed.orgA.apiKey),
       get("/api/findings/summary", seed.orgA.apiKey),
       get("/api/findings?active=true&limit=100", seed.orgA.apiKey),
+      get("/api/findings?limit=100", seed.orgA.apiKey),
     ]);
 
     const active = dash.body.findings.active;
     expect(active).toBe(sum.body.summary.active_total); // dashboard == Operations Center
     expect(active).toBe(list.body.total);               // == the page the tile links to
     expect(dash.body.findings.open).toBe(active);       // deprecated alias, same number
+
+    // The destination's POPULATION, not just its total: the tile links to `?active=true`,
+    // so that URL must carry exactly the findings that still require work. Asserting the
+    // total alone would still pass if the list quietly served every status.
+    const statuses = list.body.findings.map((f: { status: string }) => f.status);
+    expect(statuses).not.toContain("closed");
+    expect(statuses).not.toContain("accepted");
+    // The filter is real: the unfiltered list still carries the terminal findings.
+    expect(unfiltered.body.total).toBeGreaterThan(active);
 
     // The severity donut is drawn from the SAME population as the headline, so the
     // parts can never exceed the whole.

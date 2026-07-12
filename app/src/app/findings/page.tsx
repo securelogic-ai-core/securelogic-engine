@@ -99,10 +99,16 @@ export default async function FindingsPage({
   const activeDomain   = sp.domain   ?? "";
   const activeSource   = sp.source_type ?? "";
   const activePriority = sp.priority ?? "";
+  // Metric Contract: `?active=true` is the population every dashboard findings tile
+  // counts (sqlFindingActive = open + in_progress) and therefore the population its
+  // link must land on. Without this the page fell through to `status ?? "all"` and
+  // listed CLOSED and ACCEPTED findings under a tile that promised active ones.
+  const activeOnly     = sp.active === "true";
 
   const [findingsData, summaryData] = await Promise.all([
     getFindings(token, {
       status:      activeStatus === "all" ? undefined : activeStatus,
+      active:      activeOnly || undefined,
       severity:    activeSeverity  || undefined,
       domain:      activeDomain    || undefined,
       source_type: activeSource    || undefined,
@@ -127,14 +133,26 @@ export default async function FindingsPage({
 
   const currentSp: Params = {
     ...(sp.status      ? { status:      sp.status }      : {}),
+    ...(activeOnly     ? { active:      "true" }         : {}),
     ...(sp.severity    ? { severity:    sp.severity }    : {}),
     ...(sp.domain      ? { domain:      sp.domain }      : {}),
     ...(sp.source_type ? { source_type: sp.source_type } : {}),
     ...(sp.priority    ? { priority:    sp.priority }    : {}),
   };
 
+  // Picking an explicit status REPLACES the active set rather than intersecting with
+  // it (the engine ANDs the two, so `active=true&status=closed` would render an empty
+  // list under a highlighted "Closed" pill). Status hrefs are built without `active`.
+  const statusSp: Params = { ...currentSp };
+  delete statusSp.active;
+  // The Active pill is the status axis's own value, so it drops any explicit status.
+  const activeSp: Params = { ...currentSp };
+  delete activeSp.status;
+
+  // `active` is a filter. It must be one, or the workspace flag would route this
+  // deep link to the work-first landing page instead of the list it promises.
   const hasFilters = !!(
-    activeSeverity || activeDomain || activeSource || activePriority ||
+    activeOnly || activeSeverity || activeDomain || activeSource || activePriority ||
     (sp.status && sp.status !== "all")
   );
 
@@ -303,11 +321,16 @@ export default async function FindingsPage({
           <span className="text-xs font-semibold uppercase tracking-wide mr-1" style={{ color: "#64748b" }}>
             Status
           </span>
-          <FilterPill label="All"         href={filterHref(currentSp, "status", "all")}         active={activeStatus === "all"} />
-          <FilterPill label="Open"        href={filterHref(currentSp, "status", "open")}        active={activeStatus === "open"} />
-          <FilterPill label="In Progress" href={filterHref(currentSp, "status", "in_progress")} active={activeStatus === "in_progress"} />
-          <FilterPill label="Closed"      href={filterHref(currentSp, "status", "closed")}      active={activeStatus === "closed"} />
-          <FilterPill label="Accepted"    href={filterHref(currentSp, "status", "accepted")}    active={activeStatus === "accepted"} />
+          <FilterPill label="All"         href={filterHref(statusSp, "status", "all")}         active={activeStatus === "all" && !activeOnly} />
+          {/* The population every dashboard findings tile counts. Without a pill of its
+              own, an ?active=true deep link would render a filtered list with "All"
+              highlighted — a silent filter, which is the defect class this contract exists
+              to remove. */}
+          <FilterPill label="Active"      href={filterHref(activeSp, "active", "true")}        active={activeOnly} />
+          <FilterPill label="Open"        href={filterHref(statusSp, "status", "open")}        active={activeStatus === "open" && !activeOnly} />
+          <FilterPill label="In Progress" href={filterHref(statusSp, "status", "in_progress")} active={activeStatus === "in_progress" && !activeOnly} />
+          <FilterPill label="Closed"      href={filterHref(statusSp, "status", "closed")}      active={activeStatus === "closed" && !activeOnly} />
+          <FilterPill label="Accepted"    href={filterHref(statusSp, "status", "accepted")}    active={activeStatus === "accepted" && !activeOnly} />
         </div>
 
         {/* Severity */}

@@ -406,7 +406,8 @@ router.get(
         SELECT inherent_rating, COUNT(*)::text AS count
         FROM risks
         WHERE organization_id = $1
-          AND status NOT IN ('closed', 'transferred')
+          AND ${sqlRiskActive()}
+          ${riskArchivedFilter}
           AND inherent_rating IS NOT NULL
         GROUP BY inherent_rating
         `,
@@ -470,7 +471,8 @@ router.get(
                COUNT(*)::text      AS count
         FROM risks
         WHERE organization_id = $1
-          AND status NOT IN ('closed', 'transferred')
+          AND ${sqlRiskActive()}
+          ${riskArchivedFilter}
           AND residual_likelihood IS NOT NULL
           AND residual_impact IS NOT NULL
         GROUP BY residual_likelihood, residual_impact
@@ -500,7 +502,8 @@ router.get(
                COUNT(*)::text      AS count
         FROM risks
         WHERE organization_id = $1
-          AND status NOT IN ('closed', 'transferred')
+          AND ${sqlRiskActive()}
+          ${riskArchivedFilter}
           AND inherent_likelihood IS NOT NULL
           AND inherent_impact IS NOT NULL
         GROUP BY inherent_likelihood, inherent_impact

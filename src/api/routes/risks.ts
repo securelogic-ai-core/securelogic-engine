@@ -791,7 +791,7 @@ router.get(
          AND f.organization_id = $1
          AND f.status = 'open'
         WHERE r.organization_id = $1
-          AND r.status NOT IN ('closed', 'transferred')
+          AND ${sqlRiskActive("r.status")}
         GROUP BY r.id, r.title, r.domain, r.risk_rating, r.inherent_rating,
                  r.residual_rating, r.status, r.likelihood, r.owner
         ORDER BY
