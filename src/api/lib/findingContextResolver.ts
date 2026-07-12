@@ -17,6 +17,7 @@
  * carries `organization_id = $org` regardless of the client.
  */
 
+import { logger } from "../infra/logger.js";
 import {
   resolveFindingEnterpriseContext,
   type FindingEnterpriseContext,
@@ -236,9 +237,22 @@ export function affectedPathsRan(
   return ran;
 }
 
-/** PURE: bucket resolution status from (path ran?, row count). */
-export function bucketResolution(ran: boolean, count: number): AffectedResolution {
+/**
+ * PURE: bucket resolution status from (path ran?, row count, path failed?).
+ *
+ * `failed` only changes the story where we would otherwise have claimed a CONFIDENT
+ * ZERO. That is the whole point: an empty bucket must never be reported as "none
+ * found" when the truth is "we could not look". It never suppresses rows we did
+ * find — a partial answer is still an answer, and hiding it would trade one
+ * dishonesty for another.
+ */
+export function bucketResolution(
+  ran: boolean,
+  count: number,
+  failed = false
+): AffectedResolution {
   if (count > 0) return "resolved";
+  if (failed) return "resolver_error";
   return ran ? "none_found" : "not_applicable";
 }
 
@@ -471,11 +485,39 @@ export async function resolveFindingContext(
     return r.rows.map((x) => ({ type, id: x.id, name: x.name }));
   }
 
+  // Which buckets could not be resolved. A resolution path that FAILS must degrade
+  // that bucket to `resolver_error` — not throw. Throwing 500'd the whole context
+  // route, and the client turns a non-OK response into `null` and silently renders
+  // the legacy detail view, so the failure reached the user as a MISSING FEATURE
+  // rather than as an error. Failing soft, per bucket, is what makes the four-state
+  // empty-state contract reachable at all.
+  const failed = { vendors: false, ai_systems: false, controls: false, obligations: false };
+
+  async function affectedSafe(
+    bucket: keyof typeof failed,
+    table: string,
+    fk: string,
+    entityTable: string,
+    nameCol: string,
+    type: AffectedEntityType
+  ): Promise<FindingAffectedEntity[]> {
+    try {
+      return await affected(table, fk, entityTable, nameCol, type);
+    } catch (err) {
+      failed[bucket] = true;
+      logger.error(
+        { event: "finding_context_bucket_failed", organizationId, findingId, bucket, err },
+        "Affected-entity bucket failed to resolve — reporting resolver_error, not a zero"
+      );
+      return [];
+    }
+  }
+
   const [sv, sa, sc, so] = await Promise.all([
-    affected("signal_vendor_links", "vendor_id", "vendors", "name", "vendor"),
-    affected("signal_ai_system_links", "ai_system_id", "ai_systems", "name", "ai_system"),
-    affected("signal_control_links", "control_id", "controls", "name", "control"),
-    affected("signal_obligation_links", "obligation_id", "obligations", "title", "obligation"),
+    affectedSafe("vendors", "signal_vendor_links", "vendor_id", "vendors", "name", "vendor"),
+    affectedSafe("ai_systems", "signal_ai_system_links", "ai_system_id", "ai_systems", "name", "ai_system"),
+    affectedSafe("controls", "signal_control_links", "control_id", "controls", "name", "control"),
+    affectedSafe("obligations", "signal_obligation_links", "obligation_id", "obligations", "title", "obligation"),
   ]);
 
   // Event-native vendor resolution (Context Contract): an event-sourced finding
@@ -485,30 +527,55 @@ export async function resolveFindingContext(
   // existing canonical data (never stored on the finding). Without this branch
   // a Microsoft-linked event finding rendered "No affected vendors" unless a
   // human had already accepted a signal-link suggestion.
-  const eventVendors: FindingAffectedEntity[] = eventIds.length
-    ? (
-        await client.query(
-          `SELECT DISTINCT v.id AS id, v.name AS name
-             FROM intelligence_events e
-             JOIN vendors v
-               ON v.organization_id = $1
-              AND lower(trim(v.name)) = lower(trim(e.affected_vendor))
-            WHERE e.id = ANY($2::uuid[]) AND e.affected_vendor IS NOT NULL
-            ORDER BY v.name`,
-          [organizationId, eventIds]
-        )
-      ).rows.map((x) => ({ type: "vendor" as const, id: x.id, name: x.name }))
-    : [];
+  let eventVendors: FindingAffectedEntity[] = [];
+  if (eventIds.length) {
+    try {
+      const r = await client.query(
+        `SELECT DISTINCT v.id AS id, v.name AS name
+           FROM intelligence_events e
+           JOIN vendors v
+             ON v.organization_id = $1
+            AND lower(trim(v.name)) = lower(trim(e.affected_vendor))
+          WHERE e.id = ANY($2::uuid[]) AND e.affected_vendor IS NOT NULL
+          ORDER BY v.name`,
+        [organizationId, eventIds]
+      );
+      eventVendors = r.rows.map((x) => ({ type: "vendor" as const, id: x.id, name: x.name }));
+    } catch (err) {
+      failed.vendors = true;
+      logger.error(
+        { event: "finding_context_bucket_failed", organizationId, findingId, bucket: "vendors", err },
+        "Event-native vendor resolution failed — reporting resolver_error, not a zero"
+      );
+    }
+  }
 
   // Intelligence findings resolve affected entities from signal links; assessment /
   // risk / applicability findings resolve them from their source record. A finding has
   // one source_type, so only one path yields rows — merge (dedup) is safe either way.
-  const assessmentAffected = await resolveAssessmentAffected(
-    client,
-    organizationId,
-    finding.source_type,
-    finding.source_id
-  );
+  //
+  // A failure here means we could not source ANY bucket from this finding's source
+  // record, so every bucket it would have populated is unknown — not zero.
+  let assessmentAffected: AffectedBuckets = {
+    vendors: [],
+    ai_systems: [],
+    controls: [],
+    obligations: [],
+  };
+  try {
+    assessmentAffected = await resolveAssessmentAffected(
+      client,
+      organizationId,
+      finding.source_type,
+      finding.source_id
+    );
+  } catch (err) {
+    failed.vendors = failed.ai_systems = failed.controls = failed.obligations = true;
+    logger.error(
+      { event: "finding_context_source_failed", organizationId, findingId, sourceType: finding.source_type, err },
+      "Source-record affected resolution failed — every bucket reports resolver_error, not a zero"
+    );
+  }
   const { vendors, ai_systems, controls, obligations } = mergeAffected(
     mergeAffected(
       { vendors: sv, ai_systems: sa, controls: sc, obligations: so },
@@ -521,10 +588,10 @@ export async function resolveFindingContext(
   // can now distinguish an honest zero from "not resolvable from this source".
   const ran = affectedPathsRan(finding.source_type, signalIds.length > 0, eventIds.length > 0);
   const resolution: AffectedResolutions = {
-    vendors: bucketResolution(ran.vendors, vendors.length),
-    ai_systems: bucketResolution(ran.ai_systems, ai_systems.length),
-    controls: bucketResolution(ran.controls, controls.length),
-    obligations: bucketResolution(ran.obligations, obligations.length),
+    vendors: bucketResolution(ran.vendors, vendors.length, failed.vendors),
+    ai_systems: bucketResolution(ran.ai_systems, ai_systems.length, failed.ai_systems),
+    controls: bucketResolution(ran.controls, controls.length, failed.controls),
+    obligations: bucketResolution(ran.obligations, obligations.length, failed.obligations),
   };
 
   // Matcher suggestions pending human review (candidate links). Shown as

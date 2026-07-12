@@ -2053,7 +2053,15 @@ export async function getFinding(
 
 export type FindingAffectedEntity = { type: string; id: string; name: string };
 // Context Contract: how an affected bucket resolved (empty ≠ zero ≠ unknowable).
-export type AffectedResolution = "resolved" | "none_found" | "not_applicable";
+/**
+ * Mirrors the engine's Context Contract. `resolver_error` is the state that says the
+ * emptiness is IGNORANCE, not a zero — the UI must never render it as "None found".
+ */
+export type AffectedResolution =
+  | "resolved"
+  | "none_found"
+  | "not_applicable"
+  | "resolver_error";
 // A matcher suggestion awaiting human review — a candidate, not certainty.
 export type FindingCandidateEntity = {
   type: string;
