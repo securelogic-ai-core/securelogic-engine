@@ -422,6 +422,17 @@ export type Vendor = {
   last_reviewed_at: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Per-vendor finding counts, computed in the DATABASE by GET /api/vendors.
+   *
+   * The list and the risk board used to fetch the org's Vendor Risk findings with
+   * limit:100 and group them by vendor in the browser — past 100, a vendor's
+   * findings fell off the page and its card showed no badge at all. These are
+   * COUNT(*) over the whole matched set, per vendor. Optional because the single-
+   * vendor GET does not return them.
+   */
+  open_findings_count?: number;
+  active_findings_count?: number;
 };
 
 export type VendorsResponse = {
@@ -3058,6 +3069,58 @@ export async function getAiSystemFindings(
     );
     if (!res.ok) return null;
     return res.json() as Promise<AiSystemFindingsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Findings linked to ONE obligation / ONE control, resolved in the database.
+ *
+ * Same contract as getAiSystemFindings, for the same reason: these pages used to
+ * fetch the org's findings with a cap and filter them down to the entity in the
+ * browser — past the cap, the entity's real findings fell off the page before the
+ * filter saw them and the page printed a confident zero. A truncation is not a zero.
+ *
+ * The counts are COUNT(*) over the whole matched set, never `findings.length`.
+ * A null return is a RESOLVER FAILURE and must not be coalesced into an empty list.
+ */
+export type ScopedFindingsResponse = {
+  findings: Finding[];
+  total: number;
+  active_total: number;
+  open_total: number;
+};
+
+export async function getObligationFindings(
+  apiKey: string,
+  obligationId: string,
+  limit = 100
+): Promise<ScopedFindingsResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/obligations/${encodeURIComponent(obligationId)}/findings?limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<ScopedFindingsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getControlFindings(
+  apiKey: string,
+  controlId: string,
+  limit = 100
+): Promise<ScopedFindingsResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/controls/${encodeURIComponent(controlId)}/findings?limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<ScopedFindingsResponse>;
   } catch {
     return null;
   }

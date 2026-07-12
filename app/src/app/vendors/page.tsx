@@ -4,7 +4,6 @@ import { getSession } from "@/lib/session";
 import {
   getVendors,
   getVendorAssessments,
-  getFindings,
   type Vendor,
 } from "@/lib/api";
 // EAR Phase 4: badges come from the cross-domain kit (was a local duplicate).
@@ -41,36 +40,31 @@ export default async function VendorsPage({
   const critFilter = sp.criticality ?? null;
   const showInactive = sp.show_inactive === "1";
 
-  const [activeData, archivedData, assessmentsData, findingsData] = await Promise.all([
+  const [activeData, archivedData, assessmentsData] = await Promise.all([
     getVendors(token, "active"),
     showInactive ? getVendors(token, "archived") : Promise.resolve(null),
     getVendorAssessments(token, 100),
-    getFindings(token, { domain: "Vendor Risk", status: "open", limit: 100 }),
   ]);
 
   const vendorsData = activeData;
 
-  // Build vendor_id → assessment count and assessmentId → vendorId map.
+  // Build vendor_id → assessment count.
   const assessmentCountByVendor = new Map<string, number>();
-  const assessmentVendorMap = new Map<string, string>();
   for (const a of assessmentsData?.assessments ?? []) {
     assessmentCountByVendor.set(
       a.vendor_id,
       (assessmentCountByVendor.get(a.vendor_id) ?? 0) + 1
     );
-    assessmentVendorMap.set(a.id, a.vendor_id);
   }
 
-  // Build vendorId → open finding count.
-  const openFindingsByVendor = new Map<string, number>();
-  for (const f of findingsData?.findings ?? []) {
-    if (f.source_type === "vendor_review" && f.source_id) {
-      const vendorId = assessmentVendorMap.get(f.source_id);
-      if (vendorId) {
-        openFindingsByVendor.set(vendorId, (openFindingsByVendor.get(vendorId) ?? 0) + 1);
-      }
-    }
-  }
+  // The open-finding count now arrives ON the vendor, computed in the database.
+  //
+  // It used to be grouped in this file from getFindings(domain:'Vendor Risk',
+  // status:'open', limit:100) — the org's findings, capped, then bucketed by vendor
+  // via an assessment map that was ITSELF capped at 100 assessments. Past either cap
+  // a vendor's findings simply vanished, and its card showed no badge at all: a
+  // confident zero for a vendor that had open findings. A count derived from a
+  // bounded page is a cap wearing a count's clothes.
 
   const activeVendors = vendorsData?.vendors ?? [];
   const archivedVendors = archivedData?.vendors ?? [];
@@ -252,7 +246,7 @@ export default async function VendorsPage({
               <VendorRow
                 vendor={vendor}
                 assessmentCount={assessmentCountByVendor.get(vendor.id) ?? 0}
-                openFindingCount={openFindingsByVendor.get(vendor.id) ?? 0}
+                openFindingCount={vendor.open_findings_count ?? 0}
               />
             </Link>
           ))}

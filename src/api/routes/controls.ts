@@ -28,6 +28,7 @@ import { requireAuth } from "../middleware/requireAuth.js";
 import { requireAdminRole } from "../middleware/requireRole.js";
 import { validateControlCreate, validateControlPatch } from "../lib/controlValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { sqlFindingActive } from "../lib/metricDefinitions.js";
 
 const router = Router();
 
@@ -371,6 +372,94 @@ router.get(
         "GET /api/controls/:id failed"
       );
       res.status(500).json({ error: "control_get_failed" });
+    }
+  })
+);
+
+/* =========================================================
+   GET /api/controls/:id/findings
+
+   The findings linked to ONE control, resolved in the database.
+
+   Same defect as the obligation and AI-system detail pages had: the page fetched
+   the org's `control_test` findings with `limit: 100` and filtered them down, in
+   the browser, to the assessments of THIS control — assessments it had itself
+   fetched with `limit: 20`. The cap was applied BEFORE the filter, twice. Past the
+   cap, a control's real findings fell off the page and it printed a confident
+   "0 open findings" for a control that had them. A truncation is not a zero.
+
+   Findings link to the ASSESSMENT (source_id = control_assessments.id, NOT
+   control_id) — the control is reached through the join.
+
+   `total` / `active_total` / `open_total` are COUNT(*) over the WHOLE matched set,
+   never the length of the returned page.
+   ========================================================= */
+
+router.get(
+  "/controls/:id/findings",
+  requireApiKey,
+  attachOrganizationContext,
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const controlId = String(req.params.id ?? "").trim();
+      if (!isUuid(controlId)) {
+        res.status(400).json({ error: "control_id_must_be_uuid" });
+        return;
+      }
+
+      const limit = parseLimit(req.query.limit);
+
+      // Defined ONCE, reused by the page and the counts — they cannot disagree.
+      const linked = `
+        SELECT f.id, f.title, f.severity, f.status, f.operational_status,
+               f.domain, f.description, f.source_type, f.source_id,
+               f.created_at, f.updated_at
+          FROM findings f
+          JOIN control_assessments ca
+            ON ca.id::text = f.source_id::text
+           AND f.source_type = 'control_test'
+         WHERE ca.control_id = $1
+           AND ca.organization_id = $2
+           AND f.organization_id = $2
+      `;
+
+      const [rowsResult, countResult] = await Promise.all([
+        pg.query(
+          `WITH linked AS (${linked})
+           SELECT * FROM linked ORDER BY created_at DESC LIMIT $3`,
+          [controlId, organizationId, limit]
+        ),
+        pg.query<{ total: string; active_total: string; open_total: string }>(
+          `WITH linked AS (${linked})
+           SELECT COUNT(*)::text                                      AS total,
+                  COUNT(*) FILTER (WHERE ${sqlFindingActive()})::text AS active_total,
+                  COUNT(*) FILTER (WHERE status = 'open')::text       AS open_total
+             FROM linked`,
+          [controlId, organizationId]
+        )
+      ]);
+
+      const counts = countResult.rows[0];
+      res.status(200).json({
+        findings: rowsResult.rows,
+        total: parseInt(counts?.total ?? "0", 10),
+        active_total: parseInt(counts?.active_total ?? "0", 10),
+        open_total: parseInt(counts?.open_total ?? "0", 10),
+      });
+    } catch (err) {
+      logger.error(
+        { event: "control_findings_failed", err },
+        "GET /api/controls/:id/findings failed"
+      );
+      res.status(500).json({ error: "control_findings_failed" });
     }
   })
 );
