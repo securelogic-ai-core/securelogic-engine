@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { sqlFindingActive } from "../lib/metricDefinitions.js";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { intelligenceEventsEnabled } from "../lib/signals/intelligenceEventsFeatureFlag.js";
@@ -520,7 +521,7 @@ router.post(
               ON v.id = vr.vendor_id
              AND v.organization_id = $1
             WHERE f.organization_id = $1
-              AND f.status = 'open'
+              AND ${sqlFindingActive("f.operational_status")}
             GROUP BY v.id, v.name
 
             UNION ALL
@@ -542,7 +543,7 @@ router.post(
               ON ai.id = gr.ai_system_id
              AND ai.organization_id = $1
             WHERE f.organization_id = $1
-              AND f.status = 'open'
+              AND ${sqlFindingActive("f.operational_status")}
             GROUP BY ai.id, ai.name
 
             UNION ALL
@@ -564,7 +565,7 @@ router.post(
               ON ai.id = aga.ai_system_id
              AND ai.organization_id = $1
             WHERE f.organization_id = $1
-              AND f.status = 'open'
+              AND ${sqlFindingActive("f.operational_status")}
             GROUP BY ai.id, ai.name
 
             UNION ALL
@@ -586,7 +587,7 @@ router.post(
               ON d.id = da.dependency_id
              AND d.organization_id = $1
             WHERE f.organization_id = $1
-              AND f.status = 'open'
+              AND ${sqlFindingActive("f.operational_status")}
             GROUP BY d.id, d.name
 
             UNION ALL
@@ -609,7 +610,7 @@ router.post(
              AND v.organization_id = $1
              AND v.status = 'active'
             WHERE f.organization_id = $1
-              AND f.status = 'open'
+              AND ${sqlFindingActive("f.operational_status")}
               AND cs.affected_vendor IS NOT NULL
             GROUP BY v.id, v.name
           ) entity_paths

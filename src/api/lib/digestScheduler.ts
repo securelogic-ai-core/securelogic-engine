@@ -2,6 +2,7 @@ import { pg, pgElevated, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { sendDailyDigest } from "./alertEmailService.js";
 import { dailyDigestEnabled } from "./dailyDigestFeatureFlag.js";
+import { sqlFindingActive } from "./metricDefinitions.js";
 
 export async function runDailyDigest(): Promise<{ orgsProcessed: number; emailsSent: number }> {
   // OFF by default: the Intelligence Brief is the single weekly customer email.
@@ -44,8 +45,9 @@ export async function runDailyDigest(): Promise<{ orgsProcessed: number; emailsS
           ),
           pg.query<{ open_count: string; critical_count: string }>(
             `SELECT
-               COUNT(*) FILTER (WHERE status = 'open' OR status = 'in_progress') AS open_count,
-               COUNT(*) FILTER (WHERE severity = 'Critical') AS critical_count
+               COUNT(*) FILTER (WHERE ${sqlFindingActive()}) AS open_count,
+               -- Was severity-only, with NO status filter (see summaryScheduler).
+               COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND severity = 'Critical') AS critical_count
              FROM findings WHERE organization_id = $1`,
             [orgId]
           ),

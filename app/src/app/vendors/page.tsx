@@ -246,7 +246,7 @@ export default async function VendorsPage({
               <VendorRow
                 vendor={vendor}
                 assessmentCount={assessmentCountByVendor.get(vendor.id) ?? 0}
-                openFindingCount={vendor.open_findings_count ?? 0}
+                activeFindingCount={vendor.active_findings_count ?? 0}
               />
             </Link>
           ))}
@@ -279,11 +279,11 @@ function FilterPill({ label, href, active }: { label: string; href: string; acti
 function VendorRow({
   vendor,
   assessmentCount,
-  openFindingCount,
+  activeFindingCount,
 }: {
   vendor: Vendor;
   assessmentCount: number;
-  openFindingCount: number;
+  activeFindingCount: number;
 }) {
   const lastReviewed = vendor.last_reviewed_at
     ? new Date(vendor.last_reviewed_at).toLocaleDateString("en-US", {
@@ -337,10 +337,10 @@ function VendorRow({
                 : "No assessments"}
             </span>
           </div>
-          {openFindingCount > 0 && (
+          {activeFindingCount > 0 && (
             <div>
               <span className="text-xs font-semibold" style={{ color: "#fdba74" }}>
-                {openFindingCount} open finding{openFindingCount !== 1 ? "s" : ""}
+                {activeFindingCount} active finding{activeFindingCount !== 1 ? "s" : ""}
               </span>
             </div>
           )}

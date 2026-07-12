@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import {
   isOverdue,
   isUnassigned,
-  isCriticalOpen,
+  isCriticalActive,
   urgencyBucket,
   attentionSummary,
   groupByUrgency,
@@ -45,11 +45,11 @@ describe("attention predicates", () => {
     expect(isUnassigned(f({ owner_user_id: null, status: "closed" }))).toBe(false);
   });
 
-  it("isCriticalOpen: open + High/Critical", () => {
-    expect(isCriticalOpen(f({ severity: "Critical" }))).toBe(true);
-    expect(isCriticalOpen(f({ severity: "High" }))).toBe(true);
-    expect(isCriticalOpen(f({ severity: "Low" }))).toBe(false);
-    expect(isCriticalOpen(f({ severity: "Critical", status: "closed" }))).toBe(false);
+  it("isCriticalActive: open + High/Critical", () => {
+    expect(isCriticalActive(f({ severity: "Critical" }))).toBe(true);
+    expect(isCriticalActive(f({ severity: "High" }))).toBe(true);
+    expect(isCriticalActive(f({ severity: "Low" }))).toBe(false);
+    expect(isCriticalActive(f({ severity: "Critical", status: "closed" }))).toBe(false);
   });
 });
 

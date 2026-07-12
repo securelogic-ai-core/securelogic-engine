@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { isActiveStatus } from "@/app/findings/decisionQueue";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import {
@@ -187,32 +188,32 @@ function OpenFindingsSectionClient({
   findings: VendorFinding[];
   vendorId: string;
 }) {
-  const openFindings = findings.filter((f) => f.status === "open" || f.status === "in_progress");
+  const activeFindings = findings.filter((f) => isActiveStatus(f.status));
 
   return (
     <section>
       <div className="flex items-center gap-2 mb-4">
         <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
-          Open Findings
+          Active Findings
         </h2>
         <span
           className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold"
           style={{
-            background: openFindings.length > 0 ? "rgba(239,68,68,0.15)" : "rgba(148,163,184,0.12)",
-            color: openFindings.length > 0 ? "#fca5a5" : "#475569",
+            background: activeFindings.length > 0 ? "rgba(239,68,68,0.15)" : "rgba(148,163,184,0.12)",
+            color: activeFindings.length > 0 ? "#fca5a5" : "#475569",
           }}
         >
-          {openFindings.length}
+          {activeFindings.length}
         </span>
       </div>
 
-      {openFindings.length === 0 ? (
+      {activeFindings.length === 0 ? (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>No open findings</p>
+          <p className="text-sm" style={{ color: "#94a3b8" }}>No active findings</p>
         </div>
       ) : (
         <div className="space-y-3">
-          {openFindings.map((f) => {
+          {activeFindings.map((f) => {
             const sevStyle =
               f.severity === "Critical" ? { background: "rgba(239,68,68,0.15)", color: "#fca5a5" } :
               f.severity === "High"     ? { background: "rgba(249,115,22,0.15)", color: "#fdba74" } :
@@ -483,13 +484,13 @@ function riskLevelFromScore(score: number | null): string | null {
 
 function RiskSummaryCard({
   vendor,
-  openFindingCount,
+  activeFindingCount,
   assessmentCount,
   reviewCount,
   lastActivityDate,
 }: {
   vendor: Vendor;
-  openFindingCount: number;
+  activeFindingCount: number;
   assessmentCount: number;
   reviewCount: number;
   lastActivityDate: string | null;
@@ -534,9 +535,9 @@ function RiskSummaryCard({
       {/* Counts */}
       <div className="space-y-2 mb-4">
         <div className="flex items-center justify-between">
-          <span className="text-xs" style={{ color: "#94a3b8" }}>Open findings</span>
-          <span className="text-xs font-semibold" style={{ color: openFindingCount > 0 ? "#fca5a5" : "#cbd5e1" }}>
-            {openFindingCount}
+          <span className="text-xs" style={{ color: "#94a3b8" }}>Active findings</span>
+          <span className="text-xs font-semibold" style={{ color: activeFindingCount > 0 ? "#fca5a5" : "#cbd5e1" }}>
+            {activeFindingCount}
           </span>
         </div>
         <div className="flex items-center justify-between">
@@ -685,8 +686,8 @@ export default async function VendorDetailPage({
   const reviews = reviewsData?.reviews ?? [];
   const vendorFindings = vendorFindingsData?.findings ?? [];
 
-  const openFindings = vendorFindings.filter(
-    (f) => f.status === "open" || f.status === "in_progress"
+  const activeFindings = vendorFindings.filter(
+    (f) => isActiveStatus(f.status)
   );
   const inProgressReviews = reviews.filter((r) => r.status === "in_progress");
 
@@ -741,7 +742,7 @@ export default async function VendorDetailPage({
       <div className="flex flex-col lg:flex-row gap-8">
         {/* Left: main content */}
         <div className="flex-1 min-w-0 space-y-8">
-          <OpenFindingsSectionClient findings={openFindings} vendorId={vendor.id} />
+          <OpenFindingsSectionClient findings={activeFindings} vendorId={vendor.id} />
           <LiveIntelligenceSection context={signalContext} vendorId={vendor.id} />
           <AssessmentHistorySection
             assessments={assessments}
@@ -760,7 +761,7 @@ export default async function VendorDetailPage({
           <DependentAiSystemsCard dependencies={aiDeps} />
           <RiskSummaryCard
             vendor={vendor}
-            openFindingCount={openFindings.length}
+            activeFindingCount={activeFindings.length}
             assessmentCount={assessments.length}
             reviewCount={reviews.length}
             lastActivityDate={lastActivityDate}

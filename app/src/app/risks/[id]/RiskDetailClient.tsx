@@ -12,7 +12,7 @@
  *   5. Active Treatments — list of risk_treatments rows. Each row is a
  *      Link to /risks/[id]/treatments/[tid] for state management. New
  *      treatments via "+ Add Treatment" button at section header.
- *   6. Linked Findings — open findings with source_type='risk' and
+ *   6. Linked Findings — active findings with source_type='risk' and
  *      source_id=this risk's id. Title + severity per row.
  *
  * Edit, treatment create, and treatment-transition UIs landed in
@@ -433,13 +433,13 @@ export function RiskDetailClient({
             for the same filter, so the disclosure cannot itself be a lie. */}
         {findingsTotal > findings.length && (
           <p className="text-xs mb-2" style={{ color: "#fbbf24" }}>
-            Showing {findings.length} of {findingsTotal} open findings — use “View all”
+            Showing {findings.length} of {findingsTotal} active findings — use “View all”
             to see the rest.
           </p>
         )}
         {findings.length === 0 ? (
           <p className="text-sm" style={{ color: "#475569" }}>
-            No open findings link to this risk.
+            No active findings link to this risk.
           </p>
         ) : (
           <ul className="space-y-2 list-none p-0 m-0">

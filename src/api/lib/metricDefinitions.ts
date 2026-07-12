@@ -113,6 +113,37 @@ export function sqlFindingActiveLegacyStatus(col = "status"): string {
   return `${col} IN (${quotedList(FINDING_ACTIVE_STATUSES)})`;
 }
 
+/**
+ * `<col> = 'closed'` — the complement of Active, on the SAME axis.
+ *
+ * Exists because the complement kept getting hand-rolled as `status != 'open'`,
+ * which counts an in_progress finding as CLOSED — work in flight reported as
+ * work done. Closed is the one terminal state; deriving it from the same
+ * constant as sqlFindingActive() makes Active + Closed exhaustive by
+ * construction, so the two can never drift apart again.
+ */
+export function sqlFindingClosed(col = "operational_status"): string {
+  return `${col} = '${FINDING_CLOSED_STATUS}'`;
+}
+
+/**
+ * `<col> = 'open'` — STRICTLY OPEN: untouched work, nobody has started it.
+ *
+ * This is a genuine LIFECYCLE filter and a legitimate thing to ask for ("what
+ * has nobody picked up yet?"). It is NOT the enterprise population and must
+ * never back an enterprise metric — a Critical finding under active remediation
+ * is still a Critical finding, and a tile built on this predicate empties itself
+ * the moment someone starts working, rewarding inaction.
+ *
+ * Deliberately on the LEGACY axis: `open` is a legacy-status value, and the
+ * operational axis's own `open` is derived from the linked Actions rather than
+ * being the user-facing lifecycle state. The DB CHECK `findings_closure_axes_agree`
+ * keeps the two consistent.
+ */
+export function sqlFindingStrictlyOpen(col = "status"): string {
+  return `${col} = 'open'`;
+}
+
 /** `<col> IN ('open', 'in_progress', 'blocked')` — the one definition of an active action. */
 export function sqlActionActive(col = "status"): string {
   return `${col} IN (${quotedList(ACTION_ACTIVE_STATUSES)})`;

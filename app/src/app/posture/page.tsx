@@ -25,7 +25,7 @@ const STAT_CARD_STYLE: React.CSSProperties = {
 function DomainRow({ domain }: { domain: DomainScore }) {
   const s = severityStyle(domain.severity);
   const score = domain.score ?? 0;
-  const findingsHref = `/findings?domain=${encodeURIComponent(domain.domain)}&status=open`;
+  const findingsHref = `/findings?domain=${encodeURIComponent(domain.domain)}&active=true`;
 
   return (
     <tr className="border-t" style={{ borderColor: "#1e293b" }}>
@@ -152,10 +152,10 @@ export default async function PosturePage() {
         )}
       </div>
 
-      {/* Open Findings by Severity */}
+      {/* Active Findings by Severity */}
       <div className="mb-8">
         <h2 className="text-sm font-semibold uppercase tracking-wide mb-4" style={{ color: "#64748b" }}>
-          Open Findings by Severity
+          Active Findings by Severity
         </h2>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {(["Critical", "High", "Moderate", "Low"] as const).map((sev) => {
@@ -164,7 +164,7 @@ export default async function PosturePage() {
             return (
               <Link
                 key={sev}
-                href={`/findings?severity=${sev}&status=open`}
+                href={`/findings?severity=${sev}&active=true`}
                 className="block rounded-xl border p-5 transition-colors hover:border-teal-800"
                 style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b", textDecoration: "none" }}
               >
@@ -245,7 +245,7 @@ export default async function PosturePage() {
                     <td className="px-5 py-3">
                       {d.finding_count > 0 ? (
                         <Link
-                          href={`/findings?domain=${encodeURIComponent(d.domain)}&status=open`}
+                          href={`/findings?domain=${encodeURIComponent(d.domain)}&active=true`}
                           className="text-sm font-medium transition-colors hover:text-teal-300"
                           style={{ color: "#00c4b4" }}
                         >
@@ -293,15 +293,15 @@ export default async function PosturePage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div style={STAT_CARD_STYLE}>
             <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-              Total Open Findings
+              Total Active Findings
             </p>
             <p className="text-3xl font-bold mb-3" style={{ color: "#f1f5f9" }}>{findings.open}</p>
             <Link
-              href="/findings?status=open"
+              href="/findings?active=true"
               className="text-xs font-medium transition-colors hover:opacity-80"
               style={{ color: "#00c4b4" }}
             >
-              View all open findings →
+              View all active findings →
             </Link>
           </div>
           <div style={STAT_CARD_STYLE}>

@@ -30,7 +30,12 @@ import {
   writeFindingLifecycleEvent,
   recomputeFindingOperationalStatus,
 } from "../lib/findingLifecycle.js";
-import { sqlFindingActive, sqlFindingOverdue } from "../lib/metricDefinitions.js";
+import {
+  sqlFindingActive,
+  sqlFindingClosed,
+  sqlFindingOverdue,
+  sqlFindingStrictlyOpen,
+} from "../lib/metricDefinitions.js";
 import { resolveSlaDueDate } from "../lib/findingSlaPolicy.js";
 
 const router = Router();
@@ -596,6 +601,10 @@ router.get(
 
       const result = await pg.query<{
         open_count: string;
+        critical_active: string;
+        high_active: string;
+        medium_active: string;
+        low_active: string;
         critical_open: string;
         high_open: string;
         medium_open: string;
@@ -607,18 +616,31 @@ router.get(
       }>(
         `
         SELECT
-          COUNT(*) FILTER (WHERE status = 'open')                                   AS open_count,
+          -- STRICTLY OPEN (lifecycle filter, NOT the enterprise metric): untouched
+          -- work nobody has started. Retained as an explicit, honestly-named
+          -- population; every enterprise tile below reads the *_active twins.
+          COUNT(*) FILTER (WHERE ${sqlFindingStrictlyOpen()})                       AS open_count,
           COUNT(*) FILTER (WHERE status = 'in_progress')                            AS in_progress_open,
           -- Metric Contract: org-truth for the workspace attention tiles (same
-          -- ACTIVE definition as decisionQueue.isOpenStatus client-side).
+          -- ACTIVE definition as decisionQueue.isActiveStatus client-side).
           COUNT(*) FILTER (WHERE ${sqlFindingActive()})                             AS active_total,
           COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND severity IN ('Critical','High')) AS critical_high_active,
-          COUNT(*) FILTER (WHERE status = 'open' AND severity = 'Critical')         AS critical_open,
-          COUNT(*) FILTER (WHERE status = 'open' AND severity = 'High')             AS high_open,
-          COUNT(*) FILTER (WHERE status = 'open' AND severity = 'Moderate')         AS medium_open,
-          COUNT(*) FILTER (WHERE status = 'open' AND severity = 'Low')              AS low_open,
-          COUNT(*) FILTER (WHERE status != 'open')                                  AS closed_count,
-          COUNT(*) FILTER (WHERE status = 'open' AND priority = 'immediate')        AS immediate_priority,
+          -- ACTIVE by severity — THE enterprise severity population. A Critical
+          -- finding under remediation is still a Critical finding; the strictly-open
+          -- twins below empty themselves the moment someone starts work.
+          COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND severity = 'Critical')   AS critical_active,
+          COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND severity = 'High')       AS high_active,
+          COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND severity = 'Moderate')   AS medium_active,
+          COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND severity = 'Low')        AS low_active,
+          COUNT(*) FILTER (WHERE ${sqlFindingStrictlyOpen()} AND severity = 'Critical') AS critical_open,
+          COUNT(*) FILTER (WHERE ${sqlFindingStrictlyOpen()} AND severity = 'High')     AS high_open,
+          COUNT(*) FILTER (WHERE ${sqlFindingStrictlyOpen()} AND severity = 'Moderate') AS medium_open,
+          COUNT(*) FILTER (WHERE ${sqlFindingStrictlyOpen()} AND severity = 'Low')      AS low_open,
+          -- Was status != 'open', which counted every in_progress finding as
+          -- CLOSED — work in flight reported as work done. Closed is the terminal
+          -- state on the authoritative axis, and the exact complement of Active.
+          COUNT(*) FILTER (WHERE ${sqlFindingClosed()})                             AS closed_count,
+          COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND priority = 'immediate')  AS immediate_priority,
           COUNT(*) FILTER (WHERE source_type = 'vendor_review')                     AS vendor_sourced,
           COUNT(*) FILTER (WHERE source_type = 'signal')                            AS signal_sourced,
           -- Work-queue counts (ERIP work-first Findings page) — additive.
@@ -677,6 +699,12 @@ router.get(
           in_progress_open:   parseInt((row as any)?.in_progress_open ?? "0", 10),
           active_total:       parseInt((row as any)?.active_total ?? "0", 10),
           critical_high_active: parseInt((row as any)?.critical_high_active ?? "0", 10),
+          // ACTIVE by severity — what every enterprise severity tile now reads.
+          critical_active:    parseInt(row?.critical_active ?? "0", 10),
+          high_active:        parseInt(row?.high_active ?? "0", 10),
+          medium_active:      parseInt(row?.medium_active ?? "0", 10),
+          low_active:         parseInt(row?.low_active ?? "0", 10),
+          // Strictly-open twins — the lifecycle population, kept for explicit use.
           critical_open:      parseInt(row?.critical_open ?? "0", 10),
           high_open:          parseInt(row?.high_open ?? "0", 10),
           medium_open:        parseInt(row?.medium_open ?? "0", 10),

@@ -13,8 +13,16 @@
 
 import type { Finding } from "@/lib/api";
 
-/** Open findings are the ones that can still require action. */
-export function isOpenStatus(status: string): boolean {
+/**
+ * ACTIVE findings are the ones that can still require action — the client-side
+ * twin of the engine's sqlFindingActive() (operational_status <> 'closed').
+ *
+ * Expressed over the LEGACY `status` axis because that is the field the list
+ * payload carries. The DB CHECK `findings_closure_axes_agree` makes the two
+ * identical: status IN ('open','in_progress') ⟺ operational_status <> 'closed'.
+ * ('blocked' is an Action status; a Finding can never hold it.)
+ */
+export function isActiveStatus(status: string): boolean {
   return status === "open" || status === "in_progress";
 }
 
@@ -27,21 +35,21 @@ export function isFirstTimeEmpty(totalCount: number, hasFilters: boolean, hasAct
   return totalCount === 0 && !hasFilters && !hasActionsOnly;
 }
 
-/** Overdue = an open finding past its due date. */
+/** Overdue = an ACTIVE finding past its due date. */
 export function isOverdue(f: Finding, nowMs: number): boolean {
-  if (!f.due_date || !isOpenStatus(f.status)) return false;
+  if (!f.due_date || !isActiveStatus(f.status)) return false;
   const t = Date.parse(f.due_date);
   return Number.isFinite(t) && t < nowMs;
 }
 
-/** Unassigned = an open finding with no owner. */
+/** Unassigned = an ACTIVE finding with no owner. */
 export function isUnassigned(f: Finding): boolean {
-  return isOpenStatus(f.status) && !f.owner_user_id;
+  return isActiveStatus(f.status) && !f.owner_user_id;
 }
 
-/** High-signal = an open High/Critical finding. */
-export function isCriticalOpen(f: Finding): boolean {
-  return isOpenStatus(f.status) && (f.severity === "Critical" || f.severity === "High");
+/** High-signal = an ACTIVE High/Critical finding. */
+export function isCriticalActive(f: Finding): boolean {
+  return isActiveStatus(f.status) && (f.severity === "Critical" || f.severity === "High");
 }
 
 export type UrgencyBucket =
@@ -65,7 +73,7 @@ export const URGENCY_ORDER: readonly UrgencyBucket[] = [
 export const URGENCY_LABELS: Record<UrgencyBucket, string> = {
   overdue: "Overdue",
   unassigned: "Unassigned",
-  critical_open: "High & Critical — open",
+  critical_open: "High & Critical — active",
   in_progress: "In progress",
   open: "Open",
   resolved: "Resolved / closed",
@@ -77,10 +85,10 @@ export const URGENCY_LABELS: Record<UrgencyBucket, string> = {
  * overlap; the grouping is exclusive so every finding appears once.)
  */
 export function urgencyBucket(f: Finding, nowMs: number): UrgencyBucket {
-  if (!isOpenStatus(f.status)) return "resolved";
+  if (!isActiveStatus(f.status)) return "resolved";
   if (isOverdue(f, nowMs)) return "overdue";
   if (isUnassigned(f)) return "unassigned";
-  if (isCriticalOpen(f)) return "critical_open";
+  if (isCriticalActive(f)) return "critical_open";
   if (f.status === "in_progress") return "in_progress";
   return "open";
 }
@@ -102,10 +110,10 @@ export function attentionSummary(findings: Finding[], nowMs: number): AttentionS
   let criticalOpen = 0;
   let openTotal = 0;
   for (const f of findings) {
-    if (isOpenStatus(f.status)) openTotal++;
+    if (isActiveStatus(f.status)) openTotal++;
     if (isOverdue(f, nowMs)) overdue++;
     if (isUnassigned(f)) unassigned++;
-    if (isCriticalOpen(f)) criticalOpen++;
+    if (isCriticalActive(f)) criticalOpen++;
   }
   return { overdue, unassigned, criticalOpen, openTotal };
 }

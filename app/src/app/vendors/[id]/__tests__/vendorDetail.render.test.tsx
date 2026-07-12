@@ -228,7 +228,7 @@ describe("/vendors/[id] — related findings", () => {
     expect(screen.queryByText(/pre_contract/)).toBeNull();
   });
 
-  it("closed findings are excluded from Open Findings — and from the count beside it", async () => {
+  it("closed findings are excluded from Active Findings — and from the count beside it", async () => {
     api.getVendorFindings.mockResolvedValue({
       findings: [
         aVendorFinding({ id: "f-1", title: "Still open", status: "open" }),
@@ -242,8 +242,8 @@ describe("/vendors/[id] — related findings", () => {
     expect(screen.getByText("Still open")).toBeInTheDocument();
     expect(screen.queryByText("Already fixed")).toBeNull();
     // The sidebar count is the same population as the list — one number, one truth.
-    const openFindingsRow = screen.getByText("Open findings").parentElement as HTMLElement;
-    expect(openFindingsRow.textContent).toContain("1");
+    const activeFindingsRow = screen.getByText("Active findings").parentElement as HTMLElement;
+    expect(activeFindingsRow.textContent).toContain("1");
   });
 
   it("a vendor with NO findings renders an honest empty state, not a fabricated row", async () => {
@@ -251,19 +251,19 @@ describe("/vendors/[id] — related findings", () => {
 
     await renderPage(VendorDetailPage, props());
 
-    expect(screen.getByText("No open findings")).toBeInTheDocument();
+    expect(screen.getByText("No active findings")).toBeInTheDocument();
   });
 
   it("an engine failure on findings is not rendered as 'no findings'… (documented behavior)", async () => {
     // getVendorFindings returns null on a non-OK response. The page coalesces that to []
-    // and shows "No open findings" — a resolver failure rendered as an honest zero.
+    // and shows "No active findings" — a resolver failure rendered as an honest zero.
     // Asserted here so the behavior is VISIBLE and cannot change unnoticed; see the
     // report accompanying this suite.
     api.getVendorFindings.mockResolvedValue(null);
 
     await renderPage(VendorDetailPage, props());
 
-    expect(screen.getByText("No open findings")).toBeInTheDocument();
+    expect(screen.getByText("No active findings")).toBeInTheDocument();
   });
 });
 
