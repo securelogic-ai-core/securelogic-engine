@@ -57,11 +57,16 @@ export default async function AssetsPage({
 
   const sp = await searchParams;
   const typeFilter = isAssetType(sp.asset_type) ? sp.asset_type : undefined;
+  // The arrival context for the executive "Assets at risk" tile. It must survive every
+  // refinement and every page turn, or the customer lands on the right list and the very
+  // first click silently widens it back to the whole registry.
+  const atRisk = sp.at_risk === "true";
   const offset = parseOffsetParam(sp.offset);
   const limit = ASSET_PAGE.defaultLimit;
 
   const result = await getAssets(token, {
     ...(typeFilter ? { asset_type: typeFilter } : {}),
+    ...(atRisk ? { at_risk: true } : {}),
     limit,
     offset,
   });
@@ -69,12 +74,23 @@ export default async function AssetsPage({
   const filterHref = (t?: AssetType) => {
     const q = new URLSearchParams();
     if (t) q.set("asset_type", t);
+    if (atRisk) q.set("at_risk", "true");
+    const s = q.toString();
+    return s ? `/assets?${s}` : "/assets";
+  };
+  // The at-risk filter's own toggle — so an ?at_risk=true arrival is a VISIBLE filter the
+  // customer can see and clear, not a silent narrowing of a list that claims to be "Assets".
+  const atRiskHref = (on: boolean) => {
+    const q = new URLSearchParams();
+    if (typeFilter) q.set("asset_type", typeFilter);
+    if (on) q.set("at_risk", "true");
     const s = q.toString();
     return s ? `/assets?${s}` : "/assets";
   };
   const pageHref = (o: number) => {
     const q = new URLSearchParams();
     if (typeFilter) q.set("asset_type", typeFilter);
+    if (atRisk) q.set("at_risk", "true");
     if (o > 0) q.set("offset", String(o));
     const s = q.toString();
     return s ? `/assets?${s}` : "/assets";
@@ -124,6 +140,18 @@ export default async function AssetsPage({
                 label={assetTypeLabel(t)}
               />
             ))}
+          </div>
+
+          {/* Risk filter — a SEPARATE axis from type, so an executive arrival scoped to
+              both ("cloud resources at risk") shows both chips lit and can clear either.
+              Without a chip of its own, ?at_risk=true would be a filtered list under a
+              highlighted "All" — a silent filter, and a count with no visible cause. */}
+          <div className="flex flex-wrap items-center gap-2 mb-6">
+            <span className="text-xs font-semibold uppercase tracking-wide mr-1" style={{ color: "#64748b" }}>
+              Risk
+            </span>
+            <FilterChip href={atRiskHref(false)} active={!atRisk} label="All assets" />
+            <FilterChip href={atRiskHref(true)} active={atRisk} label="At risk" />
           </div>
 
           {result.assets.length === 0 ? (

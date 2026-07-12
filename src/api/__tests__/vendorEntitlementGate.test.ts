@@ -89,7 +89,8 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "obligationAssessments.ts": 4,
   "obligationComplianceContext.ts": 1,
   // AI governance
-  "aiSystems.ts": 5,
+  // 6 since GET /ai-systems/:id/findings — dual-gated like the rest.
+  "aiSystems.ts": 6,
   "aiGovernanceAssessments.ts": 4,
   "aiSystemGovernanceContext.ts": 1,
   "aiSystemVendorDependencies.ts": 4,

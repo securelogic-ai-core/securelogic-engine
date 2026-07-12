@@ -5,11 +5,17 @@
  * addressed by a raw id from the URL bar, and the engine is the only authority on
  * whether the caller may see it. A null system must render NOTHING.
  *
- * This page is also the one place in the product that assembles a detail view from an
- * ORG-WIDE read: it fetches `getFindings(token, { limit: 50 })` and filters client-side
- * to the findings whose source_id belongs to THIS system's reviews/assessments. That
- * filter is the tenant/entity boundary for this section, so it is tested directly —
- * another system's finding must never appear here.
+ * The findings section used to be assembled from an ORG-WIDE read — `getFindings(token,
+ * { limit: 50 })`, filtered down to this system in the browser. Past 50 org findings a
+ * system's own findings fell off the end of the page before the filter ever saw them, and
+ * this page printed "0 open findings" for a system that had them. A truncation is not a
+ * zero. It now reads `getAiSystemFindings(token, id)` — resolved in the database — and the
+ * tile prints the engine's COUNT, not the length of the rows beside it.
+ *
+ * The truncation itself is only provable against a real database holding more findings
+ * than the old page could carry: see test/isolation/aiSystemFindings.test.ts. What is
+ * provable HERE is the page's half of the contract — that it asks for the scoped read,
+ * prints the count it was handed, and never turns a failed resolve into a zero.
  *
  * The page reads no feature flag — there is no flag branch to cover.
  */
@@ -42,7 +48,7 @@ const api = vi.hoisted(() => ({
   getAiSystem: vi.fn(),
   getGovernanceReviewsForSystem: vi.fn(),
   getAiGovernanceAssessments: vi.fn(),
-  getFindings: vi.fn(),
+  getAiSystemFindings: vi.fn(),
   getAiSystemSignals: vi.fn(),
   getAiSystemVendorDependencies: vi.fn(),
 }));
@@ -59,6 +65,26 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), revalidateTag: vi.fn() }
 import AiSystemDetailPage from "../page";
 
 const props = (id = "ai-1") => ({ params: sp({ id }) as Promise<{ id: string }> });
+
+/**
+ * The scoped-findings payload, shaped like the engine's.
+ *
+ * The counts default to being DERIVED from the rows — but they are separate fields on
+ * purpose, and the tests below override them, because the whole point of the fix is that
+ * the count is computed over the full matched set while `findings` is a bounded page.
+ * A helper that could only ever produce `count === rows.length` would be unable to
+ * express the bug it exists to prevent.
+ */
+const aiFindings = (
+  findings: ReturnType<typeof aFinding>[],
+  overrides: Partial<{ total: number; open_total: number; active_total: number }> = {}
+) => ({
+  findings,
+  total: findings.length,
+  open_total: findings.filter((f) => f.status === "open").length,
+  active_total: findings.filter((f) => f.status === "open" || f.status === "in_progress").length,
+  ...overrides,
+});
 
 /** A finding sourced from one of THIS system's governance reviews. */
 const findingFromReview = (id: string, title: string, overrides = {}) =>
@@ -88,7 +114,7 @@ beforeEach(() => {
   api.getAiSystem.mockResolvedValue(anAiSystem());
   api.getGovernanceReviewsForSystem.mockResolvedValue(aGovernanceReviewsResponse([]));
   api.getAiGovernanceAssessments.mockResolvedValue(anAiGovernanceAssessmentsResponse([]));
-  api.getFindings.mockResolvedValue(aFindingsResponse([]));
+  api.getAiSystemFindings.mockResolvedValue(aiFindings([]));
   api.getAiSystemSignals.mockResolvedValue([]);
   api.getAiSystemVendorDependencies.mockResolvedValue([]);
 });
@@ -115,8 +141,8 @@ describe("/ai-systems/[id] — the correct, tenant-scoped record", () => {
     // show a complete, zeroed-out AI system detail for a record the caller has no right
     // to know exists. The honest outcome is the inventory list.
     api.getAiSystem.mockResolvedValue(null);
-    api.getFindings.mockResolvedValue(
-      aFindingsResponse([findingFromReview("f-1", "Someone else's finding")])
+    api.getAiSystemFindings.mockResolvedValue(
+      aiFindings([findingFromReview("f-1", "Someone else's finding")])
     );
     api.getAiSystemVendorDependencies.mockResolvedValue([anAiVendorDependency()]);
 
@@ -165,58 +191,56 @@ describe("/ai-systems/[id] — no cross-entity fill", () => {
     expect(api.getAiSystemVendorDependencies).toHaveBeenCalledWith("test-jwt", "ai-1");
   });
 
-  it("another system's findings are NEVER shown here, even though the read is org-wide", async () => {
-    // The findings read is org-wide (`getFindings(token, {limit:50})`); the entity
-    // boundary is enforced by the page's own filter. This is the test that holds it.
+  it("asks the engine for THIS system's findings — it does not read the org's and sift them", async () => {
+    // The entity boundary now lives in the database, where it can see every finding,
+    // rather than in a browser-side filter that could only see the first 50 the org had.
+    await renderPage(AiSystemDetailPage, props("ai-7"));
+
+    expect(api.getAiSystemFindings).toHaveBeenCalledWith("test-jwt", "ai-7");
+    // The org-wide read is gone. If it ever returns, it brings the truncation with it.
+    expect((api as Record<string, unknown>).getFindings).toBeUndefined();
+  });
+
+  it("the tile prints the engine's COUNT, not the number of rows it happened to render", async () => {
+    // THE REGRESSION, at the page layer. `findings` is a bounded display page; the counts
+    // are computed over the whole matched set. A tile that counts its own rows silently
+    // republishes the page cap as the truth — which is exactly how "0 open findings"
+    // appeared for a system that had them.
     api.getGovernanceReviewsForSystem.mockResolvedValue(
       aGovernanceReviewsResponse([aGovernanceReview({ id: "gr-1" })])
     );
-    api.getAiGovernanceAssessments.mockResolvedValue(
-      anAiGovernanceAssessmentsResponse([anAiGovernanceAssessment({ id: "aga-1" })])
-    );
-    api.getFindings.mockResolvedValue(
-      aFindingsResponse([
-        findingFromReview("f-1", "Mine: no human-in-the-loop on denials"),
-        findingFromAssessment("f-2", "Mine: model card missing evaluations"),
-        // Another AI system's review, another system's assessment, and a finding with
-        // no source at all. None of these belong on this page.
-        aFinding({ id: "f-3", title: "Theirs: review of a different system", source_type: "ai_review", source_id: "gr-OTHER" }),
-        aFinding({ id: "f-4", title: "Theirs: assessment of a different system", source_type: "ai_governance_review", source_id: "aga-OTHER" }),
-        aFinding({ id: "f-5", title: "Unrelated: a manual cyber finding", source_type: "manual", source_id: null }),
-        aFinding({ id: "f-6", title: "Unrelated: a vendor finding", source_type: "vendor_assessment", source_id: "va-1" }),
-      ])
+    api.getAiSystemFindings.mockResolvedValue(
+      aiFindings(
+        [findingFromReview("f-1", "One row on this page")],
+        // The engine saw 12 open findings; it handed back one row to display.
+        { total: 40, open_total: 12, active_total: 20 }
+      )
     );
 
     await renderPage(AiSystemDetailPage, props());
 
-    expect(screen.getByText("Mine: no human-in-the-loop on denials")).toBeInTheDocument();
-    expect(screen.getByText("Mine: model card missing evaluations")).toBeInTheDocument();
-    for (const foreign of [
-      "Theirs: review of a different system",
-      "Theirs: assessment of a different system",
-      "Unrelated: a manual cyber finding",
-      "Unrelated: a vendor finding",
-    ]) {
-      expect(screen.queryByText(foreign)).toBeNull();
-    }
-
-    // The count beside the section is the filtered population, not the org's total.
     const heading = screen.getByText("Open Findings").parentElement as HTMLElement;
-    expect(heading.textContent).toContain("2");
+    expect(heading.textContent).toContain("12");
+    // The Governance Summary headline reads the SAME number — both the section badge and
+    // the 4xl sidebar figure counted their own rows before, so both said "1".
+    expect(screen.getAllByText("12")).toHaveLength(2);
+    expect(screen.queryByText("open finding")).toBeNull(); // not the singular of one row
   });
 
-  it("a source_id that matches NO review or assessment of this system is dropped", async () => {
-    // This system has no reviews/assessments at all: nothing can legitimately be
-    // attributed to it, so an org finding carrying a stale ai_review source must not
-    // slip through on source_type alone.
-    api.getFindings.mockResolvedValue(
-      aFindingsResponse([findingFromReview("f-1", "Orphaned AI finding")])
-    );
+  it("a FAILED findings resolve is not a zero — it says so", async () => {
+    // The other way to print a confident zero: coalesce a null resolve to []. The page
+    // used to do exactly that (`findingsData?.findings ?? []`), so an engine 500 rendered
+    // "No open findings for this AI system." — indistinguishable from a clean system.
+    api.getAiSystemFindings.mockResolvedValue(null);
 
-    await renderPage(AiSystemDetailPage, props());
+    const { container } = await renderPage(AiSystemDetailPage, props());
 
-    expect(screen.queryByText("Orphaned AI finding")).toBeNull();
-    expect(screen.getByText("No open findings for this AI system.")).toBeInTheDocument();
+    expect(screen.queryByText("No open findings for this AI system.")).toBeNull();
+    expect(screen.getByText(/Could not load findings for this AI system/)).toBeInTheDocument();
+    expect(screen.getByText(/This is not a zero/)).toBeInTheDocument();
+    // And the count is withheld rather than invented.
+    expect(container.textContent).toContain("—");
+    expect(screen.getByText("findings unavailable")).toBeInTheDocument();
   });
 
   it("the token on every read is the CALLER's — the engine's org scope rides on it", async () => {
@@ -228,7 +252,7 @@ describe("/ai-systems/[id] — no cross-entity fill", () => {
       api.getAiSystem,
       api.getGovernanceReviewsForSystem,
       api.getAiGovernanceAssessments,
-      api.getFindings,
+      api.getAiSystemFindings,
       api.getAiSystemSignals,
       api.getAiSystemVendorDependencies,
     ]) {
@@ -246,8 +270,8 @@ describe("/ai-systems/[id] — related findings", () => {
     api.getGovernanceReviewsForSystem.mockResolvedValue(
       aGovernanceReviewsResponse([aGovernanceReview({ id: "gr-1" })])
     );
-    api.getFindings.mockResolvedValue(
-      aFindingsResponse([
+    api.getAiSystemFindings.mockResolvedValue(
+      aiFindings([
         findingFromReview("f-1", "No human-in-the-loop on denials", {
           severity: "Critical",
           description: "Automated denials ship without adjuster review.",
@@ -263,7 +287,7 @@ describe("/ai-systems/[id] — related findings", () => {
   });
 
   it("a system with no findings renders an honest empty state and a zero that is real", async () => {
-    api.getFindings.mockResolvedValue(aFindingsResponse([]));
+    api.getAiSystemFindings.mockResolvedValue(aiFindings([]));
 
     await renderPage(AiSystemDetailPage, props());
 
@@ -279,8 +303,8 @@ describe("/ai-systems/[id] — related findings", () => {
     api.getGovernanceReviewsForSystem.mockResolvedValue(
       aGovernanceReviewsResponse([aGovernanceReview({ id: "gr-1" })])
     );
-    api.getFindings.mockResolvedValue(
-      aFindingsResponse([
+    api.getAiSystemFindings.mockResolvedValue(
+      aiFindings([
         findingFromReview("f-1", "Open work", { status: "open" }),
         findingFromReview("f-2", "Work already underway", { status: "in_progress" }),
       ])
@@ -402,8 +426,8 @@ describe("/ai-systems/[id] — links land somewhere real", () => {
     api.getAiGovernanceAssessments.mockResolvedValue(
       anAiGovernanceAssessmentsResponse([anAiGovernanceAssessment({ id: "aga-1" })])
     );
-    api.getFindings.mockResolvedValue(
-      aFindingsResponse([findingFromReview("f-1", "No human-in-the-loop on denials")])
+    api.getAiSystemFindings.mockResolvedValue(
+      aiFindings([findingFromReview("f-1", "No human-in-the-loop on denials")])
     );
     api.getAiSystemSignals.mockResolvedValue([anAiSystemLinkedSignal()]);
     api.getAiSystemVendorDependencies.mockResolvedValue([anAiVendorDependency()]);
@@ -433,8 +457,8 @@ describe("/ai-systems/[id] — governance history", () => {
         anAiGovernanceAssessment({ id: "aga-2", summary: "Bias testing complete, no gaps." }),
       ])
     );
-    api.getFindings.mockResolvedValue(
-      aFindingsResponse([findingFromAssessment("f-1", "Model card missing evaluations")])
+    api.getAiSystemFindings.mockResolvedValue(
+      aiFindings([findingFromAssessment("f-1", "Model card missing evaluations")])
     );
 
     await renderPage(AiSystemDetailPage, props());
@@ -455,7 +479,7 @@ describe("/ai-systems/[id] — governance history", () => {
         aGovernanceReview({ id: "gr-1", review_type: "Pre-deployment review" }),
       ])
     );
-    api.getFindings.mockResolvedValue(aFindingsResponse([])); // no findings exist at all
+    api.getAiSystemFindings.mockResolvedValue(aiFindings([])); // no findings exist at all
 
     await renderPage(AiSystemDetailPage, props());
 
@@ -471,8 +495,8 @@ describe("/ai-systems/[id] — governance history", () => {
         aGovernanceReview({ id: "gr-1", review_type: "Pre-deployment review" }),
       ])
     );
-    api.getFindings.mockResolvedValue(
-      aFindingsResponse([
+    api.getAiSystemFindings.mockResolvedValue(
+      aiFindings([
         aFinding({ id: "f-1", source_type: "ai_review", source_id: "gr-1", status: "open" }),
       ])
     );

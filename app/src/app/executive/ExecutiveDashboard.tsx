@@ -78,7 +78,12 @@ export function ExecutiveDashboard({
       </div>
 
       {/* Scoped KPI scorecard for the selected view. */}
-      <ExecutiveKpiCards kpis={kpis} windowDays={windowDays} />
+      <ExecutiveKpiCards
+        kpis={kpis}
+        windowDays={windowDays}
+        dimension={current.dimension}
+        asOf={current.current?.snapshot_date ?? null}
+      />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Panel title={`${dimensionLabel(current.dimension)} trend`} subtitle={`${rising} dimension${rising === 1 ? "" : "s"} rising overall`}>

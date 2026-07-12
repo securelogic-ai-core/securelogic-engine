@@ -5,7 +5,7 @@ import {
   getAiSystem,
   getGovernanceReviewsForSystem,
   getAiGovernanceAssessments,
-  getFindings,
+  getAiSystemFindings,
   getAiSystemSignals,
   getAiSystemVendorDependencies,
   type AiSystem,
@@ -114,7 +114,18 @@ function DeploymentStatusChip({ value }: { value: string | null }) {
 // Section: Open Findings
 // ─────────────────────────────────────────────────────────────
 
-function OpenFindingsSection({ findings, systemId }: { findings: Finding[]; systemId: string }) {
+function OpenFindingsSection({
+  findings,
+  count,
+  unavailable,
+  systemId,
+}: {
+  findings: Finding[];
+  /** The engine's COUNT over the whole matched set — not `findings.length`, which is a page. */
+  count: number;
+  unavailable: boolean;
+  systemId: string;
+}) {
   return (
     <section>
       <div className="flex items-center gap-2 mb-4">
@@ -124,15 +135,24 @@ function OpenFindingsSection({ findings, systemId }: { findings: Finding[]; syst
         <span
           className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold"
           style={{
-            background: findings.length > 0 ? "rgba(239,68,68,0.15)" : "rgba(148,163,184,0.12)",
-            color: findings.length > 0 ? "#fca5a5" : "#475569",
+            background: count > 0 ? "rgba(239,68,68,0.15)" : "rgba(148,163,184,0.12)",
+            color: count > 0 ? "#fca5a5" : "#475569",
           }}
         >
-          {findings.length}
+          {unavailable ? "—" : count}
         </span>
       </div>
 
-      {findings.length === 0 ? (
+      {unavailable ? (
+        <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
+          {/* Could not resolve — this is not a zero. Saying "no open findings" here would
+              be the same lie the truncation used to tell, with a different cause. */}
+          <p className="text-sm" style={{ color: "#fbbf24" }}>
+            Could not load findings for this AI system. This is not a zero — retry, or
+            escalate if it persists.
+          </p>
+        </div>
+      ) : findings.length === 0 ? (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
           <p className="text-sm" style={{ color: "#94a3b8" }}>No open findings for this AI system.</p>
         </div>
@@ -367,11 +387,16 @@ function governanceSummaryColor(openFindings: Finding[]): string {
 
 function GovernanceSummaryCard({
   openFindings,
+  count,
+  unavailable,
   reviewCount,
   assessmentCount,
   latestAssessment,
 }: {
+  /** The rows on this page — used ONLY to tone the number by severity, never to count it. */
   openFindings: Finding[];
+  count: number;
+  unavailable: boolean;
   reviewCount: number;
   assessmentCount: number;
   latestAssessment: AiGovernanceAssessment | null;
@@ -385,11 +410,12 @@ function GovernanceSummaryCard({
       </h3>
 
       <div className="mb-4">
-        <p className="text-4xl font-bold leading-none" style={{ color: countColor }}>
-          {openFindings.length}
+        {/* The engine's COUNT, not the length of the rows rendered beside it. */}
+        <p className="text-4xl font-bold leading-none" style={{ color: unavailable ? "#fbbf24" : countColor }}>
+          {unavailable ? "—" : count}
         </p>
         <p className="text-xs mt-1" style={{ color: "#475569" }}>
-          open finding{openFindings.length !== 1 ? "s" : ""}
+          {unavailable ? "findings unavailable" : `open finding${count !== 1 ? "s" : ""}`}
         </p>
       </div>
 
@@ -599,7 +625,12 @@ export default async function AiSystemDetailPage({
     getAiSystem(token, id),
     getGovernanceReviewsForSystem(token, id, 20),
     getAiGovernanceAssessments(token, id, 20),
-    getFindings(token, { limit: 50 }),
+    // Resolved in the database, scoped to THIS system. This used to be
+    // getFindings(token, { limit: 50 }) — the org's findings, filtered down to this
+    // system in the browser. Past 50 org findings, a system's own findings fell off
+    // the end of the page before the filter ever saw them, and this page printed
+    // "0 open findings" for a system that had them. A truncation is not a zero.
+    getAiSystemFindings(token, id),
     getAiSystemSignals(token, id, 10),
     getAiSystemVendorDependencies(token, id),
   ]);
@@ -608,19 +639,15 @@ export default async function AiSystemDetailPage({
 
   const reviews = reviewsData?.reviews ?? [];
   const assessments = assessmentsData?.assessments ?? [];
-  const allFindings = findingsData?.findings ?? [];
 
-  // Build ID sets for both source types.
-  const reviewIds = new Set(reviews.map((r) => r.id));
-  const assessmentIds = new Set(assessments.map((a) => a.id));
+  // A failed resolve is NOT an empty result. Coalescing null to [] here would print the
+  // same confident zero the truncation used to, just by a different route.
+  const findingsUnavailable = findingsData === null;
+  const systemFindings = findingsData?.findings ?? [];
 
-  // Filter findings: ai_review links to governance_reviews; ai_governance_review links to assessments.
-  const systemFindings = allFindings.filter(
-    (f) =>
-      (f.source_type === "ai_review" && f.source_id != null && reviewIds.has(f.source_id)) ||
-      (f.source_type === "ai_governance_review" && f.source_id != null && assessmentIds.has(f.source_id))
-  );
-
+  // The COUNT the engine computed over the whole matched set — never the length of the
+  // page above, which is bounded and would silently become a cap.
+  const openFindingCount = findingsData?.open_total ?? 0;
   const openFindings = systemFindings.filter((f) => f.status === "open");
 
   // Track which assessments have findings (for "Finding created" indicator).
@@ -675,7 +702,12 @@ export default async function AiSystemDetailPage({
       <div className="flex flex-col lg:flex-row gap-8">
         {/* Left: main content */}
         <div className="flex-1 min-w-0 space-y-8">
-          <OpenFindingsSection findings={openFindings} systemId={system.id} />
+          <OpenFindingsSection
+            findings={openFindings}
+            count={openFindingCount}
+            unavailable={findingsUnavailable}
+            systemId={system.id}
+          />
           <ExternalIntelligenceSection signals={linkedSignals} />
           <GovernanceReviewsSection reviews={reviews} reviewIdsWithFindings={reviewIdsWithFindings} />
           <GovernanceAssessmentsSection
@@ -690,6 +722,8 @@ export default async function AiSystemDetailPage({
           <VendorDependenciesCard dependencies={vendorDeps} />
           <GovernanceSummaryCard
             openFindings={openFindings}
+            count={openFindingCount}
+            unavailable={findingsUnavailable}
             reviewCount={reviews.length}
             assessmentCount={assessments.length}
             latestAssessment={latestAssessment}

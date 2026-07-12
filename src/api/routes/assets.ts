@@ -29,6 +29,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireCapability } from "../lib/enterpriseContextCapability.js";
+import { sqlAssetAtRisk, sqlCurrentDecisionsCte } from "../lib/riskDimensionData.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { assetRegistryFeatureFlag } from "../lib/assetRegistryFeatureFlag.js";
 import { signalApplicabilityFeatureFlag } from "../lib/signalApplicabilityFeatureFlag.js";
@@ -90,6 +91,15 @@ const ASSET_COLS = `
   status, backing_kind, backing_id, lifecycle_status, created_at, updated_at
 `;
 
+/**
+ * The same columns, qualified. The list joins the current-decision ledger when
+ * `at_risk=true`, and `asset_id` exists on both sides — unqualified, it is ambiguous
+ * and Postgres rejects the query. Same columns, same order; only the prefix differs.
+ */
+const ASSET_COLS_V = ASSET_COLS.split(",")
+  .map((c) => `v.${c.trim()}`)
+  .join(", ");
+
 function getOrgId(req: Request): string | null {
   return (
     (req as { organizationContext?: { organizationId?: string | null } })
@@ -129,21 +139,41 @@ export async function listAssets(req: Request, res: Response): Promise<void> {
     typeFilter = rawType;
   }
 
+  // at_risk=true — the assets the executive "Assets at risk" tile counts (own_risk > 0
+  // on the CURRENT applicability decision). It exists so that tile has a destination
+  // that reproduces its number: without it, the only place the tile could send a
+  // customer was the unscoped registry, which is not a drill-through, it is a shrug.
+  // The predicate is built from DECISION_RISK, the same map the rollup scores with —
+  // one definition, so the list and the tile cannot drift apart.
+  const atRisk = req.query.at_risk === "true";
+
+  const atRiskJoin = atRisk
+    ? `LEFT JOIN current_decisions cd ON cd.asset_id = v.asset_id`
+    : ``;
+  const atRiskWhere = atRisk ? `AND ${sqlAssetAtRisk()}` : ``;
+  const withCte = atRisk ? `WITH current_decisions AS (${sqlCurrentDecisionsCte("$1")})` : ``;
+
   const rows = await pg.query(
-    `SELECT ${ASSET_COLS}
-       FROM asset_registry_v
-      WHERE organization_id = $1
-        AND ($2::text IS NULL OR asset_type = $2)
-      ORDER BY name ASC, asset_id ASC
+    `${withCte}
+     SELECT ${ASSET_COLS_V}
+       FROM asset_registry_v v
+       ${atRiskJoin}
+      WHERE v.organization_id = $1
+        AND ($2::text IS NULL OR v.asset_type = $2)
+        ${atRiskWhere}
+      ORDER BY v.name ASC, v.asset_id ASC
       LIMIT $3 OFFSET $4`,
     [orgId, typeFilter, limit, offset]
   );
 
   const total = await pg.query(
-    `SELECT count(*)::int AS n
-       FROM asset_registry_v
-      WHERE organization_id = $1
-        AND ($2::text IS NULL OR asset_type = $2)`,
+    `${withCte}
+     SELECT count(*)::int AS n
+       FROM asset_registry_v v
+       ${atRiskJoin}
+      WHERE v.organization_id = $1
+        AND ($2::text IS NULL OR v.asset_type = $2)
+        ${atRiskWhere}`,
     [orgId, typeFilter]
   );
 
