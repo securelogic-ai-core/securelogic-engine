@@ -14,9 +14,11 @@
  *   - Aggregate endpoints (dashboard.ts, findings.ts summary, actions.ts
  *     summary) build their FILTER/WHERE fragments from here — never hand-roll
  *     a status list or an overdue predicate.
- *   - ACTIVE means "still requires work". For findings: open | in_progress
- *     (legacy axis; the derived operational axis is spec'd separately). For
- *     actions: open | in_progress | blocked — blocked work is STILL work.
+ *   - ACTIVE means "still requires work". For findings: operational_status
+ *     <> 'closed' (the authoritative axis — product ruling 2026-07-12; the
+ *     legacy `status` predicate is retained only as a compat/migration proof).
+ *     Remediated findings are ACTIVE: the work is done but not yet validated.
+ *     For actions: open | in_progress | blocked — blocked work is STILL work.
  *   - OVERDUE means "active AND due_date strictly before today (CURRENT_DATE)".
  *     Date-typed due dates compare against dates, never NOW().
  *   - Fragments are compile-time constants; column names come from the const
@@ -26,8 +28,23 @@
 
 // ── Canonical status sets ───────────────────────────────────────────────────
 
-/** Finding statuses that still require work (legacy axis). */
+/**
+ * LEGACY finding statuses that still require work. Retained ONLY for the compat
+ * axis and its tests. The authoritative definition is now the operational one
+ * below — do not build new predicates from this.
+ */
 export const FINDING_ACTIVE_STATUSES = ["open", "in_progress"] as const;
+
+/**
+ * The one terminal state of the authoritative operational axis.
+ *
+ * ACTIVE FINDING = operational_status <> 'closed'   (product ruling 2026-07-12)
+ *
+ * Everything else is Active, INCLUDING `remediated` — remediation completed but
+ * awaiting validation/governance closure is still live work, and a surface that
+ * drops it would tell a customer the work is done when nobody has validated it.
+ */
+export const FINDING_CLOSED_STATUS = "closed" as const;
 
 /** Action statuses that still require work. Blocked work is still work. */
 export const ACTION_ACTIVE_STATUSES = ["open", "in_progress", "blocked"] as const;
@@ -42,7 +59,20 @@ export const ACTION_TERMINAL_STATUSES = ["closed", "accepted"] as const;
  */
 export const RISK_TERMINAL_STATUSES = ["closed", "transferred"] as const;
 
-export function isFindingActive(status: string | null | undefined): boolean {
+/**
+ * Is this finding Active? Takes the OPERATIONAL status (the authoritative axis).
+ * Anything that is not 'closed' is Active — remediated included.
+ *
+ * A null/absent operational_status is treated as Active, not inactive: absence of
+ * evidence of closure is not evidence of closure, and a resolver failure must
+ * never silently retire a live finding from the count.
+ */
+export function isFindingActive(operationalStatus: string | null | undefined): boolean {
+  return operationalStatus !== FINDING_CLOSED_STATUS;
+}
+
+/** The legacy predicate, kept for the compat axis only. Do not use for metrics. */
+export function isFindingActiveLegacyStatus(status: string | null | undefined): boolean {
   return (FINDING_ACTIVE_STATUSES as readonly string[]).includes(status ?? "");
 }
 
@@ -57,11 +87,29 @@ function quotedList(values: readonly string[]): string {
 }
 
 /**
- * `<col> IN ('open', 'in_progress')` — the one definition of an active finding.
- * `col` is a compile-time constant at every call site (e.g. "status" or
- * "f.status"); never pass request input.
+ * `<col> <> 'closed'` — THE definition of an Active Finding (ruling 2026-07-12).
+ *
+ * `col` is the OPERATIONAL axis (operational_status), not the legacy `status`.
+ * It is a compile-time constant at every call site (e.g. "operational_status" or
+ * "f.operational_status"); never pass request input.
+ *
+ * Why `<> 'closed'` and not an IN-list of the active states: an IN-list has to be
+ * updated every time the lifecycle grows a state, and the day someone adds one
+ * and forgets, that state silently vanishes from every count in the product. The
+ * negative predicate fails safe — a new operational state is Active until someone
+ * deliberately decides it is closure.
+ *
+ * NOT NULL in the schema (default 'open'), so no null-guard is needed here.
  */
-export function sqlFindingActive(col = "status"): string {
+export function sqlFindingActive(col = "operational_status"): string {
+  return `${col} <> '${FINDING_CLOSED_STATUS}'`;
+}
+
+/**
+ * The LEGACY compat predicate over `status`. Retained so the migration can prove
+ * the two axes select the identical population; not for product metrics.
+ */
+export function sqlFindingActiveLegacyStatus(col = "status"): string {
   return `${col} IN (${quotedList(FINDING_ACTIVE_STATUSES)})`;
 }
 
@@ -81,11 +129,14 @@ export function sqlRiskActive(col = "status"): string {
 }
 
 /**
- * Overdue finding: active AND due strictly before today. DATE comparison
- * (CURRENT_DATE), never NOW() — a due-today item is NOT overdue anywhere.
+ * Overdue finding: ACTIVE (operational axis) AND due strictly before today. DATE
+ * comparison (CURRENT_DATE), never NOW() — a due-today item is NOT overdue anywhere.
  */
-export function sqlFindingOverdue(statusCol = "status", dueCol = "due_date"): string {
-  return `${sqlFindingActive(statusCol)} AND ${dueCol} IS NOT NULL AND ${dueCol} < CURRENT_DATE`;
+export function sqlFindingOverdue(
+  operationalCol = "operational_status",
+  dueCol = "due_date"
+): string {
+  return `${sqlFindingActive(operationalCol)} AND ${dueCol} IS NOT NULL AND ${dueCol} < CURRENT_DATE`;
 }
 
 /** Overdue action: active AND due strictly before today (CURRENT_DATE). */
