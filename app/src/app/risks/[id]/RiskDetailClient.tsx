@@ -103,6 +103,7 @@ export function RiskDetailClient({
   risk,
   treatments,
   findings,
+  findingsTotal,
   scaleLevels,
   effectiveCadenceByRating,
   userRole,
@@ -110,6 +111,8 @@ export function RiskDetailClient({
   risk: Risk;
   treatments: RiskTreatment[];
   findings: Finding[];
+  /** Exact server-side total for the same filter. The list below is capped at 50. */
+  findingsTotal: number;
   scaleLevels: RiskScaleLevel[];
   effectiveCadenceByRating: Record<string, number>;
   /** users.role via getAuthMe — drives approver-only affordances. Null when
@@ -423,6 +426,17 @@ export function RiskDetailClient({
             </Link>
           )}
         </div>
+
+        {/* The list is bounded at 50. When there are more, SAY so — a list that just
+            stops at 50 reads as "these are all of them", which is a truncation
+            pretending to be a complete answer. The total is the server's exact count
+            for the same filter, so the disclosure cannot itself be a lie. */}
+        {findingsTotal > findings.length && (
+          <p className="text-xs mb-2" style={{ color: "#fbbf24" }}>
+            Showing {findings.length} of {findingsTotal} open findings — use “View all”
+            to see the rest.
+          </p>
+        )}
         {findings.length === 0 ? (
           <p className="text-sm" style={{ color: "#475569" }}>
             No open findings link to this risk.

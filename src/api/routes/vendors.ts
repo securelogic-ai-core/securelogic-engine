@@ -38,6 +38,7 @@ import {
   validateVendorPatch
 } from "../lib/vendorValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { sqlFindingActive } from "../lib/metricDefinitions.js";
 import { computeVendorRiskScore } from "../lib/vendorRiskScore.js";
 
 const router = Router();
@@ -274,9 +275,39 @@ router.get(
 
       const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
+      // Per-vendor finding counts, computed HERE, in the database.
+      //
+      // The vendor list and the vendor risk board used to fetch the org's Vendor
+      // Risk findings with `limit: 100` and group them by vendor in the browser.
+      // Past 100 such findings in the org, a vendor's findings fell off the end of
+      // the page before the grouping ever saw them — and the card printed no badge
+      // at all for a vendor that had open findings. A truncation is not a zero, and
+      // a count derived from a bounded page is a cap wearing a count's clothes.
+      //
+      // Findings link to the ASSESSMENT (source_id = vendor_assessments.id), never
+      // to the vendor directly — the vendor is reached through the join, the same
+      // linkage GET /api/vendors/:id/findings uses.
+      //
+      // Both populations are returned: active_findings_count is the canonical
+      // enterprise metric (operational_status <> 'closed'); open_findings_count is
+      // the strictly-open population these surfaces display today.
+      const findingCounts = (predicate: string) => `
+        (SELECT COUNT(*)
+           FROM findings f
+           JOIN vendor_assessments va
+             ON va.id::text = f.source_id::text
+            AND f.source_type = 'vendor_review'
+          WHERE va.vendor_id = vendors.id
+            AND va.organization_id = vendors.organization_id
+            AND f.organization_id = vendors.organization_id
+            AND ${predicate})::int
+      `;
+
       const result = await pg.query(
         `
-        SELECT ${VENDOR_SELECT}
+        SELECT ${VENDOR_SELECT},
+               ${findingCounts("f.status = 'open'")}                  AS open_findings_count,
+               ${findingCounts(sqlFindingActive("f.operational_status"))} AS active_findings_count
         FROM vendors
         ${whereClause}
         ORDER BY

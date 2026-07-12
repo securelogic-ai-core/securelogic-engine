@@ -4,7 +4,6 @@ import { getSession } from "@/lib/session";
 import {
   getVendors,
   getVendorAssessments,
-  getFindings,
   type Vendor,
   type VendorAssessment,
 } from "@/lib/api";
@@ -311,10 +310,9 @@ export default async function VendorRiskPage() {
     entitlementLevel === "team";
   if (!isPlatformUser) redirect("/dashboard");
 
-  const [vendorsData, assessmentsData, findingsData] = await Promise.all([
+  const [vendorsData, assessmentsData] = await Promise.all([
     getVendors(token, "active"),
     getVendorAssessments(token, 100),
-    getFindings(token, { domain: "Vendor Risk", status: "open", limit: 100 }),
   ]);
 
   if (vendorsData === null) {
@@ -347,15 +345,16 @@ export default async function VendorRiskPage() {
     }
   }
 
-  const openFindingsByVendor = new Map<string, number>();
-  for (const f of findingsData?.findings ?? []) {
-    if (f.source_type === "vendor_review" && f.source_id) {
-      const vendorId = assessmentVendorMap.get(f.source_id);
-      if (vendorId) {
-        openFindingsByVendor.set(vendorId, (openFindingsByVendor.get(vendorId) ?? 0) + 1);
-      }
-    }
-  }
+  // Open-finding counts arrive ON the vendor now, computed in the database by
+  // GET /api/vendors. They used to be grouped here from a capped page of the org's
+  // findings (limit:100) bucketed through a capped assessment map (limit:100) —
+  // past either cap a vendor's findings vanished and the board showed it clean.
+  // On THIS page that is not merely a wrong badge: `hasOpenFindings` drives the red
+  // and orange risk borders, so a truncated count made a high-risk vendor with open
+  // findings render as if it had none. A truncation is not a zero.
+  const openFindingsByVendor = new Map<string, number>(
+    (vendorsData?.vendors ?? []).map((v) => [v.id, v.open_findings_count ?? 0])
+  );
 
   const allVendors = vendorsData.vendors;
   const sortedVendors = sortVendors(allVendors);

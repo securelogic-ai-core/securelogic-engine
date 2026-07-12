@@ -20,8 +20,10 @@ const WRAPPED_FILES: Record<string, { endpoints: number; unwrapped: string[] }> 
   "vendors.ts": { endpoints: 8, unwrapped: ["/vendors/export.csv"] },
   // 6 since GET /ai-systems/:id/findings — asTenant-wrapped like the rest.
   "aiSystems.ts": { endpoints: 6, unwrapped: [] },
-  "controls.ts": { endpoints: 5, unwrapped: [] },
-  "obligations.ts": { endpoints: 5, unwrapped: [] },
+  // 6 since GET /controls/:id/findings — asTenant-wrapped like the rest.
+  "controls.ts": { endpoints: 6, unwrapped: [] },
+  // 6 since GET /obligations/:id/findings — asTenant-wrapped like the rest.
+  "obligations.ts": { endpoints: 6, unwrapped: [] },
   "actions.ts": { endpoints: 5, unwrapped: [] },
   "aiGovernanceAssessments.ts": { endpoints: 4, unwrapped: [] },
   "controlAssessments.ts": { endpoints: 4, unwrapped: [] },

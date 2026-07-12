@@ -45,6 +45,10 @@ export default async function RiskDetailPage({
     getRiskById(token, id),
     getRiskTreatments(token, { risk_id: id, limit: 50 }),
     getRiskScale(token),
+    // Server-scoped (source_id = this risk), so this is NOT the cap-before-filter
+    // defect the other detail pages had — the filter runs in the database. But the
+    // page IS bounded at 50, so the exact `total` travels with it and the card
+    // discloses when it is showing a subset, rather than quietly ending at 50.
     getFindings(token, { source_type: "risk", source_id: id, status: "open", limit: 50 }),
     getRiskSettingsServer(token),
     session.jwtToken ? getAuthMe(session.jwtToken) : Promise.resolve(null),
@@ -75,6 +79,7 @@ export default async function RiskDetailPage({
         risk={risk}
         treatments={treatmentsData?.treatments ?? []}
         findings={findingsData?.findings ?? []}
+        findingsTotal={findingsData?.total ?? findingsData?.findings.length ?? 0}
         scaleLevels={scale?.levels ?? []}
         effectiveCadenceByRating={effectiveCadenceByRating}
         userRole={userRole}

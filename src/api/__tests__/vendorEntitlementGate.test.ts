@@ -75,7 +75,8 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "signalObligationLinks.ts": 4,
   "signalMatchSuggestions.ts": 5,
   // controls / frameworks
-  "controls.ts": 5,
+  // 6 since GET /controls/:id/findings — dual-gated like the rest.
+  "controls.ts": 6,
   "controlMappings.ts": 2,
   "controlAssessments.ts": 4,
   "controlComplianceContext.ts": 1,
@@ -84,7 +85,8 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "frameworkReadiness.ts": 1,
   "requirements.ts": 6,
   // obligations
-  "obligations.ts": 5,
+  // 6 since GET /obligations/:id/findings — dual-gated like the rest.
+  "obligations.ts": 6,
   "obligationMappings.ts": 2,
   "obligationAssessments.ts": 4,
   "obligationComplianceContext.ts": 1,
