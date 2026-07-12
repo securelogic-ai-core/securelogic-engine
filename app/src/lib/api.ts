@@ -2324,6 +2324,8 @@ export async function getRisks(
     risk_rating?:   string;
     review_status?: "overdue" | "due_soon" | "up_to_date";
     archived?:      boolean;
+    /** Metric Contract: only risks still on the register — what an "open risks" count links to. */
+    active?:        boolean;
     limit?:         number;
   }
 ): Promise<RisksResponse | null> {
@@ -2334,6 +2336,7 @@ export async function getRisks(
     if (params?.risk_rating)    qs.set("risk_rating",   params.risk_rating);
     if (params?.review_status)  qs.set("review_status", params.review_status);
     if (params?.archived)       qs.set("archived",      "true");
+    if (params?.active)         qs.set("active",        "true");
     qs.set("limit", String(params?.limit ?? 50));
     const res = await engineFetch(`/api/risks?${qs.toString()}`, apiKey);
     if (!res.ok) return null;

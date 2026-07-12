@@ -35,6 +35,13 @@ export const ACTION_ACTIVE_STATUSES = ["open", "in_progress", "blocked"] as cons
 /** Action statuses that mean the work item is finished. */
 export const ACTION_TERMINAL_STATUSES = ["closed", "accepted"] as const;
 
+/**
+ * Risk statuses that mean the risk is off the books. An ACTIVE risk is anything
+ * else — the register's own framing ("open risks"), which includes accepted and
+ * mitigating risks because they are still carried.
+ */
+export const RISK_TERMINAL_STATUSES = ["closed", "transferred"] as const;
+
 export function isFindingActive(status: string | null | undefined): boolean {
   return (FINDING_ACTIVE_STATUSES as readonly string[]).includes(status ?? "");
 }
@@ -61,6 +68,16 @@ export function sqlFindingActive(col = "status"): string {
 /** `<col> IN ('open', 'in_progress', 'blocked')` — the one definition of an active action. */
 export function sqlActionActive(col = "status"): string {
   return `${col} IN (${quotedList(ACTION_ACTIVE_STATUSES)})`;
+}
+
+/**
+ * `<col> NOT IN ('closed', 'transferred')` — the one definition of an active risk,
+ * i.e. a risk still on the register. The dashboard tile already counted this; the
+ * /risks list applied NO status filter at all, so the destination listed closed and
+ * transferred risks under a tile that promised open ones.
+ */
+export function sqlRiskActive(col = "status"): string {
+  return `${col} NOT IN (${quotedList(RISK_TERMINAL_STATUSES)})`;
 }
 
 /**

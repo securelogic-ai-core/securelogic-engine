@@ -91,6 +91,24 @@ beforeAll(async () => {
   // Due exactly today — must NOT be overdue anywhere (CURRENT_DATE, not NOW()).
   const today = (await pool.query<{ d: string }>(`SELECT CURRENT_DATE::text AS d`)).rows[0].d;
   await seedActionRow({ orgId: seed.orgA.id, status: "open", dueDate: today });
+
+  // Risks: 3 still on the register (one deliberately UNSCORED → the 'Unscored'
+  // bucket) and 2 terminal. The terminal pair is the whole point — without them the
+  // "Open Risks tile == its destination list" assertion would pass on an empty set
+  // and prove nothing.
+  for (const [status, residual] of [
+    ["open", "Critical"],
+    ["accepted", "Moderate"],
+    ["open", null],
+    ["closed", "High"],
+    ["transferred", "Low"],
+  ] as const) {
+    await pool.query(
+      `INSERT INTO risks (organization_id, title, domain, likelihood, impact, risk_rating, residual_rating, status)
+       VALUES ($1, $2, 'Cyber', 'possible', 'High', 'High', $3, $4)`,
+      [seed.orgA.id, `risk ${status} ${residual ?? "unscored"}`, residual, status]
+    );
+  }
 }, 120_000);
 
 afterAll(async () => {
@@ -233,12 +251,74 @@ describe("Metric Contract — cross-surface reconciliation (real app, real Postg
     expect(s.critical_high_active).toBe(2);
   });
 
-  it("dashboard findings.open equals the findings summary open_count (one definition)", async () => {
-    const [dash, sum] = await Promise.all([
+  it("the dashboard findings tile, the Operations Center, and the list are ONE number", async () => {
+    // This test used to assert `dash.findings.open === summary.open_count`, and it
+    // PASSED — both were `status='open'`. It was pinning the divergence in place:
+    // the aging numbers inside that same dashboard tile counted sqlFindingActive()
+    // (open + in_progress), so the tile disagreed with ITSELF, and the word
+    // "findings" meant a smaller number on the dashboard than in the Operations
+    // Center. Agreeing with the wrong definition is not reconciliation.
+    const [dash, sum, list, unfiltered] = await Promise.all([
       get("/api/dashboard/summary", seed.orgA.apiKey),
       get("/api/findings/summary", seed.orgA.apiKey),
+      get("/api/findings?active=true&limit=100", seed.orgA.apiKey),
+      get("/api/findings?limit=100", seed.orgA.apiKey),
     ]);
-    expect(dash.body.findings.open).toBe(sum.body.summary.open_count);
+
+    const active = dash.body.findings.active;
+    expect(active).toBe(sum.body.summary.active_total); // dashboard == Operations Center
+    expect(active).toBe(list.body.total);               // == the page the tile links to
+    expect(dash.body.findings.open).toBe(active);       // deprecated alias, same number
+
+    // The destination's POPULATION, not just its total: the tile links to `?active=true`,
+    // so that URL must carry exactly the findings that still require work. Asserting the
+    // total alone would still pass if the list quietly served every status.
+    const statuses = list.body.findings.map((f: { status: string }) => f.status);
+    expect(statuses).not.toContain("closed");
+    expect(statuses).not.toContain("accepted");
+    // The filter is real: the unfiltered list still carries the terminal findings.
+    expect(unfiltered.body.total).toBeGreaterThan(active);
+
+    // The severity donut is drawn from the SAME population as the headline, so the
+    // parts can never exceed the whole.
+    const bySeverity: Record<string, number> = dash.body.findings.by_severity;
+    const sumParts = Object.values(bySeverity).reduce((a, b) => a + b, 0);
+    expect(sumParts).toBe(active);
+
+    // ...and the aging buckets, which live in this tile, are subsets of it — the
+    // defect was that they were computed over a LARGER population than the headline.
+    expect(dash.body.findings.older_than_30).toBeLessThanOrEqual(active);
+    expect(dash.body.findings.older_than_7).toBeLessThanOrEqual(active);
+  });
+
+  it("the Open Risks tile's link reproduces the Open Risks number", async () => {
+    // /api/risks applied NO default status filter, so the tile's "open risks" count
+    // landed on a page that also listed closed and transferred risks. No URL could
+    // reproduce the tile.
+    const [dash, activeList, unfiltered] = await Promise.all([
+      get("/api/dashboard/summary", seed.orgA.apiKey),
+      get("/api/risks?active=true&limit=100", seed.orgA.apiKey),
+      get("/api/risks?limit=100", seed.orgA.apiKey),
+    ]);
+    expect(activeList.status).toBe(200);
+
+    const rs = dash.body.risks_summary;
+    // Seeded: 3 on the register (open/Critical, accepted/Moderate, open/UNSCORED),
+    // 2 terminal (closed, transferred).
+    expect(rs.open).toBe(3);
+    expect(activeList.body.risks.length).toBe(rs.open);
+
+    // The severity breakdown is drawn from the same population as its own total —
+    // including the unscored risk, which lands in 'Unscored' rather than vanishing.
+    const byRating = rs.by_residual_rating as Record<string, number>;
+    expect(Object.values(byRating).reduce((a, b) => a + b, 0)).toBe(rs.open);
+    expect(byRating["Unscored"]).toBe(1);
+
+    const statuses = activeList.body.risks.map((r: { status: string }) => r.status);
+    expect(statuses).not.toContain("closed");
+    expect(statuses).not.toContain("transferred");
+    // The filter is real: the unfiltered list still carries the terminal risks.
+    expect(unfiltered.body.risks.length).toBeGreaterThanOrEqual(activeList.body.risks.length);
   });
 
   it("my_work_open is omitted for API-key callers (honest unknown, never a fake 0)", async () => {

@@ -121,6 +121,7 @@ export default async function RisksPage({
   // public lifecycle flag is enabled, so a flag-off list page is unchanged.
   const lifecycleUiEnabled = process.env.NEXT_PUBLIC_RISK_LIFECYCLE_ENABLED === "true";
   const activeArchived = sp.archived === "true";
+  const activeOnly     = sp.active === "true";
 
   // Fetch four endpoints in parallel:
   //   1. /api/risks      — full row data (incl. due_date, updated_at) for ALL statuses
@@ -140,6 +141,7 @@ export default async function RisksPage({
     risk_rating?: string;
     review_status?: "overdue" | "due_soon" | "up_to_date";
     archived?: boolean;
+    active?: boolean;
     limit: number;
   } = { limit: 200 };
   if (activeStatus)        basicParams.status        = activeStatus;
@@ -151,6 +153,10 @@ export default async function RisksPage({
     basicParams.review_status = activeReviewStatus;
   }
   if (lifecycleUiEnabled && activeArchived) basicParams.archived = true;
+  // ?active=true — the destination for the dashboard's "Open Risks" tile. Without it
+  // the tile's number was unreachable: this list applied no status filter, so it also
+  // showed the closed and transferred risks the tile had excluded.
+  if (activeOnly) basicParams.active = true;
 
   const [basicData, intelligenceData, summary, scale] = await Promise.all([
     getRisks(token, basicParams),
@@ -205,11 +211,21 @@ export default async function RisksPage({
 
   const currentSp: Params = {
     ...(sp.status        ? { status:        sp.status }        : {}),
+    ...(activeOnly       ? { active:        "true" }           : {}),
     ...(sp.domain        ? { domain:        sp.domain }        : {}),
     ...(sp.risk_rating   ? { risk_rating:   sp.risk_rating }   : {}),
     ...(sp.review_status ? { review_status: sp.review_status } : {}),
     ...(sp.archived ? { archived: sp.archived } : {}),
   };
+
+  // `active` must survive a refinement click (else clicking a domain silently widens
+  // the list back to closed + transferred risks and the count jumps for no visible
+  // reason), but an explicit status REPLACES it rather than intersecting — the engine
+  // ANDs them, so `active=true&status=closed` is an empty list under a "Closed" pill.
+  const statusSp: Params = { ...currentSp };
+  delete statusSp.active;
+  const activeSp: Params = { ...currentSp };
+  delete activeSp.status;
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-12">
@@ -307,13 +323,22 @@ export default async function RisksPage({
           <span className="text-xs font-semibold uppercase tracking-wide mr-1" style={{ color: "#64748b" }}>
             Status
           </span>
-          <FilterPill label="All" href={filterHref(currentSp, "status", null)} active={!activeStatus} />
+          <FilterPill label="All" href={filterHref(statusSp, "status", null)} active={!activeStatus && !activeOnly} />
+          {/* The population the dashboard's "Open Risks" tile counts. It needs a pill of
+              its own, or an ?active=true deep link renders a filtered list with "All"
+              highlighted. Labelled for the register rather than "Active" — the archived
+              axis below already spends that word on a different meaning. */}
+          <FilterPill
+            label="On the register"
+            href={filterHref(activeSp, "active", "true")}
+            active={activeOnly}
+          />
           {STATUS_FILTERS.map(({ value, label }) => (
             <FilterPill
               key={value}
               label={label}
-              href={filterHref(currentSp, "status", value)}
-              active={activeStatus === value}
+              href={filterHref(statusSp, "status", value)}
+              active={activeStatus === value && !activeOnly}
             />
           ))}
         </div>

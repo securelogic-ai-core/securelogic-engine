@@ -197,7 +197,7 @@ export function FindingsDonut({
             return (
               <Link
                 key={sev}
-                href={`/findings?severity=${sev}&status=open`}
+                href={`/findings?severity=${sev}&active=true`}
                 className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity"
               >
                 <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: SEVERITY_COLORS[sev] }} />
@@ -210,7 +210,7 @@ export function FindingsDonut({
           })}
         </div>
       </div>
-      <Link href="/findings?status=open" className="block mt-4 text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+      <Link href="/findings?active=true" className="block mt-4 text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
         View all open findings →
       </Link>
     </div>
@@ -248,7 +248,7 @@ export function DomainPostureBars({ domains }: { domains: DomainScore[] }) {
             return (
               <Link
                 key={d.domain}
-                href={`/findings?domain=${encodeURIComponent(d.domain)}&status=open`}
+                href={`/findings?domain=${encodeURIComponent(d.domain)}&active=true`}
                 className="block hover:opacity-80 transition-opacity"
               >
                 <div className="flex items-center justify-between mb-1">
@@ -489,7 +489,7 @@ export function OpenItemsAging({
         <div className="flex flex-col sm:flex-row gap-4 sm:gap-8">
           <AgingSection
             label="Findings"
-            href="/findings?status=open"
+            href="/findings?active=true"
             open={findingsOpen}
             avgAge={findings.avg_age_days}
             maxAge={findings.max_age_days}
@@ -782,7 +782,7 @@ export function RisksBreakdown({
         <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
           Open Risks
         </p>
-        <Link href="/risks" className="text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+        <Link href="/risks?active=true" className="text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
           View all →
         </Link>
       </div>
