@@ -13,8 +13,10 @@
  *                    `seq`): count by decision, blast-radius reach (distinct
  *                    affected nodes across current decisions), high-confidence
  *                    affected count
- *   workflow       — pending match suggestions; open dispatcher-generated
- *                    findings/actions (source_type 'applicability_assessment')
+ *   workflow       — pending match suggestions; open dispatcher-generated findings
+ *                    (source_type 'applicability_assessment') and open
+ *                    dispatcher-generated actions (identified by action_type, since
+ *                    those anchor to the FINDING they remediate, not the assessment)
  *   assets         — EAR Phase 5: registry-wide rollup over asset_registry_v
  *                    (total + by asset_type + by criticality across ALL asset
  *                    types). Present ONLY while SECURELOGIC_ASSET_REGISTRY_ENABLED

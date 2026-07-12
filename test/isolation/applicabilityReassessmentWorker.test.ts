@@ -144,9 +144,13 @@ describe("applicability reassessment worker (real Postgres, end-to-end)", () => 
       [seed.orgA.id, firstAssessmentId]
     );
     expect(finding.rowCount).toBe(1);
+    // The actions are the FINDING's remediation, so they anchor to the finding —
+    // that is what makes them visible to the child→parent cascade, which counts
+    // only source_type='finding'. Anchored to the assessment they were the
+    // finding's siblings, and closing them all left it 'open' forever.
     const actions = await pool.query(
-      `SELECT action_type FROM actions WHERE organization_id = $1 AND source_type = 'applicability_assessment' AND source_id = $2 ORDER BY action_type`,
-      [seed.orgA.id, firstAssessmentId]
+      `SELECT action_type FROM actions WHERE organization_id = $1 AND source_type = 'finding' AND source_id = $2 ORDER BY action_type`,
+      [seed.orgA.id, finding.rows[0].id]
     );
     expect(actions.rows.map((r) => r.action_type)).toEqual([
       "auto_applicability_evidence_request",
@@ -196,6 +200,9 @@ describe("applicability reassessment worker (real Postgres, end-to-end)", () => 
     expect(radius.rows[0].n).toBe(0);
 
     // Drift (decision_change) dispatched: the human-review task for the NEW assessment.
+    // This one legitimately anchors to the ASSESSMENT: potentially_affected draws no
+    // finding (asserted below), so there is no parent to roll up to. The fallback
+    // must not invent one.
     const actions = await pool.query(
       `SELECT action_type FROM actions WHERE organization_id = $1 AND source_type = 'applicability_assessment' AND source_id = $2`,
       [seed.orgA.id, second.id]
@@ -226,7 +233,17 @@ describe("applicability reassessment worker (real Postgres, end-to-end)", () => 
       ["applicability_assessments", "organization_id = $1"],
       ["signal_match_suggestions", "organization_id = $1"],
       ["findings", "organization_id = $1 AND source_type = 'applicability_assessment'"],
-      ["actions", "organization_id = $1 AND source_type = 'applicability_assessment'"],
+      // By ACTION_TYPE, not by anchor: dispatcher actions now hang off the finding
+      // they remediate, so an anchor-keyed check would silently stop looking at the
+      // very rows most likely to leak. action_type catches them under either anchor.
+      [
+        "actions",
+        `organization_id = $1 AND action_type IN (
+           'auto_applicability_risk_review',
+           'auto_applicability_evidence_request',
+           'auto_applicability_human_review'
+         )`
+      ],
       ["jobs", "organization_id = $1 AND job_type = 'applicability_reassess'"]
     ] as const) {
       const res = await pool.query(`SELECT count(*)::int AS n FROM ${table} WHERE ${where}`, [seed.orgB.id]);
