@@ -14,7 +14,7 @@
  *      sees an href.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { renderPage, expectRedirect, signedIn, signedOut, apiKeyOnly, hrefs } from "@/test/harness";
@@ -58,6 +58,18 @@ beforeEach(() => {
 });
 
 const renderExec = () => renderPage(ExecutivePage, undefined as never);
+
+/**
+ * The KPI card bearing `label` — scoped, because the same words ("Peak risk") also label
+ * a row of the comparison table on this page, and the two must be read independently.
+ *
+ * Returns the card ELEMENT, so a test can ask what it is: a counted tile drills through
+ * and is an <a>; a score has no list behind it and stays a <div>.
+ */
+const kpiCard = (container: HTMLElement, label: string): HTMLElement | null =>
+  (Array.from(container.querySelectorAll(".rounded-xl")).find(
+    (card) => card.querySelector("p")?.textContent === label
+  ) as HTMLElement | undefined) ?? null;
 
 describe("/executive — authorization and entitlement", () => {
   it("sends a signed-out visitor to /login", async () => {
@@ -117,9 +129,80 @@ describe("/executive — no enterprise number routes to a user-scoped page", () 
     }
   });
 
-  it("the only destination the page offers is the org-wide risk-trends export", async () => {
+  it("every drill-through is org-wide — the enterprise view opens the whole registry", async () => {
     const { container } = await renderExec();
-    expect(hrefs(container)).toEqual(["/api/export/risk-trends"]);
+
+    // The counted figures now open the registry. The enterprise view's scope IS the whole
+    // registry, so its destination carries no type filter — but it must still never carry
+    // a user filter, which would answer a board question with one person's queue.
+    const assetLinks = hrefs(container).filter((h) => h.startsWith("/assets"));
+    expect(assetLinks.length).toBeGreaterThan(0);
+    for (const href of assetLinks) {
+      expect(href).not.toContain("owner=");
+      expect(href).not.toContain("view=");
+    }
+  });
+});
+
+describe("/executive — the tiles drill through, and the destination reproduces the number", () => {
+  it("a counted tile opens the view that reproduces it; a SCORE opens nothing", async () => {
+    const { container } = await renderExec();
+    const links = hrefs(container);
+
+    // "Total assets" and "Assets at risk" are populations — each opens the list that
+    // holds exactly that population. Before this, the executive dashboard had no
+    // drill-through at all: every number a board member saw was a dead end.
+    expect(links).toContain("/assets");
+    expect(links).toContain("/assets?at_risk=true");
+
+    // "Peak risk" and "Average risk" are SCORES. There is no list of them, so they are
+    // deliberately NOT links — pointing them at a list of assets would invent a
+    // relationship the number does not have. A plausible destination is still a wrong one.
+    expect(kpiCard(container, "Peak risk")?.tagName).toBe("DIV");
+    expect(kpiCard(container, "Average risk")?.tagName).toBe("DIV");
+    // ...while the counted ones are anchors.
+    expect(kpiCard(container, "Total assets")?.tagName).toBe("A");
+    expect(kpiCard(container, "Assets at risk")?.tagName).toBe("A");
+  });
+
+  it("the drill-through carries the DIMENSION — never an unscoped list", async () => {
+    // The arrival-context rule. Selecting the Cloud Resource view and clicking its
+    // "Assets at risk" must land on cloud resources at risk — not on every asset in the
+    // org, leaving the customer to re-derive the number they just clicked.
+    api.getRiskTrends.mockResolvedValue({
+      ok: true,
+      ...aRiskTrends({
+        trends: [
+          aDimensionTrend({ dimension: "enterprise" }),
+          aDimensionTrend({ dimension: "cloud_resource" }),
+        ],
+      }),
+    });
+
+    const view = await renderExec();
+
+    // fireEvent, not user-event: the harness ships with RTL and this package does not
+    // expand the test framework.
+    fireEvent.click(screen.getByRole("button", { name: "Cloud Resource" }));
+
+    const { container } = view;
+    expect(kpiCard(container, "Assets at risk")).toHaveAttribute(
+      "href",
+      "/assets?asset_type=cloud_resource&at_risk=true"
+    );
+    expect(kpiCard(container, "Total assets")).toHaveAttribute(
+      "href",
+      "/assets?asset_type=cloud_resource"
+    );
+  });
+
+  it("discloses the snapshot the figures come from, because the destination is live", async () => {
+    // These KPIs are a DAILY SNAPSHOT; the registry they open is live. Unstated, the
+    // first day's drift makes the tile look broken against its own destination.
+    await renderExec();
+
+    expect(screen.getByText(/As of the .* snapshot/)).toBeInTheDocument();
+    expect(screen.getByText(/live registry, which may have moved since/)).toBeInTheDocument();
   });
 });
 
@@ -352,7 +435,12 @@ describe("/executive — the two-switch flag model", () => {
 
     expect(on.container.innerHTML).toBe(offHtml);
     expect(hrefs(on.container)).toEqual(offHrefs);
-    expect(hrefs(on.container)).toEqual(["/api/export/risk-trends"]);
+    // The drill-throughs and the export — identical under both flag states.
+    expect(hrefs(on.container)).toEqual([
+      "/api/export/risk-trends",
+      "/assets",
+      "/assets?at_risk=true",
+    ]);
   });
 
   it("with the env flag OFF, an entitled deep-link still gets the engine's honest state", async () => {
@@ -394,7 +482,7 @@ describe("/executive — the numbers on the page reconcile with each other", () 
     // The KPI tile and the heatmap row describe the SAME population (enterprise, latest
     // snapshot). If they can disagree, one of them is lying to the board.
     const kpi = (label: string) =>
-      Array.from(container.querySelectorAll("div.rounded-xl"))
+      Array.from(container.querySelectorAll(".rounded-xl"))
         .find((card) => card.querySelector("p")?.textContent === label)
         ?.querySelector("p.text-2xl")?.textContent;
     expect(kpi("Total assets")).toBe("47");

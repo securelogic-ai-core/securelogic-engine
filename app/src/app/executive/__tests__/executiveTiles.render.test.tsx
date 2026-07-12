@@ -32,7 +32,7 @@ import { ExecutiveDashboard } from "../ExecutiveDashboard";
  * label a row of the comparison table, and the two must be read independently.
  */
 const kpiValue = (label: string) =>
-  Array.from(document.querySelectorAll("div.rounded-xl"))
+  Array.from(document.querySelectorAll(".rounded-xl"))
     .find((card) => card.querySelector("p")?.textContent === label)
     ?.querySelector("p.text-2xl")?.textContent;
 
@@ -46,7 +46,7 @@ describe("ExecutiveKpiCards — each label names the population its number count
   });
 
   it("prints the LATEST snapshot's figures, not the first and not an average of the window", () => {
-    render(<ExecutiveKpiCards kpis={dimensionKpis(trend)} windowDays={90} />);
+    render(<ExecutiveKpiCards dimension="enterprise" kpis={dimensionKpis(trend)} windowDays={90} />);
 
     expect(kpiValue("Total assets")).toBe("47");
     expect(kpiValue("Assets at risk")).toBe("13");
@@ -55,7 +55,7 @@ describe("ExecutiveKpiCards — each label names the population its number count
   });
 
   it("the delta beneath each KPI is measured against the WINDOW START, and is labeled with that window", () => {
-    const { container } = render(<ExecutiveKpiCards kpis={dimensionKpis(trend)} windowDays={90} />);
+    const { container } = render(<ExecutiveKpiCards dimension="enterprise" kpis={dimensionKpis(trend)} windowDays={90} />);
 
     // 47 − 30 = +17 assets; 13 − 4 = +9 at risk. A delta against the *previous* point
     // would print +12 / +7 and quietly under-report the quarter to the board.
@@ -65,11 +65,11 @@ describe("ExecutiveKpiCards — each label names the population its number count
   });
 
   it("a rising RISK metric reads as bad, while asset growth stays neutral", () => {
-    render(<ExecutiveKpiCards kpis={dimensionKpis(trend)} windowDays={90} />);
+    render(<ExecutiveKpiCards dimension="enterprise" kpis={dimensionKpis(trend)} windowDays={90} />);
 
     const tone = (label: string) =>
       (
-        Array.from(document.querySelectorAll("div.rounded-xl"))
+        Array.from(document.querySelectorAll(".rounded-xl"))
           .find((card) => card.querySelector("p")?.textContent === label)!
           .querySelectorAll("p")[2] as HTMLElement
       ).style.color;
@@ -85,7 +85,7 @@ describe("ExecutiveKpiCards — each label names the population its number count
       points: [aHistoryPoint({ asset_count: 5, at_risk_count: 1, max_risk: 40, avg_risk: 20 })],
     });
 
-    const { container } = render(<ExecutiveKpiCards kpis={dimensionKpis(single)} windowDays={90} />);
+    const { container } = render(<ExecutiveKpiCards dimension="enterprise" kpis={dimensionKpis(single)} windowDays={90} />);
 
     expect(kpiValue("Assets at risk")).toBe("1");
     expect(container.textContent).not.toContain("+1");

@@ -265,6 +265,41 @@ export function dimensionKpis(trend: DimensionTrend): KpiCard[] {
   ];
 }
 
+/**
+ * Where an executive KPI drills through to.
+ *
+ * The arrival-context rule: a tile links to the view that REPRODUCES its number, carrying
+ * its scope with it. An enterprise total that lands on an unscoped list is not a
+ * drill-through — the customer arrives and has to re-derive the number they just clicked.
+ * So the dimension travels in the URL, and the at-risk tile lands on the at-risk filter.
+ *
+ * Two of the four KPIs deliberately have NO destination. "Peak risk" and "Average risk"
+ * are SCORES, not populations — there is no list of them to open, and linking a score to
+ * a list of assets would be inventing a relationship the number does not have. A tile
+ * with no honest destination is better left unlinked than pointed somewhere plausible.
+ *
+ * Returns null when there is no faithful destination.
+ */
+export function kpiDestination(key: string, dimension: string): string | null {
+  const scoped = (extra?: string) => {
+    const q = new URLSearchParams();
+    // 'enterprise' is the whole registry — the absence of a type filter IS its scope.
+    if (dimension !== "enterprise") q.set("asset_type", dimension);
+    if (extra) q.set(extra, "true");
+    const s = q.toString();
+    return s ? `/assets?${s}` : "/assets";
+  };
+  switch (key) {
+    case "total_assets":
+      return scoped();
+    case "at_risk_assets":
+      return scoped("at_risk");
+    // peak_risk / average_risk are scores. No list reproduces them.
+    default:
+      return null;
+  }
+}
+
 const COMPARISON_METRIC_LABEL: Record<string, string> = {
   asset_count: "Total assets",
   at_risk_count: "Assets at risk",

@@ -3027,6 +3027,42 @@ export async function getAiSystem(
   }
 }
 
+/**
+ * Findings linked to ONE AI system, resolved in the database.
+ *
+ * `total` / `active_total` / `open_total` are COUNT(*) over the whole matched set —
+ * never the length of `findings`, which is a bounded display page. The detail page
+ * used to fetch the org's findings with limit:50 and filter them down in the browser,
+ * so past 50 org findings a system's real findings fell off the page before the filter
+ * saw them and the tile printed a confident zero. A truncation is not a zero.
+ *
+ * Returns null on a non-OK/thrown response — a resolver failure, which the caller must
+ * NOT coalesce into an empty list (that would reproduce the same lie by another route).
+ */
+export type AiSystemFindingsResponse = {
+  findings: Finding[];
+  total: number;
+  active_total: number;
+  open_total: number;
+};
+
+export async function getAiSystemFindings(
+  apiKey: string,
+  systemId: string,
+  limit = 100
+): Promise<AiSystemFindingsResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/ai-systems/${encodeURIComponent(systemId)}/findings?limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<AiSystemFindingsResponse>;
+  } catch {
+    return null;
+  }
+}
+
 export async function getGovernanceReviewsForSystem(
   apiKey: string,
   systemId: string,
@@ -5194,10 +5230,13 @@ export async function uploadVendorAssuranceDocument(
 /** GET /api/assets — the unified cross-type list over asset_registry_v. */
 export async function getAssets(
   token: string,
-  params: { asset_type?: AssetType; limit?: number; offset?: number } = {},
+  params: { asset_type?: AssetType; at_risk?: boolean; limit?: number; offset?: number } = {},
 ): Promise<ReadResult<{ assets: CanonicalAsset[]; total: number; limit: number; offset: number }>> {
   const q = new URLSearchParams();
   if (params.asset_type) q.set("asset_type", params.asset_type);
+  // The population the executive "Assets at risk" tile counts (own_risk > 0 on the
+  // current applicability decision) — so that tile has a destination that reproduces it.
+  if (params.at_risk) q.set("at_risk", "true");
   if (params.limit !== undefined) q.set("limit", String(params.limit));
   if (params.offset !== undefined) q.set("offset", String(params.offset));
   try {
