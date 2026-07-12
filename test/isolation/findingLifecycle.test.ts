@@ -247,10 +247,22 @@ describe("evidence gate (spec §1.1) — org-enforced remediation evidence", () 
 
 describe("20260901 migration constraints", () => {
   it("rejects hand-set garbage operational_status (CHECK)", async () => {
+    // 'closed' used to be the garbage value here — it became a LEGAL state in the
+    // 20260906 migration, so the value CHECK is now proved with an actual non-value.
+    const findingId = await seedFinding(pool, seed.orgA.id);
+    await expect(
+      pool.query(`UPDATE findings SET operational_status = 'nonsense' WHERE id = $1`, [findingId])
+    ).rejects.toThrow(/findings_operational_status_check/);
+  });
+
+  it("rejects hand-setting 'closed' on the operational axis ALONE (closure invariant)", async () => {
+    // Legal value, illegal state: closing one axis and not the other is the exact
+    // contradiction that would make a closed finding count as Active. The database
+    // refuses it, whoever the writer is.
     const findingId = await seedFinding(pool, seed.orgA.id);
     await expect(
       pool.query(`UPDATE findings SET operational_status = 'closed' WHERE id = $1`, [findingId])
-    ).rejects.toThrow(/findings_operational_status_check/);
+    ).rejects.toThrow(/findings_closure_axes_agree/);
   });
 
   it("rejects the removed 'in_progress' decision_state (ratified set only)", async () => {

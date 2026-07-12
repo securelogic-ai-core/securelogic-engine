@@ -13,7 +13,109 @@ import {
   deriveOperationalStatus,
   evaluateFindingDecisionTransition,
   operationalAuditEvent,
+  projectLegacyStatusOnClosureChange,
 } from "../findingLifecycleMachine.js";
+
+/**
+ * §1.1 AS AMENDED (product ruling 2026-07-12): the operational axis acquired a
+ * terminal `closed`, and now derives from governance and the legacy compat axis
+ * as well as from workflow — in that priority order. It is still pure, and still
+ * never hand-set.
+ *
+ * These are the cases the ruling names explicitly.
+ */
+describe("deriveOperationalStatus — closure (ruling 2026-07-12)", () => {
+  it("governance closure dominates: decision 'resolved' closes, whatever the Actions say", () => {
+    expect(
+      deriveOperationalStatus(["in_progress"], undefined, { decisionState: "resolved" })
+    ).toBe("closed");
+    expect(
+      deriveOperationalStatus([], undefined, { decisionState: "resolved" })
+    ).toBe("closed");
+  });
+
+  it("the COMPAT BRIDGE: a legacy terminal `status` closes the operational axis too", () => {
+    // Without this, a legacy `status='closed'` write would leave the authoritative
+    // axis at 'open' — and `operational_status <> 'closed'` would count a closed
+    // finding as Active. This single rule is why the two axes cannot contradict.
+    expect(deriveOperationalStatus([], undefined, { legacyStatus: "closed" })).toBe("closed");
+    expect(deriveOperationalStatus([], undefined, { legacyStatus: "accepted" })).toBe("closed");
+  });
+
+  it("REMEDIATED IS NOT CLOSED — completed work awaiting validation stays Active", () => {
+    // The single most important assertion in this file. If remediated ever derives
+    // to 'closed', every finding whose remediation is done but unvalidated silently
+    // leaves the Active population, and the platform tells customers work is
+    // finished that nobody has signed off.
+    const s = deriveOperationalStatus(["closed", "closed"], undefined, {
+      decisionState: "mitigating",
+      legacyStatus: "in_progress",
+    });
+    expect(s).toBe("remediated");
+    expect(s).not.toBe("closed");
+  });
+
+  it("a non-terminal governance state never closes anything", () => {
+    for (const decisionState of ["needs_review", "mitigating", "accepted_risk"]) {
+      expect(
+        deriveOperationalStatus(["open"], undefined, { decisionState, legacyStatus: "open" })
+      ).not.toBe("closed");
+    }
+  });
+
+  it("accepted_risk does NOT close — it is carried, like an accepted Risk on the register", () => {
+    expect(
+      deriveOperationalStatus([], undefined, { decisionState: "accepted_risk", legacyStatus: "open" })
+    ).toBe("open");
+  });
+
+  it("REOPEN: clearing the closure inputs returns the finding to its REAL work state", () => {
+    // No persistent 'reopened' status is needed — the derivation simply falls back
+    // through to the Actions, which is the ruling's "transitions back to the
+    // correct active state".
+    const actions = ["in_progress"];
+    expect(deriveOperationalStatus(actions, undefined, { decisionState: "resolved" })).toBe("closed");
+    expect(deriveOperationalStatus(actions, undefined, { decisionState: "needs_review" })).toBe("in_progress");
+
+    const done = ["closed"];
+    expect(deriveOperationalStatus(done, undefined, { decisionState: "resolved" })).toBe("closed");
+    expect(deriveOperationalStatus(done, undefined, { decisionState: "needs_review" })).toBe("remediated");
+
+    expect(deriveOperationalStatus([], undefined, { legacyStatus: "closed" })).toBe("closed");
+    expect(deriveOperationalStatus([], undefined, { legacyStatus: "open" })).toBe("open");
+  });
+
+  it("omitting the closure inputs preserves the pre-ruling derivation exactly", () => {
+    expect(deriveOperationalStatus(["in_progress"])).toBe("in_progress");
+    expect(deriveOperationalStatus(["closed"])).toBe("remediated");
+    expect(deriveOperationalStatus([])).toBe("open");
+  });
+});
+
+describe("projectLegacyStatusOnClosureChange — the axes may never contradict", () => {
+  it("closing writes the legacy axis closed", () => {
+    expect(projectLegacyStatusOnClosureChange("closed", "in_progress")).toBe("closed");
+    expect(projectLegacyStatusOnClosureChange("closed", "open")).toBe("closed");
+  });
+
+  it("closing leaves an existing 'accepted' alone — it is already terminal", () => {
+    expect(projectLegacyStatusOnClosureChange("closed", "accepted")).toBeNull();
+    expect(projectLegacyStatusOnClosureChange("closed", "closed")).toBeNull();
+  });
+
+  it("reopening clears the legacy terminal, projecting per spec §3", () => {
+    expect(projectLegacyStatusOnClosureChange("open", "closed")).toBe("open");
+    expect(projectLegacyStatusOnClosureChange("in_progress", "closed")).toBe("in_progress");
+    // §3: `remediated` has no legacy spelling — it projects to 'in_progress'.
+    expect(projectLegacyStatusOnClosureChange("remediated", "closed")).toBe("in_progress");
+  });
+
+  it("never rewrites a non-closure change — a caller's own status write survives", () => {
+    expect(projectLegacyStatusOnClosureChange("in_progress", "open")).toBeNull();
+    expect(projectLegacyStatusOnClosureChange("remediated", "in_progress")).toBeNull();
+    expect(projectLegacyStatusOnClosureChange("open", "open")).toBeNull();
+  });
+});
 
 describe("deriveOperationalStatus (spec §1.1)", () => {
   it("is open with no linked actions", () => {

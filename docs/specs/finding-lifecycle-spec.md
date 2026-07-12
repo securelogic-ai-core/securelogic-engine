@@ -20,22 +20,44 @@ the free-set `status`/`decision_state` defect (`findings.ts:951-1103`).
 
 ## 1. The two axes (single writer each)
 
-### 1.1 `operational_status` — SYSTEM-DERIVED from workflow evidence
-A pure function of **objective workflow events** — the linked Actions and Evidence —
-recomputed in the same transaction that changes them. **No route, edit form, dropdown,
-or applicability result writes it directly.**
+### 1.1 `operational_status` — SYSTEM-DERIVED (AMENDED 2026-07-12)
+A pure function of **governance, the legacy compat axis, and objective workflow
+events** — the linked Actions and Evidence — recomputed in the same transaction that
+changes any of them. **No route, edit form, dropdown, or applicability result writes it
+directly.** It is derived, never hand-set (§7 is unchanged).
+
+Evaluated in this priority order:
 
 | Value | Derivation |
 |---|---|
-| `open` | no linked Action has started |
+| `closed` | `decision_state = 'resolved'` (governance closure), **or** legacy `status` is terminal (`closed`/`accepted`) — the **compat bridge**, below |
 | `in_progress` | ≥1 linked Action is `in_progress`/`blocked` |
 | `remediated` | every linked Action is terminal (`closed`/`accepted`) and ≥1 existed; evidence gate satisfied if org-enforced |
+| `open` | no linked Action has started |
 
-`remediated` is **not** closure. Closure is a governance decision (§1.2).
+`remediated` is **not** closure — remediation completed, **awaiting validation /
+governance closure**. It remains ACTIVE. Closure is a governance decision (§1.2).
 
-**Legacy `status`** (`open`/`in_progress`/`closed`) is retained as a **derived
-projection** (§3) so existing readers (posture, exports, dashboard) are byte-identical
-until they migrate. `closed` derives from a human governance decision only.
+**AMENDMENT (product ruling 2026-07-12).** The axis previously had no terminal state,
+which made the canonical enterprise metric — `Active Finding = operational_status <>
+'closed'` — vacuously true: every closed finding would have counted as Active. `closed`
+is therefore added here, and the derivation now consumes the governance decision. The
+axis remains system-derived; what changed is its *inputs*, not its discipline.
+
+**The compat bridge.** Legacy `status` (`open`/`in_progress`/`closed`/`accepted`) is
+still directly writable (PATCH, importers, flag-off callers) and is the only closure
+signal those writers have. `operational_status` therefore also derives `closed` from a
+terminal legacy `status`, so the two axes **cannot contradict each other about
+closure** — enforced in the database by `findings_closure_axes_agree`. Writing either
+axis across the closure boundary carries the other with it, in the same statement. The
+bridge retires when `status` does.
+
+**Reopen** needs no persistent state: clearing the closure inputs makes the derivation
+fall through to the Actions, so a reopened finding lands on its *real* state
+(`open`/`in_progress`/`remediated`).
+
+**Legacy `status`** is retained as a **derived projection** (§3) so existing readers
+(posture, exports, dashboard) are byte-identical until they migrate.
 
 ### 1.2 `decision_state` — HUMAN-GOVERNED (the system never writes it except the initial value)
 The management judgment. Set only through the guarded governance endpoint by an
@@ -119,6 +141,19 @@ includes closed actions" (count semantics move to open-Action-only for work surf
 2. `finding_lifecycle_events` append-only audit stream (mirrors `risk_lifecycle_events`).
 3. `status` becomes a derived projection (§3) in a later reader-migration package; no
    destructive change to `status`/`decision_state` now.
+4. **20260906 — the reader migration (ruling 2026-07-12).** `operational_status` gains
+   terminal `closed`; `finding_lifecycle_events` widened to record it; every row
+   backfilled deterministically from existing lifecycle evidence; the canonical
+   predicate (`metricDefinitions.sqlFindingActive`) rebased onto the operational axis;
+   `findings_closure_axes_agree` added so the two axes can never disagree about closure.
+   The backfill preserves the pre-migration Active population **exactly** — the new
+   predicate and the old one select the identical set, so no customer-facing number
+   moved. Proved by `test/isolation/findingOperationalClosure.test.ts`.
+
+   *Open product decision:* legacy `status='accepted'` is backfilled to `closed`, which
+   is what today's readers already do (it is excluded from Active). That is in tension
+   with the two-axis model, where `decision_state='accepted_risk'` explicitly does NOT
+   close a finding. Reconciling them is a POPULATION change and awaits a ruling.
 
 ## 7. Guards / non-negotiables
 

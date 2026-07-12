@@ -26,7 +26,10 @@ import {
   DECISION_STATES,
   evaluateFindingDecisionTransition,
 } from "../lib/findingLifecycleMachine.js";
-import { writeFindingLifecycleEvent } from "../lib/findingLifecycle.js";
+import {
+  writeFindingLifecycleEvent,
+  recomputeFindingOperationalStatus,
+} from "../lib/findingLifecycle.js";
 import { sqlFindingActive, sqlFindingOverdue } from "../lib/metricDefinitions.js";
 import { resolveSlaDueDate } from "../lib/findingSlaPolicy.js";
 
@@ -378,17 +381,17 @@ router.get(
       }
 
       if (req.query.overdue === "true") {
-        conditions.push(`${sqlFindingOverdue("f.status", "f.due_date")}`);
+        conditions.push(`${sqlFindingOverdue("f.operational_status", "f.due_date")}`);
       }
 
       if (req.query.unassigned === "true") {
-        conditions.push(`${sqlFindingActive("f.status")} AND f.owner_user_id IS NULL`);
+        conditions.push(`${sqlFindingActive("f.operational_status")} AND f.owner_user_id IS NULL`);
       }
 
       // active=true — still requires work (open or in progress). Buckets pass this
       // so their views exclude closed/resolved items unless the user browses.
       if (req.query.active === "true") {
-        conditions.push(sqlFindingActive("f.status"));
+        conditions.push(sqlFindingActive("f.operational_status"));
       }
 
       // intel_ref=<cyber_signal_id> — resolve findings across BOTH intelligence
@@ -632,7 +635,7 @@ router.get(
           COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND domain = 'Vendor Risk')                           AS vendor_risk_open,
           -- Active exploitation: same predicate as the list's exploited=true filter.
           (SELECT COUNT(*) FROM findings f2
-            WHERE f2.organization_id = $1 AND ${sqlFindingActive("f2.status")} AND (
+            WHERE f2.organization_id = $1 AND ${sqlFindingActive("f2.operational_status")} AND (
               (f2.source_type = 'intelligence_event' AND EXISTS (
                  SELECT 1 FROM intelligence_events e WHERE e.id = f2.source_id AND e.ever_exploited))
               OR (f2.source_type IN ('cyber_signal', 'signal') AND (
@@ -1050,6 +1053,8 @@ router.patch(
       // Collect the fields to update — at least one must be present
       const updates: string[] = [];
       const values: unknown[] = [];
+      /** Set when this PATCH carries the finding OUT of closure (see the reopen block). */
+      let reopening = false;
 
       if ("status" in body) {
         const status = body["status"];
@@ -1062,6 +1067,27 @@ router.patch(
         }
         values.push(status);
         updates.push(`status = $${values.length}`);
+
+        // The legacy axis is still writable, so it drags the authoritative one
+        // with it (the compat bridge — see the 20260906 migration header). This
+        // MUST happen in the same statement: findings_closure_axes_agree is a
+        // CHECK, CHECKs are not deferrable, and a `status='closed'` write that
+        // left operational_status='open' would both violate the constraint and,
+        // without it, silently count a closed finding as Active.
+        //
+        // Closing is exact. REOPENING is provisional — 'open' here, then
+        // recomputeFindingOperationalStatus (below) re-derives the true state
+        // from the linked Actions inside this same transaction, so a reopened
+        // finding lands on open/in_progress/remediated according to its real
+        // work. That is what "a reopened Finding transitions back to the correct
+        // active state" means, and why no persistent 'reopened' status is needed.
+        updates.push(
+          `operational_status = CASE
+             WHEN $${values.length} IN ('closed', 'accepted') THEN 'closed'
+             WHEN findings.operational_status = 'closed'      THEN 'open'
+             ELSE findings.operational_status
+           END`
+        );
       }
 
       if ("priority" in body) {
@@ -1162,6 +1188,29 @@ router.patch(
         }
         values.push(ds);
         updates.push(`decision_state = $${values.length}`);
+
+        // REOPEN must clear the closure on BOTH axes, here, in this statement.
+        //
+        // After a close, decision_state='resolved' AND legacy status='closed' —
+        // both say closed. Clearing only the governance axis would leave the legacy
+        // one terminal, the compat bridge would re-derive `closed` from it, and the
+        // finding would spring shut again the instant it was reopened. (This is not
+        // hypothetical: it is exactly what the isolation test caught.)
+        //
+        // Both are set provisionally to 'open' — a legal, non-contradicting pair —
+        // and the recompute below then derives the finding's REAL state from its
+        // Actions and projects the legacy axis to match (§3).
+        if (decisionTransition.transition === "reopen") {
+          reopening = true;
+          updates.push(
+            `status = CASE WHEN findings.status IN ('closed', 'accepted')
+                           THEN 'open' ELSE findings.status END`
+          );
+          updates.push(
+            `operational_status = CASE WHEN findings.operational_status = 'closed'
+                                       THEN 'open' ELSE findings.operational_status END`
+          );
+        }
       }
 
       if (updates.length === 0) {
@@ -1228,21 +1277,76 @@ router.patch(
         });
       }
 
+      // Re-derive the authoritative axis from the state this PATCH just wrote,
+      // in the SAME tenant transaction. Two things depend on it:
+      //
+      //   CLOSE   a governance close writes decision_state='resolved' and nothing
+      //           else; without this recompute the finding would stay
+      //           operational_status='remediated' — i.e. still ACTIVE — and the
+      //           whole ruling would be inert. The recompute derives 'closed'
+      //           (rule 1) and projects the legacy axis to match.
+      //   REOPEN  the provisional 'open' written above is refined to the finding's
+      //           REAL state (in_progress / remediated / open) from its Actions.
+      //
+      // Idempotent: a PATCH that touched neither axis derives the same state and
+      // writes nothing.
+      const reconciled = await recomputeFindingOperationalStatus(
+        organizationId,
+        findingId,
+        {
+          actorUserId: (req.userId as string | undefined) ?? null,
+          actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        },
+        // On a governance reopen the legacy axis was cleared to a provisional
+        // 'open'; re-derive it from the finding's REAL state so a reopened,
+        // already-remediated finding reads 'in_progress' (§3) and not 'open'.
+        { projectLegacy: reopening }
+      );
+      if (reconciled.changed && reconciled.auditEvent) {
+        writeAuditEvent({
+          organizationId,
+          actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+          actorUserId: req.userId ?? null,
+          eventType: reconciled.auditEvent,
+          resourceType: "finding",
+          resourceId: findingId,
+          payload: { from: reconciled.fromState ?? null, to: reconciled.toState ?? null },
+          ipAddress: req.ip ?? null,
+        });
+      }
+
+      // The UPDATE's RETURNING predates the recompute, so on a close/reopen it
+      // still carries the pre-reconcile axes. Re-read, or the caller would be told
+      // its close left the finding 'remediated' — the API answering with a state
+      // the database no longer holds.
+      let row = result.rows[0];
+      if (reconciled.changed) {
+        const refreshed = await pg.query(
+          `SELECT id, organization_id, source_type, title, severity,
+                  domain, priority, status, decision_state, operational_status,
+                  owner_user_id, due_date, updated_at
+             FROM findings WHERE id = $1 AND organization_id = $2`,
+          [findingId, organizationId]
+        );
+        if (refreshed.rows[0]) row = refreshed.rows[0];
+      }
+
       writeAuditEvent({
         organizationId,
         actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
         actorUserId: req.userId ?? null,
         eventType: "finding.status_changed",
         resourceType: "finding",
-        resourceId: result.rows[0].id as string,
+        resourceId: row.id as string,
         payload: {
           // The full mutation set — owner and due-date changes were previously
           // invisible in the audit payload (workflow-audit gap).
-          status: result.rows[0].status ?? null,
-          priority: result.rows[0].priority ?? null,
-          decision_state: result.rows[0].decision_state ?? null,
-          owner_user_id: result.rows[0].owner_user_id ?? null,
-          due_date: result.rows[0].due_date ?? null,
+          status: row.status ?? null,
+          operational_status: row.operational_status ?? null,
+          priority: row.priority ?? null,
+          decision_state: row.decision_state ?? null,
+          owner_user_id: row.owner_user_id ?? null,
+          due_date: row.due_date ?? null,
           changed_fields: Object.keys(body).filter((k) =>
             ["status", "priority", "owner_user_id", "due_date", "decision_state"].includes(k)
           ),
@@ -1254,13 +1358,14 @@ router.patch(
         event_type: "finding.updated",
         organization_id: organizationId,
         data: {
-          id: result.rows[0].id,
-          status: result.rows[0].status,
-          updated_at: result.rows[0].updated_at,
+          id: row.id,
+          status: row.status,
+          operational_status: row.operational_status,
+          updated_at: row.updated_at,
         },
       }).catch(() => {});
 
-      res.status(200).json({ finding: result.rows[0] });
+      res.status(200).json({ finding: row });
     } catch (err) {
       logger.error(
         { event: "finding_patch_failed", err },

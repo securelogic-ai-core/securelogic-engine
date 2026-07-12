@@ -15,7 +15,9 @@
 import { pg } from "../infra/postgres.js";
 import {
   deriveOperationalStatus,
+  legacyStatusFor,
   operationalAuditEvent,
+  projectLegacyStatusOnClosureChange,
   type FindingOperationalStatus,
 } from "./findingLifecycleMachine.js";
 
@@ -62,10 +64,28 @@ export interface RecomputeResult {
   auditEvent?: string;
 }
 
+export interface RecomputeOptions {
+  /**
+   * Re-derive the legacy `status` wholesale from the recomputed operational state
+   * (spec §3), instead of only un-closing it.
+   *
+   * Set ONLY by a caller that has just carried a finding OUT of closure. Reopening
+   * is the one case where the legacy axis cannot be left as it is: it still reads
+   * 'closed', and if it survived, the compat bridge would immediately re-derive
+   * `closed` and the finding would spring shut again the instant it was reopened.
+   * The reopening caller therefore clears both axes provisionally, and this flag
+   * tells the recompute to write the legacy axis the finding's REAL state
+   * ('in_progress' for remediated, per §3) rather than leave it at the provisional
+   * 'open'.
+   */
+  projectLegacy?: boolean;
+}
+
 /**
  * The child→parent cascade (spec §5): recompute the parent Finding's
- * operational_status from ALL its linked Actions, inside the caller's
- * asTenant() transaction. The ONLY writer of findings.operational_status.
+ * operational_status from its linked Actions, its governance decision, and the
+ * legacy compat axis, inside the caller's asTenant() transaction. The ONLY writer
+ * of findings.operational_status.
  *
  * Org-scoped throughout: both the Action read and the Finding write carry
  * `organization_id = $org`, so a cross-org source_id can never move a foreign
@@ -74,16 +94,28 @@ export interface RecomputeResult {
 export async function recomputeFindingOperationalStatus(
   organizationId: string,
   findingId: string,
-  actor: LifecycleActor
+  actor: LifecycleActor,
+  options: RecomputeOptions = {}
 ): Promise<RecomputeResult> {
-  const current = await pg.query(
-    `SELECT operational_status FROM findings
+  // The governance axis and the legacy compat axis are read here alongside the
+  // operational one, because closure now derives from all three (spec §1.1 as
+  // amended 2026-07-12). FOR UPDATE so a concurrent Action write and a
+  // concurrent close cannot interleave into a contradiction.
+  const current = await pg.query<{
+    operational_status: string;
+    status: string | null;
+    decision_state: string | null;
+  }>(
+    `SELECT operational_status, status, decision_state FROM findings
       WHERE id = $1 AND organization_id = $2
       FOR UPDATE`,
     [findingId, organizationId]
   );
-  if ((current.rowCount ?? 0) === 0) return { changed: false };
-  const fromState = String(current.rows[0].operational_status ?? "open");
+  const currentRow = current.rows[0];
+  if (!currentRow) return { changed: false };
+  const fromState = String(currentRow.operational_status ?? "open");
+  const legacyStatus = currentRow.status ?? null;
+  const decisionState = currentRow.decision_state ?? null;
 
   const actions = await pg.query(
     `SELECT status FROM actions
@@ -110,15 +142,30 @@ export async function recomputeFindingOperationalStatus(
 
   const toState = deriveOperationalStatus(
     actions.rows.map((r) => String(r.status ?? "")),
-    gate
+    gate,
+    { decisionState, legacyStatus }
   );
 
   if (toState === fromState) return { changed: false };
 
+  // Crossing the closure boundary drags the legacy axis with it, in the SAME
+  // statement — the database's findings_closure_axes_agree CHECK is not
+  // deferrable, so the two columns may never be inconsistent even for the width
+  // of one UPDATE. Null means "no legacy write needed" and leaves `status`
+  // exactly as the caller set it.
+  const legacyProjection = options.projectLegacy
+    ? legacyStatusFor(toState)
+    : projectLegacyStatusOnClosureChange(toState, legacyStatus);
+
   await pg.query(
-    `UPDATE findings SET operational_status = $1, updated_at = NOW()
-      WHERE id = $2 AND organization_id = $3`,
-    [toState, findingId, organizationId]
+    legacyProjection === null
+      ? `UPDATE findings SET operational_status = $1, updated_at = NOW()
+          WHERE id = $2 AND organization_id = $3`
+      : `UPDATE findings SET operational_status = $1, status = $4, updated_at = NOW()
+          WHERE id = $2 AND organization_id = $3`,
+    legacyProjection === null
+      ? [toState, findingId, organizationId]
+      : [toState, findingId, organizationId, legacyProjection]
   );
 
   const { eventType, transition } = operationalAuditEvent(fromState, toState);

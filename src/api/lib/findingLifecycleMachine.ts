@@ -23,7 +23,7 @@
 
 // ── Operational axis (spec §1.1) ────────────────────────────────────────────
 
-export const OPERATIONAL_STATUSES = ["open", "in_progress", "remediated"] as const;
+export const OPERATIONAL_STATUSES = ["open", "in_progress", "remediated", "closed"] as const;
 export type FindingOperationalStatus = (typeof OPERATIONAL_STATUSES)[number];
 
 /** Action statuses that mean "work is underway". */
@@ -32,20 +32,56 @@ const ACTION_ACTIVE = new Set(["in_progress", "blocked"]);
 const ACTION_TERMINAL = new Set(["closed", "accepted"]);
 
 /**
- * Pure derivation (spec §1.1): operational_status is a function of the linked
- * Actions' statuses and the org's evidence-gate policy, nothing else.
+ * Legacy `status` values that mean the finding is CLOSED. 'accepted' is a legal
+ * legacy value that no system path writes, and the pre-migration canonical
+ * predicate (`status IN ('open','in_progress')`) excluded it from Active — so it
+ * is terminal here, preserving that population exactly. See the 20260906
+ * migration header for why reconciling 'accepted' with the two-axis model's
+ * `accepted_risk` (which does NOT close a finding) is a product decision, not
+ * an implementation one.
+ */
+const LEGACY_TERMINAL = new Set(["closed", "accepted"]);
+
+/**
+ * The inputs that can close a finding. `operational_status` remains
+ * SYSTEM-DERIVED and is still never hand-set (spec §7) — it simply now derives
+ * from governance and the legacy compat axis as well as from workflow.
+ */
+export interface ClosureInputs {
+  /** the HUMAN-GOVERNED axis; 'resolved' is the governance closure */
+  decisionState?: string | null;
+  /** legacy `status`, still directly writable during the migration */
+  legacyStatus?: string | null;
+}
+
+/**
+ * Pure derivation (spec §1.1, AMENDED by the 2026-07-12 ruling): a function of
+ * governance, the legacy compat axis, and the linked Actions — in that priority
+ * order. Still pure; still never hand-set.
  *
+ *   closed      — decision_state = 'resolved' (governance closure), OR legacy
+ *                 status is terminal (the compat bridge, below)
  *   in_progress — ≥1 linked Action is in_progress/blocked
  *   remediated  — every linked Action is terminal (closed/accepted) and ≥1
  *                 existed, AND the evidence gate is satisfied if org-enforced
  *   open        — otherwise (no Actions, or none started)
  *
- * Evidence gate (spec §1.1 — the same org policy the Risk lifecycle enforces
- * via risk_settings.require_evidence_gate): when the org enforces the gate,
- * completed work WITHOUT attached evidence stays `in_progress` — for a
- * gate-enforcing org the evidence IS part of the remediation, and validation
- * (ready-for-decision) must not be offered without it. Omitting `gate` (or
- * enforced=false) preserves the action-only derivation.
+ * THE COMPAT BRIDGE. Legacy `status` stays directly writable (PATCH, importers,
+ * flag-off behaviour) and is the only closure signal those writers have. If
+ * `closed` derived from governance ALONE, a legacy `status='closed'` write would
+ * leave operational_status='open' — and the new Active predicate would count a
+ * closed finding as Active, which is precisely the bug this whole package exists
+ * to prevent. Deriving from both axes means they cannot contradict; the database
+ * enforces it (findings_closure_axes_agree). The bridge retires when `status` does.
+ *
+ * `remediated` is NOT closed: remediation done, awaiting validation/governance.
+ * It stays Active, by design.
+ *
+ * Evidence gate (spec §1.1 — the same org policy the Risk lifecycle enforces via
+ * risk_settings.require_evidence_gate): when the org enforces the gate, completed
+ * work WITHOUT attached evidence stays `in_progress` — for a gate-enforcing org
+ * the evidence IS part of the remediation, and validation (ready-for-decision)
+ * must not be offered without it.
  */
 export interface EvidenceGate {
   /** org policy: risk_settings.require_evidence_gate (default false) */
@@ -56,8 +92,14 @@ export interface EvidenceGate {
 
 export function deriveOperationalStatus(
   actionStatuses: readonly string[],
-  gate?: EvidenceGate
+  gate?: EvidenceGate,
+  closure?: ClosureInputs
 ): FindingOperationalStatus {
+  // Governance closure and the legacy compat bridge both dominate workflow: a
+  // closed finding is closed however much Action churn sits underneath it.
+  if (closure?.decisionState === "resolved") return "closed";
+  if (closure?.legacyStatus != null && LEGACY_TERMINAL.has(closure.legacyStatus)) return "closed";
+
   if (actionStatuses.some((s) => ACTION_ACTIVE.has(s))) return "in_progress";
   if (actionStatuses.length > 0 && actionStatuses.every((s) => ACTION_TERMINAL.has(s))) {
     if (gate?.enforced && !gate.hasEvidence) return "in_progress";
@@ -66,11 +108,65 @@ export function deriveOperationalStatus(
   return "open";
 }
 
+/**
+ * The legacy `status` a given operational_status projects to (spec §3), used to
+ * keep the compat axis from contradicting the authoritative one.
+ *
+ * Applied ONLY across the closure boundary — when a finding closes, or reopens.
+ * It deliberately does NOT rewrite an open finding's status, because legacy
+ * `status` cannot represent `remediated` (§3 projects it to 'in_progress') and a
+ * full projection would silently overwrite a caller's own `status` write. Narrow
+ * on purpose: this preserves every existing open/in_progress behaviour and fixes
+ * only the axis that must agree.
+ *
+ * Returns null when no legacy write is needed.
+ */
+export function projectLegacyStatusOnClosureChange(
+  operational: FindingOperationalStatus,
+  currentLegacy: string | null | undefined
+): string | null {
+  const legacyIsTerminal = currentLegacy != null && LEGACY_TERMINAL.has(currentLegacy);
+
+  // Closing: the legacy axis must say closed too. An existing 'accepted' is left
+  // alone — it is already terminal, and rewriting it would destroy the distinction.
+  if (operational === "closed") return legacyIsTerminal ? null : "closed";
+
+  // Reopening: the legacy axis must stop saying closed. It projects to the
+  // operational state per §3 (remediated has no legacy spelling → 'in_progress').
+  if (legacyIsTerminal) return legacyStatusFor(operational);
+  return null;
+}
+
+/**
+ * The legacy `status` that an operational state projects to (spec §3). Used when a
+ * finding LEAVES closure and the legacy axis has to be re-derived wholesale rather
+ * than merely un-closed — see `projectLegacy` in recomputeFindingOperationalStatus.
+ */
+export function legacyStatusFor(operational: FindingOperationalStatus): string {
+  if (operational === "closed") return "closed";
+  // §3: `remediated` has no legacy spelling — the work is done but not closed by a
+  // human, so it projects to 'in_progress'.
+  if (operational === "in_progress" || operational === "remediated") return "in_progress";
+  return "open";
+}
+
+export function isLegacyTerminal(status: string | null | undefined): boolean {
+  return status != null && LEGACY_TERMINAL.has(status);
+}
+
 /** Audit event name for an operational change (spec §4 audit column). */
 export function operationalAuditEvent(
   from: string,
   to: FindingOperationalStatus
 ): { eventType: string; transition: string } {
+  if (to === "closed") {
+    return { eventType: "finding.operational.closed", transition: "operational_closed" };
+  }
+  // Leaving the terminal state — the finding is live work again. Named so the
+  // audit stream shows a reopen as a reopen, not as a generic recompute.
+  if (from === "closed") {
+    return { eventType: "finding.operational.reopened", transition: "operational_reopened" };
+  }
   if (to === "remediated") {
     return { eventType: "finding.remediated", transition: "operational_remediated" };
   }

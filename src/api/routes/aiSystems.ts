@@ -403,7 +403,8 @@ router.get(
       // The matched set, defined once and reused by both the page and the counts,
       // so the number on the tile and the rows beneath it can never disagree.
       const linkedFindings = `
-        SELECT f.id, f.title, f.severity, f.status, f.domain, f.description,
+        SELECT f.id, f.title, f.severity, f.status, f.operational_status,
+               f.domain, f.description,
                f.source_type, f.source_id, f.created_at, f.updated_at
         FROM findings f
         JOIN governance_reviews gr
@@ -415,7 +416,8 @@ router.get(
 
         UNION ALL
 
-        SELECT f.id, f.title, f.severity, f.status, f.domain, f.description,
+        SELECT f.id, f.title, f.severity, f.status, f.operational_status,
+               f.domain, f.description,
                f.source_type, f.source_id, f.created_at, f.updated_at
         FROM findings f
         JOIN ai_governance_assessments aga
