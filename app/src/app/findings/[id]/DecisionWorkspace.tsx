@@ -130,6 +130,14 @@ function AffectedGroup({
           <span style={{ fontSize: 12, color: "#475569", fontStyle: "italic" }}>
             Not resolvable from this finding&apos;s source
           </span>
+        ) : resolution === "resolver_error" ? (
+          // NOT "None found". This emptiness is ignorance, not a zero — saying
+          // "none" here would tell an operator the blast radius is clear when the
+          // truth is that we could not look. An amber warning, because acting on
+          // this as if it were zero is exactly the wrong move.
+          <span style={{ fontSize: 12, color: "#fbbf24" }}>
+            Could not resolve — this is not a zero. Retry, or escalate if it persists.
+          </span>
         ) : (
           <span style={{ fontSize: 12, color: "#475569" }}>None found</span>
         )

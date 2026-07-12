@@ -98,8 +98,21 @@ export interface AffectedCounts {
  *   none_found      — an applicable path ran and honestly found nothing
  *   not_applicable  — NO resolution path exists for this finding's source type
  *                     (empty ≠ zero: the dimension simply cannot be sourced)
+ *   resolver_error  — a path was applicable but FAILED. The emptiness here is
+ *                     ignorance, not a zero. Previously unrepresentable: a failing
+ *                     bucket threw, 500'd the route, and the client silently fell
+ *                     back to the legacy view — so a resolver failure was not merely
+ *                     indistinguishable from "none found", it was INVISIBLE.
+ *
+ * This mirrors findingEnterpriseContext.BlastRadiusStatus, which already modelled all
+ * four. Two resolvers in the same product must not disagree about how many ways
+ * "nothing here" can be true.
  */
-export type AffectedResolution = "resolved" | "none_found" | "not_applicable";
+export type AffectedResolution =
+  | "resolved"
+  | "none_found"
+  | "not_applicable"
+  | "resolver_error";
 
 export interface AffectedResolutions {
   vendors: AffectedResolution;
@@ -173,9 +186,18 @@ export function assessBusinessImpact(
     buckets: AffectedResolution[],
     positive: string,
     zero: string,
-    unsourced: string
+    unsourced: string,
+    failedNote: string
   ): BusinessImpactDimension => {
     if (count > 0) return { level: levelFrom(count, band), note: positive };
+    // A bucket that FAILED can never produce a zero. Without this branch a
+    // resolver_error satisfied the `!== "not_applicable"` test below and the
+    // dimension rendered "No vendor in your inventory matches this finding" — the
+    // platform asserting SAFETY FROM IGNORANCE, which is the worst thing a risk
+    // product can say. It is `not_assessed`: we do not know.
+    if (buckets.some((b) => b === "resolver_error")) {
+      return { level: "not_assessed", note: failedNote };
+    }
     // Zero: honest only if at least one contributing bucket actually ran.
     const anyRan = resolution === undefined || buckets.some((b) => b !== "not_applicable");
     return anyRan
@@ -199,21 +221,24 @@ export function assessBusinessImpact(
       resolution ? [resolution.vendors] : [],
       `${counts.vendors} affected vendor(s)`,
       "No vendor in your inventory matches this finding",
-      "Vendor impact not resolvable from this finding's source"
+      "Vendor impact not resolvable from this finding's source",
+      "Vendor impact could not be resolved — this is not a zero"
     ),
     regulatory: dim(
       counts.obligations,
       resolution ? [resolution.obligations] : [],
       `${counts.obligations} affected obligation(s)`,
       "No obligation in your register is linked to this finding",
-      "Regulatory impact not resolvable from this finding's source"
+      "Regulatory impact not resolvable from this finding's source",
+      "Regulatory impact could not be resolved — this is not a zero"
     ),
     operational: dim(
       opCount,
       resolution ? [resolution.controls, resolution.ai_systems] : [],
       `${counts.controls} control(s), ${counts.ai_systems} AI system(s) affected`,
       "No control or AI system in your inventory is linked to this finding",
-      "Operational impact not resolvable from this finding's source"
+      "Operational impact not resolvable from this finding's source",
+      "Operational impact could not be resolved — this is not a zero"
     ),
   };
 }

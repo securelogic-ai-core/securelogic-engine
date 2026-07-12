@@ -205,4 +205,21 @@ describe("bucketResolution (empty ≠ zero ≠ unknowable)", () => {
   it("not_applicable when no path could run", () => {
     expect(bucketResolution(false, 0)).toBe("not_applicable");
   });
+
+  it("resolver_error when the path FAILED — a failure is never an honest zero", () => {
+    // The state that did not exist. A bucket query that threw used to 500 the
+    // context route; the client turns a non-OK response into null and silently
+    // renders the legacy view, so the failure reached the user as a missing
+    // feature. Now it is a value the UI can render as "we could not look".
+    expect(bucketResolution(true, 0, true)).toBe("resolver_error");
+    expect(bucketResolution(false, 0, true)).toBe("resolver_error");
+  });
+
+  it("a failure NEVER suppresses rows we did find — a partial answer is still an answer", () => {
+    expect(bucketResolution(true, 2, true)).toBe("resolved");
+  });
+
+  it("the honest zero survives: no failure, path ran, nothing found", () => {
+    expect(bucketResolution(true, 0, false)).toBe("none_found");
+  });
 });

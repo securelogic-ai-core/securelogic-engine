@@ -96,6 +96,38 @@ describe("assessBusinessImpact — Context Contract honesty (resolution-aware)",
     expect(bi.third_party.note).toContain("1 affected vendor");
   });
 
+  it("a FAILED bucket is never a zero — the platform must not assert safety from ignorance", () => {
+    // The sharpest edge of the honesty rule. `resolver_error` passed the
+    // `!== "not_applicable"` test, so a failed vendor lookup rendered
+    // "No vendor in your inventory matches this finding" — the product telling an
+    // operator the blast radius is CLEAR when the truth is that it could not look.
+    const bi = assessBusinessImpact(zero, "Critical", {
+      vendors: "resolver_error",
+      ai_systems: "none_found",
+      controls: "none_found",
+      obligations: "resolver_error",
+    });
+
+    expect(bi.third_party.level).toBe("not_assessed");
+    expect(bi.third_party.level).not.toBe("none");
+    expect(bi.third_party.note).toContain("could not be resolved");
+    expect(bi.third_party.note).not.toContain("No vendor in your inventory");
+
+    expect(bi.regulatory.level).toBe("not_assessed");
+    expect(bi.regulatory.note).toContain("not a zero");
+
+    // The buckets that genuinely ran still report their honest zero — a failure in
+    // one dimension must not poison the dimensions that DID resolve.
+    expect(bi.operational.level).toBe("none");
+  });
+
+  it("a failure in EITHER operational bucket blocks the operational zero", () => {
+    const bi = assessBusinessImpact(zero, "High", {
+      vendors: "none_found", ai_systems: "resolver_error", controls: "none_found", obligations: "none_found",
+    });
+    expect(bi.operational.level).toBe("not_assessed");
+  });
+
   it("omitting resolution preserves the legacy count-only behaviour", () => {
     const bi = assessBusinessImpact(zero, "High");
     expect(bi.third_party.level).toBe("none");
