@@ -64,7 +64,7 @@ const TRANSCRIBE_FALLBACK = "Could not transcribe audio. Please try again.";
 
 const EXAMPLE_QUESTIONS = [
   "What are my top 3 vendors by risk exposure?",
-  "Show me my critical open findings",
+  "Show me my critical active findings",
   "What's my overall security posture?",
   "Which risks need immediate attention?",
   "How many overdue actions do I have?",
@@ -704,7 +704,7 @@ export function AskClient() {
                 ? `Posture score ${answer.context_used.posture_score}`
                 : "No posture snapshot"}
               {" · "}
-              {answer.context_used.findings_count} open findings
+              {answer.context_used.findings_count} active findings
               {" · "}
               {answer.context_used.risks_count} risks
               {answer.context_used.as_of

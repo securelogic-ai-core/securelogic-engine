@@ -16,6 +16,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { sqlFindingActive } from "../lib/metricDefinitions.js";
 
 const router = Router();
 
@@ -236,7 +237,7 @@ async function assembleExecReport(organizationId: string): Promise<ExecReportDat
       `SELECT severity, COUNT(*)::text AS count
        FROM findings
        WHERE organization_id = $1
-         AND status NOT IN ('resolved', 'closed', 'accepted')
+         AND ${sqlFindingActive()}
        GROUP BY severity
        ORDER BY CASE severity
          WHEN 'Critical' THEN 1 WHEN 'High'     THEN 2
@@ -250,7 +251,7 @@ async function assembleExecReport(organizationId: string): Promise<ExecReportDat
       `SELECT title, severity, status, created_at::text AS created_at
        FROM findings
        WHERE organization_id = $1
-         AND status NOT IN ('resolved', 'closed', 'accepted')
+         AND ${sqlFindingActive()}
        ORDER BY
          CASE severity
            WHEN 'Critical' THEN 1 WHEN 'High' THEN 2

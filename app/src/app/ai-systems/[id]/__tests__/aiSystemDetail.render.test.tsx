@@ -212,19 +212,22 @@ describe("/ai-systems/[id] — no cross-entity fill", () => {
     api.getAiSystemFindings.mockResolvedValue(
       aiFindings(
         [findingFromReview("f-1", "One row on this page")],
-        // The engine saw 12 open findings; it handed back one row to display.
+        // The engine saw 20 ACTIVE findings (12 of them strictly open); it handed
+        // back one row to display. The tile must print the ACTIVE count.
         { total: 40, open_total: 12, active_total: 20 }
       )
     );
 
     await renderPage(AiSystemDetailPage, props());
 
-    const heading = screen.getByText("Open Findings").parentElement as HTMLElement;
-    expect(heading.textContent).toContain("12");
+    const heading = screen.getByText("Active Findings").parentElement as HTMLElement;
+    expect(heading.textContent).toContain("20");
     // The Governance Summary headline reads the SAME number — both the section badge and
     // the 4xl sidebar figure counted their own rows before, so both said "1".
-    expect(screen.getAllByText("12")).toHaveLength(2);
-    expect(screen.queryByText("open finding")).toBeNull(); // not the singular of one row
+    expect(screen.getAllByText("20")).toHaveLength(2);
+    expect(screen.queryByText("active finding")).toBeNull(); // not the singular of one row
+    // ...and it is NOT the strictly-open population, which this tile used to print.
+    expect(screen.queryByText("12")).toBeNull();
   });
 
   it("a FAILED findings resolve is not a zero — it says so", async () => {
@@ -291,15 +294,16 @@ describe("/ai-systems/[id] — related findings", () => {
 
     await renderPage(AiSystemDetailPage, props());
 
-    expect(screen.getByText("No open findings for this AI system.")).toBeInTheDocument();
+    expect(screen.getByText("No active findings for this AI system.")).toBeInTheDocument();
     // The Governance Summary headline agrees with the list — and is singular/plural correct.
-    expect(screen.getByText("open findings")).toBeInTheDocument();
+    expect(screen.getByText("active findings")).toBeInTheDocument();
   });
 
-  it("only OPEN findings are counted — in-progress work is not shown here (documented)", async () => {
-    // The vendor detail page counts open + in_progress as "open findings"; this page counts
-    // only `status === "open"`. The two surfaces therefore disagree about the same word.
-    // Asserted so the divergence is visible; see the report accompanying this suite.
+  it("in-progress work IS Active — it is counted here and it is shown", async () => {
+    // This test used to assert the DEFECT: the page counted only `status === "open"`, so
+    // a finding vanished from the AI system's risk picture the moment somebody started
+    // remediating it, and this page disagreed with vendor detail about the same word.
+    // Both now count the one enterprise population: operational_status <> 'closed'.
     api.getGovernanceReviewsForSystem.mockResolvedValue(
       aGovernanceReviewsResponse([aGovernanceReview({ id: "gr-1" })])
     );
@@ -313,8 +317,8 @@ describe("/ai-systems/[id] — related findings", () => {
     await renderPage(AiSystemDetailPage, props());
 
     expect(screen.getByText("Open work")).toBeInTheDocument();
-    expect(screen.queryByText("Work already underway")).toBeNull();
-    expect(screen.getByText("open finding")).toBeInTheDocument(); // singular: exactly 1
+    expect(screen.getByText("Work already underway")).toBeInTheDocument();
+    expect(screen.getByText("active findings")).toBeInTheDocument(); // plural: both counted
   });
 });
 
@@ -484,7 +488,7 @@ describe("/ai-systems/[id] — governance history", () => {
     await renderPage(AiSystemDetailPage, props());
 
     expect(screen.getByText("Pre-deployment review")).toBeInTheDocument();
-    expect(screen.getByText("No open findings for this AI system.")).toBeInTheDocument();
+    expect(screen.getByText("No active findings for this AI system.")).toBeInTheDocument();
     expect(screen.queryByText("Finding created")).not.toBeInTheDocument();
   });
 

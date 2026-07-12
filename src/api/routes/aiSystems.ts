@@ -457,9 +457,10 @@ router.get(
         total: parseInt(counts?.total ?? "0", 10),
         // BOTH populations are carried, and both are true counts.
         //
-        // active_total is the Metric Contract population (open + in_progress) — the
-        // definition the dashboard and Operations Center count. open_total is the
-        // strictly-open population this page has always displayed.
+        // active_total is the Metric Contract population (operational_status <>
+        // 'closed') — the definition every enterprise surface counts, and what this
+        // page now displays. open_total is the strictly-open LIFECYCLE population,
+        // retained as an explicit filter, never as the enterprise metric.
         //
         // They are both here on purpose. The word "open findings" currently denotes
         // THREE different populations across the product (dashboard: active; vendor

@@ -27,7 +27,7 @@ const ALERT_FIELDS: Array<{
   {
     field: "weekly_summary",
     label: "Weekly posture summary",
-    description: "A Monday morning overview of your overall security posture, open findings, and framework readiness.",
+    description: "A Monday morning overview of your overall security posture, active findings, and framework readiness.",
   },
 ];
 

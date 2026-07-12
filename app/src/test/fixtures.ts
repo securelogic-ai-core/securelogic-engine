@@ -60,10 +60,17 @@ export function aFindingsSummary(
   overrides: Partial<FindingsSummary> = {}
 ): FindingsSummary {
   return {
+    // STRICTLY OPEN (lifecycle) vs ACTIVE (enterprise). Deliberately DIFFERENT
+    // numbers: a fixture where they coincide cannot catch a tile reading the
+    // wrong population — which is the whole defect this convergence fixed.
     open_count: 2,
     in_progress_open: 1,
     active_total: 3,
     critical_high_active: 1,
+    critical_active: 2,
+    high_active: 1,
+    medium_active: 0,
+    low_active: 0,
     critical_open: 1,
     high_open: 1,
     medium_open: 0,

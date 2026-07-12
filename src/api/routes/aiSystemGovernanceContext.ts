@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from "express";
+import { sqlFindingActive } from "../lib/metricDefinitions.js";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
@@ -48,7 +49,7 @@ router.get(
         `SELECT f.title, f.severity, f.status
          FROM findings f
          WHERE f.organization_id = $1
-           AND f.status = 'open'
+           AND ${sqlFindingActive("f.operational_status")}
            AND (
              (f.source_type = 'ai_review'
               AND f.source_id IN (

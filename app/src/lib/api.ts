@@ -625,14 +625,25 @@ export type FindingsParams = {
 };
 
 export type FindingsSummary = {
+  // STRICTLY OPEN — the lifecycle population (status='open'): work nobody has
+  // started. A legitimate filter, but NOT the enterprise metric. Every tile in
+  // the product reads the *_active fields below.
   open_count: number;
   // Metric Contract org-truth fields (optional: absent on older engine builds).
   // active_total / critical_high_active use the SAME definitions as
-  // decisionQueue.isOpenStatus/isCriticalOpen, so the workspace attention tiles
-  // are server truth instead of a capped-slice scan.
+  // decisionQueue.isActiveStatus/isCriticalActive, so the workspace attention
+  // tiles are server truth instead of a capped-slice scan.
   in_progress_open?: number;
   active_total?: number;
   critical_high_active?: number;
+  // ACTIVE by severity — THE enterprise severity population (operational_status
+  // <> 'closed'). Optional: absent on older engine builds, so callers fall back
+  // to the strictly-open twin rather than rendering a wrong zero.
+  critical_active?: number;
+  high_active?: number;
+  medium_active?: number;
+  low_active?: number;
+  // Strictly-open severity twins — the lifecycle population.
   critical_open: number;
   high_open: number;
   medium_open: number;

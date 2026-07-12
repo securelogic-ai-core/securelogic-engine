@@ -34,7 +34,7 @@ describe("FindingsDonut — the number, and the URL that must reproduce it", () 
 
     expect(screen.getByText("8")).toBeInTheDocument();
 
-    const viewAll = hrefOf(container, /View all open findings/);
+    const viewAll = hrefOf(container, /View all active findings/);
     expect(viewAll).toBe("/findings?active=true");
 
     for (const href of hrefs(container)) {
@@ -73,7 +73,7 @@ describe("FindingsDonut — the number, and the URL that must reproduce it", () 
       />
     );
     expect(screen.getAllByText("0").length).toBeGreaterThan(0);
-    expect(hrefOf(container, /View all open findings/)).toBe("/findings?active=true");
+    expect(hrefOf(container, /View all active findings/)).toBe("/findings?active=true");
   });
 });
 

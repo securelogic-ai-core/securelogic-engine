@@ -47,7 +47,7 @@ export default async function DashboardPage({
   const isPlatformEarly = ["premium", "platform", "team"].includes(entitlementLevelEarly);
   const [recentFindingsData, frameworksData] = isPlatformEarly
     ? await Promise.all([
-        getFindings(token, { status: "open", limit: 5 }),
+        getFindings(token, { active: true, limit: 5 }),
         getFrameworks(token),
       ])
     : [null, null];
@@ -208,7 +208,7 @@ export default async function DashboardPage({
       {/* Recent Findings — platform subscribers only */}
       {isPlatformUser && (
         <div className="mt-10">
-          <RecentFindings findings={recentFindings} summaryOpenCount={dashboardSummary?.findings?.open ?? 0} />
+          <RecentFindings findings={recentFindings} summaryActiveCount={dashboardSummary?.findings?.open ?? 0} />
         </div>
       )}
 
@@ -352,9 +352,9 @@ function SamplePostureDashboard() {
               <p className="mt-2 text-xs text-slate-500">as of Apr 14, 2026</p>
             </div>
 
-            {/* Open findings */}
+            {/* Active findings */}
             <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Open Findings</p>
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Active Findings</p>
               <p className="text-3xl font-bold text-slate-100">4</p>
               <div className="mt-3 space-y-1">
                 <div className="flex items-center gap-2 text-xs text-slate-400">
@@ -515,9 +515,9 @@ function FrameworkReadinessWidget({
   );
 }
 
-function RecentFindings({ findings, summaryOpenCount }: { findings: Finding[]; summaryOpenCount: number }) {
+function RecentFindings({ findings, summaryActiveCount }: { findings: Finding[]; summaryActiveCount: number }) {
   const noFindings = findings.length === 0;
-  const summaryConfirmsZero = summaryOpenCount === 0;
+  const summaryConfirmsZero = summaryActiveCount === 0;
 
   return (
     <div>
@@ -541,7 +541,7 @@ function RecentFindings({ findings, summaryOpenCount }: { findings: Finding[]; s
             style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(34,197,94,0.2)" }}
           >
             <p className="text-sm" style={{ color: "#86efac" }}>
-              No open findings. Your organization is in good shape.
+              No active findings. Your organization is in good shape.
             </p>
           </div>
         ) : (

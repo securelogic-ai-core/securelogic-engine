@@ -86,7 +86,7 @@ describe("/dashboard — every tile's destination reproduces its number", () => 
     // The tile prints the ACTIVE total (open + in_progress; the engine's
     // `findings.open` is a deprecated alias for it). `?status=open` would serve a
     // strictly smaller list than the number the customer clicked.
-    expect(hrefOf(container, /View all open findings/)).toBe("/findings?active=true");
+    expect(hrefOf(container, /View all active findings/)).toBe("/findings?active=true");
 
     const findingsLinks = hrefs(container).filter((h) => h.startsWith("/findings"));
     expect(findingsLinks.length).toBeGreaterThan(0);

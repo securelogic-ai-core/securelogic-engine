@@ -152,7 +152,7 @@ export function FindingsDonut({
   return (
     <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
       <p className="text-xs font-semibold uppercase tracking-wide mb-4" style={{ color: TEXT_MUTED }}>
-        Open Findings
+        Active Findings
       </p>
       <div className="flex items-center gap-5">
         <div className="flex-shrink-0">
@@ -211,7 +211,7 @@ export function FindingsDonut({
         </div>
       </div>
       <Link href="/findings?active=true" className="block mt-4 text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
-        View all open findings →
+        View all active findings →
       </Link>
     </div>
   );

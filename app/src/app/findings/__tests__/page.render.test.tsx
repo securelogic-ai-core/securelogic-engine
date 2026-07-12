@@ -163,3 +163,50 @@ describe("/findings — authorization", () => {
     expect(await expectRedirect(FindingsPage, { searchParams: sp({}) })).toBe("/dashboard");
   });
 });
+
+/**
+ * The tile, not the filter pill. Both are labelled "Active" — the pill is an <a>,
+ * the tile label is a <p> — so a bare getByText finds two nodes.
+ */
+function tile(label: string): HTMLElement {
+  const labelNode = screen
+    .getAllByText(label)
+    .find((el) => el.tagName === "P");
+  if (!labelNode) throw new Error(`no tile labelled "${label}"`);
+  return labelNode.parentElement as HTMLElement;
+}
+
+describe("/findings — the summary tiles count the ACTIVE population", () => {
+  it("the tiles read the ACTIVE fields, never the strictly-open twins", async () => {
+    vi.stubEnv("SECURELOGIC_RISK_WORKSPACE_ENABLED", "false");
+    // The fixture deliberately disagrees: active_total 3 vs open_count 2, and
+    // critical_active 2 vs critical_open 1. A tile still reading the strictly-open
+    // field renders 2 and 1 — which is exactly what shipped before this convergence.
+    const { container } = await renderPage(FindingsPage, { searchParams: sp({}) });
+
+    expect(tile("Active").textContent).toContain("3");   // active_total, not open_count (2)
+    expect(tile("Critical").textContent).toContain("2"); // critical_active, not critical_open (1)
+    expect(tile("High").textContent).toContain("1");
+
+    // The old label is gone — the word "Open" must not head an enterprise tile.
+    expect(container.textContent).not.toContain("Open Findings");
+  });
+
+  it("an org whose findings are ALL in progress still shows a non-zero Active tile", async () => {
+    // The strictly-open regression, stated as a customer scenario: a team that has
+    // started work on every finding used to see a tile of 0 and a clean board.
+    vi.stubEnv("SECURELOGIC_RISK_WORKSPACE_ENABLED", "false");
+    api.getFindingsSummary.mockResolvedValue({
+      summary: aFindingsSummary({
+        open_count: 0, critical_open: 0, high_open: 0,
+        active_total: 5, critical_active: 3, high_active: 2,
+      }),
+    });
+
+    await renderPage(FindingsPage, { searchParams: sp({}) });
+
+    expect(tile("Active").textContent).toContain("5");
+    expect(tile("Critical").textContent).toContain("3");
+    expect(tile("High").textContent).toContain("2");
+  });
+});

@@ -10,6 +10,7 @@ import {
   getSignalMatchSuggestionCounts,
 } from "@/lib/api";
 import { FindingsList } from "./FindingsList";
+import { isActiveStatus } from "./decisionQueue";
 import SavedViewsBar from "./SavedViewsBar";
 import { currentViewFilters } from "./savedViews";
 import WorkFirstFindings from "./WorkFirstFindings";
@@ -121,11 +122,19 @@ export default async function FindingsPage({
   const findings = findingsData?.findings ?? [];
   const summary = summaryData?.summary;
 
-  const openCount       = summary?.open_count ?? findings.filter((f) => f.status === "open").length;
-  const criticalCount   = summary?.critical_open ?? findings.filter((f) => f.severity === "Critical").length;
-  const highCount       = summary?.high_open ?? findings.filter((f) => f.severity === "High").length;
-  const moderateCount   = summary?.medium_open ?? findings.filter((f) => f.severity === "Moderate" && f.status === "open").length;
-  const lowCount        = summary?.low_open ?? findings.filter((f) => f.severity === "Low" && f.status === "open").length;
+  // Metric Contract: these tiles count the ACTIVE population (operational_status
+  // <> 'closed'), not the strictly-open one. A Critical finding under active
+  // remediation is still a Critical finding — the old strictly-open tiles emptied
+  // themselves the moment someone STARTED work, so the numbers fell as the
+  // organization got busier and the board saw progress that had not happened.
+  //
+  // The `?? *_open` fallbacks are for an older engine build that does not serve the
+  // *_active fields yet; they under-report rather than render a wrong zero.
+  const activeCount     = summary?.active_total ?? findings.filter((f) => isActiveStatus(f.status)).length;
+  const criticalCount   = summary?.critical_active ?? summary?.critical_open ?? findings.filter((f) => f.severity === "Critical" && isActiveStatus(f.status)).length;
+  const highCount       = summary?.high_active ?? summary?.high_open ?? findings.filter((f) => f.severity === "High" && isActiveStatus(f.status)).length;
+  const moderateCount   = summary?.medium_active ?? summary?.medium_open ?? findings.filter((f) => f.severity === "Moderate" && isActiveStatus(f.status)).length;
+  const lowCount        = summary?.low_active ?? summary?.low_open ?? findings.filter((f) => f.severity === "Low" && isActiveStatus(f.status)).length;
   // Metric Contract: org truth from the summary — previously the ONLY tile in
   // this row computed from the capped ≤100-row slice while its neighbors used
   // org-wide counts (one tile row, two sources of truth).
@@ -278,9 +287,9 @@ export default async function FindingsPage({
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
         <div style={STAT_CARD_STYLE}>
           <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            Open
+            Active
           </p>
-          <p className="text-3xl font-bold" style={{ color: "#fca5a5" }}>{openCount}</p>
+          <p className="text-3xl font-bold" style={{ color: "#fca5a5" }}>{activeCount}</p>
         </div>
         <div style={STAT_CARD_STYLE}>
           <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>

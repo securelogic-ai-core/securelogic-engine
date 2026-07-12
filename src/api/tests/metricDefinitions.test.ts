@@ -11,6 +11,8 @@ import { describe, it, expect } from "vitest";
 import {
   FINDING_ACTIVE_STATUSES,
   FINDING_CLOSED_STATUS,
+  sqlFindingClosed,
+  sqlFindingStrictlyOpen,
   ACTION_ACTIVE_STATUSES,
   ACTION_TERMINAL_STATUSES,
   isFindingActive,
@@ -102,5 +104,44 @@ describe("SQL fragments", () => {
     );
     expect(sqlActionOverdue()).not.toContain("NOW()");
     expect(sqlFindingOverdue()).not.toContain("NOW()");
+  });
+});
+
+describe("Active / Closed / Strictly-Open — one definition each, and they compose", () => {
+  it("Closed is the exact complement of Active, derived from the same constant", () => {
+    // The bug this replaces: `status != 'open'` was used as "closed", which swept
+    // every in_progress finding into the closed bucket — work in flight reported to
+    // customers as work done. Both fragments now key off FINDING_CLOSED_STATUS, so
+    // Active and Closed cannot drift apart: one is literally the negation of the other.
+    expect(sqlFindingClosed()).toBe("operational_status = 'closed'");
+    expect(sqlFindingActive()).toBe("operational_status <> 'closed'");
+    expect(sqlFindingClosed()).toContain(FINDING_CLOSED_STATUS);
+    expect(sqlFindingActive()).toContain(FINDING_CLOSED_STATUS);
+    // Same column, opposite operator — the complement is structural, not a coincidence.
+    expect(sqlFindingClosed().replace("=", "<>")).toBe(sqlFindingActive());
+  });
+
+  it("Closed reads the OPERATIONAL axis, never the legacy status column", () => {
+    // Substring checks are useless here — "operational_status" ENDS with "status".
+    // Assert the column identifier itself instead.
+    expect(sqlFindingClosed().split(" ")[0]).toBe("operational_status");
+    expect(sqlFindingClosed("f.operational_status")).toBe("f.operational_status = 'closed'");
+  });
+
+  it("Strictly Open is a LIFECYCLE filter — a strict subset of Active, not a synonym", () => {
+    // Preserved on purpose ("what has nobody started yet?"), but it must never back an
+    // enterprise metric: a tile built on it empties itself the moment someone starts
+    // work, so the number falls as the organisation gets busier.
+    expect(sqlFindingStrictlyOpen()).toBe("status = 'open'");
+    // It is NOT the Active predicate, and must never be mistaken for it.
+    expect(sqlFindingStrictlyOpen()).not.toBe(sqlFindingActive());
+    expect(sqlFindingStrictlyOpen()).not.toContain("operational_status");
+    // 'in_progress' is Active but NOT strictly open — the whole gap, in one line.
+    expect(FINDING_ACTIVE_STATUSES).toContain("in_progress");
+    expect(sqlFindingStrictlyOpen()).not.toContain("in_progress");
+  });
+
+  it("supports table-aliased columns", () => {
+    expect(sqlFindingStrictlyOpen("f.status")).toBe("f.status = 'open'");
   });
 });

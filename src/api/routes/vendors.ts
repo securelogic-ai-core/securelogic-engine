@@ -387,14 +387,14 @@ router.get(
             v.name,
             v.criticality,
             COUNT(f.id) FILTER (
-              WHERE f.status = 'open'
+              WHERE ${sqlFindingActive("f.operational_status")}
             )                                                                AS open_findings,
             COUNT(f.id) FILTER (
-              WHERE f.status = 'open'
+              WHERE ${sqlFindingActive("f.operational_status")}
                 AND f.severity = 'Critical'
             )                                                                AS critical_findings,
             COUNT(f.id) FILTER (
-              WHERE f.status = 'open'
+              WHERE ${sqlFindingActive("f.operational_status")}
                 AND f.severity = 'High'
             )                                                                AS high_findings
           FROM vendors v
@@ -814,7 +814,7 @@ router.get(
           AND f.source_type = 'vendor_review'
         WHERE va.vendor_id = $1
           AND f.organization_id = $2
-          AND f.status IN ('open', 'in_progress')
+          AND ${sqlFindingActive("f.operational_status")}
 
         UNION ALL
 
@@ -825,7 +825,7 @@ router.get(
           AND f.source_type = 'vendor_cycle_review'
         WHERE vr.vendor_id = $1
           AND f.organization_id = $2
-          AND f.status IN ('open', 'in_progress')
+          AND ${sqlFindingActive("f.operational_status")}
         `,
         [vendorId, organizationId]
       );

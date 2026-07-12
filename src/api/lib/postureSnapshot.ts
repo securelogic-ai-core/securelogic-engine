@@ -8,6 +8,7 @@
  */
 
 import { pg } from "../infra/postgres.js";
+import { sqlFindingActive } from "./metricDefinitions.js";
 import { logger } from "../infra/logger.js";
 import {
   computePosture,
@@ -109,9 +110,18 @@ export async function computeAndSavePostureSnapshot(
   // no caller that could legitimately run these in parallel on the pool.
   // The reads are independent SELECTs across different tables with no
   // inter-query data dependency, so execution order does not affect results.
+
+  // The posture SCORE is computed over the ACTIVE population (Metric Contract).
+  //
+  // This used to read `status = 'open'` — the strictly-open population — which meant
+  // the score IMPROVED the moment somebody started remediating, without anything
+  // actually being fixed. A finding under active remediation is still a live risk;
+  // excluding it made the posture score reward starting work rather than finishing it,
+  // and put the score on a different population from the severity tiles rendered
+  // beside it on /posture (those read the dashboard summary, already Active).
   const findingsResult = await pg.query<DbFindingForPosture>(
     `SELECT id, title, domain, severity FROM findings
-     WHERE organization_id = $1 AND status = 'open'`,
+     WHERE organization_id = $1 AND ${sqlFindingActive()}`,
     [organizationId]
   );
 
@@ -132,7 +142,7 @@ export async function computeAndSavePostureSnapshot(
 
   const findingBreakdownResult = await pg.query<{ source_type: string; count: string }>(
     `SELECT source_type, COUNT(*)::text AS count FROM findings
-     WHERE organization_id = $1 AND status = 'open'
+     WHERE organization_id = $1 AND ${sqlFindingActive()}
      GROUP BY source_type`,
     [organizationId]
   );

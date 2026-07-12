@@ -17,6 +17,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { sqlFindingActive } from "../lib/metricDefinitions.js";
 
 const router = Router();
 
@@ -180,7 +181,7 @@ async function assembleGapReport(
     `SELECT severity, COUNT(*)::text AS count
        FROM findings
        WHERE organization_id = $1
-         AND status IN ('open', 'in_progress')
+         AND ${sqlFindingActive()}
        GROUP BY severity
        ORDER BY CASE severity
          WHEN 'Critical' THEN 1 WHEN 'High'     THEN 2

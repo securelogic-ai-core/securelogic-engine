@@ -1,6 +1,7 @@
 import { pg, pgElevated, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { sendWeeklySummary } from "./alertEmailService.js";
+import { sqlFindingActive } from "./metricDefinitions.js";
 
 export async function runWeeklySummary(): Promise<{ orgsProcessed: number; emailsSent: number }> {
   logger.info({ event: "weekly_summary_start" }, "Weekly summary run started");
@@ -26,8 +27,11 @@ export async function runWeeklySummary(): Promise<{ orgsProcessed: number; email
           ),
           pg.query<{ open_count: string; critical_count: string }>(
             `SELECT
-               COUNT(*) FILTER (WHERE status IN ('open', 'in_progress')) AS open_count,
-               COUNT(*) FILTER (WHERE severity = 'Critical') AS critical_count
+               COUNT(*) FILTER (WHERE ${sqlFindingActive()}) AS open_count,
+               -- Was severity-only, with NO status filter: closed Critical findings
+               -- were still counted, so an org that had remediated every Critical
+               -- finding was emailed a Critical count that could never fall to zero.
+               COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND severity = 'Critical') AS critical_count
              FROM findings WHERE organization_id = $1`,
             [orgId]
           ),

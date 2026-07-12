@@ -18,6 +18,7 @@
  */
 
 import { logger } from "../infra/logger.js";
+import { sqlFindingActive } from "./metricDefinitions.js";
 import {
   resolveFindingEnterpriseContext,
   type FindingEnterpriseContext,
@@ -813,7 +814,7 @@ export async function resolveFindingContext(
           FROM findings f
          WHERE f.organization_id = $1 AND f.id <> $2
            AND $10::uuid IS NOT NULL AND f.owner_user_id = $10::uuid
-           AND f.status IN ('open','in_progress')
+           AND ${sqlFindingActive("f.operational_status")}
       ),
       best AS (SELECT id, MIN(tier) AS tier FROM candidates GROUP BY id),
       ranked AS (

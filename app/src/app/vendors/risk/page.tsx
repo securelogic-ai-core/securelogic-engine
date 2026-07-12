@@ -145,19 +145,19 @@ function CriticalityBar({ vendors }: { vendors: Vendor[] }) {
 function VendorRiskRow({
   vendor,
   latestAssessment,
-  openFindingCount,
+  activeFindingCount,
 }: {
   vendor: Vendor;
   latestAssessment: VendorAssessment | null;
-  openFindingCount: number;
+  activeFindingCount: number;
 }) {
   const key = critKey(vendor);
   const colors = CRIT_COLORS[key] ?? CRIT_COLORS.uncategorized!;
   const isHighRisk = vendor.criticality === "critical" || vendor.criticality === "high";
   const neverAssessed = latestAssessment === null;
 
-  const showRedBorder = (isHighRisk && neverAssessed) || (isHighRisk && openFindingCount > 0);
-  const showOrangeBorder = vendor.criticality === "high" && openFindingCount > 0 && !showRedBorder;
+  const showRedBorder = (isHighRisk && neverAssessed) || (isHighRisk && activeFindingCount > 0);
+  const showOrangeBorder = vendor.criticality === "high" && activeFindingCount > 0 && !showRedBorder;
 
   const borderLeft = showRedBorder
     ? "3px solid rgba(239,68,68,0.5)"
@@ -221,12 +221,12 @@ function VendorRiskRow({
         </span>
       </td>
       <td className="px-5 py-3">
-        {openFindingCount > 0 ? (
+        {activeFindingCount > 0 ? (
           <span
             className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold"
             style={{ background: "rgba(245,158,11,0.15)", color: "#fcd34d" }}
           >
-            {openFindingCount}
+            {activeFindingCount}
           </span>
         ) : (
           <span className="text-xs" style={{ color: "#334155" }}>0</span>
@@ -251,17 +251,17 @@ function VendorRiskRow({
 function AttentionCard({
   vendor,
   neverAssessed,
-  openFindingCount,
+  activeFindingCount,
 }: {
   vendor: Vendor;
   neverAssessed: boolean;
-  openFindingCount: number;
+  activeFindingCount: number;
 }) {
   const key = critKey(vendor);
   const colors = CRIT_COLORS[key] ?? CRIT_COLORS.uncategorized!;
   const reason = neverAssessed
     ? "Never assessed"
-    : `${openFindingCount} open finding${openFindingCount !== 1 ? "s" : ""}`;
+    : `${activeFindingCount} active finding${activeFindingCount !== 1 ? "s" : ""}`;
   const reasonColor = neverAssessed ? "#fca5a5" : "#fcd34d";
 
   return (
@@ -349,11 +349,17 @@ export default async function VendorRiskPage() {
   // GET /api/vendors. They used to be grouped here from a capped page of the org's
   // findings (limit:100) bucketed through a capped assessment map (limit:100) —
   // past either cap a vendor's findings vanished and the board showed it clean.
-  // On THIS page that is not merely a wrong badge: `hasOpenFindings` drives the red
+  // On THIS page that is not merely a wrong badge: `hasActiveFindings` drives the red
   // and orange risk borders, so a truncated count made a high-risk vendor with open
   // findings render as if it had none. A truncation is not a zero.
-  const openFindingsByVendor = new Map<string, number>(
-    (vendorsData?.vendors ?? []).map((v) => [v.id, v.open_findings_count ?? 0])
+  // Metric Contract: the ACTIVE population, not the strictly-open one. This map
+  // drives the red/orange risk borders and the needs-attention list, so counting
+  // only untouched work made a high-risk vendor whose findings were all IN
+  // REMEDIATION render as clean — the board went green precisely because the team
+  // had started working. Active is the enterprise definition; the engine already
+  // serves it as active_findings_count alongside the strictly-open twin.
+  const activeFindingsByVendor = new Map<string, number>(
+    (vendorsData?.vendors ?? []).map((v) => [v.id, v.active_findings_count ?? 0])
   );
 
   const allVendors = vendorsData.vendors;
@@ -367,8 +373,8 @@ export default async function VendorRiskPage() {
     const isHighRisk = v.criticality === "critical" || v.criticality === "high";
     if (!isHighRisk) return false;
     const hasAssessment = (assessmentCountByVendor.get(v.id) ?? 0) > 0;
-    const hasOpenFindings = (openFindingsByVendor.get(v.id) ?? 0) > 0;
-    return !hasAssessment || hasOpenFindings;
+    const hasActiveFindings = (activeFindingsByVendor.get(v.id) ?? 0) > 0;
+    return !hasAssessment || hasActiveFindings;
   });
 
   return (
@@ -446,7 +452,7 @@ export default async function VendorRiskPage() {
             <table className="w-full">
               <thead>
                 <tr style={{ borderBottom: "1px solid #1e293b" }}>
-                  {["Vendor", "Criticality", "Category", "Data Sensitivity", "Last Assessment", "Open Findings", "Status"].map((h) => (
+                  {["Vendor", "Criticality", "Category", "Data Sensitivity", "Last Assessment", "Active Findings", "Status"].map((h) => (
                     <th
                       key={h}
                       className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide"
@@ -463,7 +469,7 @@ export default async function VendorRiskPage() {
                     key={vendor.id}
                     vendor={vendor}
                     latestAssessment={latestAssessmentByVendor.get(vendor.id) ?? null}
-                    openFindingCount={openFindingsByVendor.get(vendor.id) ?? 0}
+                    activeFindingCount={activeFindingsByVendor.get(vendor.id) ?? 0}
                   />
                 ))}
               </tbody>
@@ -511,7 +517,7 @@ export default async function VendorRiskPage() {
                 key={vendor.id}
                 vendor={vendor}
                 neverAssessed={(assessmentCountByVendor.get(vendor.id) ?? 0) === 0}
-                openFindingCount={openFindingsByVendor.get(vendor.id) ?? 0}
+                activeFindingCount={activeFindingsByVendor.get(vendor.id) ?? 0}
               />
             ))}
           </div>
