@@ -74,6 +74,19 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # App render tests — the customer-facing route contracts (links, labels, flag
+      # branches, gated states). These exist because a green 8/8 CI shipped a dashboard
+      # tile linking to a query parameter the /findings page did not read (#638): the
+      # engine suite asserted /api/findings, and nothing rendered a page, so nothing
+      # could see it.
+      #
+      # Folded into this ALREADY-REQUIRED job rather than added as a new check — same
+      # reasoning as `app typecheck` in the typecheck job above: it becomes a blocking
+      # gate immediately, with no branch-protection ruleset change. A separate job would
+      # be non-required by default, which is precisely how a broken customer route would
+      # slip through again. `--include=dev` mirrors render.yaml so vitest is installed.
+      - name: app render tests
+        run: cd app && npm ci --include=dev && npm run test
 
   audit:
     name: audit
