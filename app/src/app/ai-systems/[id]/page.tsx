@@ -151,7 +151,13 @@ function OpenFindingsSection({ findings, systemId }: { findings: Finding[]; syst
 // Section: Governance Reviews (immutable)
 // ─────────────────────────────────────────────────────────────
 
-function GovernanceReviewsSection({ reviews }: { reviews: GovernanceReview[] }) {
+function GovernanceReviewsSection({
+  reviews,
+  reviewIdsWithFindings,
+}: {
+  reviews: GovernanceReview[];
+  reviewIdsWithFindings: Set<string>;
+}) {
   return (
     <section>
       <div className="flex items-center gap-2 mb-4">
@@ -181,12 +187,18 @@ function GovernanceReviewsSection({ reviews }: { reviews: GovernanceReview[] }) 
                       {r.review_type}
                     </span>
                     <SeverityBadge severity={(r as GovernanceReview & { overall_severity?: string | null }).overall_severity ?? null} />
-                    <span
-                      className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
-                      style={{ background: "rgba(0,196,180,0.12)", color: "#00c4b4" }}
-                    >
-                      Finding created
-                    </span>
+                    {/* Gated on a finding that actually exists, exactly as the
+                        assessments section below already does. Rendered unconditionally,
+                        this told an auditor a finding had been raised by a review that
+                        produced none — a fabricated linkage claim on a governance surface. */}
+                    {reviewIdsWithFindings.has(r.id) && (
+                      <span
+                        className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                        style={{ background: "rgba(0,196,180,0.12)", color: "#00c4b4" }}
+                      >
+                        Finding created
+                      </span>
+                    )}
                   </div>
                   {r.outcome && (
                     <p className="text-xs mb-1" style={{ color: "#cbd5e1" }}>
@@ -572,6 +584,17 @@ export default async function AiSystemDetailPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
+  // Entitlement gate — identical to /vendors/[id], its sibling platform surface. This
+  // page had none: a session alone was enough, so a free-tier caller rendered the full
+  // AI-system detail. The engine still scopes by org (no cross-tenant leak), but the
+  // two sibling surfaces disagreed on who may open them, and only one of them was right.
+  const entitlementLevel = session.entitlementLevel ?? "free";
+  const isPlatformUser =
+    entitlementLevel === "premium" ||
+    entitlementLevel === "platform" ||
+    entitlementLevel === "team";
+  if (!isPlatformUser) redirect("/dashboard");
+
   const [system, reviewsData, assessmentsData, findingsData, linkedSignals, vendorDeps] = await Promise.all([
     getAiSystem(token, id),
     getGovernanceReviewsForSystem(token, id, 20),
@@ -602,9 +625,15 @@ export default async function AiSystemDetailPage({
 
   // Track which assessments have findings (for "Finding created" indicator).
   const assessmentIdsWithFindings = new Set<string>();
+  // ...and which REVIEWS do. An `ai_review` finding points at a review; an
+  // `ai_governance_review` finding points at an assessment (see systemFindings above).
+  const reviewIdsWithFindings = new Set<string>();
   for (const f of systemFindings) {
     if (f.source_type === "ai_governance_review" && f.source_id) {
       assessmentIdsWithFindings.add(f.source_id);
+    }
+    if (f.source_type === "ai_review" && f.source_id) {
+      reviewIdsWithFindings.add(f.source_id);
     }
   }
 
@@ -648,7 +677,7 @@ export default async function AiSystemDetailPage({
         <div className="flex-1 min-w-0 space-y-8">
           <OpenFindingsSection findings={openFindings} systemId={system.id} />
           <ExternalIntelligenceSection signals={linkedSignals} />
-          <GovernanceReviewsSection reviews={reviews} />
+          <GovernanceReviewsSection reviews={reviews} reviewIdsWithFindings={reviewIdsWithFindings} />
           <GovernanceAssessmentsSection
             assessments={assessments}
             assessmentIdsWithFindings={assessmentIdsWithFindings}
