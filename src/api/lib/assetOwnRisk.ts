@@ -8,15 +8,12 @@
  */
 
 import { pg } from "../infra/postgres.js";
-
-/** applicability decision → base own-risk [0–100]. Unknown/absent → 0. */
-const DECISION_RISK: Record<string, number> = {
-  affected: 90,
-  potentially_affected: 60,
-  needs_review: 40,
-  not_affected: 0,
-  unknown: 0
-};
+// The ONE decision→own-risk map. This module used to keep a private copy with
+// identical values; identical is not the same as shared, and two copies of a
+// scoring rule are two rules that merely agree for now. The graph's own-risk and
+// the registry rollup's own-risk are the same number by definition, so they are
+// now the same constant. Guarded by decisionRiskSingleDefinition.test.ts.
+import { DECISION_RISK } from "./riskDimensionData.js";
 
 /** Graph node key. */
 export interface NodeKey {

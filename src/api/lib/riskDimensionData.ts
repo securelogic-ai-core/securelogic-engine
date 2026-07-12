@@ -9,7 +9,16 @@
 import { pg } from "../infra/postgres.js";
 import type { AssetRiskRow } from "./riskDimensionRollup.js";
 
-/** applicability decision → base own-risk [0–100] (mirrors assetOwnRisk). */
+/**
+ * applicability decision → base own-risk [0–100]. Unknown/absent → 0.
+ *
+ * THE canonical map. Every own-risk score in the platform is built from it — the
+ * dimensional rollup (`gatherAssetRisk`), the SQL predicate the asset list filters
+ * with (`sqlAssetOwnRisk`), and the graph's per-node seed (`assetOwnRisk.ts`). Do
+ * not copy it: a private copy with identical values is still a SECOND scoring rule,
+ * one that merely agrees for now. `decisionRiskSingleDefinition.test.ts` fails the
+ * build if one reappears.
+ */
 export const DECISION_RISK: Record<string, number> = {
   affected: 90,
   potentially_affected: 60,
