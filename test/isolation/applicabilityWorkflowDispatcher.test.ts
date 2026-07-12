@@ -21,6 +21,7 @@ import crypto from "crypto";
 import { bootstrapTestDb, seedCyberSignal, type TestDbSeed } from "./testDb.js";
 import { persistApplicabilityAssessment } from "../../src/api/lib/applicabilityAssessmentWriter.js";
 import { dispatchApplicabilityWorkflow } from "../../src/api/lib/applicabilityWorkflowDispatcher.js";
+import { deriveOperationalStatus } from "../../src/api/lib/findingLifecycleMachine.js";
 import type { ApplicabilityResult } from "../../src/engine/applicability/v1/types.js";
 import type { EvidenceSnapshot } from "../../src/engine/applicability/v1/contentHash.js";
 import type { StoredAssessment } from "../../src/engine/applicability/v1/explainability.js";
@@ -95,8 +96,18 @@ async function counts(orgId: string): Promise<{ suggestions: number; findings: n
     "SELECT count(*)::int AS n FROM findings WHERE organization_id = $1 AND source_type = 'applicability_assessment'",
     [orgId]
   );
+  // Dispatcher-generated actions are identified by ACTION_TYPE, not by what they
+  // hang off: they are now anchored to the finding they remediate (so the
+  // child→parent cascade can see them), and counting by source_type would silently
+  // report zero. action_type is the stable identity of "the dispatcher made this".
   const a = await pool.query(
-    "SELECT count(*)::int AS n FROM actions WHERE organization_id = $1 AND source_type = 'applicability_assessment'",
+    `SELECT count(*)::int AS n FROM actions
+      WHERE organization_id = $1
+        AND action_type IN (
+          'auto_applicability_risk_review',
+          'auto_applicability_evidence_request',
+          'auto_applicability_human_review'
+        )`,
     [orgId]
   );
   return { suggestions: s.rows[0].n, findings: f.rows[0].n, actions: a.rows[0].n };
@@ -119,6 +130,9 @@ beforeAll(async () => {
 afterAll(async () => {
   await pool?.end();
 });
+
+/** Evidence gate off — the org default (risk_settings.require_evidence_gate = false). */
+const NO_GATE = { enforced: false, hasEvidence: false };
 
 describe("applicability workflow dispatcher (real Postgres, app_request)", () => {
   let firstAssessmentId: string;
@@ -221,6 +235,43 @@ describe("applicability workflow dispatcher (real Postgres, app_request)", () =>
     const c = await counts(seed.orgA.id);
     expect(c.findings).toBe(2);
     expect(c.actions).toBe(4);
+  });
+
+  it("the finding's remediation actions are VISIBLE to the child→parent cascade", async () => {
+    // The dead-end this closes: the dispatcher used to anchor its actions to the
+    // ASSESSMENT, making them siblings of the finding rather than its children. The
+    // cascade (findingLifecycle.recomputeFindingOperationalStatus) counts actions
+    // with `source_type='finding' AND source_id=<finding>` — so it saw NONE of them.
+    //
+    // An operator could close every remediation action on an applicability finding
+    // and the finding would still read operational_status='open' forever: never
+    // `remediated`, so never in the ready-for-decision queue, and — since closure
+    // requires `remediated` or `accepted_risk` — closable only by falsely accepting
+    // a risk that had in fact been remediated.
+    //
+    // This asserts with the cascade's OWN predicate. Before the fix it returned 0.
+    const visible = await pool.query<{ id: string; status: string }>(
+      `SELECT id, status FROM actions
+        WHERE organization_id = $1 AND source_type = 'finding' AND source_id = $2`,
+      [seed.orgA.id, firstFindingId]
+    );
+    expect(visible.rowCount).toBe(2);
+    expect(visible.rows.every((r) => r.status === "open")).toBe(true);
+
+    // ...and nothing is left orphaned on the assessment anchor.
+    const orphaned = await pool.query(
+      `SELECT id FROM actions
+        WHERE organization_id = $1 AND source_type = 'applicability_assessment'
+          AND source_id = $2`,
+      [seed.orgA.id, firstAssessmentId]
+    );
+    expect(orphaned.rowCount).toBe(0);
+
+    // With the actions visible, the derivation the cascade applies now terminates
+    // at `remediated` once they are all closed — the pure function is the same one
+    // findingLifecycle calls, so this is the real decision, not a restatement.
+    expect(deriveOperationalStatus(["open", "open"], NO_GATE)).not.toBe("remediated");
+    expect(deriveOperationalStatus(["closed", "closed"], NO_GATE)).toBe("remediated");
   });
 
   it("cross-org: dispatching org A's decision inside org B's scope is rejected by RLS", async () => {

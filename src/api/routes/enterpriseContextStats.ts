@@ -13,8 +13,10 @@
  *                    `seq`): count by decision, blast-radius reach (distinct
  *                    affected nodes across current decisions), high-confidence
  *                    affected count
- *   workflow       — pending match suggestions; open dispatcher-generated
- *                    findings/actions (source_type 'applicability_assessment')
+ *   workflow       — pending match suggestions; open dispatcher-generated findings
+ *                    (source_type 'applicability_assessment') and open
+ *                    dispatcher-generated actions (identified by action_type, since
+ *                    those anchor to the FINDING they remediate, not the assessment)
  *   assets         — EAR Phase 5: registry-wide rollup over asset_registry_v
  *                    (total + by asset_type + by criticality across ALL asset
  *                    types). Present ONLY while SECURELOGIC_ASSET_REGISTRY_ENABLED
@@ -110,8 +112,18 @@ export async function getEnterpriseContextStats(req: Request, res: Response): Pr
          WHERE organization_id = $1 AND accepted_at IS NULL AND dismissed_at IS NULL) AS pending_suggestions,
        (SELECT count(*)::int FROM findings
          WHERE organization_id = $1 AND source_type = 'applicability_assessment' AND status = 'open') AS open_findings,
+       -- Dispatcher-generated actions are identified by their ACTION_TYPE, not by
+       -- what they hang off. They are now anchored to the finding they remediate
+       -- (so the child→parent cascade can see them); anchoring by source_type
+       -- would have silently zeroed this tile the moment that changed. action_type
+       -- is the stable identity of "the dispatcher made this".
        (SELECT count(*)::int FROM actions
-         WHERE organization_id = $1 AND source_type = 'applicability_assessment' AND status = 'open') AS open_actions`,
+         WHERE organization_id = $1 AND status = 'open'
+           AND action_type IN (
+             'auto_applicability_risk_review',
+             'auto_applicability_evidence_request',
+             'auto_applicability_human_review'
+           )) AS open_actions`,
     [orgId]
   );
   const wf = workflow.rows[0] as Record<string, unknown>;
