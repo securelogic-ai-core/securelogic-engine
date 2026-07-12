@@ -227,11 +227,25 @@ router.get(
         conditions.push(`priority = $${params.length}`);
       }
 
-      // Filter overdue: due_date < today and status not closed/accepted
+      // `active=true` — the destination for every ACTIVE actions count.
+      //
+      // Without it, the dashboard's "N active actions" tile had no URL that could
+      // reproduce it: the only status filter was a single exact `status=`, so the
+      // tile's link fell back to the org-wide list and showed closed and accepted
+      // actions alongside the N it promised. The count and its destination could
+      // not agree BY CONSTRUCTION. Built from the contract, so they now do.
+      if (req.query.active === "true") {
+        conditions.push(sqlActionActive());
+      }
+
+      // Overdue comes from the contract too. The hand-rolled predicate this
+      // replaces (`status NOT IN ('closed','accepted')`) matched the contract only
+      // because a CHECK constraint happens to permit exactly five statuses — add a
+      // sixth (`deferred`, `cancelled`) and the list would have silently diverged
+      // from the count with no test failing.
       const overdue = req.query.overdue === "true";
       if (overdue) {
-        conditions.push("due_date < CURRENT_DATE");
-        conditions.push("status NOT IN ('closed', 'accepted')");
+        conditions.push(sqlActionOverdue());
       }
 
       // source_type + source_id: filter by linked source record (e.g. all actions for a finding)
@@ -279,7 +293,13 @@ router.get(
         SELECT
           id, organization_id, title, description, action_type,
           source_type, source_id, priority, due_date, owner_user_id,
-          status, created_at, updated_at, completed_at
+          status, created_at, updated_at, completed_at,
+          -- Overdue is decided HERE, by the contract, and shipped as a field.
+          -- The client used to re-derive it against NOW() rather than CURRENT_DATE,
+          -- so an action due TODAY wore a red "overdue" badge in this very list
+          -- while being excluded from the dashboard's overdue count and from
+          -- ?overdue=true. One definition, one wire field.
+          (${sqlActionOverdue()}) AS is_overdue
         FROM actions
         ${whereClause}
         ORDER BY

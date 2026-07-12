@@ -78,18 +78,15 @@ function FilterPill({
   );
 }
 
-function isOverdue(action: Action): boolean {
-  if (!action.due_date) return false;
-  if (action.status === "closed" || action.status === "accepted") return false;
-  return new Date(action.due_date) < new Date();
-}
-
 function ActionRow({ action }: { action: Action }) {
   const priorityStyle = PRIORITY_STYLES[action.priority] ?? PRIORITY_STYLES.watch!;
   const priorityLabel = PRIORITY_LABELS[action.priority] ?? action.priority;
   const statusStyle = STATUS_STYLES[action.status] ?? STATUS_STYLES.open!;
   const statusLabel = STATUS_LABELS[action.status] ?? action.status;
-  const overdue = isOverdue(action);
+  // Straight from the server (Metric Contract). The local re-derivation this
+  // replaces used NOW() instead of CURRENT_DATE, so a due-today action was
+  // overdue here and on-time on the dashboard — the same action, two answers.
+  const overdue = action.is_overdue;
 
   const dueDate = action.due_date
     ? new Date(action.due_date).toLocaleDateString("en-US", {
@@ -202,8 +199,17 @@ export default async function ActionsPage({
     // every tile landed on the same unfiltered list).
     const statusFilter = scope === "team" && sp.status ? sp.status : undefined;
     const overdueFilter = scope === "team" && sp.overdue === "true" ? true : undefined;
+    // ?active=true is what the dashboard's ACTIVE tiles link to. Honouring it here
+    // is what finally lets the destination reproduce the tile's number instead of
+    // listing closed and accepted actions under a heading that promised N active.
+    const activeFilter = scope === "team" && sp.active === "true" ? true : undefined;
     const [data, summary] = await Promise.all([
-      getActions(token, { limit: 200, status: statusFilter, overdue: overdueFilter }),
+      getActions(token, {
+        limit: 200,
+        status: statusFilter,
+        overdue: overdueFilter,
+        active: activeFilter,
+      }),
       scope === "team" ? getActionsSummary(token) : Promise.resolve(null),
     ]);
     const all = data?.actions ?? [];
@@ -224,11 +230,15 @@ export default async function ActionsPage({
   const activeStatus   = sp.status   ?? "";
   const activePriority = sp.priority ?? "";
   const activeOverdue  = sp.overdue  === "true";
+  const activeOnly     = sp.active   === "true";
 
   const actionsData = await getActions(token, {
     status:   activeStatus   || undefined,
     priority: activePriority || undefined,
     overdue:  activeOverdue  || undefined,
+    // Honoured with the workspace flag OFF too, so the dashboard tile reconciles
+    // with its destination in BOTH flag states rather than only the new one.
+    active:   activeOnly     || undefined,
     limit: 100,
   });
 
@@ -238,11 +248,8 @@ export default async function ActionsPage({
   // whenever the true filtered total exceeds the rendered slice.
   const truncationNote = showingOfTotal(actions.length, actionsData?.total);
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
   const openCount      = actions.filter((a) => a.status === "open" || a.status === "in_progress").length;
-  const overdueCount   = actions.filter((a) => isOverdue(a)).length;
+  const overdueCount   = actions.filter((a) => a.is_overdue).length;
   const highPrioCount  = actions.filter((a) => a.priority === "immediate" || a.priority === "near_term").length;
 
   const currentSp: Params = {

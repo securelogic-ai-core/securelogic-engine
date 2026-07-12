@@ -66,10 +66,19 @@ export function isMyActionsView(workspace: boolean, view: string | undefined): b
  *     `status`/`overdue` filter is still honored — byte-identical legacy behavior.
  * So the same URL reconciles the count with its destination in BOTH flag states.
  */
-export function orgActionsHref(filter?: { status?: string; overdue?: boolean }): string {
+export function orgActionsHref(filter?: {
+  status?: string;
+  overdue?: boolean;
+  active?: boolean;
+}): string {
   const params = new URLSearchParams();
   if (filter?.status) params.set("status", filter.status);
   if (filter?.overdue) params.set("overdue", "true");
+  // `active` is what an ACTIVE count links to. `view=team` alone only widened the
+  // scope to the org — it applied no status filter — so a tile reading "N active
+  // actions" landed on a list that also contained closed and accepted ones. There
+  // was no URL that could reproduce the number the tile displayed.
+  if (filter?.active) params.set("active", "true");
   params.set("view", "team");
   return `/actions?${params.toString()}`;
 }

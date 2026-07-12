@@ -98,6 +98,20 @@ describe("orgActionsHref (dashboard count → org-wide destination reconciliatio
     // view; flag-off falls through to the legacy list which honors status/overdue.
     expect(orgActionsHref({ status: "open" })).toContain("status=open");
   });
+
+  it("an ACTIVE count links to an ACTIVE list — the number must be reproducible", () => {
+    // The defect: the tile read "N active actions" (open|in_progress|blocked) but
+    // its link carried no status filter at all, so the destination also listed
+    // closed and accepted actions. No URL existed that could reproduce N. `active`
+    // is the filter the Metric Contract's active set maps onto.
+    expect(orgActionsHref({ active: true })).toBe("/actions?active=true&view=team");
+  });
+
+  it("active composes with a drill-down rather than replacing it", () => {
+    expect(orgActionsHref({ active: true, overdue: true })).toBe(
+      "/actions?overdue=true&active=true&view=team",
+    );
+  });
 });
 
 describe("showingOfTotal (no silent truncation)", () => {

@@ -37,6 +37,7 @@ function action(over: Partial<Action> = {}): Action {
     completed_at: null,
     created_at: iso(NOW),
     updated_at: iso(NOW),
+    is_overdue: false,
     ...over,
   };
 }

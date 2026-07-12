@@ -373,7 +373,7 @@ export function ActionsRing({ actions }: { actions: DashboardSummary["actions"] 
           )}
         </div>
       </div>
-      <Link href={orgActionsHref()} className="block mt-4 text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+      <Link href={orgActionsHref({ active: true })} className="block mt-4 text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
         View all open actions →
       </Link>
     </div>
@@ -499,7 +499,7 @@ export function OpenItemsAging({
           <div className="hidden sm:block" style={{ width: "1px", background: SLATE_LINE, flexShrink: 0 }} />
           <AgingSection
             label="Actions"
-            href={orgActionsHref()}
+            href={orgActionsHref({ active: true })}
             open={actionsOpen}
             avgAge={actions.avg_age_days}
             maxAge={actions.max_age_days}
