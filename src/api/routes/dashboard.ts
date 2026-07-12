@@ -26,7 +26,13 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { buildEvidenceSummary } from "./evidence.js";
 import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
-import { sqlActionActive, sqlActionOverdue, sqlFindingActive } from "../lib/metricDefinitions.js";
+import {
+  sqlActionActive,
+  sqlActionOverdue,
+  sqlFindingActive,
+  sqlRiskActive,
+} from "../lib/metricDefinitions.js";
+import { riskLifecycleEnabled } from "../lib/riskLifecycleFeatureFlag.js";
 
 const router = Router();
 
@@ -198,18 +204,35 @@ router.get(
         domainRows = domainResult.rows;
       }
 
+      // Archived risks are HIDDEN by the /risks list (its default is
+      // `lifecycle_state IS DISTINCT FROM 'archived'`), but the risk tiles counted
+      // them — so an archived-but-open risk inflated the tile and was then missing
+      // from the page the tile linked to. This mirrors the list's default under the
+      // SAME flag, so the tile and its destination agree in BOTH flag states. Flag
+      // off: no predicate, byte-identical to before.
+      const riskArchivedFilter = riskLifecycleEnabled()
+        ? `AND lifecycle_state IS DISTINCT FROM 'archived'`
+        : ``;
+
       // -------------------------------------------------------
-      // 3. Finding counts — open findings by severity
+      // 3. Finding counts — findings that still require work, by severity
       // -------------------------------------------------------
       const findingCountResult = await pg.query<{
         severity: string;
         count: string;
       }>(
         `
+        -- Metric Contract. This hand-rolled 'status = open' was the last finding
+        -- metric outside the contract, and it broke the tile against ITSELF: the
+        -- aging numbers rendered inside this very tile count sqlFindingActive()
+        -- (open + in_progress), so "12 older than 30 days" could sit under a
+        -- headline of "9 open". It also made the word "findings" mean one number on
+        -- the dashboard and a different one in the Operations Center, which reads
+        -- active_total. One definition: a finding that still requires work.
         SELECT severity, COUNT(*)::text AS count
         FROM findings
         WHERE organization_id = $1
-          AND status = 'open'
+          AND ${sqlFindingActive()}
         GROUP BY severity
         `,
         [organizationId]
@@ -348,7 +371,8 @@ router.get(
         SELECT COALESCE(residual_rating, 'Unscored') AS residual_rating, COUNT(*)::text AS count
         FROM risks
         WHERE organization_id = $1
-          AND status NOT IN ('closed', 'transferred')
+          AND ${sqlRiskActive()}
+          ${riskArchivedFilter}
         GROUP BY COALESCE(residual_rating, 'Unscored')
         `,
         [organizationId]
@@ -412,7 +436,8 @@ router.get(
         SELECT domain, COUNT(*)::text AS count
         FROM risks
         WHERE organization_id = $1
-          AND status NOT IN ('closed', 'transferred')
+          AND ${sqlRiskActive()}
+          ${riskArchivedFilter}
           AND domain IS NOT NULL
         GROUP BY domain
         `,
@@ -635,6 +660,16 @@ router.get(
         },
         domains: domainRows,
         findings: {
+          // Metric Contract, mirroring `actions` below: `active` (open|in_progress)
+          // is the authoritative "work remaining" total and equals the Operations
+          // Center's active_total and the /findings?active=true list.
+          //
+          // `open` is a DEPRECATED ALIAS carrying the identical value. It used to be
+          // `status='open'` only — a different, smaller population than the aging
+          // numbers in this same tile, so "12 older than 30 days" could appear under
+          // a headline of "9 open". Keeping it as an alias rather than a second
+          // definition means no consumer breaks and no two numbers can disagree.
+          active:        totalOpenFindings,
           open:          totalOpenFindings,
           by_severity:   bySeverity,
           avg_age_days:  findingsAvgAge,

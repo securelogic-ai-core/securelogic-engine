@@ -121,6 +121,7 @@ export default async function RisksPage({
   // public lifecycle flag is enabled, so a flag-off list page is unchanged.
   const lifecycleUiEnabled = process.env.NEXT_PUBLIC_RISK_LIFECYCLE_ENABLED === "true";
   const activeArchived = sp.archived === "true";
+  const activeOnly     = sp.active === "true";
 
   // Fetch four endpoints in parallel:
   //   1. /api/risks      — full row data (incl. due_date, updated_at) for ALL statuses
@@ -140,6 +141,7 @@ export default async function RisksPage({
     risk_rating?: string;
     review_status?: "overdue" | "due_soon" | "up_to_date";
     archived?: boolean;
+    active?: boolean;
     limit: number;
   } = { limit: 200 };
   if (activeStatus)        basicParams.status        = activeStatus;
@@ -151,6 +153,10 @@ export default async function RisksPage({
     basicParams.review_status = activeReviewStatus;
   }
   if (lifecycleUiEnabled && activeArchived) basicParams.archived = true;
+  // ?active=true — the destination for the dashboard's "Open Risks" tile. Without it
+  // the tile's number was unreachable: this list applied no status filter, so it also
+  // showed the closed and transferred risks the tile had excluded.
+  if (activeOnly) basicParams.active = true;
 
   const [basicData, intelligenceData, summary, scale] = await Promise.all([
     getRisks(token, basicParams),

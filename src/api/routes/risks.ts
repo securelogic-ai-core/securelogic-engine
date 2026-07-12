@@ -24,6 +24,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
+import { sqlRiskActive } from "../lib/metricDefinitions.js";
 import {
   validateRiskCreate,
   validateRiskUpdate,
@@ -473,6 +474,14 @@ router.get(
       if (input.status !== null) {
         params.push(input.status);
         conditions.push(`status = $${params.length}`);
+      }
+
+      // Metric Contract: `active=true` = still on the register. This list applied NO
+      // default status filter, so a dashboard tile reading "N open risks" landed on a
+      // page that also listed closed and transferred ones — the tile's number was not
+      // reproducible by any URL. Opt-in, so the unfiltered list stays available.
+      if (input.active) {
+        conditions.push(sqlRiskActive());
       }
 
       if (input.domain !== null) {
