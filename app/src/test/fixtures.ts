@@ -533,3 +533,574 @@ export function anIntelligenceBrief(
     ...overrides,
   } as IntelligenceBriefDetailResponse;
 }
+
+// ── Asset Registry fixtures (appended — /assets render coverage) ─────
+import type { CanonicalAsset } from "@/lib/assetRegistry";
+import type { OrgConnector } from "@/lib/connectors";
+
+/**
+ * A row of asset_registry_v as GET /api/assets projects it.
+ *
+ * The default is a DETAIL-BACKED asset (backing_kind "cloud_resources"), because
+ * that is the kind the unified surface actually homes — its detail link must stay
+ * on /assets/[id]. A vendor/ai_system/enterprise_entity backing federates OUT to
+ * its authoritative page (EAR-AD-1), so those are set explicitly by the tests that
+ * assert federation, never inherited by accident.
+ */
+export function aCanonicalAsset(
+  overrides: Partial<CanonicalAsset> = {}
+): CanonicalAsset {
+  return {
+    asset_id: "as-1",
+    asset_type: "cloud_resource",
+    organization_id: "org-1",
+    name: "prod-eu-west-1 S3 backups",
+    criticality: "high",
+    owner_user_id: null,
+    status: "active",
+    backing_kind: "cloud_resources",
+    backing_id: "cr-1",
+    lifecycle_status: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/** A connector row of the /assets/connect catalog (GET /api/connectors). */
+export function anOrgConnector(
+  overrides: Partial<OrgConnector> = {}
+): OrgConnector {
+  return {
+    connector_id: "servicenow_cmdb",
+    display_name: "ServiceNow CMDB",
+    category: "cmdb",
+    adapter_status: "reference",
+    configured: false,
+    enabled: false,
+    last_sync_at: null,
+    last_sync_status: null,
+    sync_interval_minutes: null,
+    next_sync_at: null,
+    consecutive_failures: 0,
+    config_fields: [],
+    config_keys: [],
+    ...overrides,
+  };
+}
+
+// ── Approvals fixtures (appended — /approvals render coverage) ───────
+import type { PendingApproval } from "@/lib/api";
+
+/**
+ * A row of the org-wide approvals queue (GET /api/approvals?status=pending).
+ *
+ * `is_self_proposed` is SERVER-decided: the engine computes it against the caller's
+ * identity, because separation of duties is an authorization fact, not a client guess.
+ * The fixture carries it exactly as the wire does — `false` by default, i.e. a plan
+ * somebody ELSE proposed, which is the only row an approver may legally decide.
+ */
+export function aPendingApproval(
+  overrides: Partial<PendingApproval> = {}
+): PendingApproval {
+  return {
+    id: "ap-1",
+    risk_id: "risk-1",
+    treatment_id: "tr-1",
+    kind: "treatment_plan",
+    decision: "pending",
+    requested_by_user_id: "user-2",
+    approver_user_id: null,
+    request_rationale: "Compensating controls are in place while we migrate.",
+    expires_at: null,
+    created_at: "2026-06-01T00:00:00.000Z",
+    risk_title: "Unencrypted backups in eu-west-1",
+    risk_domain: "Cyber",
+    residual_rating: "High",
+    residual_score: 61,
+    lifecycle_state: "pending_approval",
+    is_self_proposed: false,
+    ...overrides,
+  };
+}
+
+// ── Vendor + AI-system detail fixtures (appended — /vendors/[id], /ai-systems/[id]) ──
+// Appended, not merged into the blocks above: fixtures.ts is edited by several suites
+// at once and appending is the only conflict-free way in.
+import type {
+  AiGovernanceAssessment,
+  AiGovernanceAssessmentsResponse,
+  AiSystem,
+  AiSystemLinkedSignal,
+  AiVendorDependency,
+  GovernanceReview,
+  GovernanceReviewsResponse,
+  Vendor,
+  VendorAiDependency,
+  VendorAssessment,
+  VendorAssessmentsResponse,
+  VendorAssuranceDocument,
+  VendorAssuranceExtractionResponse,
+  VendorFinding,
+  VendorReview,
+  VendorReviewsResponse,
+  VendorSignalContext,
+} from "@/lib/api";
+
+/** The vendor the ENGINE returned for this id — the only vendor a detail page may show. */
+export function aVendor(overrides: Partial<Vendor> = {}): Vendor {
+  return {
+    id: "v-1",
+    organization_id: "org-1",
+    name: "Acme Cloud",
+    service_description: "Managed object storage for the claims platform.",
+    category: "Infrastructure",
+    criticality: "high",
+    current_risk_score: 42,
+    data_sensitivity: "regulated_phi",
+    access_level: "systems_access",
+    website: "acme.example",
+    status: "active",
+    owner_user_id: null,
+    last_reviewed_at: "2026-05-01T00:00:00.000Z",
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-05-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+export function aVendorAssessment(
+  overrides: Partial<VendorAssessment> = {}
+): VendorAssessment {
+  return {
+    id: "va-1",
+    organization_id: "org-1",
+    vendor_id: "v-1",
+    assessment_type: "annual_review",
+    overall_severity: "High",
+    status: "completed",
+    summary: "Encryption at rest is unproven for the claims bucket.",
+    notes: null,
+    performed_at: "2026-05-01T00:00:00.000Z",
+    reviewer_id: null,
+    created_at: "2026-05-01T00:00:00.000Z",
+    updated_at: "2026-05-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+export function aVendorAssessmentsResponse(
+  assessments: VendorAssessment[],
+  overrides: Partial<VendorAssessmentsResponse> = {}
+): VendorAssessmentsResponse {
+  return {
+    count: assessments.length,
+    limit: 20,
+    organizationId: "org-1",
+    nextCursor: null,
+    assessments,
+    ...overrides,
+  };
+}
+
+export function aVendorReview(overrides: Partial<VendorReview> = {}): VendorReview {
+  return {
+    id: "vr-1",
+    organization_id: "org-1",
+    vendor_id: "v-1",
+    status: "in_progress",
+    overall_severity: null,
+    summary: "Annual review cycle underway.",
+    notes: null,
+    performed_at: null,
+    reviewer_id: null,
+    created_at: "2026-05-10T00:00:00.000Z",
+    updated_at: "2026-05-10T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+export function aVendorReviewsResponse(
+  reviews: VendorReview[],
+  overrides: Partial<VendorReviewsResponse> = {}
+): VendorReviewsResponse {
+  return {
+    count: reviews.length,
+    limit: 20,
+    organizationId: "org-1",
+    nextCursor: null,
+    reviews,
+    ...overrides,
+  };
+}
+
+/** A finding as GET /api/vendors/:id/findings projects it (assessment-joined). */
+export function aVendorFinding(overrides: Partial<VendorFinding> = {}): VendorFinding {
+  return {
+    id: "f-1",
+    title: "Unencrypted backups in eu-west-1",
+    severity: "High",
+    status: "open",
+    domain: "Third Party",
+    description: "Backups are written without server-side encryption.",
+    created_at: "2026-05-01T00:00:00.000Z",
+    updated_at: "2026-05-01T00:00:00.000Z",
+    assessment_id: "va-1",
+    assessment_type: "annual_review",
+    performed_at: "2026-05-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/**
+ * Matched external signals for THIS vendor. The default is empty — an honest
+ * "we matched nothing", so a suite that wants intelligence must say so.
+ */
+export function aVendorSignalContext(
+  overrides: Partial<VendorSignalContext> = {}
+): VendorSignalContext {
+  return {
+    matchedSignals: [],
+    overallRiskSummary: "",
+    suggestedAssessmentSeverity: null,
+    ...overrides,
+  };
+}
+
+/** The reverse supply-chain edge: an AI system that depends on this vendor. */
+export function aVendorAiDependency(
+  overrides: Partial<VendorAiDependency> = {}
+): VendorAiDependency {
+  return {
+    dependency_id: "dep-1",
+    dependency_role: "model_provider",
+    notes: null,
+    created_at: "2026-04-01T00:00:00.000Z",
+    ai_system_id: "ai-1",
+    ai_system_name: "Claims Triage Copilot",
+    ai_system_criticality: "high",
+    ai_system_deployment_status: "production",
+    ...overrides,
+  };
+}
+
+export function aVendorAssuranceDocument(
+  overrides: Partial<VendorAssuranceDocument> = {}
+): VendorAssuranceDocument {
+  return {
+    id: "doc-1",
+    organization_id: "org-1",
+    vendor_id: "v-1",
+    uploaded_by_user_id: "user-1",
+    original_filename: "acme-soc2-2026.pdf",
+    byte_size: 1024,
+    sha256: "a".repeat(64),
+    storage_key: "vendor-assurance/doc-1.pdf",
+    mime_type: "application/pdf",
+    document_type_hint: "soc2_type2",
+    processing_status: "finalized",
+    processing_error_code: null,
+    processing_error_detail: null,
+    finalized_at: "2026-05-20T00:00:00.000Z",
+    finalized_by_user_id: "user-1",
+    approved_at: null,
+    approved_by_user_id: null,
+    created_at: "2026-05-19T00:00:00.000Z",
+    updated_at: "2026-05-20T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/** An extraction whose fields are all EXTRACTED and un-reviewed unless a test says otherwise. */
+export function aVendorAssuranceExtractionResponse(
+  overrides: Partial<VendorAssuranceExtractionResponse> = {}
+): VendorAssuranceExtractionResponse {
+  return {
+    extraction: {
+      id: "ext-1",
+      organization_id: "org-1",
+      document_id: "doc-1",
+      model_id: "test-model",
+      prompt_version: "v1",
+      raw_response_excerpt: null,
+      fields: {
+        report_type: { value: "SOC 2 Type II", confidence: 0.95, status: "extracted" },
+        auditor_name: { value: "Ledger & Co", confidence: 0.9, status: "extracted" },
+        auditor_opinion: { value: "unqualified", confidence: 0.9, status: "extracted" },
+        report_period_end: { value: "2026-03-31", confidence: 0.9, status: "extracted" },
+        report_issued_date: { value: "2026-04-30", confidence: 0.9, status: "extracted" },
+      },
+      created_at: "2026-05-19T00:00:00.000Z",
+    },
+    spans: [],
+    current_decisions: {},
+    field_overrides: [],
+    ...overrides,
+  };
+}
+
+/** The AI system the ENGINE returned for this id. */
+export function anAiSystem(overrides: Partial<AiSystem> = {}): AiSystem {
+  return {
+    id: "ai-1",
+    organization_id: "org-1",
+    name: "Claims Triage Copilot",
+    use_case: "Ranks inbound claims for adjuster review.",
+    owner_user_id: null,
+    model_type: "LLM",
+    data_classification: "PHI",
+    deployment_status: "production",
+    criticality: "high",
+    risk_classification: "high_risk",
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-05-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+export function aGovernanceReview(
+  overrides: Partial<GovernanceReview> = {}
+): GovernanceReview {
+  return {
+    id: "gr-1",
+    organization_id: "org-1",
+    ai_system_id: "ai-1",
+    review_type: "Pre-deployment review",
+    performed_at: "2026-05-01T00:00:00.000Z",
+    reviewer_id: null,
+    outcome: "Approved with conditions",
+    summary: "Human review required on all denials.",
+    created_at: "2026-05-01T00:00:00.000Z",
+    updated_at: "2026-05-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+export function aGovernanceReviewsResponse(
+  reviews: GovernanceReview[],
+  overrides: Partial<GovernanceReviewsResponse> = {}
+): GovernanceReviewsResponse {
+  return {
+    count: reviews.length,
+    limit: 20,
+    organizationId: "org-1",
+    nextCursor: null,
+    reviews,
+    ...overrides,
+  };
+}
+
+export function anAiGovernanceAssessment(
+  overrides: Partial<AiGovernanceAssessment> = {}
+): AiGovernanceAssessment {
+  return {
+    id: "aga-1",
+    organization_id: "org-1",
+    ai_system_id: "ai-1",
+    status: "partially_compliant",
+    overall_severity: "Moderate",
+    summary: "Model card is missing an evaluation section.",
+    notes: null,
+    performed_at: "2026-05-05T00:00:00.000Z",
+    reviewer_id: null,
+    created_at: "2026-05-05T00:00:00.000Z",
+    updated_at: "2026-05-05T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+export function anAiGovernanceAssessmentsResponse(
+  assessments: AiGovernanceAssessment[],
+  overrides: Partial<AiGovernanceAssessmentsResponse> = {}
+): AiGovernanceAssessmentsResponse {
+  return {
+    count: assessments.length,
+    limit: 20,
+    organizationId: "org-1",
+    nextCursor: null,
+    assessments,
+    ...overrides,
+  };
+}
+
+/** An external signal linked to an AI system (signal_ai_system_links + event bridge). */
+export function anAiSystemLinkedSignal(
+  overrides: Partial<AiSystemLinkedSignal> = {}
+): AiSystemLinkedSignal {
+  return {
+    link_id: "link-1",
+    link_created_at: "2026-06-01T00:00:00.000Z",
+    id: "sig-1",
+    source: "cisa_kev",
+    signal_type: "vulnerability",
+    severity: "critical",
+    normalized_summary: "Prompt-injection bypass in the hosted inference runtime.",
+    affected_vendor: "Acme Cloud",
+    affected_cve: "CVE-2026-1234",
+    ingestion_timestamp: "2026-06-01T00:00:00.000Z",
+    intelligence_event_id: "evt-1",
+    event_summary: "Actively exploited RCE in Acme Cloud Gateway",
+    ...overrides,
+  };
+}
+
+/** The forward supply-chain edge: a vendor this AI system depends on. */
+export function anAiVendorDependency(
+  overrides: Partial<AiVendorDependency> = {}
+): AiVendorDependency {
+  return {
+    dependency_id: "dep-1",
+    dependency_role: "model_provider",
+    notes: null,
+    created_at: "2026-04-01T00:00:00.000Z",
+    vendor_id: "v-1",
+    vendor_name: "Acme Cloud",
+    vendor_criticality: "high",
+    vendor_status: "active",
+    ...overrides,
+  };
+}
+
+// ── Executive Risk (ERIP #537 / E4) ─────────────────────────────────────────
+// Imported here (not in the header block) to keep this append-only section from
+// colliding with concurrent edits. The types are the REAL client-safe contracts the
+// executive surfaces consume, so a fixture that drifts fails typecheck.
+import type {
+  ConnectorHealthEntry,
+  ConnectorHealthResponse,
+  DimensionTrend,
+  HistoryPoint,
+  PostureForecastResponse,
+  PredictiveInsights,
+  PredictiveInsightsResponse,
+  RiskTrendsResponse,
+} from "@/lib/executiveRisk";
+
+export function aHistoryPoint(overrides: Partial<HistoryPoint> = {}): HistoryPoint {
+  return {
+    snapshot_date: "2026-07-01",
+    asset_count: 40,
+    at_risk_count: 9,
+    max_risk: 82,
+    avg_risk: 41,
+    ...overrides,
+  };
+}
+
+/**
+ * A dimension's trend. `current` defaults to the LAST point, which is what the engine
+ * sends — a fixture whose `current` disagreed with its series would test a state the
+ * wire cannot produce.
+ */
+export function aDimensionTrend(overrides: Partial<DimensionTrend> = {}): DimensionTrend {
+  const points = overrides.points ?? [
+    aHistoryPoint({ snapshot_date: "2026-04-13", asset_count: 30, at_risk_count: 4, max_risk: 70, avg_risk: 31 }),
+    aHistoryPoint({ snapshot_date: "2026-07-01", asset_count: 40, at_risk_count: 9, max_risk: 82, avg_risk: 41 }),
+  ];
+  return {
+    dimension: "enterprise",
+    points,
+    current: points[points.length - 1] ?? null,
+    avg_risk_change: 10,
+    at_risk_change: 5,
+    direction: "up",
+    ...overrides,
+  };
+}
+
+export function aRiskTrends(overrides: Partial<RiskTrendsResponse> = {}): RiskTrendsResponse {
+  return {
+    window_days: 90,
+    trends: [aDimensionTrend()],
+    ...overrides,
+  };
+}
+
+export function aPredictiveInsights(
+  overrides: Partial<PredictiveInsights> = {}
+): PredictiveInsights {
+  return {
+    source: "deterministic",
+    headline: "Cloud risk is rising faster than any other dimension.",
+    narrative: "Average cloud asset risk rose 12 points over the window, driven by unpatched hosts.",
+    recommendations: [
+      {
+        dimension: "cloud",
+        action: "Patch the 6 internet-facing hosts flagged critical.",
+        priority: "immediate",
+        rationale: "They carry the highest blast radius in the graph.",
+      },
+    ],
+    ...overrides,
+  };
+}
+
+export function aPredictiveInsightsResponse(
+  overrides: Partial<PredictiveInsightsResponse> = {}
+): PredictiveInsightsResponse {
+  return {
+    horizon_days: 30,
+    insights: aPredictiveInsights(),
+    ...overrides,
+  };
+}
+
+export function aPostureForecast(
+  overrides: Partial<PostureForecastResponse> = {}
+): PostureForecastResponse {
+  return {
+    metric: "posture_score",
+    horizon_days: 30,
+    observations: [
+      { date: "2026-06-01", score: 62 },
+      { date: "2026-06-15", score: 65 },
+      { date: "2026-07-01", score: 68 },
+    ],
+    forecast: {
+      method: "linear_regression",
+      trend: "increasing",
+      points: [{ x: 0, y: 68 }, { x: 30, y: 72 }],
+      projected_value: 72,
+    },
+    ...overrides,
+  };
+}
+
+export function aConnectorHealthEntry(
+  overrides: Partial<ConnectorHealthEntry> = {}
+): ConnectorHealthEntry {
+  return {
+    connector_id: "aws",
+    display_name: "AWS",
+    category: "cloud",
+    band: "degraded",
+    reasons: ["drift_stale_assets"],
+    severity: 2,
+    signals: {
+      enabled: true,
+      last_sync_status: "success",
+      last_sync_at: "2026-07-11T00:00:00.000Z",
+      consecutive_failures: 0,
+      next_sync_at: "2026-07-13T00:00:00.000Z",
+      stale_observations: 3,
+      writeback_pending: 0,
+      writeback_conflict: 0,
+      writeback_failed: 0,
+      open_dead_letters: 0,
+    },
+    ...overrides,
+  };
+}
+
+export function aConnectorHealth(
+  overrides: Partial<ConnectorHealthResponse> = {}
+): ConnectorHealthResponse {
+  const connectors = overrides.connectors ?? [aConnectorHealthEntry()];
+  return {
+    overall_band: "degraded",
+    configured_count: connectors.filter((c) => c.band !== "unconfigured").length,
+    by_band: { degraded: 1 },
+    connectors,
+    ...overrides,
+  };
+}
