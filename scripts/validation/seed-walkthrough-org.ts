@@ -42,10 +42,18 @@
  *   npx tsx scripts/validation/seed-walkthrough-org.ts --summary    # print state, write nothing
  *   npx tsx scripts/validation/seed-walkthrough-org.ts --org-id <uuid>   # target an existing org
  *
- * FEATURE FLAGS — the walkthrough is invisible without these two on the staging
- * engine AND the staging Next app (both default OFF, see render.yaml):
+ * FEATURE FLAGS — the walkthrough is invisible without these on the staging engine
+ * AND the staging Next app (see render.yaml):
  *   SECURELOGIC_DECISION_WORKSPACE_ENABLED=true   (gates GET /api/findings/:id/context)
  *   SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED=true  (gates the event-native channel)
+ *   SECURELOGIC_RISK_ACCEPTANCE_ENABLED=true      (gates the accepted-risk routes;
+ *                                                  already "true" on engine-staging,
+ *                                                  OFF on prod. Routes 404 while off.)
+ *
+ * CREDENTIALS — both walkthrough users carry a real argon2 password, because the
+ * accepted-risk API refuses api-key identity and needs two distinct SESSION users
+ * (proposer, approver). `--summary` prints the emails, roles and test password; it
+ * never prints a hash. See WALKTHROUGH_PASSWORD below.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * NAMING — read this before objecting to the absence of a [SEED] prefix
@@ -89,6 +97,8 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 config({ path: ".env" });
 
+import { pathToFileURL } from "node:url";
+import argon2 from "argon2";
 import { Pool, type PoolClient } from "pg";
 // The PRODUCTION canonicalizer — imported, never re-implemented, so seeded
 // canonical_key values cannot drift from what the resolver computes at runtime.
@@ -96,12 +106,39 @@ import { canonicalizeVendorName } from "../../src/api/lib/vendorNameCanonical.js
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
-const WALKTHROUGH_SLUG = "seed-walkthrough";
+export const WALKTHROUGH_SLUG = "seed-walkthrough";
 const WALKTHROUGH_NAME = "[SEED] Walkthrough Org";
 const PROD_DB_NAME = "securelogic";
 
-const ANALYST_EMAIL = "walkthrough-analyst@seed.securelogicai.test";
-const APPROVER_EMAIL = "walkthrough-approver@seed.securelogicai.test";
+export const ANALYST_EMAIL = "walkthrough-analyst@seed.securelogicai.test";
+export const APPROVER_EMAIL = "walkthrough-approver@seed.securelogicai.test";
+
+/**
+ * CREDENTIALS — these two users exist to make the accepted-risk lifecycle
+ * exercisable. The API defines "approver" purely as *a different user_id than the
+ * proposer*: riskAcceptances.ts gates on the feature flag, requireEntitlement
+ * ("premium"), and a separation-of-duties check (approver !== requested_by), and
+ * carries NO role gate. It also REFUSES api-key identity outright — propose returns
+ * 403 user_identity_required without a session user. So a real password, and a real
+ * login, is the only way to drive this flow.
+ *
+ * Roles are least-privilege for that lifecycle, not copied from each other:
+ *   proposer = 'member'  — can authenticate and propose; cannot reach the only
+ *                          admin-gated routes in the app (teamInvites.ts, sso.ts).
+ *   approver = 'admin'   — the governance signer. Matches the precondition in
+ *                          docs/validation/risk-lifecycle-r3-staging-walkthrough.md.
+ * Separation of duties is preserved structurally: they are two distinct user rows,
+ * so the proposer cannot approve its own request (403, and a DB CHECK behind that).
+ *
+ * The password is a STAGING TEST CREDENTIAL for a [SEED] org on a non-prod database
+ * — never a production secret. It is deterministic so a walkthrough is repeatable,
+ * and overridable via WALKTHROUGH_SEED_PASSWORD. The prod guard in main() means
+ * these rows cannot be written to the production database at all.
+ */
+const WALKTHROUGH_PASSWORD = process.env.WALKTHROUGH_SEED_PASSWORD ?? "Walkthrough!Seed2026";
+
+const PROPOSER_ROLE = "member";
+const APPROVER_ROLE = "admin";
 
 const RESET = process.argv.includes("--reset");
 const TEARDOWN_ONLY = process.argv.includes("--teardown");
@@ -146,6 +183,70 @@ async function upsertId(
   const sel = await c.query(selectSql, selectParams);
   if (!sel.rows[0]?.id) throw new Error(`upsertId: could not resolve id.\nSQL: ${sql}`);
   return String(sel.rows[0].id);
+}
+
+/**
+ * Create-or-reuse a walkthrough user with a working password.
+ *
+ * `users.email` is GLOBALLY unique, not unique-per-org. A bare
+ * `ON CONFLICT (email) DO UPDATE` would therefore happily overwrite a user in a
+ * DIFFERENT tenant if these seed addresses ever collided — and the old
+ * `DO NOTHING` + blind re-SELECT was worse: it would have silently returned that
+ * other tenant's user id and attributed every seeded row to them. So the update is
+ * guarded by organization_id, and the id is re-read with the org in the predicate.
+ * If the email is held by another org we resolve nothing and throw, rather than
+ * reach across the tenant boundary.
+ *
+ * Re-seeding must also RECOVER a user an operator has broken: a wrong-password
+ * lockout, an unverified email, an MFA enrolment, or a scheduled deletion would all
+ * leave the account unable to log in. Each of those is reset here, which is what
+ * makes "rerun the seed" a reliable fix rather than a no-op.
+ *
+ * The password hash is never returned and never logged.
+ */
+async function ensureWalkthroughUser(
+  c: PoolClient,
+  orgId: string,
+  email: string,
+  name: string,
+  role: string,
+  passwordHash: string
+): Promise<string> {
+  await c.query(
+    `INSERT INTO users
+       (organization_id, email, name, role, status, password_hash, email_verified)
+     VALUES ($1, $2, $3, $4, 'active', $5, TRUE)
+     ON CONFLICT (email) DO UPDATE
+        SET name                  = EXCLUDED.name,
+            role                  = EXCLUDED.role,
+            status                = 'active',
+            password_hash         = EXCLUDED.password_hash,
+            email_verified        = TRUE,
+            -- Recover an account an operator locked out or half-enrolled.
+            failed_login_attempts = 0,
+            lockout_until         = NULL,
+            last_failed_login_at  = NULL,
+            totp_enabled          = FALSE,
+            totp_secret           = NULL,
+            deleted_at            = NULL,
+            deletion_scheduled_at = NULL
+      WHERE users.organization_id = $1`,
+    [orgId, email, name, role, passwordHash]
+  );
+
+  const sel = await c.query<{ id: string }>(
+    `SELECT id FROM users WHERE email = $1 AND organization_id = $2`,
+    [email, orgId]
+  );
+  const id = sel.rows[0]?.id;
+  if (!id) {
+    throw new Error(
+      `REFUSING TO SEED: ${email} already exists in a DIFFERENT organization. ` +
+        `Walkthrough users must belong to the walkthrough org (${orgId}). ` +
+        `Resolve the collision before re-running.`
+    );
+  }
+  return String(id);
 }
 
 /** SELECT-then-INSERT, for the several tables that carry NO unique constraint. */
@@ -259,6 +360,13 @@ async function ensureCanonicalProduct(
  * Reported separately; the fix belongs in the trigger, not here.
  */
 const WORM_TRIGGERS: Array<[table: string, trigger: string]> = [
+  // A risk acceptance is a governance artifact: the product's answer to "undo" is
+  // withdraw (state='withdrawn'), never DELETE, and a BEFORE DELETE trigger enforces
+  // that. Correct for the product, and NOT changed. But it makes the seed org
+  // permanently un-reseedable once a walkthrough has proposed anything, so the
+  // explicitly-invoked validation teardown disables it for the span of one
+  // transaction — exactly as it already does for the six tables below.
+  ["finding_risk_acceptances", "trg_finding_risk_acceptances_forbid_delete"],
   ["finding_lifecycle_events", "prevent_finding_lifecycle_events_row_mutation"],
   ["security_audit_log", "prevent_security_audit_log_row_mutation"],
   ["risk_lifecycle_events", "prevent_risk_lifecycle_events_row_mutation"],
@@ -275,7 +383,7 @@ const WORM_TRIGGERS: Array<[table: string, trigger: string]> = [
  * every trigger automatically — they can never be left off, even on a crash.
  * Requires table ownership, which the migration role has.
  */
-async function teardown(c: PoolClient, orgId: string): Promise<void> {
+export async function teardown(c: PoolClient, orgId: string): Promise<void> {
   for (const [table, trigger] of WORM_TRIGGERS) {
     await c.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`);
   }
@@ -294,6 +402,17 @@ async function teardown(c: PoolClient, orgId: string): Promise<void> {
   await c.query(`DELETE FROM evidence WHERE organization_id = $1`, [orgId]);
   await c.query(`DELETE FROM actions WHERE organization_id = $1`, [orgId]);
   await c.query(`DELETE FROM security_audit_log WHERE organization_id = $1`, [orgId]);
+
+  // finding_risk_acceptances.finding_id is ON DELETE RESTRICT — deliberately, so a
+  // governed acceptance BLOCKS deletion of the Finding it governs (see
+  // 20260907_finding_risk_acceptances.sql:61-73). That FK is correct and is NOT
+  // touched here. It does mean the DELETE below RAISEs the moment a walkthrough has
+  // actually proposed or approved an acceptance — i.e. exactly once the org has been
+  // used for the thing it exists to validate. Clearing the acceptances first is what
+  // keeps this org re-seedable; it is scoped to this org and confined to this
+  // explicitly-invoked validation teardown. It is NOT a tenant-offboarding path.
+  await c.query(`DELETE FROM finding_risk_acceptances WHERE organization_id = $1`, [orgId]);
+
   await c.query(`DELETE FROM findings WHERE organization_id = $1`, [orgId]);
 
   await c.query(`DELETE FROM signal_match_suggestions WHERE organization_id = $1`, [orgId]);
@@ -339,6 +458,9 @@ async function teardown(c: PoolClient, orgId: string): Promise<void> {
   await c.query(`DELETE FROM ai_systems WHERE organization_id = $1`, [orgId]);
   await c.query(`DELETE FROM vendors WHERE organization_id = $1`, [orgId]);
   await c.query(`DELETE FROM risk_settings WHERE organization_id = $1`, [orgId]);
+  // Before users: api_keys.created_by_user_id is ON DELETE SET NULL, so this is not a
+  // FK requirement — but the key is a seeded row and must not survive its own tenant.
+  await c.query(`DELETE FROM api_keys WHERE organization_id = $1`, [orgId]);
   await c.query(`DELETE FROM users WHERE organization_id = $1`, [orgId]);
 
   for (const [table, trigger] of WORM_TRIGGERS) {
@@ -348,26 +470,46 @@ async function teardown(c: PoolClient, orgId: string): Promise<void> {
 
 // ─── Seed ────────────────────────────────────────────────────────────────────
 
-async function seed(c: PoolClient, orgId: string): Promise<void> {
-  // 1. Users — email is GLOBALLY unique. Two users so separation-of-duties on
-  //    closure (#616) is actually exercisable: the remediator cannot self-close.
-  const analystId = await upsertId(
+export async function seed(c: PoolClient, orgId: string): Promise<void> {
+  // 1. Users. Two distinct rows so separation of duties is exercisable for BOTH
+  //    gates that depend on it: closure (#616 — the remediator cannot self-close)
+  //    and risk acceptance (#646 — the proposer cannot approve their own request).
+  //    Both carry a real argon2 password; see WALKTHROUGH_PASSWORD above for why.
+  const passwordHash = await argon2.hash(WALKTHROUGH_PASSWORD);
+
+  const analystId = await ensureWalkthroughUser(
     c,
-    `INSERT INTO users (organization_id, email, name, role, status)
-     VALUES ($1, $2, '[SEED] Walkthrough Analyst', 'admin', 'active')
-     ON CONFLICT (email) DO NOTHING RETURNING id`,
-    [orgId, ANALYST_EMAIL],
-    `SELECT id FROM users WHERE email = $1`,
-    [ANALYST_EMAIL]
+    orgId,
+    ANALYST_EMAIL,
+    "[SEED] Walkthrough Analyst",
+    PROPOSER_ROLE,
+    passwordHash
   );
-  const approverId = await upsertId(
+  const approverId = await ensureWalkthroughUser(
     c,
-    `INSERT INTO users (organization_id, email, name, role, status)
-     VALUES ($1, $2, '[SEED] Walkthrough Approver', 'admin', 'active')
-     ON CONFLICT (email) DO NOTHING RETURNING id`,
-    [orgId, APPROVER_EMAIL],
-    `SELECT id FROM users WHERE email = $1`,
-    [APPROVER_EMAIL]
+    orgId,
+    APPROVER_EMAIL,
+    "[SEED] Walkthrough Approver",
+    APPROVER_ROLE,
+    passwordHash
+  );
+
+  // An ACTIVE api_keys row is mandatory for SESSION auth, which reads as a
+  // contradiction until you look at requireApiKey.ts:113-124: the JWT bridge looks up
+  // "the org's active API key" on every request and 401s `no_active_api_key` when the
+  // org has none. So without this row the walkthrough users authenticate at
+  // /auth/login and are then rejected by every API call — passwords alone are not
+  // enough. key_hash is a deliberate non-secret placeholder: this row is never used to
+  // authenticate a key-based request, only to satisfy that lookup. Same pattern, and
+  // the same reasoning, as scripts/seed-demo.ts:113-118.
+  await ensureRow(
+    c,
+    `SELECT id FROM api_keys WHERE organization_id = $1 AND label = '[SEED] Walkthrough Key'`,
+    [orgId],
+    `INSERT INTO api_keys
+       (organization_id, label, key_hash, entitlement_level, status, created_by_user_id)
+     VALUES ($1, '[SEED] Walkthrough Key', $2, 'platform', 'active', $3) RETURNING id`,
+    [orgId, `seed-walkthrough-not-for-auth-${orgId}`, approverId]
   );
 
   // 2. Org policy. Evidence gate ON and SoD ON — the walkthrough should exercise
@@ -1065,6 +1207,48 @@ async function seed(c: PoolClient, orgId: string): Promise<void> {
 // ─── Summary ─────────────────────────────────────────────────────────────────
 
 async function printSummary(c: PoolClient, orgId: string): Promise<void> {
+  // Walkthrough credentials. The PLAINTEXT test password is printed because the whole
+  // point of this org is that an operator can sign in as both parties; the hash is
+  // never selected and never printed. These are staging-only credentials for a [SEED]
+  // org on a non-prod database, guarded by the prod check in main().
+  const users = await c.query<{ email: string; name: string; role: string; has_password: boolean }>(
+    `SELECT email, name, role, (password_hash IS NOT NULL) AS has_password
+       FROM users
+      WHERE organization_id = $1 AND email = ANY($2)
+      ORDER BY email`,
+    [orgId, [ANALYST_EMAIL, APPROVER_EMAIL]]
+  );
+
+  if (users.rowCount) {
+    console.log("\n  Walkthrough users — accepted-risk lifecycle");
+    console.log("  " + "─".repeat(96));
+    console.log(
+      "  " + "email".padEnd(46) + "role".padEnd(10) + "acts as".padEnd(12) + "password"
+    );
+    for (const u of users.rows) {
+      const actsAs = u.email === ANALYST_EMAIL ? "proposer" : "approver";
+      console.log(
+        "  " +
+          String(u.email).padEnd(46) +
+          String(u.role).padEnd(10) +
+          actsAs.padEnd(12) +
+          (u.has_password ? WALKTHROUGH_PASSWORD : "(NO PASSWORD — re-run the seed)")
+      );
+    }
+    console.log(`
+    Separation of duties: the proposer CANNOT approve their own request. The API
+    enforces approver !== requested_by (403 separation_of_duties), backed by a DB
+    CHECK. Propose as the proposer, then approve as the approver — two logins.
+
+      propose  POST /api/findings/:id/risk-acceptance   (owner_user_id, rationale, expires_at)
+      approve  POST /api/risk-acceptances/:id/approve
+      reject   POST /api/risk-acceptances/:id/reject
+      withdraw POST /api/risk-acceptances/:id/withdraw   → REOPENS the finding
+
+    Session identity is REQUIRED — an API key returns 403 user_identity_required.
+    Override the password with WALKTHROUGH_SEED_PASSWORD=... when re-seeding.`);
+  }
+
   const counts = await c.query(
     `SELECT 'vendors' AS t, COUNT(*)::int AS n FROM vendors WHERE organization_id = $1
      UNION ALL SELECT 'vendor_assessments', COUNT(*)::int FROM vendor_assessments WHERE organization_id = $1
@@ -1167,6 +1351,41 @@ async function printSummary(c: PoolClient, orgId: string): Promise<void> {
 `);
 }
 
+// ─── Org ─────────────────────────────────────────────────────────────────────
+
+/** Create-or-reuse the walkthrough org, and re-assert the properties the flow needs. */
+export async function ensureWalkthroughOrg(c: PoolClient): Promise<string> {
+  const orgId = await upsertId(
+    c,
+    `INSERT INTO organizations
+       (name, slug, plan, status, entitlement_level, scale, regulated, handles_pii,
+        max_monitored_entities, enterprise_context_capability, core_platform_capability)
+     VALUES ($1, $2, 'platform', 'active', 'platform', 'Medium', TRUE, TRUE, 50, TRUE, TRUE)
+     ON CONFLICT (slug) DO NOTHING RETURNING id`,
+    [WALKTHROUGH_NAME, WALKTHROUGH_SLUG],
+    `SELECT id FROM organizations WHERE slug = $1`,
+    [WALKTHROUGH_SLUG]
+  );
+  // Re-assert the capability flags on an existing org — entitlement_level 'platform'
+  // is what clears requireEntitlement("premium"), which every risk-acceptance route
+  // and the Decision Workspace context route sit behind.
+  //
+  // require_mfa is forced FALSE: customerAuth.ts blocks login outright when the org
+  // requires MFA and the user has not enrolled, which would make the seeded
+  // credentials unusable. It defaults FALSE, but an operator can flip it on any org,
+  // so the walkthrough asserts it rather than assuming it.
+  await c.query(
+    `UPDATE organizations
+        SET entitlement_level = 'platform', plan = 'platform', status = 'active',
+            enterprise_context_capability = TRUE, core_platform_capability = TRUE,
+            require_mfa = FALSE,
+            updated_at = NOW()
+      WHERE id = $1`,
+    [orgId]
+  );
+  return orgId;
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -1200,27 +1419,7 @@ async function main(): Promise<void> {
       orgId = r.rows[0].id;
       console.log(`  Org      : ${name} (${slug}) [${orgId}]  — supplied via --org-id`);
     } else {
-      orgId = await upsertId(
-        c,
-        `INSERT INTO organizations
-           (name, slug, plan, status, entitlement_level, scale, regulated, handles_pii,
-            max_monitored_entities, enterprise_context_capability, core_platform_capability)
-         VALUES ($1, $2, 'platform', 'active', 'platform', 'Medium', TRUE, TRUE, 50, TRUE, TRUE)
-         ON CONFLICT (slug) DO NOTHING RETURNING id`,
-        [WALKTHROUGH_NAME, WALKTHROUGH_SLUG],
-        `SELECT id FROM organizations WHERE slug = $1`,
-        [WALKTHROUGH_SLUG]
-      );
-      // Re-assert the capability flags on an existing org — entitlement_level
-      // 'platform' is what clears requireEntitlement("premium") on the context route.
-      await c.query(
-        `UPDATE organizations
-            SET entitlement_level = 'platform', plan = 'platform', status = 'active',
-                enterprise_context_capability = TRUE, core_platform_capability = TRUE,
-                updated_at = NOW()
-          WHERE id = $1`,
-        [orgId]
-      );
+      orgId = await ensureWalkthroughOrg(c);
       console.log(`  Org      : ${WALKTHROUGH_NAME} (${WALKTHROUGH_SLUG}) [${orgId}]`);
     }
 
@@ -1260,4 +1459,9 @@ async function main(): Promise<void> {
   }
 }
 
-void main();
+// Only run when invoked as a script. The teardown/seed regression test imports the
+// functions above, and importing must not kick off a seed or open the module pool.
+const invokedDirectly =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (invokedDirectly) void main();
