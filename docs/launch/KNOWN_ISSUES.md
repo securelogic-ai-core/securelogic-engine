@@ -51,6 +51,7 @@ These are the only items that hold the **NO-GO**. All are operator-only gates; n
 
 ### D-3 — GDPR deletion (Art. 17) not built
 - Export rights exist; erasure rights do not. Phase-0 design is settled (10 locks; D-9 cleared) but the reaper is unbuilt. → **Sprint 3.2**.
+- **Blocked by D-12:** the reaper cannot work as designed. WORM triggers fire on FK cascade, so deleting an org raises for any tenant whose findings have been decided on. Settle D-12 first.
 
 ### D-4 — Priority-4 signal ingestion is foundation-only
 - Only the additive 4A contract/registry stubs shipped; the scheduler does not yet consume `API_SOURCES`. Source qualification, clustering, and provenance are flag-gated OFF and unimplemented at runtime. External ingestion remains the weakest layer vs. the vision. → **Sprint 3.3**.
@@ -80,6 +81,13 @@ These are the only items that hold the **NO-GO**. All are operator-only gates; n
 ### D-11 — Ask navigation now auto-derived from an Application Knowledge Index (drift risk RESOLVED)
 - Ask SecureLogic's **platform navigation answers** (menus, dropdowns, labels, routes, page titles, per-item permissions) are now rendered from a **machine-generated Application Knowledge Index** (`src/api/lib/applicationKnowledgeIndex.generated.ts`), derived from the live source of truth — `app/src/lib/navigation.ts` (the header menu) + the `app/src/app/**` route tree — via `npm run generate:knowledge-index`. **Drift is structurally prevented:** `src/api/tests/applicationKnowledgeIndex.test.ts` rebuilds the index from the live sources and fails CI if the committed artifact is stale, asserts every menu destination resolves to a real `page.tsx`, and asserts every route an Ask workflow cites exists in the index. If someone renames a menu item or moves a page without regenerating, the `test` lane goes red.
 - **Residual (minor):** the workflow *how-to prose* (the semantic intent→action mapping, e.g. "click + Add Vendor") remains curated in `productKnowledge.ts`, but **every path/label it cites is verified against the generated index** by the same test — so it cannot reference a UI that doesn't exist. Regenerate the index (`npm run generate:knowledge-index`) whenever the menu or routes change.
+
+### D-12 — WORM triggers fire on FK cascade, so tenant offboarding / GDPR erasure is IMPOSSIBLE (blocks D-3)
+- **What:** Six append-only tables (`finding_lifecycle_events`, `security_audit_log`, `risk_lifecycle_events`, `applicability_assessments`, `applicability_evidence`, `applicability_affected_entities`) are each guarded by a `BEFORE UPDATE OR DELETE … FOR EACH ROW` trigger that unconditionally `RAISE`s — no role and no session-var escape hatch. Postgres fires row triggers on **FK cascade** deletes. `finding_lifecycle_events.finding_id` and `.organization_id` are both `ON DELETE CASCADE`, so `DELETE FROM findings` — and therefore `DELETE FROM organizations` — **raises** for any org whose findings have ever been decided on. `finding_risk_acceptances` adds a second, independent barrier: its own `trg_finding_risk_acceptances_forbid_delete` (correct: an acceptance is a governance artifact, withdrawn not erased) plus `finding_id ON DELETE RESTRICT`.
+- **Consequence:** erasing a tenant is not merely unbuilt (D-3) — it is currently **impossible** for any real org. D-3 cannot be delivered by writing a reaper; the trigger/FK design must be resolved first (e.g. a session-var escape hatch honoured by the WORM triggers, or an explicit erasure path that suspends them under audit).
+- **Verified:** against a real database, not inferred. Reproduced by the validation teardown in `scripts/validation/seed-walkthrough-org.ts`, which can only delete its own seeded org by `ALTER TABLE … DISABLE TRIGGER` inside its transaction.
+- **NOT a workaround:** that teardown is an explicitly-invoked, org-scoped **validation** path for a `[SEED]` org on a non-prod database. It is not an offboarding mechanism and must not be generalised into one. Production FKs, WORM constraints, triggers and runtime deletion behaviour are unchanged.
+- **Resolution:** unowned. Must be settled before D-3 (Art. 17 erasure) can be built. → **architecture backlog**.
 
 ---
 
