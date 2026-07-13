@@ -13,6 +13,8 @@
  */
 
 import { pg } from "../infra/postgres.js";
+import { SQL_ACCEPTANCE_BINDING } from "./riskAcceptanceContract.js";
+import { riskAcceptanceEnabled } from "./riskAcceptanceFeatureFlag.js";
 import {
   deriveOperationalStatus,
   legacyStatusFor,
@@ -140,10 +142,30 @@ export async function recomputeFindingOperationalStatus(
     hasEvidence: gateRow.rows[0]?.has_evidence === true,
   };
 
+  // A BINDING risk acceptance (approved, not past its expiry) is the third closure
+  // signal — ruling 2026-07-12. Resolved here rather than in the pure machine because
+  // expiry is a function of TODAY. Always false while the enforcement flag is off, so
+  // flag-off derivation is byte-identical to before this package.
+  //
+  // Read inside the same transaction as the FOR UPDATE above, so an approval and a
+  // concurrent Action write cannot interleave into a contradiction.
+  const acceptanceBinding = riskAcceptanceEnabled()
+    ? (
+        await pg.query<{ ok: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM finding_risk_acceptances a
+              WHERE a.organization_id = $1 AND a.finding_id = $2
+                AND ${SQL_ACCEPTANCE_BINDING}
+           ) AS ok`,
+          [organizationId, findingId]
+        )
+      ).rows[0]?.ok === true
+    : false;
+
   const toState = deriveOperationalStatus(
     actions.rows.map((r) => String(r.status ?? "")),
     gate,
-    { decisionState, legacyStatus }
+    { decisionState, legacyStatus, hasBindingAcceptance: acceptanceBinding }
   );
 
   if (toState === fromState) return { changed: false };

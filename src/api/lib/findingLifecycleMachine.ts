@@ -52,6 +52,21 @@ export interface ClosureInputs {
   decisionState?: string | null;
   /** legacy `status`, still directly writable during the migration */
   legacyStatus?: string | null;
+  /**
+   * A BINDING risk acceptance exists: an approved, unexpired `finding_risk_acceptances`
+   * record (ruling 2026-07-12). This is the third — and only new — way a finding closes.
+   *
+   * It is deliberately a boolean, not the acceptance row: the caller
+   * (recomputeFindingOperationalStatus) resolves "approved AND not past expires_at"
+   * against the database, because expiry is a function of TODAY and this module must
+   * stay pure. Resolving it there also means a lapsed acceptance stops closing the
+   * finding on the very next recompute, even if the expiry worker has not run yet —
+   * an acceptance that has run out is not an acceptance.
+   *
+   * False when the enforcement flag is off, which is why flag-off behaviour is
+   * byte-identical to before this package.
+   */
+  hasBindingAcceptance?: boolean;
 }
 
 /**
@@ -95,10 +110,16 @@ export function deriveOperationalStatus(
   gate?: EvidenceGate,
   closure?: ClosureInputs
 ): FindingOperationalStatus {
-  // Governance closure and the legacy compat bridge both dominate workflow: a
-  // closed finding is closed however much Action churn sits underneath it.
+  // Governance closure, the legacy compat bridge, and an approved risk acceptance all
+  // dominate workflow: a closed finding is closed however much Action churn sits
+  // underneath it.
   if (closure?.decisionState === "resolved") return "closed";
   if (closure?.legacyStatus != null && LEGACY_TERMINAL.has(closure.legacyStatus)) return "closed";
+  // Accepting a risk is a decision that no remediation work remains — but ONLY once the
+  // approval is complete. `decision_state = 'accepted_risk'` alone does NOT close a
+  // finding: a proposal is not an approval, and a finding whose acceptance is still
+  // awaiting sign-off is very much still live work.
+  if (closure?.hasBindingAcceptance === true) return "closed";
 
   if (actionStatuses.some((s) => ACTION_ACTIVE.has(s))) return "in_progress";
   if (actionStatuses.length > 0 && actionStatuses.every((s) => ACTION_TERMINAL.has(s))) {

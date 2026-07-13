@@ -75,6 +75,7 @@ import riskObligationLinksRouter from "./riskObligationLinks.js";
 import riskSettingsRouter from "./riskSettings.js";
 import riskLifecycleRouter from "./riskLifecycle.js";
 import riskApprovalsRouter from "./riskApprovals.js";
+import riskAcceptancesRouter from "./riskAcceptances.js";
 import cyberSignalsRouter from "./cyberSignals.js";
 import signalVendorLinksRouter from "./signalVendorLinks.js";
 import signalAiSystemLinksRouter from "./signalAiSystemLinks.js";
@@ -468,6 +469,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", riskSettingsRouter);
 router.use("/api", riskLifecycleRouter);
 router.use("/api", riskApprovalsRouter);
+router.use("/api", riskAcceptancesRouter);
   router.use("/api", cyberSignalsRouter);
   router.use("/api", signalVendorLinksRouter);
   router.use("/api", signalAiSystemLinksRouter);
