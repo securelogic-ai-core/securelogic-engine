@@ -458,6 +458,17 @@ services:
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
 
+      # Finding risk-acceptance lifecycle (ruling 2026-07-12, PR #646) — STAGING
+      # ONLY, for staging validation. Gates ENFORCEMENT: approved acceptance
+      # closes a Finding; expiry/withdrawal reopens it; routes 404 when off.
+      # The production engine block intentionally does not receive this var
+      # (absent reads false) — production enablement is a separate GATE-B
+      # operator decision after staging validation passes. Flag is read only by
+      # the engine web service (routes + in-process expiry worker); the legacy
+      # accepted population is held closed by the compat bridge, not this flag.
+      - key: SECURELOGIC_RISK_ACCEPTANCE_ENABLED
+        value: "true"
+
       # Canonical Intelligence Event projection (Pipeline Hardening / IE) — DARK.
       # Projects cyber_signals into the global intelligence_events layer
       # (corroboration ledger + timeline). Off => zero DB work, legacy behaviour.
