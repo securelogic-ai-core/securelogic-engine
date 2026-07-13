@@ -348,3 +348,59 @@ When Gates 1–5 each have a **PASS** row in §0.4 with attached evidence, Part 
 
 ### Total estimated operator time
 **~2.5–3.5 hours** across Gates 1–5 (plus the separate promotion window).
+
+---
+
+## Appendix A — Staging enablement: risk acceptance (NOT a launch gate)
+
+> **Scope:** staging only. This is **not** one of Gates 1–5, does not block promotion, and is not part of the `develop → main` path. It is recorded here because the runbook is the operator's canonical reference and this procedure previously lived nowhere in the repo.
+>
+> It does **not** violate the hard rule in the header ("do not enable any feature flag while executing it") — that rule governs Gates 1–5 and **production**. Production stays OFF throughout; see below.
+
+### What
+| | |
+|---|---|
+| **Flag** | `SECURELOGIC_RISK_ACCEPTANCE_ENABLED=true` |
+| **Service** | `securelogic-engine-staging` |
+| **Source of truth** | `render.yaml` / Blueprint-managed IaC — **already declared** (`render.yaml:469-470`, PR #647) |
+| **Production** | Remains **OFF** (the key is absent from the prod service block, so the flag helper reads `false`). **GATE B unchanged.** |
+
+### Why a dashboard toggle is the wrong method
+`render.yaml` is *declarative desired state*: committing it records the intent but does **not** mutate a running service. The value is already in IaC and is waiting to be applied.
+
+**Do not set this flag by hand in the Render dashboard as the durable method.** A manual value is not the source of truth, and **a future Blueprint sync will restore the IaC value over it** — silently reverting a hand-set flag, or resurrecting one you thought you had turned off. Change the flag in `render.yaml`, then sync.
+
+### Operator action
+1. Render → Blueprint → **sync** from `develop`.
+2. Confirm `securelogic-engine-staging` **redeploys from `develop`** (check the deploy log's commit SHA).
+
+### Verification
+No credentials required — the route is flag-gated *before* auth, so an unauthenticated probe is sufficient and safe:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" \
+  https://securelogic-engine-staging.onrender.com/api/risk-acceptances
+```
+
+| Result | Meaning |
+|---|---|
+| **`401`** | Flag is **live** and the gated route exists (auth is now the only thing refusing you). Proceed. |
+| **`404`** | Blueprint has **not** synced/redeployed, or the flag is still off. Do not proceed. |
+
+The 404 is deliberate: `riskAcceptanceFeatureFlag` short-circuits to a bare 404 when the flag is off — a disabled feature must not admit that it exists. A useful control probe is `/api/findings`, which should return `401`; if it does and `/api/risk-acceptances` still returns `404`, the flag — not the deploy — is the problem.
+
+### Next step after verification
+Run the deterministic walkthrough seed, then validate the lifecycle **propose → approve → withdraw/expiry → reopen**:
+
+```bash
+# In the staging Render shell (DATABASE_URL is already present):
+npx tsx scripts/validation/seed-walkthrough-org.ts --summary   # writes nothing; rolls back
+npx tsx scripts/validation/seed-walkthrough-org.ts --reset     # teardown + reseed
+```
+
+`--summary` prints the connected database name and **hard-refuses** to run against production (`current_database() = 'securelogic'`). It seeds `[SEED] Walkthrough Org` (slug `seed-walkthrough`) with a proposer and an approver — two distinct users, because approval requires a different user than the requester (separation of duties, enforced by the API and a DB CHECK).
+
+> **The 4,000+ Finding tenant must NOT be used for the deterministic workflow walkthrough.** Use `[SEED] Walkthrough Org`. The large tenant is for validating the same behaviour **at scale, afterwards** — it is not a substitute for a deterministic dataset, and a workflow bug is not diagnosable in it.
+
+### Handling secrets
+Do **not** paste Render API tokens, database URLs, password hashes, or unrelated environment variables into tickets, transcripts, or evidence logs. The walkthrough's temporary seed credentials are the *only* credentials intended to be shared, and they are staging-only, non-prod, and deterministic by design.
