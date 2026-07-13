@@ -20,7 +20,11 @@ export const VALID_SOURCE_TYPES = new Set([
   "dependency_review",
   "risk_treatment",
   "finding",
-  "policy_review"
+  "policy_review",
+  // Evidence supporting a Finding risk-acceptance decision (ruling 2026-07-12).
+  // source_id = finding_risk_acceptances.id. Reuses the evidence primitive rather
+  // than inventing a second evidence store for governance artifacts.
+  "finding_risk_acceptance"
 ]);
 
 export const VALID_EVIDENCE_TYPES = new Set([

@@ -21,11 +21,18 @@ describe("VALID_SOURCE_TYPES", () => {
     expect(VALID_SOURCE_TYPES.has("obligation_review")).toBe(true);
   });
 
-  it("has exactly nine values", () => {
+  it("has exactly ten values", () => {
     // R4 drift reconciliation: policy_review was already in the DB CHECK and the
     // route's SOURCE_TYPE_TABLE but missing from the validator; adding it makes 9.
+    // finding_risk_acceptance (20260907) makes 10 — evidence supporting a Finding
+    // risk-acceptance decision, reusing the evidence primitive rather than standing up
+    // a second evidence store for governance artifacts.
     // 'risk' is intentionally NOT here — risk evidence uses its own flag-gated routes.
-    expect(VALID_SOURCE_TYPES.size).toBe(9);
+    expect(VALID_SOURCE_TYPES.size).toBe(10);
+  });
+
+  it("includes finding_risk_acceptance", () => {
+    expect(VALID_SOURCE_TYPES.has("finding_risk_acceptance")).toBe(true);
   });
 
   it("includes dependency_review", () => {

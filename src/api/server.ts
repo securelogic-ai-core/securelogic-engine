@@ -17,6 +17,7 @@ import { startApplicabilityReassessmentWorker } from "./workers/applicabilityRea
 import { startConnectorSyncWorker } from "./workers/connectorSyncWorker.js";
 import { startConnectorWritebackWorker } from "./workers/connectorWritebackWorker.js";
 import { startRiskHistoryWorker } from "./workers/riskHistoryWorker.js";
+import { startRiskAcceptanceExpiryWorker } from "./workers/riskAcceptanceExpiryWorker.js";
 import { startPredictiveForecastWorker } from "./workers/predictiveForecastWorker.js";
 import { startOrchestrationPlaybookWorker } from "./workers/orchestrationPlaybookWorker.js";
 import { createApp } from "./app.js";
@@ -151,6 +152,9 @@ startConnectorWritebackWorker();
 // ERIP F2: daily risk-history snapshot. Registered always; each tick self-gates
 // on SECURELOGIC_RISK_INTELLIGENCE_ENABLED AND SECURELOGIC_ASSET_REGISTRY_ENABLED.
 startRiskHistoryWorker();
+// Accepted risk is time-boxed: expired acceptances reopen their findings. Self-gates
+// on SECURELOGIC_RISK_ACCEPTANCE_ENABLED.
+startRiskAcceptanceExpiryWorker();
 // ERIP E5: daily predictive forecast inference/retraining. Registered always;
 // self-gates on SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED + asset-registry flag.
 startPredictiveForecastWorker();
