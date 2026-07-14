@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
 import { getMe, getActions, getActionsSummary, type Action } from "@/lib/api";
-import { filterMyActions, myActionsRedirect, actionScope, showingOfTotal } from "./myActions";
+import { myActionsRedirect, actionScope, showingOfTotal } from "./myActions";
 import MyActionsView from "./MyActionsView";
 
 const PRIORITY_STYLES: Record<string, React.CSSProperties> = {
@@ -187,11 +187,28 @@ export default async function ActionsPage({
   // shows all open remediation. Flag-off falls through to the unchanged legacy list.
   const scope = workspace ? actionScope(sp.view) : null;
   if (scope) {
+    // R5 fail-closed: "assigned to me" is unanswerable without a user identity (an
+    // API-key caller has none). Answer it with an empty queue rather than asking the
+    // engine for something it would have to reject — and NEVER widen to the org's
+    // actions, which is the failure this guard exists to prevent.
+    if (scope === "mine" && !session.userId) {
+      return (
+        <MyActionsView
+          actions={[]}
+          scope="mine"
+          sessionUserId={undefined}
+          nowMs={Date.now()}
+          summary={null}
+          total={undefined}
+        />
+      );
+    }
+
     // "team" (All open) is where the org-wide dashboard Actions counts now land
     // (orgActionsHref → ?view=team). Its attention tiles must be authoritative
     // org-wide COUNTs — not a scan of the ≤100 fetched slice — so they reconcile
     // with the dashboard ring. `total` drives the honest "Showing N of M"
-    // disclosure. "mine" stays a personal, slice-derived view (no org summary).
+    // disclosure.
     //
     // Metric Contract: honour ?status=… and ?overdue=true in the team view — a
     // dashboard tile that says "Open" (or "Overdue") must land on a list
@@ -203,17 +220,29 @@ export default async function ActionsPage({
     // is what finally lets the destination reproduce the tile's number instead of
     // listing closed and accepted actions under a heading that promised N active.
     const activeFilter = scope === "team" && sp.active === "true" ? true : undefined;
+
+    // "mine" is now filtered by the ENGINE (?owner=me), not by slicing a fetched page.
+    //
+    // It used to ask for the org's actions and filter them here. The engine caps a page at
+    // 100, so in any org with more than 100 actions a user's own assigned work could sit
+    // outside the fetched page and simply never appear — and `total` was withheld for this
+    // scope, so nothing even disclosed the truncation. A queue that silently drops your
+    // work is worse than one that says it is empty.
+    //
+    // The Findings "My Work" bucket has always done this correctly, server-side. This makes
+    // the two agree, and it is the codebase's own stated rule (workQueues.ts): never
+    // client-side filtering of a page, so queues stay correct at scale.
     const [data, summary] = await Promise.all([
       getActions(token, {
         limit: 200,
         status: statusFilter,
         overdue: overdueFilter,
         active: activeFilter,
+        owner: scope === "mine" ? "me" : undefined,
       }),
-      scope === "team" ? getActionsSummary(token) : Promise.resolve(null),
+      getActionsSummary(token),
     ]);
-    const all = data?.actions ?? [];
-    const scoped = scope === "mine" ? filterMyActions(all, session.userId) : all;
+    const scoped = data?.actions ?? [];
     return (
       <MyActionsView
         actions={scoped}
@@ -221,7 +250,9 @@ export default async function ActionsPage({
         sessionUserId={session.userId}
         nowMs={Date.now()}
         summary={summary}
-        total={scope === "team" ? data?.total : undefined}
+        // `total` now shown in BOTH scopes: the engine's count of the whole matched set, so
+        // "Showing N of M" is honest for a personal queue too.
+        total={data?.total}
         statusFilter={overdueFilter ? `${statusFilter ? `${statusFilter} · ` : ""}overdue` : statusFilter}
       />
     );
