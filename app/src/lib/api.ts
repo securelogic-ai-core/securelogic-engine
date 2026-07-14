@@ -2181,6 +2181,73 @@ export async function getFindingContext(
   }
 }
 
+// Finding risk-acceptance (product ruling 2026-07-12). The engine subsystem
+// (/api/risk-acceptances) is the ONE approval workflow for accepting the risk of a
+// Finding — deliberately separate from `risk_approvals`, which approves Risk-Register
+// entries and cannot approve a Finding. Every route 404s while
+// SECURELOGIC_RISK_ACCEPTANCE_ENABLED is off (byte-identical flag-off).
+export type RiskAcceptanceState =
+  | "proposed"
+  | "approved"
+  | "rejected"
+  | "withdrawn"
+  | "expired"
+  | "legacy_unverified";
+
+export type RiskAcceptance = {
+  id: string;
+  organization_id: string;
+  finding_id: string;
+  state: RiskAcceptanceState;
+  owner_user_id: string | null;
+  rationale: string | null;
+  requested_by_user_id: string | null;
+  approver_user_id: string | null;
+  approved_at: string | null;
+  decision_rationale: string | null;
+  expires_at: string | null;
+  withdrawn_at: string | null;
+  // NB: withdrawn_by_user_id exists in the schema but the register SELECT does not
+  // project it — a withdrawal is dated in the UI, not attributed.
+  withdrawal_reason: string | null;
+  governance_review_required: boolean;
+  promoted_risk_id: string | null;
+  created_at: string;
+  updated_at: string;
+  // JOINed finding columns the register/per-finding read returns (optional).
+  finding_title?: string;
+  finding_severity?: string;
+  finding_domain?: string | null;
+  finding_operational_status?: string;
+  evidence_count?: number;
+};
+
+/**
+ * A finding's current acceptance plus its terminal history, org-scoped by the engine.
+ *
+ * The return distinguishes two states the caller MUST NOT conflate:
+ *   null → the route is dark (404) or unreachable — the feature is NOT active for this
+ *          caller, so the UI keeps the legacy Accept-Risk control (byte-identical).
+ *   []   → the feature IS active and this finding simply has no acceptances yet — the UI
+ *          shows the "propose acceptance" affordance.
+ */
+export async function getRiskAcceptancesForFinding(
+  token: string,
+  findingId: string
+): Promise<RiskAcceptance[] | null> {
+  try {
+    const res = await engineFetch(
+      `/api/risk-acceptances?finding_id=${encodeURIComponent(findingId)}`,
+      token
+    );
+    if (!res.ok) return null;
+    const body = (await res.json()) as { acceptances?: RiskAcceptance[] };
+    return body.acceptances ?? [];
+  } catch {
+    return null;
+  }
+}
+
 // Findings saved views (ERIP §1) — per-user named filter presets. The engine route
 // 404s while SECURELOGIC_DECISION_WORKSPACE_ENABLED is off, so this returns [] and the
 // saved-views bar simply does not render (byte-identical flag-off).

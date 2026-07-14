@@ -343,6 +343,27 @@ describe("Risk acceptance — per-finding read (?finding_id, the Decision Worksp
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("invalid_finding_id");
   });
+
+  it("a finding with NO acceptance returns [] even when the org register is non-empty", async () => {
+    // The empty case, which the tests above do not cover — and it is the one the Decision
+    // Workspace is most exposed to. Before the filter existed, the register answered with
+    // the org's OTHER acceptances here, and the panel rendered a stranger's binding record
+    // as this finding's own: a phantom accepted risk, on which approve/withdraw then acted.
+    // [] must read as "none for THIS finding", never as "the feature is off".
+    const accepted = await mkFinding(seed.orgA.id, "register-populated");
+    await acceptAndApprove(accepted, isoInDays(90));
+    const bare = await mkFinding(seed.orgA.id, "no-acceptance-yet");
+
+    const res = await auth("get", `/api/risk-acceptances?finding_id=${bare}`, jwtRequesterA);
+    expect(res.status).toBe(200);
+    expect(res.body.acceptances).toEqual([]);
+    expect(res.body.total).toBe(0);
+
+    // ...while the unfiltered register still holds the other finding's acceptance, so the
+    // emptiness above is the filter working, not an empty org.
+    const reg = await auth("get", "/api/risk-acceptances", jwtRequesterA);
+    expect(reg.body.acceptances.length).toBeGreaterThan(0);
+  });
 });
 
 describe("Risk acceptance — review and expiration drive governance (ruling step 3)", () => {
