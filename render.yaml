@@ -1224,6 +1224,17 @@ services:
       # Brief -> Decision/Event. STAGING ONLY; prod stays "false" (GATE B).
       - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED
         value: "true"
+      # ENABLED on STAGING (Option B): the app half of the risk-acceptance two-switch.
+      # The engine flag (staging engine block above) opens /api/risk-acceptances; THIS
+      # one lets the app call it — findings/[id]/page.tsx reads it on the app service
+      # and, when unset, never fetches the acceptances, so the Decision Workspace keeps
+      # the legacy one-click Accept-Risk control and the whole subsystem renders
+      # nowhere. Both switches are required for the workflow to render AND function.
+      # RUNTIME env (not NEXT_PUBLIC): a restart applies, no rebuild. STAGING ONLY —
+      # the production app block intentionally does not receive this var (absent reads
+      # false), matching the production engine block; prod enablement is GATE B.
+      - key: SECURELOGIC_RISK_ACCEPTANCE_ENABLED
+        value: "true"
 
       # STAGING session secret — a distinct 32+ char value, NEVER the prod secret.
       - key: SESSION_SECRET

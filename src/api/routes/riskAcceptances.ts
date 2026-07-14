@@ -506,9 +506,16 @@ router.post(
    governed, with its owner, rationale, approver and review date.
 
    Filters:
+     ?finding_id=<uuid>          acceptances belonging to ONE finding
      ?state=approved|proposed|expired|withdrawn|rejected|legacy_unverified
      ?expiring_within_days=N     approved acceptances due for review
      ?governance_review_required=true
+
+   finding_id is authoritative and applied HERE, in SQL, on top of the org scope. The
+   per-finding panel asks this route for "this finding's acceptances" and treats the
+   whole response as such; without the predicate the panel rendered the org's entire
+   register and approve/withdraw acted on an arbitrary OTHER finding's signed record.
+   Never filter this client-side.
    ========================================================= */
 
 router.get(
@@ -527,6 +534,17 @@ router.get(
 
       const conditions: string[] = ["a.organization_id = $1"];
       const params: unknown[] = [organizationId];
+
+      // Scoped to one finding, in SQL, in addition to (never instead of) the org scope.
+      const findingId = req.query.finding_id;
+      if (isNonEmptyString(findingId)) {
+        if (!isUuid(findingId)) {
+          res.status(400).json({ error: "invalid_finding_id" });
+          return;
+        }
+        params.push(findingId);
+        conditions.push(`a.finding_id = $${params.length}`);
+      }
 
       const state = req.query.state;
       if (isNonEmptyString(state)) {
