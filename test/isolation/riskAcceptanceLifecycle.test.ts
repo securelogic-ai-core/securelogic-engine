@@ -556,6 +556,187 @@ describe("Risk acceptance — the legacy population does not move", () => {
   });
 });
 
+describe("Risk acceptance — the APPROVER QUEUE (?state=proposed, the /approvals surface)", () => {
+  /* The subsystem shipped complete and was still not executable end-to-end: nothing in the
+     app read the org-wide register, and /approvals reads risk_approvals (a different table,
+     a different object). An approver could only reach a proposal via a hand-passed URL.
+     These prove the contract /approvals now depends on. */
+
+  const queue = (jwt: string) => auth("get", "/api/risk-acceptances?state=proposed", jwt);
+
+  it("a pending proposal appears in the approver's queue, named — not as uuids", async () => {
+    const f = await mkFinding(seed.orgA.id, "queue-pending");
+    const p = await auth("post", `/api/findings/${f}/risk-acceptance`, jwtRequesterA)
+      .send({ owner_user_id: ownerA, rationale: "Compensating control pending Q4.", expires_at: isoInDays(90) });
+    expect(p.status).toBe(201);
+
+    // The APPROVER — a different user — sees it without anyone handing them a URL.
+    const res = await queue(jwtApproverA);
+    expect(res.status).toBe(200);
+
+    const row = res.body.acceptances.find((a: { id: string }) => a.id === p.body.acceptance.id);
+    expect(row).toBeTruthy();
+    // Everything the approver must review, and PEOPLE, not internal ids.
+    expect(row.finding_title).toBe("queue-pending");
+    expect(row.finding_severity).toBe("High");
+    expect(row.rationale).toBe("Compensating control pending Q4.");
+    expect(row.expires_at).toBeTruthy();
+    expect(row.created_at).toBeTruthy();
+    expect(row.requested_by_email).toBe("requester@a.test");
+    expect(row.owner_email).toBe("owner@a.test");
+    expect(row.evidence_count).toBe(0);
+    // Not the proposer, so the approver may decide it.
+    expect(row.is_self_proposed).toBe(false);
+  });
+
+  it("the proposer sees their own proposal flagged as self-proposed, and cannot approve it", async () => {
+    const f = await mkFinding(seed.orgA.id, "queue-sod");
+    const p = await auth("post", `/api/findings/${f}/risk-acceptance`, jwtRequesterA)
+      .send({ owner_user_id: ownerA, rationale: "Mine.", expires_at: isoInDays(90) });
+
+    // The queue TELLS the proposer why they cannot act — the UI disables on this flag.
+    const mine = await queue(jwtRequesterA);
+    const row = mine.body.acceptances.find((a: { id: string }) => a.id === p.body.acceptance.id);
+    expect(row.is_self_proposed).toBe(true);
+
+    // ...and the engine refuses regardless of what any UI shows. Belt and suspenders.
+    // NB 403 separation_of_duties, NOT the Risk-REGISTER route's 409 sod_violation: these
+    // are two different subsystems and they do not share an error contract.
+    const self = await auth("post", `/api/risk-acceptances/${p.body.acceptance.id}/approve`, jwtRequesterA)
+      .send({ decision_rationale: "approving my own" });
+    expect(self.status).toBe(403);
+    expect(self.body.error).toBe("separation_of_duties");
+  });
+
+  it("another tenant's proposal NEVER appears in the queue", async () => {
+    const f = await mkFinding(seed.orgA.id, "queue-cross-org");
+    const p = await auth("post", `/api/findings/${f}/risk-acceptance`, jwtRequesterA)
+      .send({ owner_user_id: ownerA, rationale: "org A only.", expires_at: isoInDays(90) });
+
+    const res = await queue(jwtB);
+    expect(res.status).toBe(200);
+    expect(JSON.stringify(res.body)).not.toContain(p.body.acceptance.id);
+    expect(JSON.stringify(res.body)).not.toContain("org A only.");
+    expect(res.body.acceptances.every((a: { organization_id: string }) => a.organization_id === seed.orgB.id)).toBe(true);
+  });
+
+  it("APPROVE removes it from the queue, closes the finding, and keeps it governed", async () => {
+    const f = await mkFinding(seed.orgA.id, "queue-approve");
+
+    // Active BEFORE the decision — a proposal is not an approval, so it is live work.
+    const activeBefore = await auth("get", "/api/findings?active=true", jwtApproverA);
+    expect(activeBefore.body.findings.map((x: { id: string }) => x.id)).toContain(f);
+
+    const acceptanceId = await acceptAndApprove(f, isoInDays(90));
+
+    // Left the pending queue...
+    const q = await queue(jwtApproverA);
+    expect(q.body.acceptances.map((a: { id: string }) => a.id)).not.toContain(acceptanceId);
+
+    // ...because it is decided: BOTH axes set together.
+    const row = await findingRow(f);
+    expect(row.decision_state).toBe("accepted_risk");
+    expect(row.operational_status).toBe("closed");
+
+    // ...and it has LEFT Active Findings. Asserted per-finding, not via a global counter:
+    // this suite shares one org, so a org-wide count is a function of every other test's
+    // rows and would fail for reasons that have nothing to do with this decision.
+    const activeAfter = await auth("get", "/api/findings?active=true", jwtApproverA);
+    expect(activeAfter.body.findings.map((x: { id: string }) => x.id)).not.toContain(f);
+
+    // ...and still governed, not erased.
+    const reg = await auth("get", "/api/risk-acceptances?state=approved", jwtApproverA);
+    expect(reg.body.acceptances.map((a: { id: string }) => a.id)).toContain(acceptanceId);
+  });
+
+  it("REJECT removes it from the queue and leaves the finding ACTIVE", async () => {
+    const f = await mkFinding(seed.orgA.id, "queue-reject");
+    const p = await auth("post", `/api/findings/${f}/risk-acceptance`, jwtRequesterA)
+      .send({ owner_user_id: ownerA, rationale: "Not good enough.", expires_at: isoInDays(90) });
+
+    const rej = await auth("post", `/api/risk-acceptances/${p.body.acceptance.id}/reject`, jwtApproverA)
+      .send({ decision_rationale: "Compensating control is not sufficient." });
+    expect(rej.status).toBe(200);
+
+    const q = await queue(jwtApproverA);
+    expect(q.body.acceptances.map((a: { id: string }) => a.id)).not.toContain(p.body.acceptance.id);
+
+    // Rejection is not closure. The work is still live.
+    const row = await findingRow(f);
+    expect(row.operational_status).not.toBe("closed");
+    expect(row.decision_state).not.toBe("accepted_risk");
+
+    // The rejection and its rationale are audited (the record is WORM, not deleted).
+    const hist = await auth("get", `/api/risk-acceptances?finding_id=${f}`, jwtApproverA);
+    const rejected = hist.body.acceptances.find((a: { id: string }) => a.id === p.body.acceptance.id);
+    expect(rejected.state).toBe("rejected");
+    expect(rejected.decision_rationale).toBe("Compensating control is not sufficient.");
+  });
+
+  it("WITHDRAWN and EXPIRED records are not in the pending queue", async () => {
+    // Withdrawn: approved, then withdrawn — reopens the finding, leaves the queue.
+    const fw = await mkFinding(seed.orgA.id, "queue-withdrawn");
+    const wId = await acceptAndApprove(fw, isoInDays(90));
+    const wd = await auth("post", `/api/risk-acceptances/${wId}/withdraw`, jwtApproverA)
+      .send({ reason: "Compensating control failed." });
+    expect(wd.status).toBe(200);
+    expect((await findingRow(fw)).operational_status).not.toBe("closed"); // REOPENED
+
+    // Expired: backdate past its review date (WORM freezes decision content, so as owner).
+    const fe = await mkFinding(seed.orgA.id, "queue-expired");
+    const eId = await acceptAndApprove(fe, isoInDays(30));
+    await pool.query(`ALTER TABLE finding_risk_acceptances DISABLE TRIGGER trg_finding_risk_acceptances_worm`);
+    await pool.query(`UPDATE finding_risk_acceptances SET state = 'expired', expires_at = CURRENT_DATE - 1 WHERE id = $1`, [eId]);
+    await pool.query(`ALTER TABLE finding_risk_acceptances ENABLE TRIGGER trg_finding_risk_acceptances_worm`);
+
+    const q = await queue(jwtApproverA);
+    const ids = q.body.acceptances.map((a: { id: string }) => a.id);
+    // Neither is awaiting a decision. They hold a terminal state, so the state machine —
+    // not any UI filtering — is what keeps them out.
+    expect(ids).not.toContain(wId);
+    expect(ids).not.toContain(eId);
+    expect(q.body.acceptances.every((a: { state: string }) => a.state === "proposed")).toBe(true);
+  });
+
+  it("the queue total reconciles with the summary's awaiting_approval counter", async () => {
+    // The two numbers the /approvals header and the list are drawn from. If they disagree,
+    // the page shows a count that does not match the rows under it.
+    const q = await queue(jwtApproverA);
+    const s = await auth("get", "/api/risk-acceptances/summary", jwtApproverA);
+    expect(q.status).toBe(200);
+    expect(s.status).toBe(200);
+    expect(q.body.total).toBe(s.body.summary.awaiting_approval);
+  });
+
+  it("paginates server-side: total is the whole set, never the page length", async () => {
+    // A governance queue that silently truncates reads as "that's all of them".
+    const page = await auth("get", "/api/risk-acceptances?state=proposed&limit=1&offset=0", jwtApproverA);
+    expect(page.status).toBe(200);
+    expect(page.body.acceptances.length).toBeLessThanOrEqual(1);
+    expect(page.body.limit).toBe(1);
+    expect(page.body.offset).toBe(0);
+
+    const all = await queue(jwtApproverA);
+    // total must be the FULL matched set even when one row was returned.
+    expect(page.body.total).toBe(all.body.total);
+    expect(all.body.total).toBeGreaterThan(1);
+
+    // The second page is a different row, not the same one again.
+    const p2 = await auth("get", "/api/risk-acceptances?state=proposed&limit=1&offset=1", jwtApproverA);
+    expect(p2.body.acceptances[0]?.id).not.toBe(page.body.acceptances[0]?.id);
+  });
+
+  it("refuses a nonsense page window rather than silently clamping it", async () => {
+    const bad = await auth("get", "/api/risk-acceptances?state=proposed&limit=0", jwtApproverA);
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toBe("invalid_limit");
+
+    const neg = await auth("get", "/api/risk-acceptances?state=proposed&offset=-1", jwtApproverA);
+    expect(neg.status).toBe(400);
+    expect(neg.body.error).toBe("invalid_offset");
+  });
+});
+
 describe("Risk acceptance — tenant isolation", () => {
   it("org B cannot see, approve, or withdraw org A's acceptances", async () => {
     const f = await mkFinding(seed.orgA.id, "tenant-isolation");

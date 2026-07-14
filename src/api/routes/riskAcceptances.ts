@@ -578,34 +578,88 @@ router.get(
 
       const where = conditions.join(" AND ");
 
+      // The COUNT must be taken over the FILTERED set but WITHOUT the page window, so it
+      // is built from the filter params only — before limit/offset are appended below.
+      const filterParams = [...params];
+
+      // Server-side pagination. The approver queue is an unbounded org-wide surface: the
+      // old hard `LIMIT 200` silently truncated it, which reads as "that's all of them"
+      // when it isn't. `total` is the honest count and the caller pages through it.
+      const limitRaw = req.query.limit;
+      let limit = 50;
+      if (isNonEmptyString(limitRaw)) {
+        const n = Number(limitRaw);
+        if (!Number.isInteger(n) || n < 1 || n > 200) {
+          res.status(400).json({ error: "invalid_limit", detail: "1-200" });
+          return;
+        }
+        limit = n;
+      }
+      const offsetRaw = req.query.offset;
+      let offset = 0;
+      if (isNonEmptyString(offsetRaw)) {
+        const n = Number(offsetRaw);
+        if (!Number.isInteger(n) || n < 0) {
+          res.status(400).json({ error: "invalid_offset" });
+          return;
+        }
+        offset = n;
+      }
+      params.push(limit);
+      const limitIdx = params.length;
+      params.push(offset);
+      const offsetIdx = params.length;
+
+      // The current SESSION user, for separation of duties. An API key has no user, so
+      // `is_self_proposed` is false for key callers — which is correct: the engine refuses
+      // key identity on approve outright, so no key caller can self-approve anything.
+      const viewerUserId = (req as { userId?: string }).userId ?? null;
+      params.push(viewerUserId);
+      const viewerIdx = params.length;
+
       // COUNT over the WHOLE matched set, never the page length — the Metric Contract
       // rule for every entity→findings surface.
       const [rows, total] = await Promise.all([
         pg.query(
+          // Display names, not raw ids. The approver queue is a customer-facing governance
+          // surface: it must say "Pat Proposer", not a uuid. The join is LEFT so a deleted
+          // or absent user degrades to NULL (rendered as "—") rather than dropping the
+          // acceptance out of the queue entirely.
           `SELECT ${acceptanceSelect("a")},
                   f.title AS finding_title, f.severity AS finding_severity,
+                  f.priority AS finding_priority,
                   f.domain AS finding_domain,
                   f.operational_status AS finding_operational_status,
+                  req.name  AS requested_by_name,  req.email  AS requested_by_email,
+                  own.name  AS owner_name,         own.email  AS owner_email,
+                  apr.name  AS approver_name,      apr.email  AS approver_email,
+                  ($${viewerIdx}::uuid IS NOT NULL
+                     AND a.requested_by_user_id = $${viewerIdx}::uuid) AS is_self_proposed,
                   (SELECT COUNT(*)::int FROM evidence e
                     WHERE e.organization_id = a.organization_id
                       AND e.source_type = 'finding_risk_acceptance'
                       AND e.source_id = a.id) AS evidence_count
              FROM finding_risk_acceptances a
              JOIN findings f ON f.id = a.finding_id AND f.organization_id = a.organization_id
+             LEFT JOIN users req ON req.id = a.requested_by_user_id
+             LEFT JOIN users own ON own.id = a.owner_user_id
+             LEFT JOIN users apr ON apr.id = a.approver_user_id
             WHERE ${where}
             ORDER BY a.expires_at ASC NULLS LAST, a.created_at DESC
-            LIMIT 200`,
+            LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
           params
         ),
         pg.query<{ n: string }>(
           `SELECT COUNT(*)::text AS n FROM finding_risk_acceptances a WHERE ${where}`,
-          params
+          filterParams
         ),
       ]);
 
       res.json({
         acceptances: rows.rows,
         total: parseInt(total.rows[0]?.n ?? "0", 10),
+        limit,
+        offset,
       });
     } catch (err) {
       logger.error({ event: "risk_acceptances_list_failed", err }, "list failed");
