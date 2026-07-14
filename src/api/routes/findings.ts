@@ -25,7 +25,14 @@ import { resolveOwnerMeFilter } from "../lib/findingListFilters.js";
 import {
   DECISION_STATES,
   evaluateFindingDecisionTransition,
+  isLegacyTerminal,
 } from "../lib/findingLifecycleMachine.js";
+import {
+  evaluateFindingClosure,
+  findingClosureGateEnabled,
+  loadClosureBlockers,
+} from "../lib/findingClosurePolicy.js";
+import { riskAcceptanceEnabled } from "../lib/riskAcceptanceFeatureFlag.js";
 import {
   writeFindingLifecycleEvent,
   recomputeFindingOperationalStatus,
@@ -1304,6 +1311,37 @@ router.patch(
           });
           return;
         }
+
+        // CLOSURE GATE on the legacy axis — SECURELOGIC_FINDING_CLOSURE_GATE_ENABLED.
+        //
+        // The rule, its rationale, and why it is shared rather than restated all live in
+        // findingClosurePolicy.ts. In short: the governance axis has always demanded that
+        // remediation be complete (or the risk formally accepted) before a Finding closes;
+        // this axis demanded nothing, and through the compat bridge below it force-writes
+        // operational_status='closed'. So `{"status":"closed"}` closed a Finding with open
+        // remediation outright, orphaning its Actions under a closed parent.
+        //
+        // isLegacyTerminal is the SAME predicate deriveOperationalStatus uses to decide a
+        // legacy status closes a Finding, and the same set the bridge below writes 'closed'
+        // for — so the gate covers exactly the writes that close, no more.
+        //
+        // FLAG OFF => this block is inert: no query is issued and no 409 can be produced,
+        // so the legacy contract is preserved byte for byte, not merely tolerated.
+        if (findingClosureGateEnabled() && isLegacyTerminal(status)) {
+          const decision = evaluateFindingClosure(
+            await loadClosureBlockers(pg, organizationId, findingId, {
+              acceptanceEnabled: riskAcceptanceEnabled(),
+            })
+          );
+
+          // Refuse BEFORE any mutation — nothing has been written at this point, so a
+          // refusal leaves no partial state on either axis.
+          if (!decision.allowed) {
+            res.status(decision.httpStatus).json(decision.body);
+            return;
+          }
+        }
+
         values.push(status);
         updates.push(`status = $${values.length}`);
 

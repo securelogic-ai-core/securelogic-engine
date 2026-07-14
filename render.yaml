@@ -232,6 +232,17 @@ services:
       - key: SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED
         value: "false"
 
+      # Finding closure gate (ruling 2026-07-14) — DARK, and DELIBERATELY "false" in
+      # PRODUCTION. Refuses to close a Finding whose remediation Actions are still open
+      # (409 close_requires_remediation_complete) unless an approved risk acceptance
+      # carries the risk. This CHANGES A CUSTOMER-REACHABLE API CONTRACT: a PATCH that
+      # returns 200 today returns 409 with the gate on. Production enablement is a
+      # SEPARATE operator ruling, taken only after staging validation and an inventory of
+      # the clients/integrations that would begin receiving the 409. Off => the gate is
+      # never consulted: no query, no 409, legacy behaviour byte for byte.
+      - key: SECURELOGIC_FINDING_CLOSURE_GATE_ENABLED
+        value: "false"
+
       # Intelligence Brief missed-week catch-up (boot-time recovery of a missed
       # weekly Tuesday send) — DARK (default off). Initiates outbound email, so
       # operator-owned: enable only after staging validation. Idempotency in
@@ -473,6 +484,14 @@ services:
       # Projects cyber_signals into the global intelligence_events layer
       # (corroboration ledger + timeline). Off => zero DB work, legacy behaviour.
       - key: SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED
+        value: "false"
+
+      # Finding closure gate (ruling 2026-07-14) — ships OFF, and is the FIRST place it
+      # gets turned on. Staging validation (direct close, remediation completion,
+      # validation close, accepted-risk close) is the gate on any production ruling, so
+      # flip THIS key to "true" — and only this one — when validation begins. The prod
+      # engine block keeps its own "false" and is not touched by that flip.
+      - key: SECURELOGIC_FINDING_CLOSURE_GATE_ENABLED
         value: "false"
 
       # Intelligence Brief missed-week catch-up — DARK (default off). Lockstep
