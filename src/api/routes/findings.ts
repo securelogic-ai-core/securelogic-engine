@@ -37,6 +37,8 @@ import {
   sqlFindingStrictlyOpen,
 } from "../lib/metricDefinitions.js";
 import { resolveSlaDueDate } from "../lib/findingSlaPolicy.js";
+import { buildSignalFindingTitle, resolveSignalDomain } from "../lib/signalFindingShape.js";
+import { severityToPriority } from "../lib/postureComputation.js";
 
 const router = Router();
 
@@ -1051,6 +1053,215 @@ router.post(
    Update status, owner, priority, or due_date of a finding.
    Returns 404 if the finding does not belong to the org.
    ========================================================= */
+
+/* =========================================================
+   POST /api/findings/from-signal
+   Promote an Intelligence Brief signal into a canonical Finding.
+
+   THE MISSING FIRST HOP. Findings born from intelligence were only ever created
+   by machine: the ingestion path (cyberSignalProcessingService) creates one ONLY
+   when a signal matches a vendor or AI system already in the org's registry.
+   Every other signal — including every signal about a technology the org has not
+   registered — could be READ in the Brief and then acted on nowhere. The Brief's
+   honest "no finding" affordance pointed at /queue, but /queue accepts suggested
+   LINKS (signal↔vendor/control rows); it has never created a Finding. So the
+   Decision Workspace, Risk Acceptance, remediation and closure — the whole
+   downstream chain — sat behind an input a customer had no way to produce.
+
+   This is that input: the reader of a Brief item asserts "this matters to us",
+   and gets a canonical Finding they can own, decide, and remediate.
+
+   Dark behind the Decision Workspace flag (404 when off), like the rest of the
+   chain it feeds.
+   ========================================================= */
+
+router.post(
+  "/findings/from-signal",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  asTenant(async (req, res) => {
+    if (process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED !== "true") {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const body =
+        req.body != null && typeof req.body === "object" && !Array.isArray(req.body)
+          ? (req.body as Record<string, unknown>)
+          : {};
+
+      const signalId = isNonEmptyString(body["signal_id"]) ? body["signal_id"].trim() : "";
+      if (!isUuid(signalId)) {
+        res.status(400).json({ error: "signal_id_must_be_uuid" });
+        return;
+      }
+
+      // Promotion must be idempotent, and "already promoted?" is a read followed by a
+      // write — so two clicks (or two tabs) racing could both read "no finding" and both
+      // insert, leaving the org with duplicate findings for one signal and a Brief item
+      // that links to an arbitrary one of them. Serialize per (org, signal) for the rest
+      // of this transaction. An advisory lock, not a unique index: the automated path may
+      // already have created a finding for this signal, so a uniqueness constraint could
+      // not be added to existing data without first proving no duplicates exist.
+      // Legitimate advisory-lock escape (tenantContext.ts:44-53). createSavepointClient only
+      // rewrites BEGIN/COMMIT/ROLLBACK into savepoints and passes every other statement
+      // through, which is exactly what this needs: the lock must be held on the SAME
+      // transaction as the check-and-insert below, and released when it commits. It
+      // deliberately does NOT take the pgRaw hatch — a lock acquired on a different connection
+      // than the write it guards would guard nothing. No tenant rewriting is required either:
+      // the lock key embeds organizationId, so two orgs promoting the same GLOBAL signal never
+      // contend with each other.
+      // eslint-disable-next-line securelogic-local/no-unrewriteable-stmt-in-tenant-wrap -- advisory lock, see above
+      await pg.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+        `finding_from_signal:${organizationId}:${signalId}`,
+      ]);
+
+      // Signal visibility. A signal is promotable only if it is GLOBAL (organization_id
+      // IS NULL — the fan-out model: ingested once, read by every org) or owned by the
+      // caller's org. Without the org check, any org could promote another org's private
+      // signal and read its summary back out of the finding it created.
+      const signalResult = await pg.query<{
+        signal_type: string;
+        severity: string;
+        normalized_summary: string;
+        affected_cve: string | null;
+      }>(
+        `SELECT signal_type, severity, normalized_summary, affected_cve
+           FROM cyber_signals
+          WHERE id = $1
+            AND (organization_id IS NULL OR organization_id = $2)`,
+        [signalId, organizationId]
+      );
+
+      const signal = signalResult.rows[0];
+      if (!signal) {
+        res.status(404).json({ error: "signal_not_found" });
+        return;
+      }
+
+      // Already promoted? This is the SAME predicate ?intel_ref= resolves with, on
+      // purpose: the Brief decides whether to offer "Create finding" or "Open decision"
+      // by that query, so if the two disagreed the UI would offer to create a finding
+      // that already exists. Both intelligence channels count — the legacy per-signal
+      // finding AND an event-native one the pipeline may have produced.
+      const existing = await pg.query<{ id: string }>(
+        `SELECT f.id
+           FROM findings f
+          WHERE f.organization_id = $1
+            AND (
+              (f.source_type IN ('cyber_signal', 'signal') AND f.source_id = $2::uuid)
+              OR (f.source_type = 'intelligence_event' AND f.source_id IN (
+                    SELECT ies.event_id FROM intelligence_event_sources ies
+                     WHERE ies.cyber_signal_id = $2::uuid))
+            )
+          ORDER BY f.created_at ASC
+          LIMIT 1`,
+        [organizationId, signalId]
+      );
+
+      if (existing.rows[0]) {
+        // Not an error: the caller wanted a finding for this signal and there is one.
+        // Hand back the SAME finding so a double-click lands in the same workspace.
+        res.status(200).json({ finding: existing.rows[0], created: false });
+        return;
+      }
+
+      // A promoted signal matched no registry entity (if it had, the ingestion path
+      // would already have made this finding). Shape it through the SAME shared builder
+      // that path uses, so one signal cannot read as two different findings depending on
+      // who created it.
+      const title = buildSignalFindingTitle({
+        signalType: signal.signal_type,
+        severity: signal.severity,
+        affectedCve: signal.affected_cve,
+        entity: null,
+      });
+      const domain = resolveSignalDomain(signal.signal_type, false, false);
+      const priority = severityToPriority(signal.severity);
+      const dueDate = await resolveSlaDueDate(organizationId, signal.severity);
+
+      const inserted = await pg.query(
+        `
+        INSERT INTO findings (
+          organization_id, assessment_id, source_type, source_id,
+          title, description, severity, domain, priority, status, due_date
+        )
+        VALUES ($1, NULL, 'cyber_signal', $2::uuid, $3, $4, $5, $6, $7, 'open', $8)
+        RETURNING id, title, description, severity, domain, priority, status,
+                  source_type, source_id, due_date, created_at
+        `,
+        [
+          organizationId,
+          signalId,
+          title,
+          signal.normalized_summary,
+          signal.severity,
+          domain,
+          priority,
+          dueDate,
+        ]
+      );
+
+      const finding = inserted.rows[0];
+
+      // NOTE: cyber_signals.linked_finding_id is deliberately NOT written here. For a
+      // GLOBAL signal that column is shared by every org, so writing this org's finding
+      // id into it would publish one tenant's finding to all of them. The per-org link is
+      // findings.source_id, which is what every reader (?intel_ref=) already uses.
+
+      logger.info(
+        { event: "finding_promoted_from_signal", findingId: finding.id, signalId, organizationId },
+        "Finding promoted from signal"
+      );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "finding.promoted_from_signal",
+        resourceType: "finding",
+        resourceId: finding.id as string,
+        payload: { signal_id: signalId, severity: signal.severity, domain },
+        ipAddress: req.ip ?? null,
+      });
+
+      triggerFindingAlert({
+        findingId: finding.id as string,
+        organizationId,
+        title: finding.title as string,
+        severity: finding.severity as string,
+        domain: (finding.domain as string | null) ?? null,
+      });
+
+      dispatchWebhookEvent({
+        event_type: "finding.created",
+        organization_id: organizationId,
+        data: {
+          id: finding.id,
+          title: finding.title,
+          severity: finding.severity,
+          source_type: "cyber_signal",
+          source_id: signalId,
+        },
+      });
+
+      res.status(201).json({ finding, created: true });
+    } catch (err) {
+      logger.error({ err, event: "finding_promote_from_signal_failed" }, "Failed to promote signal");
+      res.status(500).json({ error: "finding_promote_failed" });
+    }
+  })
+);
 
 router.patch(
   "/findings/:id",

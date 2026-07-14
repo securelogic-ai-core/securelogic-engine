@@ -3,6 +3,7 @@ import { redirect, notFound } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getIntelligenceBrief, getFindings, getFindingContext } from "@/lib/api";
 import { intelligenceEventHref } from "@/lib/intelligenceLinks";
+import PromoteSignalButton from "./PromoteSignalButton";
 import {
   briefDecisionAffordance,
   shouldResolveBriefDecision,
@@ -229,7 +230,7 @@ export default async function SignalDetailPage({ params }: Props) {
     // signal→event bridge. Without it, findings created by the event pipeline
     // (source_type='intelligence_event') were unreachable from the brief.
     const related = await getFindings(token, { intel_ref: item.cyber_signal_id!, limit: 1 });
-    decision = briefDecisionAffordance(related?.findings?.[0] ?? null);
+    decision = briefDecisionAffordance(related?.findings?.[0] ?? null, item.cyber_signal_id!);
     // D5 — Brief → Intelligence Event bridge: for a linked item, resolve the finding
     // context's supporting event and offer a direct drill-through. Reuses the existing
     // /context resolver (same DECISION_WORKSPACE gate); degrades to no link otherwise.
@@ -331,16 +332,16 @@ export default async function SignalDetailPage({ params }: Props) {
                   </div>
                 ) : (
                   <div className="text-sm text-slate-300 leading-relaxed max-w-prose">
-                    <p className="mb-2">
-                      No finding has been linked to this intelligence for your organization yet.
+                    <p className="mb-3">
+                      No finding has been tracked for this intelligence in your organization yet.
+                      Create one to assign an owner, plan remediation, and record the decision.
                     </p>
-                    <Link
-                      href={decision.href}
-                      className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold"
-                      style={{ background: "rgba(148,163,184,0.1)", color: "#93c5fd", border: "1px solid #334155" }}
-                    >
-                      Review suggested links →
-                    </Link>
+                    {/* Promotion — the first hop of Brief → Finding → Decision. This used to
+                        be a link to /queue ("Review suggested links"), which could not create
+                        a finding: a control that promised the next step and could not perform
+                        it. The engine is idempotent per (org, signal), so a double submit
+                        lands in the same workspace rather than making a second finding. */}
+                    <PromoteSignalButton signalId={decision.signalId} />
                   </div>
                 )}
               </section>

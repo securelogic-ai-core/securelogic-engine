@@ -39,6 +39,7 @@ import type { PoolClient } from "pg";
 import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { canonicalizeVendorName } from "./vendorNameCanonical.js";
+import { buildSignalFindingTitle, resolveSignalDomain } from "./signalFindingShape.js";
 import { signalApplicabilityEnabled } from "./signalApplicabilityFeatureFlag.js";
 import { runSignalApplicabilityShadow, backingAssetIds } from "./signalApplicabilityShadowRunner.js";
 import { extractSignalProductEvidence } from "./signalProductEvidence.js";
@@ -156,29 +157,11 @@ export type MatcherResult = {
  * also runs AI systems. AI Governance only applies when the matched entity
  * is exclusively an AI system (no vendor record matched the name).
  */
-function resolveSignalDomain(
-  signalType: string,
-  hasVendorMatch: boolean,
-  hasAiSystemMatch: boolean
-): string {
-  if (hasVendorMatch) return "Vendor Risk";
-  if (hasAiSystemMatch) return "AI Governance";
+// resolveSignalDomain and the finding-title rules now live in the pure, shared
+// signalFindingShape module: user promotion (POST /api/findings/from-signal) must
+// shape a Finding from a signal the SAME way this path does, or the same signal
+// would read as two different findings depending on who created it.
 
-  // No platform entity match — route by signal type.
-  switch (signalType) {
-    case "cve":
-    case "patch":
-    case "malware":
-    case "advisory":
-    case "threat_actor":
-      return "Vulnerability";
-    case "breach":
-      return "Vendor Risk";
-    case "geopolitical":
-    default:
-      return "General";
-  }
-}
 
 // ---------------------------------------------------------------------------
 // canonicalizeVendorName — the single canonical normalizer, now defined in the
@@ -409,16 +392,17 @@ export async function runMatcherForSignal(
       const entityName = matchedVendorName ?? matchedAiSystemName ?? "Unknown";
       const priority = severityToPriority(severity);
 
-      let findingTitle: string;
-      if (hasVendorMatch) {
-        findingTitle = signal.affected_cve !== null
-          ? `${signal.affected_cve} affects vendor: ${entityName}`
-          : `Cyber signal (${signalType}): ${entityName} — ${severity} severity`;
-      } else {
-        findingTitle = signal.affected_cve !== null
-          ? `${signal.affected_cve} affects AI system: ${entityName}`
-          : `Cyber signal (${signalType}): ${entityName} — ${severity} severity`;
-      }
+      // Same shared builder user promotion uses. This branch always has a matched
+      // entity (it is the condition for creating a finding here at all), so the
+      // wording is the one this path has always produced.
+      const findingTitle = buildSignalFindingTitle({
+        signalType,
+        severity,
+        affectedCve: signal.affected_cve,
+        entity: hasVendorMatch
+          ? { kind: "vendor", name: entityName }
+          : { kind: "ai_system", name: entityName },
+      });
 
       // SLA policy (20260903): automated signal findings get an org-policy
       // due date at creation (client keeps the read inside this transaction).

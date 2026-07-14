@@ -58,5 +58,34 @@ operator acts.
 
 ---
 
+## L-5 — Risk Acceptance on staging (OPERATOR-OWNED — engineering is complete)
+
+Risk Acceptance is **built and merged**: proposal UI, Approvals-queue discovery (#652), separate-approver
+enforcement, approve/reject/withdraw/expiry, Finding close/reopen, queue+metric reconciliation, and tests
+in CI. Nothing below is an engineering task, and none of it blocks unrelated implementation.
+
+| Field | Value |
+|---|---|
+| **The live `404`** | `POST /api/findings/:id/risk-acceptance` returns 404 on staging because the engine reads `SECURELOGIC_RISK_ACCEPTANCE_ENABLED` as unset/false. The 404 is the flag gate behaving **correctly** (dark routes 404 rather than 403, so a disabled capability is indistinguishable from a nonexistent one). It is a **configuration** state, not a defect — do not re-diagnose it in code. |
+| **Blueprint ownership** | `SECURELOGIC_RISK_ACCEPTANCE_ENABLED=true` is declared for **`securelogic-engine-staging`** and **`securelogic-app-staging`** in `render.yaml`. Like L-2, these are **IaC-managed**: the operator action is to **sync the Render Blueprint and let the services redeploy**, NOT to hand-edit dashboard env vars (a manual edit is reverted on the next sync). |
+| **Two-switch** | The signed acceptance panel needs the flag true on **both** the app and the engine, same as the Decision Workspace. App-only ⇒ the panel renders and every write 404s. Verify the **engine** value after redeploy. |
+| **Staging walkthrough** | Propose an acceptance on a finding → confirm it appears in **/approvals** for a *different* user (separate-approver enforcement: the proposer must not be able to approve it) → approve → confirm the Finding closes and the Active-Findings metric drops by one → reopen on expiry. |
+| **Production** | Unchanged and dark. Prod enablement is part of the same reserved **GATE B** ruling — no prod flag flip here. |
+
+## L-6 — Brief → Finding promotion (NEW — activates with the L-2 flags)
+
+`POST /api/findings/from-signal` + the Brief item's **"Create a finding from this intelligence"** control close
+the first hop of Brief → Finding → Decision. Before this, findings from intelligence were minted only by the
+ingestion worker, and only for signals matching an already-registered vendor/AI system — so the Decision
+Workspace sat behind an input a customer could not produce.
+
+| Field | Value |
+|---|---|
+| **Flags** | Gated by `SECURELOGIC_DECISION_WORKSPACE_ENABLED` on **both** app and engine — the **same** flags L-2 already turns on. **No new operator step**: it activates with L-2 and needs no additional configuration. |
+| **Add to the L-3 walkthrough** | On a brief item with no finding: click **"Create a finding from this intelligence"** → lands in that finding's Decision Workspace → return to the brief item and confirm the affordance has flipped to **"Open the Decision Workspace"** (it must NOT offer to create a second finding). Clicking twice must land in the **same** finding — promotion is idempotent per (org, signal). |
+| **Production** | Dark under GATE B, like the rest of the chain. |
+
+---
+
 **GATE B (prod enablement) remains a reserved product/operator decision — untouched by this goal.**
 No production flag, env, or DB change was made. Everything above is staging-first and reversible.

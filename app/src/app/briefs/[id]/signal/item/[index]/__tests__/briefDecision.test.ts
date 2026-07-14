@@ -9,16 +9,28 @@ import { briefDecisionAffordance, shouldResolveBriefDecision, briefSupportingEve
 
 describe("briefDecisionAffordance", () => {
   it("deep-links into the Decision Workspace when a finding exists", () => {
-    expect(briefDecisionAffordance({ id: "find-9" })).toEqual({
+    expect(briefDecisionAffordance({ id: "find-9" }, "sig-1")).toEqual({
       state: "linked",
       findingId: "find-9",
       href: "/findings/find-9",
     });
   });
 
-  it("points at Review Suggested Links when no finding exists", () => {
-    expect(briefDecisionAffordance(null)).toEqual({ state: "no_finding", href: "/queue" });
-    expect(briefDecisionAffordance(undefined)).toEqual({ state: "no_finding", href: "/queue" });
+  it("offers to CREATE the finding when none exists — it does not send the reader to /queue", () => {
+    // /queue accepts suggested signal↔entity LINKS; it has never created a Finding. Sending
+    // the reader there promised a next step the destination could not perform, and left the
+    // whole Decision Workspace behind an input the customer had no way to produce.
+    expect(briefDecisionAffordance(null, "sig-1")).toEqual({ state: "promotable", signalId: "sig-1" });
+    expect(briefDecisionAffordance(undefined, "sig-1")).toEqual({
+      state: "promotable",
+      signalId: "sig-1",
+    });
+  });
+
+  it("carries the signal id the promotion needs — the affordance is actionable, not just a label", () => {
+    const affordance = briefDecisionAffordance(null, "sig-abc");
+    expect(affordance.state).toBe("promotable");
+    if (affordance.state === "promotable") expect(affordance.signalId).toBe("sig-abc");
   });
 });
 
