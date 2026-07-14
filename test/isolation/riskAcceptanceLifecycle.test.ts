@@ -294,6 +294,57 @@ describe("Risk acceptance — the exposure stays GOVERNED (ruling step 6)", () =
   });
 });
 
+describe("Risk acceptance — per-finding read (?finding_id, the Decision Workspace surface)", () => {
+  it("returns a finding's live acceptance AND its terminal history, and composes with ?state", async () => {
+    const f = await mkFinding(seed.orgA.id, "finding-history");
+
+    // A first proposal, rejected — this is now terminal audit history.
+    const p1 = await auth("post", `/api/findings/${f}/risk-acceptance`, jwtRequesterA)
+      .send({ owner_user_id: ownerA, rationale: "first attempt", expires_at: isoInDays(90) });
+    expect(p1.status).toBe(201);
+    const rej = await auth("post", `/api/risk-acceptances/${p1.body.acceptance.id}/reject`, jwtApproverA)
+      .send({ decision_rationale: "insufficient compensating control" });
+    expect(rej.status).toBe(200);
+
+    // A second proposal, still live (the partial unique index allowed it because the
+    // first is terminal).
+    const p2 = await auth("post", `/api/findings/${f}/risk-acceptance`, jwtRequesterA)
+      .send({ owner_user_id: ownerA, rationale: "second attempt", expires_at: isoInDays(120) });
+    expect(p2.status).toBe(201);
+
+    const all = await auth("get", `/api/risk-acceptances?finding_id=${f}`, jwtRequesterA);
+    expect(all.status).toBe(200);
+    expect(all.body.total).toBe(2);
+    expect(all.body.acceptances.map((a: { id: string }) => a.id).sort()).toEqual(
+      [p1.body.acceptance.id, p2.body.acceptance.id].sort()
+    );
+    for (const a of all.body.acceptances) expect(a.finding_id).toBe(f);
+
+    // Composes with ?state: only the live proposal.
+    const live = await auth("get", `/api/risk-acceptances?finding_id=${f}&state=proposed`, jwtRequesterA);
+    expect(live.status).toBe(200);
+    expect(live.body.acceptances.map((a: { id: string }) => a.id)).toEqual([p2.body.acceptance.id]);
+  });
+
+  it("is org-scoped: another tenant cannot read a finding's acceptances by id", async () => {
+    const f = await mkFinding(seed.orgA.id, "cross-org-finding-read");
+    await acceptAndApprove(f, isoInDays(90));
+
+    // Org B guesses org A's finding id — the org predicate makes the result empty, never
+    // another tenant's governance record.
+    const res = await auth("get", `/api/risk-acceptances?finding_id=${f}`, jwtB);
+    expect(res.status).toBe(200);
+    expect(res.body.acceptances).toHaveLength(0);
+    expect(res.body.total).toBe(0);
+  });
+
+  it("rejects a non-uuid finding_id with 400", async () => {
+    const res = await auth("get", "/api/risk-acceptances?finding_id=not-a-uuid", jwtRequesterA);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_finding_id");
+  });
+});
+
 describe("Risk acceptance — review and expiration drive governance (ruling step 3)", () => {
   it("an acceptance nearing its review date appears in the review queue", async () => {
     const f = await mkFinding(seed.orgA.id, "review-soon");

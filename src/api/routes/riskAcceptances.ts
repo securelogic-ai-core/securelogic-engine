@@ -506,9 +506,13 @@ router.post(
    governed, with its owner, rationale, approver and review date.
 
    Filters:
+     ?finding_id=UUID            every acceptance (live + terminal history) for ONE finding
      ?state=approved|proposed|expired|withdrawn|rejected|legacy_unverified
      ?expiring_within_days=N     approved acceptances due for review
      ?governance_review_required=true
+
+   The ?finding_id filter is what the Decision Workspace reads: a finding's current
+   acceptance plus its full terminal history (the audit trail). It composes with ?state.
    ========================================================= */
 
 router.get(
@@ -527,6 +531,19 @@ router.get(
 
       const conditions: string[] = ["a.organization_id = $1"];
       const params: unknown[] = [organizationId];
+
+      // Per-finding history. The finding you are looking at, its current acceptance and
+      // every past one — org-scoped like everything else, so it can never surface another
+      // tenant's acceptance even if a finding id were guessed.
+      const findingId = req.query.finding_id;
+      if (isNonEmptyString(findingId)) {
+        if (!isUuid(findingId)) {
+          res.status(400).json({ error: "invalid_finding_id" });
+          return;
+        }
+        params.push(findingId.trim());
+        conditions.push(`a.finding_id = $${params.length}`);
+      }
 
       const state = req.query.state;
       if (isNonEmptyString(state)) {
