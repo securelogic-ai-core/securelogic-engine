@@ -262,7 +262,25 @@ export interface ClosureSodGate {
 export function evaluateFindingDecisionTransition(
   currentRaw: string | null | undefined,
   targetRaw: string,
-  gates: { operationalStatus: string | null | undefined; sod?: ClosureSodGate }
+  gates: {
+    operationalStatus: string | null | undefined;
+    sod?: ClosureSodGate;
+    /**
+     * Does this Finding have ANY linked remediation Actions? (ruling 2026-07-14)
+     *
+     * `remediated` is only reachable when a Finding HAS Actions and all of them are
+     * terminal — deriveOperationalStatus returns 'open' for a Finding with none. So
+     * demanding `remediated` unconditionally made a Finding that never needed remediation
+     * PERMANENTLY unclosable on the governance axis: a false positive could not be
+     * resolved without first inventing a fake Action and closing it.
+     *
+     * When there is no remediation to complete, "remediation is complete" is vacuously
+     * true, and an authorized explicit resolution may close the Finding. Undefined is
+     * treated as "unknown → do not relax", so an omitting caller keeps the old, stricter
+     * guard rather than silently gaining a new closure path.
+     */
+    hasRemediation?: boolean;
+  }
 ): DecisionTransitionDecision {
   const current = typeof currentRaw === "string" && VALID_DECISION.has(currentRaw)
     ? (currentRaw as FindingDecisionState)
@@ -296,8 +314,17 @@ export function evaluateFindingDecisionTransition(
       };
 
     case "resolved": {
+      // Three ways remediation can be "not outstanding" (ruling 2026-07-14):
+      //   - it was done            → operational_status === 'remediated'
+      //   - the risk was accepted  → current === 'accepted_risk'
+      //   - there was none to do   → hasRemediation === false
+      // The third limb is not a loosening of the rule, it is the rule applied honestly: a
+      // Finding with no Actions has no incomplete remediation. Requiring 'remediated' for
+      // it forced callers to fabricate a remediation item purely to reach 'closed'.
       const guard =
-        gates.operationalStatus === "remediated" || current === "accepted_risk";
+        gates.operationalStatus === "remediated" ||
+        current === "accepted_risk" ||
+        gates.hasRemediation === false;
       if (!guard) {
         return {
           allowed: false,

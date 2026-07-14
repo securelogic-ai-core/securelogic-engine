@@ -12,7 +12,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type {
   Finding,
   Action,
@@ -24,7 +24,7 @@ import type {
 } from "@/lib/api";
 import { intelligenceEventHref, findingEventId } from "@/lib/intelligenceLinks";
 import { RiskAcceptancePanel } from "./RiskAcceptancePanel";
-import { DECISION_TABS, DEFAULT_DECISION_TAB, type DecisionTab } from "./decisionTabs";
+import { DECISION_TABS, DEFAULT_DECISION_TAB, isDecisionTab, type DecisionTab } from "./decisionTabs";
 import { legalDecisionTargets } from "./decisionTransitions";
 import { intelligenceEmptyCopy } from "./findingSourceCopy";
 import { topBusinessImpact } from "./businessImpact";
@@ -55,6 +55,10 @@ const STATUS_LABELS: Record<string, string> = {
   accepted: "Accepted",
 };
 const STATUS_ORDER = ["open", "in_progress", "closed", "accepted"];
+/** Mirrors the engine's sqlActionActive(): status IN ('open','in_progress','blocked'). */
+const ACTION_ACTIVE = new Set(["open", "in_progress", "blocked"]);
+/** The legacy terminals — the writes the closure gate refuses when remediation is open. */
+const CLOSING_STATUSES = new Set(["closed", "accepted"]);
 
 const LEVEL_COLOR: Record<string, string> = {
   high: "#fca5a5",
@@ -221,6 +225,7 @@ export function DecisionWorkspace({
   owners = [],
   riskAcceptances = null,
   currentUserId = null,
+  openActionCount = 0,
   children,
 }: {
   finding: Finding;
@@ -233,26 +238,46 @@ export function DecisionWorkspace({
   riskAcceptances?: RiskAcceptance[] | null;
   /** The viewer, for separation-of-duties on approve/reject. */
   currentUserId?: string | null;
+  /** Non-terminal remediation Actions on this finding — see closureBlocked below. */
+  openActionCount?: number;
   // The recommendation + remediation-actions block (Zone F) is composed by the
   // server page (reusing AddActionForm/ActionCard) and passed in as children.
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [pending, start] = useTransition();
-  const [tab, setTab] = useState<DecisionTab>(DEFAULT_DECISION_TAB);
+  // ?tab=remediation makes the Remediation tab addressable, so a blocked-closure message
+  // anywhere in the product can link straight AT the work that is blocking it. Without
+  // this the link would land on the page and leave the customer to find the tab.
+  const initialTab = searchParams.get("tab");
+  const [tab, setTab] = useState<DecisionTab>(
+    initialTab && isDecisionTab(initialTab) ? initialTab : DEFAULT_DECISION_TAB
+  );
   // Guarded transitions can be legitimately refused (close guard, evidence
   // gate, separation of duties) — show the refusal instead of a silent no-op.
   const [actionError, setActionError] = useState<string | null>(null);
-  const run = (fn: () => Promise<{ error?: string }>) =>
+  const [errorHref, setErrorHref] = useState<string | null>(null);
+  const run = (fn: () => Promise<{ error?: string; remediationHref?: string }>) =>
     start(async () => {
       const r = await fn();
       if (!r?.error) {
         setActionError(null);
+        setErrorHref(null);
         router.refresh();
       } else {
         setActionError(r.error);
+        setErrorHref(r.remediationHref ?? null);
       }
     });
+
+  /**
+   * Blocking remediation this page ALREADY knows about — the Remediation tab renders these
+   * very Actions, so the count is passed down rather than re-fetched. Used to relabel the
+   * closing controls up front instead of inviting a click the server will refuse.
+   * Courtesy, not security: the engine still enforces.
+   */
+  const closureBlocked = openActionCount > 0;
 
   const affected = context.affected;
   const affectedTotal =
@@ -316,8 +341,19 @@ export function DecisionWorkspace({
               onChange={(e) => run(() => updateFindingStatusAction(finding.id, e.target.value))}
               style={{ background: "#0f172a", color: "#f1f5f9", border: "1px solid #334155", borderRadius: 6, padding: "4px 8px", fontSize: 13 }}
             >
+              {/* Relabel + disable the CLOSING options when this page can already see open
+                  remediation. Server-side enforcement is unchanged and remains the
+                  authority; this just stops us inviting a click we know will be refused. */}
               {STATUS_ORDER.map((s) => (
-                <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                <option
+                  key={s}
+                  value={s}
+                  disabled={closureBlocked && CLOSING_STATUSES.has(s)}
+                >
+                  {closureBlocked && CLOSING_STATUSES.has(s)
+                    ? `${STATUS_LABELS[s]} (remediation open)`
+                    : STATUS_LABELS[s]}
+                </option>
               ))}
             </select>
           </div>
@@ -348,7 +384,17 @@ export function DecisionWorkspace({
 
         {actionError && (
           <p style={{ fontSize: 13, color: "#fca5a5", margin: "10px 0 0", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 6, padding: "6px 10px", background: "rgba(239,68,68,0.08)" }}>
-            {actionError}
+            {actionError}{" "}
+            {/* A refusal with no route to the blocking work leaves the customer stuck. */}
+            {errorHref && (
+              <button
+                type="button"
+                onClick={() => setTab("remediation")}
+                style={{ background: "transparent", border: "none", padding: 0, color: "#93c5fd", textDecoration: "underline", cursor: "pointer", fontSize: 13 }}
+              >
+                View remediation
+              </button>
+            )}
           </p>
         )}
 

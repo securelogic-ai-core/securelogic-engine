@@ -154,6 +154,22 @@ async function lifecycleEventCount(findingId: string): Promise<number> {
   return Number(r.rows[0]!.n);
 }
 
+async function lifecycleEvents(findingId: string) {
+  const r = await pool.query<{
+    axis: string;
+    from_state: string;
+    to_state: string;
+    transition: string;
+    comment: string | null;
+  }>(
+    `SELECT axis, from_state, to_state, transition, comment
+       FROM finding_lifecycle_events WHERE finding_id = $1
+      ORDER BY created_at, id`,
+    [findingId]
+  );
+  return r.rows;
+}
+
 async function actionStatus(actionId: string): Promise<string> {
   const r = await pool.query<{ status: string }>(`SELECT status FROM actions WHERE id = $1`, [
     actionId,
@@ -400,23 +416,154 @@ describe("isolation, audit, and the no-partial-mutation guarantee", () => {
     expect((await axes(findingId)).operational_status).toBe("closed");
   });
 
-  it("documents that a LEGACY close writes no lifecycle event — a pre-existing gap, not this gate's", async () => {
-    const findingId = await seedFinding(pool, seed.orgA.id, { title: "Legacy close, unaudited" });
-    const eventsBefore = await lifecycleEventCount(findingId);
+  it("a LEGACY close now writes its lifecycle event too — and marks it as compat, not governance", async () => {
+    const findingId = await seedFinding(pool, seed.orgA.id, { title: "Audited legacy close" });
+    const before = await axes(findingId);
 
     expect((await patch(findingId, { status: "closed" })).status).toBe(200);
     expect((await axes(findingId)).operational_status).toBe("closed");
 
-    // PRE-EXISTING GAP, asserted so it cannot change unnoticed and so nobody reads the gate
-    // as its cause. Lifecycle events are written on the DECISION axis only (findings.ts
-    // :1529, :1816), and recomputeFindingOperationalStatus emits one only when
-    // operational_status actually CHANGES (findingLifecycle.ts:171). The legacy PATCH
-    // force-writes operational_status='closed' inline through the compat bridge, so by the
-    // time the recompute runs there is no change left to record.
-    //
-    // Net: the closure path customers actually use in production today — the Decision
-    // Workspace being dark — leaves NO audit event. That is worth fixing; it is not in this
-    // package's scope, and this gate neither caused it nor made it worse. Raised separately.
-    expect(await lifecycleEventCount(findingId)).toBe(eventsBefore);
+    // The gap this package closes. The legacy path used to force-write operational_status
+    // inline, so the recompute found nothing changed and emitted no event — the closure
+    // path customers actually use left NO audit trail. It now goes through the canonical
+    // service, which knows the true fromState and records the transition.
+    const events = await lifecycleEvents(findingId);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.axis).toBe("operational");
+    expect(events[0]!.to_state).toBe("closed");
+    expect(events[0]!.comment).toContain("legacy compatibility path");
+
+    // And it fabricated no governance decision (ruling 2026-07-14).
+    expect((await axes(findingId)).decision_state).toBe(before.decision_state);
+    expect((await axes(findingId)).decision_state).not.toBe("resolved");
+  });
+});
+
+describe("the no-action asymmetry is gone", () => {
+  it("an explicit governance RESOLUTION closes a finding that never needed remediation", async () => {
+    const findingId = await seedFinding(pool, seed.orgA.id, { title: "Nothing to remediate" });
+
+    // Before this package the governance axis demanded operational_status='remediated' —
+    // which deriveOperationalStatus NEVER returns for a finding with no Actions. So a false
+    // positive was permanently unclosable on the governance axis: you had to invent a fake
+    // remediation item and close it just to reach 'closed'. "No remediation to complete"
+    // means nothing is incomplete, so an authorized resolution may simply close it.
+    const res = await patch(findingId, { decision_state: "resolved" });
+
+    expect(res.status).toBe(200);
+    const after = await axes(findingId);
+    expect(after.operational_status).toBe("closed");
+    expect(after.decision_state).toBe("resolved");
+
+    // A real governance decision, so it IS recorded on the decision axis.
+    const events = await lifecycleEvents(findingId);
+    expect(events.some((e) => e.axis === "decision" && e.to_state === "resolved")).toBe(true);
+  });
+
+  it("but a finding WITH open work is still refused — the relaxation is narrow", async () => {
+    const findingId = await seedFinding(pool, seed.orgA.id, { title: "Has work, no shortcut" });
+    await seedAction(findingId, "open");
+
+    const res = await patch(findingId, { decision_state: "resolved" });
+
+    // ONE error contract, whichever axis the customer used: the governance axis now answers
+    // a remediation refusal with the same canonical code and count as the legacy axis.
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("close_requires_remediation_complete");
+    expect(res.body.open_actions).toBe(1);
+    expect((await axes(findingId)).operational_status).not.toBe("closed");
+  });
+});
+
+describe("reopen is symmetric and canonical", () => {
+  it("a legacy reopen emits its event and restores the true active state", async () => {
+    const findingId = await seedFinding(pool, seed.orgA.id, { title: "Legacy reopen" });
+    const a1 = await seedAction(findingId, "open");
+
+    // Close it legitimately (finish the work first — the gate is on).
+    await request(app)
+      .patch(`/api/actions/${a1}`)
+      .set("X-Api-Key", seed.orgA.apiKey)
+      .send({ status: "closed" });
+    expect((await patch(findingId, { status: "closed" })).status).toBe(200);
+
+    // Now reopen. The reopen used to be swallowed by the same inline force-write that
+    // swallowed the close, so it emitted no event either.
+    expect((await patch(findingId, { status: "open" })).status).toBe(200);
+
+    const after = await axes(findingId);
+    // Its one action is terminal, so the honest restored state is 'remediated' — not a
+    // provisional 'open'. The canonical service derives it rather than guessing.
+    expect(after.operational_status).toBe("remediated");
+    expect(after.status).not.toBe("closed");
+
+    const events = await lifecycleEvents(findingId);
+    const reopen = events.filter((e) => e.transition === "operational_reopened");
+    expect(reopen).toHaveLength(1);
+    expect(reopen[0]!.from_state).toBe("closed");
+    expect(reopen[0]!.axis).toBe("operational");
+  });
+
+  it("a governance reopen restores the active state and does not spring shut", async () => {
+    const findingId = await seedFinding(pool, seed.orgA.id, { title: "Governance reopen" });
+
+    expect((await patch(findingId, { decision_state: "resolved" })).status).toBe(200);
+    expect((await axes(findingId)).operational_status).toBe("closed");
+
+    expect((await patch(findingId, { decision_state: "needs_review" })).status).toBe(200);
+
+    // Both axes must clear. If the legacy axis stayed 'closed' the compat bridge would
+    // re-derive closure and the finding would spring shut the instant it was reopened.
+    const after = await axes(findingId);
+    expect(after.operational_status).not.toBe("closed");
+    expect(after.status).not.toBe("closed");
+    expect(after.decision_state).toBe("needs_review");
+
+    expect(
+      (await lifecycleEvents(findingId)).some(
+        (e) => e.transition === "reopen" && e.axis === "decision"
+      )
+    ).toBe(true);
+  });
+});
+
+describe("the bulk decide path closes for real", () => {
+  it("a bulk Resolve actually closes the finding — it used to leave it ACTIVE", async () => {
+    const findingId = await seedFinding(pool, seed.orgA.id, { title: "Bulk resolve" });
+    const a1 = await seedAction(findingId, "open");
+    await request(app)
+      .patch(`/api/actions/${a1}`)
+      .set("X-Api-Key", seed.orgA.apiKey)
+      .send({ status: "closed" });
+
+    const res = await request(app)
+      .post("/api/findings/bulk")
+      .set("X-Api-Key", seed.orgA.apiKey)
+      .send({ op: "decide", ids: [findingId], decision_state: "resolved" });
+    expect(res.status).toBe(200);
+    expect(res.body.updated).toBe(1);
+
+    // The bulk loop wrote decision_state and NEVER recomputed, so a bulk Resolve left the
+    // finding at operational_status='remediated' — still Active, still on every dashboard —
+    // while its governance axis claimed resolved. The two closure paths disagreed about
+    // what "close" means.
+    const after = await axes(findingId);
+    expect(after.decision_state).toBe("resolved");
+    expect(after.operational_status).toBe("closed");
+  });
+
+  it("bulk honours the same gate — open work is refused, not silently resolved", async () => {
+    const findingId = await seedFinding(pool, seed.orgA.id, { title: "Bulk blocked" });
+    await seedAction(findingId, "open");
+
+    const res = await request(app)
+      .post("/api/findings/bulk")
+      .set("X-Api-Key", seed.orgA.apiKey)
+      .send({ op: "decide", ids: [findingId], decision_state: "resolved" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.updated).toBe(0);
+    expect(res.body.results[0].ok).toBe(false);
+    expect((await axes(findingId)).operational_status).not.toBe("closed");
   });
 });

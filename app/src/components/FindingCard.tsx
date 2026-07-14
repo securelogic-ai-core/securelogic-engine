@@ -59,6 +59,8 @@ export function FindingCard({ finding, revalidateUrl, workspace = false }: Props
   const [isPending, startTransition] = useTransition();
   const [optimisticStatus, setOptimisticStatus] = useState(finding.status);
   const [error, setError] = useState<string | null>(null);
+  /** Deep link to the blocking remediation, set when a close is refused by the gate. */
+  const [blockedHref, setBlockedHref] = useState<string | null>(null);
   const { getLevelByValue } = useRiskScale();
 
   const severityRaw = finding.severity ?? "";
@@ -74,11 +76,15 @@ export function FindingCard({ finding, revalidateUrl, workspace = false }: Props
     const previous = optimisticStatus;
     setOptimisticStatus(status);
     setError(null);
+    setBlockedHref(null);
     startTransition(async () => {
       const result = await updateFindingStatus(finding.id, status, revalidateUrl);
       if (result && "error" in result) {
+        // The optimistic close is rolled back — the server refused it, so the card must
+        // not keep claiming the finding is closed.
         setOptimisticStatus(previous);
         setError(result.error);
+        setBlockedHref(result.remediationHref ?? null);
       }
     });
   }
@@ -176,7 +182,24 @@ export function FindingCard({ finding, revalidateUrl, workspace = false }: Props
       )}
 
       {error && (
-        <p className="text-xs mb-2" style={{ color: "#fca5a5" }}>{error}</p>
+        <p className="text-xs mb-2" style={{ color: "#fca5a5" }}>
+          {error}
+          {/* Say what to do AND where to do it. A refusal with no route to the blocking
+              work leaves the customer stuck on the card that refused them. */}
+          {blockedHref && (
+            <>
+              {" "}
+              <a
+                href={blockedHref}
+                onClick={(e) => e.stopPropagation()}
+                className="underline"
+                style={{ color: "#93c5fd" }}
+              >
+                View remediation
+              </a>
+            </>
+          )}
+        </p>
       )}
 
       {/* Legacy (flag-off): status transitions only, byte-for-byte unchanged. */}

@@ -57,12 +57,35 @@ async function seedAction(findingId: string, status: string): Promise<void> {
   );
 }
 
-async function axes(findingId: string): Promise<{ status: string; operational: string }> {
-  const r = await pool.query<{ status: string; operational_status: string }>(
-    `SELECT status, operational_status FROM findings WHERE id = $1`,
+async function axes(
+  findingId: string
+): Promise<{ status: string; operational: string; decision: string }> {
+  const r = await pool.query<{
+    status: string;
+    operational_status: string;
+    decision_state: string;
+  }>(`SELECT status, operational_status, decision_state FROM findings WHERE id = $1`, [findingId]);
+  return {
+    status: r.rows[0]!.status,
+    operational: r.rows[0]!.operational_status,
+    decision: r.rows[0]!.decision_state,
+  };
+}
+
+async function lifecycleEvents(findingId: string) {
+  const r = await pool.query<{
+    axis: string;
+    from_state: string;
+    to_state: string;
+    transition: string;
+    comment: string | null;
+  }>(
+    `SELECT axis, from_state, to_state, transition, comment
+       FROM finding_lifecycle_events WHERE finding_id = $1
+      ORDER BY created_at, id`,
     [findingId]
   );
-  return { status: r.rows[0]!.status, operational: r.rows[0]!.operational_status };
+  return r.rows;
 }
 
 describe("closure gate OFF — the legacy contract, byte for byte", () => {
@@ -108,5 +131,71 @@ describe("closure gate OFF — the legacy contract, byte for byte", () => {
     expect((await patch(findingId, { status: "in_progress" })).status).toBe(200);
     expect((await patch(findingId, { priority: "immediate" })).status).toBe(200);
     expect((await axes(findingId)).operational).not.toBe("closed");
+  });
+});
+
+/**
+ * The lifecycle/audit repair is NOT flag-gated, and this is the file that proves it.
+ *
+ * The flag gates the API CONTRACT CHANGE — the 409 a customer can newly receive. It does
+ * not gate a defect fix: a legacy close writing no lifecycle event was a hole in the audit
+ * trail in BOTH flag positions, and leaving it open until some future production ruling
+ * would mean the closure path customers actually use stays unauditable in the meantime.
+ * Writing an audit row changes no API response, so there is nothing here to roll out.
+ */
+describe("closure gate OFF — the canonical lifecycle still applies", () => {
+  it("a legacy close writes its lifecycle event, and marks it as a COMPAT closure", async () => {
+    const findingId = await seedFinding(pool, seed.orgA.id, { title: "Audited legacy close" });
+
+    expect((await patch(findingId, { status: "closed" })).status).toBe(200);
+
+    const events = await lifecycleEvents(findingId);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.axis).toBe("operational");
+    expect(events[0]!.from_state).toBe("open");
+    expect(events[0]!.to_state).toBe("closed");
+    expect(events[0]!.transition).toBe("operational_closed");
+    // The audit trail must say, in words, that this was compatibility and not governance.
+    expect(events[0]!.comment).toContain("legacy compatibility path");
+    expect(events[0]!.comment).toContain("No governance resolution inferred");
+  });
+
+  it("NEVER fabricates a governance decision — decision_state is untouched", async () => {
+    const findingId = await seedFinding(pool, seed.orgA.id, { title: "No fabricated decision" });
+    const before = await axes(findingId);
+
+    expect((await patch(findingId, { status: "closed" })).status).toBe(200);
+
+    // THE RULING. A legacy API caller cannot be assumed to have performed governance
+    // review; writing 'resolved' on its behalf would fabricate a decision that never
+    // happened and hollow out the Decision Workspace, SoD, and the accepted-risk workflow.
+    const after = await axes(findingId);
+    expect(after.operational).toBe("closed"); // operationally closed...
+    expect(after.decision).toBe(before.decision); // ...governance untouched
+    expect(after.decision).not.toBe("resolved");
+
+    // And no decision-axis event was written either — the trail agrees with the columns.
+    expect((await lifecycleEvents(findingId)).every((e) => e.axis === "operational")).toBe(true);
+  });
+
+  it("a legacy REOPEN emits its event and restores the true active state", async () => {
+    const findingId = await seedFinding(pool, seed.orgA.id, { title: "Reopen me" });
+    await seedAction(findingId, "in_progress");
+
+    expect((await patch(findingId, { status: "closed" })).status).toBe(200);
+    expect((await patch(findingId, { status: "open" })).status).toBe(200);
+
+    // Reopen is symmetric: it goes through the same canonical service, so it emits its own
+    // event — and it lands on the finding's REAL state, derived from its Actions. The
+    // action is still in_progress, so 'in_progress' is the honest answer, not 'open'.
+    const after = await axes(findingId);
+    expect(after.operational).toBe("in_progress");
+
+    const events = await lifecycleEvents(findingId);
+    expect(events).toHaveLength(2);
+    expect(events[1]!.from_state).toBe("closed");
+    expect(events[1]!.to_state).toBe("in_progress");
+    expect(events[1]!.transition).toBe("operational_reopened");
+    expect(events[1]!.comment).toContain("legacy compatibility path");
   });
 });
