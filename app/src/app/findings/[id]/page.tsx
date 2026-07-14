@@ -13,6 +13,7 @@ import {
 import { ActionCard } from "@/components/ActionCard";
 import { FindingEvidenceSection } from "@/components/findings/FindingEvidenceSection";
 import { AddActionForm } from "./AddActionForm";
+import { FindingStatusButtons } from "./FindingStatusButtons";
 import { DecisionWorkspace } from "./DecisionWorkspace";
 import { recommendationEmptyCopy } from "./findingSourceCopy";
 import {
@@ -122,8 +123,13 @@ const STATUS_TRANSITIONS: Record<string, StatusTransition[]> = {
 
 const PRIORITY_OPTIONS = ["immediate", "near_term", "planned", "watch"] as const;
 
-function StatusPriorityCard({ finding }: { finding: Finding }) {
+/** The one definition of "this remediation is still outstanding" — mirrors the engine's
+ *  sqlActionActive(): status IN ('open','in_progress','blocked'). */
+const ACTION_ACTIVE = new Set(["open", "in_progress", "blocked"]);
+
+function StatusPriorityCard({ finding, actions }: { finding: Finding; actions: Action[] }) {
   const transitions = STATUS_TRANSITIONS[finding.status] ?? [];
+  const openActionCount = actions.filter((a) => ACTION_ACTIVE.has(a.status)).length;
 
   return (
     <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
@@ -136,34 +142,14 @@ function StatusPriorityCard({ finding }: { finding: Finding }) {
         <StatusBadge status={finding.status} />
       </div>
 
-      {/* Status transitions */}
+      {/* Status transitions. A client component: these were server-action forms that threw
+          the result away, so a refused close showed the customer nothing at all. */}
       {transitions.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-4">
-          {transitions.map((t) => (
-            <form
-              key={t.to}
-              action={async () => {
-                "use server";
-                await updateFindingStatusAction(finding.id, t.to);
-              }}
-            >
-              <button
-                type="submit"
-                className="text-xs font-medium transition-colors"
-                style={{
-                  border: "1px solid #1e293b",
-                  color: "#94a3b8",
-                  padding: "3px 10px",
-                  borderRadius: "6px",
-                  background: "transparent",
-                  cursor: "pointer",
-                }}
-              >
-                {t.label}
-              </button>
-            </form>
-          ))}
-        </div>
+        <FindingStatusButtons
+          findingId={finding.id}
+          transitions={transitions.map((t) => ({ to: t.to, label: t.label }))}
+          openActionCount={openActionCount}
+        />
       )}
 
       {/* Priority */}
@@ -412,6 +398,7 @@ export default async function FindingDetailPage({
             owners={owners}
             riskAcceptances={riskAcceptances}
             currentUserId={session.userId ?? null}
+            openActionCount={actions.filter((a) => ACTION_ACTIVE.has(a.status)).length}
           >
             {finding.recommendation ? (
               <p className="text-sm mb-4" style={{ color: "#cbd5e1", whiteSpace: "pre-wrap" }}>
@@ -494,7 +481,7 @@ export default async function FindingDetailPage({
 
         {/* Right: sidebar */}
         <div className="w-full lg:w-72 flex-shrink-0 space-y-4">
-          <StatusPriorityCard finding={finding} />
+          <StatusPriorityCard finding={finding} actions={actions} />
           <FindingDetailsCard finding={finding} />
         </div>
       </div>

@@ -89,6 +89,20 @@ describe("POST /api/findings/bulk — decide (guarded, never a bypass)", () => {
     const triageable = await seedFinding(pool, seed.orgB.id); // needs_review → mitigating OK
     const unclosable = await seedFinding(pool, seed.orgB.id); // close guard must refuse
 
+    // The close guard refuses INCOMPLETE REMEDIATION, so this finding needs some.
+    //
+    // It used to need none: 'resolved' demanded operational_status='remediated', which
+    // deriveOperationalStatus never returns for a finding with no Actions, so a bare
+    // finding was refused simply for having nothing to do. Ruling 2026-07-14 removed that
+    // asymmetry — "no remediation to complete" means nothing is incomplete, and an
+    // authorized resolution may close it (see findingLegacyClosureGate.test.ts). A bare
+    // finding is therefore CLOSABLE now, and this test would have been asserting the bug.
+    await pool.query(
+      `INSERT INTO actions (organization_id, title, source_type, source_id, priority, status)
+       VALUES ($1, 'Outstanding remediation', 'finding', $2, 'planned', 'open')`,
+      [seed.orgB.id, unclosable]
+    );
+
     const ok = await post(seed.orgB.apiKey, "/api/findings/bulk", {
       op: "decide",
       ids: [triageable],

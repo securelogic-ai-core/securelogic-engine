@@ -32,6 +32,7 @@ import {
   findingClosureGateEnabled,
   loadClosureBlockers,
 } from "../lib/findingClosurePolicy.js";
+import { applyLegacyStatusTransition } from "../lib/findingClosureService.js";
 import { riskAcceptanceEnabled } from "../lib/riskAcceptanceFeatureFlag.js";
 import {
   writeFindingLifecycleEvent,
@@ -1302,6 +1303,16 @@ router.patch(
       /** Set when this PATCH carries the finding OUT of closure (see the reopen block). */
       let reopening = false;
 
+      // The legacy `status` axis is a COMPATIBILITY ENTRY POINT (ruling 2026-07-14). It no
+      // longer force-writes closure inline: it DELEGATES to the canonical closure service,
+      // which enforces the remediation gate, derives both axes, and writes the lifecycle +
+      // audit records that the inline write used to swallow. It never touches
+      // decision_state — a legacy caller cannot be assumed to have made a governance
+      // decision, and fabricating one would undermine the whole governance model.
+      //
+      // Applied AFTER every other field is validated (below) but BEFORE any write, so a
+      // refusal cannot leave a half-applied PATCH behind. See `legacyStatus`.
+      let legacyStatus: string | null = null;
       if ("status" in body) {
         const status = body["status"];
         if (!isNonEmptyString(status) || !VALID_PATCH_STATUSES.has(status)) {
@@ -1311,60 +1322,7 @@ router.patch(
           });
           return;
         }
-
-        // CLOSURE GATE on the legacy axis — SECURELOGIC_FINDING_CLOSURE_GATE_ENABLED.
-        //
-        // The rule, its rationale, and why it is shared rather than restated all live in
-        // findingClosurePolicy.ts. In short: the governance axis has always demanded that
-        // remediation be complete (or the risk formally accepted) before a Finding closes;
-        // this axis demanded nothing, and through the compat bridge below it force-writes
-        // operational_status='closed'. So `{"status":"closed"}` closed a Finding with open
-        // remediation outright, orphaning its Actions under a closed parent.
-        //
-        // isLegacyTerminal is the SAME predicate deriveOperationalStatus uses to decide a
-        // legacy status closes a Finding, and the same set the bridge below writes 'closed'
-        // for — so the gate covers exactly the writes that close, no more.
-        //
-        // FLAG OFF => this block is inert: no query is issued and no 409 can be produced,
-        // so the legacy contract is preserved byte for byte, not merely tolerated.
-        if (findingClosureGateEnabled() && isLegacyTerminal(status)) {
-          const decision = evaluateFindingClosure(
-            await loadClosureBlockers(pg, organizationId, findingId, {
-              acceptanceEnabled: riskAcceptanceEnabled(),
-            })
-          );
-
-          // Refuse BEFORE any mutation — nothing has been written at this point, so a
-          // refusal leaves no partial state on either axis.
-          if (!decision.allowed) {
-            res.status(decision.httpStatus).json(decision.body);
-            return;
-          }
-        }
-
-        values.push(status);
-        updates.push(`status = $${values.length}`);
-
-        // The legacy axis is still writable, so it drags the authoritative one
-        // with it (the compat bridge — see the 20260906 migration header). This
-        // MUST happen in the same statement: findings_closure_axes_agree is a
-        // CHECK, CHECKs are not deferrable, and a `status='closed'` write that
-        // left operational_status='open' would both violate the constraint and,
-        // without it, silently count a closed finding as Active.
-        //
-        // Closing is exact. REOPENING is provisional — 'open' here, then
-        // recomputeFindingOperationalStatus (below) re-derives the true state
-        // from the linked Actions inside this same transaction, so a reopened
-        // finding lands on open/in_progress/remediated according to its real
-        // work. That is what "a reopened Finding transitions back to the correct
-        // active state" means, and why no persistent 'reopened' status is needed.
-        updates.push(
-          `operational_status = CASE
-             WHEN $${values.length} IN ('closed', 'accepted') THEN 'closed'
-             WHEN findings.operational_status = 'closed'      THEN 'open'
-             ELSE findings.operational_status
-           END`
-        );
+        legacyStatus = status;
       }
 
       if ("priority" in body) {
@@ -1431,14 +1389,21 @@ router.patch(
         // remediated lifecycle event) in this same tenant transaction. Only
         // needed for the close target; resolved unconditionally-cheaply here
         // because the machine ignores it for every other transition.
-        const sodRow = await pg.query<{ enforced: boolean; remediator: string | null }>(
+        const sodRow = await pg.query<{
+          enforced: boolean;
+          remediator: string | null;
+          action_count: string;
+        }>(
           `SELECT
              COALESCE((SELECT s.require_finding_closure_sod FROM risk_settings s
                         WHERE s.organization_id = $1), FALSE) AS enforced,
              (SELECT e.actor_user_id FROM finding_lifecycle_events e
                WHERE e.organization_id = $1 AND e.finding_id = $2
                  AND e.axis = 'operational' AND e.to_state = 'remediated'
-               ORDER BY e.created_at DESC, e.id DESC LIMIT 1) AS remediator`,
+               ORDER BY e.created_at DESC, e.id DESC LIMIT 1) AS remediator,
+             (SELECT COUNT(*) FROM actions
+               WHERE organization_id = $1 AND source_type = 'finding' AND source_id = $2)
+               AS action_count`,
           [organizationId, findingId]
         );
         decisionTransition = evaluateFindingDecisionTransition(
@@ -1451,9 +1416,33 @@ router.patch(
               actorUserId: (req.userId as string | undefined) ?? null,
               remediatorUserId: sodRow.rows[0]?.remediator ?? null,
             },
+            // A Finding with NO Actions has no incomplete remediation, so an explicit
+            // resolution may close it without first inventing a fake remediation item to
+            // complete (ruling 2026-07-14). 'remediated' is unreachable for such a Finding
+            // by construction, so demanding it made false positives unclosable.
+            hasRemediation: parseInt(sodRow.rows[0]?.action_count ?? "0", 10) > 0,
           }
         );
         if (!decisionTransition.allowed) {
+          // ONE error contract for "remediation is not complete", whichever axis asked.
+          // The governance axis used to answer with its own internal reason string and no
+          // count, so a client had to parse two different refusals for one rule. With the
+          // gate on it now answers with the canonical code and the number of blocking
+          // Actions — the same body the legacy axis returns.
+          if (
+            findingClosureGateEnabled() &&
+            decisionTransition.reason === "close_requires_remediated_or_accepted_risk"
+          ) {
+            const decision = evaluateFindingClosure(
+              await loadClosureBlockers(pg, organizationId, findingId, {
+                acceptanceEnabled: riskAcceptanceEnabled(),
+              })
+            );
+            if (!decision.allowed) {
+              res.status(decision.httpStatus).json(decision.body);
+              return;
+            }
+          }
           res.status(409).json({
             error: "invalid_decision_transition",
             reason: decisionTransition.reason,
@@ -1490,7 +1479,7 @@ router.patch(
         }
       }
 
-      if (updates.length === 0) {
+      if (updates.length === 0 && legacyStatus === null) {
         res.status(400).json({
           error: "no_updateable_fields",
           updatable: ["status", "priority", "owner_user_id", "due_date"]
@@ -1498,24 +1487,88 @@ router.patch(
         return;
       }
 
-      // Append updated_at and scoping params
-      values.push(findingId, organizationId);
-      const idParam = values.length - 1;
-      const orgParam = values.length;
+      const actor = {
+        actorUserId: (req.userId as string | undefined) ?? null,
+        actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+      };
 
-      const result = await pg.query(
-        `
-        UPDATE findings
-        SET ${updates.join(", ")}, updated_at = NOW()
-        WHERE id = $${idParam}
-          AND organization_id = $${orgParam}
-        RETURNING
-          id, organization_id, source_type, title, severity,
-          domain, priority, status, decision_state, operational_status,
-          owner_user_id, due_date, updated_at
-        `,
-        values
-      );
+      // THE LEGACY AXIS, THROUGH THE CANONICAL SERVICE — first, and before any other field
+      // is written. A refused close therefore leaves the whole PATCH unapplied: the
+      // priority or owner that rode along in the same body is not written either. That is
+      // what "no partial state if rejected" has to mean when one request carries several
+      // fields.
+      let legacyOutcome: Awaited<ReturnType<typeof applyLegacyStatusTransition>> | null = null;
+      if (legacyStatus !== null) {
+        legacyOutcome = await applyLegacyStatusTransition({
+          organizationId,
+          findingId,
+          newStatus: legacyStatus,
+          actor,
+        });
+
+        if (legacyOutcome.kind === "not_found") {
+          res.status(404).json({ error: "finding_not_found" });
+          return;
+        }
+        if (legacyOutcome.kind === "refused") {
+          res.status(legacyOutcome.httpStatus).json(legacyOutcome.body);
+          return;
+        }
+        if (legacyOutcome.changed && legacyOutcome.auditEvent) {
+          // The audit record the inline write used to swallow. `closure_path` and the
+          // unchanged decision_state are recorded explicitly so the trail shows that
+          // operational closure occurred, that no governance resolution was inferred, and
+          // that no decision_state transition was fabricated.
+          writeAuditEvent({
+            organizationId,
+            actorApiKeyId: actor.actorApiKeyId,
+            actorUserId: actor.actorUserId,
+            eventType: legacyOutcome.auditEvent,
+            resourceType: "finding",
+            resourceId: findingId,
+            payload: {
+              from: legacyOutcome.fromState,
+              to: legacyOutcome.toState,
+              legacy_status: legacyStatus,
+              closure_path: "legacy_compat",
+              governance_resolution_inferred: false,
+              decision_state: legacyOutcome.decisionState,
+            },
+            ipAddress: req.ip ?? null,
+          });
+        }
+      }
+
+      // Everything EXCEPT the legacy axis (priority, owner, due date, decision_state).
+      let result: { rows: any[]; rowCount: number | null };
+      if (updates.length > 0) {
+        values.push(findingId, organizationId);
+        const idParam = values.length - 1;
+        const orgParam = values.length;
+
+        result = await pg.query(
+          `
+          UPDATE findings
+          SET ${updates.join(", ")}, updated_at = NOW()
+          WHERE id = $${idParam}
+            AND organization_id = $${orgParam}
+          RETURNING
+            id, organization_id, source_type, title, severity,
+            domain, priority, status, decision_state, operational_status,
+            owner_user_id, due_date, updated_at
+          `,
+          values
+        );
+      } else {
+        // status-only PATCH: the service already wrote it. Re-read for the response.
+        result = await pg.query(
+          `SELECT id, organization_id, source_type, title, severity,
+                  domain, priority, status, decision_state, operational_status,
+                  owner_user_id, due_date, updated_at
+             FROM findings WHERE id = $1 AND organization_id = $2`,
+          [findingId, organizationId]
+        );
+      }
 
       if ((result.rowCount ?? 0) === 0) {
         res.status(404).json({ error: "finding_not_found" });
@@ -1785,11 +1838,18 @@ router.post(
           results.push({ id: findingId, ok: false, reason: "not_found" });
           continue;
         }
-        const remediatorRow = await pg.query<{ remediator: string | null }>(
-          `SELECT e.actor_user_id AS remediator FROM finding_lifecycle_events e
-            WHERE e.organization_id = $1 AND e.finding_id = $2
-              AND e.axis = 'operational' AND e.to_state = 'remediated'
-            ORDER BY e.created_at DESC, e.id DESC LIMIT 1`,
+        const remediatorRow = await pg.query<{
+          remediator: string | null;
+          action_count: string;
+        }>(
+          `SELECT
+             (SELECT e.actor_user_id FROM finding_lifecycle_events e
+               WHERE e.organization_id = $1 AND e.finding_id = $2
+                 AND e.axis = 'operational' AND e.to_state = 'remediated'
+               ORDER BY e.created_at DESC, e.id DESC LIMIT 1) AS remediator,
+             (SELECT COUNT(*) FROM actions
+               WHERE organization_id = $1 AND source_type = 'finding' AND source_id = $2)
+               AS action_count`,
           [organizationId, findingId]
         );
         const decision = evaluateFindingDecisionTransition(currentRow.decision_state, ds, {
@@ -1799,6 +1859,8 @@ router.post(
             actorUserId,
             remediatorUserId: remediatorRow.rows[0]?.remediator ?? null,
           },
+          // Same rule as the single PATCH: no remediation to complete ⇒ nothing incomplete.
+          hasRemediation: parseInt(remediatorRow.rows[0]?.action_count ?? "0", 10) > 0,
         });
         if (!decision.allowed) {
           results.push({ id: findingId, ok: false, reason: decision.reason ?? "invalid_decision_transition" });
@@ -1808,9 +1870,22 @@ router.post(
           results.push({ id: findingId, ok: true });
           continue;
         }
+        // REOPEN must clear the closure on BOTH axes here, in this statement — exactly as
+        // the single PATCH does. Clearing only the governance axis would leave the legacy
+        // one terminal, the compat bridge would re-derive 'closed' from it, and the Finding
+        // would spring shut again the instant it was reopened. Bulk was missing this.
         await pg.query(
-          `UPDATE findings SET decision_state = $1, updated_at = NOW()
-            WHERE id = $2 AND organization_id = $3`,
+          decision.transition === "reopen"
+            ? `UPDATE findings
+                  SET decision_state = $1,
+                      status = CASE WHEN status IN ('closed','accepted') THEN 'open'
+                                    ELSE status END,
+                      operational_status = CASE WHEN operational_status = 'closed' THEN 'open'
+                                                ELSE operational_status END,
+                      updated_at = NOW()
+                WHERE id = $2 AND organization_id = $3`
+            : `UPDATE findings SET decision_state = $1, updated_at = NOW()
+                WHERE id = $2 AND organization_id = $3`,
           [ds, findingId, organizationId]
         );
         await writeFindingLifecycleEvent({
@@ -1832,6 +1907,39 @@ router.post(
           payload: { from: decision.fromState ?? null, to: decision.toState ?? null, bulk: true },
           ipAddress: req.ip ?? null,
         });
+
+        // Re-derive the authoritative axis — the step this loop was MISSING.
+        //
+        // A bulk 'decide' wrote decision_state and nothing else, so a bulk Resolve left the
+        // Finding at operational_status='remediated' — i.e. still ACTIVE, still on every
+        // dashboard — while its governance axis said resolved. The single PATCH has always
+        // recomputed (that is what makes the ruling non-inert); bulk silently did not, so
+        // the two paths disagreed about what "close" means. Same canonical recompute, same
+        // tenant transaction, and projectLegacy on a reopen for the same reason the single
+        // path needs it.
+        const reconciled = await recomputeFindingOperationalStatus(
+          organizationId,
+          findingId,
+          { actorUserId, actorApiKeyId },
+          { projectLegacy: decision.transition === "reopen" }
+        );
+        if (reconciled.changed && reconciled.auditEvent) {
+          writeAuditEvent({
+            organizationId,
+            actorApiKeyId,
+            actorUserId,
+            eventType: reconciled.auditEvent,
+            resourceType: "finding",
+            resourceId: findingId,
+            payload: {
+              from: reconciled.fromState ?? null,
+              to: reconciled.toState ?? null,
+              bulk: true,
+            },
+            ipAddress: req.ip ?? null,
+          });
+        }
+
         updatedCount++;
         results.push({ id: findingId, ok: true });
       }

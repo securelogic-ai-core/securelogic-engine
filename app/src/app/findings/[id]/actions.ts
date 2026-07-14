@@ -2,6 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { getSession } from "@/lib/session";
+import {
+  CLOSE_REQUIRES_REMEDIATION_COMPLETE,
+  mapFindingActionError,
+  remediationHref,
+  type FindingActionError,
+} from "@/lib/findingClosureError";
 
 const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
 
@@ -20,7 +26,7 @@ function authHeaders(token: string): HeadersInit {
 export async function updateFindingStatusAction(
   findingId: string,
   status: string
-): Promise<{ error?: string }> {
+): Promise<FindingActionError | Record<string, never>> {
   const token = await getToken();
   if (!token) return { error: "Not authenticated" };
 
@@ -31,8 +37,14 @@ export async function updateFindingStatusAction(
       body: JSON.stringify({ status }),
     });
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      return { error: body.error ?? "Failed to update status" };
+      // Closure can be REFUSED (409 close_requires_remediation_complete). Map it to
+      // something a human can act on — with the count and a link to the work — instead of
+      // putting a raw error code on screen.
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        open_actions?: number;
+      };
+      return mapFindingActionError(body, findingId, "Failed to update status");
     }
   } catch {
     return { error: "Network error" };
@@ -139,7 +151,7 @@ export async function createRemediationAction(
 export async function updateFindingDecisionStateAction(
   findingId: string,
   decisionState: string
-): Promise<{ error?: string }> {
+): Promise<FindingActionError | Record<string, never>> {
   const token = await getToken();
   if (!token) return { error: "Not authenticated" };
 
@@ -150,20 +162,40 @@ export async function updateFindingDecisionStateAction(
       body: JSON.stringify({ decision_state: decisionState }),
     });
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string; reason?: string };
-      // Guarded transitions 409 with a machine reason — surface it in customer
-      // language instead of a silent no-op (a control that silently fails is a
-      // dead control).
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        reason?: string;
+        open_actions?: number;
+      };
+
+      // With the closure gate on, the governance axis answers a remediation refusal with
+      // the SAME canonical body as the legacy axis — code + count. One rule, one message,
+      // one link to the work, whichever axis the customer happened to use.
+      if (body.error === CLOSE_REQUIRES_REMEDIATION_COMPLETE) {
+        return mapFindingActionError(body, findingId, "Failed to update decision");
+      }
+
+      // The other guarded transitions 409 with a machine reason — surface it in customer
+      // language instead of a silent no-op (a control that silently fails is a dead
+      // control).
       const REASON_COPY: Record<string, string> = {
         close_requires_remediated_or_accepted_risk:
-          "Cannot close: remediation is not complete (or accept the risk first).",
+          "Complete the remaining required remediation before closing this Finding.",
         actor_identity_required:
           "Cannot close: your organization requires an identified user to close findings.",
         separation_of_duties:
           "Cannot close: your organization requires a different person than the remediator to close this finding.",
         invalid_decision_transition: "That decision change is not allowed from the current state.",
       };
-      return { error: (body.reason && REASON_COPY[body.reason]) ?? body.error ?? "Failed to update decision" };
+      if (body.reason && REASON_COPY[body.reason]) {
+        return {
+          error: REASON_COPY[body.reason]!,
+          ...(body.reason === "close_requires_remediated_or_accepted_risk"
+            ? { remediationHref: remediationHref(findingId) }
+            : {}),
+        };
+      }
+      return mapFindingActionError(body, findingId, "Failed to update decision");
     }
   } catch {
     return { error: "Network error" };
