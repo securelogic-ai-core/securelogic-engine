@@ -294,68 +294,75 @@ describe("Risk acceptance — the exposure stays GOVERNED (ruling step 6)", () =
   });
 });
 
-describe("Risk acceptance — ?finding_id= scopes the register to ONE finding", () => {
-  /* The per-finding panel asks this route for "this finding's acceptances" and treats the
-     whole response as such. The filter was NOT implemented server-side: the response was
-     the org's entire register, so every finding's panel showed every other finding's
-     acceptance, and approve/reject/withdraw acted on whichever signed record happened to
-     sort first. Org-scoped, so never a tenant leak — but a governance decision applied to
-     the wrong object. These four properties are the contract the app depends on. */
+describe("Risk acceptance — per-finding read (?finding_id, the Decision Workspace surface)", () => {
+  it("returns a finding's live acceptance AND its terminal history, and composes with ?state", async () => {
+    const f = await mkFinding(seed.orgA.id, "finding-history");
 
-  it("returns ONLY the requested finding's acceptance, not the org's whole register", async () => {
-    const mine = await mkFinding(seed.orgA.id, "filter-mine");
-    const other = await mkFinding(seed.orgA.id, "filter-other");
-    const mineId = await acceptAndApprove(mine, isoInDays(90));
-    const otherId = await acceptAndApprove(other, isoInDays(90));
+    // A first proposal, rejected — this is now terminal audit history.
+    const p1 = await auth("post", `/api/findings/${f}/risk-acceptance`, jwtRequesterA)
+      .send({ owner_user_id: ownerA, rationale: "first attempt", expires_at: isoInDays(90) });
+    expect(p1.status).toBe(201);
+    const rej = await auth("post", `/api/risk-acceptances/${p1.body.acceptance.id}/reject`, jwtApproverA)
+      .send({ decision_rationale: "insufficient compensating control" });
+    expect(rej.status).toBe(200);
 
-    const res = await auth("get", `/api/risk-acceptances?finding_id=${mine}`, jwtRequesterA);
-    expect(res.status).toBe(200);
+    // A second proposal, still live (the partial unique index allowed it because the
+    // first is terminal).
+    const p2 = await auth("post", `/api/findings/${f}/risk-acceptance`, jwtRequesterA)
+      .send({ owner_user_id: ownerA, rationale: "second attempt", expires_at: isoInDays(120) });
+    expect(p2.status).toBe(201);
 
-    const ids = res.body.acceptances.map((a: { id: string }) => a.id);
-    expect(ids).toContain(mineId);
-    // The bug, stated as an assertion: the other finding's signed record must NOT be here.
-    expect(ids).not.toContain(otherId);
-    expect(res.body.acceptances.every((a: { finding_id: string }) => a.finding_id === mine)).toBe(true);
-    // total counts the FILTERED set, not the register.
-    expect(res.body.total).toBe(1);
+    const all = await auth("get", `/api/risk-acceptances?finding_id=${f}`, jwtRequesterA);
+    expect(all.status).toBe(200);
+    expect(all.body.total).toBe(2);
+    expect(all.body.acceptances.map((a: { id: string }) => a.id).sort()).toEqual(
+      [p1.body.acceptance.id, p2.body.acceptance.id].sort()
+    );
+    for (const a of all.body.acceptances) expect(a.finding_id).toBe(f);
+
+    // Composes with ?state: only the live proposal.
+    const live = await auth("get", `/api/risk-acceptances?finding_id=${f}&state=proposed`, jwtRequesterA);
+    expect(live.status).toBe(200);
+    expect(live.body.acceptances.map((a: { id: string }) => a.id)).toEqual([p2.body.acceptance.id]);
   });
 
-  it("a finding with no acceptance returns [] even when the org register is non-empty", async () => {
-    const accepted = await mkFinding(seed.orgA.id, "filter-populated");
-    await acceptAndApprove(accepted, isoInDays(90));
-    const bare = await mkFinding(seed.orgA.id, "filter-bare");
+  it("is org-scoped: another tenant cannot read a finding's acceptances by id", async () => {
+    const f = await mkFinding(seed.orgA.id, "cross-org-finding-read");
+    await acceptAndApprove(f, isoInDays(90));
 
-    // Pre-fix this returned the populated finding's acceptance, and the panel rendered it
-    // as THIS finding's binding acceptance — a phantom accepted risk.
-    const res = await auth("get", `/api/risk-acceptances?finding_id=${bare}`, jwtRequesterA);
+    // Org B guesses org A's finding id — the org predicate makes the result empty, never
+    // another tenant's governance record.
+    const res = await auth("get", `/api/risk-acceptances?finding_id=${f}`, jwtB);
     expect(res.status).toBe(200);
-    expect(res.body.acceptances).toEqual([]);
+    expect(res.body.acceptances).toHaveLength(0);
     expect(res.body.total).toBe(0);
-
-    // ...while the unfiltered register still shows it, so [] means "none for THIS finding",
-    // not "the feature is off".
-    const reg = await auth("get", "/api/risk-acceptances", jwtRequesterA);
-    expect(reg.body.acceptances.length).toBeGreaterThan(0);
   });
 
-  it("an invalid finding_id is refused, not ignored", async () => {
-    // Refused — because silently ignoring an unparseable filter is exactly how the
-    // whole-register response reached the panel in the first place.
+  it("rejects a non-uuid finding_id with 400", async () => {
     const res = await auth("get", "/api/risk-acceptances?finding_id=not-a-uuid", jwtRequesterA);
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("invalid_finding_id");
   });
 
-  it("org B asking for org A's finding_id gets nothing (the filter never widens the org scope)", async () => {
-    const f = await mkFinding(seed.orgA.id, "filter-cross-org");
-    const acceptanceId = await acceptAndApprove(f, isoInDays(90));
+  it("a finding with NO acceptance returns [] even when the org register is non-empty", async () => {
+    // The empty case, which the tests above do not cover — and it is the one the Decision
+    // Workspace is most exposed to. Before the filter existed, the register answered with
+    // the org's OTHER acceptances here, and the panel rendered a stranger's binding record
+    // as this finding's own: a phantom accepted risk, on which approve/withdraw then acted.
+    // [] must read as "none for THIS finding", never as "the feature is off".
+    const accepted = await mkFinding(seed.orgA.id, "register-populated");
+    await acceptAndApprove(accepted, isoInDays(90));
+    const bare = await mkFinding(seed.orgA.id, "no-acceptance-yet");
 
-    // A valid UUID naming a real finding in ANOTHER tenant. The predicate is applied on
-    // top of the org scope, never instead of it.
-    const res = await auth("get", `/api/risk-acceptances?finding_id=${f}`, jwtB);
+    const res = await auth("get", `/api/risk-acceptances?finding_id=${bare}`, jwtRequesterA);
     expect(res.status).toBe(200);
     expect(res.body.acceptances).toEqual([]);
-    expect(JSON.stringify(res.body)).not.toContain(acceptanceId);
+    expect(res.body.total).toBe(0);
+
+    // ...while the unfiltered register still holds the other finding's acceptance, so the
+    // emptiness above is the filter working, not an empty org.
+    const reg = await auth("get", "/api/risk-acceptances", jwtRequesterA);
+    expect(reg.body.acceptances.length).toBeGreaterThan(0);
   });
 });
 
