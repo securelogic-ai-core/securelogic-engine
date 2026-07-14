@@ -20,8 +20,10 @@ import type {
   FindingImpactDimension,
   AffectedResolution,
   FindingCandidateEntity,
+  RiskAcceptance,
 } from "@/lib/api";
 import { intelligenceEventHref, findingEventId } from "@/lib/intelligenceLinks";
+import { RiskAcceptancePanel } from "./RiskAcceptancePanel";
 import { DECISION_TABS, DEFAULT_DECISION_TAB, type DecisionTab } from "./decisionTabs";
 import { legalDecisionTargets } from "./decisionTransitions";
 import { intelligenceEmptyCopy } from "./findingSourceCopy";
@@ -217,12 +219,20 @@ export function DecisionWorkspace({
   finding,
   context,
   owners = [],
+  riskAcceptances = null,
+  currentUserId = null,
   children,
 }: {
   finding: Finding;
   context: FindingContext;
   /** Org members, for assigning the finding. Empty => owner renders as plain text. */
   owners?: { id: string; label: string }[];
+  // A finding's acceptances + terminal history. null = the risk-acceptance feature is
+  // dark (route 404) → keep the legacy Accept-Risk control (byte-identical). A non-null
+  // array = the feature is active → the signed lifecycle panel owns accepted_risk.
+  riskAcceptances?: RiskAcceptance[] | null;
+  /** The viewer, for separation-of-duties on approve/reject. */
+  currentUserId?: string | null;
   // The recommendation + remediation-actions block (Zone F) is composed by the
   // server page (reusing AddActionForm/ActionCard) and passed in as children.
   children: React.ReactNode;
@@ -257,6 +267,18 @@ export function DecisionWorkspace({
     bi.third_party.level,
   ]);
 
+  // When the signed risk-acceptance workflow is active, it OWNS accepted_risk: the
+  // legacy one-click "Accept Risk" (a status someone types) is replaced by propose →
+  // approve, and the decision dropdown no longer offers accepted_risk as a target — the
+  // only exception is when the finding already IS accepted_risk, so its current value
+  // still renders. When the feature is dark, nothing here changes.
+  const riskAcceptanceActive = riskAcceptances !== null;
+  const decisionState = context.finding.decision_state;
+  const decisionTargets = legalDecisionTargets(
+    decisionState,
+    context.finding.operational_status ?? null
+  ).filter((d) => !(riskAcceptanceActive && d === "accepted_risk" && d !== decisionState));
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 1100, margin: "0 auto" }}>
       <Link href="/findings" style={{ fontSize: 12, color: "#94a3b8" }}>← Findings</Link>
@@ -274,11 +296,10 @@ export function DecisionWorkspace({
             >
               {/* Only transitions the lifecycle engine allows (spec §4) — the
                   dropdown never offers a move the server would 409. Closing
-                  requires derived remediation or an accepted-risk override. */}
-              {legalDecisionTargets(
-                context.finding.decision_state,
-                context.finding.operational_status ?? null
-              ).map((d) => (
+                  requires derived remediation or an accepted-risk override. When
+                  the signed acceptance workflow is active, accepted_risk is owned
+                  by the panel below, not this dropdown. */}
+              {decisionTargets.map((d) => (
                 <option key={d} value={d}>{DECISION_LABELS[d]}</option>
               ))}
             </select>
@@ -301,14 +322,19 @@ export function DecisionWorkspace({
             </select>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => run(() => updateFindingDecisionStateAction(finding.id, "accepted_risk"))}
-              style={{ background: "transparent", border: "1px solid #475569", color: "#cbd5e1", borderRadius: 6, padding: "6px 12px", fontSize: 13, cursor: "pointer" }}
-            >
-              Accept Risk
-            </button>
+            {/* The legacy one-click Accept Risk is a status someone types. When the
+                signed acceptance workflow is active it is replaced by the panel below
+                (propose → a colleague approves); we do not offer both. */}
+            {!riskAcceptanceActive && (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => run(() => updateFindingDecisionStateAction(finding.id, "accepted_risk"))}
+                style={{ background: "transparent", border: "1px solid #475569", color: "#cbd5e1", borderRadius: 6, padding: "6px 12px", fontSize: 13, cursor: "pointer" }}
+              >
+                Accept Risk
+              </button>
+            )}
             <button
               type="button"
               disabled={pending}
@@ -372,6 +398,17 @@ export function DecisionWorkspace({
           <span>Confidence: {finding.confidence ?? "—"}</span>
         </div>
       </div>
+
+      {/* Risk acceptance — the signed governance lifecycle. Rendered only when the
+          feature is active (non-null array); owns accepted_risk when it is. */}
+      {riskAcceptances !== null && (
+        <RiskAcceptancePanel
+          findingId={finding.id}
+          acceptances={riskAcceptances}
+          owners={owners}
+          currentUserId={currentUserId}
+        />
+      )}
 
       {/* ZONE B — What's changed */}
       <div style={CARD}>

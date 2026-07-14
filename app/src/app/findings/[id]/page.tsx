@@ -6,6 +6,7 @@ import {
   getActionsForFinding,
   getFindingContext,
   getTeamMembers,
+  getRiskAcceptancesForFinding,
   type Finding,
   type Action,
 } from "@/lib/api";
@@ -395,9 +396,23 @@ export default async function FindingDetailPage({
   if (process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true") {
     const context = await getFindingContext(token, id);
     if (context) {
+      // The signed risk-acceptance lifecycle (product ruling 2026-07-12) — DARK. When the
+      // flag is on we read the finding's acceptances; a null result (engine route 404,
+      // its own flag off — two-switch) leaves the workspace on its legacy Accept-Risk
+      // control. Best-effort: a fetch failure degrades to that same legacy behaviour.
+      const riskAcceptances =
+        process.env.SECURELOGIC_RISK_ACCEPTANCE_ENABLED === "true"
+          ? await getRiskAcceptancesForFinding(token, id)
+          : null;
       return (
         <div className="max-w-6xl mx-auto px-6 py-12">
-          <DecisionWorkspace finding={finding} context={context} owners={owners}>
+          <DecisionWorkspace
+            finding={finding}
+            context={context}
+            owners={owners}
+            riskAcceptances={riskAcceptances}
+            currentUserId={session.userId ?? null}
+          >
             {finding.recommendation ? (
               <p className="text-sm mb-4" style={{ color: "#cbd5e1", whiteSpace: "pre-wrap" }}>
                 {finding.recommendation}

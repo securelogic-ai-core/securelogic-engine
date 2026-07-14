@@ -11,6 +11,7 @@ import type {
   FindingsResponse,
   FindingsSummary,
   MeResponse,
+  RiskAcceptance,
 } from "@/lib/api";
 
 export function aFinding(overrides: Partial<Finding> = {}): Finding {
@@ -1108,6 +1109,29 @@ export function aConnectorHealth(
     configured_count: connectors.filter((c) => c.band !== "unconfigured").length,
     by_band: { degraded: 1 },
     connectors,
+    ...overrides,
+  };
+}
+
+export function aRiskAcceptance(overrides: Partial<RiskAcceptance> = {}): RiskAcceptance {
+  return {
+    id: "ra-1",
+    organization_id: "org-1",
+    finding_id: "f-1",
+    state: "proposed",
+    owner_user_id: "user-2",
+    rationale: "Compensating control in place; cost of fix exceeds the exposure.",
+    requested_by_user_id: "user-1",
+    approver_user_id: null,
+    approved_at: null,
+    decision_rationale: null,
+    expires_at: "2026-12-31",
+    withdrawn_at: null,
+    withdrawal_reason: null,
+    governance_review_required: false,
+    promoted_risk_id: null,
+    created_at: "2026-07-10T00:00:00.000Z",
+    updated_at: "2026-07-10T00:00:00.000Z",
     ...overrides,
   };
 }
