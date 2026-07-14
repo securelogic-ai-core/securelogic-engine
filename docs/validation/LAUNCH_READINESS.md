@@ -26,7 +26,7 @@ Legend: ✅ done · ⚠️ partial / conditional · ❌ absent · — not applic
 |---|---|---|---|---|---|---|
 | **Findings** | ✅ | ✅ | ✅ | ✅ | ⚠️ not recorded | ⚠️ **closest to ready** |
 | **Decision Workspace** | ✅ | ✅ | ✅ | ✅ | ❌ blocked — Blueprint sync | ❌ |
-| **Risk Acceptance** | ✅ | ✅ | ✅ | ✅ | ❌ pending (unblocked #652) | ❌ |
+| **Risk Acceptance** | ✅ | ✅ | ✅ | ✅ | ❌ pending Blueprint sync | ❌ |
 | **Vendor Assessment** (core) | ✅ | ✅ | ✅ | ✅ | ⚠️ not recorded | ⚠️ |
 | **Vendor Assurance** (SOC 2 AI extraction) | ✅ | ✅ | ✅ | ✅ | ❌ staging-flag only | ❌ |
 | **Pen Test** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ **does not exist** |
@@ -66,7 +66,8 @@ Two-switch flag `SECURELOGIC_DECISION_WORKSPACE_ENABLED` — engine `render.yaml
 
 ### Risk Acceptance
 Backend `src/api/routes/riskAcceptances.ts` (6 routes, WORM table, expiry worker). UI = `RiskAcceptancePanel` in the Decision Workspace. The best-tested subsystem in the repo (isolation suite: SoD, no-permanent-pardons, one-live-acceptance, expiry/withdraw reopen, WORM, cross-org).
-- **Fixed in #652** (see below): the list route ignored `?finding_id=`, so every finding's panel showed the org's whole register and approve/withdraw acted on **another finding's signed record**; and the app-side flag was never declared, so the UI rendered nowhere.
+- **Fixed before merge (#651 / #650):** the list route ignored `?finding_id=`, so every finding's panel showed the org's whole register and approve/withdraw acted on **another finding's signed record**; and the app-side flag was never declared, so the UI rendered nowhere.
+- ⚠️ **Process signal — the same bug was fixed twice, independently.** #650 (engine) and #651 (engine+app) both implemented `?finding_id` filtering within hours of each other, with near-identical predicates. Nobody noticed; a merge conflict did. #651 dropped its duplicate engine work and kept develop's. **Check open PRs against the same subsystem before starting a fix.**
 - **Remaining (gate 3/6):** needs a Blueprint sync to activate both staging flags, then an operator walkthrough.
 - **Known gap (not a blocker):** there is **no approver queue**. `finding_risk_acceptances` appears in no queue surface; `GET /api/risk-acceptances` and `/summary` have zero UI consumers. Today an approver can only reach a proposal via a hand-passed finding URL. There is also no notifier. **This is a real CX gap (gate 7).**
 
