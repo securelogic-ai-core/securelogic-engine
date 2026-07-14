@@ -176,12 +176,21 @@ async function seedOrg(
  * description. `source_type='manual'` satisfies the findings_source_type_check
  * constraint. The caller owns the pool.
  */
-export async function seedFinding(pool: Pool, orgId: string): Promise<string> {
+export async function seedFinding(
+  pool: Pool,
+  orgId: string,
+  opts: { title?: string; severity?: string } = {},
+): Promise<string> {
   const res = await pool.query<{ id: string }>(
     `INSERT INTO findings (organization_id, title, severity, description, source_type)
      VALUES ($1, $2, $3, $4, 'manual')
      RETURNING id`,
-    [orgId, "Harness finding", "high", "seed finding for A04-G1 RLS pilot test"],
+    [
+      orgId,
+      opts.title ?? "Harness finding",
+      opts.severity ?? "high",
+      "seed finding for A04-G1 RLS pilot test",
+    ],
   );
   return res.rows[0].id;
 }

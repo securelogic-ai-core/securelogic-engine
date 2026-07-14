@@ -4,10 +4,15 @@
  * unit-testable without a DOM/RTL harness the app does not have.
  *
  * A Brief item is derived from an external signal (`cyber_signal_id`). When the
- * org has a Finding for that signal, the brief should route the reader straight
- * into the Decision Workspace; when it does not, it should say so honestly and
- * offer the correct next action (Review Suggested Links, where signals become
- * linked findings) rather than leaving the user to search manually.
+ * org has a Finding for that signal, the brief routes the reader straight into the
+ * Decision Workspace. When it does not, the reader can CREATE one (promotion).
+ *
+ * Promotion exists because the automated path only creates a finding when a signal
+ * matches a vendor or AI system already in the org's registry — so a reader could
+ * open a Brief item about anything else and have nowhere to take it. This used to
+ * point at /queue ("Review suggested links"), which was a dead end: /queue accepts
+ * suggested signal↔entity LINKS and has never created a Finding. It sent the reader
+ * somewhere that could not do the thing the link implied.
  *
  * DARK behind SECURELOGIC_DECISION_WORKSPACE_ENABLED; flag-off shows no
  * affordance (byte-identical brief item).
@@ -15,20 +20,25 @@
 
 export type BriefDecisionAffordance =
   | { state: "linked"; findingId: string; href: string }
-  | { state: "no_finding"; href: string };
+  /** No finding yet — the reader can promote this signal into one. */
+  | { state: "promotable"; signalId: string };
 
 /**
- * Resolve the decision affordance for a brief item from its (already
- * org-scoped) related finding lookup. A finding → deep-link into its Decision
- * Workspace; none → point at Review Suggested Links.
+ * Resolve the decision affordance for a brief item from its (already org-scoped)
+ * related finding lookup. A finding → deep-link into its Decision Workspace; none →
+ * offer to create one from this signal.
+ *
+ * `signalId` is the item's cyber_signal_id — the caller only reaches this function
+ * when shouldResolveBriefDecision() has already established it is present.
  */
 export function briefDecisionAffordance(
   relatedFinding: { id: string } | null | undefined,
+  signalId: string,
 ): BriefDecisionAffordance {
   if (relatedFinding && relatedFinding.id) {
     return { state: "linked", findingId: relatedFinding.id, href: `/findings/${relatedFinding.id}` };
   }
-  return { state: "no_finding", href: "/queue" };
+  return { state: "promotable", signalId };
 }
 
 /**
