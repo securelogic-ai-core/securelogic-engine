@@ -492,7 +492,7 @@ services:
       # flip THIS key to "true" — and only this one — when validation begins. The prod
       # engine block keeps its own "false" and is not touched by that flip.
       - key: SECURELOGIC_FINDING_CLOSURE_GATE_ENABLED
-        value: "false"
+        value: "true" # ENABLED 2026-07-14 — staging closure-gate validation. Prod block stays "false".
 
       # Intelligence Brief missed-week catch-up — DARK (default off). Lockstep
       # with the prod engine block. Enable in staging FIRST to validate missed-
