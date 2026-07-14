@@ -65,6 +65,22 @@ export async function proposeRiskAcceptanceAction(
   return r;
 }
 
+/**
+ * A decision reached from the APPROVALS QUEUE changes two surfaces, not one: the finding's
+ * own workspace, and the org-wide pending queue the approver is standing in. Revalidating
+ * only the finding would leave a decided proposal sitting in /approvals until something
+ * else happened to refresh it — the queue would lie about what is still pending. So the
+ * three DECISION actions revalidate both paths; they are invoked from both surfaces and
+ * must be correct from either.
+ *
+ * (Propose is not here: it can only originate from the finding, and it ADDS to the queue —
+ * which the approver's own next load picks up.)
+ */
+function revalidateDecision(findingId: string): void {
+  revalidatePath(`/findings/${findingId}`);
+  revalidatePath("/approvals");
+}
+
 export async function approveRiskAcceptanceAction(
   findingId: string,
   acceptanceId: string,
@@ -73,7 +89,7 @@ export async function approveRiskAcceptanceAction(
   const r = await post(`/api/risk-acceptances/${acceptanceId}/approve`, {
     decision_rationale: input.decision_rationale,
   });
-  if (!r.error) revalidatePath(`/findings/${findingId}`);
+  if (!r.error) revalidateDecision(findingId);
   return r;
 }
 
@@ -85,7 +101,7 @@ export async function rejectRiskAcceptanceAction(
   const r = await post(`/api/risk-acceptances/${acceptanceId}/reject`, {
     decision_rationale: input.decision_rationale,
   });
-  if (!r.error) revalidatePath(`/findings/${findingId}`);
+  if (!r.error) revalidateDecision(findingId);
   return r;
 }
 
@@ -97,7 +113,7 @@ export async function withdrawRiskAcceptanceAction(
   const r = await post(`/api/risk-acceptances/${acceptanceId}/withdraw`, {
     reason: input.reason,
   });
-  if (!r.error) revalidatePath(`/findings/${findingId}`);
+  if (!r.error) revalidateDecision(findingId);
   return r;
 }
 

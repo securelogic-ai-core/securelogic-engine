@@ -2217,9 +2217,22 @@ export type RiskAcceptance = {
   // JOINed finding columns the register/per-finding read returns (optional).
   finding_title?: string;
   finding_severity?: string;
+  finding_priority?: string | null;
   finding_domain?: string | null;
   finding_operational_status?: string;
   evidence_count?: number;
+  // Display names the register JOINs from users, so a governance surface can name the
+  // people involved instead of printing their uuids. Absent/deleted user → null.
+  requested_by_name?: string | null;
+  requested_by_email?: string | null;
+  owner_name?: string | null;
+  owner_email?: string | null;
+  approver_name?: string | null;
+  approver_email?: string | null;
+  // Computed by the engine against the SESSION user: this viewer proposed this acceptance,
+  // so separation of duties forbids them approving it. The engine enforces it regardless
+  // (409 sod_violation); the UI refuses before the round-trip.
+  is_self_proposed?: boolean;
 };
 
 /**
@@ -2245,6 +2258,78 @@ export async function getRiskAcceptancesForFinding(
     return body.acceptances ?? [];
   } catch {
     return null;
+  }
+}
+
+export type RiskAcceptanceSummary = {
+  awaiting_approval: number;
+  active_acceptances: number;
+  review_due_30d: number;
+  lapsed_pending_sweep: number;
+  expired: number;
+  governance_review_required: number;
+};
+
+/**
+ * The org-wide risk-acceptance approver queue, for /approvals.
+ *
+ * Reads the SAME register route the per-finding panel reads — there is no second approval
+ * engine and no queue-specific endpoint. `?state=proposed` IS the pending queue: withdrawn,
+ * rejected and expired records carry a different state, so they leave the queue by virtue
+ * of the state machine rather than by any filtering the UI has to remember to do.
+ *
+ * ReadResult, not a bare array, because the three failure modes are NOT the same thing:
+ *   disabled (404) → the feature is dark for this org; the section must not render at all.
+ *   error          → the engine is reachable but unhappy; say so, don't render "0 pending".
+ *   ok + []        → genuinely nothing awaiting approval. An honest empty state.
+ * Collapsing these is how a dark or broken queue comes to read as "all clear".
+ */
+export async function getRiskAcceptanceQueueServer(
+  token: string,
+  opts: { state?: RiskAcceptanceState; limit?: number; offset?: number } = {}
+): Promise<ReadResult<{ acceptances: RiskAcceptance[]; total: number; limit: number; offset: number }>> {
+  const state = opts.state ?? "proposed";
+  const limit = opts.limit ?? 50;
+  const offset = opts.offset ?? 0;
+  try {
+    const res = await engineFetch(
+      `/api/risk-acceptances?state=${encodeURIComponent(state)}&limit=${limit}&offset=${offset}`,
+      token
+    );
+    if (!res.ok) {
+      return { ok: false, disabled: res.status === 404, error: await readError(res) };
+    }
+    const body = (await res.json()) as {
+      acceptances?: RiskAcceptance[];
+      total?: number;
+      limit?: number;
+      offset?: number;
+    };
+    return {
+      ok: true,
+      acceptances: body.acceptances ?? [],
+      total: body.total ?? 0,
+      limit: body.limit ?? limit,
+      offset: body.offset ?? offset,
+    };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+/** The governance counters (awaiting_approval is the queue's authoritative pending count). */
+export async function getRiskAcceptanceSummaryServer(
+  token: string
+): Promise<ReadResult<{ summary: RiskAcceptanceSummary }>> {
+  try {
+    const res = await engineFetch(`/api/risk-acceptances/summary`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: res.status === 404, error: await readError(res) };
+    }
+    const body = (await res.json()) as { summary: RiskAcceptanceSummary };
+    return { ok: true, summary: body.summary };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
   }
 }
 
