@@ -8,25 +8,14 @@
  * org-wide standalone list. This is a BRIDGE, deliberately NOT the P3.4
  * saved-views system.
  *
- * TENANT/USER ISOLATION (R5): ownership is derived from the SESSION identity
- * (userId), never from request input. A missing identity yields an empty list,
- * never a fall-through to another user's or the whole org's actions.
+ * TENANT/USER ISOLATION (R5): ownership is derived from the SESSION identity,
+ * never from request input. That filter now lives in the ENGINE (`?owner=me`,
+ * resolved server-side by resolveOwnerMeFilter and applied in SQL) rather than
+ * here. A client-side helper that filtered an already-fetched page used to do it,
+ * and it silently dropped a user's own work whenever the org had more actions
+ * than the engine's 100-row page cap. It is deliberately NOT re-added: filtering a
+ * capped page can only ever under-report.
  */
-
-export type ActionOwned = { owner_user_id: string | null };
-
-/**
- * Keep only actions owned by the signed-in user. `sessionUserId` MUST come from
- * the session, never from a query/body param. Undefined identity → empty (fail
- * closed), never the unfiltered set.
- */
-export function filterMyActions<T extends ActionOwned>(
-  actions: T[],
-  sessionUserId: string | undefined,
-): T[] {
-  if (!sessionUserId) return [];
-  return actions.filter((a) => a.owner_user_id !== null && a.owner_user_id === sessionUserId);
-}
 
 /** The remediation-queue scopes the workspace supports. */
 export type ActionScope = "mine" | "team";

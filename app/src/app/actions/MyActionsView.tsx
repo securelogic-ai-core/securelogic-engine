@@ -204,11 +204,25 @@ export default function MyActionsView({
   const noSla = actions.filter((a) => isActiveStatus(a.status) && slaState(a, nowMs) === "none").length;
   const groups = groupBySla(actions, nowMs);
 
-  // Prefer authoritative org-wide counts for the tiles that mirror the dashboard
-  // ring (Open, Overdue); fall back to the slice-derived attention counts when no
-  // summary was supplied (e.g. the personal "mine" scope).
-  const openTile = summary ? summary.open_count : att.open;
-  const overdueTile = summary ? summary.overdue_count : att.overdue;
+  // Authoritative server counts — never derived by scanning the fetched page, which is
+  // capped and would under-report.
+  //
+  // The tiles must be scoped to the SAME population as the list beneath them. In "mine"
+  // that is the caller's own remediation (my_open_count / my_overdue_count); in "team" it
+  // is the org (open_count / overdue_count). Showing the org's numbers above a personal
+  // list is the enterprise-metric-in-a-user-scoped-view defect — the person reads someone
+  // else's backlog as their own.
+  //
+  // my_* are optional (older engine builds): fall back to the slice-derived counts rather
+  // than silently substituting the ORG total, which would be a wrong number, not a stale one.
+  const openTile =
+    scope === "mine"
+      ? (summary?.my_open_count ?? att.open)
+      : (summary?.open_count ?? att.open);
+  const overdueTile =
+    scope === "mine"
+      ? (summary?.my_overdue_count ?? att.overdue)
+      : (summary?.overdue_count ?? att.overdue);
   const truncationNote = showingOfTotal(actions.length, total);
 
   return (
@@ -231,10 +245,13 @@ export default function MyActionsView({
         </div>
       </div>
 
-      {/* Honest pagination disclosure (team scope can exceed the 100-row page). */}
+      {/* Honest pagination disclosure — EITHER scope can exceed the 100-row page, and the
+          personal one used to disclose nothing at all. */}
       {truncationNote && (
         <p className="mb-4 text-xs" style={{ color: "#64748b" }}>
-          {truncationNote} open remediation actions — tiles reflect the full org total.
+          {truncationNote} remediation actions
+          {scope === "mine" ? " assigned to you" : " open across the org"} — tiles reflect
+          the full {scope === "mine" ? "assigned" : "org"} total.
         </p>
       )}
 

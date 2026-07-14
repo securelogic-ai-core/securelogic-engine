@@ -1,46 +1,24 @@
 /**
  * myActions.test.ts — pure logic for the minimal "My Actions" view (ERIP
- * Package 3.3, PR-5). The critical case is the R5 tenant/user-isolation guard:
- * ownership derives from the SESSION identity, never request input, and a
- * missing identity fails closed (empty), never the org-wide set.
+ * Package 3.3, PR-5).
+ *
+ * The R5 user-isolation guard is no longer tested here: ownership filtering moved
+ * OUT of the app (where it could only filter an already-capped page, silently
+ * dropping a user's own work in a >100-action org) and INTO the engine as
+ * `?owner=me`. Its security contract — literal "me" only, identity from the
+ * session, API-key callers rejected rather than defaulted — is covered by
+ * src/api/tests/findingListFilters.test.ts, the shared resolver both the Findings
+ * and Actions lists call.
  */
 
 import { describe, it, expect } from "vitest";
 import {
-  filterMyActions,
   myActionsRedirect,
   isMyActionsView,
   actionScope,
   orgActionsHref,
   showingOfTotal,
 } from "../myActions";
-
-type A = { owner_user_id: string | null; id: string };
-const rows: A[] = [
-  { id: "a1", owner_user_id: "user-1" },
-  { id: "a2", owner_user_id: "user-2" },
-  { id: "a3", owner_user_id: null },
-  { id: "a4", owner_user_id: "user-1" },
-];
-
-describe("filterMyActions (R5 isolation)", () => {
-  it("keeps only actions owned by the session user", () => {
-    expect(filterMyActions(rows, "user-1").map((a) => a.id)).toEqual(["a1", "a4"]);
-  });
-
-  it("never returns another user's actions", () => {
-    expect(filterMyActions(rows, "user-2").map((a) => a.id)).toEqual(["a2"]);
-  });
-
-  it("fails closed to empty when the session identity is missing (never org-wide)", () => {
-    expect(filterMyActions(rows, undefined)).toEqual([]);
-    expect(filterMyActions(rows, "")).toEqual([]);
-  });
-
-  it("excludes unowned (null owner) actions", () => {
-    expect(filterMyActions(rows, "user-1").some((a) => a.owner_user_id === null)).toBe(false);
-  });
-});
 
 describe("myActionsRedirect", () => {
   it("redirects a bare /actions to the canonical My Actions form when the workspace is on", () => {

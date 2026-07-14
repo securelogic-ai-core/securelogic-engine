@@ -20,6 +20,7 @@ import { validateActionCreate } from "../lib/actionValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { recomputeFindingOperationalStatus } from "../lib/findingLifecycle.js";
 import { sqlActionActive, sqlActionOverdue } from "../lib/metricDefinitions.js";
+import { resolveOwnerMeFilter } from "../lib/findingListFilters.js";
 
 const router = Router();
 
@@ -197,6 +198,28 @@ router.get(
       const conditions: string[] = ["organization_id = $1"];
       const params: unknown[] = [organizationId];
 
+      // owner=me — the caller's own remediation ("My Actions").
+      //
+      // This filter has to exist SERVER-SIDE. Before it did, /actions?view=mine fetched
+      // the org's actions and filtered them in the app — over a page the engine silently
+      // capped at MAX_LIMIT (100). In any org with more than 100 actions a user's own
+      // assigned work could fall outside that page and simply not be shown, with no
+      // truncation disclosed. Silent loss of a person's work queue.
+      //
+      // Same security contract as the Findings list (resolveOwnerMeFilter, shared): the
+      // ONLY accepted value is the literal "me", and the user id resolves from the SESSION
+      // — a client can never pass a user id, so assignments cannot be enumerated. An
+      // API-key caller has no user identity and is rejected, never defaulted to unfiltered.
+      const ownerFilter = resolveOwnerMeFilter(req.query.owner, (req.userId as string | undefined) ?? null);
+      if (ownerFilter.kind === "error") {
+        res.status(400).json({ error: ownerFilter.error });
+        return;
+      }
+      if (ownerFilter.kind === "me") {
+        params.push(ownerFilter.userId);
+        conditions.push(`owner_user_id = $${params.length}`);
+      }
+
       const filterStatus = isNonEmptyString(req.query.status)
         ? req.query.status
         : null;
@@ -371,6 +394,11 @@ router.get(
       // page reconcile exactly. open_count = ACTIVE (open|in_progress|blocked);
       // overdue compares DATE against CURRENT_DATE (a due-today action is not
       // overdue anywhere).
+      // The caller's own identity, for the "mine" counters below. An API-key caller has no
+      // user, so its my_* counts are 0 — not the org's totals. A queue that says "yours"
+      // must never quietly widen to everyone's.
+      const viewerUserId = (req as { userId?: string }).userId ?? null;
+
       const result = await pg.query<{
         open_count: string;
         open_only_count: string;
@@ -379,6 +407,8 @@ router.get(
         overdue_count: string;
         immediate_count: string;
         closed_count: string;
+        my_open_count: string;
+        my_overdue_count: string;
       }>(
         `
         SELECT
@@ -388,11 +418,20 @@ router.get(
           COUNT(*) FILTER (WHERE status = 'blocked')                            AS blocked_count,
           COUNT(*) FILTER (WHERE ${sqlActionOverdue()})                         AS overdue_count,
           COUNT(*) FILTER (WHERE priority = 'immediate' AND ${sqlActionActive()}) AS immediate_count,
-          COUNT(*) FILTER (WHERE status = 'closed')                             AS closed_count
+          COUNT(*) FILTER (WHERE status = 'closed')                             AS closed_count,
+          -- The SAME predicates, narrowed to the caller. These are what the "My Actions"
+          -- tiles must read: computing them by filtering a fetched page is how a user's
+          -- work went missing in the first place.
+          COUNT(*) FILTER (WHERE ${sqlActionActive()}
+                             AND $2::uuid IS NOT NULL
+                             AND owner_user_id = $2::uuid)                      AS my_open_count,
+          COUNT(*) FILTER (WHERE ${sqlActionOverdue()}
+                             AND $2::uuid IS NOT NULL
+                             AND owner_user_id = $2::uuid)                      AS my_overdue_count
         FROM actions
         WHERE organization_id = $1
         `,
-        [organizationId]
+        [organizationId, viewerUserId]
       );
 
       const row = result.rows[0];
@@ -405,6 +444,8 @@ router.get(
           overdue_count:     parseInt(row?.overdue_count ?? "0", 10),
           immediate_count:   parseInt(row?.immediate_count ?? "0", 10),
           closed_count:      parseInt(row?.closed_count ?? "0", 10),
+          my_open_count:     parseInt(row?.my_open_count ?? "0", 10),
+          my_overdue_count:  parseInt(row?.my_overdue_count ?? "0", 10),
         },
       });
     } catch (err) {

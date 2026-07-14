@@ -572,6 +572,12 @@ export type ActionsSummary = {
   overdue_count: number;
   immediate_count: number;
   closed_count: number;
+  // The same predicates narrowed to the signed-in user — what the "My Actions" tiles read.
+  // Server-computed, uncapped: deriving these by filtering a fetched page is exactly how a
+  // user's assigned work went missing. 0 for an API-key caller (no user identity).
+  // Optional: absent on older engine builds.
+  my_open_count?: number;
+  my_overdue_count?: number;
 };
 
 export type ActionsParams = {
@@ -580,6 +586,12 @@ export type ActionsParams = {
   overdue?: boolean;
   /** Metric Contract active set (open|in_progress|blocked) — what an ACTIVE count links to. */
   active?: boolean;
+  /**
+   * The caller's own remediation. The ONLY accepted value is the literal "me" — the engine
+   * resolves the user from the SESSION, so a user id can never be passed and assignments
+   * cannot be enumerated. Filtered in SQL, so a personal queue stays correct past one page.
+   */
+  owner?: "me";
   limit?: number;
 };
 
@@ -2462,6 +2474,7 @@ export async function getActions(
     if (params?.priority) qs.set("priority", params.priority);
     if (params?.overdue) qs.set("overdue", "true");
     if (params?.active) qs.set("active", "true");
+    if (params?.owner) qs.set("owner", params.owner);
     qs.set("limit", String(params?.limit ?? 100));
     const res = await engineFetch(`/api/actions?${qs.toString()}`, apiKey);
     if (!res.ok) return null;

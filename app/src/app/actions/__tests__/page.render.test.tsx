@@ -81,11 +81,28 @@ const UNASSIGNED = anAction({
   status: "blocked",
 });
 
+const ORG_ACTIONS = [MINE, THEIRS, UNASSIGNED];
+
+/**
+ * Stand in for the ENGINE, which is now what scopes a personal queue: `?owner=me`
+ * is resolved from the session server-side and applied in SQL. The mock honours it
+ * so "a user-scoped view never shows the org's work" is still proven end-to-end —
+ * through the mechanism that actually enforces it, rather than a client-side filter
+ * that could only ever narrow the ≤100 rows it happened to be handed.
+ */
 beforeEach(() => {
   vi.clearAllMocks();
   signedIn();
   api.getMe.mockResolvedValue(aMe({ entitlementLevel: "platform" }));
-  api.getActions.mockResolvedValue(anActionsResponse([MINE, THEIRS, UNASSIGNED]));
+  api.getActions.mockImplementation((_token: unknown, params?: { owner?: string }) =>
+    Promise.resolve(
+      anActionsResponse(
+        params?.owner === "me"
+          ? ORG_ACTIONS.filter((a) => a.owner_user_id === "user-1")
+          : ORG_ACTIONS
+      )
+    )
+  );
   api.getActionsSummary.mockResolvedValue(anActionsSummary());
 });
 
@@ -213,20 +230,45 @@ describe("/actions — user-scoped My Work vs org-scoped enterprise counts", () 
     await renderPage(ActionsPage, { searchParams: sp({ view: "mine" }) });
 
     expect(screen.getByText("Rotate the eu-west-1 backup keys")).toBeInTheDocument();
-    // The engine returned the org's actions; a user-scoped view must not render them.
+    // The org's other work must not surface in a personal queue.
     expect(screen.queryByText("Someone else's vendor review")).not.toBeInTheDocument();
     expect(screen.queryByText("Unowned firewall rule cleanup")).not.toBeInTheDocument();
   });
 
-  it("?view=mine never renders an ORG-WIDE count — no org summary is even fetched", async () => {
-    api.getActionsSummary.mockResolvedValue(anActionsSummary({ open_count: 12 }));
+  it("?view=mine asks the ENGINE to scope the queue — it does not filter a fetched page", async () => {
+    await renderPage(ActionsPage, { searchParams: sp({ view: "mine" }) });
+
+    // The scoping must happen in SQL. Filtering client-side can only narrow the rows the
+    // engine chose to return, and it caps a page at 100 — so in an org with more actions
+    // than that, a user's own assigned work could fall outside the page and never render,
+    // with nothing disclosing the loss. Asking for owner=me is what makes the personal
+    // queue correct at scale.
+    expect(api.getActions.mock.calls[0][1].owner).toBe("me");
+  });
+
+  it("?view=mine never renders an ORG-WIDE count — the tiles read the caller's own counts", async () => {
+    api.getActionsSummary.mockResolvedValue(
+      anActionsSummary({ open_count: 12, overdue_count: 4, my_open_count: 1, my_overdue_count: 0 })
+    );
 
     const { container } = await renderPage(ActionsPage, { searchParams: sp({ view: "mine" }) });
 
-    // The org summary (12 active org-wide) must not reach a personal view: the caller
-    // owns exactly ONE action, and "My Actions / Open: 12" would be a lie.
-    expect(api.getActionsSummary).not.toHaveBeenCalled();
+    // The org is carrying 12 active / 4 overdue. The caller owns ONE action and is overdue
+    // on none. "My Actions / Open: 12" would hand someone else's backlog to a person as
+    // their own — an enterprise metric in a user-scoped view.
     expect(tileValue(container, "Open")).toBe("1");
+    expect(tileValue(container, "Overdue")).toBe("0");
+  });
+
+  it("a personal queue discloses its own truncation — 'Showing N of M' is not team-only", async () => {
+    // The caller owns 140 actions; the engine's page cap returns far fewer. A personal
+    // queue that renders a partial page and says nothing is the silent-loss bug.
+    api.getActionsSummary.mockResolvedValue(anActionsSummary({ my_open_count: 140 }));
+    api.getActions.mockResolvedValue({ ...anActionsResponse([MINE]), total: 140 });
+
+    await renderPage(ActionsPage, { searchParams: sp({ view: "mine" }) });
+
+    expect(screen.getByText(/Showing 1 of 140/)).toBeInTheDocument();
   });
 
   it("the enterprise Actions link (orgActionsHref) does NOT route into the user-scoped view", async () => {
@@ -264,7 +306,10 @@ describe("/actions — user-scoped My Work vs org-scoped enterprise counts", () 
     expect(screen.queryByText("Rotate the eu-west-1 backup keys")).not.toBeInTheDocument();
     expect(screen.queryByText("Someone else's vendor review")).not.toBeInTheDocument();
     expect(screen.queryByText("Unowned firewall rule cleanup")).not.toBeInTheDocument();
-    // And it must not borrow the org-wide summary to fill its numbers.
+    // It does not even ask: an unanswerable question is answered with an empty queue,
+    // never by widening the scope. (The engine rejects owner=me without a session
+    // identity too — resolveOwnerMeFilter — so this fails closed at both layers.)
+    expect(api.getActions).not.toHaveBeenCalled();
     expect(api.getActionsSummary).not.toHaveBeenCalled();
   });
 });
@@ -283,12 +328,20 @@ describe("/actions — agrees with the Actions metric contract", () => {
       anAction({ id: "m5", title: "Accepted item", owner_user_id: "user-1", status: "accepted" }),
     ];
     api.getActions.mockResolvedValue(anActionsResponse(mine));
+    // An engine build that predates my_*: the tiles fall back to deriving from the slice,
+    // which is where this client-side contract still lives.
+    api.getActionsSummary.mockResolvedValue(
+      anActionsSummary({ my_open_count: undefined, my_overdue_count: undefined, open_count: 12 })
+    );
 
     const { container } = await renderPage(ActionsPage, { searchParams: sp({ view: "mine" }) });
 
     // active = open | in_progress | blocked → 3. Not 5 (terminal work is done) and
     // not 2 (blocked work is still work — the whole point of ACTION_ACTIVE_STATUSES).
     expect(tileValue(container, "Open")).toBe("3");
+    // And the fallback must NEVER substitute the ORG total (12) for a personal count.
+    // A stale number is recoverable; someone else's number is just wrong.
+    expect(tileValue(container, "Open")).not.toBe("12");
   });
 
   it("does not present terminal actions as outstanding remediation", async () => {

@@ -144,6 +144,11 @@ export function anActionsSummary(
     overdue_count: 1,
     immediate_count: 1,
     closed_count: 5,
+    // Server-computed, narrowed to the caller — what the "My Actions" tiles read.
+    // Distinct from the org counts above ON PURPOSE: a fixture where they matched
+    // would let a view that shows the ORG's number in a personal queue pass.
+    my_open_count: 1,
+    my_overdue_count: 0,
     ...overrides,
   };
 }
