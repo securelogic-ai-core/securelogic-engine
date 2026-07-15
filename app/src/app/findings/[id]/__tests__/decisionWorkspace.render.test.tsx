@@ -634,4 +634,31 @@ describe("Decision Workspace — walkthrough remediation (PR-B1)", () => {
     expect(screen.getByText(/Governance: risk accepted/)).toBeInTheDocument();
     expect(screen.queryByText(/finding\.decision\.accepted_risk/)).toBeNull();
   });
+
+  it("shows remediation completion progress in the Remediation tab (R-4)", async () => {
+    workspaceOn();
+    api.getActionsForFinding.mockResolvedValue(
+      anActionsResponse([
+        anAction({ id: "a-1", status: "closed", completed_at: "2026-06-02T00:00:00.000Z" }),
+        anAction({ id: "a-2", status: "in_progress" }),
+      ]),
+    );
+    await renderPage(FindingDetailPage, props());
+    await openRemediationTab();
+    expect(screen.getByText(/1 of 2 complete/)).toBeInTheDocument();
+    expect(screen.getByText(/1 remaining/)).toBeInTheDocument();
+  });
+
+  it("makes evidence with a URL reference openable in the Remediation tab (R-2)", async () => {
+    workspaceOn();
+    api.getFindingEvidence.mockResolvedValue({
+      ok: true,
+      evidence: [{ id: "e-1", title: "Change ticket", evidence_type: "document", external_ref: "https://tickets.example.com/CR-1042", created_at: "2026-06-01T00:00:00.000Z" }],
+    });
+    const { container } = await renderPage(FindingDetailPage, props());
+    await openRemediationTab();
+    const link = container.querySelector('a[href="https://tickets.example.com/CR-1042"]');
+    expect(link).not.toBeNull();
+    expect(link?.getAttribute("target")).toBe("_blank");
+  });
 });

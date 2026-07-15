@@ -283,11 +283,40 @@ function RemediationActionsSection({
   // Only the Decision Workspace passes them.
   owners?: { id: string; label: string }[];
 }) {
+  // R-4: completion progress (workspace only — owners present). ACTION_ACTIVE is
+  // the shared "still outstanding" set; terminal = closed|accepted.
+  const total = actions.length;
+  const remaining = actions.filter((a) => ACTION_ACTIVE.has(a.status)).length;
+  const done = total - remaining;
+  const showWorkspaceExtras = owners !== undefined;
+
   return (
     <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
-      <h3 className="text-xs font-semibold uppercase tracking-wide mb-4" style={{ color: "#94a3b8" }}>
-        Remediation Actions ({actions.length})
-      </h3>
+      <div className="flex items-baseline justify-between gap-3 flex-wrap mb-1">
+        <h3 className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
+          Remediation Actions ({actions.length})
+        </h3>
+        {/* R-3: name these as the EXECUTABLE work, distinct from the advisory
+            recommendation above. */}
+        {showWorkspaceExtras && (
+          <span className="text-xs" style={{ color: "#475569" }}>Executable — tracked to completion</span>
+        )}
+      </div>
+
+      {/* R-4: progress. R-7: when the work is all done, point at the governance step. */}
+      {showWorkspaceExtras && total > 0 && (
+        <div className="mb-4">
+          {remaining > 0 ? (
+            <p className="text-xs" style={{ color: "#94a3b8" }}>
+              {done} of {total} complete · <span style={{ color: "#fcd34d" }}>{remaining} remaining</span>
+            </p>
+          ) : (
+            <p className="text-xs" style={{ color: "#00c4b4" }}>
+              All {total} actions complete — remediation done. Next: record the governance decision above.
+            </p>
+          )}
+        </div>
+      )}
 
       {actions.length === 0 ? (
         <div className="mb-4">
@@ -403,6 +432,11 @@ export default async function FindingDetailPage({
             currentUserId={session.userId ?? null}
             openActionCount={actions.filter((a) => ACTION_ACTIVE.has(a.status)).length}
           >
+            {/* R-3: the recommendation is ADVISORY guidance — distinct from the
+                executable actions below it. Labeled so the two are never conflated. */}
+            <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: "#64748b" }}>
+              Advisory guidance
+            </p>
             {finding.recommendation ? (
               <p className="text-sm mb-4" style={{ color: "#cbd5e1", whiteSpace: "pre-wrap" }}>
                 {finding.recommendation}
