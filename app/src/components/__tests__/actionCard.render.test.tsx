@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
-import { ActionCard } from "../ActionCard";
+import { ActionCard, type ActionPatch } from "../ActionCard";
 import type { Action } from "@/lib/api";
 
 function anAction(overrides: Partial<Action> = {}): Action {
@@ -35,8 +35,8 @@ const owners = [
   { id: "u-2", label: "Ben Sec" },
 ];
 
-let onStatusChange: ReturnType<typeof vi.fn>;
-let onPlanChange: ReturnType<typeof vi.fn>;
+let onStatusChange: (actionId: string, newStatus: Action["status"]) => Promise<void>;
+let onPlanChange: (actionId: string, patch: ActionPatch) => Promise<void>;
 
 beforeEach(() => {
   onStatusChange = vi.fn(async () => {});
