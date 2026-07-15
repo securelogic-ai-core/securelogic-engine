@@ -436,9 +436,12 @@ describe("Decision Workspace — remediation reflects the linked actions", () =>
 
     await openRemediationTab();
     expect(screen.getByText("Remediation Actions (1)")).toBeInTheDocument();
-    // The action's own status badge (not the finding-status <option> of the same word).
+    // The action's own status badge (not the finding-status <option> of the same
+    // word, nor the "Closed" stage label in the lifecycle stepper).
     expect(
-      screen.getAllByText("Closed").filter((el) => el.tagName === "SPAN")
+      screen
+        .getAllByText("Closed")
+        .filter((el) => el.tagName === "SPAN" && !el.closest('[aria-label="Finding lifecycle"]'))
     ).toHaveLength(1);
     expect(screen.getByText(/Completed Jun 2, 2026/)).toBeInTheDocument();
   });
@@ -536,5 +539,99 @@ describe("/findings/[id] — SECURELOGIC_DECISION_WORKSPACE_ENABLED", () => {
     expect(screen.getByText("Status & Priority")).toBeInTheDocument();
     expect(screen.queryAllByRole("tab")).toHaveLength(0);
     expect(container.textContent).not.toContain("Business impact");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// 6. Walkthrough remediation — governance clarity, explainability, actionable links
+// ─────────────────────────────────────────────────────────────────────
+
+describe("Decision Workspace — walkthrough remediation (PR-B1)", () => {
+  it("names the two axes explicitly and shows a lifecycle indicator (DW-1 / R-21)", async () => {
+    workspaceOn();
+    const { container } = await renderPage(FindingDetailPage, props());
+    expect(screen.getByText("Governance Decision")).toBeInTheDocument();
+    expect(screen.getByText("Operational Status")).toBeInTheDocument();
+    expect(container.querySelector('[aria-label="Finding lifecycle"]')).not.toBeNull();
+  });
+
+  it("states the governance hand-off when remediation is complete but undecided (R-19/R-22)", async () => {
+    workspaceOn(
+      aFindingContext({
+        finding: { id: "f-1", source_type: "manual", source_id: null, decision_state: "needs_review", operational_status: "remediated" },
+      }),
+    );
+    await renderPage(FindingDetailPage, props());
+    expect(screen.getByText("Remediation complete. Governance decision required.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Record decision/i })).toBeInTheDocument();
+  });
+
+  it("surfaces the risk-score explainability the engine already returns (DW-4)", async () => {
+    workspaceOn(
+      aFindingContext({ risk: { score: 74, band: "High", rationale: ["Severity High → base 70", "Priority immediate → +10", "Confidence 80 → −6"] } }),
+    );
+    await renderPage(FindingDetailPage, props());
+    expect(screen.getByText(/Why 74\/100\?/)).toBeInTheDocument();
+    expect(screen.getByText("Priority immediate → +10")).toBeInTheDocument();
+  });
+
+  it("makes Suggested Links show match reason + score and explains the consequence (DW-6)", async () => {
+    workspaceOn(
+      aFindingContext({
+        affected: {
+          vendors: [], ai_systems: [], controls: [], obligations: [],
+          candidates: [{ type: "vendor", id: "v-9", name: "Globex Cloud", match_reason: "vendor name match", match_score: 82, status: "needs_review" }],
+        },
+      }),
+    );
+    await renderPage(FindingDetailPage, props());
+    expect(screen.getByText("Match 82/100")).toBeInTheDocument();
+    expect(screen.getByText(/vendor name match/)).toBeInTheDocument();
+    expect(screen.getByText(/Accept to confirm the link/i)).toBeInTheDocument();
+  });
+
+  it("makes evidence with a URL reference openable and never a dead row (DW-7/B-12)", async () => {
+    workspaceOn(
+      aFindingContext({
+        evidence: [{ id: "e-1", title: "Penetration test report", evidence_type: "external_report", external_ref: "https://example.com/pentest.pdf", collected_at: "2026-06-01T00:00:00.000Z", created_at: "2026-06-01T00:00:00.000Z" }],
+      }),
+    );
+    const { container } = await renderPage(FindingDetailPage, props());
+    const link = container.querySelector('a[href="https://example.com/pentest.pdf"]');
+    expect(link).not.toBeNull();
+    expect(link?.getAttribute("target")).toBe("_blank");
+  });
+
+  it("links a business-impact dimension to its underlying entities (B-11)", async () => {
+    workspaceOn(
+      aFindingContext({
+        business_impact: {
+          operational: { level: "high", note: "Two controls exposed" },
+          regulatory: { level: "not_assessed", note: "" },
+          third_party: { level: "not_assessed", note: "" },
+        },
+        affected: {
+          vendors: [], ai_systems: [],
+          controls: [{ type: "control", id: "c-1", name: "Access Control" }],
+          obligations: [], candidates: [],
+        },
+      }),
+    );
+    await renderPage(FindingDetailPage, props());
+    // The business-impact row's link is prefixed with its entity type, distinguishing
+    // it from the same entity listed in Zone D (Affected context).
+    const link = screen.getByRole("link", { name: /Control:\s*Access Control/ });
+    expect(link).toHaveAttribute("href", "/controls/c-1");
+  });
+
+  it("humanizes activity into workflow transitions (DW-9)", async () => {
+    workspaceOn(
+      aFindingContext({
+        activity: [{ event_type: "finding.decision.accepted_risk", created_at: "2026-06-10T00:00:00.000Z", payload: null }],
+      }),
+    );
+    await renderPage(FindingDetailPage, props());
+    expect(screen.getByText(/Governance: risk accepted/)).toBeInTheDocument();
+    expect(screen.queryByText(/finding\.decision\.accepted_risk/)).toBeNull();
   });
 });

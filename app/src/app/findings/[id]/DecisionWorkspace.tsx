@@ -30,6 +30,16 @@ import { legalDecisionTargets } from "./decisionTransitions";
 import { intelligenceEmptyCopy } from "./findingSourceCopy";
 import { topBusinessImpact } from "./businessImpact";
 import { RELATION_LABEL } from "./relationHierarchy";
+import { evidenceRefHref } from "@/lib/evidenceLinks";
+import {
+  GOVERNANCE_AXIS_LABEL,
+  OPERATIONAL_AXIS_LABEL,
+  DECISION_STATE_LABELS,
+  DECISION_STATE_MEANINGS,
+  OperationalStateBadge,
+  LifecycleIndicator,
+  lifecycleSummary,
+} from "@/lib/findingLifecycleVocab";
 import {
   updateFindingStatusAction,
   updateFindingPriorityAction,
@@ -38,17 +48,9 @@ import {
   assignFindingOwnerAction,
 } from "./actions";
 
-const DECISION_LABELS: Record<string, string> = {
-  needs_review: "Needs Review",
-  accepted_risk: "Accepted Risk",
-  mitigating: "Mitigating",
-  resolved: "Resolved",
-};
-const OPERATIONAL_LABELS: Record<string, string> = {
-  open: "Work not started",
-  in_progress: "Work in progress",
-  remediated: "Remediation complete",
-};
+// Canonical governance labels (shared module) — the Decision Workspace was one of
+// the screens that re-declared these; it now imports the single source of truth.
+const DECISION_LABELS = DECISION_STATE_LABELS;
 const STATUS_LABELS: Record<string, string> = {
   open: "Open",
   in_progress: "In Progress",
@@ -98,22 +100,92 @@ function fmt(d: string | null | undefined): string {
   return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function ImpactRow({ label, dim }: { label: string; dim: FindingImpactDimension }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <span style={{ width: 96, fontSize: 12, color: "#94a3b8" }}>{label}</span>
-      <Chip text={LEVEL_LABEL[dim.level] ?? dim.level} color={LEVEL_COLOR[dim.level] ?? "#94a3b8"} />
-      <span style={{ fontSize: 12, color: "#64748b" }}>{dim.note}</span>
-    </div>
-  );
-}
-
 const ENTITY_ROUTE: Record<string, string> = {
   vendor: "/vendors",
   ai_system: "/ai-systems",
   control: "/controls",
   obligation: "/obligations",
 };
+
+const ENTITY_TYPE_LABEL: Record<string, string> = {
+  vendor: "Vendor",
+  ai_system: "AI System",
+  control: "Control",
+  obligation: "Obligation",
+};
+
+/**
+ * A business-impact dimension (B-11). Each dimension is now actionable: it lists
+ * and links the underlying entities that make it real — Operational → controls &
+ * AI systems, Regulatory → obligations, Third-party → vendors — so clicking the
+ * impact takes you to what to actually look at, instead of an inert level chip.
+ */
+function ImpactRow({
+  label,
+  dim,
+  entities,
+}: {
+  label: string;
+  dim: FindingImpactDimension;
+  entities: { type: string; id: string; name: string }[];
+}) {
+  const header = (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <span style={{ width: 96, fontSize: 12, color: "#94a3b8" }}>{label}</span>
+      <Chip text={LEVEL_LABEL[dim.level] ?? dim.level} color={LEVEL_COLOR[dim.level] ?? "#94a3b8"} />
+      <span style={{ fontSize: 12, color: "#64748b" }}>{dim.note}</span>
+    </div>
+  );
+  if (entities.length === 0) return header;
+  return (
+    <details>
+      <summary style={{ cursor: "pointer", listStyle: "none" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          {header}
+          <span style={{ fontSize: 11, color: "#93c5fd" }}>· {entities.length} linked →</span>
+        </span>
+      </summary>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "6px 0 4px 104px" }}>
+        {entities.map((e) => (
+          <Link key={`${e.type}:${e.id}`} href={`${ENTITY_ROUTE[e.type] ?? "#"}/${e.id}`} style={{ fontSize: 12, color: "#93c5fd" }}>
+            <span style={{ color: "#64748b" }}>{ENTITY_TYPE_LABEL[e.type] ?? e.type}: </span>
+            {e.name}
+          </Link>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+/** Humanize an audit event_type into a workflow-transition label (DW-9). */
+const ACTIVITY_LABELS: Record<string, string> = {
+  "finding.created": "Finding created",
+  "finding.promoted_from_signal": "Promoted from intelligence signal",
+  "finding.reviewed": "Reviewed",
+  "finding.assigned": "Owner assigned",
+  "finding.owner_assigned": "Owner assigned",
+  "finding.remediated": "Remediation completed",
+  "finding.operational.advanced": "Remediation progressed",
+  "finding.reopened": "Reopened",
+  "finding.decision.accepted_risk": "Governance: risk accepted",
+  "finding.decision.mitigating": "Governance: mitigation plan accepted",
+  "finding.decision.resolved": "Governance: closed (resolved)",
+  "finding.decision.needs_review": "Governance: sent back for review",
+  "finding.evidence_attached": "Evidence attached",
+  "action.created": "Remediation action added",
+  "action.completed": "Remediation action completed",
+  "action.blocked": "Remediation action blocked",
+};
+
+function activityLabel(eventType: string): string {
+  if (ACTIVITY_LABELS[eventType]) return ACTIVITY_LABELS[eventType];
+  // Fall back to a readable form of the raw event name.
+  return eventType
+    .replace(/^finding\./, "")
+    .replace(/^action\./, "Action: ")
+    .replace(/[._]/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 function AffectedGroup({
   label,
@@ -189,25 +261,34 @@ function CandidateLinks({
     : "/queue";
   return (
     <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-      <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>
+      <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 2 }}>
         Suggested links pending review ({candidates.length})
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+      {/* DW-6: say what accepting/rejecting DOES, so the review isn't a leap of faith. */}
+      <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>
+        Intelligence matched these entities to this finding. Accept to confirm the link (it
+        joins Affected context and drives blast-radius); reject to dismiss the suggestion.
+        Neither changes the finding&apos;s governance decision.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {candidates.map((c) => (
-          <span key={`${c.type}:${c.id}`} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-            <Link
-              href={`${ENTITY_ROUTE[c.type] ?? "#"}/${c.id}`}
-              style={{ fontSize: 13, color: "#93c5fd" }}
-            >
+          <div key={`${c.type}:${c.id}`} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ color: "#64748b", fontSize: 11 }}>{ENTITY_TYPE_LABEL[c.type] ?? c.type}</span>
+            <Link href={`${ENTITY_ROUTE[c.type] ?? "#"}/${c.id}`} style={{ fontSize: 13, color: "#93c5fd" }}>
               {c.name}
             </Link>
-            <Chip text="Needs review" color="#fcd34d" />
-          </span>
+            {typeof c.match_score === "number" && (
+              <Chip text={`Match ${Math.round(c.match_score)}/100`} color="#93c5fd" />
+            )}
+            {c.match_reason && (
+              <span style={{ fontSize: 11, color: "#64748b" }}>· {c.match_reason}</span>
+            )}
+          </div>
         ))}
-        <Link href={queueHref} style={{ fontSize: 12, color: "#93c5fd" }}>
-          Review in queue →
-        </Link>
       </div>
+      <Link href={queueHref} style={{ fontSize: 12, color: "#93c5fd", display: "inline-block", marginTop: 8 }}>
+        Accept or reject in the review queue →
+      </Link>
     </div>
   );
 }
@@ -260,6 +341,10 @@ export function DecisionWorkspace({
   // anywhere in the product can link straight AT the work that is blocking it. Without
   // this the link would land on the page and leave the customer to find the tab.
   const initialTab = searchParams.get("tab");
+  // R-19: the queue this workspace was opened from, so a hand-off from Ready to
+  // Close can state "remediation complete, governance decision required" instead
+  // of dropping the user into a page that looks the same as any other.
+  const fromQueue = searchParams.get("from");
   const [tab, setTab] = useState<DecisionTab>(
     initialTab && isDecisionTab(initialTab) ? initialTab : DEFAULT_DECISION_TAB
   );
@@ -317,9 +402,65 @@ export function DecisionWorkspace({
     context.finding.operational_status ?? null
   ).filter((d) => !(riskAcceptanceActive && d === "accepted_risk" && d !== decisionState));
 
+  // R-7 / R-19 / R-22: the operational + governance state as a single lifecycle
+  // read, plus the next required action. Governance-pending means remediation is
+  // DONE but no decision is recorded — the state the walkthrough found invisible.
+  const opStatus = context.finding.operational_status ?? null;
+  const life = lifecycleSummary(opStatus, decisionState);
+  const governancePending =
+    opStatus === "remediated" && decisionState !== "resolved" && decisionState !== "accepted_risk";
+  const showHandoff = governancePending || fromQueue === "ready_to_close";
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 1100, margin: "0 auto" }}>
       <Link href="/findings" style={{ fontSize: 12, color: "#94a3b8" }}>← Findings</Link>
+
+      {/* R-21 — compact lifecycle indicator: detected → assessed → remediation →
+          governance → closed, derived from the two axes. */}
+      <LifecycleIndicator operationalStatus={opStatus} decisionState={decisionState} />
+
+      {/* R-19 / R-20 / R-22 — governance hand-off. When remediation is complete but
+          undecided (or the user arrived from Ready to Close), state it plainly and
+          make the governance decision the primary next action. */}
+      {showHandoff && (
+        <div
+          role="status"
+          style={{
+            background: "rgba(0,196,180,0.08)",
+            border: "1px solid rgba(0,196,180,0.35)",
+            borderRadius: 10,
+            padding: "12px 16px",
+            display: "flex",
+            gap: 12,
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+          }}
+        >
+          <div>
+            <div style={{ color: "#00c4b4", fontWeight: 600, fontSize: 14 }}>
+              Remediation complete. Governance decision required.
+            </div>
+            <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 2 }}>{life.nextAction}</div>
+          </div>
+          <a
+            href="#governance-decision"
+            style={{
+              background: "rgba(0,196,180,0.15)",
+              border: "1px solid rgba(0,196,180,0.4)",
+              color: "#00c4b4",
+              borderRadius: 6,
+              padding: "6px 12px",
+              fontSize: 13,
+              fontWeight: 600,
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Record decision →
+          </a>
+        </div>
+      )}
 
       {/* P1 — the LOUD governance banner, above everything. When the workflow is on and a
           live acceptance exists, this states the governance status / owner / requester /
@@ -329,79 +470,97 @@ export function DecisionWorkspace({
         <GovernanceBanner acceptances={riskAcceptances} currentUserId={currentUserId} />
       )}
 
-      {/* ZONE A — Decision header */}
-      <div style={CARD}>
-        <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 12, color: "#94a3b8" }}>Decision</span>
-            <select
-              value={context.finding.decision_state}
-              disabled={pending}
-              onChange={(e) => run(() => updateFindingDecisionStateAction(finding.id, e.target.value))}
-              style={{ background: "#0f172a", color: "#f1f5f9", border: "1px solid #334155", borderRadius: 6, padding: "4px 8px", fontSize: 13 }}
-            >
-              {/* Only transitions the lifecycle engine allows (spec §4) — the
-                  dropdown never offers a move the server would 409. Closing
-                  requires derived remediation or an accepted-risk override. When
-                  the signed acceptance workflow is active, accepted_risk is owned
-                  by the panel below, not this dropdown. */}
-              {decisionTargets.map((d) => (
-                <option key={d} value={d}>{DECISION_LABELS[d]}</option>
-              ))}
-            </select>
-            {context.finding.operational_status ? (
-              <Chip
-                text={OPERATIONAL_LABELS[context.finding.operational_status] ?? context.finding.operational_status}
-                color={context.finding.operational_status === "remediated" ? "#86efac" : "#94a3b8"}
-              />
-            ) : null}
-            <span style={{ fontSize: 12, color: "#94a3b8", marginLeft: 8 }}>Status</span>
-            <select
-              value={finding.status}
-              disabled={pending}
-              onChange={(e) => run(() => updateFindingStatusAction(finding.id, e.target.value))}
-              style={{ background: "#0f172a", color: "#f1f5f9", border: "1px solid #334155", borderRadius: 6, padding: "4px 8px", fontSize: 13 }}
-            >
-              {/* Relabel + disable the CLOSING options when this page can already see open
-                  remediation. Server-side enforcement is unchanged and remains the
-                  authority; this just stops us inviting a click we know will be refused. */}
-              {STATUS_ORDER.map((s) => (
-                <option
-                  key={s}
-                  value={s}
-                  disabled={closureBlocked && CLOSING_STATUSES.has(s)}
-                >
-                  {closureBlocked && CLOSING_STATUSES.has(s)
-                    ? `${STATUS_LABELS[s]} (remediation open)`
-                    : STATUS_LABELS[s]}
-                </option>
-              ))}
-            </select>
+      {/* ZONE A — Decision header. DW-1: the two orthogonal axes are named and
+          separated — Governance Decision (human) vs Operational Status (system-
+          derived) — so the user never infers governance from an unlabeled control. */}
+      <div style={CARD} id="governance-decision">
+        <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
+          <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
+            {/* Governance Decision axis */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "#c4b5fd", fontWeight: 600 }}>
+                {GOVERNANCE_AXIS_LABEL}
+              </span>
+              <select
+                value={context.finding.decision_state}
+                disabled={pending}
+                onChange={(e) => run(() => updateFindingDecisionStateAction(finding.id, e.target.value))}
+                style={{ background: "#0f172a", color: "#f1f5f9", border: "1px solid #334155", borderRadius: 6, padding: "4px 8px", fontSize: 13 }}
+              >
+                {/* Only transitions the lifecycle engine allows (spec §4) — never a
+                    move the server would 409. When the signed acceptance workflow is
+                    active, accepted_risk is owned by the panel below, not this dropdown. */}
+                {decisionTargets.map((d) => (
+                  <option key={d} value={d}>{DECISION_LABELS[d]}</option>
+                ))}
+              </select>
+              <span style={{ fontSize: 11, color: "#64748b", maxWidth: 240 }}>
+                {DECISION_STATE_MEANINGS[context.finding.decision_state] ?? "The recorded risk-treatment decision."}
+              </span>
+            </div>
+
+            {/* Operational Status axis — system-derived, read-only. */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "#93c5fd", fontWeight: 600 }}>
+                {OPERATIONAL_AXIS_LABEL}
+              </span>
+              <span>
+                <OperationalStateBadge value={context.finding.operational_status} showAxis={false} />
+              </span>
+              <span style={{ fontSize: 11, color: "#64748b", maxWidth: 220 }}>
+                Derived from linked remediation — you can&apos;t set it directly.
+              </span>
+            </div>
+
+            {/* Legacy lifecycle status — being superseded by the two axes above;
+                kept editable so no behavior changes, but clearly subordinate. */}
+            <details style={{ alignSelf: "center" }}>
+              <summary style={{ cursor: "pointer", fontSize: 11, color: "#64748b" }}>Legacy status</summary>
+              <select
+                value={finding.status}
+                disabled={pending}
+                onChange={(e) => run(() => updateFindingStatusAction(finding.id, e.target.value))}
+                style={{ background: "#0f172a", color: "#f1f5f9", border: "1px solid #334155", borderRadius: 6, padding: "4px 8px", fontSize: 13, marginTop: 4 }}
+              >
+                {/* Relabel + disable the CLOSING options when this page can already see open
+                    remediation. Server-side enforcement is unchanged and remains the authority. */}
+                {STATUS_ORDER.map((s) => (
+                  <option key={s} value={s} disabled={closureBlocked && CLOSING_STATUSES.has(s)}>
+                    {closureBlocked && CLOSING_STATUSES.has(s)
+                      ? `${STATUS_LABELS[s]} (remediation open)`
+                      : STATUS_LABELS[s]}
+                  </option>
+                ))}
+              </select>
+            </details>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            {/* The legacy one-click Accept Risk is a status someone types. It exists ONLY
-                when the signed workflow is OFF (production). P0 (2026-07-15): the gate is
-                the FEATURE FLAG, not the presence of data — so a transient fetch failure can
-                never silently resurrect this side door while the workflow is live. When on,
-                accepted_risk is owned by propose → approve below. */}
-            {!riskAcceptanceFeatureOn && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+            <span style={{ fontSize: 11, color: "#64748b" }}>Governance actions</span>
+            <div style={{ display: "flex", gap: 8 }}>
+              {/* DW-3: framed as formal governance actions, not context-free peer buttons.
+                  The legacy one-click Accept Risk exists ONLY when the signed workflow is
+                  OFF (production); when on, accepted_risk is owned by propose → approve below. */}
+              {!riskAcceptanceFeatureOn && (
+                <button
+                  type="button"
+                  disabled={pending}
+                  title="Formally accept this risk — an audited governance decision that permits closure without full remediation."
+                  onClick={() => run(() => updateFindingDecisionStateAction(finding.id, "accepted_risk"))}
+                  style={{ background: "transparent", border: "1px solid #8b5cf6", color: "#c4b5fd", borderRadius: 6, padding: "6px 12px", fontSize: 13, cursor: "pointer" }}
+                >
+                  Accept Risk
+                </button>
+              )}
               <button
                 type="button"
                 disabled={pending}
-                onClick={() => run(() => updateFindingDecisionStateAction(finding.id, "accepted_risk"))}
-                style={{ background: "transparent", border: "1px solid #475569", color: "#cbd5e1", borderRadius: 6, padding: "6px 12px", fontSize: 13, cursor: "pointer" }}
+                title="Escalate: raise this finding's priority to Immediate to pull it to the top of the queue for leadership attention."
+                onClick={() => run(() => updateFindingPriorityAction(finding.id, "immediate"))}
+                style={{ background: "#b91c1c", border: "1px solid #991b1b", color: "white", borderRadius: 6, padding: "6px 12px", fontSize: 13, cursor: "pointer" }}
               >
-                Accept Risk
+                Escalate priority
               </button>
-            )}
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => run(() => updateFindingPriorityAction(finding.id, "immediate"))}
-              style={{ background: "#b91c1c", border: "1px solid #991b1b", color: "white", borderRadius: 6, padding: "6px 12px", fontSize: 13, cursor: "pointer" }}
-            >
-              Escalate
-            </button>
+            </div>
           </div>
         </div>
 
@@ -428,6 +587,20 @@ export function DecisionWorkspace({
           <Chip text={`Risk ${context.risk.score}/100 (${context.risk.band})`} color="#93c5fd" />
           {finding.priority ? <Chip text={finding.priority} color="#fcd34d" /> : null}
         </div>
+        {/* DW-4: risk-score explainability — the factors that produced the number,
+            already computed by the engine (context.risk.rationale) and previously dropped. */}
+        {context.risk.rationale.length > 0 && (
+          <details style={{ marginBottom: 8 }}>
+            <summary style={{ cursor: "pointer", fontSize: 12, color: "#93c5fd" }}>
+              Why {context.risk.score}/100? — how this score was computed
+            </summary>
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18, color: "#94a3b8", fontSize: 12 }}>
+              {context.risk.rationale.map((r, i) => (
+                <li key={i}>{r}</li>
+              ))}
+            </ul>
+          </details>
+        )}
         <div style={{ fontSize: 13, color: "#94a3b8", display: "flex", gap: 16, flexWrap: "wrap" }}>
           {/* Ownership was read-only text. The engine has accepted owner_user_id on
               PATCH /api/findings/:id since 20260410; the only way to set it was a
@@ -463,8 +636,14 @@ export function DecisionWorkspace({
               <span>{context.owner?.email ?? "Unassigned"}</span>
             )}
           </span>
-          <span>SLA: {fmt((finding as { due_date?: string | null }).due_date)}</span>
-          <span>Confidence: {finding.confidence ?? "—"}</span>
+          <span title="The committed remediation due date (SLA) for this finding.">
+            SLA: {fmt((finding as { due_date?: string | null }).due_date)}
+          </span>
+          {/* DW-5: Confidence is otherwise a bare, undefined value. */}
+          <span title="Confidence = how strongly the evidence supports this finding (higher = more certain). It discounts the risk score when low.">
+            Confidence: {finding.confidence ?? "—"}
+            <span style={{ color: "#475569" }}> ⓘ</span>
+          </span>
         </div>
       </div>
 
@@ -547,9 +726,10 @@ export function DecisionWorkspace({
             and could never read anything else. A row that can only ever say one
             thing is furniture, and it taught the eye to skip the whole panel. */}
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <ImpactRow label="Operational" dim={bi.operational} />
-          <ImpactRow label="Regulatory" dim={bi.regulatory} />
-          <ImpactRow label="Third-party" dim={bi.third_party} />
+          {/* B-11: each dimension links through to the entities that make it real. */}
+          <ImpactRow label="Operational" dim={bi.operational} entities={[...affected.controls, ...affected.ai_systems]} />
+          <ImpactRow label="Regulatory" dim={bi.regulatory} entities={affected.obligations} />
+          <ImpactRow label="Third-party" dim={bi.third_party} entities={affected.vendors} />
         </div>
       </div>
 
@@ -670,9 +850,31 @@ export function DecisionWorkspace({
                 </button>
               </span>
             ) : (
-              context.evidence.map((ev, i) => (
-                <div key={i} style={{ fontSize: 13, color: "#e5e7eb" }}>{String(ev.title)}</div>
-              ))
+              context.evidence.map((ev, i) => {
+                const ref = ev.external_ref == null ? null : String(ev.external_ref);
+                const href = evidenceRefHref(ref);
+                const type = ev.evidence_type ? String(ev.evidence_type).replace(/_/g, " ") : null;
+                const when = ev.collected_at ?? ev.created_at;
+                return (
+                  <div key={i} style={{ fontSize: 13, color: "#e5e7eb", marginBottom: 4 }}>
+                    {href ? (
+                      <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: "#93c5fd" }}>
+                        {String(ev.title)} ↗
+                      </a>
+                    ) : (
+                      <span>{String(ev.title)}</span>
+                    )}
+                    <span style={{ color: "#64748b", fontSize: 12 }}>
+                      {type ? ` · ${type}` : ""}
+                      {when ? ` · ${fmt(String(when))}` : ""}
+                    </span>
+                    {/* A non-URL reference is still shown so it is copyable — never a dead link. */}
+                    {ref && !href && (
+                      <div style={{ fontSize: 11, color: "#64748b" }}>Ref: {ref}</div>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
         </div>
@@ -726,9 +928,12 @@ export function DecisionWorkspace({
           {context.activity.length === 0 ? (
             <span style={{ fontSize: 12, color: "#475569" }}>No recorded activity</span>
           ) : (
-            context.activity.slice(0, 8).map((a, i) => (
-              <div key={i} style={{ fontSize: 12, color: "#cbd5e1" }}>
-                {fmt(a.created_at)} · {a.event_type.replace(/^finding\./, "")}
+            // DW-9: show meaningful workflow transitions with readable labels
+            // (assignment, remediation, evidence, decisions, closure, reopen),
+            // not raw event_type strings, and more than the prior 8.
+            context.activity.slice(0, 20).map((a, i) => (
+              <div key={i} style={{ fontSize: 12, color: "#cbd5e1", marginBottom: 2 }}>
+                <span style={{ color: "#64748b" }}>{fmt(a.created_at)}</span> · {activityLabel(a.event_type)}
               </div>
             ))
           )}
@@ -750,13 +955,14 @@ export function DecisionWorkspace({
           onClick={() => run(() => markFindingReviewedAction(finding.id))}
           style={{ background: "transparent", border: "1px solid #334155", color: "#94a3b8", borderRadius: 6, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}
         >
-          Mark reviewed
+          Mark reviewed by me
         </button>
         <span style={{ fontSize: 12, color: "#64748b" }}>
           {context.whats_changed.since
             ? `You last reviewed this on ${fmt(context.whats_changed.since)}. `
             : "You haven't marked this reviewed yet. "}
-          Resets your “what’s changed” baseline — it doesn’t change status or decision.
+          This is a personal bookmark: it clears your “What’s changed since your last review”
+          list above. It does not change the governance decision, operational status, or any queue.
         </span>
       </div>
     </div>
