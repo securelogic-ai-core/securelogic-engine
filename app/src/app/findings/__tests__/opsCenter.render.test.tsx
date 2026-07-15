@@ -13,7 +13,7 @@
  * Nothing here duplicates it.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { renderPage, signedIn, apiKeyOnly, sp } from "@/test/harness";
 import { aFinding, aFindingsResponse, aFindingsSummary, aMe } from "@/test/fixtures";
 
@@ -24,6 +24,7 @@ const api = vi.hoisted(() => ({
   getFindingSavedViews: vi.fn(),
   getFindingsByEntity: vi.fn(),
   getSignalMatchSuggestionCounts: vi.fn(),
+  getTeamMembers: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -43,7 +44,7 @@ const FINDINGS_BUCKETS = [
   { id: "my_work",             label: "My Work",             count: 3,  field: "my_work_open",            params: { owner: "me", active: true } },
   { id: "sla_breached",        label: "SLA Breached",        count: 7,  field: "overdue_open",            params: { overdue: true } },
   { id: "needs_assignment",    label: "Needs Assignment",    count: 5,  field: "unassigned_open",         params: { unassigned: true } },
-  { id: "needs_decision",      label: "Needs Decision",      count: 9,  field: "needs_review_open",       params: { decision_state: "needs_review", active: true } },
+  { id: "needs_decision",      label: "Needs Governance Decision", count: 9, field: "needs_review_open",   params: { decision_state: "needs_review", active: true } },
   { id: "ready_to_close",      label: "Ready to Close",      count: 4,  field: "ready_for_decision_open", params: { ready_for_decision: true } },
   { id: "active_exploitation", label: "Active Exploitation", count: 2,  field: "exploited_open",          params: { exploited: true, active: true } },
   { id: "regulatory",          label: "Regulatory Impact",   count: 6,  field: "regulatory_open",         params: { domain: "Regulatory", active: true } },
@@ -65,6 +66,7 @@ const BUCKET_PAGE_SIZE = 25;
  *  wired to the wrong summary field shows the wrong number instead of coincidentally
  *  the right one. */
 const OPS_SUMMARY = aFindingsSummary({
+  active_total: 42,
   my_work_open: 3,
   overdue_open: 7,
   unassigned_open: 5,
@@ -89,9 +91,12 @@ const token = (c: { created_at: string; id: string }) => `${c.created_at}~${c.id
 const members = (n: number) =>
   Array.from({ length: n }, (_, i) => aFinding({ id: `f-${i}`, title: `Bucket finding ${i}` }));
 
-/** The card as the customer sees it: its link, and the number printed on it. */
+/** The card as the customer sees it: its link, and the number printed on it.
+ *  Scoped to the bucket grid — the F-1 headline summary bar links to some of the
+ *  same destinations, so we skip anchors inside it and pin the actual bucket card. */
 function card(container: HTMLElement, href: string) {
-  const el = container.querySelector<HTMLAnchorElement>(`a[href="${href}"]`);
+  const anchors = Array.from(container.querySelectorAll<HTMLAnchorElement>(`a[href="${href}"]`));
+  const el = anchors.find((a) => !a.closest('section[aria-label="Findings summary"]')) ?? anchors[0];
   if (!el) return null;
   const spans = el.querySelectorAll("span");
   return { el, label: spans[0]?.textContent ?? "", count: spans[1]?.textContent ?? "" };
@@ -113,17 +118,20 @@ beforeEach(() => {
     total: 15,
     by_target_type: {},
   });
+  api.getTeamMembers.mockResolvedValue({ members: [], pending_invites: [], seat_usage: { used: 0, max: 5 } });
 });
 
 describe("ops center — the work queues render", () => {
   it("lands on decision buckets, risk domains and tracking — not a list of records", async () => {
     const { container } = await home();
 
-    for (const g of ["Decision work", "Risk domains", "Tracking"]) {
-      expect(screen.getByText(g)).toBeInTheDocument();
-    }
+    expect(screen.getByText("Decision work")).toBeInTheDocument();
+    expect(screen.getByText("Risk domains")).toBeInTheDocument();
+    expect(screen.getByText(/^Tracking/)).toBeInTheDocument();
+    // getAllByText tolerates the F-1 summary bar, which repeats a few bucket names
+    // (Ready to Close, Accepted Risk, Awaiting Approval) as headline drill-throughs.
     for (const b of [...FINDINGS_BUCKETS, ...HREF_BUCKETS]) {
-      expect(screen.getByText(b.label)).toBeInTheDocument();
+      expect(screen.getAllByText(b.label).length).toBeGreaterThan(0);
     }
     // Work-first means work, not records: the landing view renders NO finding rows.
     // A page that shows both is the mixed state this mode exists to replace.
@@ -194,6 +202,41 @@ describe("ops center — a card's count and its destination are the same populat
     expect(card(container, "/queue")?.count).toBe("—");
     // ...and the page must not claim all-clear while a count is unknown.
     expect(screen.queryByText(/All clear/)).toBeNull();
+  });
+});
+
+describe("ops center — the F-1 headline summary bar", () => {
+  const summarySection = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>('section[aria-label="Findings summary"]')!;
+
+  it("renders the five headline metrics, each from its own server field", async () => {
+    const { container } = await home();
+    const bar = summarySection(container);
+    expect(bar).not.toBeNull();
+    // Each metric drills through to its destination and prints its own count.
+    const metric = (href: string) =>
+      bar.querySelector<HTMLAnchorElement>(`a[href="${href}"]`)?.querySelector(".text-2xl")?.textContent;
+    expect(metric("/findings?active=true")).toBe("42");
+    expect(metric("/findings?bucket=sla_breached")).toBe("7");
+    expect(metric("/approvals")).toBe("14");
+    expect(metric("/findings?bucket=ready_to_close")).toBe("4");
+    expect(metric("/findings?bucket=accepted_risk")).toBe("13");
+    expect(within(bar).getByText("Active Findings")).toBeInTheDocument();
+  });
+
+  it("discloses that queues overlap (F-2) with a freshness timestamp (F-8)", async () => {
+    const { container } = await home();
+    const bar = summarySection(container);
+    expect(within(bar).getByText(/Queues overlap by design/i)).toBeInTheDocument();
+    expect(bar.textContent).toMatch(/Counts as of/i);
+  });
+
+  it("tags governance vs operational tracking so Accepted Risk ≠ In Mitigation (F-3)", async () => {
+    const { container } = await home();
+    const accepted = card(container, "/findings?bucket=accepted_risk")!.el;
+    const mitigating = card(container, "/findings?bucket=in_mitigation")!.el;
+    expect(within(accepted).getByText("Governance record")).toBeInTheDocument();
+    expect(within(mitigating).getByText("Operational tracking")).toBeInTheDocument();
   });
 });
 

@@ -19,6 +19,8 @@ interface Props {
   orgSummary?: FindingsSummary;
   // True filtered total (server) for the honest "Showing N of M" disclosure.
   total?: number;
+  // MW-4: owner id → display name for the workspace cards.
+  ownerNames?: Record<string, string>;
 }
 
 const TILE: React.CSSProperties = {
@@ -38,7 +40,7 @@ const PILL_INACTIVE: React.CSSProperties = {
   background: "transparent", color: "#94a3b8", border: "1px solid #1e293b",
 };
 
-export function FindingsList({ findings, hasFilters, workspace = false, orgSummary, total }: Props) {
+export function FindingsList({ findings, hasFilters, workspace = false, orgSummary, total, ownerNames }: Props) {
   const [hasActionsOnly, setHasActionsOnly] = useState(false);
 
   const visible = hasActionsOnly
@@ -200,7 +202,13 @@ export function FindingsList({ findings, hasFilters, workspace = false, orgSumma
               </div>
               <div className="space-y-3">
                 {section.findings.map((f) => (
-                  <FindingCard key={f.id} finding={f} revalidateUrl="/findings" workspace={workspace} />
+                  <FindingCard
+                    key={f.id}
+                    finding={f}
+                    revalidateUrl="/findings"
+                    workspace={workspace}
+                    ownerName={f.owner_user_id ? ownerNames?.[f.owner_user_id] ?? null : null}
+                  />
                 ))}
               </div>
             </div>

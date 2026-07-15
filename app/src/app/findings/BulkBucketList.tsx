@@ -23,18 +23,25 @@ const REFUSAL_COPY: Record<string, string> = {
   not_found: "not found",
 };
 
+// Governance-decision framing (MW-1 / R-17): these set the human decision_state
+// axis. "Resolve (close)" read as a one-click close divorced from governance; the
+// labels now name the recorded governance decision.
 const BULK_DECISIONS = [
-  { value: "mitigating", label: "Mitigating (accept plan)" },
-  { value: "accepted_risk", label: "Accept risk" },
-  { value: "resolved", label: "Resolve (close)" },
+  { value: "mitigating", label: "Record decision: Mitigating (accept plan)" },
+  { value: "accepted_risk", label: "Record decision: Accept risk" },
+  { value: "resolved", label: "Record decision: Resolved (close finding)" },
 ] as const;
 
 export default function BulkBucketList({
   findings,
   revalidateUrl,
+  ownerNames,
+  bucketId,
 }: {
   findings: Finding[];
   revalidateUrl: string;
+  ownerNames?: Record<string, string>;
+  bucketId?: string;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -134,7 +141,14 @@ export default function BulkBucketList({
               aria-label={`Select ${f.title}`}
             />
             <div className="flex-1 min-w-0">
-              <FindingCard finding={f} revalidateUrl={revalidateUrl} workspace />
+              <FindingCard
+                finding={f}
+                revalidateUrl={revalidateUrl}
+                workspace
+                ownerName={f.owner_user_id ? ownerNames?.[f.owner_user_id] ?? null : null}
+                reason={bucketId === "my_work" ? "You own this finding" : null}
+                queueContext={bucketId}
+              />
             </div>
           </div>
         ))}

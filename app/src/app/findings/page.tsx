@@ -8,13 +8,14 @@ import {
   getFindingSavedViews,
   getFindingsByEntity,
   getSignalMatchSuggestionCounts,
+  getTeamMembers,
 } from "@/lib/api";
 import { FindingsList } from "./FindingsList";
 import { isActiveStatus } from "./decisionQueue";
 import SavedViewsBar from "./SavedViewsBar";
 import { currentViewFilters } from "./savedViews";
 import WorkFirstFindings from "./WorkFirstFindings";
-import { opsBucket, bucketListParams, opsCounts, decodeCursor, parseTrail, bucketPageHrefs, pageRange, BUCKET_PAGE_SIZE } from "./workQueues";
+import { opsBucket, bucketListParams, opsCounts, globalSummary, decodeCursor, parseTrail, bucketPageHrefs, pageRange, BUCKET_PAGE_SIZE } from "./workQueues";
 
 const SOURCE_TYPE_LABELS: Record<string, string> = {
   vendor_review:        "Vendor Assessment",
@@ -170,6 +171,16 @@ export default async function FindingsPage({
   // (attention tiles + urgency grouping in FindingsList). Off = unchanged list.
   const workspace = process.env.SECURELOGIC_RISK_WORKSPACE_ENABLED === "true";
 
+  // MW-4: resolve owner ids → names so cards show WHO owns a finding, not a bare
+  // "Assigned" chip. Workspace-only (legacy cards never showed owners). Best-effort:
+  // a failed/permission-limited fetch leaves the map empty and cards fall back to
+  // "Assigned" rather than erroring.
+  const ownerNames: Record<string, string> = {};
+  if (workspace) {
+    const teamData = await getTeamMembers(token);
+    for (const m of teamData?.members ?? []) ownerNames[m.id] = m.name || m.email;
+  }
+
   // Saved views (ERIP §1) — DARK, SECURELOGIC_DECISION_WORKSPACE_ENABLED (the engine
   // route 404s while off → []). Per-user named filter presets on the decision queue.
   const savedViewsEnabled = process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true";
@@ -220,6 +231,14 @@ export default async function FindingsPage({
     workFirstMode === "home" ? (suggestionCounts ? suggestionCounts.total : null) : 0
   );
   const entityResult = workFirstMode === "entity" ? await getFindingsByEntity(token, entityQuery) : null;
+
+  // F-1 headline summary + F-8 freshness. Server component with revalidate=0, so
+  // the request-time clock is the honest "as of" for these server-COUNT metrics.
+  const summaryItems = workFirstMode === "home" ? globalSummary(summary) : undefined;
+  const generatedAt =
+    workFirstMode === "home"
+      ? new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZoneName: "short" })
+      : undefined;
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">
@@ -275,6 +294,9 @@ export default async function FindingsPage({
           mode={workFirstMode}
           counts={wfCounts}
           unknownCounts={wfUnknown}
+          summaryItems={summaryItems}
+          generatedAt={generatedAt}
+          ownerNames={ownerNames}
           bucket={bucket ?? undefined}
           bucketFindings={bucketData?.findings ?? undefined}
           bucketPage={bucketPage ?? undefined}
@@ -393,6 +415,7 @@ export default async function FindingsPage({
         workspace={workspace}
         orgSummary={summary}
         total={findingsData?.total}
+        ownerNames={ownerNames}
       />
         </>
       )}
