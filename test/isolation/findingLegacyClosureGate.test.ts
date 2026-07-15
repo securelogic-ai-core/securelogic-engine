@@ -243,16 +243,19 @@ describe("the legacy status axis honours the closure gate (flag ON)", () => {
     expect((await axes(findingId)).operational_status).toBe("closed");
   });
 
-  it("gates 'accepted' too — the other legacy terminal is not an unguarded synonym for closed", async () => {
+  it("gates 'accepted' — with the acceptance workflow live it is refused in favour of the signed workflow, not a legacy synonym for closed", async () => {
     const findingId = await seedFinding(pool, seed.orgA.id, { title: "Accept instead" });
     await seedAction(findingId, "open");
 
     const res = await patch(findingId, { status: "accepted" });
 
-    // 'accepted' writes operational_status='closed' through the same bridge, so gating only
-    // 'closed' would leave the door open one word to the left.
+    // P0 (2026-07-15): 'accepted' is the legacy shorthand for "risk accepted" — a governance
+    // decision. With SECURELOGIC_RISK_ACCEPTANCE_ENABLED on (this suite, line 49), that
+    // decision may only be reached through the signed propose→approve workflow, so a direct
+    // legacy write is refused BEFORE the closure gate is even consulted. Either way the door
+    // is shut — but now for the more fundamental reason.
     expect(res.status).toBe(409);
-    expect(res.body.error).toBe("close_requires_remediation_complete");
+    expect(res.body.error).toBe("use_risk_acceptance_workflow");
     expect((await axes(findingId)).operational_status).not.toBe("closed");
   });
 

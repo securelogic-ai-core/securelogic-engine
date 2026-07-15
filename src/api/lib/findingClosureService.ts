@@ -51,6 +51,11 @@ import { pg } from "../infra/postgres.js";
 import { SQL_ACCEPTANCE_BINDING } from "./riskAcceptanceContract.js";
 import { riskAcceptanceEnabled } from "./riskAcceptanceFeatureFlag.js";
 import {
+  directRiskAcceptanceBlocked,
+  USE_RISK_ACCEPTANCE_WORKFLOW_ERROR,
+  type RiskAcceptanceWorkflowRefusal,
+} from "./findingAcceptanceWorkflow.js";
+import {
   deriveOperationalStatus,
   isLegacyTerminal,
   operationalAuditEvent,
@@ -79,7 +84,7 @@ export const LEGACY_COMPAT_REOPEN_COMMENT =
 
 export type LegacyStatusOutcome =
   | { kind: "not_found" }
-  | { kind: "refused"; httpStatus: 409; body: ClosureRefusal }
+  | { kind: "refused"; httpStatus: 409; body: ClosureRefusal | RiskAcceptanceWorkflowRefusal }
   | {
       kind: "applied";
       changed: boolean;
@@ -109,6 +114,21 @@ export async function applyLegacyStatusTransition(params: {
   actor: LifecycleActor;
 }): Promise<LegacyStatusOutcome> {
   const { organizationId, findingId, newStatus, actor } = params;
+
+  // P0 (2026-07-15): 'accepted' is the legacy shorthand for "risk accepted" — a governance
+  // decision. When the signed risk-acceptance workflow is live, that decision may only be
+  // reached by an approved acceptance (approver ≠ proposer, with rationale + expiry), never
+  // by a direct legacy status write that would fabricate a cosmetic 'accepted' terminal
+  // with no proposal, approver, rationale or expiry behind it. Refused before any read.
+  // Flag OFF (prod): directRiskAcceptanceBlocked() is false — the legacy accept path is
+  // byte-identical.
+  if (directRiskAcceptanceBlocked({ legacyStatus: newStatus })) {
+    return {
+      kind: "refused",
+      httpStatus: 409,
+      body: { ...USE_RISK_ACCEPTANCE_WORKFLOW_ERROR, finding_id: findingId },
+    };
+  }
 
   // FOR UPDATE: a concurrent Action write and a concurrent close cannot interleave into a
   // contradiction, and `fromState` is the state we are genuinely transitioning from.

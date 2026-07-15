@@ -26,6 +26,10 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import {
+  sendAcceptanceProposedNotification,
+  sendAcceptanceDecidedNotification,
+} from "../lib/riskAcceptanceNotifier.js";
 import { riskAcceptanceFeatureFlag } from "../lib/riskAcceptanceFeatureFlag.js";
 import {
   ACCEPTANCE_SELECT,
@@ -171,6 +175,17 @@ router.post(
         ipAddress: req.ip ?? null,
       });
 
+      // P2 (2026-07-15): tell the org's approvers there is something to approve — SoD only
+      // works if the person who must act knows. Fire-and-forget on its own pgElevated
+      // connection (safe after the asTenant commit), never fatal to the request, and dark
+      // unless SECURELOGIC_RISK_ACCEPTANCE_NOTIFICATIONS_ENABLED is on.
+      void sendAcceptanceProposedNotification({
+        organizationId,
+        findingId,
+        requesterUserId: requestedBy,
+        expiresAt: acceptance.expires_at,
+      });
+
       res.status(201).json({ acceptance });
     } catch (err) {
       logger.error({ event: "risk_acceptance_propose_failed", err }, "POST risk-acceptance failed");
@@ -314,6 +329,15 @@ router.post(
         ipAddress: req.ip ?? null,
       });
 
+      // P2: tell the requester their acceptance was approved. Fire-and-forget, non-fatal.
+      void sendAcceptanceDecidedNotification({
+        organizationId,
+        findingId: acceptance.finding_id,
+        requesterUserId: acceptance.requested_by_user_id,
+        decision: "approved",
+        rationale: acceptance.decision_rationale ?? null,
+      });
+
       res.json({ acceptance, finding_operational_status: recompute.toState ?? "unchanged" });
     } catch (err) {
       logger.error({ event: "risk_acceptance_approve_failed", err }, "approve failed");
@@ -401,6 +425,15 @@ router.post(
         resourceId: acceptanceId,
         payload: { finding_id: row.finding_id },
         ipAddress: req.ip ?? null,
+      });
+
+      // P2: tell the requester their acceptance was rejected. Fire-and-forget, non-fatal.
+      void sendAcceptanceDecidedNotification({
+        organizationId,
+        findingId: row.finding_id,
+        requesterUserId: row.requested_by_user_id,
+        decision: "rejected",
+        rationale: updated.rows[0]?.decision_rationale ?? null,
       });
 
       res.json({ acceptance: updated.rows[0] });

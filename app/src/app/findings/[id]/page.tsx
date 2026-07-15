@@ -382,14 +382,16 @@ export default async function FindingDetailPage({
   if (process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true") {
     const context = await getFindingContext(token, id);
     if (context) {
-      // The signed risk-acceptance lifecycle (product ruling 2026-07-12) — DARK. When the
-      // flag is on we read the finding's acceptances; a null result (engine route 404,
-      // its own flag off — two-switch) leaves the workspace on its legacy Accept-Risk
-      // control. Best-effort: a fetch failure degrades to that same legacy behaviour.
-      const riskAcceptances =
-        process.env.SECURELOGIC_RISK_ACCEPTANCE_ENABLED === "true"
-          ? await getRiskAcceptancesForFinding(token, id)
-          : null;
+      // The signed risk-acceptance lifecycle (product ruling 2026-07-12). Whether the
+      // workflow OWNS accepted_risk is decided by this flag — passed explicitly so the
+      // client never infers "feature off" from a null fetch (P0, 2026-07-15). When on we
+      // read the finding's acceptances; a null result is a transient failure, and the
+      // workspace shows an "unavailable" notice rather than the one-click side door.
+      const riskAcceptanceFeatureOn =
+        process.env.SECURELOGIC_RISK_ACCEPTANCE_ENABLED === "true";
+      const riskAcceptances = riskAcceptanceFeatureOn
+        ? await getRiskAcceptancesForFinding(token, id)
+        : null;
       return (
         <div className="max-w-6xl mx-auto px-6 py-12">
           <DecisionWorkspace
@@ -397,6 +399,7 @@ export default async function FindingDetailPage({
             context={context}
             owners={owners}
             riskAcceptances={riskAcceptances}
+            riskAcceptanceFeatureOn={riskAcceptanceFeatureOn}
             currentUserId={session.userId ?? null}
             openActionCount={actions.filter((a) => ACTION_ACTIVE.has(a.status)).length}
           >

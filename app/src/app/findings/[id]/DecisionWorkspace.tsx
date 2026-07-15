@@ -24,6 +24,7 @@ import type {
 } from "@/lib/api";
 import { intelligenceEventHref, findingEventId } from "@/lib/intelligenceLinks";
 import { RiskAcceptancePanel } from "./RiskAcceptancePanel";
+import { GovernanceBanner } from "./GovernanceBanner";
 import { DECISION_TABS, DEFAULT_DECISION_TAB, isDecisionTab, type DecisionTab } from "./decisionTabs";
 import { legalDecisionTargets } from "./decisionTransitions";
 import { intelligenceEmptyCopy } from "./findingSourceCopy";
@@ -224,6 +225,7 @@ export function DecisionWorkspace({
   context,
   owners = [],
   riskAcceptances = null,
+  riskAcceptanceFeatureOn = false,
   currentUserId = null,
   openActionCount = 0,
   children,
@@ -232,10 +234,17 @@ export function DecisionWorkspace({
   context: FindingContext;
   /** Org members, for assigning the finding. Empty => owner renders as plain text. */
   owners?: { id: string; label: string }[];
-  // A finding's acceptances + terminal history. null = the risk-acceptance feature is
-  // dark (route 404) → keep the legacy Accept-Risk control (byte-identical). A non-null
-  // array = the feature is active → the signed lifecycle panel owns accepted_risk.
+  // A finding's acceptances + terminal history. null = the feature returned no data for
+  // this request (route dark OR — with the feature on — a fetch that failed). A non-null
+  // array = data in hand. NEVER infer "feature off" from null; that is what
+  // `riskAcceptanceFeatureOn` is for (P0, 2026-07-15).
   riskAcceptances?: RiskAcceptance[] | null;
+  // P0 (2026-07-15): whether the signed risk-acceptance workflow is configured ON (read
+  // server-side from SECURELOGIC_RISK_ACCEPTANCE_ENABLED). This — NOT the presence of data
+  // — decides whether the workflow owns `accepted_risk`. When on but the data is null (a
+  // transient fetch failure), we show an "unavailable" notice, never the one-click side
+  // door. When off (production), the legacy one-click Accept-Risk is unchanged.
+  riskAcceptanceFeatureOn?: boolean;
   /** The viewer, for separation-of-duties on approve/reject. */
   currentUserId?: string | null;
   /** Non-terminal remediation Actions on this finding — see closureBlocked below. */
@@ -297,7 +306,11 @@ export function DecisionWorkspace({
   // approve, and the decision dropdown no longer offers accepted_risk as a target — the
   // only exception is when the finding already IS accepted_risk, so its current value
   // still renders. When the feature is dark, nothing here changes.
-  const riskAcceptanceActive = riskAcceptances !== null;
+  // P0 (2026-07-15): the workflow owns accepted_risk whenever it is CONFIGURED ON — decided
+  // by the flag, not by whether data happened to load. This keeps the dropdown filter and
+  // the one-click suppression aligned with the ENGINE, which 409s a direct accepted_risk
+  // write while the flag is on regardless of what the client fetched.
+  const riskAcceptanceActive = riskAcceptanceFeatureOn;
   const decisionState = context.finding.decision_state;
   const decisionTargets = legalDecisionTargets(
     decisionState,
@@ -307,6 +320,14 @@ export function DecisionWorkspace({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 1100, margin: "0 auto" }}>
       <Link href="/findings" style={{ fontSize: 12, color: "#94a3b8" }}>← Findings</Link>
+
+      {/* P1 — the LOUD governance banner, above everything. When the workflow is on and a
+          live acceptance exists, this states the governance status / owner / requester /
+          approver / next action / dates at the top, so the state is never read off the
+          Decision dropdown. Renders nothing when there is no live acceptance. */}
+      {riskAcceptanceFeatureOn && riskAcceptances !== null && (
+        <GovernanceBanner acceptances={riskAcceptances} currentUserId={currentUserId} />
+      )}
 
       {/* ZONE A — Decision header */}
       <div style={CARD}>
@@ -358,10 +379,12 @@ export function DecisionWorkspace({
             </select>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            {/* The legacy one-click Accept Risk is a status someone types. When the
-                signed acceptance workflow is active it is replaced by the panel below
-                (propose → a colleague approves); we do not offer both. */}
-            {!riskAcceptanceActive && (
+            {/* The legacy one-click Accept Risk is a status someone types. It exists ONLY
+                when the signed workflow is OFF (production). P0 (2026-07-15): the gate is
+                the FEATURE FLAG, not the presence of data — so a transient fetch failure can
+                never silently resurrect this side door while the workflow is live. When on,
+                accepted_risk is owned by propose → approve below. */}
+            {!riskAcceptanceFeatureOn && (
               <button
                 type="button"
                 disabled={pending}
@@ -445,16 +468,61 @@ export function DecisionWorkspace({
         </div>
       </div>
 
-      {/* Risk acceptance — the signed governance lifecycle. Rendered only when the
-          feature is active (non-null array); owns accepted_risk when it is. */}
-      {riskAcceptances !== null && (
-        <RiskAcceptancePanel
-          findingId={finding.id}
-          acceptances={riskAcceptances}
-          owners={owners}
-          currentUserId={currentUserId}
-        />
-      )}
+      {/* Risk acceptance — the signed governance lifecycle. P0 (2026-07-15): keyed off the
+          FEATURE FLAG. Feature on + data → the panel owns accepted_risk. Feature on but data
+          null (a transient fetch failure) → an explicit "unavailable" notice with a retry,
+          NEVER a silent fall-back to the one-click side door. Feature off → nothing here
+          (the legacy control lives in Zone A). */}
+      {riskAcceptanceFeatureOn &&
+        (riskAcceptances !== null ? (
+          <div id="risk-acceptance">
+            <RiskAcceptancePanel
+              findingId={finding.id}
+              acceptances={riskAcceptances}
+              owners={owners}
+              currentUserId={currentUserId}
+            />
+          </div>
+        ) : (
+          <div
+            id="risk-acceptance"
+            role="alert"
+            style={{
+              background: "rgba(148,163,184,0.08)",
+              border: "1px solid rgba(148,163,184,0.35)",
+              borderRadius: 10,
+              padding: "14px 18px",
+              fontSize: 13,
+              color: "#cbd5e1",
+              display: "flex",
+              gap: 12,
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+            }}
+          >
+            <span>
+              The risk-acceptance workflow is temporarily unavailable, so its status can’t be
+              shown right now. Accepting a risk is a governed decision — it is never a
+              one-click status here. Reload to try again.
+            </span>
+            <button
+              type="button"
+              onClick={() => router.refresh()}
+              style={{
+                background: "transparent",
+                border: "1px solid #475569",
+                color: "#e2e8f0",
+                borderRadius: 6,
+                padding: "6px 12px",
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        ))}
 
       {/* ZONE B — What's changed */}
       <div style={CARD}>

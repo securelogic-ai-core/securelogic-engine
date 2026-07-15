@@ -105,23 +105,32 @@ describe("closure gate OFF — the legacy contract, byte for byte", () => {
     expect(after.operational).toBe("closed");
   });
 
-  it("never produces the 409 — the new error code cannot reach a client with the flag off", async () => {
+  it("never produces the closure-gate 409 — that error code cannot reach a client with the gate off", async () => {
     const findingId = await seedFinding(pool, seed.orgA.id, { title: "No 409 here" });
     await seedAction(findingId, "blocked");
 
-    for (const status of ["closed", "accepted"]) {
-      const res = await patch(findingId, { status });
-      expect(res.status).not.toBe(409);
-      expect(res.body.error).not.toBe("close_requires_remediation_complete");
-    }
+    // 'closed' is the closure gate's terminal. With the gate off it never yields the
+    // closure-gate refusal. ('accepted' is separately governed by the acceptance workflow —
+    // asserted below — so it is NOT part of this closure-gate-off invariant.)
+    const res = await patch(findingId, { status: "closed" });
+    expect(res.status).not.toBe(409);
+    expect(res.body.error).not.toBe("close_requires_remediation_complete");
   });
 
-  it("closes via 'accepted' with work outstanding, as before", async () => {
+  it("refuses legacy 'accepted' in favour of the signed workflow — no cosmetic accepted state", async () => {
     const findingId = await seedFinding(pool, seed.orgA.id, { title: "Legacy accept" });
     await seedAction(findingId, "open");
 
-    expect((await patch(findingId, { status: "accepted" })).status).toBe(200);
-    expect((await axes(findingId)).operational).toBe("closed");
+    // P0 (2026-07-15): with the acceptance workflow live (this suite sets it, line 23), the
+    // legacy 'accepted' shorthand no longer fabricates a terminal 'accepted' state. Accepting
+    // a risk is a governed decision (propose → approve by a different user). This refusal is
+    // INDEPENDENT of the closure gate — which is OFF here — proving it comes from the
+    // acceptance workflow, not the gate. In production (acceptance workflow OFF) the legacy
+    // accept path is unchanged.
+    const res = await patch(findingId, { status: "accepted" });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("use_risk_acceptance_workflow");
+    expect((await axes(findingId)).operational).not.toBe("closed");
   });
 
   it("leaves every non-closing write alone", async () => {

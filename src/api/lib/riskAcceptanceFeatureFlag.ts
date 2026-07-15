@@ -14,10 +14,15 @@
  * Flag ON (staging) — the full lifecycle: acceptance requires approval by someone other
  * than the requester, approval closes the Finding, expiry or withdrawal reopens it.
  *
- * The legacy accepted population is NOT affected by this flag in either position: those
- * findings are closed by the legacy compat bridge (`status='accepted'` is terminal), so
- * they stay closed whether the flag is on or off. Their `finding_risk_acceptances` rows
- * are governance-review markers, not closure inputs.
+ * The EXISTING legacy accepted population (findings already at `status='accepted'`) is NOT
+ * affected in either position: those findings stay closed, and their
+ * `finding_risk_acceptances` rows are governance-review markers, not closure inputs.
+ *
+ * NEW writes are gated (P0, 2026-07-15). When the flag is ON, no direct write may fabricate
+ * an accepted state without the signed workflow: `decision_state='accepted_risk'` (Decision
+ * Workspace + bulk decide) and the legacy `status='accepted'` shorthand are both refused
+ * with `use_risk_acceptance_workflow` — see `findingAcceptanceWorkflow.ts`. When OFF
+ * (production), every path is byte-identical to before; the legacy accept still closes.
  */
 
 import type { Request, Response, NextFunction } from "express";

@@ -35,6 +35,10 @@ import {
 import { applyLegacyStatusTransition } from "../lib/findingClosureService.js";
 import { riskAcceptanceEnabled } from "../lib/riskAcceptanceFeatureFlag.js";
 import {
+  directRiskAcceptanceBlocked,
+  USE_RISK_ACCEPTANCE_WORKFLOW_ERROR,
+} from "../lib/findingAcceptanceWorkflow.js";
+import {
   writeFindingLifecycleEvent,
   recomputeFindingOperationalStatus,
 } from "../lib/findingLifecycle.js";
@@ -1373,6 +1377,15 @@ router.patch(
           res.status(400).json({ error: "invalid_decision_state", allowed: [...VALID_DECISION_STATES] });
           return;
         }
+        // P0 (2026-07-15): when the signed risk-acceptance workflow is live, `accepted_risk`
+        // is the OUTPUT of that workflow (approve by a second authorized user), never a
+        // direct decision write. Refuse the one-click side door before any read, so a
+        // governance decision can never be fabricated as a bare label. Flag OFF (prod):
+        // directRiskAcceptanceBlocked() is false and this branch is byte-identical.
+        if (directRiskAcceptanceBlocked({ decisionState: ds })) {
+          res.status(409).json({ ...USE_RISK_ACCEPTANCE_WORKFLOW_ERROR, finding_id: findingId });
+          return;
+        }
         const current = await pg.query<{ decision_state: string; operational_status: string }>(
           `SELECT decision_state, operational_status FROM findings
             WHERE id = $1 AND organization_id = $2
@@ -1812,6 +1825,14 @@ router.post(
       const ds = body["decision_state"];
       if (!isNonEmptyString(ds) || !VALID_DECISION_STATES.has(ds)) {
         res.status(400).json({ error: "invalid_decision_state", allowed: [...VALID_DECISION_STATES] });
+        return;
+      }
+      // P0 (2026-07-15): the same side-door guard as the single PATCH. A bulk decide can no
+      // more fabricate an acceptance than one-at-a-time — each finding needs its own signed
+      // proposal + independent approval. Refuse the whole op rather than silently accepting
+      // a subset. Flag OFF (prod): not reached (bulk decide is behind DECISION_WORKSPACE).
+      if (directRiskAcceptanceBlocked({ decisionState: ds })) {
+        res.status(409).json(USE_RISK_ACCEPTANCE_WORKFLOW_ERROR);
         return;
       }
 
