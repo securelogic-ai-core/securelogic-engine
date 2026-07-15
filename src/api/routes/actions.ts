@@ -317,6 +317,8 @@ router.get(
           id, organization_id, title, description, action_type,
           source_type, source_id, priority, due_date, owner_user_id,
           status, created_at, updated_at, completed_at,
+          blocked_reason, blocked_dependency, blocked_owner_user_id,
+          blocked_expected_unblock_date,
           -- Overdue is decided HERE, by the contract, and shipped as a field.
           -- The client used to re-derive it against NOW() rather than CURRENT_DATE,
           -- so an action due TODAY wore a red "overdue" badge in this very list
@@ -487,7 +489,9 @@ router.get(
         SELECT
           id, organization_id, title, description, action_type,
           source_type, source_id, priority, due_date, owner_user_id,
-          status, created_at, updated_at, completed_at
+          status, created_at, updated_at, completed_at,
+          blocked_reason, blocked_dependency, blocked_owner_user_id,
+          blocked_expected_unblock_date
         FROM actions
         WHERE id = $1
           AND organization_id = $2
@@ -600,10 +604,60 @@ router.patch(
         updates.push(`due_date = $${values.length}`);
       }
 
+      // R-10: structured blocker metadata. All optional (a block can carry just a
+      // reason). Free-text fields are trimmed and treated as null when empty so a
+      // cleared field is a real null, not "". The owner FK and the date reuse the
+      // same validation shape as owner_user_id / due_date above.
+      if ("blocked_reason" in body) {
+        const v = body["blocked_reason"];
+        if (v !== null && typeof v !== "string") {
+          res.status(400).json({ error: "blocked_reason_must_be_string_or_null" });
+          return;
+        }
+        const trimmed = typeof v === "string" ? v.trim() : "";
+        values.push(trimmed.length > 0 ? trimmed : null);
+        updates.push(`blocked_reason = $${values.length}`);
+      }
+
+      if ("blocked_dependency" in body) {
+        const v = body["blocked_dependency"];
+        if (v !== null && typeof v !== "string") {
+          res.status(400).json({ error: "blocked_dependency_must_be_string_or_null" });
+          return;
+        }
+        const trimmed = typeof v === "string" ? v.trim() : "";
+        values.push(trimmed.length > 0 ? trimmed : null);
+        updates.push(`blocked_dependency = $${values.length}`);
+      }
+
+      if ("blocked_owner_user_id" in body) {
+        const v = body["blocked_owner_user_id"];
+        if (v !== null && !isUuid(v)) {
+          res.status(400).json({ error: "blocked_owner_user_id_must_be_uuid_or_null" });
+          return;
+        }
+        values.push(v ?? null);
+        updates.push(`blocked_owner_user_id = $${values.length}`);
+      }
+
+      if ("blocked_expected_unblock_date" in body) {
+        const v = body["blocked_expected_unblock_date"];
+        if (v !== null && !isIsoDate(v)) {
+          res.status(400).json({ error: "blocked_expected_unblock_date_must_be_yyyy_mm_dd_or_null" });
+          return;
+        }
+        values.push(v ?? null);
+        updates.push(`blocked_expected_unblock_date = $${values.length}`);
+      }
+
       if (updates.length === 0) {
         res.status(400).json({
           error: "no_updateable_fields",
-          updatable: ["status", "priority", "owner_user_id", "due_date"]
+          updatable: [
+            "status", "priority", "owner_user_id", "due_date",
+            "blocked_reason", "blocked_dependency", "blocked_owner_user_id",
+            "blocked_expected_unblock_date"
+          ]
         });
         return;
       }
@@ -620,7 +674,9 @@ router.patch(
           AND organization_id = $${orgParam}
         RETURNING
           id, organization_id, title, source_type, source_id, priority,
-          status, owner_user_id, due_date, updated_at, completed_at
+          status, owner_user_id, due_date, updated_at, completed_at,
+          blocked_reason, blocked_dependency, blocked_owner_user_id,
+          blocked_expected_unblock_date
         `,
         values
       );

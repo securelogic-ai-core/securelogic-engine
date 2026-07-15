@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getFindingEvidence, attachFindingEvidence, type Evidence } from "@/lib/api";
+import { evidenceRefHref } from "@/lib/evidenceLinks";
 import { EVIDENCE_TYPES } from "./findingEvidencePayload";
 
 const CARD_STYLE: React.CSSProperties = {
@@ -136,8 +137,8 @@ export function FindingEvidenceSection({ findingId }: { findingId: string }) {
 
   return (
     <div className="mt-4 p-5" style={CARD_STYLE}>
-      <div className="flex items-baseline justify-between mb-4 gap-3 flex-wrap">
-        <p style={SECTION_LABEL}>Evidence ({evidence.length})</p>
+      <div className="flex items-baseline justify-between mb-1 gap-3 flex-wrap">
+        <p style={SECTION_LABEL}>Remediation evidence ({evidence.length})</p>
         {!addOpen && (
           <button
             type="button"
@@ -155,6 +156,10 @@ export function FindingEvidenceSection({ findingId }: { findingId: string }) {
           </button>
         )}
       </div>
+      {/* R-1: connect the evidence to the remediation it supports. */}
+      <p className="text-xs mb-4" style={{ color: "#475569" }}>
+        Proof that the remediation actions above were completed — attaching it can advance this finding to Remediation complete.
+      </p>
 
       {addOpen && (
         <div
@@ -271,16 +276,30 @@ export function FindingEvidenceSection({ findingId }: { findingId: string }) {
               style={{ background: "rgba(148,163,184,0.04)", border: "1px solid #1e293b" }}
             >
               <div className="flex items-baseline justify-between gap-3 flex-wrap">
-                <span className="text-sm" style={{ color: "#e2e8f0" }}>
-                  {ev.title}
-                </span>
+                {/* R-2: openable when the reference is a URL — never a dead row. */}
+                {evidenceRefHref(ev.external_ref) ? (
+                  <a
+                    href={evidenceRefHref(ev.external_ref)!}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm"
+                    style={{ color: "#93c5fd" }}
+                  >
+                    {ev.title} ↗
+                  </a>
+                ) : (
+                  <span className="text-sm" style={{ color: "#e2e8f0" }}>
+                    {ev.title}
+                  </span>
+                )}
                 <span className="text-xs" style={{ color: "#64748b" }}>
                   {fmtEvidenceType(ev.evidence_type)} · {fmtDate(ev.created_at)}
                 </span>
               </div>
-              {ev.external_ref && (
+              {/* A non-URL reference stays visible so it is copyable — never a dead link. */}
+              {ev.external_ref && !evidenceRefHref(ev.external_ref) && (
                 <p className="text-xs mt-1 m-0" style={{ color: "#64748b" }}>
-                  {ev.external_ref}
+                  Ref: {ev.external_ref}
                 </p>
               )}
             </li>

@@ -537,6 +537,12 @@ export type Action = {
   completed_at: string | null;
   created_at: string;
   updated_at: string;
+  // R-10: structured blocker metadata, populated when an action is blocked.
+  // All optional/nullable; absent on older cached payloads.
+  blocked_reason?: string | null;
+  blocked_dependency?: string | null;
+  blocked_owner_user_id?: string | null;
+  blocked_expected_unblock_date?: string | null;
   /**
    * Server-decided, per the Metric Contract (active AND due < CURRENT_DATE).
    * Never re-derive this on the client: doing so with `new Date()` compares

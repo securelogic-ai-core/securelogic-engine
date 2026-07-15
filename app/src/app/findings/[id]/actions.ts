@@ -268,6 +268,11 @@ export async function updateActionAction(
     priority?: string;
     owner_user_id?: string | null;
     due_date?: string | null;
+    // R-10 structured blocker metadata (set when blocking an action).
+    blocked_reason?: string | null;
+    blocked_dependency?: string | null;
+    blocked_owner_user_id?: string | null;
+    blocked_expected_unblock_date?: string | null;
   }
 ): Promise<{ error?: string }> {
   const token = await getToken();
