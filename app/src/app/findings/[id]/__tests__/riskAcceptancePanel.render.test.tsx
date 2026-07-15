@@ -91,7 +91,7 @@ describe("risk acceptance — dark", () => {
     expect(api.getRiskAcceptancesForFinding).not.toHaveBeenCalled();
   });
 
-  it("even with the app flag on, a null result (engine dark) falls back to the legacy control", async () => {
+  it("with the app flag ON, a null result (transient failure) does NOT resurrect the legacy control (P0)", async () => {
     vi.stubEnv("SECURELOGIC_DECISION_WORKSPACE_ENABLED", "true");
     vi.stubEnv("SECURELOGIC_RISK_ACCEPTANCE_ENABLED", "true");
     api.getFindingContext.mockResolvedValue(aFindingContext());
@@ -99,8 +99,12 @@ describe("risk acceptance — dark", () => {
 
     await renderPage(FindingDetailPage, props());
 
-    expect(screen.getByRole("button", { name: "Accept Risk" })).toBeInTheDocument();
-    expect(screen.queryByText("Risk acceptance")).toBeNull();
+    // P0 (2026-07-15): the side door is gated by the FLAG, not by whether data loaded. A
+    // null fetch with the workflow on is a transient failure — the one-click control stays
+    // gone, and the user is told the workflow is unavailable rather than handed an
+    // ungoverned shortcut.
+    expect(screen.queryByRole("button", { name: "Accept Risk" })).toBeNull();
+    expect(screen.getByText(/temporarily unavailable/i)).toBeInTheDocument();
   });
 });
 

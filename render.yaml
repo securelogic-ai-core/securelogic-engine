@@ -479,6 +479,14 @@ services:
       # accepted population is held closed by the compat bridge, not this flag.
       - key: SECURELOGIC_RISK_ACCEPTANCE_ENABLED
         value: "true"
+      # P2 (2026-07-15): email notifications for the risk-acceptance workflow — proposal to
+      # the org's approvers, decision to the requester. DELIBERATELY separate from the
+      # workflow flag so email can be validated (or held) independently. Staging = "true";
+      # production intentionally omits it (absent reads false) — a separate operator
+      # decision after staging validation, and production has the workflow off anyway so no
+      # acceptance events are produced. Read only by the engine web service (the routes).
+      - key: SECURELOGIC_RISK_ACCEPTANCE_NOTIFICATIONS_ENABLED
+        value: "true"
 
       # Canonical Intelligence Event projection (Pipeline Hardening / IE) — DARK.
       # Projects cyber_signals into the global intelligence_events layer

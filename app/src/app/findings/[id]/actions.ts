@@ -175,6 +175,17 @@ export async function updateFindingDecisionStateAction(
         return mapFindingActionError(body, findingId, "Failed to update decision");
       }
 
+      // P0 (2026-07-15): with the signed workflow live, the engine 409s a direct write to
+      // accepted_risk. The dropdown already hides that option, so this is defence-in-depth
+      // (a stale client / direct call) — surface the engine's customer-safe message.
+      if (body.error === "use_risk_acceptance_workflow") {
+        return {
+          error:
+            (body as { message?: string }).message ??
+            "Accepting a risk is a governed decision. Propose a risk acceptance and have a different authorized user approve it.",
+        };
+      }
+
       // The other guarded transitions 409 with a machine reason — surface it in customer
       // language instead of a silent no-op (a control that silently fails is a dead
       // control).
