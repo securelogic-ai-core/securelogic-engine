@@ -267,3 +267,44 @@ describe("/dashboard — authorization", () => {
     expect(api.getFrameworks).not.toHaveBeenCalled();
   });
 });
+
+// ── Walkthrough remediation (D-1 / D-2 / D-4 / D-5) ─────────────────────────
+
+describe("dashboard — enterprise vs newsletter truthfulness (walkthrough)", () => {
+  const EMPTY_SUMMARY = aDashboardSummary({
+    posture: { overall_score: null, overall_severity: null, snapshot_date: null },
+    domains: [],
+    findings: { open: 0, by_severity: { Critical: 0, High: 0, Moderate: 0, Low: 0 } },
+    actions: { open: 0, in_progress: 0, overdue: 0 },
+    risks_summary: { open: 0, by_risk_rating: { Critical: 0, High: 0, Moderate: 0, Low: 0 } },
+  });
+
+  it("D-1/D-4: a platform tenant is addressed as a platform, not a Brief Lite subscriber", async () => {
+    api.getMe.mockResolvedValue(aMe({ entitlementLevel: "platform", organizationName: "Acme" }));
+    await renderPage(DashboardPage, { searchParams: sp({}) });
+    expect(screen.getByText(/access to the SecureLogic platform/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Intelligence Brief Lite/i)).toBeNull();
+    // No consumer upsell on an enterprise tenant.
+    expect(screen.queryByText(/Upgrade your plan/i)).toBeNull();
+  });
+
+  it("D-2: the 'complete setup to start tracking posture' banner is hidden when the tenant has data", async () => {
+    // Default beforeEach seeds a posture snapshot + domains → the org is already tracking.
+    await renderPage(DashboardPage, { searchParams: sp({}) });
+    expect(screen.queryByText(/Complete your security program setup to start tracking your posture/i)).toBeNull();
+  });
+
+  it("D-2: the setup banner still shows for a genuinely empty platform tenant", async () => {
+    api.getDashboardSummary.mockResolvedValue(EMPTY_SUMMARY);
+    api.getPostureHistory.mockResolvedValue({ snapshots: [] });
+    api.getFindings.mockResolvedValue(aFindingsResponse([]));
+    api.getFrameworks.mockResolvedValue({ frameworks: [] });
+    await renderPage(DashboardPage, { searchParams: sp({}) });
+    expect(screen.getByText(/Complete your security program setup to start tracking your posture/i)).toBeInTheDocument();
+  });
+
+  it("D-5: Framework Readiness carries copy distinguishing it from Compliance Coverage", async () => {
+    await renderPage(DashboardPage, { searchParams: sp({}) });
+    expect(screen.getByText(/How close each activated framework is to being audit-ready/i)).toBeInTheDocument();
+  });
+});

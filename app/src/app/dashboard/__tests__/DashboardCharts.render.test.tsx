@@ -20,6 +20,8 @@ import {
   ActionsRing,
   RisksBreakdown,
   OpenItemsAging,
+  PostureScoreTile,
+  ComplianceCoverage,
 } from "../DashboardCharts";
 
 const SUMMARY = aDashboardSummary();
@@ -191,5 +193,23 @@ describe("OpenItemsAging — the aging buckets belong to the same population as 
     );
     expect(screen.queryByText(/All clear/)).toBeNull();
     expect(screen.getByText("Actions")).toBeInTheDocument();
+  });
+});
+
+// ── Walkthrough remediation (D-3 / D-5) ─────────────────────────────────────
+
+describe("PostureScoreTile — risk-vs-health clarity (D-3)", () => {
+  it("frames the score as RISK (higher = worse), so a high 'Critical' isn't read as good", () => {
+    render(<PostureScoreTile posture={{ overall_score: 82, overall_severity: "Critical", snapshot_date: "2026-06-01T00:00:00.000Z" }} />);
+    expect(screen.getByText(/higher = more risk/i)).toBeInTheDocument();
+    expect(screen.getByText("Critical")).toBeInTheDocument();
+    expect(screen.getByText(/\/100 risk/i)).toBeInTheDocument();
+  });
+});
+
+describe("ComplianceCoverage — distinguished from Framework Readiness (D-5)", () => {
+  it("explains it is the share of requirements satisfied, not overall readiness", () => {
+    render(<ComplianceCoverage frameworkPairs={[]} />);
+    expect(screen.getByText(/Share of mapped requirements currently satisfied/i)).toBeInTheDocument();
   });
 });
