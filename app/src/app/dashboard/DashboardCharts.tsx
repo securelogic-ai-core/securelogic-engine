@@ -716,8 +716,13 @@ export function PostureScoreTile({
       className="rounded-xl border p-5 flex flex-col justify-between"
       style={{ background: SURFACE, borderColor: SLATE_LINE, borderLeft: `4px solid ${TEAL}` }}
     >
-      <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: TEXT_MUTED }}>
+      <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
         Posture Score
+      </p>
+      {/* D-3: this is a RISK score — higher is worse. Stated explicitly so a high
+          number badged "Critical" is never misread as a good security score. */}
+      <p className="text-[11px] mb-3" style={{ color: TEXT_MUTED }}>
+        Risk score (0–100) · higher = more risk
       </p>
       {score == null ? (
         <div>
@@ -726,7 +731,10 @@ export function PostureScoreTile({
         </div>
       ) : (
         <>
-          <p className="text-4xl font-bold leading-none" style={{ color: severityColor }}>{score}</p>
+          <p className="text-4xl font-bold leading-none" style={{ color: severityColor }}>
+            {score}
+            <span className="text-lg font-medium" style={{ color: TEXT_MUTED }}>/100 risk</span>
+          </p>
           <div className="mt-2 flex items-center gap-2">
             {severity && (
               <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold" style={badgeStyle}>
@@ -1071,7 +1079,7 @@ export function ComplianceCoverage({
 
   return (
     <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
-      <div className="flex items-baseline justify-between mb-4">
+      <div className="flex items-baseline justify-between mb-1">
         <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
           Compliance Coverage
         </p>
@@ -1079,6 +1087,11 @@ export function ComplianceCoverage({
           All frameworks →
         </Link>
       </div>
+      {/* D-5: distinguish from Framework Readiness — this is the share of mapped
+          requirements currently satisfied, not overall audit-readiness. */}
+      <p className="text-[11px] mb-4" style={{ color: TEXT_MUTED }}>
+        Share of mapped requirements currently satisfied.
+      </p>
 
       {/* Single empty state when no frameworks have been assessed.
           Pre-fix: both the aggregate-number block AND the per-framework

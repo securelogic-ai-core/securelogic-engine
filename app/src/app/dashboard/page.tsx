@@ -74,6 +74,23 @@ export default async function DashboardPage({
   const displayName = session.name ?? me?.organizationName ?? session.organizationName ?? null;
   const orgName = me?.organizationName ?? session.organizationName;
 
+  // D-2: the org has posture data when ANY platform object exists — a posture
+  // snapshot, an open finding/action/risk, a computed domain, or an activated
+  // framework. The "complete setup to start tracking posture" nudge must not show
+  // to a tenant that is already tracking posture. (If a tenant's entitlement is
+  // mis-seeded, that is an operator/data concern — the dashboard's own signals are
+  // kept internally consistent so it cannot contradict itself.)
+  const hasPlatformData = Boolean(
+    (postureHistory?.snapshots?.length ?? 0) > 0 ||
+      dashboardSummary?.posture?.snapshot_date ||
+      (dashboardSummary?.findings?.open ?? 0) > 0 ||
+      (dashboardSummary?.actions?.open ?? 0) > 0 ||
+      (dashboardSummary?.domains?.length ?? 0) > 0 ||
+      recentFindings.length > 0 ||
+      frameworks.length > 0 ||
+      (dashboardSummary?.risks_summary?.open ?? 0) > 0,
+  );
+
   return (
     <div className="max-w-4xl mx-auto px-6 py-12">
       <LastLoginBanner previousLoginAt={authMe?.previousLoginAt ?? null} />
@@ -116,8 +133,9 @@ export default async function DashboardPage({
           Self-gates on env var + user state; renders null when not applicable. */}
       <IndustryTemplatesBanner authMe={authMe} />
 
-      {/* Onboarding banner — shown until onboarding is complete */}
-      {isPlatformUser && !onboardingCompleted && (
+      {/* Onboarding banner — only when setup is genuinely incomplete (D-2): a
+          tenant already tracking posture must not be told to "complete setup". */}
+      {isPlatformUser && !onboardingCompleted && !hasPlatformData && (
         <OnboardingBanner />
       )}
 
@@ -126,8 +144,13 @@ export default async function DashboardPage({
         <h1 className="text-2xl font-bold text-slate-100 mb-1">
           Welcome back{displayName ? `, ${displayName}` : ""}.
         </h1>
+        {/* D-1 / D-4: separate enterprise platform framing from consumer newsletter
+            framing. A platform/enterprise tenant is not a "Brief Lite" subscriber and
+            must not be addressed as one. */}
         <p className="text-slate-400 text-sm">
-          {isPaid
+          {isPlatformUser
+            ? `You have ${planName} access to the SecureLogic platform.`
+            : isPaid
             ? `You have ${planName} access to the Intelligence Brief.`
             : "You're receiving the weekly Intelligence Brief Lite. Upgrade for the full brief."}
         </p>
@@ -450,7 +473,7 @@ function FrameworkReadinessWidget({
 }) {
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-1">
         <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">
           Framework Readiness
         </h2>
@@ -462,6 +485,11 @@ function FrameworkReadinessWidget({
           {pairs.length === 0 ? "Add Framework →" : "View all →"}
         </Link>
       </div>
+      {/* D-5: distinguish from Compliance Coverage below — this is how close each
+          activated framework is to audit-ready, not the share of requirements met. */}
+      <p className="text-xs mb-4" style={{ color: "#64748b" }}>
+        How close each activated framework is to being audit-ready.
+      </p>
 
       {pairs.length === 0 ? (
         <div className="bg-brand-surface border border-brand-line rounded-xl">
