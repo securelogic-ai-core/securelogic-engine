@@ -59,6 +59,19 @@ function fmtDate(iso: string | null | undefined): string {
   }
 }
 
+/**
+ * Format an evidence_type for display. The column is TEXT NOT NULL with a CHECK
+ * constraint (db/migrations/20260420), so a valid row always has one of the
+ * enum strings — but a single malformed field must never blank the entire
+ * finding detail page, so null/undefined/non-string values fall back to a dash
+ * rather than throwing on .replace().
+ */
+function fmtEvidenceType(type: unknown): string {
+  return typeof type === "string" && type.length > 0
+    ? type.replace(/_/g, " ")
+    : "—";
+}
+
 export function FindingEvidenceSection({ findingId }: { findingId: string }) {
   const router = useRouter();
 
@@ -262,7 +275,7 @@ export function FindingEvidenceSection({ findingId }: { findingId: string }) {
                   {ev.title}
                 </span>
                 <span className="text-xs" style={{ color: "#64748b" }}>
-                  {ev.evidence_type.replace(/_/g, " ")} · {fmtDate(ev.created_at)}
+                  {fmtEvidenceType(ev.evidence_type)} · {fmtDate(ev.created_at)}
                 </span>
               </div>
               {ev.external_ref && (
