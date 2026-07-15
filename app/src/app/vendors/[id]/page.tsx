@@ -181,6 +181,38 @@ function assessmentTypeLabel(raw: string): string {
   return ASSESSMENT_TYPE_LABELS[raw] ?? raw;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Compact empty state (V-1 layout balance)
+// A sparse vendor stacks several sections, each otherwise a tall centered
+// "No X recorded" card, which reads as an unbalanced column of near-empty
+// boxes against a dense sidebar. This renders empty sections as a single
+// slim, quiet row instead — the sections remain, but they stop shouting.
+// An optional inline action lets an empty section point at its create path.
+// ─────────────────────────────────────────────────────────────
+
+function SectionEmpty({
+  children,
+  action,
+}: {
+  children: React.ReactNode;
+  action?: { href: string; label: string };
+}) {
+  return (
+    <div className="bg-brand-surface border border-brand-line rounded-lg px-4 py-3 flex items-center justify-between gap-3">
+      <p className="text-xs" style={{ color: "#64748b" }}>{children}</p>
+      {action && (
+        <Link
+          href={action.href}
+          className="text-xs font-medium flex-shrink-0 transition-opacity hover:opacity-80"
+          style={{ color: "#00c4b4" }}
+        >
+          {action.label} →
+        </Link>
+      )}
+    </div>
+  );
+}
+
 function OpenFindingsSectionClient({
   findings,
   vendorId,
@@ -208,9 +240,7 @@ function OpenFindingsSectionClient({
       </div>
 
       {activeFindings.length === 0 ? (
-        <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>No active findings</p>
-        </div>
+        <SectionEmpty>No active findings</SectionEmpty>
       ) : (
         <div className="space-y-3">
           {activeFindings.map((f) => {
@@ -263,9 +293,11 @@ function OpenFindingsSectionClient({
 function AssessmentHistorySection({
   assessments,
   assessmentIdsWithFindings,
+  vendorId,
 }: {
   assessments: VendorAssessment[];
   assessmentIdsWithFindings: Set<string>;
+  vendorId: string;
 }) {
   return (
     <section>
@@ -282,9 +314,9 @@ function AssessmentHistorySection({
       </div>
 
       {assessments.length === 0 ? (
-        <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>No assessments recorded</p>
-        </div>
+        <SectionEmpty action={{ href: `/vendors/${vendorId}/assess`, label: "New assessment" }}>
+          No assessments recorded
+        </SectionEmpty>
       ) : (
         <div className="space-y-3">
           {assessments.map((a) => (
@@ -337,7 +369,13 @@ function AssessmentHistorySection({
 // Section: Review Cycle History
 // ─────────────────────────────────────────────────────────────
 
-function ReviewCyclesSection({ reviews }: { reviews: VendorReview[] }) {
+function ReviewCyclesSection({
+  reviews,
+  vendorId,
+}: {
+  reviews: VendorReview[];
+  vendorId: string;
+}) {
   return (
     <section>
       <div className="flex items-center gap-2 mb-4">
@@ -353,9 +391,9 @@ function ReviewCyclesSection({ reviews }: { reviews: VendorReview[] }) {
       </div>
 
       {reviews.length === 0 ? (
-        <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>No review cycles recorded</p>
-        </div>
+        <SectionEmpty action={{ href: `/vendors/${vendorId}/review`, label: "Start a review cycle" }}>
+          No review cycles recorded
+        </SectionEmpty>
       ) : (
         <div className="space-y-3">
           {reviews.map((r) => (
@@ -482,15 +520,49 @@ function riskLevelFromScore(score: number | null): string | null {
   return "Critical Risk";
 }
 
+// The order the engine's pure formula (src/api/lib/vendorRiskScore.ts) weights
+// open findings by. Used only to render the SAME factors the engine scored on —
+// this never recomputes or changes the score itself.
+const FINDING_SEVERITY_ORDER = ["Critical", "High", "Moderate", "Low"] as const;
+
+// V-4: explain the score the engine already returned in terms of the two inputs
+// the page already holds — the vendor's criticality and its open findings by
+// severity — so the number is attributable, not opaque. Null-safe: a vendor with
+// no criticality and no findings still yields a truthful sentence.
+function riskScoreDerivation(
+  criticality: string | null,
+  severityCounts: Record<string, number>,
+  totalOpenFindings: number,
+): string {
+  const critLabel = criticality
+    ? criticality.charAt(0).toUpperCase() + criticality.slice(1)
+    : "unspecified";
+
+  const breakdown = FINDING_SEVERITY_ORDER
+    .filter((s) => (severityCounts[s] ?? 0) > 0)
+    .map((s) => `${severityCounts[s]} ${s}`)
+    .join(", ");
+
+  const findingsPhrase =
+    totalOpenFindings === 0
+      ? "no open findings"
+      : `${totalOpenFindings} open finding${totalOpenFindings === 1 ? "" : "s"}` +
+        (breakdown ? ` (${breakdown})` : "");
+
+  return `Based on ${critLabel} criticality and ${findingsPhrase}.`;
+}
+
 function RiskSummaryCard({
   vendor,
   activeFindingCount,
+  findingSeverityCounts,
   assessmentCount,
   reviewCount,
   lastActivityDate,
 }: {
   vendor: Vendor;
   activeFindingCount: number;
+  findingSeverityCounts: Record<string, number>;
   assessmentCount: number;
   reviewCount: number;
   lastActivityDate: string | null;
@@ -498,6 +570,11 @@ function RiskSummaryCard({
   const score = vendor.current_risk_score ?? null;
   const scoreColor = riskScoreColor(score);
   const riskLevel = riskLevelFromScore(score);
+  const derivation = riskScoreDerivation(
+    vendor.criticality,
+    findingSeverityCounts,
+    activeFindingCount,
+  );
 
   const riskLevelBadgeStyle: React.CSSProperties =
     riskLevel === "Low Risk"      ? { background: "rgba(34,197,94,0.15)",   color: "#86efac" } :
@@ -529,6 +606,17 @@ function RiskSummaryCard({
           <p className="text-xs" style={{ color: "#475569" }}>
             No score yet — create an assessment to compute
           </p>
+        )}
+        {/* V-4: attribute the score to the factors the engine weighted it on. */}
+        {score != null && (
+          <div className="mt-3">
+            <p className="text-xs font-medium mb-0.5" style={{ color: "#64748b" }}>
+              How this score is derived
+            </p>
+            <p className="text-xs leading-relaxed" style={{ color: "#94a3b8" }}>
+              {derivation}
+            </p>
+          </div>
         )}
       </div>
 
@@ -689,6 +777,16 @@ export default async function VendorDetailPage({
   const activeFindings = vendorFindings.filter(
     (f) => isActiveStatus(f.status)
   );
+  // Open findings by severity — the finding half of the vendor risk-score
+  // derivation (V-4). Built from data already on the page; no extra fetch.
+  const findingSeverityCounts = activeFindings.reduce<Record<string, number>>(
+    (acc, f) => {
+      const sev = f.severity ?? "";
+      if (sev) acc[sev] = (acc[sev] ?? 0) + 1;
+      return acc;
+    },
+    {}
+  );
   const inProgressReviews = reviews.filter((r) => r.status === "in_progress");
 
   // Track which assessments produced findings (for the badge on history cards).
@@ -747,8 +845,9 @@ export default async function VendorDetailPage({
           <AssessmentHistorySection
             assessments={assessments}
             assessmentIdsWithFindings={assessmentIdsWithFindings}
+            vendorId={vendor.id}
           />
-          <ReviewCyclesSection reviews={reviews} />
+          <ReviewCyclesSection reviews={reviews} vendorId={vendor.id} />
           <CompleteReviewSection
             inProgressReviews={inProgressReviews}
             vendorId={vendor.id}
@@ -762,6 +861,7 @@ export default async function VendorDetailPage({
           <RiskSummaryCard
             vendor={vendor}
             activeFindingCount={activeFindings.length}
+            findingSeverityCounts={findingSeverityCounts}
             assessmentCount={assessments.length}
             reviewCount={reviews.length}
             lastActivityDate={lastActivityDate}
@@ -815,9 +915,13 @@ function LiveIntelligenceSection({
         </span>
       </div>
       {matches.length === 0 ? (
-        <p className="text-sm" style={{ color: "#475569" }}>
-          No external signals currently match this vendor.
-        </p>
+        <div className="bg-brand-surface border border-brand-line rounded-lg px-4 py-3">
+          <p className="text-xs leading-relaxed" style={{ color: "#64748b" }}>
+            Live Intelligence matches external threat and vendor signals to this vendor
+            as they arrive. No signals currently match — new intelligence will appear here
+            automatically as the pipeline links it to this vendor.
+          </p>
+        </div>
       ) : (
         <div className="space-y-2">
           {context?.overallRiskSummary && (

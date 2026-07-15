@@ -295,27 +295,36 @@ describe("/vendors/[id] — live intelligence and the AI systems that depend on 
     expect(hrefOf(container, /Reassess with this intelligence/)).toBe("/vendors/v-1/assess");
   });
 
-  it("no matched signals: an honest sentence — and NO reassess link to nothing", async () => {
+  it("no matched signals: a guiding empty state that explains Live Intelligence — and NO reassess link to nothing", async () => {
     api.getVendorSignalContext.mockResolvedValue(aVendorSignalContext({ matchedSignals: [] }));
 
     const { container } = await renderPage(VendorDetailPage, props());
 
+    // V-2: the empty state now explains WHAT Live Intelligence is and WHY it may be empty,
+    // instead of a bare "No external signals currently match this vendor."
     expect(
-      screen.getByText("No external signals currently match this vendor.")
+      screen.getByText(
+        /Live Intelligence matches external threat and vendor signals to this vendor/i
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/new intelligence will appear here automatically/i)
     ).toBeInTheDocument();
     expect(hrefOf(container, /Reassess with this intelligence/)).toBeNull();
   });
 
   it("a signal-context outage does not invent a clean vendor", async () => {
     // getVendorSignalContext returns null when the engine is unreachable. The section
-    // then reads "No external signals currently match this vendor." — the same sentence
-    // it uses for a genuine zero. Documented, not endorsed (see report).
+    // then shows the SAME guiding empty state it uses for a genuine zero. Documented,
+    // not endorsed (see report).
     api.getVendorSignalContext.mockResolvedValue(null);
 
     await renderPage(VendorDetailPage, props());
 
     expect(
-      screen.getByText("No external signals currently match this vendor.")
+      screen.getByText(
+        /Live Intelligence matches external threat and vendor signals to this vendor/i
+      )
     ).toBeInTheDocument();
   });
 
@@ -522,6 +531,76 @@ describe("/vendors/[id] — history sections", () => {
 
     expect(screen.getByText("Concerns Identified")).toBeInTheDocument();
     expect(screen.getByText("Two gaps.")).toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// 6b. Walkthrough remediation: empty-state CTA + risk-score explainability
+// ─────────────────────────────────────────────────────────────────────
+
+describe("/vendors/[id] — review-cycle empty state offers an inline create path (V-3)", () => {
+  it("an empty Review Cycles section links to this vendor's review workflow", async () => {
+    api.getVendorReviews.mockResolvedValue(aVendorReviewsResponse([]));
+
+    const { container } = await renderPage(VendorDetailPage, props("v-1"));
+
+    // The empty state must not force the user to hunt for the sidebar action.
+    expect(screen.getByText("No review cycles recorded")).toBeInTheDocument();
+    expect(hrefOf(container, /Start a review cycle/)).toBe("/vendors/v-1/review");
+  });
+
+  it("a populated Review Cycles section does not show the inline create CTA", async () => {
+    api.getVendorReviews.mockResolvedValue(
+      aVendorReviewsResponse([aVendorReview({ id: "vr-1" })])
+    );
+
+    const { container } = await renderPage(VendorDetailPage, props("v-1"));
+
+    expect(hrefOf(container, /Start a review cycle/)).toBeNull();
+  });
+});
+
+describe("/vendors/[id] — risk-score explainability (V-4)", () => {
+  it("attributes the score to the vendor's criticality and its open findings by severity", async () => {
+    api.getVendor.mockResolvedValue(
+      aVendor({ criticality: "high", current_risk_score: 42 })
+    );
+    api.getVendorFindings.mockResolvedValue({
+      findings: [
+        aVendorFinding({ id: "f-1", severity: "Critical", status: "open" }),
+        aVendorFinding({ id: "f-2", severity: "High", status: "open" }),
+        aVendorFinding({ id: "f-3", severity: "High", status: "in_progress" }),
+      ],
+      total: 3,
+    });
+
+    await renderPage(VendorDetailPage, props());
+
+    expect(screen.getByText("How this score is derived")).toBeInTheDocument();
+    expect(
+      screen.getByText("Based on High criticality and 3 open findings (1 Critical, 2 High).")
+    ).toBeInTheDocument();
+  });
+
+  it("a scored vendor with no criticality and no findings still reads honestly", async () => {
+    api.getVendor.mockResolvedValue(
+      aVendor({ criticality: null, current_risk_score: 80 })
+    );
+    api.getVendorFindings.mockResolvedValue({ findings: [], total: 0 });
+
+    await renderPage(VendorDetailPage, props());
+
+    expect(
+      screen.getByText("Based on unspecified criticality and no open findings.")
+    ).toBeInTheDocument();
+  });
+
+  it("an UNSCORED vendor shows no derivation — there is no score to attribute", async () => {
+    api.getVendor.mockResolvedValue(aVendor({ current_risk_score: null }));
+
+    const { container } = await renderPage(VendorDetailPage, props());
+
+    expect(container.textContent).not.toContain("How this score is derived");
   });
 });
 
