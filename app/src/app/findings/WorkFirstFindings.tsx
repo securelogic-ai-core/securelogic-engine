@@ -16,6 +16,7 @@ import Link from "next/link";
 import type { Finding, EntityFindingsResponse } from "@/lib/api";
 import { FindingCard } from "@/components/FindingCard";
 import BulkBucketList from "./BulkBucketList";
+import { QUEUE_OVERLAP_NOTE } from "@/lib/findingLifecycleVocab";
 import {
   OPS_GROUP_LABELS,
   bucketsInGroup,
@@ -24,6 +25,7 @@ import {
   type OpsBucketDef,
   type OpsBucketId,
   type OpsBucketGroup,
+  type SummaryItem,
 } from "./workQueues";
 
 const CARD: React.CSSProperties = {
@@ -68,6 +70,54 @@ function EntitySearchForm({ initial }: { initial?: string }) {
   );
 }
 
+const AXIS_TAG_STYLE: Record<string, React.CSSProperties> = {
+  Governance: { background: "rgba(139,92,246,0.15)", color: "#c4b5fd" },
+  Operational: { background: "rgba(59,130,246,0.15)", color: "#93c5fd" },
+};
+
+const SUMMARY_TONE: Record<string, string> = {
+  urgent: "#fca5a5",
+  attention: "#fcd34d",
+  governance: "#c4b5fd",
+  neutral: "#f1f5f9",
+};
+
+function SummaryBar({ items, generatedAt }: { items: SummaryItem[]; generatedAt?: string }) {
+  return (
+    <section className="mb-6" aria-label="Findings summary">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {items.map((item) => {
+          const known = item.value !== null;
+          const color = known && item.value! > 0 ? SUMMARY_TONE[item.tone] ?? "#f1f5f9" : "#334155";
+          return (
+            <Link
+              key={item.key}
+              href={item.href}
+              className="block rounded-xl border p-4 transition-colors"
+              style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}
+            >
+              <div className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: "#64748b" }}>
+                {item.label}
+              </div>
+              <div className="text-2xl font-bold leading-none mb-1" style={{ color }}>
+                {known ? item.value : "—"}
+              </div>
+              <div className="text-[11px]" style={{ color: "#475569" }}>
+                {item.hint}
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+      {/* F-2 (overlap) + F-8 (freshness) */}
+      <p className="mt-2 text-[11px]" style={{ color: "#475569" }}>
+        {QUEUE_OVERLAP_NOTE}
+        {generatedAt && <> · Counts as of {generatedAt}.</>}
+      </p>
+    </section>
+  );
+}
+
 function BucketCard({ def, count, unknown }: { def: OpsBucketDef; count: number; unknown: boolean }) {
   const hot = def.urgent && count > 0;
   return (
@@ -93,6 +143,14 @@ function BucketCard({ def, count, unknown }: { def: OpsBucketDef; count: number;
       <p className="text-xs" style={{ color: "#64748b" }}>
         {def.ask}
       </p>
+      {def.axisTag && (
+        <span
+          className="inline-block mt-2 text-[10px] font-medium px-1.5 py-0.5 rounded"
+          style={AXIS_TAG_STYLE[def.axisTag]}
+        >
+          {def.axisTag === "Governance" ? "Governance record" : "Operational tracking"}
+        </span>
+      )}
       <p className="text-xs mt-2 font-medium" style={{ color: !unknown && count > 0 ? "#00c4b4" : "#334155" }}>
         {unknown ? "Open →" : count > 0 ? "Work the queue →" : "Clear"}
       </p>
@@ -128,6 +186,9 @@ export default function WorkFirstFindings({
   mode,
   counts,
   unknownCounts,
+  summaryItems,
+  generatedAt,
+  ownerNames,
   bucket,
   bucketFindings,
   bucketPage,
@@ -137,6 +198,9 @@ export default function WorkFirstFindings({
   mode: "home" | "bucket" | "entity";
   counts: Record<OpsBucketId, number>;
   unknownCounts: OpsBucketId[];
+  summaryItems?: SummaryItem[];
+  generatedAt?: string;
+  ownerNames?: Record<string, string>;
   bucket?: OpsBucketDef;
   bucketFindings?: Finding[];
   bucketPage?: {
@@ -203,7 +267,12 @@ export default function WorkFirstFindings({
           <>
             {/* Selection + bulk actions (W2): assign/decide the visible page in
                 one call — each decision individually guarded engine-side. */}
-            <BulkBucketList findings={members} revalidateUrl={`/findings?bucket=${bucket.id}`} />
+            <BulkBucketList
+              findings={members}
+              revalidateUrl={`/findings?bucket=${bucket.id}`}
+              ownerNames={ownerNames}
+              bucketId={bucket.id}
+            />
             {(hrefs.prevHref !== null || hrefs.nextHref !== null) && (
               <div className="flex items-center justify-between gap-4">
                 {hrefs.prevHref ? (
@@ -293,7 +362,13 @@ export default function WorkFirstFindings({
             ) : (
               <div className="space-y-3">
                 {res.findings.map((f) => (
-                  <FindingCard key={f.id} finding={f} revalidateUrl={`/findings?entity=${encodeURIComponent(res.query)}`} workspace />
+                  <FindingCard
+                    key={f.id}
+                    finding={f}
+                    revalidateUrl={`/findings?entity=${encodeURIComponent(res.query)}`}
+                    workspace
+                    ownerName={f.owner_user_id ? ownerNames?.[f.owner_user_id] ?? null : null}
+                  />
                 ))}
               </div>
             )}
@@ -309,6 +384,10 @@ export default function WorkFirstFindings({
   const due = dueWorkCount(counts);
   return (
     <>
+      {summaryItems && summaryItems.length > 0 && (
+        <SummaryBar items={summaryItems} generatedAt={generatedAt} />
+      )}
+
       <div className="mb-6">
         <EntitySearchForm />
       </div>

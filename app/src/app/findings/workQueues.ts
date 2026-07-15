@@ -43,6 +43,13 @@ export interface OpsBucketDef {
   /** Non-zero count means work is due now (drives urgency styling). */
   urgent: boolean;
   /**
+   * Which lifecycle axis the bucket tracks (F-3). Surfaced as a tag so a
+   * governance record (Accepted Risk) is never read as equivalent to
+   * operational tracking (In Mitigation). Omitted where the label already makes
+   * the axis unambiguous.
+   */
+  axisTag?: "Governance" | "Operational";
+  /**
    * Where the bucket opens. `findings` buckets open the subordinate findings view
    * with SERVER-side filters; `href` buckets open the surface that owns that work.
    */
@@ -55,7 +62,7 @@ export const OPS_BUCKETS: readonly OpsBucketDef[] = [
   { id: "my_work", label: "My Work", ask: "Assigned to you and still requires action", group: "decisions", urgent: true, target: { kind: "findings", params: { owner: "me", active: true } } },
   { id: "sla_breached", label: "SLA Breached", ask: "Past the committed date — act or renegotiate", group: "decisions", urgent: true, target: { kind: "findings", params: { overdue: true } } },
   { id: "needs_assignment", label: "Needs Assignment", ask: "No accountable owner yet", group: "decisions", urgent: true, target: { kind: "findings", params: { unassigned: true } } },
-  { id: "needs_decision", label: "Needs Decision", ask: "No business decision recorded — triage", group: "decisions", urgent: true, target: { kind: "findings", params: { decision_state: "needs_review", active: true } } },
+  { id: "needs_decision", label: "Needs Governance Decision", ask: "No risk-treatment decision recorded — triage", group: "decisions", urgent: true, target: { kind: "findings", params: { decision_state: "needs_review", active: true } } },
   // Ready-for-decision queue (finding-lifecycle-spec §1.3): remediation work is
   // DERIVED complete (operational_status=remediated) but leadership hasn't made
   // the governance call. A query, never an automated decision (R3).
@@ -68,14 +75,14 @@ export const OPS_BUCKETS: readonly OpsBucketDef[] = [
   { id: "ai_risk", label: "AI Risk", ask: "AI systems under governance exposure", group: "domains", urgent: false, target: { kind: "findings", params: { domain: "AI Governance", active: true } } },
   { id: "third_party", label: "Third-Party Risk", ask: "Vendor and supply-chain exposure", group: "domains", urgent: false, target: { kind: "findings", params: { domain: "Vendor Risk", active: true } } },
   // ── Tracking ──────────────────────────────────────────────────
-  { id: "in_mitigation", label: "In Mitigation", ask: "Remediation underway — track to done", group: "tracking", urgent: false, target: { kind: "findings", params: { decision_state: "mitigating", active: true } } },
-  { id: "accepted_risk", label: "Accepted Risk", ask: "Decisions on record — periodic review", group: "tracking", urgent: false, target: { kind: "findings", params: { decision_state: "accepted_risk" } } },
+  { id: "in_mitigation", label: "In Mitigation", ask: "Remediation plan underway — track to done", group: "tracking", urgent: false, axisTag: "Operational", target: { kind: "findings", params: { decision_state: "mitigating", active: true } } },
+  { id: "accepted_risk", label: "Accepted Risk", ask: "Governance decisions on record — periodic review", group: "tracking", urgent: false, axisTag: "Governance", target: { kind: "findings", params: { decision_state: "accepted_risk" } } },
 ];
 
 export const OPS_GROUP_LABELS: Record<OpsBucketGroup, string> = {
   decisions: "Decision work",
   domains: "Risk domains",
-  tracking: "Tracking",
+  tracking: "Tracking — operational vs. governance",
 };
 
 export function opsBucket(id: string | undefined): OpsBucketDef | null {
@@ -156,6 +163,75 @@ export function opsCounts(
 /** Total items of due decision work (drives the all-clear state). */
 export function dueWorkCount(c: Record<OpsBucketId, number>): number {
   return OPS_BUCKETS.filter((b) => b.urgent).reduce((n, b) => n + (c[b.id] ?? 0), 0);
+}
+
+/* ── Global summary bar (F-1) ─────────────────────────────────────────────
+ * A concise headline strip at the top of the operations center: the five
+ * numbers a leader wants first. Every value comes from /findings/summary via
+ * the SAME server COUNT(*)s the buckets use (never a client scan) — so a
+ * headline can never disagree with the bucket it links to. A field the engine
+ * does not serve yet is UNKNOWN ("—"), never a lying zero.
+ */
+
+export type SummaryTone = "urgent" | "attention" | "neutral" | "governance";
+
+export interface SummaryItem {
+  key: "active" | "accepted_risk" | "awaiting_approval" | "ready_to_close" | "overdue";
+  label: string;
+  /** null → render as "—" (engine build predates the field). */
+  value: number | null;
+  tone: SummaryTone;
+  /** Where the headline drills through (a bucket view or an owning surface). */
+  href: string;
+  /** Short explanation shown under the number. */
+  hint: string;
+}
+
+/** The ordered headline metrics for the operations-center summary bar. */
+export function globalSummary(summary: FindingsSummary | undefined): SummaryItem[] {
+  const n = (v: number | null | undefined): number | null => (typeof v === "number" ? v : null);
+  return [
+    {
+      key: "active",
+      label: "Active Findings",
+      value: n(summary?.active_total),
+      tone: "neutral",
+      href: "/findings?active=true",
+      hint: "Open or in-progress — still require work",
+    },
+    {
+      key: "overdue",
+      label: "Overdue / SLA",
+      value: n(summary?.overdue_open),
+      tone: "urgent",
+      href: "/findings?bucket=sla_breached",
+      hint: "Past the committed date",
+    },
+    {
+      key: "awaiting_approval",
+      label: "Awaiting Approval",
+      value: n(summary?.pending_risk_approvals),
+      tone: "attention",
+      href: "/approvals",
+      hint: "Risk treatments pending sign-off",
+    },
+    {
+      key: "ready_to_close",
+      label: "Ready to Close",
+      value: n(summary?.ready_for_decision_open),
+      tone: "governance",
+      href: "/findings?bucket=ready_to_close",
+      hint: "Remediation complete — governance decision required",
+    },
+    {
+      key: "accepted_risk",
+      label: "Accepted Risk",
+      value: n(summary?.accepted_risk_total),
+      tone: "governance",
+      href: "/findings?bucket=accepted_risk",
+      hint: "Governance decisions on record",
+    },
+  ];
 }
 
 /* ── Keyset pagination (bucket views) ─────────────────────────────
