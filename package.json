@@ -108,6 +108,7 @@
     "eslint": "^9.39.2",
     "eslint-plugin-boundaries": "^6.0.2",
     "js-yaml": "^5.2.0",
+    "pdfjs-dist": "5.4.296",
     "supertest": "^7.2.2",
     "tsx": "^4.21.0",
     "typescript": "~5.9.3",

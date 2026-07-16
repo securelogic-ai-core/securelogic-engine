@@ -546,8 +546,39 @@ export function generateAuditPackagePDF(
   // Page numbers are stamped once at the end by stampFooters (with the real
   // total); writing them inline in the bottom margin is what used to spawn
   // page-number-only artifact pages and drift the numbering.
+  //
+  // Layout rule for this section (staging REP-4): every write is placed at an
+  // explicit y and the flow cursor only ever moves DOWN. pdfkit leaves doc.y
+  // below whatever it last wrote — including a write placed back up at the top
+  // of the block — so a right-column write must save and restore the cursor.
+  // The status badge used to be written at reqTop without restoring, rewinding
+  // doc.y to the top of the requirement and stamping the control name,
+  // assessment status, summary and evidence straight over the requirement
+  // title.
 
-  function addPageHeader() {
+  // The badge owns a fixed right-hand column; requirement text is measured
+  // against the remaining width so it can never run underneath the badge.
+  const BADGE_W = 80;
+  const GUTTER = 10;
+  const reqTextW = contentW - BADGE_W - GUTTER;
+  const INDENT = 12;
+  const ctrlTextW = contentW - INDENT * 2;
+  const evTextW = contentW - 32;
+  // Content must stop clear of the stamped footer (rule at pageH-36, text at
+  // pageH-28) and above pdfkit's own bottom margin, so no block can trigger an
+  // implicit, header-less page break.
+  const contentBottom = pageH - 56;
+
+  type TextStyle = {
+    font: string;
+    size: number;
+    color: string;
+    width: number;
+    align?: "left" | "right";
+    lineGap?: number;
+  };
+
+  function addPageHeader(): number {
     doc.addPage();
 
     doc
@@ -562,60 +593,73 @@ export function generateAuditPackagePDF(
     return 44; // y after header
   }
 
-  let startY = addPageHeader();
-  doc.y = startY;
+  /** Height this text will occupy in `style`'s box, without drawing it. */
+  function measure(text: string, style: TextStyle): number {
+    doc.font(style.font).fontSize(style.size);
+    return doc.heightOfString(text, { width: style.width, lineGap: style.lineGap ?? 0 });
+  }
 
-  for (const req of requirements) {
-    // Check if we need a new page (need at least 80px for the requirement header)
-    if (doc.y > pageH - 120) {
-      startY = addPageHeader();
-      doc.y = startY;
-    }
+  /** Draw text at an explicit box; returns the y immediately below it. */
+  function writeBlock(text: string, x: number, y: number, style: TextStyle): number {
+    doc
+      .font(style.font)
+      .fontSize(style.size)
+      .fillColor(style.color)
+      .text(text, x, y, {
+        width: style.width,
+        align: style.align ?? "left",
+        lineGap: style.lineGap ?? 0,
+      });
+    return doc.y;
+  }
+
+  /** Break to a fresh headed page unless `needed` points fit below `y`. */
+  function fit(y: number, needed: number): number {
+    return y + needed > contentBottom ? addPageHeader() : y;
+  }
+
+  const REF_STYLE:   TextStyle = { font: "Courier-Bold",   size: 10, color: C.teal,     width: reqTextW };
+  const TITLE_STYLE: TextStyle = { font: "Helvetica-Bold", size: 11, color: C.textDark, width: reqTextW };
+  const NAME_STYLE:  TextStyle = { font: "Helvetica-Bold", size: 10, color: C.textDark, width: ctrlTextW };
+
+  doc.y = addPageHeader();
+
+  requirements.forEach((req, reqIndex) => {
+    // Keep the reference id + title together with the first line of detail;
+    // a heading orphaned at the foot of a page reads as a rendering fault.
+    const headingH = measure(req.reference_id, REF_STYLE) + measure(req.title, TITLE_STYLE) + 1;
+    doc.y = fit(doc.y, headingH + 26);
 
     const reqTop = doc.y;
 
-    // Reference ID + title row
-    doc
-      .fillColor(C.teal)
-      .font("Courier-Bold")
-      .fontSize(10)
-      .text(req.reference_id, margin, doc.y, { continued: false });
+    const refBottom = writeBlock(req.reference_id, margin, reqTop, REF_STYLE);
+    const headingBottom = writeBlock(req.title, margin, refBottom + 1, TITLE_STYLE);
 
-    doc
-      .fillColor(C.textDark)
-      .font("Helvetica-Bold")
-      .fontSize(11)
-      .text(req.title, margin, doc.y, { width: contentW - 90 });
+    // Status badge — right-hand column, drawn last now that the left column's
+    // extent is known. doc.y is set from headingBottom afterwards, never from
+    // where this write leaves it.
+    writeBlock(statusLabel(req.status), margin + contentW - BADGE_W, reqTop + 1, {
+      font: "Helvetica-Bold",
+      size: 8,
+      color: statusColor(req.status),
+      width: BADGE_W,
+      align: "right",
+    });
 
-    // Status badge — right-aligned at reqTop
-    doc
-      .fillColor(statusColor(req.status))
-      .font("Helvetica-Bold")
-      .fontSize(8)
-      .text(statusLabel(req.status), margin, reqTop, { width: contentW, align: "right" });
-
-    doc.moveDown(0.4);
+    doc.y = headingBottom + 6;
 
     if (req.status === "unmapped" || req.controls.length === 0) {
-      doc
-        .fillColor(C.slate)
-        .font("Helvetica-Oblique")
-        .fontSize(9)
-        .text("No controls mapped to this requirement.", margin + 12, doc.y);
-      doc.moveDown(0.6);
+      const note = "No controls mapped to this requirement.";
+      const style: TextStyle = {
+        font: "Helvetica-Oblique", size: 9, color: C.slate, width: ctrlTextW,
+      };
+      doc.y = writeBlock(note, margin + INDENT, fit(doc.y, measure(note, style)), style);
+      doc.y += 4;
     } else {
-      for (const ctrl of req.controls) {
-        if (doc.y > pageH - 100) {
-          startY = addPageHeader();
-          doc.y = startY;
-        }
+      req.controls.forEach((ctrl, ctrlIndex) => {
+        doc.y = fit(doc.y, measure(ctrl.control_name, NAME_STYLE) + 24);
 
-        // Control name
-        doc
-          .fillColor(C.textDark)
-          .font("Helvetica-Bold")
-          .fontSize(10)
-          .text(ctrl.control_name, margin + 12, doc.y);
+        let cy = writeBlock(ctrl.control_name, margin + INDENT, doc.y, NAME_STYLE);
 
         // Assessment status + severity
         const aStatus = ctrl.assessment_status
@@ -631,77 +675,74 @@ export function generateAuditPackagePDF(
           ctrl.assessment_status === null      ? C.slate :
           C.amber;
 
-        doc
-          .fillColor(aColor)
-          .font("Helvetica")
-          .fontSize(9)
-          .text(aLine, margin + 12, doc.y + 2);
+        cy = writeBlock(aLine, margin + INDENT, cy + 2, {
+          font: "Helvetica", size: 9, color: aColor, width: ctrlTextW,
+        });
 
         // Assessment summary
         if (ctrl.assessment_summary) {
-          doc
-            .fillColor(C.slate)
-            .font("Helvetica-Oblique")
-            .fontSize(9)
-            .text(ctrl.assessment_summary, margin + 12, doc.y + 2, {
-              width: contentW - 24,
-              lineGap: 1,
-            });
+          const style: TextStyle = {
+            font: "Helvetica-Oblique", size: 9, color: C.slate, width: ctrlTextW, lineGap: 1,
+          };
+          const h = measure(ctrl.assessment_summary, style);
+          cy = cy + 2 > contentBottom - h ? addPageHeader() : cy + 2;
+          cy = writeBlock(ctrl.assessment_summary, margin + INDENT, cy, style);
         }
 
         // Evidence
         if (ctrl.evidence.length > 0) {
-          doc.moveDown(0.3);
-          doc
-            .fillColor(C.slate)
-            .font("Helvetica")
-            .fontSize(9)
-            .text(`Evidence (${ctrl.evidence.length} item${ctrl.evidence.length !== 1 ? "s" : ""}):`, margin + 12, doc.y);
+          const heading = `Evidence (${ctrl.evidence.length} item${ctrl.evidence.length !== 1 ? "s" : ""}):`;
+          const headStyle: TextStyle = {
+            font: "Helvetica", size: 9, color: C.slate, width: ctrlTextW,
+          };
+          cy = cy + 6 > contentBottom - 24 ? addPageHeader() : cy + 6;
+          cy = writeBlock(heading, margin + INDENT, cy, headStyle);
 
           for (const ev of ctrl.evidence) {
-            if (doc.y > pageH - 80) {
-              startY = addPageHeader();
-              doc.y = startY;
-            }
-            doc
-              .fillColor(C.textDark)
-              .font("Helvetica")
-              .fontSize(9)
-              .text(`• [${ev.evidence_type}] ${ev.title}`, margin + 20, doc.y + 1, {
-                width: contentW - 32,
-              });
+            const line = `• [${ev.evidence_type}] ${ev.title}`;
+            const lineStyle: TextStyle = {
+              font: "Helvetica", size: 9, color: C.textDark, width: evTextW,
+            };
+            const metaStyle: TextStyle = {
+              font: "Helvetica", size: 8, color: C.slate, width: evTextW,
+            };
+            // Keep an evidence item and its metadata on one page.
+            cy = fit(cy + 2, measure(line, lineStyle) + 20);
+            cy = writeBlock(line, margin + 20, cy, lineStyle);
 
             const meta: string[] = [];
             if (ev.collected_at) meta.push(`Collected: ${fmtDate(ev.collected_at)}`);
             if (ev.collected_by) meta.push(`by ${ev.collected_by}`);
             if (meta.length > 0) {
-              doc
-                .fillColor(C.slate)
-                .font("Helvetica")
-                .fontSize(8)
-                .text(`  ${meta.join("  ")}`, margin + 20, doc.y + 1, { width: contentW - 32 });
+              cy = writeBlock(`  ${meta.join("  ")}`, margin + 20, cy + 1, metaStyle);
             }
             if (ev.external_ref) {
-              doc
-                .fillColor(C.slate)
-                .font("Helvetica")
-                .fontSize(8)
-                .text(`  Ref: ${ev.external_ref}`, margin + 20, doc.y + 1, { width: contentW - 32 });
+              cy = writeBlock(`  Ref: ${ev.external_ref}`, margin + 20, cy + 1, metaStyle);
             }
           }
         }
 
-        doc.moveDown(0.5);
-        // Thin separator between controls
-        doc.rect(margin + 12, doc.y, contentW - 24, 0.5).fill("#e2e8f0");
-        doc.moveDown(0.5);
-      }
+        doc.y = cy + 6;
+
+        // Thin separator between controls — never after the last one, and
+        // never as the only thing carried onto a page.
+        if (ctrlIndex < req.controls.length - 1 && doc.y + 8 <= contentBottom) {
+          doc.rect(margin + INDENT, doc.y, contentW - INDENT * 2, 0.5).fill("#e2e8f0");
+          doc.y += 6;
+        }
+      });
     }
 
     // Divider between requirements
-    doc.rect(margin, doc.y + 2, contentW, 1).fill("#e2e8f0");
-    doc.moveDown(1);
-  }
+    if (reqIndex < requirements.length - 1) {
+      if (doc.y + 14 > contentBottom) {
+        doc.y = addPageHeader();
+      } else {
+        doc.rect(margin, doc.y + 3, contentW, 1).fill("#e2e8f0");
+        doc.y += 14;
+      }
+    }
+  });
 
   // Stamp "Page N of TOTAL" footers on every page with the real page count.
   stampFooters(doc, { leftText: "SecureLogic AI — Confidential", textColor: C.slate });
