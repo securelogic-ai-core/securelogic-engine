@@ -33,6 +33,7 @@ import {
   sqlRiskActive,
 } from "../lib/metricDefinitions.js";
 import { riskLifecycleEnabled } from "../lib/riskLifecycleFeatureFlag.js";
+import { toDisplayScore, toDisplayDomain } from "../lib/postureDisplay.js";
 
 const router = Router();
 
@@ -656,12 +657,15 @@ router.get(
 
       res.status(200).json({
         ...(assetsSummary ? { assets: assetsSummary } : {}),
+        // Walkthrough items 1+2 ruling: posture is HEALTH-style (higher = better)
+        // on every customer surface. The DB/engine stay risk-style; the canonical
+        // mapper inverts exactly once, here at the API boundary.
         posture: {
-          overall_score: snapshotRow?.overall_score ?? null,
+          overall_score: toDisplayScore(snapshotRow?.overall_score ?? null),
           overall_severity: snapshotRow?.overall_severity ?? null,
           snapshot_date: snapshotRow?.snapshot_date ?? null
         },
-        domains: domainRows,
+        domains: domainRows.map(toDisplayDomain),
         findings: {
           // Metric Contract, mirroring `actions` below: `active` (open|in_progress)
           // is the authoritative "work remaining" total and equals the Operations

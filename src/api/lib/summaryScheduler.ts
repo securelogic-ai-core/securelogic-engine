@@ -2,6 +2,7 @@ import { pg, pgElevated, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { sendWeeklySummary } from "./alertEmailService.js";
 import { sqlFindingActive } from "./metricDefinitions.js";
+import { toDisplayScore } from "./postureDisplay.js";
 
 export async function runWeeklySummary(): Promise<{ orgsProcessed: number; emailsSent: number }> {
   logger.info({ event: "weekly_summary_start" }, "Weekly summary run started");
@@ -73,7 +74,8 @@ export async function runWeeklySummary(): Promise<{ orgsProcessed: number; email
           ),
         ]);
 
-        const postureScore = postureResult.rows[0]?.overall_score ?? null;
+        // Health-style display value (walkthrough ruling): the email shows what the dashboard shows.
+        const postureScore = toDisplayScore(postureResult.rows[0]?.overall_score ?? null);
         const openFindings = parseInt(findingsResult.rows[0]?.open_count ?? "0", 10);
         const criticalFindings = parseInt(findingsResult.rows[0]?.critical_count ?? "0", 10);
         const frameworkReadiness = frameworksResult.rows.map((r) => ({

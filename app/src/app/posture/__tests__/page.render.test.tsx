@@ -121,6 +121,25 @@ describe("/posture — every findings number reconciles with the list it links t
   });
 });
 
+describe("/posture — health-style display (posture display ruling 2026-07-15)", () => {
+  it("frames posture as HEALTH (higher = better) and never as risk-style", async () => {
+    const { container } = await renderPage(PosturePage, { searchParams: sp({}) });
+    // The header and the domain table both carry the health caption.
+    expect(screen.getAllByText(/higher = better/i).length).toBeGreaterThanOrEqual(2);
+    // The app regression the ruling demands: no surface renders raw risk framing.
+    expect(container.textContent).not.toContain("risk position");
+    expect(container.textContent).not.toMatch(/higher = more risk/i);
+  });
+
+  it("formats the snapshot date in UTC (item 2b — no off-by-one-day split)", async () => {
+    // Fixture snapshot_date is 2026-06-01T00:00:00.000Z; a non-UTC format renders
+    // "May 31" in any negative-UTC zone. The shared helper pins UTC.
+    const { container } = await renderPage(PosturePage, { searchParams: sp({}) });
+    expect(container.textContent).toContain("as of Jun 1, 2026");
+    expect(container.textContent).not.toContain("May 31");
+  });
+});
+
 describe("/posture — authorization", () => {
   it("sends a signed-out visitor to /login", async () => {
     signedOut();

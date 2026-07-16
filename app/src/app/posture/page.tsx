@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getMe, getDashboardSummary, type DomainScore } from "@/lib/api";
+import { getMe, getDashboardSummary } from "@/lib/api";
+import { formatDateOnlyUTC } from "@/lib/dates";
 
 const SEVERITY_STYLES: Record<string, { badge: string; bar: string; label: string; color: string }> = {
   Critical: { badge: "bg-red-900/40 text-red-300",      bar: "bg-red-500",    label: "Critical", color: "#fca5a5" },
@@ -21,58 +22,6 @@ const STAT_CARD_STYLE: React.CSSProperties = {
   borderRadius: "12px",
   padding: "16px 20px",
 };
-
-function DomainRow({ domain }: { domain: DomainScore }) {
-  const s = severityStyle(domain.severity);
-  const score = domain.score ?? 0;
-  const findingsHref = `/findings?domain=${encodeURIComponent(domain.domain)}&active=true`;
-
-  return (
-    <tr className="border-t" style={{ borderColor: "#1e293b" }}>
-      <td className="py-3 pr-4">
-        <span className="text-sm font-medium" style={{ color: "#f1f5f9" }}>
-          {domain.domain}
-        </span>
-      </td>
-      <td className="py-3 pr-4">
-        <div className="flex items-center gap-2">
-          <div className="w-20 rounded-full h-1.5" style={{ background: "rgba(255,255,255,0.08)" }}>
-            <div
-              className={`h-1.5 rounded-full ${s.bar}`}
-              style={{ width: `${Math.min(score, 100)}%` }}
-            />
-          </div>
-          <span className="text-sm font-bold tabular-nums w-8" style={{ color: s.color }}>
-            {score}
-          </span>
-        </div>
-      </td>
-      <td className="py-3 pr-4">
-        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${s.badge}`}>
-          {s.label}
-        </span>
-      </td>
-      <td className="py-3 pr-4">
-        {domain.finding_count > 0 ? (
-          <Link
-            href={findingsHref}
-            className="text-sm font-medium transition-colors hover:text-teal-300"
-            style={{ color: "#00c4b4" }}
-          >
-            {domain.finding_count}
-          </Link>
-        ) : (
-          <span className="text-sm" style={{ color: "#334155" }}>0</span>
-        )}
-      </td>
-      <td className="py-3">
-        <span className="text-sm" style={{ color: domain.action_count > 0 ? "#94a3b8" : "#334155" }}>
-          {domain.action_count}
-        </span>
-      </td>
-    </tr>
-  );
-}
 
 export default async function PosturePage() {
   const session = await getSession();
@@ -120,8 +69,10 @@ export default async function PosturePage() {
           <h1 className="text-2xl font-bold mb-1" style={{ color: "#f1f5f9" }}>
             Security Posture
           </h1>
+          {/* Posture display ruling (2026-07-15): scores arrive HEALTH-style from
+              the API's canonical mapper (src/api/lib/postureDisplay.ts). */}
           <p className="text-sm" style={{ color: "#94a3b8" }}>
-            Overall risk position across all domains
+            Overall security health across all domains · higher = better
           </p>
         </div>
 
@@ -139,13 +90,11 @@ export default async function PosturePage() {
             <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${scoreStyle.badge}`}>
               {scoreStyle.label}
             </span>
+            {/* Item 2b: DATE fields format in UTC via the shared helper so this
+                page can never disagree with the dashboard about the same date. */}
             {posture.snapshot_date && (
               <p className="mt-2 text-xs" style={{ color: "#475569" }}>
-                as of {new Date(posture.snapshot_date).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
+                as of {formatDateOnlyUTC(posture.snapshot_date)}
               </p>
             )}
           </div>
@@ -192,7 +141,7 @@ export default async function PosturePage() {
                 time; the links open the LIVE findings list, which may differ.
                 Say so instead of letting the two look contradictory. */}
             <p className="text-xs mt-1" style={{ color: "#475569" }}>
-              Counts are from this snapshot — links open the live findings list, which may have changed since.
+              Health score (0–100) · higher = better. Counts are from this snapshot — links open the live findings list, which may have changed since.
             </p>
           </div>
           <div className="overflow-x-auto">

@@ -125,7 +125,7 @@ export function PostureDashboard({ summary, frameworkPairs, postureSnapshots, us
 
   function renderTile(id: string) {
     switch (id) {
-      case "posture_score":       return <PostureScoreTile posture={posture} />;
+      case "posture_score":       return <PostureScoreTile posture={posture} findings={summary.findings} />;
       case "risks_breakdown":     return <RisksBreakdown risks_summary={risks_summary} />;
       case "risk_heatmap":        return <RiskHeatmap risks_summary={risks_summary} />;
       case "posture_trend":       return <PostureTrendChart snapshots={postureSnapshots} />;

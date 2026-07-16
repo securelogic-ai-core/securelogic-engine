@@ -66,8 +66,10 @@ export function PostureTrendChart({ snapshots }: { snapshots: PostureSnapshot[] 
           <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
             Posture Score Trend
           </p>
+          {/* Posture display ruling (2026-07-15): the series arrives HEALTH-style
+              from the API mapper — an upward line means improving. */}
           <p className="text-xs mt-0.5" style={{ color: TEXT_MUTED }}>
-            {filtered.length} {filtered.length === 1 ? "snapshot" : "snapshots"}
+            {filtered.length} {filtered.length === 1 ? "snapshot" : "snapshots"} · higher = better
           </p>
         </div>
 

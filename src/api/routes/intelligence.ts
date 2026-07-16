@@ -7,6 +7,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
+import { toDisplayPosture } from "../lib/postureDisplay.js";
 
 const router = Router();
 
@@ -391,7 +392,8 @@ export function buildLeadershipSummary(
   ) {
     trendDirection = "insufficient_data";
   } else {
-    // Lower score = worse posture (higher risk). Improving = score going up.
+    // Snapshots arrive HEALTH-style (converted by toDisplayPosture at the call
+    // site) — higher = better, so improving = score going up.
     const delta = currentSnapshot.overall_score - previousSnapshot.overall_score;
     if (delta > 2) {
       trendDirection = "improving";
@@ -751,7 +753,10 @@ router.post(
           [organizationId]
         );
 
-      const snapshots = snapshotsResult.rows;
+      // Health-style display values (walkthrough ruling): the leadership summary
+      // quotes the same posture numbers the dashboard shows. Both comparison
+      // points convert through the one canonical mapper.
+      const snapshots = snapshotsResult.rows.map(toDisplayPosture);
       const currentSnapshot = snapshots[0] ?? null;
       const previousSnapshot = snapshots[1] ?? null;
 

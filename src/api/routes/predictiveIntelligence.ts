@@ -19,6 +19,7 @@ import { forecastLinear, type ForecastPoint } from "../lib/forecastEngine.js";
 import { readForecasts } from "../lib/riskForecastStore.js";
 import { FORECAST_HORIZON_DAYS } from "../workers/predictiveForecastWorker.js";
 import { generatePredictiveInsights } from "../lib/predictiveNarrative.js";
+import { toDisplayTrend } from "../lib/postureDisplay.js";
 
 const router = Router();
 
@@ -64,11 +65,16 @@ export async function getPostureForecast(req: Request, res: Response): Promise<v
     [orgId]
   );
 
+  // Health-style display series (walkthrough ruling): observations AND the
+  // forecast derived from them convert through the one canonical mapper, so the
+  // projected trend is coherent with every other posture surface.
+  const displayRows = toDisplayTrend(rows);
+
   // x = days since the first snapshot; y = overall score (bounded 0–100).
-  const first = rows.length > 0 ? new Date(rows[0]!.snapshot_date).getTime() : 0;
-  const points: ForecastPoint[] = rows.map((r) => ({
+  const first = displayRows.length > 0 ? new Date(displayRows[0]!.snapshot_date).getTime() : 0;
+  const points: ForecastPoint[] = displayRows.map((r) => ({
     x: (new Date(r.snapshot_date).getTime() - first) / MS_PER_DAY,
-    y: r.overall_score
+    y: r.overall_score ?? 0
   }));
   const lastX = points.length > 0 ? points[points.length - 1]!.x : 0;
   const forecast = forecastLinear(points, lastX + horizonDays, { min: 0, max: 100 });
@@ -76,7 +82,7 @@ export async function getPostureForecast(req: Request, res: Response): Promise<v
   res.status(200).json({
     metric: "posture_overall_score",
     horizon_days: horizonDays,
-    observations: rows.map((r) => ({ date: r.snapshot_date, score: r.overall_score })),
+    observations: displayRows.map((r) => ({ date: r.snapshot_date, score: r.overall_score })),
     forecast
   });
 }

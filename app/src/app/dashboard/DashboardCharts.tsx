@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { DashboardSummary, DomainScore, Framework, FrameworkReadiness } from "@/lib/api";
 import { orgActionsHref } from "@/app/actions/myActions";
+import { formatDateOnlyUTC } from "@/lib/dates";
 
 const CRIT_COLORS: Record<string, { bar: string; badge: string; text: string }> = {
   critical:      { bar: "#ef4444", badge: "rgba(239,68,68,0.15)",   text: "#fca5a5" },
@@ -40,10 +41,8 @@ const DONUT_CIRC   = 2 * Math.PI * DONUT_R;
  * Use for: framework readiness % (satisfied / total_requirements),
  * compliance coverage %, control implementation %.
  *
- * High score → green; low score → red.
- *
- * DO NOT use for the posture engine's domain risk scores — those are
- * RISK-style (higher = worse). Use riskColor for those.
+ * High score → green; low score → red. Posture scores qualify too: the API's
+ * canonical mapper serves them health-style (posture display ruling 2026-07-15).
  */
 function scoreColor(score: number): string {
   if (score >= 80) return "#22c55e";
@@ -52,27 +51,11 @@ function scoreColor(score: number): string {
   return "#ef4444";
 }
 
-/**
- * riskColor — colorizer for RISK-style metrics (higher = worse).
- *
- * Use for: posture engine's domain risk scores
- * (DomainRiskAggregationEngineV2 output, materialized as
- * domain_scores.score). The engine's bands are Critical ≥85,
- * High ≥65, Moderate ≥40, else Low — see
- * src/engine/policy/defaultScoringPolicy.ts and
- * src/engine/scoring/v2/DomainRiskAggregationEngineV2.ts:49-54.
- *
- * High score → red; low score → green. The bar color matches the
- * severity badge already shown alongside the score.
- *
- * DO NOT use for posture-style metrics — use scoreColor instead.
- */
-function riskColor(score: number): string {
-  if (score >= 85) return "#ef4444"; // Critical
-  if (score >= 65) return "#f97316"; // High
-  if (score >= 40) return "#f59e0b"; // Moderate
-  return "#22c55e";                   // Low
-}
+// riskColor (higher = worse) was deleted with the posture display ruling
+// (2026-07-15): every posture score now arrives HEALTH-style from the API's
+// canonical mapper (src/api/lib/postureDisplay.ts), so scoreColor is the one
+// colorizer for every 0–100 metric on this page. The engine's internal
+// risk-style math is unchanged — the inversion happens once, at the API.
 
 /**
  * CompactEmptyState — shared empty-state body used inside cards whose
@@ -230,6 +213,10 @@ export function DomainPostureBars({ domains }: { domains: DomainScore[] }) {
           Full breakdown →
         </Link>
       </div>
+      {/* Posture display ruling: scores arrive HEALTH-style from the API mapper. */}
+      <p className="text-[11px] -mt-3 mb-4" style={{ color: TEXT_MUTED }}>
+        Health score (0–100) · higher = better
+      </p>
       {domains.length === 0 ? (
         <CompactEmptyState
           message="No domain data yet."
@@ -240,11 +227,11 @@ export function DomainPostureBars({ domains }: { domains: DomainScore[] }) {
         <div className="space-y-3">
           {domains.slice(0, 6).map((d) => {
             const score = d.score ?? 0;
-            // riskColor (not scoreColor): the engine produces a risk
-            // score where higher = more risk. Pre-fix the bar
-            // colorizer was inverted, rendering Critical-risk
-            // domains green.
-            const color = riskColor(score);
+            // Posture display ruling (2026-07-15): the API's canonical mapper
+            // (src/api/lib/postureDisplay.ts) now serves HEALTH-style domain
+            // scores (higher = better), so the posture-style colorizer applies —
+            // a healthy domain is green, a Critical one reads as a LOW number.
+            const color = scoreColor(score);
             return (
               <Link
                 key={d.domain}
@@ -686,8 +673,12 @@ export function VendorRiskCard({
 
 export function PostureScoreTile({
   posture,
+  findings = null,
 }: {
   posture: DashboardSummary["posture"];
+  /** Active-findings counts for the findings-fact chip (ruling: the score and
+   *  the findings are different truths and get different elements). */
+  findings?: DashboardSummary["findings"] | null;
 }) {
   const score = posture.overall_score;
   const severity = posture.overall_severity;
@@ -707,9 +698,9 @@ export function PostureScoreTile({
     severity === "Critical" ? { background: "rgba(239,68,68,0.15)",   color: severityColor } :
     { background: "rgba(100,116,139,0.12)", color: severityColor };
 
-  const formattedDate = date
-    ? new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-    : null;
+  // Item 2b: DATE fields format in UTC via the shared helper so this tile can
+  // never disagree with the trend chart about the same snapshot_date.
+  const formattedDate = formatDateOnlyUTC(date);
 
   return (
     <div
@@ -719,10 +710,11 @@ export function PostureScoreTile({
       <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
         Posture Score
       </p>
-      {/* D-3: this is a RISK score — higher is worse. Stated explicitly so a high
-          number badged "Critical" is never misread as a good security score. */}
+      {/* Posture display ruling (2026-07-15): scores arrive HEALTH-style from the
+          API's canonical mapper — higher is better, matching executive instinct.
+          A Critical posture now reads as a LOW number beside its Critical badge. */}
       <p className="text-[11px] mb-3" style={{ color: TEXT_MUTED }}>
-        Risk score (0–100) · higher = more risk
+        Health score (0–100) · higher = better
       </p>
       {score == null ? (
         <div>
@@ -733,14 +725,34 @@ export function PostureScoreTile({
         <>
           <p className="text-4xl font-bold leading-none" style={{ color: severityColor }}>
             {score}
-            <span className="text-lg font-medium" style={{ color: TEXT_MUTED }}>/100 risk</span>
+            <span className="text-lg font-medium" style={{ color: TEXT_MUTED }}>/100</span>
           </p>
-          <div className="mt-2 flex items-center gap-2">
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
             {severity && (
               <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold" style={badgeStyle}>
                 {severity}
               </span>
             )}
+            {/* The findings FACT, as its own chip — never folded into the score
+                badge (ruling: score and findings are different truths). */}
+            {(() => {
+              const crit = findings?.by_severity?.Critical ?? 0;
+              const high = findings?.by_severity?.High ?? 0;
+              if (crit === 0 && high === 0) return null;
+              const parts = [
+                ...(crit > 0 ? [`${crit} critical`] : []),
+                ...(high > 0 ? [`${high} high`] : []),
+              ];
+              return (
+                <Link
+                  href="/findings?active=true"
+                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium hover:opacity-80"
+                  style={{ background: "rgba(239,68,68,0.1)", color: "#fca5a5" }}
+                >
+                  {parts.join(" · ")} finding{crit + high === 1 ? "" : "s"}
+                </Link>
+              );
+            })()}
           </div>
           {formattedDate && (
             <p className="mt-2 text-xs" style={{ color: TEXT_MUTED }}>as of {formattedDate}</p>

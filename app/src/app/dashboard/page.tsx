@@ -368,6 +368,7 @@ function SamplePostureDashboard() {
             {/* Posture score */}
             <div className="lg:col-span-1 bg-brand-surface border border-brand-line rounded-xl p-5 flex flex-col justify-between">
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Posture Score</p>
+              <p className="text-[11px] text-slate-500 mb-1">Health score · higher = better</p>
               <p className="text-4xl font-bold text-slate-100 leading-none">67</p>
               <span className="mt-2 self-start inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-900/40 text-amber-300">
                 Moderate

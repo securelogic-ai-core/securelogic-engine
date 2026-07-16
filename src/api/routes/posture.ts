@@ -21,6 +21,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { computeAndSavePostureSnapshot } from "../lib/postureSnapshot.js";
+import { toDisplayScore, toDisplayDomain, toDisplayTrend } from "../lib/postureDisplay.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 
 const router = Router();
@@ -126,7 +127,9 @@ router.post(
         event_type: "posture.snapshot_created",
         organization_id: organizationId,
         data: {
-          overall_score:    result.overallScore,
+          // Health-style display value (walkthrough ruling) — outward payloads
+          // must match what the dashboard shows.
+          overall_score:    toDisplayScore(result.overallScore),
           overall_severity: result.overallSeverity,
           snapshot_date:    result.snapshotDate,
         },
@@ -136,12 +139,13 @@ router.post(
         snapshotId:          result.snapshotId,
         organizationId,
         snapshotDate:        result.snapshotDate,
-        overallScore:        result.overallScore,
+        // Health-style (walkthrough ruling): higher = better on every surface.
+        overallScore:        toDisplayScore(result.overallScore),
         overallSeverity:     result.overallSeverity,
         openFindingCount:    result.openFindingCount,
         openActionCount:     result.openActionCount,
         overdueActionCount:  result.overdueActionCount,
-        domainScores:        result.domainScores,
+        domainScores:        result.domainScores.map(toDisplayDomain),
         computationRationale: result.computationRationale,
       });
     } catch (err) {
@@ -227,7 +231,8 @@ router.get(
           id: snapshot.id,
           organizationId: snapshot.organization_id,
           snapshotDate: snapshot.snapshot_date,
-          overallScore: snapshot.overall_score,
+          // Health-style display value (walkthrough ruling).
+          overallScore: toDisplayScore(snapshot.overall_score),
           overallSeverity: snapshot.overall_severity,
           openFindingCount: snapshot.open_finding_count,
           openActionCount: snapshot.open_action_count,
@@ -235,7 +240,7 @@ router.get(
           computationRationale: snapshot.computation_rationale,
           createdAt: snapshot.created_at
         },
-        domainScores: domainResult.rows
+        domainScores: domainResult.rows.map(toDisplayDomain)
       });
     } catch (err) {
       logger.error(
@@ -292,7 +297,9 @@ router.get(
         organizationId,
         days,
         count: result.rows.length,
-        snapshots: result.rows
+        // Trend converts through the same mapper so the series stays coherent
+        // with the headline (walkthrough ruling).
+        snapshots: toDisplayTrend(result.rows)
       });
     } catch (err) {
       logger.error(
