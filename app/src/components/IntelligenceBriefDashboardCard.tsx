@@ -46,7 +46,7 @@ type CardAccent = {
  *
  *   any immediate>0 → red    ("Immediate action")
  *   else any near_term>0 → amber ("Near-term focus")
- *   else                 → teal  ("Today's intelligence")
+ *   else                 → teal  ("Latest intelligence")
  *
  * Hex codes rather than Tailwind tokens because the inline-style stripe
  * needs an exact value and the eyebrow contrasts against slate-800.
@@ -58,7 +58,32 @@ function cardAccent(counts: UrgencyCounts): CardAccent {
   if (counts.near_term > 0) {
     return { stripe: "#EF9F27", eyebrow: "Near-term focus", eyebrowColor: "#854F0B" };
   }
-  return { stripe: "#1D9E75", eyebrow: "Today's intelligence", eyebrowColor: "#0F6E56" };
+  // Was "Today's intelligence" — a hardcoded claim of currency the card cannot
+  // make (walkthrough item 4: an 8-week-old brief presented itself as today's).
+  return { stripe: "#1D9E75", eyebrow: "Latest intelligence", eyebrowColor: "#0F6E56" };
+}
+
+/**
+ * Staleness rule (walkthrough item 4): briefs are generated WEEKLY (engine cron
+ * "0 7 * * 2", Tuesday 07:00 UTC — schedulerRunner.ts). A Latest Brief older
+ * than one cadence window must carry a visible staleness signal — old
+ * intelligence never silently presents as current. 9 days = one 7-day window
+ * plus 2 days' grace for send-time jitter.
+ */
+export const BRIEF_STALE_AFTER_DAYS = 9;
+
+/** Whole days between the brief's period_end and now (never negative). */
+export function briefAgeDays(periodEnd: string, nowMs: number): number {
+  const t = Date.parse(periodEnd);
+  if (Number.isNaN(t)) return 0;
+  return Math.max(0, Math.floor((nowMs - t) / 86400000));
+}
+
+/** Human age label for the staleness banner ("12 days old", "8 weeks old"). */
+export function briefAgeLabel(ageDays: number): string {
+  if (ageDays < 14) return `${ageDays} day${ageDays === 1 ? "" : "s"} old`;
+  const weeks = Math.floor(ageDays / 7);
+  return `${weeks} weeks old`;
 }
 
 /**
@@ -85,9 +110,15 @@ export function IntelligenceBriefDashboardCard({
   const synthesis = brief.content_json?.synthesis ?? null;
   const headline = synthesis?.headline ?? null;
   const counts = countByUrgency(brief.items);
-  const accent = cardAccent(counts);
+  const ageDays = briefAgeDays(brief.period_end, Date.now());
+  const isStale = ageDays > BRIEF_STALE_AFTER_DAYS;
+  // A stale brief must not wear an urgency eyebrow as if its calls-to-action were
+  // current — the staleness signal replaces it.
+  const accent: CardAccent = isStale
+    ? { stripe: "#64748b", eyebrow: "Older intelligence", eyebrowColor: "#94a3b8" }
+    : cardAccent(counts);
   const teaser = synthesis?.teaser ?? urgencyTeaser(counts);
-  const title = headline ?? "Daily Intelligence Brief";
+  const title = headline ?? "Intelligence Brief";
 
   return (
     <Link href={`/briefs/${brief.id}`} className="block group">
@@ -104,6 +135,17 @@ export function IntelligenceBriefDashboardCard({
         <p className="text-xs text-slate-500 font-medium mt-0.5">
           Intelligence Brief · {date}
         </p>
+
+        {/* Walkthrough item 4: a Latest Brief older than the weekly cadence window
+            carries an explicit staleness indicator. */}
+        {isStale && (
+          <p
+            className="text-xs font-medium mt-2 px-2 py-1 rounded inline-block"
+            style={{ background: "rgba(245,158,11,0.12)", color: "#fcd34d" }}
+          >
+            ⚠ This brief is {briefAgeLabel(ageDays)} — no newer brief has been published.
+          </p>
+        )}
 
         <h3 className="text-slate-100 font-bold text-base leading-snug mt-2 mb-2 group-hover:text-brand-teal transition-colors">
           {title}

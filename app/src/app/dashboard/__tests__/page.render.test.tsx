@@ -277,6 +277,9 @@ describe("dashboard — enterprise vs newsletter truthfulness (walkthrough)", ()
     findings: { open: 0, by_severity: { Critical: 0, High: 0, Moderate: 0, Low: 0 } },
     actions: { open: 0, in_progress: 0, overdue: 0 },
     risks_summary: { open: 0, by_risk_rating: { Critical: 0, High: 0, Moderate: 0, Low: 0 } },
+    // A genuinely empty org has no inventory either (hasPlatformData now also
+    // counts vendors/AI systems/controls/obligations — walkthrough item 9).
+    inventory: { vendors: 0, ai_systems: 0, controls: 0, control_assessments: 0, governance_reviews: 0, frameworks: 0, risks: 0, obligations: 0 },
   });
 
   it("D-1/D-4: a platform tenant is addressed as a platform, not a Brief Lite subscriber", async () => {
@@ -306,5 +309,25 @@ describe("dashboard — enterprise vs newsletter truthfulness (walkthrough)", ()
   it("D-5: Framework Readiness carries copy distinguishing it from Compliance Coverage", async () => {
     await renderPage(DashboardPage, { searchParams: sp({}) });
     expect(screen.getByText(/How close each activated framework is to being audit-ready/i)).toBeInTheDocument();
+  });
+});
+
+describe("dashboard — setup banner detection covers inventory-only orgs (item 9 hardening)", () => {
+  it("an org with ONLY vendors/controls (no findings/posture/frameworks) still counts as set up", async () => {
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        posture: { overall_score: null, overall_severity: null, snapshot_date: null },
+        domains: [],
+        findings: { open: 0, by_severity: { Critical: 0, High: 0, Moderate: 0, Low: 0 } },
+        actions: { open: 0, in_progress: 0, overdue: 0 },
+        risks_summary: { open: 0, by_risk_rating: { Critical: 0, High: 0, Moderate: 0, Low: 0 } },
+        inventory: { vendors: 8, ai_systems: 0, controls: 12, control_assessments: 0, governance_reviews: 0, frameworks: 0, risks: 0, obligations: 0 },
+      }),
+    );
+    api.getPostureHistory.mockResolvedValue({ snapshots: [] });
+    api.getFindings.mockResolvedValue(aFindingsResponse([]));
+    api.getFrameworks.mockResolvedValue({ frameworks: [] });
+    await renderPage(DashboardPage, { searchParams: sp({}) });
+    expect(screen.queryByText(/Complete your security program setup/i)).toBeNull();
   });
 });

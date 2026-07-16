@@ -88,7 +88,14 @@ export default async function DashboardPage({
       (dashboardSummary?.domains?.length ?? 0) > 0 ||
       recentFindings.length > 0 ||
       frameworks.length > 0 ||
-      (dashboardSummary?.risks_summary?.open ?? 0) > 0,
+      (dashboardSummary?.risks_summary?.open ?? 0) > 0 ||
+      // Walkthrough item 9 hardening: an org seeded with only inventory entities
+      // (vendors / AI systems / controls / obligations) is materially set up too —
+      // the summary already carries these counts.
+      (dashboardSummary?.inventory?.vendors ?? 0) > 0 ||
+      (dashboardSummary?.inventory?.ai_systems ?? 0) > 0 ||
+      (dashboardSummary?.inventory?.controls ?? 0) > 0 ||
+      (dashboardSummary?.inventory?.obligations ?? 0) > 0,
   );
 
   return (

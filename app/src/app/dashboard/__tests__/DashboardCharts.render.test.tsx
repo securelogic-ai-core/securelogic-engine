@@ -213,3 +213,45 @@ describe("ComplianceCoverage — distinguished from Framework Readiness (D-5)", 
     expect(screen.getByText(/Share of mapped requirements currently satisfied/i)).toBeInTheDocument();
   });
 });
+
+// ── Walkthrough remediation (items 3, 8, 10) ────────────────────────────────
+
+describe("RisksBreakdown — empty state explains itself (items 3+10)", () => {
+  it("at zero, the all-zero severity ladder collapses into an explaining empty state", () => {
+    const { container } = render(
+      <RisksBreakdown
+        risks_summary={{ open: 0, by_risk_rating: { Critical: 0, High: 0, Moderate: 0, Low: 0 } }}
+      />
+    );
+    // No ladder rows…
+    expect(screen.queryByText("Critical")).toBeNull();
+    expect(screen.queryByText("Moderate")).toBeNull();
+    // …an empty state that explains rather than implies zero risk…
+    expect(screen.getByText(/No risks promoted to the register yet/)).toBeInTheDocument();
+    expect(screen.getByText(/don't become risks automatically/)).toBeInTheDocument();
+    // …and an actionable route to the findings that feed it.
+    expect(hrefOf(container, /Review findings/)).toBe("/findings?active=true");
+  });
+
+  it("with open risks the ladder renders as before", () => {
+    render(<RisksBreakdown risks_summary={SUMMARY.risks_summary} />);
+    expect(screen.getByText("6")).toBeInTheDocument();
+    expect(screen.getByText("Critical")).toBeInTheDocument();
+    expect(screen.queryByText(/No risks promoted/)).toBeNull();
+  });
+});
+
+describe("OpenItemsAging — a legitimate zero average is not 'no data' (item 8)", () => {
+  const zeroAgeActions = { ...SUMMARY.actions, avg_age_days: 0 };
+
+  it("renders '<1' for an avg of 0 days (brand-new actions), not an em-dash", () => {
+    render(<OpenItemsAging findings={SUMMARY.findings} actions={zeroAgeActions} />);
+    expect(screen.getByText("<1")).toBeInTheDocument();
+  });
+
+  it("dashes ONLY when the engine sent null (no active items)", () => {
+    const nullAge = { ...SUMMARY.actions, avg_age_days: null };
+    render(<OpenItemsAging findings={SUMMARY.findings} actions={nullAge} />);
+    expect(screen.getByText("—")).toBeInTheDocument();
+  });
+});
