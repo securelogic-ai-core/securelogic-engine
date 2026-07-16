@@ -7,7 +7,7 @@
  *   Make every panel of the core walkthrough — Brief → Finding → Decision
  *   Workspace → Links → Evidence → Remediation → status update — light up from
  *   REAL rows, at a size a human can verify by eye (2 vendors, 5 assets,
- *   8 findings, 4 actions, 2 evidence records).
+ *   8 findings, 4 actions, 2 evidence records, 3 risks).
  *
  *   It is also a DISCRIMINATOR. The finding set is deliberately spread across
  *   five source_types so that panels which render empty do so for a *knowable*
@@ -1114,6 +1114,45 @@ export async function seed(c: PoolClient, orgId: string): Promise<void> {
                CASE WHEN $7 IN ('closed','accepted') THEN NOW() - INTERVAL '1 day' ELSE NULL END)
        RETURNING id`,
       [orgId, findingId, title, desc, priority, analystId, status]
+    );
+  }
+
+  // 18b. Risks — walkthrough item 3. Findings do NOT auto-create risks (the
+  //      only INSERT INTO risks in src/ is user-initiated POST /api/risks), so
+  //      the register is seeded the way production populates it: risks PROMOTED
+  //      from findings, carrying source_type='finding'. Three risks light up the
+  //      Open Risks ladder, the residual heatmap and /risks, and their ratings
+  //      reconcile with the severities of the findings they came from. A fresh
+  //      org (zero risks) remains the honest-empty state the dashboard's
+  //      explanatory empty state renders — that path is regression-tested.
+  for (const [srcFinding, title, domain, inhL, inhI, inhR, resL, resI, resR, dueOffset] of [
+    [
+      f4, "[SEED] Privileged account compromise via password-only authentication",
+      "Access Control", "very_likely", "Critical", "Critical", "likely", "High", "High", 30,
+    ],
+    [
+      f6, "[SEED] Unquantified nth-party exposure across Microsoft-hosted services",
+      "Vendor Risk", "likely", "High", "High", "possible", "Moderate", "Moderate", 60,
+    ],
+    [
+      f8, "[SEED] Customer PII retained beyond stated commitments in AI copilot",
+      "AI Governance", "likely", "High", "High", "likely", "High", "High", 45,
+    ],
+  ] as Array<[string, string, string, string, string, string, string, string, string, number]>) {
+    await ensureRow(
+      c,
+      `SELECT id FROM risks WHERE organization_id = $1 AND title = $2`,
+      [orgId, title],
+      `INSERT INTO risks
+         (organization_id, title, domain, status, owner, due_date,
+          likelihood, impact, risk_rating,
+          inherent_likelihood, inherent_impact, inherent_rating,
+          residual_likelihood, residual_impact, residual_rating,
+          source_type, source_id)
+       VALUES ($1, $2, $3, 'open', '[SEED] Walkthrough Analyst', CURRENT_DATE + ($4)::int,
+               $5, $6, $7, $8, $9, $10, $11, $12, $13, 'finding', $14)
+       RETURNING id`,
+      [orgId, title, domain, dueOffset, resL, resI, resR, inhL, inhI, inhR, resL, resI, resR, srcFinding]
     );
   }
 
