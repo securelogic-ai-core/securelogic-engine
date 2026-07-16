@@ -9,7 +9,6 @@
  */
 
 import { Router } from "express";
-import type { Response } from "express";
 import PDFDocument from "pdfkit";
 import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
@@ -18,6 +17,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { sqlFindingActive } from "../lib/metricDefinitions.js";
 import { toDisplayPosture } from "../lib/postureDisplay.js";
+import { secureLogicLogo, stampFooters } from "../lib/reportBranding.js";
 
 const router = Router();
 
@@ -64,7 +64,7 @@ type RecentFinding = {
   created_at: string;
 };
 
-type ExecReportData = {
+export type ExecReportData = {
   generated_at:       string;
   org_name:           string;
   posture:            PostureRow | null;
@@ -369,7 +369,7 @@ async function assembleExecReport(organizationId: string): Promise<ExecReportDat
 
 // ─── PDF generation ───────────────────────────────────────────────────────────
 
-function generateExecutivePDF(data: ExecReportData, res: Response): void {
+export function generateExecutivePDF(data: ExecReportData, out: NodeJS.WritableStream): void {
   const doc = new PDFDocument({
     margin:      50,
     size:        "A4",
@@ -381,7 +381,7 @@ function generateExecutivePDF(data: ExecReportData, res: Response): void {
     },
   });
 
-  doc.pipe(res);
+  doc.pipe(out);
 
   const pageW         = doc.page.width;   // 595.28
   const pageH         = doc.page.height;  // 841.89
@@ -394,17 +394,23 @@ function generateExecutivePDF(data: ExecReportData, res: Response): void {
   // Top accent bar
   doc.rect(0, 0, pageW, 20).fill(TEAL);
 
-  // Logo
-  doc
-    .fillColor(TEAL)
-    .font("Helvetica-Bold")
-    .fontSize(18)
-    .text("SecureLogic AI", margin, 50, { width: contentW });
-  doc
-    .fillColor(TEXT_MUTED)
-    .font("Helvetica")
-    .fontSize(9)
-    .text("Security Intelligence Platform", margin, 72, { width: contentW });
+  // Logo — the canonical SecureLogic AI logo asset; text wordmark only if
+  // the asset is unavailable (never a substitute logo).
+  const logo = secureLogicLogo();
+  if (logo) {
+    doc.image(logo, margin, 44, { width: 90 });
+  } else {
+    doc
+      .fillColor(TEAL)
+      .font("Helvetica-Bold")
+      .fontSize(18)
+      .text("SecureLogic AI", margin, 50, { width: contentW });
+    doc
+      .fillColor(TEXT_MUTED)
+      .font("Helvetica")
+      .fontSize(9)
+      .text("Security Intelligence Platform", margin, 72, { width: contentW });
+  }
 
   // Main title block
   doc
@@ -906,29 +912,14 @@ function generateExecutivePDF(data: ExecReportData, res: Response): void {
     );
 
   // ─── Footer stamp on all pages ────────────────────────────────────────────────
+  // stampFooters zeroes the bottom margin while writing so footer text cannot
+  // trigger pdfkit's implicit page break (footer-only artifact pages, REP-3).
 
-  const range      = (doc as any).bufferedPageRange() as { start: number; count: number };
-  const totalPages = range.count;
-
-  for (let i = 0; i < totalPages; i++) {
-    doc.switchToPage(i);
-    const footerY = pageH - 28;
-    doc.rect(margin, footerY - 8, contentW, 0.5).fill(RULE_COLOR);
-    doc
-      .fillColor(TEXT_MUTED)
-      .font("Helvetica")
-      .fontSize(8)
-      .text("SecureLogic AI — Confidential", margin, footerY, {
-        width: contentW / 2, lineBreak: false,
-      });
-    doc
-      .fillColor(TEXT_MUTED)
-      .font("Helvetica")
-      .fontSize(8)
-      .text(`Page ${i + 1} of ${totalPages}`, margin + contentW / 2, footerY, {
-        width: contentW / 2, align: "right", lineBreak: false,
-      });
-  }
+  stampFooters(doc, {
+    leftText:  "SecureLogic AI — Confidential",
+    textColor: TEXT_MUTED,
+    ruleColor: RULE_COLOR,
+  });
 
   doc.end();
 }

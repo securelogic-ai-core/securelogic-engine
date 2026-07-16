@@ -11,6 +11,7 @@ import {
   getTeamMembers,
 } from "@/lib/api";
 import { FindingsList } from "./FindingsList";
+import { ExportCsvButton } from "./ExportCsvButton";
 import { isActiveStatus } from "./decisionQueue";
 import SavedViewsBar from "./SavedViewsBar";
 import { currentViewFilters } from "./savedViews";
@@ -271,22 +272,13 @@ export default async function FindingsPage({
         >
           ↑ Import CSV
         </Link>
-        <a
-          href={`/api/export/findings${
-            Object.keys(currentSp).length > 0
-              ? `?${new URLSearchParams(
-                  Object.fromEntries(
-                    Object.entries(currentSp).filter(([, v]) => v !== undefined)
-                  ) as Record<string, string>
-                ).toString()}`
-              : ""
-          }`}
-          download
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex-shrink-0"
-          style={{ border: "1px solid #1e293b", color: "#94a3b8", background: "transparent" }}
-        >
-          ⬇ Export CSV
-        </a>
+        <ExportCsvButton
+          queryString={new URLSearchParams(
+            Object.fromEntries(
+              Object.entries(currentSp).filter(([, v]) => v !== undefined)
+            ) as Record<string, string>
+          ).toString()}
+        />
       </div>
 
       {workFirstMode ? (

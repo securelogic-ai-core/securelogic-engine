@@ -435,6 +435,10 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", billingRouter);
   router.use("/api", assessRouter);
   router.use("/api", assessmentsRouter);
+  // findingsExportRouter MUST mount before findingsRouter: its literal path
+  // /findings/export.csv is otherwise captured by GET /findings/:id, which
+  // rejects "export.csv" as a non-UUID id (staging EXP-1).
+  router.use("/api", findingsExportRouter);
   router.use("/api", findingsRouter);
   router.use("/api", actionsRouter);
   router.use("/api", vendorsRouter);
@@ -517,7 +521,6 @@ router.use("/api", riskAcceptancesRouter);
   router.use("/api", teamInvitesRouter);
   router.use("/api", auditPackageRouter);
   router.use("/api", gapReportRouter);
-  router.use("/api", findingsExportRouter);
   // GDPR self-export intake + authenticated list/download (each route owns
   // requireApiKey + attachOrganizationContext). The session-optional tokenized
   // download lives in dataExportPublicDownloadRouter, mounted above.

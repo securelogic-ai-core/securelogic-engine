@@ -252,7 +252,7 @@ export default async function FrameworkDetailPage({
 
       {/* Export actions + self-assessment link */}
       <div className="flex items-center gap-3 mb-6 flex-wrap">
-        <DownloadButtons frameworkId={framework.id} />
+        <DownloadButtons frameworkId={framework.id} frameworkName={framework.name} />
         <Link
           href={`/compliance/${framework.id}/assess`}
           className="inline-flex items-center px-4 py-2 rounded-lg text-sm font-semibold transition-opacity hover:opacity-80"
