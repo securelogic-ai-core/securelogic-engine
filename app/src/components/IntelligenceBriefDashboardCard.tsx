@@ -3,17 +3,18 @@ import type {
   IntelligenceBriefDetailResponse,
   IntelligenceBriefItem,
 } from "@/lib/api";
+import { formatDateOnlyUTC } from "@/lib/dates";
 
 interface IntelligenceBriefDashboardCardProps {
   brief: IntelligenceBriefDetailResponse;
 }
 
+// period_end is a Postgres DATE — format through the UTC-pinned helper
+// (item 2b) so the card can never disagree with the brief page's date.
 function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
+  return (
+    formatDateOnlyUTC(dateStr, { year: "numeric", month: "long", day: "numeric" }) ?? dateStr
+  );
 }
 
 type UrgencyCounts = {
@@ -46,7 +47,7 @@ type CardAccent = {
  *
  *   any immediate>0 → red    ("Immediate action")
  *   else any near_term>0 → amber ("Near-term focus")
- *   else                 → teal  ("Today's intelligence")
+ *   else                 → teal  ("Current intelligence")
  *
  * Hex codes rather than Tailwind tokens because the inline-style stripe
  * needs an exact value and the eyebrow contrasts against slate-800.
@@ -58,7 +59,34 @@ function cardAccent(counts: UrgencyCounts): CardAccent {
   if (counts.near_term > 0) {
     return { stripe: "#EF9F27", eyebrow: "Near-term focus", eyebrowColor: "#854F0B" };
   }
-  return { stripe: "#1D9E75", eyebrow: "Today's intelligence", eyebrowColor: "#0F6E56" };
+  return { stripe: "#1D9E75", eyebrow: "Current intelligence", eyebrowColor: "#0F6E56" };
+}
+
+/**
+ * Staleness (walkthrough item 4): the brief is generated weekly (Tuesday
+ * 07:00 UTC — schedulerRunner cron "0 7 * * 2"), so one full cadence window
+ * plus a day of publish slack is the honest limit: a brief more than 8 days
+ * old cannot be the current cycle's brief. Old intelligence must never
+ * silently present as current — a stale brief drops its urgency accent
+ * (an 8-week-old "Immediate action" stripe is itself a false claim) and
+ * carries an explicit age warning instead.
+ */
+const STALE_AFTER_DAYS = 8;
+
+const STALE_ACCENT: CardAccent = {
+  stripe: "#64748b",
+  eyebrow: "Previous brief",
+  eyebrowColor: "#94a3b8",
+};
+
+function briefAgeDays(dateStr: string): number {
+  return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86_400_000);
+}
+
+function staleAgeLabel(ageDays: number): string {
+  const weeks = Math.floor(ageDays / 7);
+  const age = weeks >= 2 ? `${weeks} weeks` : `${ageDays} days`;
+  return `This brief is ${age} old — briefs are published weekly. A newer brief has not been generated yet.`;
 }
 
 /**
@@ -85,9 +113,11 @@ export function IntelligenceBriefDashboardCard({
   const synthesis = brief.content_json?.synthesis ?? null;
   const headline = synthesis?.headline ?? null;
   const counts = countByUrgency(brief.items);
-  const accent = cardAccent(counts);
+  const ageDays = briefAgeDays(brief.period_end);
+  const isStale = ageDays > STALE_AFTER_DAYS;
+  const accent = isStale ? STALE_ACCENT : cardAccent(counts);
   const teaser = synthesis?.teaser ?? urgencyTeaser(counts);
-  const title = headline ?? "Daily Intelligence Brief";
+  const title = headline ?? "Intelligence Brief";
 
   return (
     <Link href={`/briefs/${brief.id}`} className="block group">
@@ -104,6 +134,11 @@ export function IntelligenceBriefDashboardCard({
         <p className="text-xs text-slate-500 font-medium mt-0.5">
           Intelligence Brief · {date}
         </p>
+        {isStale && (
+          <p className="text-xs font-semibold mt-1.5" style={{ color: "#f59e0b" }}>
+            {staleAgeLabel(ageDays)}
+          </p>
+        )}
 
         <h3 className="text-slate-100 font-bold text-base leading-snug mt-2 mb-2 group-hover:text-brand-teal transition-colors">
           {title}
