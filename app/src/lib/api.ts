@@ -82,6 +82,13 @@ export function planDisplayName(
   }
   switch (entitlementLevel) {
     case "premium":      return "Platform Professional";
+    // 'platform' and 'team' are full platform entitlements (the dashboard's own
+    // isPlatformUser gates treat them exactly like 'premium'). They were missing
+    // here, so a platform-entitled org with no Stripe tier — e.g. a seeded or
+    // manually-provisioned org — displayed "Plan: Free" while correctly rendering
+    // every platform surface (July-15 walkthrough Step-0 defect).
+    case "platform":     return "Platform Professional";
+    case "team":         return "Platform Professional";
     case "professional": return "Brief Pro";
     case "admin":        return "Enterprise";
     default:             return "Free";
