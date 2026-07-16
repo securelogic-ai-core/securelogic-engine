@@ -1501,19 +1501,23 @@ export async function getFramework(
   }
 }
 
-export type SelfAssessmentReadiness = {
+export type SelfAssessmentProgress = {
   total: number;
   pass: number;
   partial: number;
   fail: number;
   not_assessed: number;
-  readiness_score: number;
+  /** 0–100 share of requirements with a completed response. O-5 ruling:
+   *  this measures assessment PROGRESS (how much has been answered), never
+   *  readiness — readiness comes only from satisfied control mappings via
+   *  FrameworkReadiness.readiness_score. */
+  progress_pct: number;
 };
 
 export type FrameworkDetail = {
   framework: Framework;
-  assessment_readiness: {
-    self: SelfAssessmentReadiness;
+  assessment_progress: {
+    self: SelfAssessmentProgress;
   };
 };
 
@@ -4665,7 +4669,8 @@ export type FrameworkRequirements = {
     partial: number;
     fail: number;
     not_assessed: number;
-    readiness_score: number;
+    /** 0–100 completion share — assessment progress, never readiness (O-5). */
+    progress_pct: number;
   };
 };
 

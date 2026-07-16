@@ -55,6 +55,29 @@ function ReadinessBar({ score }: { score: number }) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Assessment progress bar — deliberately NOT the readiness bar.
+// Progress is completion, not goodness: single neutral color, no
+// red/green banding, so it can never be read as a readiness verdict
+// (O-5 ruling).
+// ─────────────────────────────────────────────────────────────
+
+function ProgressBar({ pct }: { pct: number }) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex-1 rounded-full h-2" style={{ background: "rgba(255,255,255,0.08)" }}>
+        <div
+          className="h-2 rounded-full transition-all"
+          style={{ width: `${pct}%`, background: "#00c4b4" }}
+        />
+      </div>
+      <span className="text-sm font-bold tabular-nums w-10 text-right" style={{ color: "#00c4b4" }}>
+        {pct}%
+      </span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Requirement status badge
 // ─────────────────────────────────────────────────────────────
 
@@ -186,7 +209,7 @@ export default async function FrameworkDetailPage({
 
   if (!frameworkDetail) redirect("/frameworks");
   const framework = frameworkDetail.framework;
-  const selfReadiness = frameworkDetail.assessment_readiness.self;
+  const selfProgress = frameworkDetail.assessment_progress.self;
 
   const controls = (controlsData?.controls ?? []).map((c) => ({ id: c.id, name: c.name }));
 
@@ -276,12 +299,13 @@ export default async function FrameworkDetailPage({
         </div>
       )}
 
-      {/* Self-assessment readiness */}
-      {selfReadiness.total > 0 && (
+      {/* Self-assessment progress — O-5: completion of the questionnaire,
+          a separate truth from readiness, never blended into it. */}
+      {selfProgress.total > 0 && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-6 mb-8">
-          <div className="flex items-center justify-between gap-4 mb-4">
+          <div className="flex items-center justify-between gap-4 mb-1">
             <h2 className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
-              Self Assessment Readiness
+              Assessment Progress
             </h2>
             <Link
               href={`/compliance/${framework.id}/assess`}
@@ -291,15 +315,19 @@ export default async function FrameworkDetailPage({
               Continue assessment →
             </Link>
           </div>
+          <p className="text-[11px] mb-4" style={{ color: "#475569" }}>
+            {selfProgress.total - selfProgress.not_assessed} of {selfProgress.total} requirements
+            assessed — how much has been answered, not how much is implemented.
+          </p>
 
-          <ReadinessBar score={Math.round(selfReadiness.readiness_score * 100)} />
+          <ProgressBar pct={selfProgress.progress_pct} />
 
           <div className="grid grid-cols-4 gap-4 mt-5">
             {[
-              { label: "Pass",         value: selfReadiness.pass,         color: "#86efac" },
-              { label: "Partial",      value: selfReadiness.partial,      color: "#fcd34d" },
-              { label: "Fail",         value: selfReadiness.fail,         color: "#fca5a5" },
-              { label: "Not Assessed", value: selfReadiness.not_assessed, color: "#94a3b8" },
+              { label: "Pass",         value: selfProgress.pass,         color: "#86efac" },
+              { label: "Partial",      value: selfProgress.partial,      color: "#fcd34d" },
+              { label: "Fail",         value: selfProgress.fail,         color: "#fca5a5" },
+              { label: "Not Assessed", value: selfProgress.not_assessed, color: "#94a3b8" },
             ].map((s) => (
               <div key={s.label} className="text-center">
                 <p className="text-2xl font-bold" style={{ color: s.color }}>{s.value}</p>

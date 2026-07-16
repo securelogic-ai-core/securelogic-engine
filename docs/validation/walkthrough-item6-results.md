@@ -342,7 +342,7 @@ reconciling with every other and with its destination page:
 ## Triage list additions (NOT built)
 
 - (carried) `publication_context_json` stores risk-style posture provenance.
-- (carried) assessment-response `readiness_score` partial-credit collision → O-5 ruling.
+- (carried) assessment-response `readiness_score` partial-credit collision → O-5 ruling — RESOLVED 2026-07-16, see O-5 ledger row.
 - (carried) `frameworks/page.tsx` + `frameworks/[id]` plain readiness bars →
   convert to shared `CoverageBar`.
 - Brief card copy says briefs are "published weekly" — if the cadence ever
@@ -358,7 +358,7 @@ reconciling with every other and with its destination page:
 | O-2 | Add cutover annotation to the customer-facing release note **beside the posture-population discontinuity note**: "Posture scores now read health-style (higher = better); numbers before this release are on the inverted scale." No canonical release-note file exists in-repo — annotate wherever the discontinuity note was published | Ruling requirement | ☐ pending |
 | O-3 | Staging re-walkthrough of the posture surfaces (dashboard, /posture, trend, executive report PDF, Ask, weekly email) after deploy — confirm every surface shows the same health-style number | Package gate: report product behavior, not PR completion | ☐ pending |
 | O-4 | Staging check of item 7 after deploy: a framework with 0 satisfied / N partial shows "0 fully satisfied · N partial" and a hatched-only bar on Framework Gaps, Compliance Coverage, and the Readiness widget; audit-package + gap-report PDFs carry the partial count | Package gate: report product behavior | ☐ pending |
-| O-5 | Ruling request for Simmee: assessment-response readiness (`frameworks.ts` / `requirements.ts`) grants partial credit (`pass + partial×0.5`) under the same `readiness_score` name as the satisfied-only control-mapping readiness — same word, two maths. Should it become satisfied-only too, or be renamed? | DESIGN-NEEDS-RULING (never pick silently) | ☐ pending |
+| O-5 | ~~Ruling request for Simmee~~ RULED 2026-07-16: Readiness Score = satisfied control mappings only; assessment responses are a separate "Assessment Progress" metric (`progress_pct` = answered/total) and never feed readiness. Implemented: `frameworks.ts` + `requirements.ts` blended `(pass + partial×0.5)` removed, `assessment_progress`/`progress_pct` on the wire, framework-detail card renamed "Assessment Progress" (neutral bar), both assess checklists count completion only. Staging retest: framework detail + self/vendor assess checklists | RULED + IMPLEMENTED | ☑ code-complete |
 | O-6 | Investigate why staging has published no Intelligence Brief since May 19: the brief cron (`0 7 * * 2`) runs in the staging **web** service at boot (`server.ts` → `startScheduler`), not the intelligence worker. Check staging web-service logs for Tuesday-07:00 scheduler runs / generation errors; confirm boot-time catch-up (`briefCatchup.ts`) fires | Item 4 root cause — real generator output is stale; not fixable from code | ☐ pending |
 | O-7 | Re-run the walkthrough seed on staging (`npx tsx scripts/validation/seed-walkthrough-org.ts`) after #673 deploys, so the walkthrough org picks up the 3 risk-register rows | Item 3 seed half | ☐ pending |
 | O-8 | Extend the O-3 staging re-walkthrough to the full dashboard checklist in "Post-fix walkthrough" above (risk tiles + heatmap vs /risks, aging averages, brief staleness marker, setup banner absent) | Package gate: report product behavior, not PR completion | ☐ pending |

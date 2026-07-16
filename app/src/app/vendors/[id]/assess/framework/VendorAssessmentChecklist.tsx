@@ -210,14 +210,13 @@ export function VendorAssessmentChecklist({
   const partial = cardValues.filter((c) => c.status === "partial").length;
   const fail = cardValues.filter((c) => c.status === "fail").length;
   const not_assessed = total - pass - partial - fail;
-  const readiness_pct =
-    total === 0 ? 0 : Math.round(((pass + partial * 0.5) / total) * 10000) / 100;
-
-  const readinessColor =
-    readiness_pct >= 75 ? "#22c55e" :
-    readiness_pct >= 50 ? "#f59e0b" :
-    readiness_pct >= 25 ? "#f97316" :
-    "#ef4444";
+  // O-5 ruling: this panel tracks assessment PROGRESS — the share of
+  // requirements answered, regardless of outcome. Readiness (implemented and
+  // satisfied controls) is a different metric and never computed from
+  // responses. Neutral color: progress is completion, not goodness.
+  const assessed = pass + partial + fail;
+  const progress_pct = total === 0 ? 0 : Math.round((assessed / total) * 100);
+  const progressColor = "#00c4b4";
 
   const saveToEngine = useCallback(
     async (reqId: string, status: Status, notes: string, evidenceUrl: string) => {
@@ -323,15 +322,15 @@ export function VendorAssessmentChecklist({
           <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
             Assessment Progress
           </p>
-          <span className="text-sm font-bold tabular-nums" style={{ color: readinessColor }}>
-            {readiness_pct}%
+          <span className="text-sm font-bold tabular-nums" style={{ color: progressColor }}>
+            {assessed} of {total} assessed · {progress_pct}%
           </span>
         </div>
 
         <div className="rounded-full h-2 mb-4" style={{ background: "rgba(255,255,255,0.06)" }}>
           <div
             className="h-2 rounded-full transition-all"
-            style={{ width: `${readiness_pct}%`, background: readinessColor }}
+            style={{ width: `${progress_pct}%`, background: progressColor }}
           />
         </div>
 
