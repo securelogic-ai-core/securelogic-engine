@@ -173,12 +173,31 @@ const ACTIVITY_LABELS: Record<string, string> = {
   "finding.decision.needs_review": "Governance: sent back for review",
   "finding.evidence_attached": "Evidence attached",
   "action.created": "Remediation action added",
-  "action.completed": "Remediation action completed",
-  "action.blocked": "Remediation action blocked",
 };
 
-function activityLabel(eventType: string): string {
+/** Action status → past-tense transition label (action.status_changed payload).
+ *  Statuses are the actions table CHECK set: open | in_progress | blocked |
+ *  closed | accepted. */
+const ACTION_STATUS_LABELS: Record<string, string> = {
+  open: "Remediation action reopened",
+  in_progress: "Remediation action started",
+  blocked: "Remediation action blocked",
+  closed: "Remediation action completed",
+  accepted: "Remediation action accepted",
+};
+
+function activityLabel(eventType: string, payload?: unknown): string {
   if (ACTIVITY_LABELS[eventType]) return ACTIVITY_LABELS[eventType];
+  // The engine writes action.status_changed / action.updated with the action's
+  // resulting state in the payload — the actual remediation + reassignment
+  // history (owner and due-date changes arrive as action.updated).
+  const p = (payload ?? {}) as { status?: string | null };
+  if (eventType === "action.status_changed" && p.status && ACTION_STATUS_LABELS[p.status]) {
+    return ACTION_STATUS_LABELS[p.status];
+  }
+  if (eventType === "action.updated") {
+    return "Remediation action updated (owner / due date / details)";
+  }
   // Fall back to a readable form of the raw event name.
   return eventType
     .replace(/^finding\./, "")
@@ -933,7 +952,7 @@ export function DecisionWorkspace({
             // not raw event_type strings, and more than the prior 8.
             context.activity.slice(0, 20).map((a, i) => (
               <div key={i} style={{ fontSize: 12, color: "#cbd5e1", marginBottom: 2 }}>
-                <span style={{ color: "#64748b" }}>{fmt(a.created_at)}</span> · {activityLabel(a.event_type)}
+                <span style={{ color: "#64748b" }}>{fmt(a.created_at)}</span> · {activityLabel(a.event_type, a.payload)}
               </div>
             ))
           )}

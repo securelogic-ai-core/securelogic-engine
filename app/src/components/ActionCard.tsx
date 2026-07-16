@@ -209,6 +209,12 @@ export function ActionCard({
       setBlkError("A blocker reason is required.");
       return;
     }
+    // An expected unblock date is a forecast — a date already in the past is
+    // never a valid forecast at entry time.
+    if (blkUnblock && blkUnblock < new Date().toISOString().slice(0, 10)) {
+      setBlkError("Expected unblock date can't be in the past.");
+      return;
+    }
     setOptimisticStatus("blocked");
     startTransition(async () => {
       await onPlanChange(action.id, {

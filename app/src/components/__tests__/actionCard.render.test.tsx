@@ -57,7 +57,7 @@ describe("R-10 — Block captures structured metadata", () => {
     const selects = screen.getAllByRole("combobox");
     fireEvent.change(selects[0]!, { target: { value: "u-2" } });
     const dateInputs = document.querySelectorAll('input[type="date"]');
-    fireEvent.change(dateInputs[dateInputs.length - 1]!, { target: { value: "2026-07-01" } });
+    fireEvent.change(dateInputs[dateInputs.length - 1]!, { target: { value: "2027-01-15" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Block action" }));
 
@@ -66,8 +66,19 @@ describe("R-10 — Block captures structured metadata", () => {
       blocked_reason: "Vendor patch pending",
       blocked_dependency: "CR-1042",
       blocked_owner_user_id: "u-2",
-      blocked_expected_unblock_date: "2026-07-01",
+      blocked_expected_unblock_date: "2027-01-15",
     });
+  });
+
+  it("rejects an expected unblock date in the past — a forecast can't be history", () => {
+    render(<ActionCard action={anAction()} findingId="f-1" onStatusChange={onStatusChange} onPlanChange={onPlanChange} owners={owners} />);
+    fireEvent.click(screen.getByRole("button", { name: "Block" }));
+    fireEvent.change(screen.getByPlaceholderText(/Waiting on vendor patch/i), { target: { value: "Vendor patch pending" } });
+    const dateInputs = document.querySelectorAll('input[type="date"]');
+    fireEvent.change(dateInputs[dateInputs.length - 1]!, { target: { value: "2020-01-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Block action" }));
+    expect(screen.getByText(/Expected unblock date can't be in the past/i)).toBeInTheDocument();
+    expect(onPlanChange).not.toHaveBeenCalled();
   });
 
   it("requires a blocker reason", () => {
@@ -131,5 +142,46 @@ describe("R-13 — due-date validation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(screen.getByText(/Due date can't be before/i)).toBeInTheDocument();
     expect(onPlanChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("R-6 — every transition control explains what it does", () => {
+  it("Start/Complete/Block carry effect tooltips on an in-progress action's controls", () => {
+    render(<ActionCard action={anAction()} findingId="f-1" onStatusChange={onStatusChange} onPlanChange={onPlanChange} owners={owners} />);
+    // in_progress offers Complete and Block.
+    expect(screen.getByRole("button", { name: "Complete" }).getAttribute("title")).toContain(
+      "the finding becomes Remediation complete and moves to the governance decision",
+    );
+    expect(screen.getByRole("button", { name: "Block" }).getAttribute("title")).toContain(
+      "stops counting as work in flight",
+    );
+  });
+
+  it("Unblock and Re-open explain themselves too", () => {
+    render(
+      <ActionCard
+        action={anAction({ status: "blocked", blocked_reason: "Vendor" })}
+        findingId="f-1"
+        onStatusChange={onStatusChange}
+        onPlanChange={onPlanChange}
+        owners={owners}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Unblock" }).getAttribute("title")).toContain(
+      "Returns this action to In Progress",
+    );
+
+    render(
+      <ActionCard
+        action={anAction({ id: "a-2", status: "closed" })}
+        findingId="f-1"
+        onStatusChange={onStatusChange}
+        onPlanChange={onPlanChange}
+        owners={owners}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Re-open" }).getAttribute("title")).toContain(
+      "the finding regresses from remediated",
+    );
   });
 });
