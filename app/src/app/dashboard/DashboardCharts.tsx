@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { DashboardSummary, DomainScore, Framework, FrameworkReadiness } from "@/lib/api";
 import { orgActionsHref } from "@/app/actions/myActions";
 import { formatDateOnlyUTC } from "@/lib/dates";
+import { CoverageBar } from "@/lib/frameworkCoverage";
 
 const CRIT_COLORS: Record<string, { bar: string; badge: string; text: string }> = {
   critical:      { bar: "#ef4444", badge: "rgba(239,68,68,0.15)",   text: "#fca5a5" },
@@ -1023,16 +1024,7 @@ export function FrameworkGaps({
       ) : (
         <div className="space-y-4">
           {sorted.map(({ framework, readiness }) => {
-            const score     = readiness?.readiness_score   ?? 0;
-            const satisfied = readiness?.satisfied         ?? 0;
-            const partial   = readiness?.partial           ?? 0;
-            const unmapped  = readiness?.unmapped          ?? 0;
-            const color     = scoreColor(score);
-            const breakdown = [
-              satisfied > 0 ? `${satisfied} satisfied` : null,
-              partial   > 0 ? `${partial} partial`     : null,
-              unmapped  > 0 ? `${unmapped} unmapped`   : null,
-            ].filter(Boolean);
+            const score = readiness?.readiness_score ?? 0;
             return (
               <div key={framework.id}>
                 <div className="flex items-baseline justify-between mb-1.5">
@@ -1040,7 +1032,7 @@ export function FrameworkGaps({
                     {framework.name}
                   </span>
                   <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                    <span className="text-xs font-bold tabular-nums" style={{ color }}>{score}%</span>
+                    <span className="text-xs font-bold tabular-nums" style={{ color: scoreColor(score) }}>{score}%</span>
                     <Link
                       href={`/frameworks/${framework.id}`}
                       className="text-xs font-medium hover:opacity-80 transition-opacity"
@@ -1050,14 +1042,18 @@ export function FrameworkGaps({
                     </Link>
                   </div>
                 </div>
-                <div className="h-2 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }}>
-                  <div className="h-2 rounded-full" style={{ width: `${score}%`, background: color }} />
-                </div>
-                {breakdown.length > 0 && (
-                  <p className="mt-1 text-xs" style={{ color: TEXT_MUTED }}>
-                    {breakdown.join(" • ")}
-                  </p>
-                )}
+                {/* Item-7 ruling: segmented bar (solid = fully satisfied,
+                    hatched = partial) + the engine's caption verbatim. The old
+                    breakdown dropped zero counts, so "0 satisfied · 3 partial"
+                    rendered as just "3 partial" beside an unexplained 0%. */}
+                <CoverageBar
+                  satisfied={readiness?.satisfied ?? 0}
+                  partial={readiness?.partial ?? 0}
+                  total={readiness?.total_requirements ?? 0}
+                />
+                <p className="mt-1 text-xs" style={{ color: TEXT_MUTED }}>
+                  {readiness?.coverage_caption}
+                </p>
               </div>
             );
           })}
@@ -1126,46 +1122,36 @@ export function ComplianceCoverage({
                 {overallPct}%
               </p>
               <p className="mt-1 text-xs" style={{ color: "#94a3b8" }}>
-                {totalSatisfied} of {totalRequirements} requirements satisfied
+                {totalSatisfied} of {totalRequirements} requirements fully satisfied
               </p>
             </div>
           )}
         <div className="space-y-3">
           {sorted.map(({ framework, readiness }) => {
-            const score     = readiness?.readiness_score   ?? 0;
             const satisfied = readiness?.satisfied         ?? 0;
             const total     = readiness?.total_requirements ?? 0;
-            const partial   = readiness?.partial           ?? 0;
-            const unmapped  = readiness?.unmapped          ?? 0;
-            const color =
-              score >= 80 ? "#22c55e" :
-              score >= 60 ? "#f59e0b" :
-              "#ef4444";
             return (
               <div key={framework.id}>
                 <div className="flex items-baseline justify-between mb-1">
                   <span className="text-xs truncate max-w-[120px]" style={{ color: "#cbd5e1" }}>
                     {framework.name}
                   </span>
-                  <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-                    <span className="text-xs tabular-nums" style={{ color: TEXT_MUTED }}>
-                      {satisfied}/{total}
-                    </span>
-                    {partial > 0 && (
-                      <span className="text-xs" style={{ color: "#f59e0b" }}>
-                        {partial} partial
-                      </span>
-                    )}
-                    {unmapped > 0 && (
-                      <span className="text-xs" style={{ color: "#475569" }}>
-                        {unmapped} unmapped
-                      </span>
-                    )}
-                  </div>
+                  <span className="text-xs tabular-nums flex-shrink-0 ml-2" style={{ color: TEXT_MUTED }}>
+                    {satisfied}/{total}
+                  </span>
                 </div>
-                <div className="h-1 rounded-full" style={{ background: SLATE_LINE }}>
-                  <div className="h-1 rounded-full" style={{ width: `${Math.min(score, 100)}%`, background: color }} />
-                </div>
+                {/* Item-7 ruling: shared segmented bar + the engine's caption
+                    verbatim — this tile may not phrase or color coverage its
+                    own way (it previously had its own 80/60 color bands). */}
+                <CoverageBar
+                  satisfied={satisfied}
+                  partial={readiness?.partial ?? 0}
+                  total={total}
+                  heightClass="h-1"
+                />
+                <p className="mt-0.5 text-[11px]" style={{ color: TEXT_MUTED }}>
+                  {readiness?.coverage_caption}
+                </p>
               </div>
             );
           })}

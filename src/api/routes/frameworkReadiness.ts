@@ -25,6 +25,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { readinessScore, coverageCaption } from "../lib/frameworkCoverage.js";
 
 const router = Router();
 
@@ -101,6 +102,7 @@ router.get(
           satisfied: 0,
           partial: 0,
           unmapped: 0,
+          coverage_caption: coverageCaption({ satisfied: 0, partial: 0, unmapped: 0 }),
           requirements: [],
         });
         return;
@@ -228,8 +230,10 @@ router.get(
       });
 
       const total = requirements.length;
-      const readiness_score =
-        total === 0 ? 0 : Math.round((satisfiedCount / total) * 100);
+      // Item-7 ruling: satisfied-only score + explicit caption, both from the
+      // shared coverage rule (src/api/lib/frameworkCoverage.ts). App surfaces
+      // render coverage_caption verbatim so the wording cannot drift.
+      const readiness_score = readinessScore(satisfiedCount, total);
 
       res.status(200).json({
         framework: { id: framework.id, name: framework.name, version: framework.version },
@@ -238,6 +242,11 @@ router.get(
         satisfied: satisfiedCount,
         partial: partialCount,
         unmapped: unmappedCount,
+        coverage_caption: coverageCaption({
+          satisfied: satisfiedCount,
+          partial: partialCount,
+          unmapped: unmappedCount,
+        }),
         requirements: requirementDetails,
       });
     } catch (err) {

@@ -307,6 +307,18 @@ describe("dashboard — enterprise vs newsletter truthfulness (walkthrough)", ()
     await renderPage(DashboardPage, { searchParams: sp({}) });
     expect(screen.getByText(/How close each activated framework is to being audit-ready/i)).toBeInTheDocument();
   });
+
+  it("item 7: the Readiness widget renders the engine's coverage caption and a segmented bar", async () => {
+    // aFrameworkReadiness: 11 satisfied / 4 partial / 5 unmapped of 20 → the
+    // widget must show the caption verbatim (satisfied-only score explained)
+    // and render partial work as a hatched segment distinct from the solid one.
+    const { container } = await renderPage(DashboardPage, { searchParams: sp({}) });
+    expect(container.textContent).toContain("11 fully satisfied · 4 partial · 5 unmapped");
+    expect(container.querySelector('[data-coverage-segment="satisfied"]')).not.toBeNull();
+    const partialSeg = container.querySelector('[data-coverage-segment="partial"]') as HTMLElement;
+    expect(partialSeg).not.toBeNull();
+    expect(partialSeg.style.background).toContain("repeating-linear-gradient");
+  });
 });
 
 describe("dashboard — no raw source_type enums reach the customer (walkthrough item 6)", () => {
