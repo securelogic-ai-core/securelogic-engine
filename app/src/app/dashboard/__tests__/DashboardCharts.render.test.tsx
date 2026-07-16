@@ -19,6 +19,7 @@ import {
   DomainPostureBars,
   ActionsRing,
   RisksBreakdown,
+  RiskHeatmap,
   OpenItemsAging,
   PostureScoreTile,
   ComplianceCoverage,
@@ -323,5 +324,72 @@ describe("ComplianceCoverage — coverage caption + segmented bar (item 7)", () 
     const partialSeg = container.querySelector('[data-coverage-segment="partial"]') as HTMLElement;
     expect(partialSeg).not.toBeNull();
     expect(partialSeg.style.background).toContain("repeating-linear-gradient");
+  });
+});
+
+// ── Walkthrough remediation (items 3 + 10 + 8) ──────────────────────────────
+
+const EMPTY_RISKS_SUMMARY = {
+  open: 0,
+  by_risk_rating: { Critical: 0, High: 0, Moderate: 0, Low: 0 },
+  by_residual_rating: { Critical: 0, High: 0, Moderate: 0, Low: 0 },
+  by_residual_likelihood_impact: [],
+};
+
+describe("RisksBreakdown + RiskHeatmap — empty register explains itself (items 3+10)", () => {
+  it("collapses the all-zero severity ladder into an explanatory empty state", () => {
+    const { container } = render(<RisksBreakdown risks_summary={EMPTY_RISKS_SUMMARY} />);
+    // The defect: four zero bars implied "measured, found nothing" beside
+    // 12 active findings. At zero the ladder must not render at all.
+    expect(screen.queryByText("Critical")).toBeNull();
+    expect(screen.queryByText("High")).toBeNull();
+    expect(screen.getByText(/No risks promoted yet/)).toBeInTheDocument();
+    expect(screen.getByText(/don't become risks automatically/)).toBeInTheDocument();
+    expect(hrefOf(container, /Review findings/)).toBe("/findings?active=true");
+    // The headline 0 stays — it is truthful and reconciles with /risks.
+    expect(screen.getByText("0")).toBeInTheDocument();
+  });
+
+  it("keeps the severity ladder when risks exist", () => {
+    render(<RisksBreakdown risks_summary={SUMMARY.risks_summary} />);
+    expect(screen.getByText("Critical")).toBeInTheDocument();
+    expect(screen.queryByText(/No risks promoted yet/)).toBeNull();
+  });
+
+  it("heatmap tells the SAME empty-register story, not 'no data available'", () => {
+    const { container } = render(<RiskHeatmap risks_summary={EMPTY_RISKS_SUMMARY} />);
+    // "No risk data available." read as a loading/error state and contradicted
+    // the adjacent tile's plain 0. Both tiles now share one message and CTA.
+    expect(screen.queryByText(/No risk data available/)).toBeNull();
+    expect(screen.getByText(/No risks promoted yet/)).toBeInTheDocument();
+    expect(hrefOf(container, /Review findings/)).toBe("/findings?active=true");
+  });
+});
+
+describe("OpenItemsAging — avg age 0 is data, not absence (item 8)", () => {
+  it("renders 0 avg days for young actions instead of a dash", () => {
+    render(
+      <OpenItemsAging
+        findings={SUMMARY.findings}
+        // 4 active actions all created within the last half day: the engine
+        // rounds the average to 0 — a real value the walkthrough saw dashed.
+        actions={{
+          open: 4, in_progress: 0, blocked: 0, active: 4, overdue: 0,
+          avg_age_days: 0, max_age_days: 0, older_than_30: 0, older_than_7: 0,
+        }}
+      />
+    );
+    expect(screen.queryByText("—")).toBeNull();
+  });
+
+  it("still dashes when there is genuinely nothing to average", () => {
+    render(
+      <OpenItemsAging
+        findings={SUMMARY.findings}
+        // No active actions → the engine's AVG over zero rows is null.
+        actions={{ open: 0, in_progress: 0, blocked: 0, active: 0, overdue: 0 }}
+      />
+    );
+    expect(screen.getByText("—")).toBeInTheDocument();
   });
 });

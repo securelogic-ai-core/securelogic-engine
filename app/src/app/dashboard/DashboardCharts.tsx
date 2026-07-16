@@ -73,7 +73,8 @@ function scoreColor(score: number): string {
  *   - FrameworkGaps       (no frameworks activated)
  *   - DomainPostureBars   (no domain data — single-populated renders
  *                          the actual bar, not a stub)
- *   - RiskHeatmap         (no risk data)
+ *   - RiskHeatmap         (empty risk register)
+ *   - RisksBreakdown      (empty risk register — same message, same CTA)
  *
  * Exported and reused in:
  *   - PostureTrendChart.tsx (insufficient snapshots)
@@ -401,9 +402,11 @@ function AgingSection({
         {label}
       </p>
 
-      {/* Avg age */}
+      {/* Avg age — 0 is a real average (items younger than half a day),
+          not absence of data. The engine only returns null when there are
+          no active rows to average; dash on null alone (item 8). */}
       <p className="font-bold leading-none mb-0.5" style={{ fontSize: "26px", color: open > 0 ? "#f1f5f9" : TEXT_MUTED }}>
-        {avgAge != null && avgAge > 0 ? Math.round(avgAge) : "—"}
+        {avgAge != null ? Math.round(avgAge) : "—"}
       </p>
       <p className="text-xs mb-3" style={{ color: TEXT_MUTED }}>avg days open</p>
 
@@ -769,6 +772,17 @@ export function PostureScoreTile({
 
 // ── RisksBreakdown ─────────────────────────────────────────────
 
+// An empty risk register is a workflow state, not missing data: findings
+// never auto-create risks (the only INSERT INTO risks is user-initiated
+// POST /api/risks), so zero risks legitimately coexists with many active
+// findings. Both risk tiles must explain that with the SAME words — two
+// adjacent tiles telling different stories about the same emptiness reads
+// as a contradiction (walkthrough items 3+10).
+const RISKS_EMPTY_MESSAGE =
+  "No risks promoted yet — findings don't become risks automatically. Review findings to decide what belongs on the risk register.";
+const RISKS_EMPTY_CTA_LABEL = "Review findings →";
+const RISKS_EMPTY_CTA_HREF = "/findings?active=true";
+
 export function RisksBreakdown({
   risks_summary,
 }: {
@@ -810,22 +824,33 @@ export function RisksBreakdown({
       <p className="text-3xl font-bold mb-3" style={{ color: total > 0 ? "#f1f5f9" : TEXT_MUTED }}>
         {total}
       </p>
-      <div className="space-y-2.5">
-        {bars.map(({ label, count, color }) => {
-          const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-          return (
-            <div key={label}>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs" style={{ color: "#94a3b8" }}>{label}</span>
-                <span className="text-xs font-bold tabular-nums" style={{ color: count > 0 ? color : TEXT_MUTED }}>{count}</span>
+      {total === 0 ? (
+        // Item 10: the all-zero severity ladder collapses into the
+        // explanatory empty state — four zero bars imply "we measured and
+        // found nothing", which is not what an unpopulated register means.
+        <CompactEmptyState
+          message={RISKS_EMPTY_MESSAGE}
+          ctaLabel={RISKS_EMPTY_CTA_LABEL}
+          ctaHref={RISKS_EMPTY_CTA_HREF}
+        />
+      ) : (
+        <div className="space-y-2.5">
+          {bars.map(({ label, count, color }) => {
+            const pct = Math.round((count / total) * 100);
+            return (
+              <div key={label}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs" style={{ color: "#94a3b8" }}>{label}</span>
+                  <span className="text-xs font-bold tabular-nums" style={{ color: count > 0 ? color : TEXT_MUTED }}>{count}</span>
+                </div>
+                <div className="h-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }}>
+                  <div className="h-1.5 rounded-full" style={{ width: `${pct}%`, background: color }} />
+                </div>
               </div>
-              <div className="h-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }}>
-                <div className="h-1.5 rounded-full" style={{ width: `${pct}%`, background: color }} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -910,9 +935,9 @@ export function RiskHeatmap({
 
       {!hasData ? (
         <CompactEmptyState
-          message="No risk data available."
-          ctaLabel="Open risk register →"
-          ctaHref="/risks"
+          message={RISKS_EMPTY_MESSAGE}
+          ctaLabel={RISKS_EMPTY_CTA_LABEL}
+          ctaHref={RISKS_EMPTY_CTA_HREF}
         />
       ) : (
         <div>
