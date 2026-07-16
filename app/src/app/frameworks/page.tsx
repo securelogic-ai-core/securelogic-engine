@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getFrameworks, getFrameworkReadiness, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { ActivateButton } from "./ActivateButton";
+import { CoverageBar, coverageColor } from "@/components/FrameworkCoverage";
 import { DeactivateButton } from "./DeactivateButton";
 
 // ─────────────────────────────────────────────────────────────
@@ -144,23 +145,21 @@ function CategoryBadge({ category }: { category: Category }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Readiness bar
+// Readiness bar — the shared coverage rule (walkthrough item 7): the score is
+// satisfied-only, and the bar renders partials as a distinct hatched segment so
+// this page can never disagree with the dashboard tiles it is clicked from.
 // ─────────────────────────────────────────────────────────────
 
-function ReadinessBar({ score }: { score: number }) {
-  const color =
-    score >= 75 ? "#22c55e" :
-    score >= 50 ? "#f59e0b" :
-    score >= 25 ? "#f97316" :
-    "#ef4444";
+function ReadinessBar({ readiness }: { readiness: FrameworkReadiness }) {
+  const score = readiness.readiness_score;
+  const color = coverageColor(score);
   return (
     <div className="flex items-center gap-2">
-      <div className="flex-1 rounded-full h-1.5" style={{ background: "rgba(255,255,255,0.08)" }}>
-        <div
-          className="h-1.5 rounded-full transition-all"
-          style={{ width: `${score}%`, background: color }}
-        />
-      </div>
+      <CoverageBar
+        satisfied={readiness.satisfied}
+        partial={readiness.partial}
+        total={readiness.total_requirements}
+      />
       <span className="text-xs font-bold tabular-nums w-9 text-right" style={{ color }}>
         {score}%
       </span>
@@ -214,7 +213,7 @@ function ActiveFrameworkCard({
       <Link href={`/frameworks/${framework.id}`} className="block">
         {readiness ? (
           <div className="space-y-2">
-            <ReadinessBar score={readiness.readiness_score} />
+            <ReadinessBar readiness={readiness} />
             <div className="flex gap-4 text-xs" style={{ color: "#475569" }}>
               <span>
                 <span className="font-medium" style={{ color: "#86efac" }}>{readiness.satisfied}</span> satisfied

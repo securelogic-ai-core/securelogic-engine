@@ -10,6 +10,7 @@ import { PostureDashboard } from "./PostureDashboard";
 import { LastLoginBanner } from "./LastLoginBanner";
 import { IndustryTemplatesBanner } from "./IndustryTemplatesBanner";
 import { CompactEmptyState } from "./DashboardCharts";
+import { CoverageBar, coverageCaption, coverageColor } from "@/components/FrameworkCoverage";
 import { dashboardPanel } from "./dashboardState";
 
 export const revalidate = 0;
@@ -512,11 +513,9 @@ function FrameworkReadinessWidget({
         <div className="bg-brand-surface border border-brand-line rounded-xl divide-y" style={{ "--tw-divide-opacity": "1" } as React.CSSProperties}>
           {pairs.map(({ framework, readiness }) => {
             const score = readiness?.readiness_score ?? 0;
-            const color =
-              score >= 75 ? "#22c55e" :
-              score >= 50 ? "#f59e0b" :
-              score >= 25 ? "#f97316" :
-              "#ef4444";
+            // Item 7 (ruling): the one shared coverage rule — satisfied-only
+            // score, explicit caption, partial rendered as a distinct segment.
+            const color = coverageColor(score);
             return (
               <Link
                 key={framework.id}
@@ -530,15 +529,21 @@ function FrameworkReadinessWidget({
                   </p>
                   <p className="text-xs mt-0.5" style={{ color: "#475569" }}>
                     v{framework.version}
+                    {readiness && (
+                      <span> · {coverageCaption(readiness.satisfied, readiness.partial, readiness.unmapped)}</span>
+                    )}
                   </p>
                 </div>
                 <div className="w-32 flex items-center gap-2 flex-shrink-0">
-                  <div className="flex-1 rounded-full h-1.5" style={{ background: "rgba(255,255,255,0.08)" }}>
-                    <div
-                      className="h-1.5 rounded-full"
-                      style={{ width: `${score}%`, background: color }}
+                  {readiness ? (
+                    <CoverageBar
+                      satisfied={readiness.satisfied}
+                      partial={readiness.partial}
+                      total={readiness.total_requirements}
                     />
-                  </div>
+                  ) : (
+                    <div className="flex-1 rounded-full h-1.5" style={{ background: "rgba(255,255,255,0.08)" }} />
+                  )}
                   <span className="text-xs font-bold tabular-nums w-8 text-right" style={{ color }}>
                     {score}%
                   </span>

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
+import { CoverageBar, coverageColor } from "@/components/FrameworkCoverage";
 import {
   getFrameworkDetail,
   getFrameworkReadiness,
@@ -33,20 +34,23 @@ function filterHref(
 // Readiness bar
 // ─────────────────────────────────────────────────────────────
 
-function ReadinessBar({ score }: { score: number }) {
-  const color =
-    score >= 75 ? "#22c55e" :
-    score >= 50 ? "#f59e0b" :
-    score >= 25 ? "#f97316" :
-    "#ef4444";
+// The shared coverage rule (walkthrough item 7): satisfied-only score, partials
+// rendered as a distinct hatched segment — same truth as the dashboard tiles.
+function ReadinessBar({
+  score,
+  satisfied,
+  partial,
+  total,
+}: {
+  score: number;
+  satisfied: number;
+  partial: number;
+  total: number;
+}) {
+  const color = coverageColor(score);
   return (
     <div className="flex items-center gap-3">
-      <div className="flex-1 rounded-full h-2" style={{ background: "rgba(255,255,255,0.08)" }}>
-        <div
-          className="h-2 rounded-full transition-all"
-          style={{ width: `${score}%`, background: color }}
-        />
-      </div>
+      <CoverageBar satisfied={satisfied} partial={partial} total={total} heightClass="h-2" />
       <span className="text-sm font-bold tabular-nums w-10 text-right" style={{ color }}>
         {score}%
       </span>
@@ -251,7 +255,7 @@ export default async function FrameworkDetailPage({
             </span>
           </div>
 
-          <ReadinessBar score={readiness.readiness_score} />
+          <ReadinessBar score={readiness.readiness_score} satisfied={readiness.satisfied} partial={readiness.partial} total={readiness.total_requirements} />
 
           <div className="grid grid-cols-3 gap-4 mt-5">
             <div className="text-center">
@@ -292,7 +296,7 @@ export default async function FrameworkDetailPage({
             </Link>
           </div>
 
-          <ReadinessBar score={Math.round(selfReadiness.readiness_score * 100)} />
+          <ReadinessBar score={Math.round(selfReadiness.readiness_score * 100)} satisfied={selfReadiness.pass} partial={selfReadiness.partial} total={selfReadiness.total} />
 
           <div className="grid grid-cols-4 gap-4 mt-5">
             {[

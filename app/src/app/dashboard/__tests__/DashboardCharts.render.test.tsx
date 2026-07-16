@@ -213,3 +213,20 @@ describe("ComplianceCoverage — distinguished from Framework Readiness (D-5)", 
     expect(screen.getByText(/Share of mapped requirements currently satisfied/i)).toBeInTheDocument();
   });
 });
+
+describe("ComplianceCoverage — the shared coverage rule on the tile (item 7)", () => {
+  const nistShape = [{
+    framework: { id: "fw-1", name: "NIST CSF", version: "1.1" },
+    readiness: { framework_id: "fw-1", readiness_score: 0, total_requirements: 57, satisfied: 0, partial: 3, unmapped: 54 },
+  }] as never;
+
+  it("0% beside 3 partial now captions itself and shows the partial segment", () => {
+    const { container } = render(<ComplianceCoverage frameworkPairs={nistShape} />);
+    // The score stays satisfied-only…
+    expect(screen.getByText("0%")).toBeInTheDocument();
+    // …but the canonical caption names the effort (aggregate + per-framework row)…
+    expect(screen.getAllByText(/0 fully satisfied · 3 partial/).length).toBeGreaterThan(0);
+    // …and the bar renders the partial work as a distinct hatched segment.
+    expect(container.querySelector('[data-segment="partial"]')).not.toBeNull();
+  });
+});

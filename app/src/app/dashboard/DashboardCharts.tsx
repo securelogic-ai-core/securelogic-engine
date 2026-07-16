@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { DashboardSummary, DomainScore, Framework, FrameworkReadiness } from "@/lib/api";
 import { orgActionsHref } from "@/app/actions/myActions";
+import { CoverageBar, coverageCaption, coverageColor } from "@/components/FrameworkCoverage";
 
 const CRIT_COLORS: Record<string, { bar: string; badge: string; text: string }> = {
   critical:      { bar: "#ef4444", badge: "rgba(239,68,68,0.15)",   text: "#fca5a5" },
@@ -1011,16 +1012,12 @@ export function FrameworkGaps({
       ) : (
         <div className="space-y-4">
           {sorted.map(({ framework, readiness }) => {
-            const score     = readiness?.readiness_score   ?? 0;
-            const satisfied = readiness?.satisfied         ?? 0;
-            const partial   = readiness?.partial           ?? 0;
-            const unmapped  = readiness?.unmapped          ?? 0;
-            const color     = scoreColor(score);
-            const breakdown = [
-              satisfied > 0 ? `${satisfied} satisfied` : null,
-              partial   > 0 ? `${partial} partial`     : null,
-              unmapped  > 0 ? `${unmapped} unmapped`   : null,
-            ].filter(Boolean);
+            const score     = readiness?.readiness_score    ?? 0;
+            const satisfied = readiness?.satisfied          ?? 0;
+            const partial   = readiness?.partial            ?? 0;
+            const unmapped  = readiness?.unmapped           ?? 0;
+            const total     = readiness?.total_requirements ?? 0;
+            const color     = coverageColor(score);
             return (
               <div key={framework.id}>
                 <div className="flex items-baseline justify-between mb-1.5">
@@ -1038,14 +1035,12 @@ export function FrameworkGaps({
                     </Link>
                   </div>
                 </div>
-                <div className="h-2 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }}>
-                  <div className="h-2 rounded-full" style={{ width: `${score}%`, background: color }} />
-                </div>
-                {breakdown.length > 0 && (
-                  <p className="mt-1 text-xs" style={{ color: TEXT_MUTED }}>
-                    {breakdown.join(" • ")}
-                  </p>
-                )}
+                {/* Item 7 (ruling): shared segmented bar — solid = satisfied,
+                    hatched = partial. The bar shows the same truth as the number. */}
+                <CoverageBar satisfied={satisfied} partial={partial} total={total} heightClass="h-2" />
+                <p className="mt-1 text-xs" style={{ color: TEXT_MUTED }}>
+                  {coverageCaption(satisfied, partial, unmapped)}
+                </p>
               </div>
             );
           })}
@@ -1068,6 +1063,7 @@ export function ComplianceCoverage({
   const pairs = frameworkPairs.filter((p) => p.readiness !== null);
 
   const totalSatisfied    = pairs.reduce((sum, p) => sum + (p.readiness?.satisfied         ?? 0), 0);
+  const totalPartial      = pairs.reduce((sum, p) => sum + (p.readiness?.partial           ?? 0), 0);
   const totalRequirements = pairs.reduce((sum, p) => sum + (p.readiness?.total_requirements ?? 0), 0);
   const overallPct = totalRequirements > 0
     ? Math.round((totalSatisfied / totalRequirements) * 100)
@@ -1107,53 +1103,37 @@ export function ComplianceCoverage({
         />
       ) : (
         <>
-          {/* Aggregate number — only when data exists */}
+          {/* Aggregate number — only when data exists. Item 7 (ruling): the score
+              stays satisfied-only; the canonical caption names the partial effort
+              so a 0% never reads as zero-effort. */}
           {overallPct !== null && (
             <div className="mb-4">
               <p className="text-4xl font-bold leading-none" style={{ color: TEAL }}>
                 {overallPct}%
               </p>
               <p className="mt-1 text-xs" style={{ color: "#94a3b8" }}>
-                {totalSatisfied} of {totalRequirements} requirements satisfied
+                {coverageCaption(totalSatisfied, totalPartial)} · of {totalRequirements} requirements
               </p>
             </div>
           )}
         <div className="space-y-3">
           {sorted.map(({ framework, readiness }) => {
-            const score     = readiness?.readiness_score   ?? 0;
-            const satisfied = readiness?.satisfied         ?? 0;
+            const satisfied = readiness?.satisfied          ?? 0;
             const total     = readiness?.total_requirements ?? 0;
-            const partial   = readiness?.partial           ?? 0;
-            const unmapped  = readiness?.unmapped          ?? 0;
-            const color =
-              score >= 80 ? "#22c55e" :
-              score >= 60 ? "#f59e0b" :
-              "#ef4444";
+            const partial   = readiness?.partial            ?? 0;
+            const unmapped  = readiness?.unmapped           ?? 0;
             return (
               <div key={framework.id}>
                 <div className="flex items-baseline justify-between mb-1">
                   <span className="text-xs truncate max-w-[120px]" style={{ color: "#cbd5e1" }}>
                     {framework.name}
                   </span>
-                  <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-                    <span className="text-xs tabular-nums" style={{ color: TEXT_MUTED }}>
-                      {satisfied}/{total}
-                    </span>
-                    {partial > 0 && (
-                      <span className="text-xs" style={{ color: "#f59e0b" }}>
-                        {partial} partial
-                      </span>
-                    )}
-                    {unmapped > 0 && (
-                      <span className="text-xs" style={{ color: "#475569" }}>
-                        {unmapped} unmapped
-                      </span>
-                    )}
-                  </div>
+                  <span className="text-xs flex-shrink-0 ml-2" style={{ color: TEXT_MUTED }}>
+                    {coverageCaption(satisfied, partial, unmapped)}
+                  </span>
                 </div>
-                <div className="h-1 rounded-full" style={{ background: SLATE_LINE }}>
-                  <div className="h-1 rounded-full" style={{ width: `${Math.min(score, 100)}%`, background: color }} />
-                </div>
+                {/* Shared segmented bar: solid = satisfied, hatched = partial. */}
+                <CoverageBar satisfied={satisfied} partial={partial} total={total} heightClass="h-1" />
               </div>
             );
           })}
