@@ -49,7 +49,8 @@ const TILE_LABELS: Record<string, string> = {
   actions_ring:        "Actions",
   open_items_aging:    "Open Items Aging",
   vendor_risk:         "Vendor Risk",
-  framework_gaps:      "Framework Gaps",
+  // Display label only — the tile id stays framework_gaps (persisted layouts).
+  framework_gaps:      "Largest Readiness Gaps",
   compliance_coverage: "Compliance",
   inventory_grid:      "Inventory",
 };

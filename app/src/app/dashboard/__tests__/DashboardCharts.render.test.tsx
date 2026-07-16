@@ -281,6 +281,18 @@ const ZERO_SCORE_PAIR = {
 };
 
 describe("FrameworkGaps — coverage caption + segmented bar (item 7)", () => {
+  it("is titled 'Largest Readiness Gaps' with a clarifier — never the unexplained 'Framework Gaps'", () => {
+    render(<FrameworkGaps pairs={[ZERO_SCORE_PAIR]} />);
+    // Walkthrough: "Framework Gaps" never said what a gap was or why these
+    // frameworks were listed. The tile now names the selection rule and
+    // carries the same clarifier pattern as the other framework tiles.
+    expect(screen.getByText("Largest Readiness Gaps")).toBeInTheDocument();
+    expect(
+      screen.getByText("Your activated frameworks furthest from audit-ready.")
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Framework Gaps")).not.toBeInTheDocument();
+  });
+
   it("renders the engine caption verbatim — '0 fully satisfied' is never dropped", () => {
     render(<FrameworkGaps pairs={[ZERO_SCORE_PAIR]} />);
     // The old breakdown dropped zero counts, so a 0% score sat beside a bare

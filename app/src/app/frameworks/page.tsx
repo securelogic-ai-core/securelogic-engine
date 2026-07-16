@@ -4,6 +4,7 @@ import { getSession } from "@/lib/session";
 import { getFrameworks, getFrameworkReadiness, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { ActivateButton } from "./ActivateButton";
 import { DeactivateButton } from "./DeactivateButton";
+import { CoverageBar, coverageColor } from "@/lib/frameworkCoverage";
 
 // ─────────────────────────────────────────────────────────────
 // Template metadata (display only — not persisted in DB)
@@ -144,31 +145,6 @@ function CategoryBadge({ category }: { category: Category }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Readiness bar
-// ─────────────────────────────────────────────────────────────
-
-function ReadinessBar({ score }: { score: number }) {
-  const color =
-    score >= 75 ? "#22c55e" :
-    score >= 50 ? "#f59e0b" :
-    score >= 25 ? "#f97316" :
-    "#ef4444";
-  return (
-    <div className="flex items-center gap-2">
-      <div className="flex-1 rounded-full h-1.5" style={{ background: "rgba(255,255,255,0.08)" }}>
-        <div
-          className="h-1.5 rounded-full transition-all"
-          style={{ width: `${score}%`, background: color }}
-        />
-      </div>
-      <span className="text-xs font-bold tabular-nums w-9 text-right" style={{ color }}>
-        {score}%
-      </span>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
 // Active framework card
 // ─────────────────────────────────────────────────────────────
 
@@ -214,18 +190,28 @@ function ActiveFrameworkCard({
       <Link href={`/frameworks/${framework.id}`} className="block">
         {readiness ? (
           <div className="space-y-2">
-            <ReadinessBar score={readiness.readiness_score} />
-            <div className="flex gap-4 text-xs" style={{ color: "#475569" }}>
-              <span>
-                <span className="font-medium" style={{ color: "#86efac" }}>{readiness.satisfied}</span> satisfied
-              </span>
-              <span>
-                <span className="font-medium" style={{ color: "#fcd34d" }}>{readiness.partial}</span> partial
-              </span>
-              <span>
-                <span className="font-medium" style={{ color: "#94a3b8" }}>{readiness.unmapped}</span> unmapped
+            {/* Item-7 ruling: the ONE coverage bar + the engine's verbatim
+                caption. Score color comes from the same shared bands, so this
+                card can never contradict the dashboard's verdict color. */}
+            <div className="flex items-center gap-2">
+              <div className="flex-1">
+                <CoverageBar
+                  satisfied={readiness.satisfied}
+                  partial={readiness.partial}
+                  total={readiness.total_requirements}
+                  heightClass="h-1.5"
+                />
+              </div>
+              <span
+                className="text-xs font-bold tabular-nums w-9 text-right"
+                style={{ color: coverageColor(readiness.readiness_score) }}
+              >
+                {readiness.readiness_score}%
               </span>
             </div>
+            <p className="text-xs" style={{ color: "#475569" }}>
+              {readiness.coverage_caption}
+            </p>
           </div>
         ) : (
           <p className="text-xs" style={{ color: "#475569" }}>

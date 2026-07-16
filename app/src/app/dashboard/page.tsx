@@ -124,7 +124,11 @@ export default async function DashboardPage({
           <div>
             <p className="text-teal-200 font-semibold text-sm">Upgrade successful!</p>
             <p className="text-teal-300/80 text-xs mt-0.5">
-              Your account has been upgraded. Full brief access is now enabled.
+              {/* A platform tenant just bought the platform, not "brief access" —
+                  the copy must match what they purchased. */}
+              {isPlatformUser
+                ? `Your account has been upgraded. ${planName} is now active.`
+                : "Your account has been upgraded. Full brief access is now enabled."}
             </p>
           </div>
         </div>

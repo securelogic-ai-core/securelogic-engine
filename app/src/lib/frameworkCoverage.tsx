@@ -19,8 +19,10 @@ const TRACK = "rgba(255,255,255,0.08)";
 
 /** Color for a satisfied-only readiness score — same bands as the dashboard's
  *  health-style scoreColor (higher = better), so the coverage bar and every
- *  other 0–100 metric on the page speak one color language. */
-function coverageColor(score: number): string {
+ *  other 0–100 metric on the page speak one color language. Exported so a
+ *  surface printing the score NUMBER beside this bar uses the same verdict
+ *  color — a 77 must never be green on one page and amber on another. */
+export function coverageColor(score: number): string {
   if (score >= 80) return "#22c55e";
   if (score >= 60) return "#f59e0b";
   if (score >= 40) return "#f97316";
