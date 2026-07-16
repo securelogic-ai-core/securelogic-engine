@@ -4,7 +4,11 @@
  * defined once and shared by every surface.
  */
 import { describe, it, expect } from "vitest";
-import { readinessScore, coverageCaption } from "../lib/frameworkCoverage.js";
+import {
+  readinessScore,
+  coverageCaption,
+  assessmentProgress,
+} from "../lib/frameworkCoverage.js";
 
 describe("readinessScore — satisfied-only, partial earns no credit", () => {
   it("scores the walkthrough's exact case: 0 satisfied, 3 partial → 0%", () => {
@@ -51,5 +55,33 @@ describe("coverageCaption — the explicit breakdown, satisfied always present",
     expect(coverageCaption({ satisfied: 0, partial: 0, unmapped: 0 })).toBe(
       "0 fully satisfied",
     );
+  });
+});
+
+describe("assessmentProgress — completion only, a separate metric from readiness (O-5)", () => {
+  it("counts any completed response — pass, partial, AND fail — as progress", () => {
+    // 1 pass + 1 partial + 1 fail out of 4 = 75% assessed. The old blended
+    // formula would have called this (1 + 0.5)/4 = 37.5% "readiness".
+    expect(assessmentProgress(3, 4)).toBe(75);
+  });
+
+  it("a fully answered questionnaire is 100% progress even if every answer failed", () => {
+    expect(assessmentProgress(5, 5)).toBe(100);
+  });
+
+  it("O-5 exemplar: responses alone → readiness 0, progress > 0", () => {
+    // A framework with 10 answered requirements but zero satisfied control
+    // mappings: full progress, zero readiness. The two must never converge.
+    expect(readinessScore(0, 10)).toBe(0);
+    expect(assessmentProgress(10, 10)).toBe(100);
+  });
+
+  it("returns 0 for an empty framework instead of dividing by zero", () => {
+    expect(assessmentProgress(0, 0)).toBe(0);
+  });
+
+  it("rounds to an integer percentage", () => {
+    expect(assessmentProgress(1, 3)).toBe(33);
+    expect(assessmentProgress(2, 3)).toBe(67);
   });
 });

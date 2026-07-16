@@ -14,11 +14,14 @@
  * `coverage_caption` on the wire so app surfaces render the words verbatim
  * and cannot drift.
  *
- * NOT covered here: the assessment-response readiness in frameworks.ts /
- * requirements.ts (`(pass + partial*0.5)/total` over questionnaire responses).
- * That is a different metric family on a different data source; whether it
- * should also be satisfied-only is an open design question for Simmee — do
- * not silently rewire it through this module.
+ * O-5 ruling (Simmee, 2026-07-16): readiness means "how much of this
+ * framework is actually implemented and satisfied" — satisfied control
+ * mappings ONLY. Assessment responses, questionnaires, and evidence
+ * collection are PROGRESS, never readiness, and must never contribute to any
+ * readiness score. The old assessment-response formula in frameworks.ts /
+ * requirements.ts (`(pass + partial*0.5)/total`) is gone; those endpoints now
+ * emit `progress_pct` from assessmentProgress() below, labeled
+ * "Assessment Progress" on every surface.
  */
 
 export interface CoverageCounts {
@@ -46,4 +49,15 @@ export function coverageCaption(counts: CoverageCounts): string {
   if (counts.partial > 0) parts.push(`${counts.partial} partial`);
   if (counts.unmapped > 0) parts.push(`${counts.unmapped} unmapped`);
   return parts.join(" · ");
+}
+
+/**
+ * Assessment progress, 0–100 integer: the share of requirements with a
+ * completed response (pass, partial, or fail — completion counts, quality
+ * does not). O-5 ruling: this is a separate metric from readiness. It answers
+ * "how much have we assessed?", never "how much is implemented?", and must
+ * never feed a readiness score.
+ */
+export function assessmentProgress(assessed: number, total: number): number {
+  return total === 0 ? 0 : Math.round((assessed / total) * 100);
 }

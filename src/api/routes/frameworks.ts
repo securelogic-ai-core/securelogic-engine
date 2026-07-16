@@ -22,6 +22,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireAdminRole } from "../middleware/requireRole.js";
 import { validateFrameworkCreate } from "../lib/frameworkValidation.js";
+import { assessmentProgress } from "../lib/frameworkCoverage.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
@@ -248,8 +249,11 @@ router.get(
         return;
       }
 
-      // Compute self-assessment readiness from requirement_responses
-      const readinessResult = await pg.query<{
+      // Compute self-assessment PROGRESS from requirement_responses.
+      // O-5 ruling: responses measure how much has been assessed, never how
+      // much is implemented — readiness comes only from satisfied control
+      // mappings (GET /frameworks/:id/readiness).
+      const progressResult = await pg.query<{
         total: string;
         pass: string;
         partial: string;
@@ -272,25 +276,24 @@ router.get(
         [organizationId, frameworkId]
       );
 
-      const rs = readinessResult.rows[0]!;
+      const rs = progressResult.rows[0]!;
       const total        = parseInt(rs.total,   10);
       const pass         = parseInt(rs.pass,    10);
       const partial      = parseInt(rs.partial, 10);
       const fail         = parseInt(rs.fail,    10);
       const not_assessed = total - pass - partial - fail;
-      const readiness_score =
-        total === 0 ? 0 : Math.round(((pass + partial * 0.5) / total) * 10000) / 10000;
+      const progress_pct = assessmentProgress(pass + partial + fail, total);
 
       res.status(200).json({
         framework: result.rows[0],
-        assessment_readiness: {
+        assessment_progress: {
           self: {
             total,
             pass,
             partial,
             fail,
             not_assessed,
-            readiness_score
+            progress_pct
           }
         }
       });
