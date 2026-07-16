@@ -18,6 +18,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { sqlFindingActive } from "../lib/metricDefinitions.js";
+import { readinessScore, coverageCaption } from "../lib/frameworkCoverage.js";
 
 const router = Router();
 
@@ -274,7 +275,8 @@ async function assembleGapReport(
   });
 
   const total         = requirements.length;
-  const readiness_score   = total === 0 ? 0 : Math.round((satisfied / total) * 100);
+  // Item-7 ruling: satisfied-only, via the one shared coverage rule.
+  const readiness_score   = readinessScore(satisfied, total);
   const total_mapped_controls = allControlIds.length;
 
   return {
@@ -459,11 +461,14 @@ function generateGapReportPDF(data: GapReportData, res: Response): void {
   doc.y = gridTop + 2 * (boxH + gap) + 20;
 
   // Assessment summary paragraph
+  // Item-7 ruling: the breakdown sentence is the shared caption, so this PDF
+  // can never phrase coverage differently from the dashboard.
   const summaryText =
     `As of ${fmtDate(data.generated_at)}, ${data.org_name} has achieved ${data.readiness_score}% ` +
     `readiness against ${data.framework.name} ${data.framework.version} requirements. ` +
-    `${data.satisfied} of ${data.total_requirements} requirements are fully satisfied by mapped ` +
-    `and assessed controls. ` +
+    `Of ${data.total_requirements} requirements: ` +
+    `${coverageCaption({ satisfied: data.satisfied, partial: data.partial, unmapped: data.unmapped })} ` +
+    `(partially covered requirements earn no score credit). ` +
     `${gapCount} requirement${gapCount !== 1 ? "s have" : " has"} been identified as ` +
     `gap${gapCount !== 1 ? "s" : ""} requiring immediate or near-term remediation.`;
 

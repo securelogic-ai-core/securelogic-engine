@@ -269,6 +269,7 @@ export function aFrameworkReadiness(
     satisfied: 11,
     partial: 4,
     unmapped: 5,
+    coverage_caption: "11 fully satisfied · 4 partial · 5 unmapped",
     requirements: [],
     ...overrides,
   };

@@ -7,6 +7,7 @@ import { IntelligenceBriefDashboardCard } from "@/components/IntelligenceBriefDa
 import { UpgradeCard } from "@/components/UpgradeCard";
 import { BillingPortalForm } from "@/components/BillingPortalForm";
 import { PostureDashboard } from "./PostureDashboard";
+import { CoverageBar } from "@/lib/frameworkCoverage";
 import { LastLoginBanner } from "./LastLoginBanner";
 import { IndustryTemplatesBanner } from "./IndustryTemplatesBanner";
 import { CompactEmptyState } from "./DashboardCharts";
@@ -514,9 +515,9 @@ function FrameworkReadinessWidget({
           {pairs.map(({ framework, readiness }) => {
             const score = readiness?.readiness_score ?? 0;
             const color =
-              score >= 75 ? "#22c55e" :
-              score >= 50 ? "#f59e0b" :
-              score >= 25 ? "#f97316" :
+              score >= 80 ? "#22c55e" :
+              score >= 60 ? "#f59e0b" :
+              score >= 40 ? "#f97316" :
               "#ef4444";
             return (
               <Link
@@ -529,15 +530,22 @@ function FrameworkReadinessWidget({
                   <p className="text-sm font-medium truncate" style={{ color: "#f1f5f9" }}>
                     {framework.name}
                   </p>
+                  {/* Item-7 ruling: the engine's coverage caption, verbatim —
+                      the score is satisfied-only, and this line is what makes
+                      a low score beside visible partial work read as fact. */}
                   <p className="text-xs mt-0.5" style={{ color: "#475569" }}>
                     v{framework.version}
+                    {readiness ? <> · {readiness.coverage_caption}</> : null}
                   </p>
                 </div>
                 <div className="w-32 flex items-center gap-2 flex-shrink-0">
-                  <div className="flex-1 rounded-full h-1.5" style={{ background: "rgba(255,255,255,0.08)" }}>
-                    <div
-                      className="h-1.5 rounded-full"
-                      style={{ width: `${score}%`, background: color }}
+                  {/* Shared segmented bar: solid = fully satisfied, hatched = partial. */}
+                  <div className="flex-1">
+                    <CoverageBar
+                      satisfied={readiness?.satisfied ?? 0}
+                      partial={readiness?.partial ?? 0}
+                      total={readiness?.total_requirements ?? 0}
+                      heightClass="h-1.5"
                     />
                   </div>
                   <span className="text-xs font-bold tabular-nums w-8 text-right" style={{ color }}>

@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { hrefs, hrefOf } from "@/test/harness";
-import { aDashboardSummary, aDomainScore } from "@/test/fixtures";
+import { aDashboardSummary, aDomainScore, aFramework, aFrameworkReadiness } from "@/test/fixtures";
 import {
   FindingsDonut,
   DomainPostureBars,
@@ -22,6 +22,7 @@ import {
   OpenItemsAging,
   PostureScoreTile,
   ComplianceCoverage,
+  FrameworkGaps,
 } from "../DashboardCharts";
 
 const SUMMARY = aDashboardSummary();
@@ -254,5 +255,73 @@ describe("ComplianceCoverage — distinguished from Framework Readiness (D-5)", 
   it("explains it is the share of requirements satisfied, not overall readiness", () => {
     render(<ComplianceCoverage frameworkPairs={[]} />);
     expect(screen.getByText(/Share of mapped requirements currently satisfied/i)).toBeInTheDocument();
+  });
+});
+
+// ── Walkthrough item 7 — framework coverage rule ─────────────────────────────
+//
+// RULING: satisfied-only score (partial earns NO credit) + the engine's
+// explicit caption verbatim + a segmented bar (solid = fully satisfied,
+// hatched = partial). The bar and the number must tell the same truth on
+// every surface, from ONE shared component.
+
+// The walkthrough's exact case: work exists (3 partial) but none complete —
+// score 0, and the caption is what explains the zero.
+const ZERO_SCORE_PAIR = {
+  framework: aFramework(),
+  readiness: aFrameworkReadiness({
+    readiness_score: 0,
+    total_requirements: 3,
+    satisfied: 0,
+    partial: 3,
+    unmapped: 0,
+    coverage_caption: "0 fully satisfied · 3 partial",
+  }),
+};
+
+describe("FrameworkGaps — coverage caption + segmented bar (item 7)", () => {
+  it("renders the engine caption verbatim — '0 fully satisfied' is never dropped", () => {
+    render(<FrameworkGaps pairs={[ZERO_SCORE_PAIR]} />);
+    // The old breakdown dropped zero counts, so a 0% score sat beside a bare
+    // "3 partial" with nothing explaining the zero.
+    expect(screen.getByText("0 fully satisfied · 3 partial")).toBeInTheDocument();
+    expect(screen.getByText("0%")).toBeInTheDocument();
+  });
+
+  it("renders partials as a distinct hatched segment, no solid segment at score 0", () => {
+    const { container } = render(<FrameworkGaps pairs={[ZERO_SCORE_PAIR]} />);
+    // Bar and number tell the same truth: no solid (score-credit) segment,
+    // but the partial work is VISIBLE as the hatched segment.
+    expect(container.querySelector('[data-coverage-segment="satisfied"]')).toBeNull();
+    const partialSeg = container.querySelector('[data-coverage-segment="partial"]') as HTMLElement;
+    expect(partialSeg).not.toBeNull();
+    expect(partialSeg.style.background).toContain("repeating-linear-gradient");
+  });
+
+  it("renders both segments when coverage is mixed", () => {
+    const { container } = render(
+      <FrameworkGaps pairs={[{ framework: aFramework(), readiness: aFrameworkReadiness() }]} />,
+    );
+    // Fixture: 11 satisfied / 4 partial / 5 unmapped of 20.
+    expect(screen.getByText("11 fully satisfied · 4 partial · 5 unmapped")).toBeInTheDocument();
+    expect(container.querySelector('[data-coverage-segment="satisfied"]')).not.toBeNull();
+    expect(container.querySelector('[data-coverage-segment="partial"]')).not.toBeNull();
+  });
+});
+
+describe("ComplianceCoverage — coverage caption + segmented bar (item 7)", () => {
+  it("renders the engine caption verbatim per framework row", () => {
+    render(<ComplianceCoverage frameworkPairs={[ZERO_SCORE_PAIR]} />);
+    expect(screen.getByText("0 fully satisfied · 3 partial")).toBeInTheDocument();
+  });
+
+  it("says 'fully satisfied' in the aggregate line and segments the row bar", () => {
+    const { container } = render(
+      <ComplianceCoverage frameworkPairs={[{ framework: aFramework(), readiness: aFrameworkReadiness() }]} />,
+    );
+    expect(screen.getByText(/11 of 20 requirements fully satisfied/)).toBeInTheDocument();
+    const partialSeg = container.querySelector('[data-coverage-segment="partial"]') as HTMLElement;
+    expect(partialSeg).not.toBeNull();
+    expect(partialSeg.style.background).toContain("repeating-linear-gradient");
   });
 });

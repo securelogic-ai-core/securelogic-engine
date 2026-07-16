@@ -942,6 +942,10 @@ export type FrameworkReadiness = {
   satisfied: number;
   partial: number;
   unmapped: number;
+  /** The explicit coverage breakdown ("0 fully satisfied · 3 partial"),
+   *  formatted ONCE by the engine (src/api/lib/frameworkCoverage.ts) — item-7
+   *  ruling. Surfaces render it verbatim; never re-derive the wording. */
+  coverage_caption: string;
   requirements: ReadinessRequirement[];
 };
 

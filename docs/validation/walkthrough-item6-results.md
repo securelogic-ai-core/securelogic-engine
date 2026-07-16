@@ -95,6 +95,71 @@ All five now receive display values and are correct without code changes.
 
 ---
 
+## Item 7 — Framework coverage rule (RULED)
+
+### Classification
+
+CODE DEFECT once ruled. Simmee's ruling (2026-07-15): **keep satisfied-only math**
+(partial earns no score credit); explicit caption everywhere ("0 fully satisfied ·
+3 partial" pattern); progress bars render partials as a **visually distinct
+segment** (solid = satisfied, hatched/lighter = partial); defined **once** so
+caption and segmentation cannot drift per-surface.
+
+### What was drifting (verified pre-fix)
+
+- The identical satisfied-only formula was hand-rolled in THREE engine routes
+  (`frameworkReadiness.ts`, `auditPackage.ts`, `gapReport.ts`).
+- Four UI surfaces phrased the breakdown four different ways; `FrameworkGaps`
+  **dropped zero counts**, so the walkthrough's "0% with 3 partial" rendered as a
+  bare "3 partial" beside an unexplained 0%.
+- Color bands also drifted: ComplianceCoverage used 80/60, the Readiness widget
+  75/50/25, versus the canonical 80/60/40.
+- The audit-package PDF omitted the partial count from its stat grid and summary
+  sentence entirely.
+
+### Implementation (branch `fix/framework-partial-credit-display`)
+
+- **Engine `src/api/lib/frameworkCoverage.ts`** (new, the ONE definition):
+  `readinessScore(satisfied, total)` (satisfied-only, unchanged math) +
+  `coverageCaption()` ("N fully satisfied · N partial · N unmapped"; the
+  "fully satisfied" part is ALWAYS present, even at 0). Wired into all three
+  routes. `GET /frameworks/:id/readiness` now emits `coverage_caption` on the
+  wire; app surfaces render it **verbatim** — the wording physically cannot drift.
+- **App `app/src/lib/frameworkCoverage.tsx`** (new): `CoverageBar` — solid
+  segment = fully satisfied, hatched/lighter segment (same hue,
+  `repeating-linear-gradient`) = partial. One component; canonical 80/60/40 bands.
+- **Four surfaces converted:** engine readiness_score (wire caption + audit PDF
+  grid gains "Fully Satisfied" / "Partial / Unmapped" boxes + caption sentence,
+  gap-report PDF sentence uses the caption), Compliance Coverage tile, Readiness
+  widget, Framework Gaps — all render `coverage_caption` + `CoverageBar`.
+
+### Evidence
+
+- Engine: new `frameworkCoverage.test.ts` (7 tests — pins "0 fully satisfied · 3
+  partial" exemplar, partial-earns-no-credit, zero-count never dropped); full
+  suite 6193 passed (356 files).
+- App: per-surface regression tests — FrameworkGaps (caption verbatim; hatched
+  partial segment with NO solid segment at score 0; both segments when mixed),
+  ComplianceCoverage (caption + "fully satisfied" aggregate + segmented row bar),
+  Readiness widget via full-page harness. Full suite 849 passed (65 files).
+- `tsc --noEmit` clean on both packages.
+
+### Triage discoveries (NOT built)
+
+- **`readiness_score` name collision, different math:** `frameworks.ts`
+  (`assessment_readiness.self`) and `requirements.ts` (requirements summary)
+  compute `(pass + partial*0.5)/total` over **questionnaire responses** — a
+  different metric family on a different data source that DOES grant partial
+  credit, under the same field name. Whether assessment-response readiness should
+  also be satisfied-only is a DESIGN-NEEDS-RULING for Simmee — not changed
+  silently.
+- `frameworks/page.tsx` (`ActiveFrameworkCard`/`ReadinessBar`) and
+  `frameworks/[id]` render the same readiness with a plain bar + own counts —
+  outside the ruled four surfaces; converting them to the shared component is a
+  small follow-up.
+
+---
+
 ## Operator ledger (actions NOT performed by the build session)
 
 | # | Action | Why | Status |
@@ -102,3 +167,5 @@ All five now receive display values and are correct without code changes.
 | O-1 | Staging DB confirm for Step-0: verify the walkthrough org's entitlement row is `platform`/`team` (query against `organizations`/entitlement source), confirming verdict (a) | Package gate 1 | ☐ pending |
 | O-2 | Add cutover annotation to the customer-facing release note **beside the posture-population discontinuity note**: "Posture scores now read health-style (higher = better); numbers before this release are on the inverted scale." No canonical release-note file exists in-repo — annotate wherever the discontinuity note was published | Ruling requirement | ☐ pending |
 | O-3 | Staging re-walkthrough of the posture surfaces (dashboard, /posture, trend, executive report PDF, Ask, weekly email) after deploy — confirm every surface shows the same health-style number | Package gate: report product behavior, not PR completion | ☐ pending |
+| O-4 | Staging check of item 7 after deploy: a framework with 0 satisfied / N partial shows "0 fully satisfied · N partial" and a hatched-only bar on Framework Gaps, Compliance Coverage, and the Readiness widget; audit-package + gap-report PDFs carry the partial count | Package gate: report product behavior | ☐ pending |
+| O-5 | Ruling request for Simmee: assessment-response readiness (`frameworks.ts` / `requirements.ts`) grants partial credit (`pass + partial×0.5`) under the same `readiness_score` name as the satisfied-only control-mapping readiness — same word, two maths. Should it become satisfied-only too, or be renamed? | DESIGN-NEEDS-RULING (never pick silently) | ☐ pending |

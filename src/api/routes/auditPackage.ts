@@ -17,6 +17,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { readinessScore, coverageCaption } from "../lib/frameworkCoverage.js";
 
 const router = Router();
 
@@ -299,7 +300,8 @@ async function assembleAuditPackage(
   });
 
   const total = requirements.length;
-  const readiness_score = total === 0 ? 0 : Math.round((satisfiedCount / total) * 100);
+  // Item-7 ruling: satisfied-only, via the one shared coverage rule.
+  const readiness_score = readinessScore(satisfiedCount, total);
 
   return {
     generated_at: new Date().toISOString(),
@@ -513,11 +515,15 @@ router.get(
     // Stat boxes (2x2 grid)
     const boxW = (contentW - 12) / 2;
     const boxH = 52;
+    // Item-7 ruling: the score is satisfied-only, so the grid must carry the
+    // partial count too — a low score beside visible partial work is only
+    // honest when both numbers are on the page. "Fully Satisfied" (not
+    // "Satisfied") is the vocabulary the caption uses everywhere.
     const boxes = [
       { label: "Readiness Score", value: `${rs.readiness_score}%`, color: scoreColor(rs.readiness_score) },
       { label: "Total Requirements", value: String(rs.total_requirements), color: C.textDark },
-      { label: "Satisfied", value: String(rs.satisfied), color: C.green },
-      { label: "Unmapped", value: String(rs.unmapped), color: C.slate },
+      { label: "Fully Satisfied", value: String(rs.satisfied), color: C.green },
+      { label: "Partial / Unmapped", value: `${rs.partial} / ${rs.unmapped}`, color: C.slate },
     ];
 
     const gridTop = doc.y;
@@ -547,8 +553,9 @@ router.get(
     const summaryPara =
       `This audit readiness package documents ${organization.name}'s compliance posture against the ` +
       `${framework.name} ${framework.version} framework as of ${dateStr}. ` +
-      `The organization has satisfied ${rs.satisfied} of ${rs.total_requirements} requirements ` +
-      `(${rs.readiness_score}% readiness).`;
+      `Of ${rs.total_requirements} requirements: ` +
+      `${coverageCaption({ satisfied: rs.satisfied, partial: rs.partial, unmapped: rs.unmapped })} ` +
+      `(${rs.readiness_score}% readiness — partially covered requirements earn no score credit).`;
 
     doc
       .fillColor(C.textDark)
