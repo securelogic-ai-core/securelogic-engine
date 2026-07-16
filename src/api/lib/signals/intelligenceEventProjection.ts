@@ -22,6 +22,7 @@
 
 import { eventCanonicalKey, peakSeverity, severityRank, type EventIdentityInput } from "./intelligenceEventIdentity.js";
 import { assessContent, trimToSentence, type ContentStatus } from "./contentQuality.js";
+import { signalTypePhraseCapitalized } from "./signalTypeLabels.js";
 import { buildEventSummary } from "./eventExecutiveSummary.js";
 import {
   deriveLifecycleState,
@@ -136,8 +137,9 @@ function buildTitle(s: IncomingSignal): string {
   if (q.status !== "degraded" && q.displayText !== "") {
     return trimToSentence(q.displayText, TITLE_MAX);
   }
-  // Degenerate summary → construct from structured fields.
-  const parts: string[] = [s.signal_type.replace(/_/g, " ").toUpperCase()];
+  // Degenerate summary → construct from structured fields. Customer phrase, not
+  // the raw enum shouted in caps ("PATCH ADVISORY" — walkthrough item 6).
+  const parts: string[] = [signalTypePhraseCapitalized(s.signal_type)];
   if (s.affected_cve) parts.push(s.affected_cve);
   if (s.affected_vendor) parts.push(`affecting ${s.affected_vendor}`);
   return parts.join(" — ");
