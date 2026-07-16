@@ -223,7 +223,13 @@ export function AssessmentChecklist({
   const progressColor = "#00c4b4";
 
   const saveToEngine = useCallback(
-    async (reqId: string, status: Status, notes: string, evidenceUrl: string) => {
+    async (
+      reqId: string,
+      status: Status,
+      notes: string,
+      evidenceUrl: string,
+      revertTo?: Status
+    ) => {
       setCards((prev) => {
         const m = new Map(prev);
         const c = m.get(reqId);
@@ -254,10 +260,19 @@ export function AssessmentChecklist({
           return m;
         });
       } catch {
+        // Roll the optimistic status back so the progress counts never claim
+        // an answer the engine did not persist.
         setCards((prev) => {
           const m = new Map(prev);
           const c = m.get(reqId);
-          if (c) m.set(reqId, { ...c, saving: false, error: "Failed to save" });
+          if (c) {
+            m.set(reqId, {
+              ...c,
+              ...(revertTo !== undefined ? { status: revertTo } : {}),
+              saving: false,
+              error: "Failed to save",
+            });
+          }
           return m;
         });
       }
@@ -269,17 +284,19 @@ export function AssessmentChecklist({
     (reqId: string, status: Status) => {
       let currentNotes = "";
       let currentEvidenceUrl = "";
+      let previousStatus: Status | undefined;
       setCards((prev) => {
         const m = new Map(prev);
         const c = m.get(reqId);
         if (c) {
           currentNotes = c.notes;
           currentEvidenceUrl = c.evidenceUrl;
+          previousStatus = c.status;
           m.set(reqId, { ...c, status });
         }
         return m;
       });
-      saveToEngine(reqId, status, currentNotes, currentEvidenceUrl);
+      saveToEngine(reqId, status, currentNotes, currentEvidenceUrl, previousStatus);
     },
     [saveToEngine]
   );

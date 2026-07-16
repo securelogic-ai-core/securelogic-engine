@@ -1032,14 +1032,20 @@ export function FrameworkGaps({
 
   return (
     <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
-      <div className="flex items-baseline justify-between mb-4">
+      <div className="flex items-baseline justify-between mb-1">
         <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
-          Framework Gaps
+          Largest Readiness Gaps
         </p>
         <Link href="/frameworks" className="text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
           All frameworks →
         </Link>
       </div>
+      {/* Same clarifier pattern as Framework Readiness / Compliance Coverage —
+          "Framework Gaps" never said WHAT a gap was or why these frameworks
+          were listed. */}
+      <p className="text-xs mb-4" style={{ color: TEXT_MUTED }}>
+        Your activated frameworks furthest from audit-ready.
+      </p>
       {sorted.length === 0 ? (
         <CompactEmptyState
           message="No frameworks activated yet."

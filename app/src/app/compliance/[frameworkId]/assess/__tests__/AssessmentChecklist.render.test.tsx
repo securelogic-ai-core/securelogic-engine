@@ -9,7 +9,7 @@
  * answer combination can make it read as an implementation verdict.
  */
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { FrameworkRequirements } from "@/lib/api";
 import { AssessmentChecklist } from "../AssessmentChecklist";
 
@@ -103,5 +103,53 @@ describe("AssessmentChecklist progress panel — completion, not readiness", () 
       <AssessmentChecklist frameworkId="f-1" subjectId="org-1" initialData={checklistData([])} />
     );
     expect(screen.getByText("0 of 0 assessed · 0%")).toBeInTheDocument();
+  });
+});
+
+describe("AssessmentChecklist — metrics update on save, and roll back when the save fails", () => {
+  it("advances the progress panel the moment a status is recorded — no refresh", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) })
+    );
+    render(
+      <AssessmentChecklist
+        frameworkId="f-1"
+        subjectId="org-1"
+        initialData={checklistData([aRequirement(1, "pass"), aRequirement(2, null)])}
+      />
+    );
+    expect(screen.getByText("1 of 2 assessed · 50%")).toBeInTheDocument();
+
+    // REQ-2 is unanswered; its "Pass" button is the second one on the page.
+    fireEvent.click(screen.getAllByRole("button", { name: "Pass" })[1]!);
+
+    // Synchronous optimistic update: the panel recomputes on the same click.
+    expect(screen.getByText("2 of 2 assessed · 100%")).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it("rolls the count back when the engine rejects the save — progress never overstates what persisted", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) })
+    );
+    render(
+      <AssessmentChecklist
+        frameworkId="f-1"
+        subjectId="org-1"
+        initialData={checklistData([aRequirement(1, "pass"), aRequirement(2, null)])}
+      />
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Pass" })[1]!);
+    expect(screen.getByText("2 of 2 assessed · 100%")).toBeInTheDocument();
+
+    // The failed save reverts the optimistic answer and surfaces the error.
+    await waitFor(() =>
+      expect(screen.getByText("1 of 2 assessed · 50%")).toBeInTheDocument()
+    );
+    expect(screen.getByText("Error")).toBeInTheDocument();
+    vi.unstubAllGlobals();
   });
 });

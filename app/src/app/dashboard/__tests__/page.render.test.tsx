@@ -288,6 +288,15 @@ describe("dashboard — enterprise vs newsletter truthfulness (walkthrough)", ()
     expect(screen.queryByText(/Upgrade your plan/i)).toBeNull();
   });
 
+  it("a platform tenant's upgrade-success banner names the plan, never 'brief access'", async () => {
+    api.getMe.mockResolvedValue(aMe({ entitlementLevel: "platform", organizationName: "Acme" }));
+    await renderPage(DashboardPage, { searchParams: sp({ upgraded: "true" }) });
+    // The tenant just bought the platform — "Full brief access is now enabled"
+    // read as if they'd purchased the newsletter.
+    expect(screen.getByText(/Platform Professional is now active/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Full brief access is now enabled/i)).toBeNull();
+  });
+
   it("D-2: the 'complete setup to start tracking posture' banner is hidden when the tenant has data", async () => {
     // Default beforeEach seeds a posture snapshot + domains → the org is already tracking.
     await renderPage(DashboardPage, { searchParams: sp({}) });

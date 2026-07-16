@@ -9,6 +9,7 @@ import {
 } from "@/lib/api";
 import { MapControlButton } from "./MapControlButton";
 import { DownloadButtons } from "./DownloadButtons";
+import { CoverageBar, coverageColor } from "@/lib/frameworkCoverage";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -27,31 +28,6 @@ function filterHref(
   }
   const qs = new URLSearchParams(next).toString();
   return qs ? `?${qs}` : "";
-}
-
-// ─────────────────────────────────────────────────────────────
-// Readiness bar
-// ─────────────────────────────────────────────────────────────
-
-function ReadinessBar({ score }: { score: number }) {
-  const color =
-    score >= 75 ? "#22c55e" :
-    score >= 50 ? "#f59e0b" :
-    score >= 25 ? "#f97316" :
-    "#ef4444";
-  return (
-    <div className="flex items-center gap-3">
-      <div className="flex-1 rounded-full h-2" style={{ background: "rgba(255,255,255,0.08)" }}>
-        <div
-          className="h-2 rounded-full transition-all"
-          style={{ width: `${score}%`, background: color }}
-        />
-      </div>
-      <span className="text-sm font-bold tabular-nums w-10 text-right" style={{ color }}>
-        {score}%
-      </span>
-    </div>
-  );
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -274,7 +250,28 @@ export default async function FrameworkDetailPage({
             </span>
           </div>
 
-          <ReadinessBar score={readiness.readiness_score} />
+          {/* Item-7 ruling: the ONE coverage bar (hatched partial segment) +
+              the engine's verbatim caption; score color from the same shared
+              bands the dashboard uses. */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <CoverageBar
+                satisfied={readiness.satisfied}
+                partial={readiness.partial}
+                total={readiness.total_requirements}
+                heightClass="h-2"
+              />
+            </div>
+            <span
+              className="text-sm font-bold tabular-nums w-10 text-right"
+              style={{ color: coverageColor(readiness.readiness_score) }}
+            >
+              {readiness.readiness_score}%
+            </span>
+          </div>
+          <p className="text-xs mt-2" style={{ color: "#475569" }}>
+            {readiness.coverage_caption}
+          </p>
 
           <div className="grid grid-cols-3 gap-4 mt-5">
             <div className="text-center">
