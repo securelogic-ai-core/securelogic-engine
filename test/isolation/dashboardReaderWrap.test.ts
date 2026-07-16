@@ -91,6 +91,14 @@ const B_FINDINGS = 3;
 const B_RISKS = 2;
 const B_POSTURE_SCORE = 40;
 
+// The dashboard API serves posture HEALTH-style (posture display ruling
+// 2026-07-15, src/api/lib/postureDisplay.ts): display = 100 − risk. The seeds
+// above are the RISK values written to the DB; the wire assertions below expect
+// their display forms. Isolation semantics are unchanged — A's converted score
+// is still distinguishable from B's.
+const A_POSTURE_DISPLAY = 100 - A_POSTURE_SCORE;
+const B_POSTURE_DISPLAY = 100 - B_POSTURE_SCORE;
+
 beforeAll(async () => {
   seed = await bootstrapTestDb();
 
@@ -227,7 +235,7 @@ describe("A04-G1 reader-wrap 0a — dashboard wrap: functional + RLS propagation
     expect(
       res.body?.posture?.overall_score,
       "posture_snapshots policy returned no row under the wrap — GUC did not propagate",
-    ).toBe(A_POSTURE_SCORE);
+    ).toBe(A_POSTURE_DISPLAY);
     expect(res.body?.posture?.snapshot_date, "snapshot_date null under the wrap").not.toBeNull();
   });
 });
@@ -250,9 +258,9 @@ describe("A04-G1 reader-wrap 0a — dashboard wrap: cross-org isolation", () => 
     expect(res.body?.inventory?.risks).not.toBe(B_RISKS);
     expect(res.body?.inventory?.risks).not.toBe(A_RISKS + B_RISKS);
 
-    // Org A's most-recent snapshot score, not org B's.
-    expect(res.body?.posture?.overall_score).toBe(A_POSTURE_SCORE);
-    expect(res.body?.posture?.overall_score).not.toBe(B_POSTURE_SCORE);
+    // Org A's most-recent snapshot score (display form), not org B's.
+    expect(res.body?.posture?.overall_score).toBe(A_POSTURE_DISPLAY);
+    expect(res.body?.posture?.overall_score).not.toBe(B_POSTURE_DISPLAY);
   });
 
   it("org B dashboard shows org B's counts (symmetric isolation check)", async () => {
@@ -260,6 +268,6 @@ describe("A04-G1 reader-wrap 0a — dashboard wrap: cross-org isolation", () => 
     expect(res.status).toBe(200);
     expect(res.body?.findings?.open).toBe(B_FINDINGS);
     expect(res.body?.inventory?.risks).toBe(B_RISKS);
-    expect(res.body?.posture?.overall_score).toBe(B_POSTURE_SCORE);
+    expect(res.body?.posture?.overall_score).toBe(B_POSTURE_DISPLAY);
   });
 });

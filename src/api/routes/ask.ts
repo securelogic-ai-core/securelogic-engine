@@ -26,6 +26,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { renderProductKnowledge } from "../lib/productKnowledge.js";
 import { sqlFindingActive, sqlFindingClosed } from "../lib/metricDefinitions.js";
+import { toDisplayScore } from "../lib/postureDisplay.js";
 
 const router = Router();
 
@@ -435,7 +436,9 @@ router.post(
         risk_scale: riskScaleContext,
         posture: posture
           ? {
-              overall_score:    posture.overall_score,
+              // Health-style display value (walkthrough ruling): Ask answers must
+              // quote the same number the dashboard shows.
+              overall_score:    toDisplayScore(posture.overall_score),
               overall_severity: posture.overall_severity,
               open_findings:    posture.open_finding_count,
               open_actions:     posture.open_action_count,
@@ -445,7 +448,7 @@ router.post(
           : null,
         domains: domainResult.rows.map((d) => ({
           domain:   d.domain,
-          score:    d.score,
+          score:    toDisplayScore(d.score),
           severity: d.severity,
           trend:    d.trend_direction,
           findings: d.finding_count,
@@ -501,7 +504,9 @@ router.post(
       res.status(200).json({
         answer,
         context_used: {
-          posture_score:   posture?.overall_score ?? null,
+          // Same mapper as the LLM context above — context_used is customer-visible
+          // and must quote the same health-style number the answer was built from.
+          posture_score:   toDisplayScore(posture?.overall_score ?? null),
           findings_count:  findingsSummary.active_count,
           risks_count:     topRisksResult.rows.length,
           vendors_count:   parseInt(vendorCountResult.rows[0]?.total ?? "0", 10),

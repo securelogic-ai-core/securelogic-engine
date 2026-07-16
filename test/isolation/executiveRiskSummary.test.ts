@@ -111,7 +111,10 @@ describe("ERIP Epic 4 — executive risk summary", () => {
     expect(body.executive_summary.headline.total_assets).toBe(2);
     expect(body.executive_summary.headline.at_risk_assets).toBe(1);
     expect(body.executive_summary.headline.top_dimensions[0].dimension).toBe("endpoint");
-    expect(body.executive_summary.posture).toMatchObject({ overall_score: 68, overall_severity: "Moderate" });
+    // Seeded RISK 68; the route serves the display form 100 − 68 = 32 (posture
+    // display ruling 2026-07-15, src/api/lib/postureDisplay.ts). Severity passes
+    // through untouched.
+    expect(body.executive_summary.posture).toMatchObject({ overall_score: 32, overall_severity: "Moderate" });
   });
 
   it("returns posture null when the org has no snapshot", async () => {

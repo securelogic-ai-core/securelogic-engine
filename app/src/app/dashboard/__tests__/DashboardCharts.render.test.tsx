@@ -198,12 +198,55 @@ describe("OpenItemsAging — the aging buckets belong to the same population as 
 
 // ── Walkthrough remediation (D-3 / D-5) ─────────────────────────────────────
 
-describe("PostureScoreTile — risk-vs-health clarity (D-3)", () => {
-  it("frames the score as RISK (higher = worse), so a high 'Critical' isn't read as good", () => {
-    render(<PostureScoreTile posture={{ overall_score: 82, overall_severity: "Critical", snapshot_date: "2026-06-01T00:00:00.000Z" }} />);
-    expect(screen.getByText(/higher = more risk/i)).toBeInTheDocument();
+describe("PostureScoreTile — health-style display (items 1+2 ruling)", () => {
+  it("frames the score as HEALTH (higher = better) and NEVER as raw risk-style", () => {
+    // The API's canonical mapper serves display values: risk 96 arrives as 4.
+    render(
+      <PostureScoreTile
+        posture={{ overall_score: 4, overall_severity: "Critical", snapshot_date: "2026-07-15" }}
+      />,
+    );
+    expect(screen.getByText(/higher = better/i)).toBeInTheDocument();
+    // A Critical posture now reads as a LOW number beside its Critical badge.
+    expect(screen.getByText("4")).toBeInTheDocument();
     expect(screen.getByText("Critical")).toBeInTheDocument();
-    expect(screen.getByText(/\/100 risk/i)).toBeInTheDocument();
+    // The app regression the ruling demands: no surface renders raw risk-style.
+    expect(screen.queryByText(/higher = more risk/i)).toBeNull();
+    expect(screen.queryByText(/\/100 risk/i)).toBeNull();
+  });
+
+  it("carries the findings FACT as its own chip, separate from the score badge", () => {
+    render(
+      <PostureScoreTile
+        posture={{ overall_score: 4, overall_severity: "Critical", snapshot_date: "2026-07-15" }}
+        findings={{ open: 12, by_severity: { Critical: 2, High: 3, Moderate: 5, Low: 2 } }}
+      />,
+    );
+    const chip = screen.getByText(/2 critical · 3 high findings/);
+    expect(chip.closest("a")).toHaveAttribute("href", "/findings?active=true");
+  });
+
+  it("formats the DATE-typed snapshot_date in UTC (item 2b — no Jul 14/Jul 15 split)", () => {
+    render(
+      <PostureScoreTile
+        posture={{ overall_score: 50, overall_severity: "Moderate", snapshot_date: "2026-07-15" }}
+      />,
+    );
+    expect(screen.getByText(/as of Jul 15, 2026/)).toBeInTheDocument();
+  });
+});
+
+describe("DomainPostureBars — health-style (items 1+2 ruling)", () => {
+  it("labels the axis higher = better and colors a high display score green", () => {
+    const { container } = render(
+      <DomainPostureBars
+        domains={[aDomainScore({ domain: "Access Control", score: 88, severity: "Low" })]}
+      />,
+    );
+    expect(screen.getByText(/higher = better/i)).toBeInTheDocument();
+    // Display 88 (healthy) renders green (rgb form of #22c55e) — under the old
+    // risk framing 88 was red.
+    expect(container.innerHTML).toContain("rgb(34, 197, 94)");
   });
 });
 

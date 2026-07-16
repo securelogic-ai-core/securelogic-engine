@@ -23,6 +23,7 @@ import { rollupRiskByDimension } from "../lib/riskDimensionRollup.js";
 import { composeExecutiveRiskSummary, type PostureContext } from "../lib/executiveRiskSummary.js";
 import { gatherAssetRisk } from "../lib/riskDimensionData.js";
 import { readHistoryWindow, ENTERPRISE_DIMENSION, type HistoryRow } from "../lib/riskHistoryStore.js";
+import { toDisplayScore } from "../lib/postureDisplay.js";
 import {
   buildDimensionTrend,
   buildKpiScorecard,
@@ -101,7 +102,8 @@ export async function getExecutiveRiskSummary(req: Request, res: Response): Prom
   );
   const posture: PostureContext | null = snap.rows[0]
     ? {
-        overall_score: snap.rows[0].overall_score,
+        // Health-style display value (walkthrough ruling).
+        overall_score: toDisplayScore(snap.rows[0].overall_score),
         overall_severity: snap.rows[0].overall_severity,
         snapshot_date: snap.rows[0].snapshot_date
       }

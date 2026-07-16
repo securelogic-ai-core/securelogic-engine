@@ -17,6 +17,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { sqlFindingActive } from "../lib/metricDefinitions.js";
+import { toDisplayPosture } from "../lib/postureDisplay.js";
 
 const router = Router();
 
@@ -331,8 +332,10 @@ async function assembleExecReport(organizationId: string): Promise<ExecReportDat
   return {
     generated_at:       new Date().toISOString(),
     org_name:           orgResult.rows[0]?.name ?? "Unknown Organization",
-    posture:            postureResult.rows[0] ?? null,
-    posture_prior:      posturePrior,
+    // Health-style display values (walkthrough ruling) — the report shows what
+    // the dashboard shows. Both points of the trend convert through ONE mapper.
+    posture:            postureResult.rows[0] ? toDisplayPosture(postureResult.rows[0]) : null,
+    posture_prior:      posturePrior ? toDisplayPosture(posturePrior) : null,
     period: {
       days: 90,
       findings_closed:        transitionCount(findingEventsResult.rows, "close"),

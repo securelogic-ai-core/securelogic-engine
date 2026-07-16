@@ -61,11 +61,13 @@ afterAll(async () => {
 
 describe("ERIP Epic 5 — posture forecast", () => {
   it("fits a rising posture series and projects an increasing trend", async () => {
-    // Scores 40→50→60→70 over the last 30..0 days (steady rise).
-    await seedSnapshot(seed.orgA.id, 30, 40);
+    // Seeds are RISK-style (what the DB stores); the route serves display =
+    // 100 − risk (posture display ruling 2026-07-15). Risk falling 60→50→40→30
+    // renders as display 40→50→60→70 — a steadily improving series.
+    await seedSnapshot(seed.orgA.id, 30, 60);
     await seedSnapshot(seed.orgA.id, 20, 50);
-    await seedSnapshot(seed.orgA.id, 10, 60);
-    await seedSnapshot(seed.orgA.id, 0, 70);
+    await seedSnapshot(seed.orgA.id, 10, 40);
+    await seedSnapshot(seed.orgA.id, 0, 30);
 
     const res = mockRes();
     await withTenant(seed.orgA.id, () => getPostureForecast(reqFor(seed.orgA.id, "30"), res));
@@ -86,7 +88,8 @@ describe("ERIP Epic 5 — posture forecast", () => {
   });
 
   it("reports insufficient_data when the org has a single snapshot", async () => {
-    await seedSnapshot(seed.orgB.id, 0, 55);
+    // Risk 45 → display 55; the projected value echoes the display form.
+    await seedSnapshot(seed.orgB.id, 0, 45);
     const res = mockRes();
     await withTenant(seed.orgB.id, () => getPostureForecast(reqFor(seed.orgB.id), res));
     const body = res._json as { observations: unknown[]; forecast: { insufficient_data: boolean; projected_value: number } };
