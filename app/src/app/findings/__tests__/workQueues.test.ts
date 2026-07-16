@@ -194,3 +194,24 @@ describe("keyset pagination helpers", () => {
     expect(pageRange(TOK, [TOK, TOK], 7)).toEqual({ start: 76, end: 82 });
   });
 });
+
+describe("bucket membership reasons (MW-7)", () => {
+  it("every findings-backed bucket except my_work states why a finding is in it", () => {
+    // A queue card must say why the record appears in the queue. my_work is the
+    // one exception: its reason is derived from the caller (whyInMyWork).
+    for (const b of OPS_BUCKETS) {
+      if (b.id === "my_work" || b.target.kind !== "findings") continue;
+      expect(b.membershipReason, `${b.id} has no membershipReason`).toBeTruthy();
+    }
+  });
+
+  it("reasons restate the bucket's filter truthfully — spot pins", () => {
+    expect(opsBucket("sla_breached")?.membershipReason).toBe("Past its due date");
+    expect(opsBucket("ready_to_close")?.membershipReason).toBe(
+      "Remediation complete — governance decision pending"
+    );
+    expect(opsBucket("needs_decision")?.membershipReason).toBe(
+      "No governance decision recorded yet"
+    );
+  });
+});

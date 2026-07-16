@@ -525,6 +525,9 @@ export type Finding = {
   owner_user_id: string | null;
   due_date: string | null;
   action_count: number;
+  // Attached evidence rows (source_type='finding'). Optional: absent on older
+  // engine payloads — surfaces must treat undefined as "unknown", not zero.
+  evidence_count?: number;
   created_at: string;
   updated_at: string;
 };

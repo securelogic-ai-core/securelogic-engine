@@ -90,6 +90,24 @@ export async function expectRedirect<P>(
 /** Next 15 passes searchParams/params as promises. */
 export const sp = (params: Record<string, string | undefined> = {}) => Promise.resolve(params);
 
+// ── Client search params ────────────────────────────────────────────
+// Client components read the URL via useSearchParams(). setup.ts wires the mocked
+// hook to this store; tests that assert a ?param-driven branch set it and MUST
+// reset it (beforeEach does via resetClientSearchParams).
+
+export const clientSearchParams: { current: URLSearchParams } = {
+  current: new URLSearchParams(),
+};
+
+/** Set the URL the client hooks see, e.g. setClientSearchParams("from=ready_to_close"). */
+export function setClientSearchParams(qs: string): void {
+  clientSearchParams.current = new URLSearchParams(qs);
+}
+
+export function resetClientSearchParams(): void {
+  clientSearchParams.current = new URLSearchParams();
+}
+
 // ── Link assertions ─────────────────────────────────────────────────
 
 /** Every href on the page, in document order. */

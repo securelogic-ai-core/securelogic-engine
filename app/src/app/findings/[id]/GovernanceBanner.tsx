@@ -154,6 +154,19 @@ export function GovernanceBanner({
         <Field label="Owner" value={owner} />
         <Field label="Requester" value={requester} />
         <Field label="Approver" value={approver} />
+        {/* Explicit approvals arithmetic: the workflow is single-approver, and
+            the banner says so — "how many sign-offs remain" must never be
+            inferred from prose. */}
+        <Field
+          label="Approvals"
+          value={
+            live.state === "approved"
+              ? "1 of 1 — complete"
+              : live.state === "proposed"
+                ? "0 of 1 — one approval remaining"
+                : "not recorded — needs a fully-signed acceptance"
+          }
+        />
         <Field label="Submitted" value={fmtDate(live.created_at)} />
         {live.state === "approved" ? <Field label="Approved" value={fmtDate(live.approved_at)} /> : null}
         <Field label="Review by" value={fmtDate(live.expires_at)} />

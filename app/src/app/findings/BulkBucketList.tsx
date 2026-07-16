@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import type { Finding } from "@/lib/api";
 import { FindingCard } from "@/components/FindingCard";
 import { bulkAssignToMeAction, bulkDecideAction, type BulkResult } from "./bulkActions";
+import { opsBucket } from "./workQueues";
 
 const REFUSAL_COPY: Record<string, string> = {
   close_requires_remediated_or_accepted_risk: "remediation not complete",
@@ -146,7 +147,13 @@ export default function BulkBucketList({
                 revalidateUrl={revalidateUrl}
                 workspace
                 ownerName={f.owner_user_id ? ownerNames?.[f.owner_user_id] ?? null : null}
-                reason={bucketId === "my_work" ? "You own this finding" : null}
+                reason={
+                  // MW-7: every queue states why the finding is in it — the
+                  // bucket's membership criterion, or ownership for My Work.
+                  bucketId === "my_work"
+                    ? "You own this finding"
+                    : opsBucket(bucketId)?.membershipReason ?? null
+                }
                 queueContext={bucketId}
               />
             </div>
