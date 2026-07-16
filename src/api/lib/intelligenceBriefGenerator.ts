@@ -43,6 +43,7 @@ import { stripHtmlToText } from "./sanitize.js";
 import { signalSanitizeEnabled } from "./signalSanitizeFeatureFlag.js";
 import { briefRelevanceEnabled, refineCategory } from "./briefRelevance.js";
 import { trimToSentence } from "./signals/contentQuality.js";
+import { SIGNAL_TYPE_PHRASE } from "./signals/signalTypeLabels.js";
 import { briefQualityEnabled } from "./briefQualityFeatureFlag.js";
 // IQP Q5: reliability guard + alerting. The grounding guard lives in the
 // PURE signals/actionGrounding module (extracted from briefSynthesizer, which
@@ -810,20 +811,10 @@ export function restatesTitle(title: string, summary: string): boolean {
   return t === s || s.startsWith(t) || t.startsWith(s);
 }
 
-const SIGNAL_TYPE_PHRASE: Record<string, string> = {
-  cve: "vulnerability",
-  vulnerability: "attack technique",
-  advisory: "security advisory",
-  patch: "security patch",
-  patch_advisory: "vendor security advisory",
-  breach: "security incident",
-  third_party_breach: "third-party breach disclosure",
-  data_exposure: "data exposure",
-  malware: "malware campaign",
-  threat_actor: "threat-actor activity",
-  regulatory_change: "regulatory development",
-  geopolitical: "geopolitical development"
-};
+// Shared customer-language vocabulary — moved to signals/signalTypeLabels.ts so
+// brief synthesis, finding titles, and event projection use ONE map (walkthrough
+// item 6: raw signal_type enums were leaking into finding titles).
+// This module keeps its own "security development" fallback below, unchanged.
 
 /**
  * Deterministic executive summary from the signal's structured entities, for

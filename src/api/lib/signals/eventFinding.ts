@@ -70,9 +70,19 @@ export function eventFindingDomain(event: EventForFinding): string {
   }
 }
 
-/** Build the finding title from the event (CVE-prefixed when present). */
+/**
+ * Build the finding title from the event (CVE-prefixed when present).
+ *
+ * Walkthrough item 5 (July-15): the event's own title is derived from the signal
+ * summary, which for CVE advisories usually already names the CVE — so the
+ * unconditional prefix produced "CVE-2026-90001: … (CVE-2026-90001) …". Prefix
+ * only when the title does not already mention that CVE (case-insensitive).
+ */
 export function eventFindingTitle(event: EventForFinding): string {
-  const base = event.affected_cve ? `${event.affected_cve}: ${event.title}` : event.title;
+  const cve = event.affected_cve;
+  const alreadyNamed =
+    cve !== null && event.title.toLowerCase().includes(cve.toLowerCase());
+  const base = cve && !alreadyNamed ? `${cve}: ${event.title}` : event.title;
   return trimToSentence(base, FINDING_TITLE_MAX);
 }
 

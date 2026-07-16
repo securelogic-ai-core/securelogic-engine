@@ -20,6 +20,8 @@
  * wording that would make the same signal read as two different findings.
  */
 
+import { signalTypePhraseCapitalized } from "./signals/signalTypeLabels.js";
+
 /** The entity a signal matched in the org's registry, if any. */
 export type SignalEntityMatch =
   | { kind: "vendor"; name: string }
@@ -37,9 +39,12 @@ export interface SignalFindingInput {
 /**
  * The Finding title for a signal.
  *
- * The matched-entity wordings are the ones the automated path has always
- * produced and are preserved verbatim — findings already in customers' orgs read
- * this way, and a title is what a person recognizes a finding BY.
+ * Walkthrough item 6 (July-15): the previous wordings interpolated the raw
+ * signal_type enum — "Cyber signal (patch_advisory): …" — straight into a
+ * customer-visible, PERSISTED title. Titles now use the shared customer
+ * vocabulary (signalTypeLabels). Existing findings keep their old wording (dedup
+ * keys on (org, source), never on title); new/updated ones read in customer
+ * language.
  */
 export function buildSignalFindingTitle(input: SignalFindingInput): string {
   const { signalType, severity, affectedCve, entity } = input;
@@ -49,14 +54,14 @@ export function buildSignalFindingTitle(input: SignalFindingInput): string {
       const noun = entity.kind === "vendor" ? "vendor" : "AI system";
       return `${affectedCve} affects ${noun}: ${entity.name}`;
     }
-    return `Cyber signal (${signalType}): ${entity.name} — ${severity} severity`;
+    return `${signalTypePhraseCapitalized(signalType)}: ${entity.name} — ${severity} severity`;
   }
 
   // No matched entity — the promotion case. The automated path never reaches here
   // (it does not create a finding at all without a match), so there is no legacy
   // wording to preserve. Name the signal itself, since there is no entity to name.
   if (affectedCve !== null) return `${affectedCve} — requires assessment`;
-  return `Cyber signal (${signalType}) — ${severity} severity`;
+  return `${signalTypePhraseCapitalized(signalType)} — ${severity} severity`;
 }
 
 /**
