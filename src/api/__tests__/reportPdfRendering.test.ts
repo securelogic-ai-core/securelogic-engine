@@ -1,9 +1,16 @@
 /**
  * reportPdfRendering.test.ts — rendered-PDF regression suite for the staging
- * report defects (REP-1 branding, REP-2 framework language, REP-3 pagination).
+ * report defects (REP-1 branding, REP-2 framework language, REP-3 pagination,
+ * REP-4 requirement-block overlap).
  *
- * These tests parse the ACTUAL rendered PDF bytes (pdf-parse), not template
- * strings:
+ * These tests parse the ACTUAL rendered PDF bytes (pdf-parse for text,
+ * pdfjs-dist for glyph positions), not template strings:
+ *   - REP-4: on the audit package's requirement pages, the status badge was
+ *     written back at the top of the requirement block without restoring the
+ *     flow cursor. pdfkit leaves doc.y below its last write, so the cursor
+ *     rewound to the top of the block and the control name, assessment status,
+ *     summary and evidence were stamped on top of the requirement title. We
+ *     assert no two text boxes on a page overlap.
  *   - REP-3: footer stamping used to write inside pdfkit's bottom margin,
  *     which triggers an implicit page break per write — a 5-page gap report
  *     rendered as 15 pages, 10 of them footer-only. We assert every page has
@@ -69,6 +76,72 @@ async function parsePdf(buf: Buffer): Promise<ParsedPdf> {
   const parser = new PDFParse(new Uint8Array(buf));
   const result = await parser.getText();
   return { total: result.total, pages: result.pages, fullText: result.text };
+}
+
+type TextBox = {
+  page: number;
+  text: string;
+  x0: number; x1: number;
+  y0: number; y1: number;
+};
+
+/**
+ * Every rendered glyph run with its box, in PDF user space (y grows upward).
+ * pdf-parse only exposes text, so go to pdfjs directly for the geometry.
+ */
+async function extractBoxes(buf: Buffer): Promise<TextBox[]> {
+  const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const doc = await pdfjs.getDocument({
+    data: new Uint8Array(buf),
+    useSystemFonts: true,
+  }).promise;
+
+  const boxes: TextBox[] = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const content = await page.getTextContent();
+    for (const item of content.items as any[]) {
+      if (!item.str || !item.str.trim()) continue;
+      const x = item.transform[4];
+      const baseline = item.transform[5];
+      boxes.push({
+        page: p,
+        text: item.str,
+        x0: x,
+        x1: x + item.width,
+        y0: baseline,
+        y1: baseline + item.height,
+      });
+    }
+  }
+  return boxes;
+}
+
+/**
+ * No two text boxes on a page may share ink. Tolerance absorbs the sub-point
+ * slop between pdfjs' reported glyph box and the real inked extent (descenders,
+ * side bearings) — a real collision is many points deep, not fractions.
+ */
+function expectNoOverlappingText(boxes: TextBox[]): void {
+  const TOL = 1.5;
+  const byPage = new Map<number, TextBox[]>();
+  for (const b of boxes) byPage.set(b.page, [...(byPage.get(b.page) ?? []), b]);
+
+  for (const [page, items] of byPage) {
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        const a = items[i]!;
+        const b = items[j]!;
+        const xOverlap = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+        const yOverlap = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+        expect(
+          xOverlap > TOL && yOverlap > TOL,
+          `page ${page}: ${JSON.stringify(a.text)} overlaps ${JSON.stringify(b.text)} ` +
+            `by ${xOverlap.toFixed(1)}x${yOverlap.toFixed(1)}pt`
+        ).toBe(false);
+      }
+    }
+  }
 }
 
 /** Page text with footer/header chrome removed — what's left must be content. */
@@ -217,6 +290,71 @@ function makeAuditPackage(overrides: Partial<AuditPackage> = {}): AuditPackage {
   };
 }
 
+/**
+ * The realistic shape of a NIST CSF package: long titles that wrap to several
+ * lines, several controls per requirement, and multi-item evidence. This is the
+ * fixture that reproduced REP-4 — short titles happen to leave enough slack to
+ * hide a cursor rewind.
+ */
+function makeVerboseAuditPackage(): AuditPackage {
+  const requirements: AuditPackage["requirements"] = [];
+  for (let i = 0; i < 18; i++) {
+    const cat = NIST_CATEGORIES[i % NIST_CATEGORIES.length]!;
+    const status = i % 3 === 0 ? "satisfied" : i % 3 === 1 ? "partial" : "unmapped";
+    const controlCount = status === "unmapped" ? 0 : (i % 2) + 2;
+    requirements.push({
+      id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      reference_id: `${cat}-${String(i + 1).padStart(2, "0")}`,
+      title:
+        `Requirement ${i + 1}: the organization establishes, documents, communicates and ` +
+        `maintains policies, processes and procedures governing area ${i + 1}, and reviews ` +
+        `them at planned intervals and whenever a significant change occurs`,
+      status,
+      controls: Array.from({ length: controlCount }, (_, k) => ({
+        control_id: `1000000${k}-0000-4000-8000-${String(i).padStart(12, "0")}`,
+        control_name:
+          `Control ${i + 1}.${k + 1} — quarterly access review with documented approver ` +
+          `sign-off and retained exception handling records`,
+        assessment_id:
+          status === "satisfied" ? `3000000${k}-0000-4000-8000-${String(i).padStart(12, "0")}` : null,
+        assessment_status: status === "satisfied" ? "passed" : k % 2 === 0 ? "failed" : null,
+        overall_severity: status === "satisfied" ? null : "Moderate",
+        assessment_summary:
+          `Testing covered the full review period. The control operated as designed for ` +
+          `sampled populations, with exceptions tracked to closure and evidence retained ` +
+          `in the governance repository for area ${i + 1}.`,
+        performed_at: "2026-06-01T00:00:00.000Z",
+        evidence: Array.from({ length: (i % 3) + 1 }, (_, e) => ({
+          id: `4000000${e}-0000-4000-8000-${String(i).padStart(12, "0")}`,
+          title: `Evidence artifact ${i + 1}.${k + 1}.${e + 1} — signed quarterly review export`,
+          evidence_type: "document",
+          description: null,
+          collected_at: "2026-06-01T00:00:00.000Z",
+          collected_by: "Internal Audit",
+          external_ref: `GRC-${i + 1}-${k + 1}-${e + 1}`,
+        })),
+      })),
+    });
+  }
+  const satisfied = requirements.filter((r) => r.status === "satisfied").length;
+  const partial = requirements.filter((r) => r.status === "partial").length;
+  const unmapped = requirements.filter((r) => r.status === "unmapped").length;
+
+  return {
+    generated_at: "2026-07-16T12:00:00.000Z",
+    organization: { name: "Acme Health Systems" },
+    framework: { id: "20000000-0000-4000-8000-000000000000", name: "NIST CSF", version: "2.0" },
+    readiness_summary: {
+      readiness_score: Math.round((satisfied / requirements.length) * 100),
+      total_requirements: requirements.length,
+      satisfied,
+      partial,
+      unmapped,
+    },
+    requirements,
+  };
+}
+
 function makeExecReport(): ExecReportData {
   return {
     generated_at: "2026-07-16T12:00:00.000Z",
@@ -267,6 +405,8 @@ describe("gap report PDF", () => {
     expect(parsed.total).toBeGreaterThanOrEqual(4);
     expectNoArtifactPages(parsed);
     expectConsistentPageNumbers(parsed);
+    // REP-4 guard: the gap report draws its own right-aligned priority badges.
+    expectNoOverlappingText(await extractBoxes(buf));
   });
 
   it("REP-2: a NIST CSF report carries NIST CSF title/version and zero SOC 2 references", async () => {
@@ -348,17 +488,89 @@ describe("audit package PDF", () => {
     const parsed = await parsePdf(buf);
     expect(parsed.pages[0]!.text).toContain("Generated by SecureLogic AI");
   });
+
+  // ── REP-4: requirement blocks must not overlap ──────────────────────────────
+
+  it("REP-4: no text overlaps any other text on any page", async () => {
+    const buf = await renderToBuffer((out) => generateAuditPackagePDF(makeAuditPackage(), out));
+    expectNoOverlappingText(await extractBoxes(buf));
+  });
+
+  it("REP-4: still no overlap when titles wrap and controls carry evidence", async () => {
+    const buf = await renderToBuffer((out) =>
+      generateAuditPackagePDF(makeVerboseAuditPackage(), out)
+    );
+    expectNoOverlappingText(await extractBoxes(buf));
+  });
+
+  it("REP-4: a wrapped requirement title never runs under the status badge", async () => {
+    const buf = await renderToBuffer((out) =>
+      generateAuditPackagePDF(makeVerboseAuditPackage(), out)
+    );
+    const boxes = await extractBoxes(buf);
+
+    const badges = boxes.filter((b) => /^(SATISFIED|PARTIAL|UNMAPPED)$/.test(b.text.trim()));
+    expect(badges.length).toBeGreaterThan(0);
+
+    // Requirement titles start with "Requirement N:" in the fixture.
+    const titles = boxes.filter((b) => b.text.trim().startsWith("Requirement "));
+    expect(titles.length).toBeGreaterThan(0);
+
+    for (const badge of badges) {
+      for (const title of titles.filter((t) => t.page === badge.page)) {
+        expect(
+          title.x1 <= badge.x0,
+          `title ${JSON.stringify(title.text)} extends to x=${title.x1.toFixed(1)}, ` +
+            `into the badge column starting at x=${badge.x0.toFixed(1)}`
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("REP-4: every requirement renders exactly once", async () => {
+    const pkg = makeVerboseAuditPackage();
+    const buf = await renderToBuffer((out) => generateAuditPackagePDF(pkg, out));
+    const parsed = await parsePdf(buf);
+
+    for (const req of pkg.requirements) {
+      const hits = parsed.fullText.split(req.reference_id).length - 1;
+      expect(hits, `${req.reference_id} rendered ${hits} times, expected once`).toBe(1);
+    }
+  });
+
+  it("REP-4: no requirement content is written into the footer zone", async () => {
+    const buf = await renderToBuffer((out) =>
+      generateAuditPackagePDF(makeVerboseAuditPackage(), out)
+    );
+    const boxes = await extractBoxes(buf);
+    // stampFooters draws its rule 36pt from the bottom of the page. In PDF user
+    // space (y grows upward) that is y=36, and the only ink allowed below it is
+    // the footer text itself. Page 1 is the cover, which deliberately carries a
+    // centred CONFIDENTIAL line down in the footer band.
+    const FOOTER_TOP = 36;
+    for (const b of boxes) {
+      if (b.page === 1) continue;
+      const isFooter =
+        b.text.includes("SecureLogic AI") || /^Page \d+ of \d+$/.test(b.text.trim());
+      if (isFooter) continue;
+      expect(
+        b.y0,
+        `page ${b.page}: ${JSON.stringify(b.text)} sits in the footer zone`
+      ).toBeGreaterThan(FOOTER_TOP);
+    }
+  });
 });
 
 // ─── Executive report ──────────────────────────────────────────────────────────
 
 describe("executive report PDF", () => {
-  it("REP-3/REP-1: no artifact pages, consistent numbering, embedded logo", async () => {
+  it("REP-3/REP-1/REP-4: no artifact pages, no overlap, consistent numbering, embedded logo", async () => {
     const buf = await renderToBuffer((out) => generateExecutivePDF(makeExecReport(), out));
     const parsed = await parsePdf(buf);
 
     expectNoArtifactPages(parsed);
     expectConsistentPageNumbers(parsed);
+    expectNoOverlappingText(await extractBoxes(buf));
     expect(buf.toString("latin1")).toMatch(/\/Subtype\s*\/Image/);
     expect(parsed.pages[0]!.text).toContain("Generated by");
   });
