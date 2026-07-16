@@ -477,8 +477,17 @@ router.get(
       let partial = 0;
       let fail = 0;
       let not_assessed = 0;
+      // Most recent response timestamp — "last updated" for progress surfaces.
+      // pg returns timestamptz as Date; compare by epoch and emit ISO.
+      let lastResponseMs: number | null = null;
 
       const requirementList = requirements.map((row) => {
+        if (row.response_assessed_at) {
+          const ms = new Date(row.response_assessed_at as unknown as string).getTime();
+          if (!Number.isNaN(ms) && (lastResponseMs === null || ms > lastResponseMs)) {
+            lastResponseMs = ms;
+          }
+        }
         const hasResponse = row.response_id !== null;
         if (!hasResponse || row.response_status === "not_assessed") {
           not_assessed++;
@@ -515,7 +524,8 @@ router.get(
           partial,
           fail,
           not_assessed,
-          progress_pct: assessmentProgress(pass + partial + fail, total)
+          progress_pct: assessmentProgress(pass + partial + fail, total),
+          last_response_at: lastResponseMs === null ? null : new Date(lastResponseMs).toISOString()
         }
       });
     } catch (err) {

@@ -11,6 +11,10 @@ import {
   getVendorAiDependencies,
   listVendorAssuranceDocuments,
   getVendorAssuranceExtraction,
+  getFrameworks,
+  getFrameworkRequirements,
+  type Framework,
+  type FrameworkRequirements,
   type Vendor,
   type VendorAssessment,
   type VendorReview,
@@ -240,7 +244,10 @@ function OpenFindingsSectionClient({
       </div>
 
       {activeFindings.length === 0 ? (
-        <SectionEmpty>No active findings</SectionEmpty>
+        <SectionEmpty action={{ href: `/vendors/${vendorId}/assess`, label: "Run an assessment" }}>
+          No active findings for this vendor — findings appear here when an
+          assessment or review cycle identifies an issue.
+        </SectionEmpty>
       ) : (
         <div className="space-y-3">
           {activeFindings.map((f) => {
@@ -277,6 +284,98 @@ function OpenFindingsSectionClient({
                     </p>
                   </div>
                 </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Section: Framework Assessments (per-vendor progress)
+// ─────────────────────────────────────────────────────────────
+
+type VendorFrameworkProgress = {
+  framework: Framework;
+  summary: FrameworkRequirements["summary"];
+};
+
+/** date-only render of an ISO timestamp; em-dash when absent. */
+function fmtDateOnly(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function FrameworkAssessmentsSection({
+  progress,
+  vendorId,
+}: {
+  progress: VendorFrameworkProgress[];
+  vendorId: string;
+}) {
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
+          Framework Assessments
+        </h2>
+      </div>
+      {/* O-5: this is assessment PROGRESS — how much of the questionnaire has
+          been answered for THIS vendor. It is not readiness and not the vendor
+          risk score; the bar stays a single neutral color so completion can
+          never read as a verdict. */}
+      {progress.length === 0 ? (
+        <SectionEmpty
+          action={{ href: `/vendors/${vendorId}/assess/framework`, label: "Assess against a framework" }}
+        >
+          No framework assessments started for this vendor
+        </SectionEmpty>
+      ) : (
+        <div className="space-y-3">
+          {progress.map(({ framework, summary }) => {
+            const assessed = summary.total - summary.not_assessed;
+            return (
+              <div
+                key={framework.id}
+                className="bg-brand-surface border border-brand-line rounded-xl p-5"
+              >
+                <div className="flex items-start justify-between gap-3 mb-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
+                      {framework.name}{" "}
+                      <span style={{ color: "#475569" }}>v{framework.version}</span>
+                    </p>
+                    <p className="text-xs mt-0.5" style={{ color: "#64748b" }}>
+                      {assessed} of {summary.total} requirements assessed ·{" "}
+                      {summary.progress_pct}% — completion, not readiness
+                    </p>
+                  </div>
+                  <Link
+                    href={`/vendors/${vendorId}/assess/framework?frameworkId=${framework.id}`}
+                    className="text-xs font-medium hover:underline flex-shrink-0"
+                    style={{ color: "#00c4b4" }}
+                  >
+                    Continue assessment →
+                  </Link>
+                </div>
+                <div className="rounded-full h-1.5" style={{ background: "rgba(255,255,255,0.08)" }}>
+                  <div
+                    className="h-1.5 rounded-full"
+                    style={{ width: `${summary.progress_pct}%`, background: "#00c4b4" }}
+                  />
+                </div>
+                <p className="text-xs mt-2" style={{ color: "#475569" }}>
+                  Last updated: {fmtDateOnly(summary.last_response_at)}
+                </p>
               </div>
             );
           })}
@@ -756,6 +855,26 @@ export default async function VendorDetailPage({
 
   if (!vendor) redirect("/vendors");
 
+  // Framework assessment progress for THIS vendor: activated frameworks with
+  // at least one recorded response. Answered here means the vendor-scoped
+  // questionnaire (assessment_type='vendor', subject_id=vendor) — a separate
+  // truth from org readiness and from the vendor risk score (O-5).
+  const frameworksData = await getFrameworks(token);
+  const activeFrameworks = frameworksData?.frameworks ?? [];
+  const frameworkProgress: VendorFrameworkProgress[] = (
+    await Promise.all(
+      activeFrameworks.map(async (fw) => {
+        const reqs = await getFrameworkRequirements(token, fw.id, "vendor", vendor.id);
+        if (!reqs || reqs.summary.total === 0) return null;
+        // Only frameworks where this vendor's assessment has started — an
+        // untouched framework belongs behind the "Assess against a framework"
+        // CTA, not as a wall of 0% rows.
+        if (reqs.summary.total - reqs.summary.not_assessed === 0) return null;
+        return { framework: fw, summary: reqs.summary };
+      })
+    )
+  ).filter((p): p is VendorFrameworkProgress => p !== null);
+
   // Vendor-Assurance read: latest finalized document + its extraction +
   // current decision per field projected at read time. No stored snapshot.
   const assuranceDocsData = await listVendorAssuranceDocuments(token, {
@@ -842,6 +961,7 @@ export default async function VendorDetailPage({
         <div className="flex-1 min-w-0 space-y-8">
           <OpenFindingsSectionClient findings={activeFindings} vendorId={vendor.id} />
           <LiveIntelligenceSection context={signalContext} vendorId={vendor.id} />
+          <FrameworkAssessmentsSection progress={frameworkProgress} vendorId={vendor.id} />
           <AssessmentHistorySection
             assessments={assessments}
             assessmentIdsWithFindings={assessmentIdsWithFindings}
@@ -980,7 +1100,12 @@ function DependentAiSystemsCard({ dependencies }: { dependencies: VendorAiDepend
       </h3>
       {dependencies.length === 0 ? (
         <p className="text-xs" style={{ color: "#475569" }}>
-          No AI systems record a dependency on this vendor.
+          No AI systems record a dependency on this vendor. Dependencies are
+          declared on an AI system's detail page —{" "}
+          <Link href="/ai-systems" style={{ color: "#93c5fd" }}>
+            review your AI inventory
+          </Link>{" "}
+          if this vendor powers one.
         </p>
       ) : (
         <div className="space-y-2">

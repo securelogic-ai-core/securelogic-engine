@@ -24,6 +24,7 @@ import {
   hrefOf,
 } from "@/test/harness";
 import {
+  aFramework,
   aVendor,
   aVendorAssessment,
   aVendorAssessmentsResponse,
@@ -45,6 +46,8 @@ const api = vi.hoisted(() => ({
   getVendorAiDependencies: vi.fn(),
   listVendorAssuranceDocuments: vi.fn(),
   getVendorAssuranceExtraction: vi.fn(),
+  getFrameworks: vi.fn(),
+  getFrameworkRequirements: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -71,6 +74,8 @@ beforeEach(() => {
   api.getVendorAiDependencies.mockResolvedValue([]);
   api.listVendorAssuranceDocuments.mockResolvedValue({ documents: [] });
   api.getVendorAssuranceExtraction.mockResolvedValue(null);
+  api.getFrameworks.mockResolvedValue({ frameworks: [] });
+  api.getFrameworkRequirements.mockResolvedValue(null);
 });
 
 // ─────────────────────────────────────────────────────────────────────
@@ -251,7 +256,7 @@ describe("/vendors/[id] — related findings", () => {
 
     await renderPage(VendorDetailPage, props());
 
-    expect(screen.getByText("No active findings")).toBeInTheDocument();
+    expect(screen.getByText(/No active findings for this vendor/)).toBeInTheDocument();
   });
 
   it("an engine failure on findings is not rendered as 'no findings'… (documented behavior)", async () => {
@@ -263,7 +268,7 @@ describe("/vendors/[id] — related findings", () => {
 
     await renderPage(VendorDetailPage, props());
 
-    expect(screen.getByText("No active findings")).toBeInTheDocument();
+    expect(screen.getByText(/No active findings for this vendor/)).toBeInTheDocument();
   });
 });
 
@@ -347,15 +352,18 @@ describe("/vendors/[id] — live intelligence and the AI systems that depend on 
     expect(screen.getByText("Model provider")).toBeInTheDocument();
   });
 
-  it("no dependent AI systems: the concentration card says so and links nowhere", async () => {
+  it("no dependent AI systems: the card says so and links only to the AI inventory, never a fabricated system", async () => {
     api.getVendorAiDependencies.mockResolvedValue([]);
 
     const { container } = await renderPage(VendorDetailPage, props());
 
     expect(screen.getByText("Dependent AI Systems (0)")).toBeInTheDocument();
     expect(
-      screen.getByText("No AI systems record a dependency on this vendor.")
+      screen.getByText(/No AI systems record a dependency on this vendor/)
     ).toBeInTheDocument();
+    // Guidance links to the inventory LIST; no per-system deep link may exist
+    // (there is no system to link to).
+    expect(hrefs(container)).toContain("/ai-systems");
     expect(hrefs(container).some((h) => h.startsWith("/ai-systems/"))).toBe(false);
   });
 });
@@ -652,5 +660,83 @@ describe("/vendors/[id] — authorization and entitlement", () => {
 
     expect(api.getVendor).toHaveBeenCalledWith("test-key", "v-1");
     expect(screen.getByRole("heading", { level: 1, name: "Acme Cloud" })).toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Framework assessment progress (walkthrough V-follow-up)
+// ─────────────────────────────────────────────────────────────────────
+
+describe("/vendors/[id] — framework assessment progress", () => {
+  const summary = {
+    total: 4,
+    pass: 1,
+    partial: 1,
+    fail: 1,
+    not_assessed: 1,
+    progress_pct: 75,
+    last_response_at: "2026-07-10T14:00:00.000Z",
+  };
+
+  it("shows per-framework progress with last-updated and a continue link", async () => {
+    api.getFrameworks.mockResolvedValue({
+      frameworks: [aFramework({ id: "fw-1", name: "NIST CSF", version: "2.0" })],
+    });
+    api.getFrameworkRequirements.mockResolvedValue({
+      framework: { id: "fw-1", name: "NIST CSF", version: "2.0" },
+      requirements: [],
+      summary,
+    });
+
+    const { container } = await renderPage(VendorDetailPage, props("v-1"));
+
+    expect(api.getFrameworkRequirements).toHaveBeenCalledWith(
+      "test-jwt",
+      "fw-1",
+      "vendor",
+      "v-1",
+    );
+    expect(screen.getByText("Framework Assessments")).toBeInTheDocument();
+    // Progress is COMPLETION — labeled so it can't read as a verdict (O-5).
+    expect(screen.getByText(/3 of 4 requirements assessed · 75% — completion, not readiness/)).toBeInTheDocument();
+    expect(screen.getByText(/Last updated: Jul 10, 2026/)).toBeInTheDocument();
+    expect(hrefOf(container, "Continue assessment")).toBe(
+      "/vendors/v-1/assess/framework?frameworkId=fw-1",
+    );
+  });
+
+  it("an untouched framework is not listed; the empty state routes to the assess flow", async () => {
+    api.getFrameworks.mockResolvedValue({
+      frameworks: [aFramework({ id: "fw-1", name: "NIST CSF", version: "2.0" })],
+    });
+    api.getFrameworkRequirements.mockResolvedValue({
+      framework: { id: "fw-1", name: "NIST CSF", version: "2.0" },
+      requirements: [],
+      summary: { total: 4, pass: 0, partial: 0, fail: 0, not_assessed: 4, progress_pct: 0, last_response_at: null },
+    });
+
+    const { container } = await renderPage(VendorDetailPage, props("v-1"));
+
+    expect(screen.getByText(/No framework assessments started for this vendor/)).toBeInTheDocument();
+    expect(hrefOf(container, "Assess against a framework")).toBe("/vendors/v-1/assess/framework");
+    expect(screen.queryByText(/Continue assessment/)).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Empty states carry a next step (walkthrough V-1 follow-up)
+// ─────────────────────────────────────────────────────────────────────
+
+describe("/vendors/[id] — remaining empty states explain what to do", () => {
+  it("Active Findings empty state explains where findings come from and offers the assess flow", async () => {
+    const { container } = await renderPage(VendorDetailPage, props("v-1"));
+    expect(screen.getByText(/findings appear here when an assessment or review cycle identifies an issue/)).toBeInTheDocument();
+    expect(hrefOf(container, "Run an assessment")).toBe("/vendors/v-1/assess");
+  });
+
+  it("Dependent AI Systems empty state points at the AI inventory", async () => {
+    const { container } = await renderPage(VendorDetailPage, props("v-1"));
+    expect(screen.getByText(/Dependencies are declared on an AI system/)).toBeInTheDocument();
+    expect(hrefOf(container, "review your AI inventory")).toBe("/ai-systems");
   });
 });
