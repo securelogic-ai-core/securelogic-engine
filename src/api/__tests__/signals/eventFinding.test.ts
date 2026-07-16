@@ -68,4 +68,33 @@ describe("planFindingUpsert", () => {
   it("title omits the CVE prefix when there is no CVE", () => {
     expect(eventFindingTitle(event({ affected_cve: null, title: "Vendor breach disclosed" }))).toBe("Vendor breach disclosed");
   });
+
+  // Walkthrough item 5 regression: event titles derived from advisory summaries
+  // usually already name the CVE — the unconditional prefix produced
+  // "CVE-2026-90001: … (CVE-2026-90001) …" on every finding surface.
+  it("does NOT prefix the CVE when the title already names it", () => {
+    expect(
+      eventFindingTitle(
+        event({
+          affected_cve: "CVE-2026-90001",
+          title: "Critical RCE in ExampleSoft Server (CVE-2026-90001) under active exploitation",
+        })
+      )
+    ).toBe("Critical RCE in ExampleSoft Server (CVE-2026-90001) under active exploitation");
+  });
+
+  it("CVE-in-title detection is case-insensitive", () => {
+    expect(
+      eventFindingTitle(
+        event({ affected_cve: "CVE-2026-90001", title: "Patch now: cve-2026-90001 exploited" })
+      )
+    ).toBe("Patch now: cve-2026-90001 exploited");
+  });
+
+  it("still prefixes when the title names a DIFFERENT CVE", () => {
+    const t = eventFindingTitle(
+      event({ affected_cve: "CVE-2026-90001", title: "Follow-up to CVE-2026-80000 campaign" })
+    );
+    expect(t).toBe("CVE-2026-90001: Follow-up to CVE-2026-80000 campaign");
+  });
 });

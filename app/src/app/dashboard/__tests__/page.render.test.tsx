@@ -331,3 +331,19 @@ describe("dashboard — setup banner detection covers inventory-only orgs (item 
     expect(screen.queryByText(/Complete your security program setup/i)).toBeNull();
   });
 });
+
+describe("dashboard — no raw source_type enums reach the customer (walkthrough item 6)", () => {
+  it("a signal-sourced finding with no domain renders a customer label, not the enum", async () => {
+    api.getFindings.mockResolvedValue(
+      aFindingsResponse([
+        aFinding({ id: "f-sig", title: "Vendor security advisory: Acme", source_type: "cyber_signal", domain: null }),
+        aFinding({ id: "f-evt", title: "CVE-2026-90001 under exploitation", source_type: "intelligence_event", domain: null }),
+      ]),
+    );
+    const { container } = await renderPage(DashboardPage, { searchParams: sp({}) });
+    expect(container.textContent).not.toContain("cyber_signal");
+    expect(container.textContent).not.toContain("intelligence_event");
+    expect(screen.getByText("Signal")).toBeInTheDocument();
+    expect(screen.getByText("Intelligence")).toBeInTheDocument();
+  });
+});

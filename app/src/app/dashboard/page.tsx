@@ -471,6 +471,15 @@ const SOURCE_COMPACT_LABELS: Record<string, string> = {
   assessment:           "Assessment",
   signal:               "Signal",
   risk:                 "Risk",
+  // Walkthrough item 6: complete coverage of the findings_source_type_check enum
+  // (migration 20260823) — these values previously fell through the raw
+  // `?? f.source_type` fallback below and rendered as internal enums.
+  cyber_signal:             "Signal",
+  intelligence_event:       "Intelligence",
+  dependency_review:        "Dependency",
+  vendor_cycle_review:      "Vendor",
+  applicability_assessment: "Applicability",
+  asset_assessment:         "Asset",
 };
 
 function FrameworkReadinessWidget({

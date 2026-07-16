@@ -34,7 +34,9 @@ describe("buildSignalFindingTitle", () => {
     ).toBe("CVE-2026-9999 affects AI system: Claims Triage Model");
   });
 
-  it("falls back to type + severity for a matched entity with no CVE", () => {
+  it("falls back to the CUSTOMER phrase + severity for a matched entity with no CVE", () => {
+    // Walkthrough item 6: was "Cyber signal (breach): …" — the raw pipeline enum
+    // persisted into a customer-visible title.
     expect(
       buildSignalFindingTitle({
         signalType: "breach",
@@ -42,7 +44,7 @@ describe("buildSignalFindingTitle", () => {
         affectedCve: null,
         entity: { kind: "vendor", name: "Acme Corp" },
       })
-    ).toBe("Cyber signal (breach): Acme Corp — high severity");
+    ).toBe("Security incident: Acme Corp — high severity");
   });
 
   // The promotion case. The ingestion path never reaches it (no match ⇒ it creates no
@@ -64,7 +66,30 @@ describe("buildSignalFindingTitle", () => {
         affectedCve: null,
         entity: null,
       })
-    ).toBe("Cyber signal (geopolitical) — medium severity");
+    ).toBe("Geopolitical development — medium severity");
+  });
+
+  // Walkthrough item 6 regression: raw signal_type enums must never appear in a
+  // composed title — not for known types, and not for unknown future ones either.
+  it("never leaks a raw underscore enum into a title, even for unknown types", () => {
+    const known = buildSignalFindingTitle({
+      signalType: "patch_advisory",
+      severity: "high",
+      affectedCve: null,
+      entity: { kind: "vendor", name: "Microsoft" },
+    });
+    expect(known).toBe("Vendor security advisory: Microsoft — high severity");
+    expect(known).not.toMatch(/patch_advisory/);
+
+    const unknown = buildSignalFindingTitle({
+      signalType: "zero_day_chatter",
+      severity: "critical",
+      affectedCve: null,
+      entity: null,
+    });
+    // Unknown types humanize (underscores → spaces), never the raw enum.
+    expect(unknown).toBe("Zero day chatter signal — critical severity");
+    expect(unknown).not.toMatch(/_/);
   });
 
   it("never renders an entity-less title containing 'Unknown' or an empty name", () => {
