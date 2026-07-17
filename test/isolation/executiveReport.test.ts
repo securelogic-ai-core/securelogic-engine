@@ -13,12 +13,29 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
 import { Pool } from "pg";
+import { PDFParse } from "pdf-parse";
 
 import { bootstrapTestDb, seedFinding, seedRisk, seedPostureSnapshot, type TestDbSeed } from "./testDb.js";
 
 let app: Express;
 let seed: TestDbSeed;
 let pool: Pool;
+
+/** GET a PDF report and return its extracted full text. */
+async function fetchReportText(apiKey: string): Promise<string> {
+  const res = await request(app)
+    .get("/api/reports/executive.pdf")
+    .set("X-Api-Key", apiKey)
+    .buffer(true)
+    .parse((r, cb) => {
+      const chunks: Buffer[] = [];
+      r.on("data", (c: Buffer) => chunks.push(c));
+      r.on("end", () => cb(null, Buffer.concat(chunks)));
+    });
+  expect(res.status).toBe(200);
+  const parser = new PDFParse(new Uint8Array(res.body as Buffer));
+  return (await parser.getText()).text;
+}
 
 beforeAll(async () => {
   seed = await bootstrapTestDb();
@@ -41,8 +58,25 @@ beforeAll(async () => {
     [fw.rows[0].id]
   );
 
-  // Posture snapshots: one now, one 120 days back (trend comparison).
-  await seedPostureSnapshot(pool, org, {});
+  // Posture snapshots: a prior one (2026-01-01, risk 52 → health 48) and TODAY's
+  // latest carrying the reconciled domain breakdown. domain_scores.score is
+  // risk-style in the DB (higher = worse); the report and /posture both invert it
+  // once to health-style, so risk 60/92/28 render as health 40/8/72. The
+  // per-domain finding counts (2 + 23 + 1 = 26) equal the snapshot's
+  // open_finding_count — the reconciliation the report must reproduce.
+  await seedPostureSnapshot(pool, org, { snapshotDate: "2026-01-01", overallScore: 52 });
+  const today = new Date().toISOString().slice(0, 10);
+  const latestSnap = await seedPostureSnapshot(pool, org, { snapshotDate: today, overallScore: 60 });
+  await pool.query(`UPDATE posture_snapshots SET open_finding_count = 26 WHERE id = $1`, [latestSnap]);
+  await pool.query(
+    `INSERT INTO domain_scores
+       (posture_snapshot_id, domain, score, severity, finding_count, trend_direction, rationale)
+     VALUES
+       ($1, 'Access Control',  60, 'High',     2,  'stable',    'seed'),
+       ($1, 'Data Protection', 92, 'Critical', 23, 'worsening', 'seed'),
+       ($1, 'Vendor Risk',     28, 'Low',      1,  'improving', 'seed')`,
+    [latestSnap]
+  );
 
   // Findings + risks + a lifecycle decision event for the 90-day section.
   const findingId = await seedFinding(pool, org);
@@ -92,5 +126,64 @@ describe("GET /api/reports/executive.pdf", () => {
 
     expect(res.status).toBe(200);
     expect((res.body as Buffer).subarray(0, 5).toString()).toBe("%PDF-");
+  });
+
+  it("renders the reconciled domain breakdown whose counts sum to Total Active Findings (26)", async () => {
+    const text = await fetchReportText(seed.orgA.apiKey);
+
+    expect(text).toContain("Posture Domain Breakdown");
+    // Every domain from the saved snapshot appears…
+    for (const domain of ["Access Control", "Data Protection", "Vendor Risk"]) {
+      expect(text).toContain(domain);
+    }
+    // …with health-style scores (higher = better), inverted once from risk-style.
+    expect(text).toContain("40/100"); // Access Control  (risk 60)
+    expect(text).toContain("8/100");  // Data Protection (risk 92)
+    expect(text).toContain("72/100"); // Vendor Risk     (risk 28)
+    // The counts reconcile to the snapshot's active-finding total.
+    expect(text).toContain("TOTAL ACTIVE FINDINGS");
+    expect(text).toContain("26");
+    // Deterministic trend wording, no malformed glyphs (health 40 vs prior 48).
+    expect(text).toContain("decreased by 8 points");
+    expect(text).toContain("higher = better");
+    for (const glyph of ["▲", "▼", "◆", "�"]) {
+      expect(text.includes(glyph), `report contains malformed char ${JSON.stringify(glyph)}`).toBe(false);
+    }
+  });
+
+  it("report domain values match the SAME saved snapshot that /posture serves", async () => {
+    // Read /posture/latest — the source of truth the dashboard renders.
+    const postureRes = await request(app)
+      .get("/api/posture/latest")
+      .set("X-Api-Key", seed.orgA.apiKey);
+    expect(postureRes.status).toBe(200);
+
+    const snapshot = postureRes.body.snapshot;
+    const domainScores: Array<{ domain: string; score: number | null; severity: string | null; finding_count: number }> =
+      postureRes.body.domainScores;
+
+    // /posture already reports the reconciled total and health-style scores.
+    expect(snapshot.openFindingCount).toBe(26);
+    const domainSum = domainScores.reduce((s, d) => s + d.finding_count, 0);
+    expect(domainSum).toBe(snapshot.openFindingCount);
+
+    // The report must reproduce those exact values off the same snapshot.
+    const text = await fetchReportText(seed.orgA.apiKey);
+    for (const d of domainScores) {
+      expect(text).toContain(d.domain);
+      if (d.score !== null) expect(text).toContain(`${d.score}/100`);
+    }
+    expect(text).toContain(String(snapshot.openFindingCount));
+  });
+
+  it("tenant isolation: org B's report never shows org A's domain rows", async () => {
+    // Org B has no posture snapshot — its domain section degrades cleanly and
+    // cannot contain any of org A's domains.
+    const text = await fetchReportText(seed.orgB.apiKey);
+    expect(text).toContain("Posture Domain Breakdown");
+    expect(text).toContain("No posture snapshot exists yet");
+    for (const domain of ["Access Control", "Data Protection", "Vendor Risk"]) {
+      expect(text).not.toContain(domain);
+    }
   });
 });
