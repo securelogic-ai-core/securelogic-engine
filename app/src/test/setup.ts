@@ -11,9 +11,10 @@ import { cleanup } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { afterEach, vi } from "vitest";
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
   vi.unstubAllEnvs();
+  (await import("./harness")).resetClientSearchParams();
 });
 
 // next/link resolves through the App Router context, which does not exist outside a
@@ -31,7 +32,7 @@ vi.mock("next/link", () => ({
 // redirect() throws a framework signal to unwind the render. Ours carries the
 // destination so a test can assert an unentitled caller is sent away.
 vi.mock("next/navigation", async () => {
-  const { RedirectSignal } = await import("./harness");
+  const { RedirectSignal, clientSearchParams } = await import("./harness");
   return {
     redirect: (to: string) => {
       throw new RedirectSignal(to);
@@ -51,7 +52,9 @@ vi.mock("next/navigation", async () => {
       prefetch: vi.fn(),
     }),
     usePathname: () => "/",
-    useSearchParams: () => new URLSearchParams(),
+    // The store lives in harness.ts beside sessionStore, so tests drive
+    // ?param branches the same way they drive the session.
+    useSearchParams: () => clientSearchParams.current,
   };
 });
 

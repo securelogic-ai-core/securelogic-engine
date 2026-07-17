@@ -120,6 +120,18 @@ describe("P1 — the governance banner announces live acceptance state", () => {
     expect(acceptButton()).toBeNull();
   });
 
+  it("states the approvals arithmetic explicitly — remaining while proposed, complete once approved", async () => {
+    workspaceOn();
+    vi.stubEnv("SECURELOGIC_RISK_ACCEPTANCE_ENABLED", "true");
+    api.getRiskAcceptancesForFinding.mockResolvedValue([
+      aRiskAcceptance({ state: "proposed" }),
+    ]);
+    await renderPage(FindingDetailPage, props());
+    // Single-approver workflow, said in numbers — never left to be inferred
+    // from the next-action prose.
+    expect(screen.getByText(/0 of 1 — one approval remaining/)).toBeTruthy();
+  });
+
   it("an APPROVED acceptance shows 'Governed' and the review date", async () => {
     workspaceOn();
     vi.stubEnv("SECURELOGIC_RISK_ACCEPTANCE_ENABLED", "true");
@@ -137,6 +149,7 @@ describe("P1 — the governance banner announces live acceptance state", () => {
     // "Governed" and the review date appear in both the banner and the panel.
     expect(screen.getAllByText(/Governed/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/2026-12-31/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/1 of 1 — complete/)).toBeTruthy();
   });
 
   it("shows NO banner when there is no live acceptance (feature on, empty history)", async () => {

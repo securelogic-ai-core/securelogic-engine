@@ -537,7 +537,13 @@ router.get(
            WHERE a.source_type = 'finding'
              AND a.source_id = f.id
              AND a.organization_id = f.organization_id
-          ) AS action_count
+          ) AS action_count,
+          (SELECT COUNT(*)::integer
+           FROM evidence e
+           WHERE e.source_type = 'finding'
+             AND e.source_id = f.id
+             AND e.organization_id = f.organization_id
+          ) AS evidence_count
         FROM findings f
         ${whereClause}
         ORDER BY
@@ -880,7 +886,13 @@ router.get(
            WHERE a.source_type = 'finding'
              AND a.source_id = f.id
              AND a.organization_id = f.organization_id
-          ) AS action_count
+          ) AS action_count,
+          (SELECT COUNT(*)::integer
+           FROM evidence e
+           WHERE e.source_type = 'finding'
+             AND e.source_id = f.id
+             AND e.organization_id = f.organization_id
+          ) AS evidence_count
         FROM findings f
         WHERE f.id = $1
           AND f.organization_id = $2

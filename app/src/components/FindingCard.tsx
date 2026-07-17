@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { updateFindingStatus } from "@/app/actions/updateFindingStatus";
 import type { Finding } from "@/lib/api";
@@ -249,6 +250,18 @@ export function FindingCard({ finding, revalidateUrl, workspace = false, ownerNa
           <div className="mt-0.5">
             Decision owner: {finding.owner_user_id ? (ownerName ?? "assigned owner") : "unassigned — assign to yourself to decide"}
           </div>
+          {/* Evidence status (R-16): the decision-maker sees whether remediation
+              proof is attached BEFORE opening the record. Older engine payloads
+              omit the count — say nothing rather than claim zero. */}
+          {typeof finding.evidence_count === "number" && (
+            <div className="mt-0.5">
+              {finding.evidence_count > 0 ? (
+                <>Evidence: {finding.evidence_count} item{finding.evidence_count !== 1 ? "s" : ""} attached</>
+              ) : (
+                <span style={{ color: "#fcd34d" }}>No evidence attached yet — review remediation proof before deciding</span>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -314,13 +327,17 @@ export function FindingCard({ finding, revalidateUrl, workspace = false, ownerNa
               </button>
             )}
           </div>
-          <button
-            onClick={(e) => { e.stopPropagation(); router.push(decisionHref); }}
-            className="px-3 py-1 rounded text-xs font-semibold transition-colors"
+          {/* A real link, not a router.push button: the href carries the
+              ?from= queue context (R-19), so open-in-new-tab and copy-link
+              preserve the handoff exactly like a click. */}
+          <Link
+            href={decisionHref}
+            onClick={(e) => e.stopPropagation()}
+            className="px-3 py-1 rounded text-xs font-semibold transition-colors inline-block"
             style={{ background: "rgba(0,196,180,0.15)", color: "#00c4b4", border: "1px solid rgba(0,196,180,0.4)" }}
           >
             {life && life.stage === "Governance" ? "Open governance decision →" : "Open decision →"}
-          </button>
+          </Link>
         </div>
       )}
     </div>

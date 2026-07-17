@@ -87,6 +87,81 @@ describe("workspace card — Decision Workspace is the primary action; no ambigu
     expect(screen.getByText(/Decision owner:/i)).toBeInTheDocument();
     expect(screen.getByText("Open governance decision →")).toBeInTheDocument();
   });
+
+  it("the ready-to-close block states the evidence status — attached count or an explicit warning", () => {
+    const { rerender } = render(
+      <FindingCard
+        finding={aFinding({
+          operational_status: "remediated",
+          decision_state: "needs_review",
+          evidence_count: 2,
+        })}
+        revalidateUrl="/findings"
+        workspace
+        queueContext="ready_to_close"
+      />,
+    );
+    expect(screen.getByText(/Evidence: 2 items attached/i)).toBeInTheDocument();
+
+    rerender(
+      <FindingCard
+        finding={aFinding({
+          operational_status: "remediated",
+          decision_state: "needs_review",
+          evidence_count: 0,
+        })}
+        revalidateUrl="/findings"
+        workspace
+        queueContext="ready_to_close"
+      />,
+    );
+    expect(
+      screen.getByText(/No evidence attached yet — review remediation proof before deciding/i),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing about evidence when an older engine omits the count — never a fake zero", () => {
+    render(
+      <FindingCard
+        finding={aFinding({ operational_status: "remediated", decision_state: "needs_review" })}
+        revalidateUrl="/findings"
+        workspace
+        queueContext="ready_to_close"
+      />,
+    );
+    expect(screen.queryByText(/Evidence:/)).toBeNull();
+    expect(screen.queryByText(/No evidence attached/)).toBeNull();
+  });
+
+  it("the card's decision link preserves the queue it was opened from (?from=, R-19)", () => {
+    const { container } = render(
+      <FindingCard
+        finding={aFinding({ id: "f-42", decision_state: "needs_review" })}
+        revalidateUrl="/findings"
+        workspace
+        queueContext="ready_to_close"
+      />,
+    );
+    // Both the card click and the primary button route through decisionHref;
+    // the anchor is what we can assert. Losing ?from= silently drops the
+    // ready-to-close handoff banner in the Decision Workspace.
+    const link = container.querySelector('a[href="/findings/f-42?from=ready_to_close"]');
+    expect(link).not.toBeNull();
+  });
+
+  it("every non-my-work queue card states why the finding is in that queue (MW-7)", () => {
+    render(
+      <FindingCard
+        finding={aFinding({ decision_state: "needs_review", owner_user_id: "u-1" })}
+        revalidateUrl="/findings"
+        workspace
+        ownerName="Dana Ops"
+        reason="No governance decision recorded yet"
+        queueContext="needs_decision"
+      />,
+    );
+    expect(screen.getByText("No governance decision recorded yet")).toBeInTheDocument();
+  });
 });
 
 describe("legacy card — flag-off is unchanged", () => {

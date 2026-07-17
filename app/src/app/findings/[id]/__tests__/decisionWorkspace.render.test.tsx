@@ -17,7 +17,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { screen, fireEvent, waitFor, within } from "@testing-library/react";
-import { renderPage, expectRedirect, signedIn, signedOut, sp } from "@/test/harness";
+import { renderPage, expectRedirect, signedIn, signedOut, sp, setClientSearchParams } from "@/test/harness";
 import { aFinding, anAction, anActionsResponse, aFindingContext } from "@/test/fixtures";
 import { DECISION_STATES } from "../decisionTransitions";
 
@@ -564,6 +564,39 @@ describe("Decision Workspace — walkthrough remediation (PR-B1)", () => {
     await renderPage(FindingDetailPage, props());
     expect(screen.getByText("Remediation complete. Governance decision required.")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Record decision/i })).toBeInTheDocument();
+  });
+
+  it("arriving from the Ready to Close queue shows the hand-off even before the state re-derives (?from=, R-19)", async () => {
+    // The queue card links /findings/{id}?from=ready_to_close; the workspace
+    // must honor that context on its own — this drives the fromQueue branch,
+    // not the operational_status one (state here is NOT remediated).
+    setClientSearchParams("from=ready_to_close");
+    workspaceOn(
+      aFindingContext({
+        finding: { id: "f-1", source_type: "manual", source_id: null, decision_state: "needs_review", operational_status: "in_progress" },
+      }),
+    );
+    await renderPage(FindingDetailPage, props());
+    expect(screen.getByText("Remediation complete. Governance decision required.")).toBeInTheDocument();
+  });
+
+  it("defines Confidence where it is shown (DW-5)", async () => {
+    workspaceOn();
+    const { container } = await renderPage(FindingDetailPage, props());
+    const chip = Array.from(container.querySelectorAll("[title]")).find((el) =>
+      el.getAttribute("title")?.startsWith("Confidence ="),
+    );
+    expect(chip).toBeTruthy();
+    expect(chip!.getAttribute("title")).toContain("discounts the risk score when low");
+  });
+
+  it("'Mark reviewed by me' says it is a personal bookmark, never a lifecycle action", async () => {
+    workspaceOn();
+    await renderPage(FindingDetailPage, props());
+    expect(screen.getByRole("button", { name: "Mark reviewed by me" })).toBeInTheDocument();
+    expect(
+      screen.getByText(/It does not change the governance decision, operational status, or any queue/),
+    ).toBeInTheDocument();
   });
 
   it("surfaces the risk-score explainability the engine already returns (DW-4)", async () => {

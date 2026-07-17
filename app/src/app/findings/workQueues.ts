@@ -54,29 +54,36 @@ export interface OpsBucketDef {
    * with SERVER-side filters; `href` buckets open the surface that owns that work.
    */
   target: { kind: "findings"; params: FindingsParams } | { kind: "href"; href: string };
+  /**
+   * Why a finding is IN this queue (MW-7) — the membership criterion stated as
+   * a fact about the finding, shown on every card in the bucket. Must restate
+   * the target filter truthfully; my_work instead derives its reason from the
+   * caller (whyInMyWork).
+   */
+  membershipReason?: string;
 }
 
 /** The operations-center buckets, grouped. Order within a group = display order. */
 export const OPS_BUCKETS: readonly OpsBucketDef[] = [
   // ── Decision work ─────────────────────────────────────────────
   { id: "my_work", label: "My Work", ask: "Assigned to you and still requires action", group: "decisions", urgent: true, target: { kind: "findings", params: { owner: "me", active: true } } },
-  { id: "sla_breached", label: "SLA Breached", ask: "Past the committed date — act or renegotiate", group: "decisions", urgent: true, target: { kind: "findings", params: { overdue: true } } },
-  { id: "needs_assignment", label: "Needs Assignment", ask: "No accountable owner yet", group: "decisions", urgent: true, target: { kind: "findings", params: { unassigned: true } } },
-  { id: "needs_decision", label: "Needs Governance Decision", ask: "No risk-treatment decision recorded — triage", group: "decisions", urgent: true, target: { kind: "findings", params: { decision_state: "needs_review", active: true } } },
+  { id: "sla_breached", label: "SLA Breached", ask: "Past the committed date — act or renegotiate", group: "decisions", urgent: true, membershipReason: "Past its due date", target: { kind: "findings", params: { overdue: true } } },
+  { id: "needs_assignment", label: "Needs Assignment", ask: "No accountable owner yet", group: "decisions", urgent: true, membershipReason: "No owner assigned yet", target: { kind: "findings", params: { unassigned: true } } },
+  { id: "needs_decision", label: "Needs Governance Decision", ask: "No risk-treatment decision recorded — triage", group: "decisions", urgent: true, membershipReason: "No governance decision recorded yet", target: { kind: "findings", params: { decision_state: "needs_review", active: true } } },
   // Ready-for-decision queue (finding-lifecycle-spec §1.3): remediation work is
   // DERIVED complete (operational_status=remediated) but leadership hasn't made
   // the governance call. A query, never an automated decision (R3).
-  { id: "ready_to_close", label: "Ready to Close", ask: "Remediation complete — make the governance call", group: "decisions", urgent: true, target: { kind: "findings", params: { ready_for_decision: true } } },
+  { id: "ready_to_close", label: "Ready to Close", ask: "Remediation complete — make the governance call", group: "decisions", urgent: true, membershipReason: "Remediation complete — governance decision pending", target: { kind: "findings", params: { ready_for_decision: true } } },
   { id: "awaiting_approval", label: "Awaiting Approval", ask: "Risk treatments pending executive sign-off", group: "decisions", urgent: true, target: { kind: "href", href: "/approvals" } },
   { id: "review_links", label: "Review Suggested Links", ask: "Intelligence matched your entities — confirm or dismiss", group: "decisions", urgent: true, target: { kind: "href", href: "/queue" } },
   // ── Risk domains ──────────────────────────────────────────────
-  { id: "active_exploitation", label: "Active Exploitation", ask: "Exploitation observed in the wild — highest urgency", group: "domains", urgent: true, target: { kind: "findings", params: { exploited: true, active: true } } },
-  { id: "regulatory", label: "Regulatory Impact", ask: "Compliance obligations exposed", group: "domains", urgent: false, target: { kind: "findings", params: { domain: "Regulatory", active: true } } },
-  { id: "ai_risk", label: "AI Risk", ask: "AI systems under governance exposure", group: "domains", urgent: false, target: { kind: "findings", params: { domain: "AI Governance", active: true } } },
-  { id: "third_party", label: "Third-Party Risk", ask: "Vendor and supply-chain exposure", group: "domains", urgent: false, target: { kind: "findings", params: { domain: "Vendor Risk", active: true } } },
+  { id: "active_exploitation", label: "Active Exploitation", ask: "Exploitation observed in the wild — highest urgency", group: "domains", urgent: true, membershipReason: "Its source signal has exploitation observed in the wild", target: { kind: "findings", params: { exploited: true, active: true } } },
+  { id: "regulatory", label: "Regulatory Impact", ask: "Compliance obligations exposed", group: "domains", urgent: false, membershipReason: "In the Regulatory risk domain", target: { kind: "findings", params: { domain: "Regulatory", active: true } } },
+  { id: "ai_risk", label: "AI Risk", ask: "AI systems under governance exposure", group: "domains", urgent: false, membershipReason: "In the AI Governance risk domain", target: { kind: "findings", params: { domain: "AI Governance", active: true } } },
+  { id: "third_party", label: "Third-Party Risk", ask: "Vendor and supply-chain exposure", group: "domains", urgent: false, membershipReason: "In the Vendor Risk domain", target: { kind: "findings", params: { domain: "Vendor Risk", active: true } } },
   // ── Tracking ──────────────────────────────────────────────────
-  { id: "in_mitigation", label: "In Mitigation", ask: "Remediation plan underway — track to done", group: "tracking", urgent: false, axisTag: "Operational", target: { kind: "findings", params: { decision_state: "mitigating", active: true } } },
-  { id: "accepted_risk", label: "Accepted Risk", ask: "Governance decisions on record — periodic review", group: "tracking", urgent: false, axisTag: "Governance", target: { kind: "findings", params: { decision_state: "accepted_risk" } } },
+  { id: "in_mitigation", label: "In Mitigation", ask: "Remediation plan underway — track to done", group: "tracking", urgent: false, axisTag: "Operational", membershipReason: "Governance decision: mitigating — remediation being tracked", target: { kind: "findings", params: { decision_state: "mitigating", active: true } } },
+  { id: "accepted_risk", label: "Accepted Risk", ask: "Governance decisions on record — periodic review", group: "tracking", urgent: false, axisTag: "Governance", membershipReason: "Governance decision: risk accepted — on the periodic review record", target: { kind: "findings", params: { decision_state: "accepted_risk" } } },
 ];
 
 export const OPS_GROUP_LABELS: Record<OpsBucketGroup, string> = {
