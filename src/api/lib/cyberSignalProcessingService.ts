@@ -58,6 +58,7 @@ import {
   buildScoringRationaleExtension
 } from "./workflowScoringIntegration.js";
 import { vendorCriticalityToSignals } from "./inventoryToSignals.js";
+import { sqlFindingActive } from "./metricDefinitions.js";
 import {
   computeRiskScore,
   DEFAULT_WEIGHTS,
@@ -1449,12 +1450,18 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
     treatedRiskResult,
     vendorInventoryResult,
   ] = await Promise.all([
+      // Metric Contract: posture computes over the ACTIVE finding population,
+      // matching postureSnapshot.ts (which documents why `status = 'open'` was
+      // retired there). This path had drifted — a snapshot written after signal
+      // ingestion used a smaller population than the worker/route snapshot for
+      // the same org, so domain counts could not reconcile with the dashboard's
+      // Active headline depending on which writer ran last.
       pgElevated.query<DbFindingForPosture>(
         `
         SELECT id, title, domain, severity
         FROM findings
         WHERE organization_id = $1
-          AND status = 'open'
+          AND ${sqlFindingActive()}
         `,
         [orgId]
       ),
@@ -1475,7 +1482,7 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
         SELECT source_type, COUNT(*)::text AS count
         FROM findings
         WHERE organization_id = $1
-          AND status = 'open'
+          AND ${sqlFindingActive()}
         GROUP BY source_type
         `,
         [orgId]
@@ -1515,11 +1522,11 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
     vendorInventoryResult.rows
   );
 
-  const openFindings = [
-    ...findingsResult.rows,
-    ...riskSignals,
-    ...vendorInventorySignals,
-  ];
+  // Domain-count reconciliation ruling (2026-07-17): risk + inventory signals
+  // feed SCORING only — passed to computePosture separately (mirrors
+  // postureSnapshot.ts; both pipelines must stay in sync) so headline counts
+  // cover unique active findings exactly once, under their primary domain.
+  const auxSignals = [...riskSignals, ...vendorInventorySignals];
   const riskSignalCount = riskSignals.length;
 
   // Count open and overdue actions.
@@ -1559,11 +1566,12 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
 
   const rationaleExtension = buildScoringRationaleExtension(signalBreakdown);
   const computed = computePosture(
-    openFindings,
+    findingsResult.rows,
     openActionCount,
     overdueActionCount,
     orgContext,
-    riskSignalCount
+    riskSignalCount,
+    auxSignals
   );
 
   const enrichedRationale = { ...computed.computation_rationale, ...rationaleExtension };
