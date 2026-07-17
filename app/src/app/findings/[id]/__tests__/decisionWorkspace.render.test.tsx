@@ -668,6 +668,28 @@ describe("Decision Workspace — walkthrough remediation (PR-B1)", () => {
     expect(screen.queryByText(/finding\.decision\.accepted_risk/)).toBeNull();
   });
 
+  it("the feed includes remediation + reassignment history — action events, humanized (R-9)", async () => {
+    // The engine writes action.status_changed / action.updated (with the
+    // resulting state in the payload); the feed labels them as remediation
+    // transitions and reassignments, never raw enums.
+    workspaceOn(
+      aFindingContext({
+        activity: [
+          { event_type: "action.status_changed", created_at: "2026-06-12T00:00:00.000Z", payload: { status: "closed" } },
+          { event_type: "action.status_changed", created_at: "2026-06-11T00:00:00.000Z", payload: { status: "blocked" } },
+          { event_type: "action.updated", created_at: "2026-06-10T00:00:00.000Z", payload: { status: "in_progress", owner_user_id: "u-2" } },
+          { event_type: "action.created", created_at: "2026-06-09T00:00:00.000Z", payload: null },
+        ],
+      }),
+    );
+    await renderPage(FindingDetailPage, props());
+    expect(screen.getByText(/Remediation action completed/)).toBeInTheDocument();
+    expect(screen.getByText(/Remediation action blocked/)).toBeInTheDocument();
+    expect(screen.getByText(/Remediation action updated \(owner \/ due date \/ details\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Remediation action added/)).toBeInTheDocument();
+    expect(screen.queryByText(/action\.status_changed/)).toBeNull();
+  });
+
   it("shows remediation completion progress in the Remediation tab (R-4)", async () => {
     workspaceOn();
     api.getActionsForFinding.mockResolvedValue(
@@ -680,6 +702,32 @@ describe("Decision Workspace — walkthrough remediation (PR-B1)", () => {
     await openRemediationTab();
     expect(screen.getByText(/1 of 2 complete/)).toBeInTheDocument();
     expect(screen.getByText(/1 remaining/)).toBeInTheDocument();
+  });
+
+  it("when the last action completes, the progress line hands off to governance (R-22)", async () => {
+    workspaceOn();
+    api.getActionsForFinding.mockResolvedValue(
+      anActionsResponse([
+        anAction({ id: "a-1", status: "closed", completed_at: "2026-06-02T00:00:00.000Z" }),
+        anAction({ id: "a-2", status: "closed", completed_at: "2026-06-03T00:00:00.000Z" }),
+      ]),
+    );
+    await renderPage(FindingDetailPage, props());
+    await openRemediationTab();
+    expect(
+      screen.getByText(/All 2 actions complete — remediation done\. Next: record the governance decision/),
+    ).toBeInTheDocument();
+  });
+
+  it("labels the recommendation as advisory and the actions as executable (R-3)", async () => {
+    workspaceOn();
+    api.getActionsForFinding.mockResolvedValue(anActionsResponse([anAction({ id: "a-1" })]));
+    await renderPage(FindingDetailPage, props());
+    await openRemediationTab();
+    // The walkthrough read the recommendation text as a to-do; the two blocks
+    // now name their nature explicitly.
+    expect(screen.getByText("Advisory guidance")).toBeInTheDocument();
+    expect(screen.getByText(/Executable — tracked to completion/)).toBeInTheDocument();
   });
 
   it("makes evidence with a URL reference openable in the Remediation tab (R-2)", async () => {

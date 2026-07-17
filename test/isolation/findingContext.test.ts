@@ -279,3 +279,44 @@ describe("Context Contract — pending suggestions surface as candidates, never 
     expect(ctx!.affected.candidates).toEqual([]);
   });
 });
+
+describe("Activity feed — remediation/reassignment history (action-scoped audit events)", () => {
+  it("includes the finding's own actions' events; never another finding's or another org's", async () => {
+    const a = await seedSignalSourcedFinding(seed.orgA.id, "ctx-act-1");
+    const other = await seedSignalSourcedFinding(seed.orgA.id, "ctx-act-2");
+
+    const mkAction = async (orgId: string, findingId: string) =>
+      (
+        await pool.query<{ id: string }>(
+          `INSERT INTO actions (organization_id, title, source_type, source_id, status, priority)
+           VALUES ($1, 'Patch the thing', 'finding', $2, 'in_progress', 'planned') RETURNING id`,
+          [orgId, findingId]
+        )
+      ).rows[0].id;
+
+    const actionA = await mkAction(seed.orgA.id, a.findingId);
+    const actionOther = await mkAction(seed.orgA.id, other.findingId);
+
+    const logEvent = (orgId: string, eventType: string, resourceType: string, resourceId: string) =>
+      pool.query(
+        `INSERT INTO security_audit_log (organization_id, event_type, resource_type, resource_id, payload)
+         VALUES ($1, $2, $3, $4, '{"status":"closed"}')`,
+        [orgId, eventType, resourceType, resourceId]
+      );
+
+    await logEvent(seed.orgA.id, "finding.created", "finding", a.findingId);
+    await logEvent(seed.orgA.id, "action.status_changed", "action", actionA);
+    // Noise that must NOT appear: a sibling finding's action, and a foreign
+    // org's event referencing the SAME action id.
+    await logEvent(seed.orgA.id, "action.status_changed", "action", actionOther);
+    await logEvent(seed.orgB.id, "action.status_changed", "action", actionA);
+
+    const ctx = await resolveFindingContext(pool, seed.orgA.id, a.findingId);
+    const rows = ctx!.activity as Array<{ event_type: string; resource_type: string; resource_id: string }>;
+
+    expect(rows.some((r) => r.resource_type === "action" && r.resource_id === actionA)).toBe(true);
+    expect(rows.some((r) => r.event_type === "finding.created")).toBe(true);
+    // Exactly ONE action event — the sibling's and the foreign org's are filtered.
+    expect(rows.filter((r) => r.resource_type === "action").length).toBe(1);
+  });
+});

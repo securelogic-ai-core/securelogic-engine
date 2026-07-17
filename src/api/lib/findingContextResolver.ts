@@ -920,12 +920,26 @@ export async function resolveFindingContext(
       ).rows[0] ?? null
     : null;
 
-  // Activity from the org-scoped security audit log for this finding.
+  // Activity from the org-scoped security audit log: the finding's own events
+  // PLUS its remediation actions' events (action.created / action.updated /
+  // action.status_changed carry status, owner and due-date changes — the
+  // reassignment history the walkthrough asked for). Action events were
+  // audit-logged all along (actions.ts writeAuditEvent) but never fetched, so
+  // reassignments surfaced nowhere.
   const activityRows = (
     await client.query(
       `SELECT event_type, resource_type, resource_id, payload, created_at
          FROM security_audit_log
-        WHERE organization_id = $1 AND resource_type = 'finding' AND resource_id = $2
+        WHERE organization_id = $1
+          AND (
+            (resource_type = 'finding' AND resource_id = $2)
+            OR (resource_type = 'action' AND resource_id IN (
+              SELECT id FROM actions
+               WHERE organization_id = $1
+                 AND source_type = 'finding'
+                 AND source_id = $2
+            ))
+          )
         ORDER BY created_at DESC
         LIMIT 50`,
       [organizationId, findingId]
