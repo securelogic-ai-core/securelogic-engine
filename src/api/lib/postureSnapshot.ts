@@ -215,11 +215,12 @@ export async function computeAndSavePostureSnapshot(
     vendorInventoryResult.rows
   );
 
-  const openFindings = [
-    ...findingsResult.rows,
-    ...riskSignals,
-    ...vendorInventorySignals,
-  ];
+  // Domain-count reconciliation ruling (2026-07-17): risk + inventory signals
+  // feed SCORING only. They are passed to computePosture separately so the
+  // headline counts (open_finding_count, per-domain finding_count) cover the
+  // unique active findings exactly once, under their primary domain, and
+  // therefore sum to the active-finding total on the same snapshot.
+  const auxSignals = [...riskSignals, ...vendorInventorySignals];
   const riskSignalCount = riskSignals.length;
 
   const actionRow = actionCountResult.rows[0];
@@ -240,11 +241,12 @@ export async function computeAndSavePostureSnapshot(
 
   // ── 5. Compute posture ──────────────────────────────────────────────────
   const computed = computePosture(
-    openFindings,
+    findingsResult.rows,
     openActionCount,
     overdueActionCount,
     orgContext,
-    riskSignalCount
+    riskSignalCount,
+    auxSignals
   );
   const enrichedRationale = { ...computed.computation_rationale, ...rationaleExtension };
 

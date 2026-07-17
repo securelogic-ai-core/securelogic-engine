@@ -127,9 +127,18 @@ export type PostureComputationResult = {
  * silently — callers must log a warning if they fall back.
  *
  * riskSignalCount — the number of open risk register entries included in
- * the signals array. Used only in the computation_rationale for transparency;
+ * auxSignals. Used only in the computation_rationale for transparency;
  * does not affect scoring. Defaults to 0 when called from pre-risk-integration
  * code paths.
+ *
+ * auxSignals — non-finding signals (open risks, synthetic inventory signals)
+ * that feed SCORING only. Domain-count reconciliation ruling (2026-07-17):
+ * `findings` must contain only unique active findings; every headline count
+ * (open_finding_count, per-domain finding_count) is derived from `findings`
+ * alone, so each active finding is counted exactly once under its primary
+ * domain and domain counts sum to the active-finding total. auxSignals still
+ * reach the aggregation engine unchanged, so scores and severities are
+ * identical to the pre-split behaviour.
  *
  * Returns null overall_score when there are no signals — this is honest
  * and must be represented as "insufficient data" in the presentation layer,
@@ -140,7 +149,8 @@ export function computePosture(
   openActionCount: number,
   overdueActionCount: number,
   orgContext: OrgContext = FALLBACK_CONTEXT,
-  riskSignalCount: number = 0
+  riskSignalCount: number = 0,
+  auxSignals: DbFindingForPosture[] = []
 ): PostureComputationResult {
   // Build a human-readable summary of the context applied — used in rationale.
   const contextSummary = [
@@ -152,7 +162,11 @@ export function computePosture(
     .filter(Boolean)
     .join(", ");
 
-  if (findings.length === 0) {
+  // Scoring population = findings + aux signals. Counting population = findings only.
+  const signals =
+    auxSignals.length > 0 ? [...findings, ...auxSignals] : findings;
+
+  if (signals.length === 0) {
     return {
       overall_score: null,
       overall_severity: null,
@@ -184,7 +198,7 @@ export function computePosture(
     scale: orgContext.scale
   };
 
-  const engineFindings: Finding[] = findings.map((f) => ({
+  const engineFindings: Finding[] = signals.map((f) => ({
     id: f.id,
     title: f.title,
     domain: f.domain ?? "General", // null domain → General; not fabricated, just bucketed
@@ -209,33 +223,50 @@ export function computePosture(
       ? OverallRiskAggregationEngineV2.aggregate(domainProfiles)
       : null;
 
-  const domainScores: DomainScoreResult[] = domainProfiles.map((profile) => ({
-    domain: profile.domain,
-    score: profile.finalScore,
-    severity: profile.severity,
-    finding_count: profile.findingCount,
-    rationale:
-      `${profile.findingCount} finding(s); ` +
-      `max severity ${profile.maxSeverity}; ` +
-      `base score ${profile.baseScore}; ` +
-      `context multiplier ${profile.contextMultiplier} (${contextSummary})`
-  }));
+  // Headline domain counts come from the FINDINGS population only (2026-07-17
+  // ruling): each active finding counts exactly once under its primary domain,
+  // so SUM(finding_count) across domains === open_finding_count. The engine
+  // profile's findingCount (all scored signals in the domain) stays visible in
+  // the rationale for analysis, but never in the headline count.
+  const findingCountByDomain = new Map<string, number>();
+  for (const f of findings) {
+    const d = f.domain ?? "General";
+    findingCountByDomain.set(d, (findingCountByDomain.get(d) ?? 0) + 1);
+  }
+
+  const domainScores: DomainScoreResult[] = domainProfiles.map((profile) => {
+    const activeFindingCount = findingCountByDomain.get(profile.domain) ?? 0;
+    return {
+      domain: profile.domain,
+      score: profile.finalScore,
+      severity: profile.severity,
+      finding_count: activeFindingCount,
+      rationale:
+        `${activeFindingCount} active finding(s); ` +
+        `${profile.findingCount} scored signal(s); ` +
+        `max severity ${profile.maxSeverity}; ` +
+        `base score ${profile.baseScore}; ` +
+        `context multiplier ${profile.contextMultiplier} (${contextSummary})`
+    };
+  });
 
   const nullDomainCount = findings.filter((f) => f.domain === null).length;
 
-  const findingSignalCount = findings.length - riskSignalCount;
+  const inventorySignalCount = Math.max(0, auxSignals.length - riskSignalCount);
   const noteparts: string[] = [
-    `Computed from ${findings.length} signal(s) across ${domainProfiles.length} domain(s)`
+    `Computed from ${signals.length} signal(s) across ${domainProfiles.length} domain(s)`
   ];
-  if (riskSignalCount > 0) {
-    noteparts.push(
-      `${findingSignalCount} finding(s) + ${riskSignalCount} open risk(s)`
-    );
+  if (riskSignalCount > 0 || inventorySignalCount > 0) {
+    const parts = [`${findings.length} finding(s)`];
+    if (riskSignalCount > 0) parts.push(`${riskSignalCount} open risk(s)`);
+    if (inventorySignalCount > 0) parts.push(`${inventorySignalCount} inventory signal(s)`);
+    noteparts.push(parts.join(" + "));
   }
 
   return {
     overall_score: overall?.score ?? null,
     overall_severity: overall?.severity ?? null,
+    // Unique active findings only — aux signals must never inflate this.
     open_finding_count: findings.length,
     open_action_count: openActionCount,
     overdue_action_count: overdueActionCount,
@@ -253,7 +284,8 @@ export function computePosture(
       null_domain_findings: nullDomainCount > 0
         ? `${nullDomainCount} finding(s) with no domain bucketed under "General"`
         : 0,
-      risk_signals_included: riskSignalCount
+      risk_signals_included: riskSignalCount,
+      inventory_signals_included: inventorySignalCount
     }
   };
 }
