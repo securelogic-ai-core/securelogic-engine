@@ -171,7 +171,16 @@ export default async function DashboardPage({
           {latestBrief ? (
             <IntelligenceBriefDashboardCard brief={latestBrief} />
           ) : latestIssue ? (
-            <BriefCard issue={latestIssue} />
+            // Legacy newsletter-issue fallback (no intelligence brief yet).
+            // viewerIsPlatform: a platform tenant must never see the Free/
+            // Brief Pro teaser even if the engine returns locked (drift →
+            // neutral unavailable card). showStaleWarning: this is a "Latest
+            // Brief" surface — an old issue must declare its age.
+            <BriefCard
+              issue={latestIssue}
+              viewerIsPlatform={isPlatformUser}
+              showStaleWarning
+            />
           ) : (
             <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
               <p className="text-slate-400 text-sm">

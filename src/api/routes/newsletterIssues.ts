@@ -13,16 +13,29 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * they may read in full.
  *
  * Tier hierarchy:
- *   premium  → free + standard + premium
- *   standard → free + standard
- *   starter  → free only
+ *   premium-rank → free + standard + premium
+ *   professional → free + standard
+ *   starter      → free only
+ *
+ * The premium-rank set must stay in lock-step with requireEntitlement's
+ * normalization: the Stripe webhook writes 'premium' for Platform
+ * Professional, but seeded / manually-provisioned orgs carry 'platform' or
+ * 'team' directly. When this mapping recognized only 'premium', a Platform
+ * Professional tenant read the brief archive as a free subscriber and was
+ * served consumer upgrade prompts (staging walkthrough defect, 2026-07).
  */
-function allowedAudienceTiers(entitlementLevel: string | null): string[] {
+export function allowedAudienceTiers(entitlementLevel: string | null): string[] {
   switch (entitlementLevel?.toLowerCase()) {
-    case "premium":       return ["free", "standard", "premium"]; // Team
-    case "professional":  return ["free", "standard"];            // Professional
-    case "standard":      return ["free", "standard"];            // legacy alias
-    default:              return ["free"];                        // starter or unrecognised
+    case "premium":
+    case "platform":
+    case "platform_annual":
+    case "team":
+      return ["free", "standard", "premium"];
+    case "professional":
+    case "standard":              // legacy alias for professional
+      return ["free", "standard"];
+    default:
+      return ["free"];            // starter or unrecognised
   }
 }
 
@@ -34,7 +47,7 @@ function allowedAudienceTiers(entitlementLevel: string | null): string[] {
  * metadata (title, summary, dates) is always returned so the client can
  * render a teaser / upgrade prompt rather than a generic error.
  */
-function shapeIssue(
+export function shapeIssue(
   row: Record<string, unknown>,
   entitlementLevel: string | null
 ): Record<string, unknown> {

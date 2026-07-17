@@ -28,6 +28,8 @@ import {
   aFrameworkReadiness,
   aMe,
   anAuthMe,
+  aNewsletterIssue,
+  anIssuesResponse,
   aPostureSnapshot,
 } from "@/test/fixtures";
 
@@ -327,6 +329,81 @@ describe("dashboard — enterprise vs newsletter truthfulness (walkthrough)", ()
     const partialSeg = container.querySelector('[data-coverage-segment="partial"]') as HTMLElement;
     expect(partialSeg).not.toBeNull();
     expect(partialSeg.style.background).toContain("repeating-linear-gradient");
+  });
+});
+
+// ── Staging validation defects (2026-07-17): Latest Brief entitlement + staleness ──
+
+describe("dashboard — Latest Brief fallback: entitlement + staleness", () => {
+  const DAY_MS = 86_400_000;
+  const staleDate = new Date(Date.now() - 60 * DAY_MS).toISOString(); // ~8½ weeks ago
+  const freshDate = new Date(Date.now() - 1 * DAY_MS).toISOString();
+
+  it("a platform tenant with a LOCKED issue sees zero Free/Brief Pro upsell strings", async () => {
+    // The staging defect verbatim: entitlement 'platform', no intelligence
+    // brief, engine returned the newsletter issue locked.
+    api.getMe.mockResolvedValue(aMe({ entitlementLevel: "platform", organizationName: "Acme" }));
+    api.getLatestBrief.mockResolvedValue(null);
+    api.getIssues.mockResolvedValue(
+      anIssuesResponse([
+        aNewsletterIssue({ locked: true, audience_tier: "premium", publish_date: staleDate, created_at: staleDate }),
+      ])
+    );
+
+    await renderDashboard();
+
+    expect(screen.queryByText(/Free preview/i)).toBeNull();
+    expect(screen.queryByText(/Your free brief includes/i)).toBeNull();
+    expect(screen.queryByText(/Available to Brief Pro and Team subscribers/i)).toBeNull();
+    expect(screen.queryByText(/Upgrade to Brief Pro/i)).toBeNull();
+    // The neutral unavailable state renders in its place.
+    expect(screen.getByText(/isn't available right now/i)).toBeInTheDocument();
+    expect(screen.getByText(/no upgrade is needed/i)).toBeInTheDocument();
+  });
+
+  it("a stale latest issue carries the amber age warning (platform tenant, unlocked)", async () => {
+    api.getMe.mockResolvedValue(aMe({ entitlementLevel: "platform", organizationName: "Acme" }));
+    api.getLatestBrief.mockResolvedValue(null);
+    api.getIssues.mockResolvedValue(
+      anIssuesResponse([
+        aNewsletterIssue({ locked: false, publish_date: staleDate, created_at: staleDate }),
+      ])
+    );
+
+    await renderDashboard();
+
+    expect(screen.getByText(/This brief is 8 weeks old/)).toBeInTheDocument();
+    expect(screen.getByText(/briefs are published weekly/i)).toBeInTheDocument();
+    expect(screen.getByText(/Last published/)).toBeInTheDocument();
+  });
+
+  it("a current latest issue shows NO staleness warning", async () => {
+    api.getLatestBrief.mockResolvedValue(null);
+    api.getIssues.mockResolvedValue(
+      anIssuesResponse([
+        aNewsletterIssue({ locked: false, publish_date: freshDate, created_at: freshDate }),
+      ])
+    );
+
+    await renderDashboard();
+
+    expect(screen.queryByText(/weeks old|days old/)).toBeNull();
+  });
+
+  it("a free-tier tenant keeps the locked teaser + Brief Pro upsell", async () => {
+    api.getMe.mockResolvedValue(aMe({ entitlementLevel: "starter" }));
+    api.getLatestBrief.mockResolvedValue(null);
+    api.getIssues.mockResolvedValue(
+      anIssuesResponse([
+        aNewsletterIssue({ locked: true, audience_tier: "standard", publish_date: freshDate, created_at: freshDate }),
+      ])
+    );
+
+    await renderDashboard();
+
+    expect(screen.getByText(/Free preview/)).toBeInTheDocument();
+    expect(screen.getByText(/Upgrade to Brief Pro — \$49\/mo/)).toBeInTheDocument();
+    expect(screen.queryByText(/isn't available right now/i)).toBeNull();
   });
 });
 
