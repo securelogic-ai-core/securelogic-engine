@@ -1135,6 +1135,16 @@ services:
       - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED
         value: "false"
 
+      # Scalable Risk Findings queue controls — DARK (default off). Adds the
+      # search/filter/sort toolbar, due-status urgency labels, and server-side
+      # OFFSET pagination to the BROWSE findings queue (never the Operations
+      # Center). RUNTIME (not NEXT_PUBLIC): a restart applies it. Flag off = the
+      # legacy browse list, byte-for-byte. Staging app is defined below; prod flip
+      # is GATE B. Engine-side: GET /api/findings already serves the new query
+      # params (additive), so no engine flag is needed.
+      - key: SECURELOGIC_FINDINGS_QUEUE_CONTROLS_ENABLED
+        value: "false"
+
       # Secret used to encrypt the iron-session cookie.
       # Must be at least 32 characters. Generate with: openssl rand -hex 32
       - key: SESSION_SECRET
@@ -1261,6 +1271,14 @@ services:
       # the production app block intentionally does not receive this var (absent reads
       # false), matching the production engine block; prod enablement is GATE B.
       - key: SECURELOGIC_RISK_ACCEPTANCE_ENABLED
+        value: "true"
+      # ENABLED on STAGING: the scalable Risk Findings queue controls (search /
+      # filter / sort toolbar, due-status urgency, server OFFSET pagination) on the
+      # BROWSE queue. Because the staging app also runs RISK_WORKSPACE=true, the
+      # enhanced queue renders via the browse escape hatch at /findings?queue=all
+      # (the Operations Center home is unchanged). STAGING ONLY; prod stays "false"
+      # (GATE B). RUNTIME env — a restart applies, no rebuild.
+      - key: SECURELOGIC_FINDINGS_QUEUE_CONTROLS_ENABLED
         value: "true"
 
       # STAGING session secret — a distinct 32+ char value, NEVER the prod secret.

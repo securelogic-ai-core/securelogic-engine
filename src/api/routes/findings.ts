@@ -51,11 +51,26 @@ import {
 import { resolveSlaDueDate } from "../lib/findingSlaPolicy.js";
 import { buildSignalFindingTitle, resolveSignalDomain } from "../lib/signalFindingShape.js";
 import { severityToPriority } from "../lib/postureComputation.js";
+import {
+  VALID_QUEUE_SORTS,
+  VALID_DUE_STATUSES,
+  dueStatusCondition,
+  queueOrderBy,
+  type QueueSort,
+  type DueStatus,
+} from "../lib/findingsQueueOrdering.js";
+import {
+  normalizeSearchQuery,
+  searchLikePattern,
+  resolveSearchFindingIds,
+} from "../lib/findingQuerySearch.js";
 
 const router = Router();
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
+// Cap OFFSET so a hostile ?offset can't force an unbounded deep scan.
+const MAX_OFFSET = 100_000;
 
 const VALID_STATUSES = new Set(["open", "in_progress", "closed", "accepted"]);
 const VALID_SEVERITIES = new Set(["Critical", "High", "Moderate", "Low"]);
@@ -72,6 +87,8 @@ const VALID_SOURCE_TYPES = new Set([
   "risk"
 ]);
 const VALID_PRIORITIES = new Set(["immediate", "near_term", "planned", "watch"]);
+// The SYSTEM-DERIVED operational axis (finding-lifecycle-spec §1.1).
+const VALID_OPERATIONAL_STATUSES = new Set(["open", "in_progress", "remediated", "closed"]);
 const VALID_PATCH_STATUSES = new Set(["open", "in_progress", "closed", "accepted"]);
 // The HUMAN-GOVERNED decision axis (finding-lifecycle-spec §1.2, ratified set —
 // 'in_progress' was pre-ratification drift, normalized away by 20260901).
@@ -82,6 +99,14 @@ function parseLimit(value: unknown): number {
   const parsed = Number(String(value ?? "").trim());
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_LIMIT;
   return Math.min(parsed, MAX_LIMIT);
+}
+
+/** Non-negative page offset, bounded. Invalid input fails safe to 0. */
+function parseOffset(value: unknown): number {
+  if (value === undefined) return 0;
+  const parsed = Number(String(value ?? "").trim());
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.min(Math.floor(parsed), MAX_OFFSET);
 }
 
 function isNonEmptyString(v: unknown): v is string {
@@ -481,6 +506,89 @@ router.get(
         )`);
       }
 
+      // operational_status=<state> — the SYSTEM-DERIVED axis (spec §1.1). Kept
+      // distinct from ?status (legacy) and ?decision_state (governance).
+      const filterOperationalStatus = isNonEmptyString(req.query.operational_status)
+        ? req.query.operational_status
+        : null;
+      if (filterOperationalStatus !== null) {
+        if (!VALID_OPERATIONAL_STATUSES.has(filterOperationalStatus)) {
+          res.status(400).json({
+            error: "invalid_operational_status_filter",
+            allowed: [...VALID_OPERATIONAL_STATUSES],
+          });
+          return;
+        }
+        params.push(filterOperationalStatus);
+        conditions.push(`f.operational_status = $${params.length}`);
+      }
+
+      // due=<overdue|today|soon|none> — due-status partition, server-side so the
+      // SLA buckets stay correct at scale. Predicates reuse the Metric Contract
+      // (sqlFindingActive/sqlFindingOverdue); values are constants (no param).
+      if (req.query.due !== undefined) {
+        const due = isNonEmptyString(req.query.due) ? req.query.due.trim() : "";
+        if (!VALID_DUE_STATUSES.has(due)) {
+          res.status(400).json({ error: "invalid_due_filter", allowed: [...VALID_DUE_STATUSES] });
+          return;
+        }
+        conditions.push(dueStatusCondition(due as DueStatus));
+      }
+
+      // has_action=true / has_evidence=true — findings that have at least one
+      // linked remediation Action / evidence item (polymorphic source join,
+      // org-scoped). EXISTS, not the correlated COUNT in the SELECT, so the
+      // filter short-circuits.
+      if (req.query.has_action === "true") {
+        conditions.push(
+          `EXISTS (SELECT 1 FROM actions a WHERE a.source_type = 'finding' ` +
+            `AND a.source_id = f.id AND a.organization_id = f.organization_id)`
+        );
+      }
+      if (req.query.has_evidence === "true") {
+        conditions.push(
+          `EXISTS (SELECT 1 FROM evidence e WHERE e.source_type = 'finding' ` +
+            `AND e.source_id = f.id AND e.organization_id = f.organization_id)`
+        );
+      }
+
+      // created_from / created_to — inclusive date range on when the finding was
+      // raised. `to` is inclusive of the whole day (created_at is a timestamptz).
+      if (req.query.created_from !== undefined) {
+        if (!isIsoDate(req.query.created_from)) {
+          res.status(400).json({ error: "created_from_must_be_iso_date" });
+          return;
+        }
+        params.push(String(req.query.created_from).trim());
+        conditions.push(`f.created_at >= $${params.length}::date`);
+      }
+      if (req.query.created_to !== undefined) {
+        if (!isIsoDate(req.query.created_to)) {
+          res.status(400).json({ error: "created_to_must_be_iso_date" });
+          return;
+        }
+        params.push(String(req.query.created_to).trim());
+        conditions.push(`f.created_at < ($${params.length}::date + INTERVAL '1 day')`);
+      }
+
+      // q=<text> — free-text search across title, description, finding id, CVE,
+      // and the name of the linked vendor / AI system / control / obligation
+      // (the monitored "asset"). Direct columns match inline; the indirect
+      // dimensions (CVE + entity name) resolve — org-scoped — to a bounded id
+      // set that is OR'd in. Empty / oversized q is ignored (no filter).
+      const searchQuery = normalizeSearchQuery(req.query.q);
+      if (searchQuery !== null) {
+        const indirectIds = await resolveSearchFindingIds(pg, organizationId, searchQuery);
+        params.push(searchLikePattern(searchQuery));
+        const likeParam = params.length;
+        params.push(indirectIds);
+        const idsParam = params.length;
+        conditions.push(
+          `(f.title ILIKE $${likeParam} OR f.description ILIKE $${likeParam} ` +
+            `OR f.id::text ILIKE $${likeParam} OR f.id = ANY($${idsParam}::uuid[]))`
+        );
+      }
+
       // Exact filtered total for pagination — same conditions/params BEFORE the
       // cursor predicate (the cursor narrows the page, never the total).
       const preCursorConditions = [...conditions];
@@ -494,15 +602,58 @@ router.get(
         );
       }
 
-      // Stable keyset ordering: the cursor predicate compares (created_at, id), so
-      // paged requests MUST sort by (created_at DESC, id DESC) or pages would skip
-      // and duplicate rows as data changes. Cursor requests force it; first pages
-      // opt in via ?sort=created so every page of a paged view shares one order.
-      // The legacy default (priority → severity → created_at) is unchanged.
-      const stableSort = useCursor || req.query.sort === "created";
+      // Sort resolution. Three families, mutually exclusive per request:
+      //  - a queue sort (urgency|severity|due_date|newest|oldest) → OFFSET paging
+      //    with the scalable-queue ORDER BY (findingsQueueOrdering).
+      //  - ?sort=created OR a cursor request → the legacy stable keyset
+      //    (created_at DESC, id DESC), unchanged.
+      //  - no sort → the legacy default (priority → severity → created_at).
+      const sortParam = isNonEmptyString(req.query.sort) ? String(req.query.sort).trim() : null;
+      if (sortParam !== null && sortParam !== "created" && !VALID_QUEUE_SORTS.has(sortParam)) {
+        res.status(400).json({ error: "invalid_sort", allowed: ["created", ...VALID_QUEUE_SORTS] });
+        return;
+      }
+      const queueSort: QueueSort | null =
+        sortParam !== null && VALID_QUEUE_SORTS.has(sortParam) ? (sortParam as QueueSort) : null;
+      const stableSort = useCursor || sortParam === "created";
+
+      // OFFSET paging powers the scalable queue (arbitrary sort + jump-to-page).
+      // The keyset cursor stays the legacy path; a request never mixes the two.
+      const offset = useCursor ? 0 : parseOffset(req.query.offset);
+      const useOffset = !useCursor && (queueSort !== null || req.query.offset !== undefined);
+
+      // Legacy default ORDER BY (priority → severity → created_at) — preserved
+      // byte-for-byte for callers that pass no sort.
+      const defaultOrderBy =
+        `CASE f.priority
+            WHEN 'immediate'  THEN 1
+            WHEN 'near_term'  THEN 2
+            WHEN 'planned'    THEN 3
+            WHEN 'watch'      THEN 4
+            ELSE 5
+          END,
+          CASE f.severity
+            WHEN 'Critical' THEN 1
+            WHEN 'High'     THEN 2
+            WHEN 'Moderate' THEN 3
+            WHEN 'Low'      THEN 4
+            ELSE 5
+          END,
+          f.created_at DESC,
+          f.id DESC`;
+      const orderByBody = queueSort
+        ? queueOrderBy(queueSort)
+        : stableSort
+          ? "f.created_at DESC, f.id DESC"
+          : defaultOrderBy;
 
       params.push(limit);
       const limitParam = params.length;
+      let paginationClause = `LIMIT $${limitParam}`;
+      if (useOffset && offset > 0) {
+        params.push(offset);
+        paginationClause += ` OFFSET $${params.length}`;
+      }
 
       const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
@@ -546,24 +697,8 @@ router.get(
           ) AS evidence_count
         FROM findings f
         ${whereClause}
-        ORDER BY
-          ${stableSort ? "" : `CASE f.priority
-            WHEN 'immediate'  THEN 1
-            WHEN 'near_term'  THEN 2
-            WHEN 'planned'    THEN 3
-            WHEN 'watch'      THEN 4
-            ELSE 5
-          END,
-          CASE f.severity
-            WHEN 'Critical' THEN 1
-            WHEN 'High'     THEN 2
-            WHEN 'Moderate' THEN 3
-            WHEN 'Low'      THEN 4
-            ELSE 5
-          END,`}
-          f.created_at DESC,
-          f.id DESC
-        LIMIT $${limitParam}
+        ORDER BY ${orderByBody}
+        ${paginationClause}
         `,
         params
       );
@@ -583,9 +718,12 @@ router.get(
         count: findings.length,
         limit,
         total,
+        // OFFSET paging echoes the offset so the client can render "page N of M";
+        // cursor/default paging keeps offset 0 and drives paging off nextCursor.
+        offset: useOffset ? offset : 0,
         organizationId,
         nextCursor:
-          last != null
+          !useOffset && last != null
             ? { created_at: last.created_at, id: last.id }
             : null,
         findings

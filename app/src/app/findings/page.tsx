@@ -11,11 +11,20 @@ import {
   getTeamMembers,
 } from "@/lib/api";
 import { FindingsList } from "./FindingsList";
+import { FindingCard } from "@/components/FindingCard";
 import { ExportCsvButton } from "./ExportCsvButton";
-import { isActiveStatus } from "./decisionQueue";
+import { isActiveStatus, urgencyBucket, URGENCY_LABELS } from "./decisionQueue";
 import SavedViewsBar from "./SavedViewsBar";
 import { currentViewFilters } from "./savedViews";
 import WorkFirstFindings from "./WorkFirstFindings";
+import { FindingsQueueToolbar } from "./FindingsQueueToolbar";
+import {
+  parseQueueState,
+  queueStateToParams,
+  buildPager,
+  clearAllFilters,
+  queueHref,
+} from "./queueControls";
 import { opsBucket, bucketListParams, opsCounts, globalSummary, decodeCursor, parseTrail, bucketPageHrefs, pageRange, BUCKET_PAGE_SIZE } from "./workQueues";
 
 const SOURCE_TYPE_LABELS: Record<string, string> = {
@@ -172,12 +181,17 @@ export default async function FindingsPage({
   // (attention tiles + urgency grouping in FindingsList). Off = unchanged list.
   const workspace = process.env.SECURELOGIC_RISK_WORKSPACE_ENABLED === "true";
 
+  // Scalable Risk Findings queue controls (search/filter/sort/pagination + due
+  // urgency) — DARK, SECURELOGIC_FINDINGS_QUEUE_CONTROLS_ENABLED. Enhances the
+  // BROWSE queue only; the Operations Center (workspace home/bucket/entity) is
+  // untouched. Flag off = the legacy browse list, byte-for-byte unchanged.
+  const queueEnabled = process.env.SECURELOGIC_FINDINGS_QUEUE_CONTROLS_ENABLED === "true";
+
   // MW-4: resolve owner ids → names so cards show WHO owns a finding, not a bare
-  // "Assigned" chip. Workspace-only (legacy cards never showed owners). Best-effort:
-  // a failed/permission-limited fetch leaves the map empty and cards fall back to
-  // "Assigned" rather than erroring.
+  // "Assigned" chip. Best-effort: a failed/permission-limited fetch leaves the map
+  // empty and cards fall back to "Assigned" rather than erroring.
   const ownerNames: Record<string, string> = {};
-  if (workspace) {
+  if (workspace || queueEnabled) {
     const teamData = await getTeamMembers(token);
     for (const m of teamData?.members ?? []) ownerNames[m.id] = m.name || m.email;
   }
@@ -201,6 +215,16 @@ export default async function FindingsPage({
   const browse = sp.queue === "all" || hasFilters;
   const workFirstMode: "home" | "bucket" | "entity" | null =
     !workspace || browse ? null : entityQuery ? "entity" : bucket ? "bucket" : "home";
+
+  // Enhanced browse queue: server-side search/filter/sort/pagination fetch. Only
+  // when the flag is on AND we are in the browse view (never the Ops Center).
+  const showQueue = queueEnabled && workFirstMode === null;
+  const queueState = parseQueueState(sp);
+  const queueData = showQueue ? await getFindings(token, queueStateToParams(queueState)) : null;
+  const queueFindings = queueData?.findings ?? [];
+  const queueTotal = queueData?.total ?? queueFindings.length;
+  const queuePager = buildPager(queueState, queueTotal);
+  const nowMs = Date.now();
 
   // Bucket members come from a SERVER-filtered, SERVER-paged fetch (never
   // client-filtering a page). Keyset cursor + bounded prev-trail live in the URL;
@@ -295,6 +319,70 @@ export default async function FindingsPage({
           entityQuery={entityQuery}
           entityResult={entityResult}
         />
+      ) : showQueue ? (
+        <>
+          {/* Scalable Risk Findings queue: compact toolbar + server-paged cards. */}
+          <FindingsQueueToolbar
+            state={queueState}
+            total={queueTotal}
+            count={queueFindings.length}
+          />
+          {queueFindings.length === 0 ? (
+            <div
+              className="rounded-xl border p-10 text-center"
+              style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}
+            >
+              <p className="text-sm mb-3" style={{ color: "#94a3b8" }}>
+                No findings match your search and filters.
+              </p>
+              <Link
+                href={queueHref(clearAllFilters(queueState))}
+                className="text-xs font-medium"
+                style={{ color: "#00c4b4" }}
+              >
+                Clear all
+              </Link>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-3">
+                {queueFindings.map((f) => (
+                  <FindingCard
+                    key={f.id}
+                    finding={f}
+                    revalidateUrl="/findings"
+                    workspace
+                    showDueStatus
+                    ownerName={f.owner_user_id ? ownerNames[f.owner_user_id] ?? null : null}
+                    reason={URGENCY_LABELS[urgencyBucket(f, nowMs)]}
+                    queueContext="findings_queue"
+                  />
+                ))}
+              </div>
+              {/* Pager — offset pagination; the URL carries page + all state so
+                  Back restores the exact queue after opening a finding. */}
+              <div className="flex items-center justify-between mt-6">
+                {queuePager.prevHref ? (
+                  <Link href={queuePager.prevHref} className="text-sm font-medium" style={{ color: "#00c4b4" }}>
+                    ← Previous
+                  </Link>
+                ) : (
+                  <span />
+                )}
+                <span className="text-xs" style={{ color: "#64748b" }}>
+                  Page {queuePager.page} of {queuePager.pages}
+                </span>
+                {queuePager.nextHref ? (
+                  <Link href={queuePager.nextHref} className="text-sm font-medium" style={{ color: "#00c4b4" }}>
+                    Next →
+                  </Link>
+                ) : (
+                  <span />
+                )}
+              </div>
+            </>
+          )}
+        </>
       ) : (
         <>
       {/* Summary stat cards */}

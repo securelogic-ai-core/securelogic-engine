@@ -67,6 +67,10 @@ type Props = {
   // governance/operational state, the real owner, due urgency, and an explicit
   // Decision-Workspace drill-through. Off = the legacy card, byte-for-byte unchanged.
   workspace?: boolean;
+  // Scalable Risk Findings queue: force the explicit due-status label
+  // (Overdue by N / Due today / Due in N days / No due date) even when the
+  // workspace flag is off, and label the no-due-date case (never blank).
+  showDueStatus?: boolean;
   // Resolved owner display name (workspace only). Absent → "Unassigned".
   ownerName?: string | null;
   // Why this finding appears in the user's My Work queue (workspace only, MW-7).
@@ -76,7 +80,7 @@ type Props = {
   queueContext?: string | null;
 };
 
-export function FindingCard({ finding, revalidateUrl, workspace = false, ownerName, reason, queueContext }: Props) {
+export function FindingCard({ finding, revalidateUrl, workspace = false, showDueStatus = false, ownerName, reason, queueContext }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [optimisticStatus, setOptimisticStatus] = useState(finding.status);
@@ -118,17 +122,19 @@ export function FindingCard({ finding, revalidateUrl, workspace = false, ownerNa
     router.push(decisionHref);
   }
 
-  // Due date display — legacy wording (both modes fall back to this shape).
+  // Due date display. The queue (showDueStatus) and workspace both use the
+  // explicit urgency wording — never a bare date the reader has to interpret.
+  const richDue = workspace || showDueStatus;
   let dueDateNode: React.ReactNode = null;
   if (finding.due_date) {
     const days = daysUntil(finding.due_date);
     const dueDateStr = fmt(finding.due_date);
-    if (workspace) {
+    if (richDue) {
       // MW-5: explicit urgency — Due today / Due in N days / Overdue by N days.
       if (days < 0) {
-        dueDateNode = <span style={{ color: "#fca5a5" }}>Overdue by {-days} day{-days === 1 ? "" : "s"}</span>;
+        dueDateNode = <span style={{ color: "#fca5a5", fontWeight: 600 }}>Overdue by {-days} day{-days === 1 ? "" : "s"}</span>;
       } else if (days === 0) {
-        dueDateNode = <span style={{ color: "#fcd34d" }}>Due today</span>;
+        dueDateNode = <span style={{ color: "#fcd34d", fontWeight: 600 }}>Due today</span>;
       } else if (days <= 7) {
         dueDateNode = <span style={{ color: "#fcd34d" }}>Due in {days} day{days === 1 ? "" : "s"}</span>;
       } else {
@@ -143,6 +149,10 @@ export function FindingCard({ finding, revalidateUrl, workspace = false, ownerNa
         dueDateNode = <span style={{ color: "#94a3b8" }}>Due {dueDateStr}</span>;
       }
     }
+  } else if (showDueStatus) {
+    // Every queue card carries an explicit due-status label, including the
+    // absence of a deadline (never a blank).
+    dueDateNode = <span style={{ color: "#64748b" }}>No due date</span>;
   }
 
   // Governance next-step framing when remediation is complete (R-7 / R-22).

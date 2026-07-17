@@ -616,10 +616,17 @@ export type FindingsResponse = {
   limit: number;
   // Exact total for the applied filter set (cursor excluded) — pagination truth.
   total?: number;
+  // Echoed OFFSET for the scalable queue's page math (0 for cursor/default paging).
+  offset?: number;
   organizationId: string;
   nextCursor: { created_at: string; id: string } | null;
   findings: Finding[];
 };
+
+/** The scalable-queue sort modes (queue) plus the legacy keyset `created`. */
+export type FindingsSort = "created" | "urgency" | "severity" | "due_date" | "newest" | "oldest";
+/** The queue's due-status partition. */
+export type FindingsDueStatus = "overdue" | "today" | "soon" | "none";
 
 export type FindingsParams = {
   domain?: string;
@@ -630,6 +637,8 @@ export type FindingsParams = {
   priority?: string;
   // Ops-center work filters (server-side — buckets stay correct at any scale).
   decision_state?: string;
+  // The SYSTEM-DERIVED operational axis (open | in_progress | remediated | closed).
+  operational_status?: string;
   overdue?: boolean;
   unassigned?: boolean;
   exploited?: boolean;
@@ -645,9 +654,22 @@ export type FindingsParams = {
   // (legacy per-signal AND event-native via the signal→event bridge). Used by
   // the Brief decision affordance so event-sourced findings are reachable.
   intel_ref?: string;
-  // Stable keyset ordering for paged views (created_at DESC, id DESC).
-  sort?: "created";
-  // Keyset cursor from the previous page's nextCursor.
+  // ── Scalable Risk Findings queue controls (all server-side) ──
+  // Free-text search across title / description / finding id / CVE / vendor+asset name.
+  q?: string;
+  // Due-status partition (overdue | today | soon | none).
+  due?: FindingsDueStatus;
+  // Findings with at least one linked remediation Action / evidence item.
+  has_action?: boolean;
+  has_evidence?: boolean;
+  // Inclusive created-date range (YYYY-MM-DD).
+  created_from?: string;
+  created_to?: string;
+  // Queue sort mode. The queue defaults to "urgency".
+  sort?: FindingsSort;
+  // OFFSET page start (used with a queue sort; the queue's pagination model).
+  offset?: number;
+  // Keyset cursor from the previous page's nextCursor (legacy paging).
   before?: { created_at: string; id: string };
   limit?: number;
 };
@@ -2068,6 +2090,7 @@ export async function getFindings(
     if (params?.source_id) qs.set("source_id", params.source_id);
     if (params?.priority) qs.set("priority", params.priority);
     if (params?.decision_state) qs.set("decision_state", params.decision_state);
+    if (params?.operational_status) qs.set("operational_status", params.operational_status);
     if (params?.overdue) qs.set("overdue", "true");
     if (params?.unassigned) qs.set("unassigned", "true");
     if (params?.exploited) qs.set("exploited", "true");
@@ -2075,7 +2098,16 @@ export async function getFindings(
     if (params?.active) qs.set("active", "true");
     if (params?.ready_for_decision) qs.set("ready_for_decision", "true");
     if (params?.intel_ref) qs.set("intel_ref", params.intel_ref);
+    if (params?.q) qs.set("q", params.q);
+    if (params?.due) qs.set("due", params.due);
+    if (params?.has_action) qs.set("has_action", "true");
+    if (params?.has_evidence) qs.set("has_evidence", "true");
+    if (params?.created_from) qs.set("created_from", params.created_from);
+    if (params?.created_to) qs.set("created_to", params.created_to);
     if (params?.sort) qs.set("sort", params.sort);
+    if (typeof params?.offset === "number" && params.offset > 0) {
+      qs.set("offset", String(params.offset));
+    }
     if (params?.before) {
       qs.set("before_created_at", params.before.created_at);
       qs.set("before_id", params.before.id);
