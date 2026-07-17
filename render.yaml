@@ -502,11 +502,11 @@ services:
       - key: SECURELOGIC_FINDING_CLOSURE_GATE_ENABLED
         value: "true" # ENABLED 2026-07-14 — staging closure-gate validation. Prod block stays "false".
 
-      # Intelligence Brief missed-week catch-up — DARK (default off). Lockstep
-      # with the prod engine block. Enable in staging FIRST to validate missed-
-      # week recovery; idempotency prevents any double-delivery.
+      # Intelligence Brief missed-week catch-up — enable in staging FIRST to
+      # validate missed-week recovery; idempotency prevents any double-delivery.
+      # The prod engine block keeps its own "false" and is not touched.
       - key: SECURELOGIC_BRIEF_CATCHUP_ENABLED
-        value: "false"
+        value: "true" # ENABLED 2026-07-17 — O-6: staging brief dormant since May 19; the weekly cron's single Tuesday-07:00 firing chance lives in a service that redeploys on every develop commit. Catch-up recovers a missed Tuesday at next boot. Prod stays "false".
 
       # Sentry error tracking (engine — staging). Kept in lockstep with the
       # production engine block above; set SENTRY_ENV=staging in the dashboard.
