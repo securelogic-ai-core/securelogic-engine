@@ -131,6 +131,11 @@ describe("O-5: assessment responses never move Readiness Score", () => {
     expect(reqs.status).toBe(200);
     expect(reqs.body.summary.progress_pct).toBe(75);
     expect(reqs.body.summary.readiness_score).toBeUndefined();
+
+    // last_response_at: the most recent answer's timestamp, ISO, present once
+    // anything has been answered (vendor detail renders it as "Last updated").
+    expect(typeof reqs.body.summary.last_response_at).toBe("string");
+    expect(new Date(reqs.body.summary.last_response_at).getTime()).not.toBeNaN();
   });
 
   it("a satisfied control mapping DOES raise readiness — and leaves progress untouched", async () => {

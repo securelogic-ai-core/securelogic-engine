@@ -4674,6 +4674,9 @@ export type FrameworkRequirements = {
     not_assessed: number;
     /** 0–100 completion share — assessment progress, never readiness (O-5). */
     progress_pct: number;
+    /** ISO timestamp of the most recent response, null when nothing answered.
+     *  Optional: absent on older engine payloads. */
+    last_response_at?: string | null;
   };
 };
 
