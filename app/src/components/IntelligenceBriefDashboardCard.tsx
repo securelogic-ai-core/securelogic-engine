@@ -4,6 +4,7 @@ import type {
   IntelligenceBriefItem,
 } from "@/lib/api";
 import { formatDateOnlyUTC } from "@/lib/dates";
+import { briefAgeDays, staleAgeLabel, STALE_AFTER_DAYS } from "@/lib/briefStaleness";
 
 interface IntelligenceBriefDashboardCardProps {
   brief: IntelligenceBriefDetailResponse;
@@ -63,31 +64,17 @@ function cardAccent(counts: UrgencyCounts): CardAccent {
 }
 
 /**
- * Staleness (walkthrough item 4): the brief is generated weekly (Tuesday
- * 07:00 UTC — schedulerRunner cron "0 7 * * 2"), so one full cadence window
- * plus a day of publish slack is the honest limit: a brief more than 8 days
- * old cannot be the current cycle's brief. Old intelligence must never
- * silently present as current — a stale brief drops its urgency accent
- * (an 8-week-old "Immediate action" stripe is itself a false claim) and
- * carries an explicit age warning instead.
+ * Staleness (walkthrough item 4): rule and label live in @/lib/briefStaleness —
+ * shared with the legacy newsletter-issue BriefCard so both Latest Brief
+ * surfaces warn identically. A stale brief additionally drops its urgency
+ * accent here (an 8-week-old "Immediate action" stripe is itself a false
+ * claim) and carries the explicit age warning instead.
  */
-const STALE_AFTER_DAYS = 8;
-
 const STALE_ACCENT: CardAccent = {
   stripe: "#64748b",
   eyebrow: "Previous brief",
   eyebrowColor: "#94a3b8",
 };
-
-function briefAgeDays(dateStr: string): number {
-  return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86_400_000);
-}
-
-function staleAgeLabel(ageDays: number): string {
-  const weeks = Math.floor(ageDays / 7);
-  const age = weeks >= 2 ? `${weeks} weeks` : `${ageDays} days`;
-  return `This brief is ${age} old — briefs are published weekly. A newer brief has not been generated yet.`;
-}
 
 /**
  * Fallback teaser built from the urgency mix when synthesis.teaser is null.
