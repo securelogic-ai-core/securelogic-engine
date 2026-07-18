@@ -3284,14 +3284,28 @@ export function uploadFindingEvidence(
       };
     }
     xhr.onload = () => {
-      const body = (xhr.response ?? {}) as { evidence?: Evidence; error?: string; detail?: string };
+      const body = (xhr.response ?? {}) as {
+        evidence?: Evidence;
+        error?: string;
+        detail?: string;
+        details?: { reason?: string };
+      };
       if (xhr.status >= 200 && xhr.status < 300 && body.evidence) {
         resolve({ ok: true, evidence: body.evidence });
         return;
       }
+      // The hardened-server guards return `{error:"bad_request", details:{reason}}`
+      // (e.g. request_body_too_large) — a nested reason the UI can map precisely,
+      // unlike the flat top-level `error`. Prefer that reason when present so the
+      // message tells the user WHY (too large / malformed) rather than "bad_request".
+      const nestedReason = body.details?.reason;
+      const code =
+        body.error === "bad_request" && nestedReason
+          ? nestedReason
+          : body.error ?? "upload_failed";
       resolve({
         ok: false,
-        error: body.detail ? `${body.error}: ${body.detail}` : body.error ?? "upload_failed",
+        error: body.detail ? `${code}: ${body.detail}` : code,
         status: xhr.status,
       });
     };

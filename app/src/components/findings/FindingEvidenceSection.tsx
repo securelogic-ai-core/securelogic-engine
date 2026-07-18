@@ -85,23 +85,61 @@ function fmtEvidenceType(type: unknown): string {
     : "—";
 }
 
-/** Map the engine's upload error codes to copy a user can act on. */
+/**
+ * Map the engine's upload error codes to copy a user can act on. Each error
+ * CLASS is distinguishable so the user knows whether to fix the file, retry, add
+ * a reference, or escalate to an administrator:
+ *   invalid file            → change the file
+ *   too large / malformed    → size/transport problem
+ *   storage failure          → transient, retry or use a reference
+ *   configuration unavailable→ storage not wired up; use a reference / escalate
+ *   authorization            → session/permission problem
+ *   not found                → reload
+ */
 function uploadErrorMessage(raw: string): string {
   const code = raw.split(":")[0]?.trim() ?? raw;
   switch (code) {
+    // — Invalid file: the file itself is rejected. —
     case "unsupported_file_type":
     case "file_content_mismatch":
       return `That file type isn't accepted. Allowed: ${EVIDENCE_ACCEPTED_LABEL}.`;
     case "file_too_large":
-      return "That file is too large (max 25 MB).";
+    case "request_body_too_large":
+      return "That file is too large (max 25 MB). Choose a smaller file, or add a reference instead.";
     case "empty_file":
       return "That file is empty.";
+    // — Transport / malformed request: the bytes didn't arrive intact. —
+    case "invalid_multipart_body":
+    case "invalid_content_length":
+    case "content_length_required":
+      return "The file couldn't be sent. Try again, or add a reference instead.";
+    // — Configuration unavailable: object storage isn't wired up on this env. —
     case "storage_unavailable":
-      return "File storage is temporarily unavailable. Try again shortly, or add a reference instead.";
+      return "File storage isn't configured on this environment. Add a reference instead, or contact your administrator.";
+    // — Storage failure: storage is configured but the write/record failed. —
+    case "blob_put_failed":
+    case "evidence_create_failed":
+    case "evidence_upload_failed":
+      return "The file couldn't be saved to storage. Try again shortly, or add a reference instead.";
     case "org_storage_quota_exceeded":
       return "Your organization's evidence storage limit has been reached.";
+    // — Authorization: session expired or insufficient permission. —
+    case "not_authenticated":
+    case "api_key_required":
+    case "invalid_token":
+    case "session_invalidated":
+      return "Your session has expired. Sign in again and retry.";
+    case "read_only_access":
+    case "insufficient_entitlement":
+    case "organization_context_missing":
+      return "You don't have permission to upload evidence on this account.";
+    case "auth_unavailable":
+      return "Sign-in is temporarily unavailable. Try again shortly.";
+    // — Not found / connectivity. —
     case "source_record_not_found":
       return "This finding could not be found — reload and try again.";
+    case "engine_unavailable":
+      return "Couldn't reach the server. Try again shortly, or add a reference instead.";
     default:
       return "Could not upload the file. Try again, or add a reference instead.";
   }
