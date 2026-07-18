@@ -18,6 +18,7 @@ import SavedViewsBar from "./SavedViewsBar";
 import { currentViewFilters } from "./savedViews";
 import WorkFirstFindings from "./WorkFirstFindings";
 import { FindingsQueueToolbar } from "./FindingsQueueToolbar";
+import { FindingsSummaryBar } from "./FindingsSummaryBar";
 import {
   parseQueueState,
   queueStateToParams,
@@ -293,6 +294,18 @@ export default async function FindingsPage({
       ? new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZoneName: "short" })
       : undefined;
 
+  // The scalable BROWSE queue keeps the SAME tenant-wide executive summary as the
+  // Operations Center above its toolbar — same globalSummary() over the same
+  // org-wide `summary`, so the two surfaces reconcile exactly in calculation and
+  // terminology. It is DELIBERATELY independent of the queue's search/filters:
+  // applying a filter updates the result count below, never these org-wide totals
+  // (the summary answers "where does the whole org stand", the queue answers "what
+  // matches my current search"). Restores the overview the queue controls dropped.
+  const queueSummaryItems = showQueue ? globalSummary(summary) : undefined;
+  const queueGeneratedAt = showQueue
+    ? new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZoneName: "short" })
+    : undefined;
+
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">
       {/* Header */}
@@ -359,6 +372,14 @@ export default async function FindingsPage({
         />
       ) : showQueue ? (
         <>
+          {/* Executive operational overview — tenant-wide, ABOVE the queue controls.
+              The scalable queue controls refine what is LISTED; they must never
+              replace the page-level summary. These totals are org-wide (globalSummary
+              over the org-wide summary), so search/filters below change the result
+              count without silently moving these numbers. */}
+          {queueSummaryItems && (
+            <FindingsSummaryBar items={queueSummaryItems} generatedAt={queueGeneratedAt} />
+          )}
           {/* Scalable Risk Findings queue: compact toolbar + server-paged cards. */}
           <FindingsQueueToolbar
             state={queueState}

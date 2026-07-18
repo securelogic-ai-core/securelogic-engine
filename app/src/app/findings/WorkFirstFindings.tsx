@@ -17,7 +17,7 @@ import type { Finding, EntityFindingsResponse } from "@/lib/api";
 import { FindingCard } from "@/components/FindingCard";
 import BulkBucketList from "./BulkBucketList";
 import { FindingsQueueToolbar } from "./FindingsQueueToolbar";
-import { QUEUE_OVERLAP_NOTE } from "@/lib/findingLifecycleVocab";
+import { FindingsSummaryBar } from "./FindingsSummaryBar";
 import {
   buildPager,
   clearAllFilters,
@@ -83,49 +83,6 @@ const AXIS_TAG_STYLE: Record<string, React.CSSProperties> = {
   Governance: { background: "rgba(139,92,246,0.15)", color: "#c4b5fd" },
   Operational: { background: "rgba(59,130,246,0.15)", color: "#93c5fd" },
 };
-
-const SUMMARY_TONE: Record<string, string> = {
-  urgent: "#fca5a5",
-  attention: "#fcd34d",
-  governance: "#c4b5fd",
-  neutral: "#f1f5f9",
-};
-
-function SummaryBar({ items, generatedAt }: { items: SummaryItem[]; generatedAt?: string }) {
-  return (
-    <section className="mb-6" aria-label="Findings summary">
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        {items.map((item) => {
-          const known = item.value !== null;
-          const color = known && item.value! > 0 ? SUMMARY_TONE[item.tone] ?? "#f1f5f9" : "#334155";
-          return (
-            <Link
-              key={item.key}
-              href={item.href}
-              className="block rounded-xl border p-4 transition-colors"
-              style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}
-            >
-              <div className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: "#64748b" }}>
-                {item.label}
-              </div>
-              <div className="text-2xl font-bold leading-none mb-1" style={{ color }}>
-                {known ? item.value : "—"}
-              </div>
-              <div className="text-[11px]" style={{ color: "#475569" }}>
-                {item.hint}
-              </div>
-            </Link>
-          );
-        })}
-      </div>
-      {/* F-2 (overlap) + F-8 (freshness) */}
-      <p className="mt-2 text-[11px]" style={{ color: "#475569" }}>
-        {QUEUE_OVERLAP_NOTE}
-        {generatedAt && <> · Counts as of {generatedAt}.</>}
-      </p>
-    </section>
-  );
-}
 
 function BucketCard({ def, count, unknown }: { def: OpsBucketDef; count: number; unknown: boolean }) {
   const hot = def.urgent && count > 0;
@@ -507,7 +464,7 @@ export default function WorkFirstFindings({
   return (
     <>
       {summaryItems && summaryItems.length > 0 && (
-        <SummaryBar items={summaryItems} generatedAt={generatedAt} />
+        <FindingsSummaryBar items={summaryItems} generatedAt={generatedAt} />
       )}
 
       <div className="mb-6">

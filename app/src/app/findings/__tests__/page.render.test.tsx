@@ -25,6 +25,7 @@ const api = vi.hoisted(() => ({
   getFindingSavedViews: vi.fn(),
   getFindingsByEntity: vi.fn(),
   getSignalMatchSuggestionCounts: vi.fn(),
+  getTeamMembers: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -48,6 +49,7 @@ beforeEach(() => {
   api.getFindingSavedViews.mockResolvedValue([]);
   api.getFindingsByEntity.mockResolvedValue(null);
   api.getSignalMatchSuggestionCounts.mockResolvedValue(null);
+  api.getTeamMembers.mockResolvedValue({ members: [] });
 });
 
 describe("/findings — the destination of every dashboard findings tile", () => {
@@ -149,6 +151,97 @@ describe("/findings — feature-flag branches", () => {
     // Legacy = the filter bar + rows, with no bucket deep links.
     expect(screen.getByText(/Unencrypted backups/)).toBeInTheDocument();
     expect(container.querySelector('a[href*="bucket="]')).toBeNull();
+  });
+});
+
+describe("/findings?queue=all — executive summary restored above the scalable queue", () => {
+  // The regression: when the scalable queue controls (SECURELOGIC_FINDINGS_QUEUE_
+  // CONTROLS_ENABLED) shipped, the browse queue rendered search/filters/cards with
+  // NO page-level operational overview above them. These tests pin the restored
+  // summary AND that the queue controls still render beneath it.
+  beforeEach(() => {
+    vi.stubEnv("SECURELOGIC_RISK_WORKSPACE_ENABLED", "false");
+    vi.stubEnv("SECURELOGIC_FINDINGS_QUEUE_CONTROLS_ENABLED", "true");
+  });
+
+  const RICH_SUMMARY = () =>
+    aFindingsSummary({
+      active_total: 3,
+      overdue_open: 4,
+      pending_risk_approvals: 2,
+      ready_for_decision_open: 5,
+      accepted_risk_total: 6,
+    });
+
+  it("renders the five validated summary metrics above the toolbar", async () => {
+    api.getFindingsSummary.mockResolvedValue({ summary: RICH_SUMMARY() });
+
+    const { container } = await renderPage(FindingsPage, { searchParams: sp({ queue: "all" }) });
+
+    for (const label of [
+      "Active Findings",
+      "Overdue / SLA",
+      "Awaiting Approval",
+      "Ready to Close",
+      "Accepted Risk",
+    ]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+
+    // The summary section exists, is labelled, and reads the TENANT-WIDE totals.
+    const summary = container.querySelector('section[aria-label="Findings summary"]');
+    expect(summary).not.toBeNull();
+    expect(summary!.textContent).toContain("3"); // active_total
+    expect(summary!.textContent).toContain("6"); // accepted_risk_total
+
+    // The scalable queue controls still render — the summary did not replace them.
+    const toolbar = screen.getByLabelText("Search findings");
+    expect(toolbar).toBeInTheDocument();
+
+    // …and the summary is ABOVE the toolbar in the document (overview first).
+    expect(
+      summary!.compareDocumentPosition(toolbar) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it("summary totals stay TENANT-WIDE when search/filters narrow the queue", async () => {
+    api.getFindingsSummary.mockResolvedValue({ summary: RICH_SUMMARY() });
+    // The queue result set is narrowed to a single row by the filters…
+    api.getFindings.mockResolvedValue(aFindingsResponse([ACTIVE[0]!], { total: 1 }));
+
+    const { container } = await renderPage(FindingsPage, {
+      searchParams: sp({ queue: "all", q: "backups", severity: "High", operational_status: "in_progress" }),
+    });
+
+    // …but the executive summary is org-wide: it still reads active_total (3), not
+    // the 1-row filtered result set.
+    const summary = container.querySelector('section[aria-label="Findings summary"]');
+    expect(summary!.textContent).toContain("3");
+
+    // The summary is computed from getFindingsSummary(token) — which takes NO filter
+    // arguments — so a user's search can never silently move the executive totals.
+    expect(api.getFindingsSummary).toHaveBeenCalled();
+    const summaryArgs = api.getFindingsSummary.mock.calls[0];
+    expect(summaryArgs.length).toBe(1); // token only — no q / severity / status
+  });
+
+  it("Operations Center and All Findings summaries reconcile — same calc, same terminology", async () => {
+    const summary = aFindingsSummary({ active_total: 7, accepted_risk_total: 9 });
+    api.getFindingsSummary.mockResolvedValue({ summary });
+
+    // Browse queue (flag on, RISK_WORKSPACE off) — the All Findings summary.
+    const browse = await renderPage(FindingsPage, { searchParams: sp({ queue: "all" }) });
+    const browseSummary = browse.container.querySelector('section[aria-label="Findings summary"]')!;
+    expect(browseSummary.textContent).toContain("Active Findings");
+    expect(browseSummary.textContent).toContain("7");
+
+    // Operations Center HOME (RISK_WORKSPACE on, no browse) — the same summary bar,
+    // from the same globalSummary() over the same org-wide summary.
+    vi.stubEnv("SECURELOGIC_RISK_WORKSPACE_ENABLED", "true");
+    const ops = await renderPage(FindingsPage, { searchParams: sp({}) });
+    const opsSummary = ops.container.querySelector('section[aria-label="Findings summary"]')!;
+    expect(opsSummary.textContent).toContain("Active Findings");
+    expect(opsSummary.textContent).toContain("7"); // identical value + label → reconciled
   });
 });
 
