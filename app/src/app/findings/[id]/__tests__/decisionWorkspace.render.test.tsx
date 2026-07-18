@@ -932,8 +932,20 @@ describe("Decision Workspace — walkthrough remediation (PR-B1)", () => {
     expect(screen.getByText(/1 remaining/)).toBeInTheDocument();
   });
 
-  it("when the last action completes, the progress line hands off to governance (R-22)", async () => {
-    workspaceOn();
+  it("when the last action completes AND remediation is derived complete, the progress line hands off to governance (R-22)", async () => {
+    // The header's authoritative operational_status is 'remediated' — the progress
+    // line reads the SAME source, so the two agree.
+    workspaceOn(
+      aFindingContext({
+        finding: {
+          id: "f-1",
+          source_type: "manual",
+          source_id: null,
+          decision_state: "needs_review",
+          operational_status: "remediated",
+        },
+      }),
+    );
     api.getActionsForFinding.mockResolvedValue(
       anActionsResponse([
         anAction({ id: "a-1", status: "closed", completed_at: "2026-06-02T00:00:00.000Z" }),
@@ -945,6 +957,42 @@ describe("Decision Workspace — walkthrough remediation (PR-B1)", () => {
     expect(
       screen.getByText(/All 2 actions complete — remediation done\. Next: record the governance decision/),
     ).toBeInTheDocument();
+  });
+
+  it("all actions done but the evidence gate holds it — the progress line RECONCILES with the header, not contradicts it", async () => {
+    // The staging defect: every action is complete, but the org's evidence gate
+    // keeps operational_status at 'in_progress'. The header correctly shows "Work
+    // in progress"; the progress line must NOT claim "remediation done — go to
+    // governance". It reconciles (both say in-progress) and explains the evidence
+    // requirement, pointing at the evidence section below.
+    workspaceOn(
+      aFindingContext({
+        finding: {
+          id: "f-1",
+          source_type: "manual",
+          source_id: null,
+          decision_state: "needs_review",
+          operational_status: "in_progress",
+        },
+      }),
+    );
+    api.getActionsForFinding.mockResolvedValue(
+      anActionsResponse([
+        anAction({ id: "a-1", status: "closed", completed_at: "2026-06-02T00:00:00.000Z" }),
+        anAction({ id: "a-2", status: "closed", completed_at: "2026-06-03T00:00:00.000Z" }),
+      ]),
+    );
+    const { container } = await renderPage(FindingDetailPage, props());
+    await openRemediationTab();
+
+    // Explains the evidence gate — does NOT send the user to governance.
+    expect(screen.getByText(/requires evidence before a finding is marked Remediation complete/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/remediation done\. Next: record the governance decision/),
+    ).toBeNull();
+    // The header stays "Work in progress" — the two surfaces now AGREE.
+    expect(container.textContent).toContain("Work in progress");
+    expect(container.textContent).not.toContain("Remediation complete. Governance decision required.");
   });
 
   it("labels the recommendation as advisory and the actions as executable (R-3)", async () => {

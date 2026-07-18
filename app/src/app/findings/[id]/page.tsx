@@ -277,6 +277,7 @@ function RemediationActionsSection({
   finding,
   actions,
   owners,
+  operationalStatus,
 }: {
   finding: Finding;
   actions: Action[];
@@ -284,6 +285,14 @@ function RemediationActionsSection({
   // so it stays byte-identical — no owner chip, no assign control, exactly as before.
   // Only the Decision Workspace passes them.
   owners?: { id: string; label: string }[];
+  // The AUTHORITATIVE, system-derived operational status — the SAME source the
+  // header and lifecycle indicator read (context.finding.operational_status). The
+  // "what's next" message below is derived from THIS, not from raw action counts,
+  // so the remediation section can never contradict the header. Completing every
+  // action does not always mean remediation is complete: when the org enforces the
+  // evidence gate, the finding stays In Progress until evidence is attached, and
+  // this section must say so rather than falsely send the user to governance.
+  operationalStatus?: string | null;
 }) {
   // R-4: completion progress (workspace only — owners present). ACTION_ACTIVE is
   // the shared "still outstanding" set; terminal = closed|accepted.
@@ -291,6 +300,10 @@ function RemediationActionsSection({
   const remaining = actions.filter((a) => ACTION_ACTIVE.has(a.status)).length;
   const done = total - remaining;
   const showWorkspaceExtras = owners !== undefined;
+  // Reconcile with the header: remediation is "done" only when the derived
+  // operational status says so — not merely when the action list is empty of work.
+  const remediationComplete = operationalStatus === "remediated";
+  const findingClosed = operationalStatus === "closed";
 
   return (
     <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
@@ -305,16 +318,35 @@ function RemediationActionsSection({
         )}
       </div>
 
-      {/* R-4: progress. R-7: when the work is all done, point at the governance step. */}
+      {/* R-4: progress. R-7: when remediation is genuinely complete, point at the
+          governance step — but derive "complete" from the authoritative operational
+          status so this line never contradicts the header. */}
       {showWorkspaceExtras && total > 0 && (
         <div className="mb-4">
           {remaining > 0 ? (
             <p className="text-xs" style={{ color: "#94a3b8" }}>
               {done} of {total} complete · <span style={{ color: "#fcd34d" }}>{remaining} remaining</span>
             </p>
-          ) : (
+          ) : remediationComplete ? (
+            // Every action done AND the derived status advanced → remediation is
+            // complete; the header shows "Remediation complete" and the governance
+            // hand-off banner is up. The two surfaces now agree.
             <p className="text-xs" style={{ color: "#00c4b4" }}>
               All {total} actions complete — remediation done. Next: record the governance decision above.
+            </p>
+          ) : findingClosed ? (
+            <p className="text-xs" style={{ color: "#86efac" }}>
+              All {total} actions complete. This finding is closed.
+            </p>
+          ) : (
+            // Every action is done but the derived status is still In Progress: the
+            // org's evidence gate holds remediation open until evidence is attached.
+            // Say so — and point at the evidence section below — instead of sending
+            // the user to a governance decision the finding is not ready for.
+            <p className="text-xs" style={{ color: "#fcd34d" }}>
+              All {total} actions complete, but remediation isn’t finished yet — this
+              organization requires evidence before a finding is marked Remediation
+              complete. Attach evidence below to advance to the governance decision.
             </p>
           )}
         </div>
@@ -369,14 +401,24 @@ function RemediationTab({
   finding,
   actions,
   owners,
+  operationalStatus,
 }: {
   finding: Finding;
   actions: Action[];
   owners: { id: string; label: string }[];
+  // The authoritative operational status (context.finding.operational_status) —
+  // threaded so the progress line reconciles with the header, not with a re-derived
+  // action count.
+  operationalStatus?: string | null;
 }) {
   return (
     <>
-      <RemediationActionsSection finding={finding} actions={actions} owners={owners} />
+      <RemediationActionsSection
+        finding={finding}
+        actions={actions}
+        owners={owners}
+        operationalStatus={operationalStatus}
+      />
       <FindingEvidenceSection findingId={finding.id} />
     </>
   );
@@ -456,7 +498,12 @@ export default async function FindingDetailPage({
                 {recommendationEmptyCopy(finding.source_type)}
               </p>
             )}
-            <RemediationTab finding={finding} actions={actions} owners={owners} />
+            <RemediationTab
+              finding={finding}
+              actions={actions}
+              owners={owners}
+              operationalStatus={context.finding.operational_status}
+            />
           </DecisionWorkspace>
         </div>
       );
