@@ -12,6 +12,9 @@ import {
   buildFindingEvidencePayload,
   isValidEvidenceType,
   EVIDENCE_TYPES,
+  validateEvidenceFileClient,
+  formatFileSize,
+  EVIDENCE_MAX_FILE_BYTES,
 } from "../findingEvidencePayload";
 
 const FINDING = "44444444-4444-4444-8444-444444444444";
@@ -85,5 +88,32 @@ describe("isValidEvidenceType — mirrors the evidence_type CHECK constraint", (
     expect(isValidEvidenceType("attachment")).toBe(false);
     expect(isValidEvidenceType("Document")).toBe(false);
     expect(isValidEvidenceType("")).toBe(false);
+  });
+});
+
+describe("validateEvidenceFileClient — UX pre-validation mirrors the engine allowlist", () => {
+  function fakeFile(name: string, size: number): File {
+    return { name, size } as File;
+  }
+  it("accepts allowed extensions within the size limit", () => {
+    for (const ext of ["pdf", "png", "jpg", "jpeg", "txt", "csv", "docx", "xlsx", "pptx"]) {
+      expect(validateEvidenceFileClient(fakeFile(`proof.${ext}`, 1024))).toBeNull();
+    }
+  });
+  it("rejects a disallowed extension", () => {
+    expect(validateEvidenceFileClient(fakeFile("evil.exe", 1024))).toMatch(/Unsupported file type/);
+  });
+  it("rejects an empty file and an oversized file", () => {
+    expect(validateEvidenceFileClient(fakeFile("x.pdf", 0))).toMatch(/empty/);
+    expect(validateEvidenceFileClient(fakeFile("x.pdf", EVIDENCE_MAX_FILE_BYTES + 1))).toMatch(/too large/);
+  });
+});
+
+describe("formatFileSize", () => {
+  it("renders compact human sizes", () => {
+    expect(formatFileSize(512)).toBe("512 B");
+    expect(formatFileSize(2048)).toBe("2 KB");
+    expect(formatFileSize(3 * 1024 * 1024)).toBe("3.0 MB");
+    expect(formatFileSize(-1)).toBe("—");
   });
 });

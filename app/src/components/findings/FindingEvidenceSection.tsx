@@ -21,11 +21,23 @@
  * evidence route is immutable (no DELETE), unlike the bespoke risk route.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getFindingEvidence, attachFindingEvidence, type Evidence } from "@/lib/api";
+import {
+  getFindingEvidence,
+  attachFindingEvidence,
+  uploadFindingEvidence,
+  evidenceFileHref,
+  type Evidence,
+} from "@/lib/api";
 import { evidenceRefHref } from "@/lib/evidenceLinks";
-import { EVIDENCE_TYPES } from "./findingEvidencePayload";
+import {
+  EVIDENCE_TYPES,
+  EVIDENCE_ACCEPT_ATTR,
+  EVIDENCE_ACCEPTED_LABEL,
+  formatFileSize,
+  validateEvidenceFileClient,
+} from "./findingEvidencePayload";
 
 const CARD_STYLE: React.CSSProperties = {
   background: "var(--color-brand-surface, #111827)",
@@ -73,6 +85,28 @@ function fmtEvidenceType(type: unknown): string {
     : "—";
 }
 
+/** Map the engine's upload error codes to copy a user can act on. */
+function uploadErrorMessage(raw: string): string {
+  const code = raw.split(":")[0]?.trim() ?? raw;
+  switch (code) {
+    case "unsupported_file_type":
+    case "file_content_mismatch":
+      return `That file type isn't accepted. Allowed: ${EVIDENCE_ACCEPTED_LABEL}.`;
+    case "file_too_large":
+      return "That file is too large (max 25 MB).";
+    case "empty_file":
+      return "That file is empty.";
+    case "storage_unavailable":
+      return "File storage is temporarily unavailable. Try again shortly, or add a reference instead.";
+    case "org_storage_quota_exceeded":
+      return "Your organization's evidence storage limit has been reached.";
+    case "source_record_not_found":
+      return "This finding could not be found — reload and try again.";
+    default:
+      return "Could not upload the file. Try again, or add a reference instead.";
+  }
+}
+
 export function FindingEvidenceSection({ findingId }: { findingId: string }) {
   const router = useRouter();
 
@@ -86,6 +120,11 @@ export function FindingEvidenceSection({ findingId }: { findingId: string }) {
   const [externalRef, setExternalRef] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // File upload state.
+  const [file, setFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -108,6 +147,36 @@ export function FindingEvidenceSection({ findingId }: { findingId: string }) {
     setEvidenceType("document");
     setExternalRef("");
     setSaveError(null);
+    setFile(null);
+    setFileError(null);
+    setProgress(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function onPickFile(picked: File | null) {
+    setFileError(null);
+    if (!picked) {
+      setFile(null);
+      return;
+    }
+    const err = validateEvidenceFileClient(picked);
+    if (err) {
+      setFile(null);
+      setFileError(err);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    setFile(picked);
+    // Default the title to the filename if the user hasn't typed one — a small
+    // convenience so the required title is rarely a blocker for a file upload.
+    if (!title.trim()) setTitle(picked.name.replace(/\.[^.]+$/, ""));
+  }
+
+  function removeFile() {
+    setFile(null);
+    setFileError(null);
+    setProgress(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   async function save(): Promise<void> {
@@ -115,23 +184,55 @@ export function FindingEvidenceSection({ findingId }: { findingId: string }) {
       setSaveError("A title is required.");
       return;
     }
+    if (fileError) {
+      setSaveError("Fix the file error before saving.");
+      return;
+    }
     setSaving(true);
     setSaveError(null);
-    const res = await attachFindingEvidence(findingId, {
-      title: title.trim(),
-      evidence_type: evidenceType,
-      external_ref: externalRef.trim() || null,
-    });
+
+    // A file upload and a reference-only record go through different endpoints:
+    // the file path (multipart, with progress) when a file is chosen, else the
+    // JSON reference-only path (unchanged). Either way a title is required, and
+    // the Reference field is preserved as an alternative / supplement.
+    let ok: boolean;
+    let errorMsg: string | null = null;
+    if (file) {
+      setProgress(0);
+      const res = await uploadFindingEvidence(
+        findingId,
+        file,
+        {
+          title: title.trim(),
+          evidence_type: evidenceType,
+          external_ref: externalRef.trim() || null,
+        },
+        (pct) => setProgress(pct)
+      );
+      ok = res.ok;
+      if (!res.ok) errorMsg = uploadErrorMessage(res.error);
+    } else {
+      const res = await attachFindingEvidence(findingId, {
+        title: title.trim(),
+        evidence_type: evidenceType,
+        external_ref: externalRef.trim() || null,
+      });
+      ok = res.ok;
+      if (!res.ok) errorMsg = "Could not attach evidence.";
+    }
+
     setSaving(false);
-    if (!res.ok) {
-      setSaveError("Could not attach evidence.");
+    setProgress(null);
+    if (!ok) {
+      setSaveError(errorMsg ?? "Could not attach evidence.");
       return;
     }
     resetForm();
     setAddOpen(false);
     await refresh();
     // The server may have advanced operational_status to `remediated` on this
-    // write. Refresh so the header and Overview reflect it, not just this list.
+    // write (evidence gate). Refresh so the header and Overview reflect it, not
+    // just this list.
     router.refresh();
   }
 
@@ -196,6 +297,84 @@ export function FindingEvidenceSection({ findingId }: { findingId: string }) {
             ))}
           </select>
 
+          {/* Upload file — the artifact itself (screenshot, log, change ticket). */}
+          <label className="block text-xs mb-1" style={{ color: "#94a3b8" }}>
+            Upload file (optional)
+          </label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={EVIDENCE_ACCEPT_ATTR}
+            disabled={saving}
+            onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
+            className="w-full mb-1 text-xs"
+            style={{ color: "#cbd5e1" }}
+          />
+          {!file && !fileError && (
+            <p className="text-xs mb-2" style={{ color: "#475569" }}>
+              {EVIDENCE_ACCEPTED_LABEL} · up to 25 MB
+            </p>
+          )}
+          {fileError && (
+            <p className="text-xs mb-2" style={{ color: "#fca5a5" }}>
+              {fileError}
+            </p>
+          )}
+          {file && (
+            <div
+              className="mb-2 p-2 rounded flex items-center justify-between gap-2 flex-wrap"
+              style={{ background: "rgba(0,196,180,0.06)", border: "1px solid rgba(0,196,180,0.25)" }}
+            >
+              <div className="min-w-0">
+                <p className="text-xs truncate m-0" style={{ color: "#e2e8f0" }} title={file.name}>
+                  {file.name}
+                </p>
+                <p className="text-[11px] m-0" style={{ color: "#64748b" }}>
+                  {file.type || "unknown type"} · {formatFileSize(file.size)}
+                </p>
+              </div>
+              {!saving && (
+                <div className="flex gap-2 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="text-[11px] font-semibold"
+                    style={{ color: "#93c5fd", background: "transparent", border: "none", cursor: "pointer", padding: 0 }}
+                  >
+                    Replace
+                  </button>
+                  <button
+                    type="button"
+                    onClick={removeFile}
+                    className="text-[11px] font-semibold"
+                    style={{ color: "#fca5a5", background: "transparent", border: "none", cursor: "pointer", padding: 0 }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Upload progress. */}
+          {progress !== null && (
+            <div className="mb-2">
+              <div className="h-1.5 rounded overflow-hidden" style={{ background: "#1e293b" }}>
+                <div
+                  className="h-full"
+                  style={{ width: `${progress}%`, background: "#00c4b4", transition: "width 120ms linear" }}
+                  role="progressbar"
+                  aria-valuenow={progress}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                />
+              </div>
+              <p className="text-[11px] mt-1 m-0" style={{ color: "#64748b" }}>
+                Uploading… {progress}%
+              </p>
+            </div>
+          )}
+
           <label className="block text-xs mb-1" style={{ color: "#94a3b8" }}>
             Reference (optional)
           </label>
@@ -203,9 +382,12 @@ export function FindingEvidenceSection({ findingId }: { findingId: string }) {
             value={externalRef}
             onChange={(e) => setExternalRef(e.target.value)}
             placeholder="link or document reference"
-            className="w-full mb-3 px-2 py-1.5 text-sm rounded"
+            className="w-full mb-1 px-2 py-1.5 text-sm rounded"
             style={INPUT_STYLE}
           />
+          <p className="text-xs mb-3" style={{ color: "#475569" }}>
+            Attach a file above, or use this for a link / external document reference — either satisfies the evidence gate.
+          </p>
 
           {saveError && (
             <p className="text-xs mb-2" style={{ color: "#fca5a5" }}>
@@ -227,7 +409,7 @@ export function FindingEvidenceSection({ findingId }: { findingId: string }) {
                 opacity: saving ? 0.6 : 1,
               }}
             >
-              {saving ? "Saving…" : "Save"}
+              {saving ? (file ? "Uploading…" : "Saving…") : "Save"}
             </button>
             <button
               type="button"
@@ -276,8 +458,20 @@ export function FindingEvidenceSection({ findingId }: { findingId: string }) {
               style={{ background: "rgba(148,163,184,0.04)", border: "1px solid #1e293b" }}
             >
               <div className="flex items-baseline justify-between gap-3 flex-wrap">
-                {/* R-2: openable when the reference is a URL — never a dead row. */}
-                {evidenceRefHref(ev.external_ref) ? (
+                {/* An uploaded file opens/downloads via the authenticated proxy
+                    (short-lived signed URL); a URL reference opens externally;
+                    otherwise the title is plain text — never a dead row. */}
+                {ev.has_file ? (
+                  <a
+                    href={evidenceFileHref(ev.id)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm"
+                    style={{ color: "#93c5fd" }}
+                  >
+                    {ev.title} ↓
+                  </a>
+                ) : evidenceRefHref(ev.external_ref) ? (
                   <a
                     href={evidenceRefHref(ev.external_ref)!}
                     target="_blank"
@@ -296,6 +490,15 @@ export function FindingEvidenceSection({ findingId }: { findingId: string }) {
                   {fmtEvidenceType(ev.evidence_type)} · {fmtDate(ev.created_at)}
                 </span>
               </div>
+              {/* File metadata — filename, type, size (uploader + date are on the
+                  audit trail; date is shown above). */}
+              {ev.has_file && (
+                <p className="text-xs mt-1 m-0" style={{ color: "#64748b" }}>
+                  {ev.original_filename ?? "file"}
+                  {ev.mime_type ? ` · ${ev.mime_type}` : ""}
+                  {typeof ev.byte_size === "number" ? ` · ${formatFileSize(ev.byte_size)}` : ""}
+                </p>
+              )}
               {/* A non-URL reference stays visible so it is copyable — never a dead link. */}
               {ev.external_ref && !evidenceRefHref(ev.external_ref) && (
                 <p className="text-xs mt-1 m-0" style={{ color: "#64748b" }}>

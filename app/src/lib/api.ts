@@ -3044,6 +3044,15 @@ export type Evidence = {
   collected_at: string | null;
   collected_by: string | null;
   external_ref: string | null;
+  // File attachment (nullable — reference-only evidence leaves these unset).
+  // `has_file` is the boolean the UI branches on; the raw storage key is never
+  // exposed (downloads go through the signed-URL redirect at /api/evidence/:id/file).
+  has_file?: boolean;
+  original_filename?: string | null;
+  mime_type?: string | null;
+  byte_size?: number | null;
+  sha256?: string | null;
+  uploaded_by_user_id?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -3229,6 +3238,66 @@ export async function attachFindingEvidence(
   } catch {
     return { ok: false, error: "network_error", status: 0 };
   }
+}
+
+/** The authenticated download URL for a file-backed evidence row. The app proxy
+ *  attaches the session token and 302s to a short-lived, single-org signed URL —
+ *  there is never a public object URL. */
+export function evidenceFileHref(evidenceId: string): string {
+  return `/api/evidence/${encodeURIComponent(evidenceId)}/file`;
+}
+
+/**
+ * Upload a FILE as evidence for a finding (multipart). Uses XHR rather than fetch
+ * so the caller gets real upload-progress events. On success the engine has
+ * persisted the file AND recomputed the finding's operational_status, so an
+ * evidence-gated finding advances immediately — the caller should refresh.
+ */
+export function uploadFindingEvidence(
+  findingId: string,
+  file: File,
+  meta: {
+    title: string;
+    evidence_type: string;
+    description?: string | null;
+    external_ref?: string | null;
+  },
+  onProgress?: (pct: number) => void
+): Promise<ActionResult<{ evidence: Evidence }>> {
+  return new Promise((resolve) => {
+    const form = new FormData();
+    form.append("source_type", "finding");
+    form.append("source_id", findingId);
+    form.append("title", meta.title);
+    form.append("evidence_type", meta.evidence_type);
+    if (meta.description) form.append("description", meta.description);
+    if (meta.external_ref) form.append("external_ref", meta.external_ref);
+    // `file` last so the text fields are parsed first server-side.
+    form.append("file", file, file.name);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/evidence/upload");
+    xhr.responseType = "json";
+    if (onProgress && xhr.upload) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+    }
+    xhr.onload = () => {
+      const body = (xhr.response ?? {}) as { evidence?: Evidence; error?: string; detail?: string };
+      if (xhr.status >= 200 && xhr.status < 300 && body.evidence) {
+        resolve({ ok: true, evidence: body.evidence });
+        return;
+      }
+      resolve({
+        ok: false,
+        error: body.detail ? `${body.error}: ${body.detail}` : body.error ?? "upload_failed",
+        status: xhr.status,
+      });
+    };
+    xhr.onerror = () => resolve({ ok: false, error: "network_error", status: 0 });
+    xhr.send(form);
+  });
 }
 
 export async function getEvidence(

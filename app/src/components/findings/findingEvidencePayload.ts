@@ -75,3 +75,46 @@ export function buildFindingEvidencePayload(
 export function isValidEvidenceType(value: string): value is EvidenceType {
   return (EVIDENCE_TYPES as readonly string[]).includes(value);
 }
+
+// ── File-upload client constants ────────────────────────────────────────────
+// UX-only mirror of the engine allowlist (evidenceFileValidation.ts). The server
+// is the authority (declared MIME + magic bytes + size); this just gives the user
+// an immediate error instead of a round-trip, and populates the file input's
+// accept attribute.
+
+/** 25 MB — must match the engine's MAX_EVIDENCE_FILE_BYTES. */
+export const EVIDENCE_MAX_FILE_BYTES = 25 * 1024 * 1024;
+
+/** Accepted file extensions (lowercase, no dot). */
+export const EVIDENCE_ACCEPTED_EXTS = [
+  "pdf", "png", "jpg", "jpeg", "txt", "csv", "docx", "xlsx", "pptx",
+] as const;
+
+/** The <input type="file" accept="..."> value. */
+export const EVIDENCE_ACCEPT_ATTR = EVIDENCE_ACCEPTED_EXTS.map((e) => `.${e}`).join(",");
+
+/** Human-readable accepted list, for the picker hint. */
+export const EVIDENCE_ACCEPTED_LABEL = "PDF, PNG, JPG, TXT, CSV, DOCX, XLSX, PPTX";
+
+/** Bytes → a compact human size ("1.2 MB", "34 KB"). */
+export function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Client pre-validation (extension + size). Returns an error string or null. */
+export function validateEvidenceFileClient(file: File): string | null {
+  const ext = file.name.includes(".") ? file.name.split(".").pop()!.toLowerCase() : "";
+  if (!(EVIDENCE_ACCEPTED_EXTS as readonly string[]).includes(ext)) {
+    return `Unsupported file type. Allowed: ${EVIDENCE_ACCEPTED_LABEL}.`;
+  }
+  if (file.size <= 0) return "That file is empty.";
+  if (file.size > EVIDENCE_MAX_FILE_BYTES) {
+    return `File is too large (${formatFileSize(file.size)}). Max ${Math.floor(
+      EVIDENCE_MAX_FILE_BYTES / (1024 * 1024)
+    )} MB.`;
+  }
+  return null;
+}

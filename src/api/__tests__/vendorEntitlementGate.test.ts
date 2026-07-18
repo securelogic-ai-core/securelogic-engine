@@ -102,11 +102,13 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   // assessments / evidence / dependencies
   "assess.ts": 1,
   "assessments.ts": 2,
-  "evidence.ts": 4,
+  // 6 since POST /evidence/upload + GET /evidence/:id/file (file attachments).
+  "evidence.ts": 6,
   "dependencies.ts": 5,
   "dependencyAssessments.ts": 4,
   // findings/actions/policies
-  "actions.ts": 5,
+  // 6 since POST /actions/:id/unblock (dual-gated like the rest).
+  "actions.ts": 6,
   "policies.ts": 6,
   // reports
   "executiveReport.ts": 2,

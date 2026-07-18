@@ -24,7 +24,8 @@ const WRAPPED_FILES: Record<string, { endpoints: number; unwrapped: string[] }> 
   "controls.ts": { endpoints: 6, unwrapped: [] },
   // 6 since GET /obligations/:id/findings — asTenant-wrapped like the rest.
   "obligations.ts": { endpoints: 6, unwrapped: [] },
-  "actions.ts": { endpoints: 5, unwrapped: [] },
+  // 6 since POST /actions/:id/unblock — asTenant-wrapped like the rest.
+  "actions.ts": { endpoints: 6, unwrapped: [] },
   "aiGovernanceAssessments.ts": { endpoints: 4, unwrapped: [] },
   "controlAssessments.ts": { endpoints: 4, unwrapped: [] },
   "obligationAssessments.ts": { endpoints: 4, unwrapped: [] },
