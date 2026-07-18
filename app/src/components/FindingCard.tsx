@@ -2,8 +2,9 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { updateFindingStatus } from "@/app/actions/updateFindingStatus";
+import { buildDecisionHref } from "@/app/findings/queueHandoff";
 import type { Finding } from "@/lib/api";
 import { useRiskScale } from "@/hooks/useRiskScale";
 import {
@@ -82,6 +83,11 @@ type Props = {
 
 export function FindingCard({ finding, revalidateUrl, workspace = false, showDueStatus = false, ownerName, reason, queueContext }: Props) {
   const router = useRouter();
+  // The current queue URL (path + search: filters, sort, page, bucket) so the
+  // handoff can carry an exact `return` — a new tab restores the queue from the
+  // URL alone, not from browser history or client memory.
+  const pathname = usePathname();
+  const currentQuery = useSearchParams().toString();
   const [isPending, startTransition] = useTransition();
   const [optimisticStatus, setOptimisticStatus] = useState(finding.status);
   const [error, setError] = useState<string | null>(null);
@@ -99,7 +105,7 @@ export function FindingCard({ finding, revalidateUrl, workspace = false, showDue
   const transitions = STATUS_TRANSITIONS[optimisticStatus] ?? [];
 
   const isReadyToClose = queueContext === "ready_to_close";
-  const decisionHref = `/findings/${finding.id}${queueContext ? `?from=${encodeURIComponent(queueContext)}` : ""}`;
+  const decisionHref = buildDecisionHref(finding.id, queueContext, pathname, currentQuery);
 
   function handleStatusChange(status: "open" | "in_progress" | "closed") {
     const previous = optimisticStatus;

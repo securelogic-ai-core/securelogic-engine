@@ -580,6 +580,83 @@ describe("Decision Workspace — walkthrough remediation (PR-B1)", () => {
     expect(screen.getByText("Remediation complete. Governance decision required.")).toBeInTheDocument();
   });
 
+  // ── Originating-queue provenance banner (new-tab handoff, R-19) ──────────
+  // The default context (operational_status "open") is NOT governance-pending, so
+  // these exercise the provenance branch: name the queue + link back, from the URL
+  // alone (a new tab has no history/memory to fall back on).
+
+  it("names the originating queue on arrival from All Findings — 'Opened from All Findings'", async () => {
+    setClientSearchParams("from=findings_queue");
+    workspaceOn();
+    await renderPage(FindingDetailPage, props());
+    expect(screen.getByText("Opened from All Findings")).toBeInTheDocument();
+  });
+
+  it("names the originating Operations Center bucket — 'Opened from Needs Governance Decision'", async () => {
+    setClientSearchParams("from=needs_decision");
+    workspaceOn();
+    await renderPage(FindingDetailPage, props());
+    expect(screen.getByText("Opened from Needs Governance Decision")).toBeInTheDocument();
+  });
+
+  it("offers an exact back-link that restores the filtered/paginated queue (?return=)", async () => {
+    setClientSearchParams(
+      "from=findings_queue&return=" + encodeURIComponent("/findings?q=azure&severity=Critical&page=2"),
+    );
+    workspaceOn();
+    await renderPage(FindingDetailPage, props());
+    expect(screen.getByRole("link", { name: /Back to All Findings/i })).toHaveAttribute(
+      "href",
+      "/findings?q=azure&severity=Critical&page=2",
+    );
+  });
+
+  it("falls back to the canonical bucket URL when no ?return= is supplied", async () => {
+    setClientSearchParams("from=needs_decision");
+    workspaceOn();
+    await renderPage(FindingDetailPage, props());
+    expect(screen.getByRole("link", { name: /Back to Needs Governance Decision/i })).toHaveAttribute(
+      "href",
+      "/findings?bucket=needs_decision",
+    );
+  });
+
+  it("a malformed or unsupported from value shows NO handoff banner (fails safe)", async () => {
+    setClientSearchParams("from=" + encodeURIComponent("<script>alert(1)</script>"));
+    workspaceOn();
+    await renderPage(FindingDetailPage, props());
+    expect(screen.queryByText(/Opened from/)).toBeNull();
+    expect(screen.queryByText("Remediation complete. Governance decision required.")).toBeNull();
+  });
+
+  it("direct detail-page navigation with no handoff context shows no banner", async () => {
+    // No setClientSearchParams → empty URL; default context is not governance-pending.
+    workspaceOn();
+    await renderPage(FindingDetailPage, props());
+    expect(screen.queryByText(/Opened from/)).toBeNull();
+    expect(screen.queryByText("Remediation complete. Governance decision required.")).toBeNull();
+  });
+
+  it("tenant isolation: a hostile ?return= is never turned into a live link (no open redirect)", async () => {
+    // The finding itself is fetched org-scoped SERVER-side (existing isolation lanes);
+    // the handoff params carry no authority. Here we prove the one navigational
+    // surface they touch — the back-link — can't be pointed off-origin.
+    setClientSearchParams(
+      "from=findings_queue&return=" + encodeURIComponent("https://evil.example/steal"),
+    );
+    workspaceOn();
+    const { container } = await renderPage(FindingDetailPage, props());
+    // Provenance banner still renders (from is valid) ...
+    expect(screen.getByText("Opened from All Findings")).toBeInTheDocument();
+    // ... but the unsafe return is rejected and no link points at the hostile host;
+    // the back-link falls back to the safe canonical queue URL.
+    expect(container.querySelector('a[href*="evil.example"]')).toBeNull();
+    expect(screen.getByRole("link", { name: /Back to All Findings/i })).toHaveAttribute(
+      "href",
+      "/findings?queue=all",
+    );
+  });
+
   it("defines Confidence where it is shown (DW-5)", async () => {
     workspaceOn();
     const { container } = await renderPage(FindingDetailPage, props());
