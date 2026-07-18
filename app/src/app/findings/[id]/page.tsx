@@ -22,6 +22,7 @@ import {
   updateFindingDueDateAction,
   updateActionStatusAction,
   updateActionAction,
+  unblockAction,
 } from "./actions";
 
 // ─────────────────────────────────────────────────────────────
@@ -340,6 +341,10 @@ function RemediationActionsSection({
               onPlanChange={owners ? async (actionId, patch) => {
                 "use server";
                 await updateActionAction(finding.id, actionId, patch);
+              } : undefined}
+              onUnblock={owners ? async (actionId) => {
+                "use server";
+                await unblockAction(finding.id, actionId);
               } : undefined}
             />
           ))}

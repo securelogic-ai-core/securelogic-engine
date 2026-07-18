@@ -179,6 +179,7 @@ const ACTIVITY_LABELS: Record<string, string> = {
   "finding.decision.needs_review": "Governance: sent back for review",
   "finding.evidence_attached": "Evidence attached",
   "action.created": "Remediation action added",
+  "action.unblocked": "Remediation action unblocked",
 };
 
 /** Action status → past-tense transition label (action.status_changed payload).
