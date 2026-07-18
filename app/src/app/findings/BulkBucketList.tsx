@@ -38,11 +38,14 @@ export default function BulkBucketList({
   revalidateUrl,
   ownerNames,
   bucketId,
+  showDueStatus = false,
 }: {
   findings: Finding[];
   revalidateUrl: string;
   ownerNames?: Record<string, string>;
   bucketId?: string;
+  /** Explicit due labels on every card (incl. "No due date") — queue-controls views. */
+  showDueStatus?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -146,6 +149,7 @@ export default function BulkBucketList({
                 finding={f}
                 revalidateUrl={revalidateUrl}
                 workspace
+                showDueStatus={showDueStatus}
                 ownerName={f.owner_user_id ? ownerNames?.[f.owner_user_id] ?? null : null}
                 reason={
                   // MW-7: every queue states why the finding is in it — the

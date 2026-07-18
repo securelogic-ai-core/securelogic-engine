@@ -30,6 +30,7 @@ import {
 } from "../queueHandoff";
 import { RiskAcceptancePanel } from "./RiskAcceptancePanel";
 import { GovernanceBanner } from "./GovernanceBanner";
+import { GovernanceDecisionPanel } from "./GovernanceDecisionPanel";
 import { DECISION_TABS, DEFAULT_DECISION_TAB, isDecisionTab, type DecisionTab } from "./decisionTabs";
 import { legalDecisionTargets } from "./decisionTransitions";
 import { intelligenceEmptyCopy } from "./findingSourceCopy";
@@ -379,6 +380,10 @@ export function DecisionWorkspace({
   const [tab, setTab] = useState<DecisionTab>(
     initialTab && isDecisionTab(initialTab) ? initialTab : DEFAULT_DECISION_TAB
   );
+  // The Governance Decision panel — the REAL decision controls behind "Record
+  // decision" (options + consequences + rationale + confirm/cancel). The CTA
+  // used to be an in-page anchor, which scrolled but opened nothing.
+  const [decisionPanelOpen, setDecisionPanelOpen] = useState(false);
   // Guarded transitions can be legitimately refused (close guard, evidence
   // gate, separation of duties) — show the refusal instead of a silent no-op.
   const [actionError, setActionError] = useState<string | null>(null);
@@ -498,8 +503,11 @@ export function DecisionWorkspace({
                   </div>
                 )}
               </div>
-              <a
-                href="#governance-decision"
+              {/* Opens the ACTUAL decision controls (options, consequences,
+                  rationale, confirm/cancel) — not an in-page scroll. */}
+              <button
+                type="button"
+                onClick={() => setDecisionPanelOpen(true)}
                 style={{
                   background: "rgba(0,196,180,0.15)",
                   border: "1px solid rgba(0,196,180,0.4)",
@@ -508,12 +516,12 @@ export function DecisionWorkspace({
                   padding: "6px 12px",
                   fontSize: 13,
                   fontWeight: 600,
-                  textDecoration: "none",
+                  cursor: "pointer",
                   whiteSpace: "nowrap",
                 }}
               >
                 Record decision →
-              </a>
+              </button>
             </>
           ) : (
             // Provenance-only hand-off: fromLabel is non-null here (showHandoff true,
@@ -548,6 +556,19 @@ export function DecisionWorkspace({
             </>
           )}
         </div>
+      )}
+
+      {/* The Governance Decision panel — modal decision controls. Cancel/backdrop
+          records nothing; success refreshes the workspace with the new state. */}
+      {decisionPanelOpen && (
+        <GovernanceDecisionPanel
+          findingId={finding.id}
+          decisionState={decisionState}
+          operationalStatus={opStatus}
+          openActionCount={openActionCount}
+          riskAcceptanceActive={riskAcceptanceActive}
+          onClose={() => setDecisionPanelOpen(false)}
+        />
       )}
 
       {/* P1 — the LOUD governance banner, above everything. When the workflow is on and a

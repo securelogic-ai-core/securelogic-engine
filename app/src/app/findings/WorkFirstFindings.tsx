@@ -16,7 +16,16 @@ import Link from "next/link";
 import type { Finding, EntityFindingsResponse } from "@/lib/api";
 import { FindingCard } from "@/components/FindingCard";
 import BulkBucketList from "./BulkBucketList";
+import { FindingsQueueToolbar } from "./FindingsQueueToolbar";
 import { QUEUE_OVERLAP_NOTE } from "@/lib/findingLifecycleVocab";
+import {
+  buildPager,
+  clearAllFilters,
+  hasActiveFilters,
+  queueHref,
+  type QueueState,
+  type PinnableFilterKey,
+} from "./queueControls";
 import {
   OPS_GROUP_LABELS,
   bucketsInGroup,
@@ -192,6 +201,7 @@ export default function WorkFirstFindings({
   bucket,
   bucketFindings,
   bucketPage,
+  bucketQueue,
   entityQuery,
   entityResult,
 }: {
@@ -208,9 +218,121 @@ export default function WorkFirstFindings({
     range: { start: number; end: number };
     hrefs: { nextHref: string | null; prevHref: string | null };
   };
+  /**
+   * Queue-controls state for this bucket view (SECURELOGIC_FINDINGS_QUEUE_CONTROLS_ENABLED):
+   * the shared toolbar refines the bucket server-side. Absent = legacy keyset view.
+   */
+  bucketQueue?: {
+    state: QueueState;
+    pinned: PinnableFilterKey[];
+    total: number;
+    count: number;
+  };
   entityQuery?: string;
   entityResult?: EntityFindingsResponse | null;
 }) {
+  // Bucket view WITH the shared queue controls: same toolbar, same query model as
+  // /findings?queue=all — the bucket definition is the implicit, never-clearable
+  // filter; search/filter/sort/page refine WITHIN it and live in the URL.
+  if (mode === "bucket" && bucket && bucketQueue) {
+    const members = bucketFindings ?? [];
+    const { state, pinned, total, count } = bucketQueue;
+    const filtered = hasActiveFilters(state);
+    const pager = buildPager(state, total, { bucket: bucket.id });
+    return (
+      <>
+        <div className="mb-6">
+          <Link href="/findings" className="text-sm font-medium" style={{ color: "#00c4b4" }}>
+            ← Operations center
+          </Link>
+        </div>
+        <div className="mb-4">
+          <h2 className="text-lg font-bold" style={{ color: "#f1f5f9" }}>
+            {bucket.label}
+          </h2>
+          <p className="text-sm" style={{ color: "#94a3b8" }}>{bucket.ask}</p>
+        </div>
+        <FindingsQueueToolbar
+          state={state}
+          total={total}
+          count={count}
+          bucketId={bucket.id}
+          hiddenFilters={pinned}
+        />
+        {members.length === 0 ? (
+          <div
+            className="rounded-xl border p-10 text-center"
+            style={{ ...CARD, borderColor: filtered ? "#1e293b" : "rgba(34,197,94,0.2)" }}
+          >
+            {filtered ? (
+              <>
+                {/* An empty FILTERED queue is not a clear queue — say which, and
+                    offer the way back (bucket preserved; only user filters clear). */}
+                <p className="text-sm mb-3" style={{ color: "#94a3b8" }}>
+                  No findings in {bucket.label} match your search and filters.
+                </p>
+                <Link
+                  href={queueHref(clearAllFilters(state), { bucket: bucket.id })}
+                  className="text-xs font-medium"
+                  style={{ color: "#00c4b4" }}
+                >
+                  Clear all
+                </Link>
+              </>
+            ) : bucket.id === "my_work" ? (
+              <>
+                <p className="text-sm font-semibold mb-1" style={{ color: "#86efac" }}>
+                  Nothing is assigned to you right now.
+                </p>
+                <p className="text-xs mb-4" style={{ color: "#64748b" }}>
+                  Pick up work from the queues — assign a finding to yourself from its Decision Workspace.
+                </p>
+                <Link href="/findings" className="text-sm font-medium" style={{ color: "#00c4b4" }}>
+                  Go to the operations center →
+                </Link>
+              </>
+            ) : (
+              <p className="text-sm font-semibold" style={{ color: "#86efac" }}>
+                Queue clear — nothing waiting here.
+              </p>
+            )}
+          </div>
+        ) : (
+          <>
+            <BulkBucketList
+              findings={members}
+              revalidateUrl={`/findings?bucket=${bucket.id}`}
+              ownerNames={ownerNames}
+              bucketId={bucket.id}
+              showDueStatus
+            />
+            {/* Offset pager — URL carries bucket + page + all filter state, so Back
+                restores the exact queue and new-tab links carry provenance. */}
+            <div className="flex items-center justify-between mt-6">
+              {pager.prevHref ? (
+                <Link href={pager.prevHref} className="text-sm font-medium" style={{ color: "#00c4b4" }}>
+                  ← Previous
+                </Link>
+              ) : (
+                <span />
+              )}
+              <span className="text-xs" style={{ color: "#64748b" }}>
+                Page {pager.page} of {pager.pages}
+              </span>
+              {pager.nextHref ? (
+                <Link href={pager.nextHref} className="text-sm font-medium" style={{ color: "#00c4b4" }}>
+                  Next →
+                </Link>
+              ) : (
+                <span />
+              )}
+            </div>
+          </>
+        )}
+      </>
+    );
+  }
+
   if (mode === "bucket" && bucket) {
     const members = bucketFindings ?? [];
     const total = bucketPage?.total ?? members.length;

@@ -411,3 +411,172 @@ describe("ops center — the flag is a clean switch, not a blend", () => {
     expect(container.querySelector('a[href="/findings?status=closed"]')).not.toBeNull();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// Bucket queue controls (SECURELOGIC_FINDINGS_QUEUE_CONTROLS_ENABLED)
+// The SAME toolbar + server query model as /findings?queue=all, applied to
+// every findings-backed bucket. The bucket definition is the implicit filter:
+// user refinement composes with it and can never override it.
+// ─────────────────────────────────────────────────────────────────────
+
+describe("bucket queue controls — every findings bucket gets the shared toolbar", () => {
+  beforeEach(() => {
+    vi.stubEnv("SECURELOGIC_FINDINGS_QUEUE_CONTROLS_ENABLED", "true");
+  });
+
+  it.each(FINDINGS_BUCKETS)(
+    "$label: renders search/sort/pagination controls and fetches the bucket's population",
+    async (b) => {
+      api.getFindings.mockResolvedValue(aFindingsResponse(members(3), { total: 3 }));
+
+      await renderPage(FindingsPage, { searchParams: sp({ bucket: b.id }) });
+
+      // The shared toolbar is present…
+      expect(screen.getByLabelText("Search findings")).toBeInTheDocument();
+      expect(screen.getByLabelText("Sort findings")).toBeInTheDocument();
+      // …and the fetch is the bucket's implicit params + the queue model's
+      // sort/limit (urgency default, offset paging).
+      expect(api.getFindings).toHaveBeenCalledWith(expect.anything(), {
+        ...b.params,
+        sort: "urgency",
+        limit: BUCKET_PAGE_SIZE,
+      });
+    }
+  );
+
+  it("combined search + filters + page refine WITHIN the bucket, server-side", async () => {
+    api.getFindings.mockResolvedValue(aFindingsResponse(members(BUCKET_PAGE_SIZE), { total: 60 }));
+
+    await renderPage(FindingsPage, {
+      searchParams: sp({
+        bucket: "needs_decision",
+        q: "azure",
+        severity: "High",
+        page: "2",
+      }),
+    });
+
+    expect(api.getFindings).toHaveBeenCalledWith(expect.anything(), {
+      q: "azure",
+      severity: "High",
+      offset: BUCKET_PAGE_SIZE,
+      decision_state: "needs_review", // the bucket's implicit filter
+      active: true,
+      sort: "urgency",
+      limit: BUCKET_PAGE_SIZE,
+    });
+    // The result count is server truth.
+    expect(screen.getByText(`26–50 of 60`)).toBeInTheDocument();
+  });
+
+  it("membership is ENFORCED: a hand-edited governance param cannot widen the bucket", async () => {
+    api.getFindings.mockResolvedValue(aFindingsResponse(members(2), { total: 2 }));
+
+    await renderPage(FindingsPage, {
+      searchParams: sp({ bucket: "needs_decision", governance: "resolved" }),
+    });
+
+    // The bucket's decision_state wins; the URL's governance never reaches the engine.
+    // (The page also makes the legacy header fetch — pick the bucket fetch by its limit.)
+    const call = api.getFindings.mock.calls.find(
+      (c: unknown[]) => (c[1] as { limit?: number })?.limit === BUCKET_PAGE_SIZE
+    )?.[1] as Record<string, unknown>;
+    expect(call.decision_state).toBe("needs_review");
+    // And the pinned Governance control is not rendered as a (lying) control.
+    expect(screen.queryByLabelText("Governance")).toBeNull();
+  });
+
+  it("pinned axes are hidden per bucket: domain in a domain bucket, assigned-to-me in My Work", async () => {
+    api.getFindings.mockResolvedValue(aFindingsResponse(members(1), { total: 1 }));
+
+    await renderPage(FindingsPage, { searchParams: sp({ bucket: "regulatory" }) });
+    expect(screen.queryByLabelText("Domain")).toBeNull();
+    expect(screen.getByLabelText("Severity")).toBeInTheDocument();
+  });
+
+  it("pagination links carry the bucket AND the full filter state", async () => {
+    api.getFindings.mockResolvedValue(aFindingsResponse(members(BUCKET_PAGE_SIZE), { total: 60 }));
+
+    const { container } = await renderPage(FindingsPage, {
+      searchParams: sp({ bucket: "sla_breached", q: "azure" }),
+    });
+
+    const nextLink = Array.from(container.querySelectorAll("a")).find((a) =>
+      a.textContent?.includes("Next")
+    );
+    expect(nextLink?.getAttribute("href")).toContain("bucket=sla_breached");
+    expect(nextLink?.getAttribute("href")).toContain("q=azure");
+    expect(nextLink?.getAttribute("href")).toContain("page=2");
+    expect(nextLink?.getAttribute("href")).not.toContain("queue=all");
+  });
+
+  it("empty FILTERED results say so and Clear all preserves the bucket's implicit filter", async () => {
+    api.getFindings.mockResolvedValue(aFindingsResponse([], { total: 0 }));
+
+    const { container } = await renderPage(FindingsPage, {
+      searchParams: sp({ bucket: "needs_decision", q: "nonexistent" }),
+    });
+
+    expect(
+      screen.getByText(/No findings in Needs Governance Decision match your search and filters/)
+    ).toBeInTheDocument();
+    // Clear all clears only USER filters — the href keeps the bucket.
+    const clear = Array.from(container.querySelectorAll("a")).filter((a) =>
+      a.textContent?.includes("Clear all")
+    );
+    expect(clear.length).toBeGreaterThan(0);
+    for (const a of clear) {
+      expect(a.getAttribute("href")).toContain("bucket=needs_decision");
+      expect(a.getAttribute("href")).not.toContain("q=");
+    }
+  });
+
+  it("an empty UNFILTERED bucket still reads as a clear queue, not a filter dead-end", async () => {
+    api.getFindings.mockResolvedValue(aFindingsResponse([], { total: 0 }));
+
+    await renderPage(FindingsPage, { searchParams: sp({ bucket: "ready_to_close" }) });
+
+    expect(screen.getByText(/Queue clear — nothing waiting here/)).toBeInTheDocument();
+    expect(screen.queryByText(/match your search and filters/)).toBeNull();
+  });
+
+  it("cards keep due labels, Owner: Unassigned, membership reason, and new-tab provenance", async () => {
+    api.getFindings.mockResolvedValue(
+      aFindingsResponse(
+        [aFinding({ id: "f-7", title: "Unowned undated finding", due_date: null, owner_user_id: null })],
+        { total: 1 }
+      )
+    );
+
+    const { container } = await renderPage(FindingsPage, {
+      searchParams: sp({ bucket: "needs_decision" }),
+    });
+
+    // Explicit due label incl. the no-due-date case (never blank). The toolbar's
+    // Due-status select also offers "No due date" — assert the CARD's label
+    // (a span), not the select option.
+    expect(
+      screen.getAllByText("No due date").some((el) => el.tagName === "SPAN")
+    ).toBe(true);
+    // Ownership is an explicit axis, not a bare status word.
+    expect(container.textContent).toContain("Owner: Unassigned");
+    // Why the finding is in THIS queue.
+    expect(screen.getByText("No governance decision recorded yet")).toBeInTheDocument();
+    // New-tab provenance in the URL (?from=<bucket>), not client memory.
+    expect(container.querySelector('a[href*="/findings/f-7?from=needs_decision"]')).not.toBeNull();
+  });
+
+  it("flag OFF: the bucket view keeps the legacy keyset path with NO toolbar", async () => {
+    vi.stubEnv("SECURELOGIC_FINDINGS_QUEUE_CONTROLS_ENABLED", "false");
+    api.getFindings.mockResolvedValue(aFindingsResponse(members(2), { total: 2 }));
+
+    await renderPage(FindingsPage, { searchParams: sp({ bucket: "sla_breached" }) });
+
+    expect(screen.queryByLabelText("Search findings")).toBeNull();
+    expect(api.getFindings).toHaveBeenCalledWith(expect.anything(), {
+      overdue: true,
+      sort: "created",
+      limit: BUCKET_PAGE_SIZE,
+    });
+  });
+});

@@ -16,6 +16,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   type QueueState,
+  type PinnableFilterKey,
   SEVERITY_OPTIONS,
   DOMAIN_OPTIONS,
   GOVERNANCE_OPTIONS,
@@ -68,15 +69,28 @@ export function FindingsQueueToolbar({
   state,
   total,
   count,
+  bucketId,
+  hiddenFilters,
 }: {
   state: QueueState;
   total: number;
   count: number;
+  /**
+   * The Operations Center bucket this toolbar refines. Every URL it produces
+   * carries `bucket=<id>` instead of `queue=all`, so search/filter/sort/page —
+   * and Clear all — stay INSIDE the bucket (its definition is the implicit,
+   * never-clearable filter). Absent = the browse queue, unchanged.
+   */
+  bucketId?: string;
+  /** Axes the bucket definition already pins — hidden, never lying controls. */
+  hiddenFilters?: readonly PinnableFilterKey[];
 }) {
   const router = useRouter();
   const [searchText, setSearchText] = useState(state.q);
 
-  const go = (next: QueueState) => router.push(queueHref(next));
+  const extra = bucketId ? { bucket: bucketId } : undefined;
+  const hidden = new Set(hiddenFilters ?? []);
+  const go = (next: QueueState) => router.push(queueHref(next, extra));
 
   const submitSearch = () => {
     const q = searchText.trim();
@@ -143,26 +157,34 @@ export function FindingsQueueToolbar({
           onChange={(v) => go(withField(state, "severity", v))}
           options={SEVERITY_OPTIONS.map((s) => ({ value: s, label: s }))}
         />
-        <FilterSelect
-          label="Domain" value={state.domain}
-          onChange={(v) => go(withField(state, "domain", v))}
-          options={DOMAIN_OPTIONS.map((d) => ({ value: d, label: d }))}
-        />
-        <FilterSelect
-          label="Governance" value={state.governance}
-          onChange={(v) => go(withField(state, "governance", v))}
-          options={GOVERNANCE_OPTIONS.map((g) => ({ value: g, label: GOVERNANCE_LABELS[g] }))}
-        />
-        <FilterSelect
-          label="Operational" value={state.operational}
-          onChange={(v) => go(withField(state, "operational", v))}
-          options={OPERATIONAL_OPTIONS.map((o) => ({ value: o, label: OPERATIONAL_LABELS[o] }))}
-        />
-        <FilterSelect
-          label="Due status" value={state.due}
-          onChange={(v) => go(withField(state, "due", v))}
-          options={DUE_OPTIONS.map((d) => ({ value: d, label: DUE_LABELS[d] }))}
-        />
+        {!hidden.has("domain") && (
+          <FilterSelect
+            label="Domain" value={state.domain}
+            onChange={(v) => go(withField(state, "domain", v))}
+            options={DOMAIN_OPTIONS.map((d) => ({ value: d, label: d }))}
+          />
+        )}
+        {!hidden.has("governance") && (
+          <FilterSelect
+            label="Governance" value={state.governance}
+            onChange={(v) => go(withField(state, "governance", v))}
+            options={GOVERNANCE_OPTIONS.map((g) => ({ value: g, label: GOVERNANCE_LABELS[g] }))}
+          />
+        )}
+        {!hidden.has("operational") && (
+          <FilterSelect
+            label="Operational" value={state.operational}
+            onChange={(v) => go(withField(state, "operational", v))}
+            options={OPERATIONAL_OPTIONS.map((o) => ({ value: o, label: OPERATIONAL_LABELS[o] }))}
+          />
+        )}
+        {!hidden.has("due") && (
+          <FilterSelect
+            label="Due status" value={state.due}
+            onChange={(v) => go(withField(state, "due", v))}
+            options={DUE_OPTIONS.map((d) => ({ value: d, label: DUE_LABELS[d] }))}
+          />
+        )}
         <div>
           <label style={LABEL} htmlFor="created-from">Created from</label>
           <input
@@ -183,7 +205,9 @@ export function FindingsQueueToolbar({
 
       {/* Row 3: boolean toggles */}
       <div className="flex items-center gap-2 flex-wrap mb-3">
-        <Toggle label="Assigned to me" on={state.assignedToMe} onClick={() => go(withField(state, "assignedToMe", !state.assignedToMe))} />
+        {!hidden.has("assignedToMe") && (
+          <Toggle label="Assigned to me" on={state.assignedToMe} onClick={() => go(withField(state, "assignedToMe", !state.assignedToMe))} />
+        )}
         <Toggle label="Has remediation action" on={state.hasAction} onClick={() => go(withField(state, "hasAction", !state.hasAction))} />
         <Toggle label="Has evidence" on={state.hasEvidence} onClick={() => go(withField(state, "hasEvidence", !state.hasEvidence))} />
       </div>
@@ -206,8 +230,10 @@ export function FindingsQueueToolbar({
             </button>
           ))}
           {hasActiveFilters(state) && (
+            /* Clears the USER's filters only — in a bucket, the href keeps
+               bucket=<id>, so the bucket's implicit filter is never removed. */
             <Link
-              href={queueHref(clearAllFilters(state))}
+              href={queueHref(clearAllFilters(state), extra)}
               className="text-xs font-medium"
               style={{ color: "#94a3b8", textDecoration: "underline" }}
             >
