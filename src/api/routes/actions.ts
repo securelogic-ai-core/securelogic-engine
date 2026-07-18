@@ -750,4 +750,168 @@ router.patch(
   })
 );
 
+/* =========================================================
+   POST /api/actions/:id/unblock
+   Explicit, auditable Blocked → In Progress transition.
+
+   Unblock is a distinct lifecycle transition, not a generic field PATCH:
+   before this route a client "unblocked" by PATCHing {status:"in_progress"},
+   which (a) was allowed from ANY state, so an action that was never blocked
+   could be "unblocked", and (b) recorded the same action.status_changed event
+   as a plain Start — the blocker context vanished with no auditable trace of
+   what had been resolved.
+
+   This route:
+     - refuses the transition unless the action is currently `blocked`
+       (409 action_not_blocked) — the guard the generic PATCH lacked;
+     - snapshots the prior blocker metadata and records it on a dedicated
+       `action.unblocked` audit event (actor + timestamp from the audit row),
+       so the resolved blocker is preserved in history even if the action is
+       later re-blocked with new details;
+     - LEAVES the blocked_* columns on the row (still queryable) — the
+       transition never destroys the metadata it is resolving;
+     - runs the same child→parent finding recompute as any status write.
+
+   Org-scoped throughout: the SELECT/UPDATE both require organization_id, so a
+   cross-tenant call 404s and changes nothing.
+   ========================================================= */
+
+router.post(
+  "/actions/:id/unblock",
+  requireApiKey,
+  attachOrganizationContext,
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const actionId = String(req.params.id ?? "").trim();
+      if (!actionId) {
+        res.status(400).json({ error: "action_id_required" });
+        return;
+      }
+
+      // Load + row-lock inside the tenant transaction so a concurrent unblock
+      // cannot double-fire the transition. Distinguishes 404 (absent / other
+      // org) from 409 (present but not blocked).
+      const existing = await pg.query(
+        `
+        SELECT id, status, source_type, source_id,
+               blocked_reason, blocked_dependency, blocked_owner_user_id,
+               blocked_expected_unblock_date
+          FROM actions
+         WHERE id = $1
+           AND organization_id = $2
+         FOR UPDATE
+        `,
+        [actionId, organizationId]
+      );
+
+      if ((existing.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "action_not_found" });
+        return;
+      }
+
+      const current = existing.rows[0];
+      if (current.status !== "blocked") {
+        res.status(409).json({
+          error: "action_not_blocked",
+          status: current.status ?? null,
+        });
+        return;
+      }
+
+      // Snapshot BEFORE the write — this is the blocker being resolved. The
+      // columns stay on the row; the snapshot is what the unblock event carries
+      // so the history is self-contained across future re-blocks.
+      const blockerSnapshot = {
+        blocked_reason: current.blocked_reason ?? null,
+        blocked_dependency: current.blocked_dependency ?? null,
+        blocked_owner_user_id: current.blocked_owner_user_id ?? null,
+        blocked_expected_unblock_date: current.blocked_expected_unblock_date ?? null,
+      };
+
+      const result = await pg.query(
+        `
+        UPDATE actions
+           SET status = 'in_progress', updated_at = NOW()
+         WHERE id = $1
+           AND organization_id = $2
+           AND status = 'blocked'
+        RETURNING
+          id, organization_id, title, source_type, source_id, priority,
+          status, owner_user_id, due_date, updated_at, completed_at,
+          blocked_reason, blocked_dependency, blocked_owner_user_id,
+          blocked_expected_unblock_date
+        `,
+        [actionId, organizationId]
+      );
+
+      if ((result.rowCount ?? 0) === 0) {
+        // Lost a race with a concurrent unblock — the row already moved off
+        // 'blocked'. Same contract as the pre-check.
+        res.status(409).json({ error: "action_not_blocked" });
+        return;
+      }
+
+      // The unblock lifecycle event — distinct from a plain status flip, with
+      // actor + timestamp (audit row) and the resolved blocker preserved.
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        actorUserId: (req as any).userId ?? null,
+        eventType: "action.unblocked",
+        resourceType: "action",
+        resourceId: actionId,
+        payload: {
+          from: "blocked",
+          to: "in_progress",
+          ...blockerSnapshot,
+        },
+        ipAddress: req.ip ?? null,
+      });
+
+      // Child→parent cascade, identical to the PATCH status path: recompute the
+      // parent finding's derived operational_status in THIS tenant transaction.
+      if (result.rows[0].source_type === "finding" && result.rows[0].source_id) {
+        const parentFindingId = String(result.rows[0].source_id);
+        const recompute = await recomputeFindingOperationalStatus(
+          organizationId,
+          parentFindingId,
+          {
+            actorUserId: ((req as any).userId as string | undefined) ?? null,
+            actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+          }
+        );
+        if (recompute.changed && recompute.auditEvent) {
+          writeAuditEvent({
+            organizationId,
+            actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+            actorUserId: (req as any).userId ?? null,
+            eventType: recompute.auditEvent,
+            resourceType: "finding",
+            resourceId: parentFindingId,
+            payload: { from: recompute.fromState ?? null, to: recompute.toState ?? null, trigger: "action.unblocked" },
+            ipAddress: req.ip ?? null,
+          });
+        }
+      }
+
+      res.status(200).json({ action: result.rows[0] });
+    } catch (err) {
+      logger.error(
+        { event: "action_unblock_failed", err },
+        "POST /api/actions/:id/unblock failed"
+      );
+      res.status(500).json({ error: "action_unblock_failed" });
+    }
+  })
+);
+
 export default router;

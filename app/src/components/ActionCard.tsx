@@ -124,6 +124,13 @@ interface Props {
    * is the status-only card it has always been (legacy callers unaffected).
    */
   onPlanChange?: (actionId: string, patch: ActionPatch) => Promise<void>;
+  /**
+   * Explicit Unblock transition (Blocked → In Progress). Optional: when omitted
+   * the card keeps the legacy bare status flip (no confirmation), so status-only
+   * callers are unaffected. When provided, Unblock opens a Confirm/Cancel dialog
+   * and calls the dedicated engine endpoint, which preserves blocker history.
+   */
+  onUnblock?: (actionId: string) => Promise<void>;
   owners?: ActionOwnerOption[];
 }
 
@@ -132,12 +139,13 @@ export function ActionCard({
   findingId: _findingId,
   onStatusChange,
   onPlanChange,
+  onUnblock,
   owners,
 }: Props) {
   const [isPending, startTransition] = useTransition();
   const [optimisticStatus, setOptimisticStatus] = useState(action.status);
-  // One editor open at a time: the reassign/reschedule dialog or the block dialog.
-  const [editor, setEditor] = useState<null | "plan" | "block">(null);
+  // One editor open at a time: reassign/reschedule, block, or unblock-confirm.
+  const [editor, setEditor] = useState<null | "plan" | "block" | "unblock">(null);
 
   // R-11: staged edit state — nothing commits until Save (no more auto-commit onChange).
   const [planOwner, setPlanOwner] = useState<string>(action.owner_user_id ?? "");
@@ -154,6 +162,7 @@ export function ActionCard({
 
   const transitions = STATUS_TRANSITIONS[optimisticStatus] ?? [];
   const canPlan = typeof onPlanChange === "function";
+  const canConfirmUnblock = typeof onUnblock === "function";
 
   function handleTransition(newStatus: Action["status"]) {
     const prev = optimisticStatus;
@@ -176,6 +185,34 @@ export function ActionCard({
     } else {
       handleTransition("blocked");
     }
+  }
+
+  // Unblock is an explicit, auditable transition. With the confirm capability,
+  // open a Confirm/Cancel dialog (nothing changes until Confirm, and Cancel
+  // leaves the action blocked). Without it (legacy status-only card), keep the
+  // bare status flip so those callers are byte-identical.
+  function handleUnblockClick() {
+    if (canConfirmUnblock) {
+      setEditor("unblock");
+    } else {
+      handleTransition("in_progress");
+    }
+  }
+
+  function confirmUnblock() {
+    if (!onUnblock) return;
+    const prev = optimisticStatus;
+    setOptimisticStatus("in_progress");
+    startTransition(async () => {
+      try {
+        await onUnblock(action.id);
+        setEditor(null);
+      } catch {
+        // The transition failed on the server (e.g. no longer blocked) — revert
+        // the optimistic flip and leave the dialog so the user can retry/cancel.
+        setOptimisticStatus(prev);
+      }
+    });
   }
 
   function openPlan() {
@@ -314,7 +351,13 @@ export function ActionCard({
           {transitions.map((t) => (
             <button
               key={t.value}
-              onClick={() => (t.value === "blocked" ? handleBlockClick() : handleTransition(t.value))}
+              onClick={() =>
+                t.value === "blocked"
+                  ? handleBlockClick()
+                  : t.label === "Unblock"
+                    ? handleUnblockClick()
+                    : handleTransition(t.value)
+              }
               disabled={isPending}
               style={BUTTON_STYLE}
               title={TRANSITION_EFFECT[t.label] ?? undefined}
@@ -398,6 +441,33 @@ export function ActionCard({
           <div className="flex gap-2 mt-3">
             <button onClick={saveBlock} disabled={isPending} style={{ ...BUTTON_STYLE, borderColor: "#fca5a5", color: "#fca5a5" }}>Block action</button>
             <button onClick={() => { setEditor(null); setBlkError(null); }} disabled={isPending} style={BUTTON_STYLE}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Unblock CONFIRMATION — an explicit Confirm/Cancel step. Cancel leaves the
+          action Blocked; Confirm transitions it to In Progress via the dedicated
+          endpoint, which records the unblock and preserves the blocker below in
+          the activity history. */}
+      {canConfirmUnblock && editor === "unblock" && (
+        <div className="mt-3 pt-3" style={{ borderTop: "1px solid #1e293b" }}>
+          <p className="text-xs mb-2" style={{ color: "#93c5fd" }}>
+            Unblock this action? It returns to In Progress. The blocker is preserved in the activity history.
+          </p>
+          {(action.blocked_reason || action.blocked_dependency || action.blocked_owner_user_id || action.blocked_expected_unblock_date) && (
+            <div
+              className="text-xs mb-2 p-2 rounded"
+              style={{ background: "rgba(148,163,184,0.06)", border: "1px solid #1e293b", color: "#94a3b8" }}
+            >
+              {action.blocked_reason && <div><span style={{ color: "#fca5a5" }}>Resolving blocker:</span> {action.blocked_reason}</div>}
+              {action.blocked_dependency && <div>Depends on: {action.blocked_dependency}</div>}
+              {action.blocked_owner_user_id && <div>Blocker owner: {blockOwnerLabel}</div>}
+              {action.blocked_expected_unblock_date && <div>Expected unblock: {fmt(action.blocked_expected_unblock_date)}</div>}
+            </div>
+          )}
+          <div className="flex gap-2 mt-3">
+            <button onClick={confirmUnblock} disabled={isPending} style={{ ...BUTTON_STYLE, borderColor: "#93c5fd", color: "#93c5fd" }}>Confirm unblock</button>
+            <button onClick={() => setEditor(null)} disabled={isPending} style={BUTTON_STYLE}>Cancel</button>
           </div>
         </div>
       )}

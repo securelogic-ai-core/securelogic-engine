@@ -37,10 +37,12 @@ const owners = [
 
 let onStatusChange: (actionId: string, newStatus: Action["status"]) => Promise<void>;
 let onPlanChange: (actionId: string, patch: ActionPatch) => Promise<void>;
+let onUnblock: (actionId: string) => Promise<void>;
 
 beforeEach(() => {
   onStatusChange = vi.fn(async () => {});
   onPlanChange = vi.fn(async () => {});
+  onUnblock = vi.fn(async () => {});
 });
 
 describe("R-10 — Block captures structured metadata", () => {
@@ -108,6 +110,61 @@ describe("R-10 — Block captures structured metadata", () => {
     render(<ActionCard action={anAction()} findingId="f-1" onStatusChange={onStatusChange} />);
     fireEvent.click(screen.getByRole("button", { name: "Block" }));
     expect(onStatusChange).toHaveBeenCalledWith("a-1", "blocked");
+  });
+});
+
+describe("Unblock — explicit Confirm/Cancel, not a bare status flip", () => {
+  function blockedAction() {
+    return anAction({
+      status: "blocked",
+      blocked_reason: "Awaiting vendor",
+      blocked_dependency: "CR-9",
+    });
+  }
+
+  it("clicking Unblock opens a confirmation instead of transitioning immediately", () => {
+    render(
+      <ActionCard action={blockedAction()} findingId="f-1" onStatusChange={onStatusChange} onPlanChange={onPlanChange} onUnblock={onUnblock} owners={owners} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Unblock" }));
+    // No transition has fired — the confirmation dialog is shown.
+    expect(onUnblock).not.toHaveBeenCalled();
+    expect(onStatusChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Confirm unblock" })).toBeInTheDocument();
+    // The blocker being resolved is shown in the dialog so the confirmation is
+    // not a mystery click (the "Resolving blocker:" label is dialog-only).
+    expect(screen.getByText(/Resolving blocker:/)).toBeInTheDocument();
+  });
+
+  it("Cancel leaves the action Blocked and calls nothing", () => {
+    render(
+      <ActionCard action={blockedAction()} findingId="f-1" onStatusChange={onStatusChange} onPlanChange={onPlanChange} onUnblock={onUnblock} owners={owners} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Unblock" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onUnblock).not.toHaveBeenCalled();
+    expect(onStatusChange).not.toHaveBeenCalled();
+    // Still Blocked — the Unblock control is back, the status pill unchanged.
+    expect(screen.getByRole("button", { name: "Unblock" })).toBeInTheDocument();
+    expect(screen.getByText("Blocked")).toBeInTheDocument();
+  });
+
+  it("Confirm calls onUnblock exactly once", () => {
+    render(
+      <ActionCard action={blockedAction()} findingId="f-1" onStatusChange={onStatusChange} onPlanChange={onPlanChange} onUnblock={onUnblock} owners={owners} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Unblock" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm unblock" }));
+    expect(onUnblock).toHaveBeenCalledTimes(1);
+    expect(onUnblock).toHaveBeenCalledWith("a-1");
+    // The bare status flip must NOT have fired.
+    expect(onStatusChange).not.toHaveBeenCalled();
+  });
+
+  it("without the confirm capability (legacy card), Unblock stays a bare status flip", () => {
+    render(<ActionCard action={blockedAction()} findingId="f-1" onStatusChange={onStatusChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "Unblock" }));
+    expect(onStatusChange).toHaveBeenCalledWith("a-1", "in_progress");
   });
 });
 

@@ -306,6 +306,47 @@ export async function updateActionAction(
 }
 
 /**
+ * Unblock a remediation action — an explicit, auditable Blocked → In Progress
+ * transition (POST /api/actions/:id/unblock), NOT a bare status PATCH.
+ *
+ * The engine refuses the transition unless the action is currently blocked
+ * (409 action_not_blocked) and records a dedicated `action.unblocked` lifecycle
+ * event that preserves the prior blocker metadata. This wrapper surfaces the
+ * "no longer blocked" refusal in human language (it can only happen on a stale
+ * client) and revalidates the finding so the Activity feed shows the unblock.
+ */
+export async function unblockAction(
+  findingId: string,
+  actionId: string
+): Promise<{ error?: string }> {
+  const token = await getToken();
+  if (!token) return { error: "Not authenticated" };
+
+  try {
+    const res = await fetch(`${ENGINE_URL}/api/actions/${actionId}/unblock`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (body.error === "action_not_blocked") {
+        return {
+          error:
+            "This action is no longer blocked — refresh to see its current state.",
+        };
+      }
+      return { error: body.error ?? "Failed to unblock action" };
+    }
+  } catch {
+    return { error: "Network error" };
+  }
+
+  revalidatePath(`/findings/${findingId}`);
+  return {};
+}
+
+/**
  * Assign the FINDING itself to an owner. PATCH /api/findings/:id has accepted
  * owner_user_id since 20260410 (routes/findings.ts:1170), but the only way to set
  * it was a bulk operation from the list view that assigned to yourself. From the
