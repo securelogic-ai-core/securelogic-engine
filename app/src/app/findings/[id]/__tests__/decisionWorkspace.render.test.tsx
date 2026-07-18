@@ -446,13 +446,18 @@ describe("Decision Workspace — remediation reflects the linked actions", () =>
 
     await openRemediationTab();
     expect(screen.getByText("Remediation Actions (1)")).toBeInTheDocument();
-    // The action's own status badge (not the finding-status <option> of the same
-    // word, nor the "Closed" stage label in the lifecycle stepper).
+    // The action's own status badge now reads "Completed" — "Closed" is reserved
+    // for the terminal FINDING state (the legacy-status <option> and the lifecycle
+    // "Closed" stage), never a remediation action.
+    expect(
+      screen.getAllByText("Completed").filter((el) => el.tagName === "SPAN")
+    ).toHaveLength(1);
+    // No remediation-action badge says "Closed" (only the lifecycle stepper does).
     expect(
       screen
         .getAllByText("Closed")
         .filter((el) => el.tagName === "SPAN" && !el.closest('[aria-label="Finding lifecycle"]'))
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     expect(screen.getByText(/Completed Jun 2, 2026/)).toBeInTheDocument();
   });
 

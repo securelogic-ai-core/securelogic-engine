@@ -23,6 +23,7 @@ import {
   updateActionStatusAction,
   updateActionAction,
   unblockAction,
+  completeAction,
 } from "./actions";
 
 // ─────────────────────────────────────────────────────────────
@@ -345,6 +346,10 @@ function RemediationActionsSection({
               onUnblock={owners ? async (actionId) => {
                 "use server";
                 await unblockAction(finding.id, actionId);
+              } : undefined}
+              onComplete={owners ? async (actionId, note) => {
+                "use server";
+                await completeAction(finding.id, actionId, note);
               } : undefined}
             />
           ))}

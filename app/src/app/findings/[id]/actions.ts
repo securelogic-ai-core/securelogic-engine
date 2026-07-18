@@ -258,6 +258,49 @@ export async function updateActionStatusAction(
 }
 
 /**
+ * Complete a remediation action (→ Completed) with an optional completion note.
+ *
+ * Distinct from a bare status PATCH only in that it carries the note: the engine
+ * records it on the `action.status_changed` audit event (actor, timestamp, action
+ * title, completion note, prior → new status) so the completion is fully auditable.
+ * The note is optional under current policy; an empty note is simply omitted.
+ *
+ * Marking the action complete never closes the FINDING. The engine's child→parent
+ * cascade advances the finding's operational_status to `remediated` once every
+ * linked action is terminal — surfacing the governance decision — and the caller
+ * refreshes the workspace so that transition is visible immediately.
+ */
+export async function completeAction(
+  findingId: string,
+  actionId: string,
+  note?: string
+): Promise<{ error?: string }> {
+  const token = await getToken();
+  if (!token) return { error: "Not authenticated" };
+
+  const trimmed = note?.trim();
+  try {
+    const res = await fetch(`${ENGINE_URL}/api/actions/${actionId}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        status: "closed",
+        ...(trimmed ? { completion_note: trimmed } : {}),
+      }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { error: body.error ?? "Failed to complete action" };
+    }
+  } catch {
+    return { error: "Network error" };
+  }
+
+  revalidatePath(`/findings/${findingId}`);
+  return {};
+}
+
+/**
  * Update any field of a remediation action the engine already accepts.
  *
  * PATCH /api/actions/:id has been `updatable: ["status","priority","owner_user_id",

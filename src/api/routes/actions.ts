@@ -553,6 +553,22 @@ router.patch(
       const updates: string[] = [];
       const values: unknown[] = [];
 
+      // Completion note — an optional, human-authored note recorded ON the audit
+      // event when an action is completed (status → closed). It is NOT a column
+      // (no schema change): it exists only to make the completion auditable
+      // (actor + timestamp + title + prior→new status + note). Validated here,
+      // applied to the audit payload below. Ignored for non-closing writes.
+      let completionNote: string | null = null;
+      if ("completion_note" in body) {
+        const v = body["completion_note"];
+        if (v !== null && typeof v !== "string") {
+          res.status(400).json({ error: "completion_note_must_be_string_or_null" });
+          return;
+        }
+        const trimmed = typeof v === "string" ? v.trim() : "";
+        completionNote = trimmed.length > 0 ? trimmed : null;
+      }
+
       if ("status" in body) {
         const status = body["status"];
         if (!isNonEmptyString(status) || !VALID_STATUSES.has(status)) {
@@ -715,6 +731,12 @@ router.patch(
       if (statusChanged) {
         auditPayload.from = (row.old_status as string | null) ?? null;
         auditPayload.to = updatedStatus ?? null;
+      }
+      // Completion note travels with the completion event (status → closed), so the
+      // append-only trail records WHY/HOW the remediation was completed alongside
+      // WHO and WHEN. Only meaningful on a completion; never attached elsewhere.
+      if (statusChanged && updatedStatus === "closed" && completionNote) {
+        auditPayload.completion_note = completionNote;
       }
       // A block must carry its WHY into the append-only trail (reason, dependency,
       // blocker owner, expected unblock date) — otherwise the blocker vanishes

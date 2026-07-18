@@ -35,14 +35,23 @@ const owners = [
   { id: "u-2", label: "Ben Sec" },
 ];
 
+// next/navigation is not available in jsdom; the ActionCard calls
+// useRouter().refresh() after a completion. A stub is enough — the assertions
+// below care that onComplete fired with the right note, not about navigation.
+const refresh = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
+
 let onStatusChange: (actionId: string, newStatus: Action["status"]) => Promise<void>;
 let onPlanChange: (actionId: string, patch: ActionPatch) => Promise<void>;
 let onUnblock: (actionId: string) => Promise<void>;
+let onComplete: (actionId: string, note: string) => Promise<void>;
 
 beforeEach(() => {
+  refresh.mockClear();
   onStatusChange = vi.fn(async () => {});
   onPlanChange = vi.fn(async () => {});
   onUnblock = vi.fn(async () => {});
+  onComplete = vi.fn(async () => {});
 });
 
 describe("R-10 — Block captures structured metadata", () => {
@@ -187,6 +196,78 @@ describe("R-11 / R-14 — reassign is a Save/Cancel dialog, no ambiguous Done", 
     expect(onPlanChange).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(onPlanChange).toHaveBeenCalledWith("a-1", expect.objectContaining({ owner_user_id: "u-2" }));
+  });
+});
+
+describe("Complete — confirm dialog, 'Completed' label, optional note", () => {
+  it("renders a completed action as 'Completed', never 'Closed'", () => {
+    render(
+      <ActionCard
+        action={anAction({ status: "closed" })}
+        findingId="f-1"
+        onStatusChange={onStatusChange}
+        onPlanChange={onPlanChange}
+        onComplete={onComplete}
+        owners={owners}
+      />,
+    );
+    // "Closed" is reserved for the terminal FINDING state — an action reads "Completed".
+    expect(screen.getByText("Completed")).toBeInTheDocument();
+    expect(screen.queryByText("Closed")).toBeNull();
+  });
+
+  it("clicking Complete opens a confirmation instead of transitioning immediately", () => {
+    render(
+      <ActionCard action={anAction()} findingId="f-1" onStatusChange={onStatusChange} onPlanChange={onPlanChange} onComplete={onComplete} owners={owners} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Complete" }));
+    // No transition has fired — the confirmation dialog is shown.
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(onStatusChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Confirm complete" })).toBeInTheDocument();
+  });
+
+  it("Cancel leaves the action unchanged and calls nothing", () => {
+    render(
+      <ActionCard action={anAction()} findingId="f-1" onStatusChange={onStatusChange} onPlanChange={onPlanChange} onComplete={onComplete} owners={owners} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Complete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(onStatusChange).not.toHaveBeenCalled();
+    // Still In Progress — the Complete control is back, the status pill unchanged.
+    expect(screen.getByRole("button", { name: "Complete" })).toBeInTheDocument();
+    expect(screen.getByText("In Progress")).toBeInTheDocument();
+  });
+
+  it("Confirm calls onComplete once with the trimmed completion note", async () => {
+    render(
+      <ActionCard action={anAction()} findingId="f-1" onStatusChange={onStatusChange} onPlanChange={onPlanChange} onComplete={onComplete} owners={owners} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Complete" }));
+    fireEvent.change(screen.getByPlaceholderText(/Patched to/i), { target: { value: "  Verified in staging  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm complete" }));
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(onComplete).toHaveBeenCalledWith("a-1", "Verified in staging");
+    // The bare status flip must NOT have fired — completion goes through onComplete.
+    expect(onStatusChange).not.toHaveBeenCalled();
+  });
+
+  it("Confirm with no note sends an empty string (note is optional)", () => {
+    render(
+      <ActionCard action={anAction()} findingId="f-1" onStatusChange={onStatusChange} onPlanChange={onPlanChange} onComplete={onComplete} owners={owners} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Complete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm complete" }));
+    expect(onComplete).toHaveBeenCalledWith("a-1", "");
+  });
+
+  it("without the complete capability (legacy card), Complete stays a bare status flip", () => {
+    render(<ActionCard action={anAction()} findingId="f-1" onStatusChange={onStatusChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "Complete" }));
+    // No dialog — the legacy card flips straight to closed via onStatusChange.
+    expect(screen.queryByRole("button", { name: "Confirm complete" })).toBeNull();
+    expect(onStatusChange).toHaveBeenCalledWith("a-1", "closed");
   });
 });
 

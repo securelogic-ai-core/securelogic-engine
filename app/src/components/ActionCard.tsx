@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import type { Action } from "@/lib/api";
 
 const STATUS_STYLES: Record<string, React.CSSProperties> = {
@@ -11,11 +12,15 @@ const STATUS_STYLES: Record<string, React.CSSProperties> = {
   accepted:    { background: "rgba(139,92,246,0.15)",  color: "#c4b5fd" },
 };
 
+// A remediation action's terminal WORK state is "Completed" — "Closed" is
+// reserved for the terminal FINDING state (governance closure). Completing an
+// action never closes the finding; it moves the finding toward the governance
+// decision. Using distinct words here keeps the two concepts from blurring.
 const STATUS_LABELS: Record<string, string> = {
   open:        "Open",
   in_progress: "In Progress",
   blocked:     "Blocked",
-  closed:      "Closed",
+  closed:      "Completed",
   accepted:    "Accepted",
 };
 
@@ -131,6 +136,17 @@ interface Props {
    * and calls the dedicated engine endpoint, which preserves blocker history.
    */
   onUnblock?: (actionId: string) => Promise<void>;
+  /**
+   * Explicit Complete transition (→ Completed). Optional: when omitted, the
+   * "Complete" control stays the legacy bare status flip via onStatusChange, so
+   * status-only callers are byte-identical. When provided, Complete opens a
+   * Confirm/Cancel dialog that captures an optional completion note (recorded on
+   * the audit event) and, on confirm, refreshes the workspace so the finding
+   * header, lifecycle, progress, queue membership and Activity all reconcile —
+   * completing the final action advances the finding to Remediation complete and
+   * surfaces the governance decision, without closing the finding.
+   */
+  onComplete?: (actionId: string, note: string) => Promise<void>;
   owners?: ActionOwnerOption[];
 }
 
@@ -140,12 +156,17 @@ export function ActionCard({
   onStatusChange,
   onPlanChange,
   onUnblock,
+  onComplete,
   owners,
 }: Props) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [optimisticStatus, setOptimisticStatus] = useState(action.status);
-  // One editor open at a time: reassign/reschedule, block, or unblock-confirm.
-  const [editor, setEditor] = useState<null | "plan" | "block" | "unblock">(null);
+  // One editor open at a time: reassign/reschedule, block, unblock-confirm, or
+  // complete-confirm.
+  const [editor, setEditor] = useState<null | "plan" | "block" | "unblock" | "complete">(null);
+  // Completion note — optional under current policy; recorded on the audit event.
+  const [completeNote, setCompleteNote] = useState<string>("");
 
   // R-11: staged edit state — nothing commits until Save (no more auto-commit onChange).
   const [planOwner, setPlanOwner] = useState<string>(action.owner_user_id ?? "");
@@ -163,6 +184,7 @@ export function ActionCard({
   const transitions = STATUS_TRANSITIONS[optimisticStatus] ?? [];
   const canPlan = typeof onPlanChange === "function";
   const canConfirmUnblock = typeof onUnblock === "function";
+  const canConfirmComplete = typeof onComplete === "function";
 
   function handleTransition(newStatus: Action["status"]) {
     const prev = optimisticStatus;
@@ -210,6 +232,44 @@ export function ActionCard({
       } catch {
         // The transition failed on the server (e.g. no longer blocked) — revert
         // the optimistic flip and leave the dialog so the user can retry/cancel.
+        setOptimisticStatus(prev);
+      }
+    });
+  }
+
+  // Complete is a confirmed transition when the workspace supplies onComplete:
+  // nothing changes until Confirm, and Cancel leaves the action exactly as it
+  // was. Without it (legacy status-only card), keep the bare status flip so those
+  // callers stay byte-identical.
+  function handleCompleteClick() {
+    if (canConfirmComplete) {
+      setCompleteNote("");
+      setEditor("complete");
+    } else {
+      handleTransition("closed");
+    }
+  }
+
+  function confirmComplete() {
+    if (!onComplete) return;
+    const prev = optimisticStatus;
+    setOptimisticStatus("closed");
+    startTransition(async () => {
+      try {
+        await onComplete(action.id, completeNote.trim());
+        setEditor(null);
+        setCompleteNote("");
+        // Re-fetch the server tree so EVERY dependent surface reconciles at once
+        // without a browser refresh: the finding header, the lifecycle indicator,
+        // remediation progress, queue membership, and the Activity timeline —
+        // and, when this was the final active action, the Remediation-complete /
+        // governance hand-off. revalidatePath on the server action alone can
+        // leave sibling client components showing stale props; router.refresh()
+        // makes the reconciliation deterministic.
+        router.refresh();
+      } catch {
+        // The server refused (or the network failed) — revert the optimistic flip
+        // and leave the dialog open so the user can retry or cancel.
         setOptimisticStatus(prev);
       }
     });
@@ -356,7 +416,9 @@ export function ActionCard({
                   ? handleBlockClick()
                   : t.label === "Unblock"
                     ? handleUnblockClick()
-                    : handleTransition(t.value)
+                    : t.label === "Complete"
+                      ? handleCompleteClick()
+                      : handleTransition(t.value)
               }
               disabled={isPending}
               style={BUTTON_STYLE}
@@ -468,6 +530,37 @@ export function ActionCard({
           <div className="flex gap-2 mt-3">
             <button onClick={confirmUnblock} disabled={isPending} style={{ ...BUTTON_STYLE, borderColor: "#93c5fd", color: "#93c5fd" }}>Confirm unblock</button>
             <button onClick={() => setEditor(null)} disabled={isPending} style={BUTTON_STYLE}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Complete CONFIRMATION — an explicit Confirm/Cancel step before the action
+          is marked Completed. Cancel changes nothing. Confirm records the optional
+          completion note on the audit event and, when this is the finding's last
+          active action, advances it to Remediation complete (governance decision
+          required) — it does NOT close the finding. */}
+      {canConfirmComplete && editor === "complete" && (
+        <div className="mt-3 pt-3" style={{ borderTop: "1px solid #1e293b" }}>
+          <p className="text-xs mb-2" style={{ color: "#86efac" }}>
+            Mark this action <strong>Completed</strong>? When every action on this
+            finding is complete, the finding becomes <em>Remediation complete</em>{" "}
+            and a governance decision is required. This does not close the finding.
+          </p>
+          <label className="block text-xs mb-1" style={{ color: "#64748b" }}>
+            Completion note <span style={{ color: "#475569" }}>(optional)</span>
+          </label>
+          <textarea
+            value={completeNote}
+            disabled={isPending}
+            onChange={(e) => setCompleteNote(e.target.value)}
+            placeholder="e.g. Patched to 1.4.2 and verified in staging"
+            rows={2}
+            className="w-full mb-1"
+            style={{ ...FIELD_STYLE, padding: "5px 8px", resize: "vertical" }}
+          />
+          <div className="flex gap-2 mt-2">
+            <button onClick={confirmComplete} disabled={isPending} style={{ ...BUTTON_STYLE, borderColor: "#22c55e", color: "#86efac" }}>Confirm complete</button>
+            <button onClick={() => { setEditor(null); setCompleteNote(""); }} disabled={isPending} style={BUTTON_STYLE}>Cancel</button>
           </div>
         </div>
       )}

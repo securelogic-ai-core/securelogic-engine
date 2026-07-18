@@ -287,6 +287,17 @@ function activityTransition(a: ActivityItem): string | null {
   return null;
 }
 
+/** The completion note carried by a completion (action.status_changed → closed).
+ *  Part of the audit-grade record — WHY/HOW the remediation was completed, next to
+ *  WHO and WHEN. Null when the entry is not a completion or carries no note. */
+function activityCompletionNote(a: ActivityItem): string | null {
+  if (a.event_type !== "action.status_changed") return null;
+  const p = (a.payload ?? {}) as Record<string, unknown>;
+  if (p.status !== "closed" && p.to !== "closed") return null;
+  const note = typeof p.completion_note === "string" ? p.completion_note.trim() : "";
+  return note ? note : null;
+}
+
 type BlockerDetail = { reason: string | null; dependency: string | null; owner: string | null; expected: string | null };
 
 /** Blocker metadata carried by a block (action.status_changed → blocked) or an
@@ -1166,6 +1177,7 @@ export function DecisionWorkspace({
                 const identity = activityActionIdentity(a);
                 const transition = activityTransition(a);
                 const blocker = activityBlocker(a);
+                const completionNote = activityCompletionNote(a);
                 return (
                   <div
                     key={`${a.event_type}:${a.resource_id ?? ""}:${a.created_at}:${i}`}
@@ -1213,6 +1225,21 @@ export function DecisionWorkspace({
                         {blocker.dependency && <div>Depends on: {blocker.dependency}</div>}
                         {blocker.owner && <div>Blocker owner: {blocker.owner}</div>}
                         {blocker.expected && <div>Expected unblock: {blocker.expected}</div>}
+                      </div>
+                    )}
+                    {completionNote && (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: "#94a3b8",
+                          marginTop: 4,
+                          padding: "4px 8px",
+                          borderRadius: 4,
+                          background: "rgba(34,197,94,0.06)",
+                          border: "1px solid rgba(34,197,94,0.2)",
+                        }}
+                      >
+                        <span style={{ color: "#86efac" }}>Completion note:</span> {completionNote}
                       </div>
                     )}
                   </div>
