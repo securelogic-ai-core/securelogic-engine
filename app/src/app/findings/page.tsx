@@ -24,6 +24,10 @@ import {
   buildPager,
   clearAllFilters,
   queueHref,
+  pinnedFilterKeys,
+  clearPinnedFilters,
+  bucketQueueParams,
+  type PinnableFilterKey,
 } from "./queueControls";
 import { opsBucket, bucketListParams, opsCounts, globalSummary, decodeCursor, parseTrail, bucketPageHrefs, pageRange, BUCKET_PAGE_SIZE } from "./workQueues";
 
@@ -212,12 +216,17 @@ export default async function FindingsPage({
   const bucket = workspace ? opsBucket(sp.bucket) : null;
   const entityQuery =
     workspace && typeof sp.entity === "string" && sp.entity.trim().length >= 2 ? sp.entity.trim() : "";
-  const browse = sp.queue === "all" || hasFilters;
+  // Under the queue-controls flag, a bucket URL carrying refinement params
+  // (severity=, domain= — names shared with the legacy filter bar) must stay a
+  // BUCKET view: the toolbar is refining the bucket, not asking for the browse
+  // escape hatch. Flag off (or no bucket), the legacy behavior is unchanged.
+  const bucketRefinement = queueEnabled && bucket !== null;
+  const browse = sp.queue === "all" || (hasFilters && !bucketRefinement);
   const workFirstMode: "home" | "bucket" | "entity" | null =
     !workspace || browse ? null : entityQuery ? "entity" : bucket ? "bucket" : "home";
 
   // Enhanced browse queue: server-side search/filter/sort/pagination fetch. Only
-  // when the flag is on AND we are in the browse view (never the Ops Center).
+  // when the flag is on AND we are in the browse view (never the Ops Center home).
   const showQueue = queueEnabled && workFirstMode === null;
   const queueState = parseQueueState(sp);
   const queueData = showQueue ? await getFindings(token, queueStateToParams(queueState)) : null;
@@ -226,16 +235,35 @@ export default async function FindingsPage({
   const queuePager = buildPager(queueState, queueTotal);
   const nowMs = Date.now();
 
-  // Bucket members come from a SERVER-filtered, SERVER-paged fetch (never
-  // client-filtering a page). Keyset cursor + bounded prev-trail live in the URL;
-  // invalid pagination input fails safe to the first page (decodeCursor → null).
+  // Bucket views under the SAME flag get the SAME toolbar + server query model:
+  // the bucket's definition is the implicit filter (spread last — membership
+  // enforced regardless of URL input), the toolbar refines within it, and the
+  // pinned axes are dropped/hidden. Flag off = the keyset path below, unchanged.
+  const bucketImplicitParams =
+    workFirstMode === "bucket" && bucket && bucket.target.kind === "findings"
+      ? bucket.target.params
+      : null;
+  const bucketQueueOn = queueEnabled && bucketImplicitParams !== null;
+  const bucketPinned: Set<PinnableFilterKey> = bucketImplicitParams
+    ? pinnedFilterKeys(bucketImplicitParams)
+    : new Set();
+  const bucketState = bucketQueueOn ? clearPinnedFilters(queueState, bucketPinned) : null;
+  const bucketQueueData =
+    bucketQueueOn && bucketState && bucketImplicitParams
+      ? await getFindings(token, bucketQueueParams(bucketState, bucketImplicitParams))
+      : null;
+
+  // Legacy bucket members (flag OFF): SERVER-filtered keyset fetch. Cursor +
+  // bounded prev-trail live in the URL; invalid input fails safe to page 1.
   const afterToken = typeof sp.after === "string" && decodeCursor(sp.after) ? sp.after : null;
   const trail = parseTrail(typeof sp.trail === "string" ? sp.trail : undefined);
   const bucketParams =
-    workFirstMode === "bucket" && bucket ? bucketListParams(bucket, decodeCursor(afterToken)) : null;
+    !bucketQueueOn && workFirstMode === "bucket" && bucket
+      ? bucketListParams(bucket, decodeCursor(afterToken))
+      : null;
   const bucketData = bucketParams ? await getFindings(token, bucketParams) : null;
   const bucketPage =
-    workFirstMode === "bucket" && bucket && bucketData
+    !bucketQueueOn && workFirstMode === "bucket" && bucket && bucketData
       ? {
           total: bucketData.total ?? bucketData.findings.length,
           range: pageRange(afterToken, trail, bucketData.findings.length),
@@ -314,8 +342,18 @@ export default async function FindingsPage({
           generatedAt={generatedAt}
           ownerNames={ownerNames}
           bucket={bucket ?? undefined}
-          bucketFindings={bucketData?.findings ?? undefined}
+          bucketFindings={(bucketQueueOn ? bucketQueueData?.findings : bucketData?.findings) ?? undefined}
           bucketPage={bucketPage ?? undefined}
+          bucketQueue={
+            bucketQueueOn && bucketState
+              ? {
+                  state: bucketState,
+                  pinned: [...bucketPinned],
+                  total: bucketQueueData?.total ?? bucketQueueData?.findings.length ?? 0,
+                  count: bucketQueueData?.findings.length ?? 0,
+                }
+              : undefined
+          }
           entityQuery={entityQuery}
           entityResult={entityResult}
         />

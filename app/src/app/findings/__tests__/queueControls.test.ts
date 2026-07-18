@@ -248,3 +248,111 @@ describe("pagination", () => {
     expect(beyond.nextHref).toBeNull();
   });
 });
+
+// ── Bucket refinement (Operations Center) ───────────────────────────────────
+
+import {
+  pinnedFilterKeys,
+  clearPinnedFilters,
+  bucketQueueParams,
+} from "../queueControls";
+import { OPS_BUCKETS } from "../workQueues";
+
+describe("bucket URLs — the toolbar stays inside the bucket", () => {
+  const s: QueueState = { ...EMPTY_QUEUE_STATE, q: "azure", severity: "High", page: 3 };
+
+  it("with extra.bucket the URL carries bucket=<id> and NOT queue=all", () => {
+    const href = queueHref(s, { bucket: "needs_decision" });
+    expect(href).toContain("bucket=needs_decision");
+    expect(href).not.toContain("queue=all");
+    // The user's refinement rides along.
+    expect(href).toContain("q=azure");
+    expect(href).toContain("severity=High");
+    expect(href).toContain("page=3");
+  });
+
+  it("without a bucket the browse queue keeps its queue=all contract", () => {
+    expect(queueHref(s)).toContain("queue=all");
+  });
+
+  it("Clear all in a bucket clears user filters but PRESERVES the bucket", () => {
+    const href = queueHref(clearAllFilters(s), { bucket: "sla_breached" });
+    expect(href).toContain("bucket=sla_breached");
+    expect(href).not.toContain("q=");
+    expect(href).not.toContain("severity=");
+  });
+
+  it("the pager carries the bucket on both directions", () => {
+    const pager = buildPager({ ...EMPTY_QUEUE_STATE, page: 2 }, 60, { bucket: "ai_risk" });
+    expect(pager.prevHref).toContain("bucket=ai_risk");
+    expect(pager.nextHref).toContain("bucket=ai_risk");
+    expect(pager.nextHref).toContain("page=3");
+  });
+});
+
+describe("pinnedFilterKeys — a bucket's own axis is never a user control", () => {
+  it("maps each implicit param to the toolbar axis it pins", () => {
+    expect(pinnedFilterKeys({ decision_state: "needs_review", active: true })).toEqual(
+      new Set(["governance"])
+    );
+    expect(pinnedFilterKeys({ ready_for_decision: true })).toEqual(
+      new Set(["governance", "operational"])
+    );
+    expect(pinnedFilterKeys({ domain: "Regulatory", active: true })).toEqual(new Set(["domain"]));
+    expect(pinnedFilterKeys({ overdue: true })).toEqual(new Set(["due"]));
+    expect(pinnedFilterKeys({ owner: "me", active: true })).toEqual(new Set(["assignedToMe"]));
+    expect(pinnedFilterKeys({ unassigned: true })).toEqual(new Set(["assignedToMe"]));
+    // active alone pins nothing — operational refinement composes with it.
+    expect(pinnedFilterKeys({ exploited: true, active: true })).toEqual(new Set());
+  });
+
+  it("clearPinnedFilters drops stale URL params on pinned axes only", () => {
+    const s: QueueState = {
+      ...EMPTY_QUEUE_STATE,
+      q: "azure",
+      governance: "mitigating",
+      domain: "Regulatory",
+      assignedToMe: true,
+    };
+    const cleaned = clearPinnedFilters(s, new Set(["governance", "assignedToMe"]));
+    expect(cleaned.governance).toBe("");
+    expect(cleaned.assignedToMe).toBe(false);
+    // Unpinned axes survive.
+    expect(cleaned.q).toBe("azure");
+    expect(cleaned.domain).toBe("Regulatory");
+  });
+});
+
+describe("bucketQueueParams — membership is enforced no matter what the URL says", () => {
+  it("spreads the bucket's implicit params LAST, over any user value", () => {
+    const hostile: QueueState = {
+      ...EMPTY_QUEUE_STATE,
+      // A hand-edited URL trying to widen the Needs Decision bucket to a
+      // different governance population.
+      governance: "resolved",
+      severity: "High",
+      page: 2,
+    };
+    const params = bucketQueueParams(hostile, { decision_state: "needs_review", active: true });
+    expect(params.decision_state).toBe("needs_review"); // bucket wins
+    expect(params.active).toBe(true);
+    // The legitimate refinement and paging survive.
+    expect(params.severity).toBe("High");
+    expect(params.offset).toBe(QUEUE_PAGE_SIZE);
+    expect(params.limit).toBe(QUEUE_PAGE_SIZE);
+  });
+
+  it("carries search/sort/filters into every findings-backed bucket definition", () => {
+    const s: QueueState = { ...EMPTY_QUEUE_STATE, q: "CVE-2026", sort: "due_date" };
+    for (const b of OPS_BUCKETS) {
+      if (b.target.kind !== "findings") continue;
+      const params = bucketQueueParams(s, b.target.params);
+      expect(params.q).toBe("CVE-2026");
+      expect(params.sort).toBe("due_date");
+      // Every implicit key of the bucket survives the merge verbatim.
+      for (const [k, v] of Object.entries(b.target.params)) {
+        expect((params as Record<string, unknown>)[k]).toEqual(v);
+      }
+    }
+  });
+});

@@ -150,16 +150,25 @@ export async function createRemediationAction(
 // operational status. Flag-gated on the engine; a no-op error when dark.
 export async function updateFindingDecisionStateAction(
   findingId: string,
-  decisionState: string
+  decisionState: string,
+  // Optional rationale recorded WITH the transition (lifecycle event comment +
+  // audit payload). The Governance Decision panel requires it for closing
+  // decisions; the Zone A quick dropdown and bulk ops send none — both remain
+  // valid callers of the same engine contract.
+  decisionNote?: string
 ): Promise<FindingActionError | Record<string, never>> {
   const token = await getToken();
   if (!token) return { error: "Not authenticated" };
 
+  const note = decisionNote?.trim();
   try {
     const res = await fetch(`${ENGINE_URL}/api/findings/${findingId}`, {
       method: "PATCH",
       headers: authHeaders(token),
-      body: JSON.stringify({ decision_state: decisionState }),
+      body: JSON.stringify({
+        decision_state: decisionState,
+        ...(note ? { decision_note: note } : {}),
+      }),
     });
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as {

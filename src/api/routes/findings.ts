@@ -1521,11 +1521,25 @@ router.patch(
       let decisionTransition:
         | ReturnType<typeof evaluateFindingDecisionTransition>
         | null = null;
+      // Optional rationale accompanying a decision_state write. Persisted as the
+      // lifecycle event's `comment` (column existed since 20260901; never written by
+      // this route before) and echoed into the decision audit payload — so the WHY of
+      // a governance decision lands on the same trail as the decision itself.
+      // Meaningful only alongside decision_state; alone it changes nothing.
+      let decisionNote: string | null = null;
       if (process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true" && "decision_state" in body) {
         const ds = body["decision_state"];
         if (!isNonEmptyString(ds) || !VALID_DECISION_STATES.has(ds)) {
           res.status(400).json({ error: "invalid_decision_state", allowed: [...VALID_DECISION_STATES] });
           return;
+        }
+        if ("decision_note" in body && body["decision_note"] != null) {
+          const note = body["decision_note"];
+          if (typeof note !== "string" || note.trim().length === 0 || note.length > 2000) {
+            res.status(400).json({ error: "invalid_decision_note", max_length: 2000 });
+            return;
+          }
+          decisionNote = note.trim();
         }
         // P0 (2026-07-15): when the signed risk-acceptance workflow is live, `accepted_risk`
         // is the OUTPUT of that workflow (approve by a second authorized user), never a
@@ -1753,6 +1767,7 @@ router.patch(
             actorUserId: (req.userId as string | undefined) ?? null,
             actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
           },
+          comment: decisionNote,
         });
         writeAuditEvent({
           organizationId,
@@ -1765,6 +1780,7 @@ router.patch(
             from: decisionTransition.fromState ?? null,
             to: decisionTransition.toState ?? null,
             operational_status: result.rows[0].operational_status ?? null,
+            ...(decisionNote !== null ? { note: decisionNote } : {}),
           },
           ipAddress: req.ip ?? null,
         });

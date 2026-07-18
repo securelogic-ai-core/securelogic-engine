@@ -166,10 +166,16 @@ export function queueStateToParams(s: QueueState): FindingsParams {
   return params;
 }
 
-/** Queue state → URL query string (always carries queue=all to force browse). */
+/**
+ * Queue state → URL query string. On the browse queue it always carries
+ * `queue=all` (forces the findings page's browse view even under the Operations
+ * Center flag). When `extra.bucket` is present, the URL carries `bucket=<id>`
+ * INSTEAD — the toolbar is refining a bucket view, and `queue=all` would silently
+ * eject the customer from their queue into the browse list.
+ */
 export function queueStateToQuery(s: QueueState, extra?: Record<string, string>): string {
   const qs = new URLSearchParams();
-  qs.set("queue", "all");
+  if (!extra?.bucket) qs.set("queue", "all");
   if (s.q) qs.set("q", s.q);
   if (s.severity) qs.set("severity", s.severity);
   if (s.domain) qs.set("domain", s.domain);
@@ -260,13 +266,71 @@ export interface Pager {
   nextHref: string | null;
 }
 
-export function buildPager(s: QueueState, total: number): Pager {
+export function buildPager(s: QueueState, total: number, extra?: Record<string, string>): Pager {
   const pages = pageCount(total);
   const page = Math.min(Math.max(1, s.page), pages);
   return {
     page,
     pages,
-    prevHref: page > 1 ? queueHref(withField(s, "page", page - 1)) : null,
-    nextHref: page < pages ? queueHref(withField(s, "page", page + 1)) : null,
+    prevHref: page > 1 ? queueHref(withField(s, "page", page - 1), extra) : null,
+    nextHref: page < pages ? queueHref(withField(s, "page", page + 1), extra) : null,
+  };
+}
+
+// ── Bucket refinement (Operations Center) ───────────────────────────────────
+//
+// A bucket's definition (workQueues.OPS_BUCKETS target.params) is an IMPLICIT
+// filter — it defines the queue and is never user-clearable. The toolbar refines
+// WITHIN it. Two rules keep that honest:
+//
+//   1. the bucket's params are spread LAST into the fetch, so a user filter can
+//      never override the bucket's population (membership stays enforced);
+//   2. a toolbar axis the bucket already pins (e.g. Governance in the Needs
+//      Governance Decision bucket) is dropped from the state and hidden from the
+//      toolbar — a control whose value the bucket overrides would be a lying
+//      control, and a stale URL param on that axis must not render a fake chip.
+
+/** The toolbar axes a bucket definition can pin. */
+export type PinnableFilterKey = "governance" | "operational" | "domain" | "due" | "assignedToMe";
+
+/**
+ * The toolbar axes this bucket's implicit params already determine.
+ *  - decision_state / ready_for_decision pin the Governance axis
+ *  - operational_status / ready_for_decision pin the Operational axis
+ *  - domain pins Domain
+ *  - overdue pins Due status (every member is overdue by definition)
+ *  - owner / unassigned pin Assigned-to-me (already scoped / contradictory)
+ * `active: true` pins nothing — an operational refinement composes with it.
+ */
+export function pinnedFilterKeys(params: FindingsParams): Set<PinnableFilterKey> {
+  const pinned = new Set<PinnableFilterKey>();
+  if (params.decision_state !== undefined || params.ready_for_decision) pinned.add("governance");
+  if (params.operational_status !== undefined || params.ready_for_decision) pinned.add("operational");
+  if (params.domain !== undefined) pinned.add("domain");
+  if (params.overdue) pinned.add("due");
+  if (params.owner !== undefined || params.unassigned) pinned.add("assignedToMe");
+  return pinned;
+}
+
+/** Drop user filters on pinned axes (stale URL params must not fight the bucket). */
+export function clearPinnedFilters(s: QueueState, pinned: Set<PinnableFilterKey>): QueueState {
+  const next = { ...s };
+  if (pinned.has("governance")) next.governance = "";
+  if (pinned.has("operational")) next.operational = "";
+  if (pinned.has("domain")) next.domain = "";
+  if (pinned.has("due")) next.due = "";
+  if (pinned.has("assignedToMe")) next.assignedToMe = false;
+  return next;
+}
+
+/**
+ * The server fetch params for a bucket view refined by the toolbar: the user's
+ * search/filter/sort/page, with the bucket's implicit params spread LAST so
+ * membership is enforced no matter what the URL carries.
+ */
+export function bucketQueueParams(s: QueueState, bucketParams: FindingsParams): FindingsParams {
+  return {
+    ...queueStateToParams(clearPinnedFilters(s, pinnedFilterKeys(bucketParams))),
+    ...bucketParams,
   };
 }

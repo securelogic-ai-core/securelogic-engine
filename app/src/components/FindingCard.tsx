@@ -242,7 +242,9 @@ export function FindingCard({ finding, revalidateUrl, workspace = false, showDue
             {finding.owner_user_id ? (
               <>Owner: <span style={{ color: "#cbd5e1" }}>{ownerName ?? "Assigned"}</span></>
             ) : (
-              <span style={{ color: "#fcd34d" }}>Unassigned</span>
+              // Explicit axis label — "Unassigned" alone reads as a status, not
+              // an ownership fact.
+              <>Owner: <span style={{ color: "#fcd34d" }}>Unassigned</span></>
             )}
           </span>
           {reason && (

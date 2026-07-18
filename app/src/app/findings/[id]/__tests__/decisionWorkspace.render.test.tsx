@@ -38,6 +38,16 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 // process. They are never invoked here — only rendered as handlers.
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), revalidateTag: vi.fn() }));
 
+// The decision-state server action, mocked so the Governance Decision panel tests
+// can assert WHAT is submitted (state + rationale) and drive engine refusals.
+const actions = vi.hoisted(() => ({
+  updateFindingDecisionStateAction: vi.fn(async () => ({}) as Record<string, never>),
+}));
+vi.mock("../actions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../actions")>()),
+  ...actions,
+}));
+
 import FindingDetailPage from "../page";
 
 const props = (id = "f-1") => ({ params: sp({ id }) as Promise<{ id: string }> });
@@ -563,7 +573,9 @@ describe("Decision Workspace — walkthrough remediation (PR-B1)", () => {
     );
     await renderPage(FindingDetailPage, props());
     expect(screen.getByText("Remediation complete. Governance decision required.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Record decision/i })).toBeInTheDocument();
+    // A BUTTON that opens the decision panel — no longer an in-page anchor that
+    // scrolled to unrelated content.
+    expect(screen.getByRole("button", { name: /Record decision/i })).toBeInTheDocument();
   });
 
   it("arriving from the Ready to Close queue shows the hand-off even before the state re-derives (?from=, R-19)", async () => {
@@ -818,5 +830,148 @@ describe("Decision Workspace — walkthrough remediation (PR-B1)", () => {
     const link = container.querySelector('a[href="https://tickets.example.com/CR-1042"]');
     expect(link).not.toBeNull();
     expect(link?.getAttribute("target")).toBe("_blank");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// 7. Record decision — the REAL governance decision controls (modal panel)
+// ─────────────────────────────────────────────────────────────────────
+
+describe("Record decision — opens the actual decision controls, not a scroll", () => {
+  /** A Ready-to-Close finding: remediation derived complete, decision pending. */
+  const readyToClose = () =>
+    workspaceOn(
+      aFindingContext({
+        finding: {
+          id: "f-1",
+          source_type: "manual",
+          source_id: null,
+          decision_state: "needs_review",
+          operational_status: "remediated",
+        },
+      })
+    );
+
+  const openPanel = () => {
+    fireEvent.click(screen.getByRole("button", { name: "Record decision →" }));
+    return screen.getByRole("dialog", { name: /Record a governance decision/i });
+  };
+
+  it("the CTA is a button that opens the decision panel with options, consequences, and controls", async () => {
+    readyToClose();
+    await renderPage(FindingDetailPage, props());
+
+    // The defect: an in-page anchor that scrolled somewhere unrelated. There is
+    // no anchor CTA any more — clicking opens the decision UI itself.
+    expect(screen.queryByRole("link", { name: /Record decision/ })).toBeNull();
+    const dialog = openPanel();
+
+    // The current state the decision is made FROM.
+    expect(within(dialog).getByText(/Governance Decision/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Operational Status/)).toBeInTheDocument();
+    // Available options with stated consequences (resulting state + closure eligibility).
+    expect(within(dialog).getByText(/Closes the finding/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Accepts the remediation plan/)).toBeInTheDocument();
+    // Confirm and Cancel.
+    expect(within(dialog).getByRole("button", { name: "Record decision" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+  });
+
+  it("cancel closes the panel and records NOTHING", async () => {
+    readyToClose();
+    await renderPage(FindingDetailPage, props());
+    const dialog = openPanel();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(actions.updateFindingDecisionStateAction).not.toHaveBeenCalled();
+  });
+
+  it("a closing decision REQUIRES a rationale — validation error, no submit", async () => {
+    readyToClose();
+    const { container } = await renderPage(FindingDetailPage, props());
+    const dialog = openPanel();
+
+    fireEvent.click(container.querySelector('input[value="resolved"]')!);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Record decision" }));
+
+    expect(within(dialog).getByRole("alert").textContent).toMatch(/rationale is required/i);
+    expect(actions.updateFindingDecisionStateAction).not.toHaveBeenCalled();
+    // The panel stays open for the user to fix it.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("confirm submits the selected decision WITH the rationale and closes the panel", async () => {
+    readyToClose();
+    const { container } = await renderPage(FindingDetailPage, props());
+    const dialog = openPanel();
+
+    fireEvent.click(container.querySelector('input[value="resolved"]')!);
+    fireEvent.change(within(dialog).getByLabelText(/Rationale/), {
+      target: { value: "Patch verified in production." },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Record decision" }));
+
+    await waitFor(() =>
+      expect(actions.updateFindingDecisionStateAction).toHaveBeenCalledWith(
+        "f-1",
+        "resolved",
+        "Patch verified in production."
+      )
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("an engine refusal is shown INSIDE the panel, which stays open", async () => {
+    actions.updateFindingDecisionStateAction.mockResolvedValueOnce({
+      error: "Cannot close: your organization requires a different person than the remediator to close this finding.",
+    } as never);
+    readyToClose();
+    const { container } = await renderPage(FindingDetailPage, props());
+    const dialog = openPanel();
+
+    fireEvent.click(container.querySelector('input[value="mitigating"]')!);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Record decision" }));
+
+    await waitFor(() =>
+      expect(within(dialog).getByRole("alert").textContent).toMatch(/different person than the remediator/)
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("a decision without required rationale still submits when optional (mitigating)", async () => {
+    readyToClose();
+    const { container } = await renderPage(FindingDetailPage, props());
+    const dialog = openPanel();
+
+    fireEvent.click(container.querySelector('input[value="mitigating"]')!);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Record decision" }));
+
+    await waitFor(() =>
+      expect(actions.updateFindingDecisionStateAction).toHaveBeenCalledWith("f-1", "mitigating", undefined)
+    );
+  });
+
+  it("open remediation disables the closing option with the stated reason", async () => {
+    api.getActionsForFinding.mockResolvedValue(
+      anActionsResponse([anAction({ id: "a-1", status: "in_progress" })])
+    );
+    readyToClose();
+    const { container } = await renderPage(FindingDetailPage, props());
+    openPanel();
+
+    const resolved = container.querySelector('input[value="resolved"]') as HTMLInputElement;
+    expect(resolved.disabled).toBe(true);
+    expect(screen.getByText(/1 remediation action still open/)).toBeInTheDocument();
+  });
+
+  it("queue provenance survives the panel — the handoff banner is still on the page", async () => {
+    setClientSearchParams("from=ready_to_close");
+    readyToClose();
+    await renderPage(FindingDetailPage, props());
+    openPanel();
+
+    expect(screen.getByText("Remediation complete. Governance decision required.")).toBeInTheDocument();
   });
 });
