@@ -2231,7 +2231,25 @@ export type FindingContext = {
   related_context?: {
     same_vendor: Array<{ vendor_id: string; vendor_name: string; finding_count: number }>;
   };
-  activity: Array<{ event_type: string; created_at: string; payload: unknown }>;
+  // Audit-grade activity entries. The core three (event_type / created_at /
+  // payload) are always present; the enrichment fields are optional so older
+  // payloads and fixtures stay valid. `resource_type`/`resource_id` scope the
+  // entry to a finding or a specific remediation action; `actor_*` is WHO;
+  // `action_title` + `blocked_owner_*` are the resolved WHAT/WHO the renderer
+  // shows instead of a bare id.
+  activity: Array<{
+    event_type: string;
+    created_at: string;
+    payload: unknown;
+    resource_type?: string;
+    resource_id?: string | null;
+    actor_user_id?: string | null;
+    actor_name?: string | null;
+    actor_email?: string | null;
+    action_title?: string | null;
+    blocked_owner_name?: string | null;
+    blocked_owner_email?: string | null;
+  }>;
   whats_changed: { since: string | null; changes: Array<{ label: string; at: string }> };
 };
 

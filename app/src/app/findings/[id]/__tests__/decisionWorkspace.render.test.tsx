@@ -779,6 +779,140 @@ describe("Decision Workspace — walkthrough remediation (PR-B1)", () => {
     expect(screen.queryByText(/action\.status_changed/)).toBeNull();
   });
 
+  // ── Audit-grade Activity timeline correctness ────────────────────────────────
+  it("surfaces the unblock event with its label and the preserved blocker metadata", async () => {
+    workspaceOn(
+      aFindingContext({
+        activity: [
+          {
+            event_type: "action.unblocked",
+            created_at: "2026-06-14T09:15:00.000Z",
+            resource_type: "action",
+            resource_id: "a-9",
+            action_title: "Patch Log4j on billing hosts",
+            actor_name: "Dana Ops",
+            payload: {
+              from: "blocked",
+              to: "in_progress",
+              title: "Patch Log4j on billing hosts",
+              blocked_reason: "Waiting on vendor patch",
+              blocked_dependency: "CR-1042",
+              blocked_expected_unblock_date: "2026-08-01",
+            },
+          },
+        ],
+      }),
+    );
+    await renderPage(FindingDetailPage, props());
+    // The specific event label appears immediately (not a raw enum).
+    expect(screen.getByText(/Remediation action unblocked/)).toBeInTheDocument();
+    expect(screen.queryByText(/action\.unblocked/)).toBeNull();
+    // It references the earlier blocked state and preserves that metadata.
+    expect(screen.getByText(/Blocked → In Progress/)).toBeInTheDocument();
+    expect(screen.getByText(/Waiting on vendor patch/)).toBeInTheDocument();
+    expect(screen.getByText(/CR-1042/)).toBeInTheDocument();
+  });
+
+  it("each entry shows an exact labeled-UTC timestamp, the actor, and the affected action", async () => {
+    workspaceOn(
+      aFindingContext({
+        activity: [
+          {
+            event_type: "action.status_changed",
+            created_at: "2026-06-12T14:32:00.000Z",
+            resource_type: "action",
+            resource_id: "a-7",
+            action_title: "Rotate exposed API key",
+            actor_name: "Dana Ops",
+            actor_email: "dana@acme.test",
+            payload: { status: "closed", from: "in_progress", to: "closed" },
+          },
+        ],
+      }),
+    );
+    await renderPage(FindingDetailPage, props());
+    // Timestamp: date AND time, clearly labeled UTC — not a bare date.
+    expect(screen.getByText(/Jun 12, 2026, 14:32 UTC/)).toBeInTheDocument();
+    // Actor identity (display name preferred).
+    expect(screen.getByText(/Dana Ops/)).toBeInTheDocument();
+    // Which action it was about, and the prior → new transition.
+    expect(screen.getByText(/Rotate exposed API key/)).toBeInTheDocument();
+    expect(screen.getByText(/In Progress → Completed/)).toBeInTheDocument();
+  });
+
+  it("falls back to actor email, then System, when no display name is present", async () => {
+    workspaceOn(
+      aFindingContext({
+        activity: [
+          { event_type: "action.created", created_at: "2026-06-11T00:00:00.000Z", resource_type: "action", resource_id: "a-1", actor_email: "ops@acme.test", payload: null },
+          { event_type: "finding.created", created_at: "2026-06-10T00:00:00.000Z", resource_type: "finding", resource_id: "f-1", payload: null },
+        ],
+      }),
+    );
+    await renderPage(FindingDetailPage, props());
+    expect(screen.getByText(/ops@acme.test/)).toBeInTheDocument();
+    // No actor at all → an honest "System", never a blank or a raw id.
+    expect(screen.getByText(/System/)).toBeInTheDocument();
+  });
+
+  it("a block entry exposes reason, dependency, blocker owner (resolved) and expected unblock date", async () => {
+    workspaceOn(
+      aFindingContext({
+        activity: [
+          {
+            event_type: "action.status_changed",
+            created_at: "2026-06-13T00:00:00.000Z",
+            resource_type: "action",
+            resource_id: "a-5",
+            action_title: "Segment the flat network",
+            blocked_owner_name: "Priya Netsec",
+            payload: {
+              status: "blocked",
+              from: "in_progress",
+              to: "blocked",
+              blocked_reason: "Awaiting change window",
+              blocked_dependency: "CHG-88",
+              blocked_owner_user_id: "u-priya",
+              blocked_expected_unblock_date: "2026-07-05",
+            },
+          },
+        ],
+      }),
+    );
+    await renderPage(FindingDetailPage, props());
+    expect(screen.getByText(/Awaiting change window/)).toBeInTheDocument();
+    expect(screen.getByText(/Depends on: CHG-88/)).toBeInTheDocument();
+    // The blocker owner shows the resolved NAME, not the raw UUID.
+    expect(screen.getByText(/Blocker owner: Priya Netsec/)).toBeInTheDocument();
+    expect(screen.queryByText(/u-priya/)).toBeNull();
+    expect(screen.getByText(/Expected unblock: 2026-07-05/)).toBeInTheDocument();
+  });
+
+  it("renders lifecycle entries newest-first and collapses only exact duplicates", async () => {
+    const dupPayload = { status: "closed", from: "in_progress", to: "closed" };
+    workspaceOn(
+      aFindingContext({
+        activity: [
+          // Newest first (as the resolver returns them). Two of these are byte-identical
+          // (a double-write) and must collapse to one; the finding rollup shares the
+          // action's timestamp but is a DISTINCT event and must be kept.
+          { event_type: "action.status_changed", created_at: "2026-06-15T10:00:00.000Z", resource_type: "action", resource_id: "a-2", action_title: "Close ticket", actor_name: "Dana Ops", payload: dupPayload },
+          { event_type: "action.status_changed", created_at: "2026-06-15T10:00:00.000Z", resource_type: "action", resource_id: "a-2", action_title: "Close ticket", actor_name: "Dana Ops", payload: dupPayload },
+          { event_type: "finding.operational.advanced", created_at: "2026-06-15T10:00:00.000Z", resource_type: "finding", resource_id: "f-1", payload: { from: "open", to: "remediated" } },
+          { event_type: "finding.created", created_at: "2026-06-01T00:00:00.000Z", resource_type: "finding", resource_id: "f-1", payload: null },
+        ],
+      }),
+    );
+    const { container } = await renderPage(FindingDetailPage, props());
+    // Exactly one "Remediation action completed" survives the dedup (not two).
+    expect(screen.getAllByText(/Remediation action completed/)).toHaveLength(1);
+    // The distinct finding rollup at the same instant is preserved.
+    expect(screen.getByText(/Remediation progressed/)).toBeInTheDocument();
+    // Newest-first: the Jun 15 completion appears before the Jun 1 creation.
+    const body = container.textContent ?? "";
+    expect(body.indexOf("Remediation action completed")).toBeLessThan(body.indexOf("Finding created"));
+  });
+
   it("shows remediation completion progress in the Remediation tab (R-4)", async () => {
     workspaceOn();
     api.getActionsForFinding.mockResolvedValue(

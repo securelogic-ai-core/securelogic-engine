@@ -123,7 +123,7 @@ router.post(
         eventType: "action.created",
         resourceType: "action",
         resourceId: result.rows[0].id as string,
-        payload: { priority: input.priority, source_type: input.source_type },
+        payload: { priority: input.priority, source_type: input.source_type, title: input.title },
         ipAddress: req.ip ?? null,
       });
 
@@ -666,17 +666,29 @@ router.patch(
       const idParam = values.length - 1;
       const orgParam = values.length;
 
+      // Capture the PRE-update status in the same statement (CTE) so the audit
+      // event can record a real prior → new transition, not just a destination.
+      // Atomic with the UPDATE — no separate SELECT, no TOCTOU window.
       const result = await pg.query(
         `
+        WITH prev AS (
+          SELECT status AS old_status
+            FROM actions
+           WHERE id = $${idParam}
+             AND organization_id = $${orgParam}
+        )
         UPDATE actions
         SET ${updates.join(", ")}, updated_at = NOW()
-        WHERE id = $${idParam}
-          AND organization_id = $${orgParam}
+        FROM prev
+        WHERE actions.id = $${idParam}
+          AND actions.organization_id = $${orgParam}
         RETURNING
-          id, organization_id, title, source_type, source_id, priority,
-          status, owner_user_id, due_date, updated_at, completed_at,
-          blocked_reason, blocked_dependency, blocked_owner_user_id,
-          blocked_expected_unblock_date
+          actions.id, actions.organization_id, actions.title, actions.source_type,
+          actions.source_id, actions.priority, actions.status, actions.owner_user_id,
+          actions.due_date, actions.updated_at, actions.completed_at,
+          actions.blocked_reason, actions.blocked_dependency,
+          actions.blocked_owner_user_id, actions.blocked_expected_unblock_date,
+          prev.old_status
         `,
         values
       );
@@ -686,9 +698,34 @@ router.patch(
         return;
       }
 
-      const updatedStatus = result.rows[0].status as string | undefined;
-      const eventType =
-        "status" in body ? "action.status_changed" : "action.updated";
+      const row = result.rows[0];
+      const updatedStatus = row.status as string | undefined;
+      const statusChanged = "status" in body;
+      const eventType = statusChanged ? "action.status_changed" : "action.updated";
+
+      // Audit-grade payload: WHAT (the action's title, snapshotted so the trail
+      // stays readable even after a rename/delete), the resulting state, and —
+      // for a status change — the real prior → new transition.
+      const auditPayload: Record<string, unknown> = {
+        status: updatedStatus ?? null,
+        owner_user_id: row.owner_user_id ?? null,
+        due_date: row.due_date ?? null,
+        title: row.title ?? null,
+      };
+      if (statusChanged) {
+        auditPayload.from = (row.old_status as string | null) ?? null;
+        auditPayload.to = updatedStatus ?? null;
+      }
+      // A block must carry its WHY into the append-only trail (reason, dependency,
+      // blocker owner, expected unblock date) — otherwise the blocker vanishes
+      // from history the moment the row's columns are cleared or a later unblock
+      // overwrites them. Symmetric with the unblock event's blocker snapshot.
+      if (updatedStatus === "blocked") {
+        auditPayload.blocked_reason = row.blocked_reason ?? null;
+        auditPayload.blocked_dependency = row.blocked_dependency ?? null;
+        auditPayload.blocked_owner_user_id = row.blocked_owner_user_id ?? null;
+        auditPayload.blocked_expected_unblock_date = row.blocked_expected_unblock_date ?? null;
+      }
 
       writeAuditEvent({
         organizationId,
@@ -697,11 +734,7 @@ router.patch(
         eventType,
         resourceType: "action",
         resourceId: actionId,
-        payload: {
-          status: updatedStatus ?? null,
-          owner_user_id: result.rows[0].owner_user_id ?? null,
-          due_date: result.rows[0].due_date ?? null,
-        },
+        payload: auditPayload,
         ipAddress: req.ip ?? null,
       });
 
@@ -739,7 +772,10 @@ router.patch(
         }
       }
 
-      res.status(200).json({ action: result.rows[0] });
+      // `old_status` is an audit-only detail from the CTE — never part of the
+      // Action resource contract. Strip it so the response shape is unchanged.
+      const { old_status: _oldStatus, ...action } = row;
+      res.status(200).json({ action });
     } catch (err) {
       logger.error(
         { event: "action_patch_failed", err },
@@ -872,6 +908,9 @@ router.post(
         payload: {
           from: "blocked",
           to: "in_progress",
+          // Snapshot the action title so the unblock entry is self-describing,
+          // symmetric with the block event's title snapshot.
+          title: result.rows[0].title ?? null,
           ...blockerSnapshot,
         },
         ipAddress: req.ip ?? null,

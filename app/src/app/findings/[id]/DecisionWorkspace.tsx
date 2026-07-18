@@ -213,6 +213,123 @@ function activityLabel(eventType: string, payload?: unknown): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// ── Audit-grade Activity timeline (rendering correctness) ──────────────────────
+// An audit entry answers WHEN (exact, unambiguous), WHO, WHAT changed, on WHICH
+// action, and — for a block/unblock — WHY. Each helper is a pure projection of one
+// activity row so it is unit-testable and the JSX below stays declarative.
+
+type ActivityItem = FindingContext["activity"][number];
+
+/** Action status → human label, for prior→new transitions. Mirrors the actions
+ *  CHECK set (open | in_progress | blocked | closed | accepted). */
+const STATUS_HUMAN: Record<string, string> = {
+  open: "Open",
+  in_progress: "In Progress",
+  blocked: "Blocked",
+  closed: "Completed",
+  accepted: "Accepted",
+};
+
+/** Exact, clearly-labeled UTC timestamp — date AND time, never a bare date (the
+ *  original defect). Server-rendered deterministically; the "UTC" suffix removes
+ *  any ambiguity about whose clock this is. */
+function fmtActivityTimestamp(d: string | null | undefined): string {
+  if (!d) return "—";
+  const date = new Date(d);
+  if (Number.isNaN(date.getTime())) return "—";
+  return (
+    date.toLocaleString("en-US", {
+      timeZone: "UTC",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }) + " UTC"
+  );
+}
+
+/** WHO acted: display name, then email, then an honest "System" for
+ *  scheduler / API-key events with no human actor. Never a raw UUID. */
+function activityActor(a: ActivityItem): string {
+  const name = typeof a.actor_name === "string" ? a.actor_name.trim() : "";
+  if (name) return name;
+  const email = typeof a.actor_email === "string" ? a.actor_email.trim() : "";
+  if (email) return email;
+  return "System";
+}
+
+/** WHICH action an entry is about: the action's title, then a payload-snapshotted
+ *  title (survives a deleted action), then a short id. Null for finding-level
+ *  entries — the finding is the page, so naming it would be noise. */
+function activityActionIdentity(a: ActivityItem): string | null {
+  if (a.resource_type !== "action") return null;
+  const title = typeof a.action_title === "string" ? a.action_title.trim() : "";
+  if (title) return title;
+  const p = (a.payload ?? {}) as { title?: unknown };
+  const snap = typeof p.title === "string" ? p.title.trim() : "";
+  if (snap) return snap;
+  const id = typeof a.resource_id === "string" ? a.resource_id : "";
+  return id ? `Action ${id.slice(0, 8)}` : null;
+}
+
+/** Prior → new status, where the event carries it. Block/unblock and every status
+ *  change now record from/to; an older status_changed at least has a destination. */
+function activityTransition(a: ActivityItem): string | null {
+  const p = (a.payload ?? {}) as { from?: unknown; to?: unknown; status?: unknown };
+  const human = (s: unknown): string | null =>
+    typeof s === "string" && s ? STATUS_HUMAN[s] ?? s : null;
+  const from = human(p.from);
+  const to = human(p.to) ?? human(p.status);
+  if (from && to) return `${from} → ${to}`;
+  if (to) return `→ ${to}`;
+  return null;
+}
+
+type BlockerDetail = { reason: string | null; dependency: string | null; owner: string | null; expected: string | null };
+
+/** Blocker metadata carried by a block (action.status_changed → blocked) or an
+ *  unblock (action.unblocked) — the WHY the audit trail must preserve and expose.
+ *  Owner prefers a resolved name/email over the raw UUID. Null when the entry is
+ *  neither, or carries no blocker at all. */
+function activityBlocker(a: ActivityItem): BlockerDetail | null {
+  const p = (a.payload ?? {}) as Record<string, unknown>;
+  const isBlock = a.event_type === "action.status_changed" && p.status === "blocked";
+  const isUnblock = a.event_type === "action.unblocked";
+  if (!isBlock && !isUnblock) return null;
+  const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
+  const reason = str(p.blocked_reason);
+  const dependency = str(p.blocked_dependency);
+  const owner = str(a.blocked_owner_name) ?? str(a.blocked_owner_email) ?? str(p.blocked_owner_user_id);
+  const expected = str(p.blocked_expected_unblock_date);
+  if (!reason && !dependency && !owner && !expected) return null;
+  return { reason, dependency, owner, expected };
+}
+
+/** Drop accidental exact-duplicate rows (a re-render or an event fan-out that
+ *  double-wrote the identical event) WITHOUT collapsing genuinely distinct events.
+ *  Two rows are "the same event" only if type, resource, timestamp AND payload all
+ *  match — so a finding-level rollup and the action change that triggered it (same
+ *  instant, different resource) are correctly KEPT. */
+function dedupeActivity(rows: ActivityItem[]): ActivityItem[] {
+  const seen = new Set<string>();
+  const out: ActivityItem[] = [];
+  for (const a of rows) {
+    const key = [
+      a.event_type,
+      a.resource_type ?? "",
+      a.resource_id ?? "",
+      a.created_at,
+      JSON.stringify(a.payload ?? null),
+    ].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(a);
+  }
+  return out;
+}
+
 function AffectedGroup({
   label,
   items,
@@ -1038,14 +1155,69 @@ export function DecisionWorkspace({
           {context.activity.length === 0 ? (
             <span style={{ fontSize: 12, color: "#475569" }}>No recorded activity</span>
           ) : (
-            // DW-9: show meaningful workflow transitions with readable labels
-            // (assignment, remediation, evidence, decisions, closure, reopen),
-            // not raw event_type strings, and more than the prior 8.
-            context.activity.slice(0, 20).map((a, i) => (
-              <div key={i} style={{ fontSize: 12, color: "#cbd5e1", marginBottom: 2 }}>
-                <span style={{ color: "#64748b" }}>{fmt(a.created_at)}</span> · {activityLabel(a.event_type, a.payload)}
-              </div>
-            ))
+            // Audit-grade entries, newest-first (the resolver orders
+            // created_at DESC, id DESC): exact UTC timestamp, WHO acted, the
+            // specific transition, WHICH remediation action, and — for a
+            // block/unblock — the preserved blocker metadata. Deduped against
+            // accidental double-writes, never collapsing distinct events.
+            dedupeActivity(context.activity)
+              .slice(0, 20)
+              .map((a, i) => {
+                const identity = activityActionIdentity(a);
+                const transition = activityTransition(a);
+                const blocker = activityBlocker(a);
+                return (
+                  <div
+                    key={`${a.event_type}:${a.resource_id ?? ""}:${a.created_at}:${i}`}
+                    style={{
+                      fontSize: 12,
+                      color: "#cbd5e1",
+                      marginBottom: 8,
+                      paddingBottom: 8,
+                      borderBottom: "1px solid rgba(255,255,255,0.05)",
+                    }}
+                  >
+                    <div>
+                      <span style={{ color: "#64748b" }} title={a.created_at}>
+                        {fmtActivityTimestamp(a.created_at)}
+                      </span>{" "}
+                      · <span style={{ color: "#e2e8f0" }}>{activityLabel(a.event_type, a.payload)}</span>
+                      {transition && <span style={{ color: "#94a3b8" }}> · {transition}</span>}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 1 }}>
+                      {activityActor(a)}
+                      {identity && (
+                        <>
+                          {" · "}
+                          <span style={{ color: "#cbd5e1" }}>{identity}</span>
+                        </>
+                      )}
+                    </div>
+                    {blocker && (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: "#94a3b8",
+                          marginTop: 4,
+                          padding: "4px 8px",
+                          borderRadius: 4,
+                          background: "rgba(239,68,68,0.06)",
+                          border: "1px solid rgba(239,68,68,0.2)",
+                        }}
+                      >
+                        {blocker.reason && (
+                          <div>
+                            <span style={{ color: "#fca5a5" }}>Blocker:</span> {blocker.reason}
+                          </div>
+                        )}
+                        {blocker.dependency && <div>Depends on: {blocker.dependency}</div>}
+                        {blocker.owner && <div>Blocker owner: {blocker.owner}</div>}
+                        {blocker.expected && <div>Expected unblock: {blocker.expected}</div>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
           )}
         </div>
       </div>

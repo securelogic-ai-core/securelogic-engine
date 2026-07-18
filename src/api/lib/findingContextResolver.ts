@@ -922,25 +922,71 @@ export async function resolveFindingContext(
 
   // Activity from the org-scoped security audit log: the finding's own events
   // PLUS its remediation actions' events (action.created / action.updated /
-  // action.status_changed carry status, owner and due-date changes — the
-  // reassignment history the walkthrough asked for). Action events were
-  // audit-logged all along (actions.ts writeAuditEvent) but never fetched, so
-  // reassignments surfaced nowhere.
+  // action.status_changed / action.unblocked carry status, owner and due-date
+  // changes — the reassignment + block/unblock history the walkthrough asked
+  // for). Action events were audit-logged all along (actions.ts writeAuditEvent)
+  // but never fetched, so reassignments surfaced nowhere.
+  //
+  // Audit-grade enrichment (Activity timeline correctness): each row is joined,
+  // ALL org-scoped, to WHO acted (actor name/email) and WHAT it affected (the
+  // action's current title). The blocker owner recorded on a block/unblock
+  // payload is resolved to a human name too — a raw UUID is not an audit trail a
+  // leader can read. The blocked_owner UUID is extracted in a CTE with a guarded
+  // CASE (the cast only runs when the string is a UUID) so a malformed legacy
+  // payload can never error the query. Ordering is `created_at DESC, id DESC` —
+  // newest-first, with a stable tiebreaker so same-instant events never reorder
+  // between renders. The org guard on every join is the tenant boundary: an
+  // actor, action, or blocker-owner from another org simply does not join.
   const activityRows = (
     await client.query(
-      `SELECT event_type, resource_type, resource_id, payload, created_at
-         FROM security_audit_log
-        WHERE organization_id = $1
-          AND (
-            (resource_type = 'finding' AND resource_id = $2)
-            OR (resource_type = 'action' AND resource_id IN (
-              SELECT id FROM actions
-               WHERE organization_id = $1
-                 AND source_type = 'finding'
-                 AND source_id = $2
-            ))
-          )
-        ORDER BY created_at DESC
+      `WITH audit AS (
+         SELECT s.id,
+                s.event_type,
+                s.resource_type,
+                s.resource_id,
+                s.payload,
+                s.created_at,
+                s.actor_user_id,
+                CASE
+                  WHEN s.payload->>'blocked_owner_user_id'
+                       ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                  THEN (s.payload->>'blocked_owner_user_id')::uuid
+                END AS blocked_owner_uuid
+           FROM security_audit_log s
+          WHERE s.organization_id = $1
+            AND (
+              (s.resource_type = 'finding' AND s.resource_id = $2)
+              OR (s.resource_type = 'action' AND s.resource_id IN (
+                SELECT id FROM actions
+                 WHERE organization_id = $1
+                   AND source_type = 'finding'
+                   AND source_id = $2
+              ))
+            )
+       )
+       SELECT a.event_type,
+              a.resource_type,
+              a.resource_id,
+              a.payload,
+              a.created_at,
+              a.actor_user_id,
+              actor.name  AS actor_name,
+              actor.email AS actor_email,
+              act.title   AS action_title,
+              bowner.name  AS blocked_owner_name,
+              bowner.email AS blocked_owner_email
+         FROM audit a
+         LEFT JOIN users actor
+           ON actor.id = a.actor_user_id
+          AND actor.organization_id = $1
+         LEFT JOIN actions act
+           ON a.resource_type = 'action'
+          AND act.id = a.resource_id
+          AND act.organization_id = $1
+         LEFT JOIN users bowner
+           ON bowner.id = a.blocked_owner_uuid
+          AND bowner.organization_id = $1
+        ORDER BY a.created_at DESC, a.id DESC
         LIMIT 50`,
       [organizationId, findingId]
     )
@@ -972,7 +1018,22 @@ export async function resolveFindingContext(
     related_findings,
     related_context: { same_vendor },
     enterprise_context,
-    activity: activityRows,
+    // Audit-grade shape: every row carries WHO (actor), WHAT (affected action
+    // identity), and — for block/unblock — the resolved blocker owner, so the
+    // renderer never has to fall back to a bare id or an anonymous "someone".
+    activity: activityRows.map((a) => ({
+      event_type: a.event_type,
+      resource_type: a.resource_type,
+      resource_id: a.resource_id ?? null,
+      payload: a.payload ?? null,
+      created_at: String(a.created_at),
+      actor_user_id: a.actor_user_id ?? null,
+      actor_name: a.actor_name ?? null,
+      actor_email: a.actor_email ?? null,
+      action_title: a.action_title ?? null,
+      blocked_owner_name: a.blocked_owner_name ?? null,
+      blocked_owner_email: a.blocked_owner_email ?? null,
+    })),
     whats_changed: { since, changes },
   };
 }
