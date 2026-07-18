@@ -99,6 +99,9 @@ export const clientSearchParams: { current: URLSearchParams } = {
   current: new URLSearchParams(),
 };
 
+/** The path the client usePathname() hook sees. Defaults to "/" (see setup.ts). */
+export const clientPathname: { current: string } = { current: "/" };
+
 /** Set the URL the client hooks see, e.g. setClientSearchParams("from=ready_to_close"). */
 export function setClientSearchParams(qs: string): void {
   clientSearchParams.current = new URLSearchParams(qs);
@@ -106,6 +109,15 @@ export function setClientSearchParams(qs: string): void {
 
 export function resetClientSearchParams(): void {
   clientSearchParams.current = new URLSearchParams();
+}
+
+/** Set the path the client usePathname() hook sees, e.g. setClientPathname("/findings"). */
+export function setClientPathname(path: string): void {
+  clientPathname.current = path;
+}
+
+export function resetClientPathname(): void {
+  clientPathname.current = "/";
 }
 
 // ── Link assertions ─────────────────────────────────────────────────

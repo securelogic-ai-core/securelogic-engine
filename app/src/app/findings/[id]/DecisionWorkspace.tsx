@@ -23,6 +23,11 @@ import type {
   RiskAcceptance,
 } from "@/lib/api";
 import { intelligenceEventHref, findingEventId } from "@/lib/intelligenceLinks";
+import {
+  queueHandoffLabel,
+  safeQueueReturnUrl,
+  queueHandoffFallbackHref,
+} from "../queueHandoff";
 import { RiskAcceptancePanel } from "./RiskAcceptancePanel";
 import { GovernanceBanner } from "./GovernanceBanner";
 import { DECISION_TABS, DEFAULT_DECISION_TAB, isDecisionTab, type DecisionTab } from "./decisionTabs";
@@ -360,10 +365,17 @@ export function DecisionWorkspace({
   // anywhere in the product can link straight AT the work that is blocking it. Without
   // this the link would land on the page and leave the customer to find the tab.
   const initialTab = searchParams.get("tab");
-  // R-19: the queue this workspace was opened from, so a hand-off from Ready to
-  // Close can state "remediation complete, governance decision required" instead
-  // of dropping the user into a page that looks the same as any other.
+  // R-19: the queue this workspace was opened from, so the page can state WHERE the
+  // user came from ("Opened from All Findings" / "Opened from Needs Governance
+  // Decision") and link back to the exact queue — instead of dropping them into a
+  // page that looks the same as any other. Read from the URL (not history/memory)
+  // so it works in a NEW TAB. `fromQueue` is untrusted: queueHandoffLabel returns
+  // null for anything malformed or unrecognized (no banner), and the return link is
+  // validated safe, never trusted for data access — the finding was already fetched
+  // org-scoped server-side.
   const fromQueue = searchParams.get("from");
+  const fromLabel = queueHandoffLabel(fromQueue);
+  const returnHref = safeQueueReturnUrl(searchParams.get("return")) ?? queueHandoffFallbackHref(fromQueue);
   const [tab, setTab] = useState<DecisionTab>(
     initialTab && isDecisionTab(initialTab) ? initialTab : DEFAULT_DECISION_TAB
   );
@@ -428,7 +440,13 @@ export function DecisionWorkspace({
   const life = lifecycleSummary(opStatus, decisionState);
   const governancePending =
     opStatus === "remediated" && decisionState !== "resolved" && decisionState !== "accepted_risk";
-  const showHandoff = governancePending || fromQueue === "ready_to_close";
+  // The Ready-to-Close queue asserts remediation is done; honor that framing on
+  // arrival even if the client-side state snapshot hasn't re-derived yet (R-19).
+  const governanceHandoff = governancePending || fromQueue === "ready_to_close";
+  // Show the banner whenever remediation-governance is pending OR we recognize the
+  // originating queue (so a new tab always states its provenance and offers a way
+  // back). A malformed/unknown `from` yields fromLabel === null → no banner.
+  const showHandoff = governanceHandoff || fromLabel !== null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 1100, margin: "0 auto" }}>
@@ -438,9 +456,12 @@ export function DecisionWorkspace({
           governance → closed, derived from the two axes. */}
       <LifecycleIndicator operationalStatus={opStatus} decisionState={decisionState} />
 
-      {/* R-19 / R-20 / R-22 — governance hand-off. When remediation is complete but
-          undecided (or the user arrived from Ready to Close), state it plainly and
-          make the governance decision the primary next action. */}
+      {/* R-19 / R-20 / R-22 — originating-queue hand-off. Two shapes share one banner:
+          (a) governance hand-off — remediation complete/undecided, or arrived from
+              Ready to Close: state it plainly, make the governance decision primary;
+          (b) provenance hand-off — arrived from any other recognized queue: name the
+              queue and offer an exact link back.
+          Both work from the URL alone, so a NEW TAB shows the right banner. */}
       {showHandoff && (
         <div
           role="status"
@@ -456,28 +477,76 @@ export function DecisionWorkspace({
             flexWrap: "wrap",
           }}
         >
-          <div>
-            <div style={{ color: "#00c4b4", fontWeight: 600, fontSize: 14 }}>
-              Remediation complete. Governance decision required.
-            </div>
-            <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 2 }}>{life.nextAction}</div>
-          </div>
-          <a
-            href="#governance-decision"
-            style={{
-              background: "rgba(0,196,180,0.15)",
-              border: "1px solid rgba(0,196,180,0.4)",
-              color: "#00c4b4",
-              borderRadius: 6,
-              padding: "6px 12px",
-              fontSize: 13,
-              fontWeight: 600,
-              textDecoration: "none",
-              whiteSpace: "nowrap",
-            }}
-          >
-            Record decision →
-          </a>
+          {governanceHandoff ? (
+            <>
+              <div>
+                <div style={{ color: "#00c4b4", fontWeight: 600, fontSize: 14 }}>
+                  Remediation complete. Governance decision required.
+                </div>
+                <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 2 }}>{life.nextAction}</div>
+                {/* Provenance line — where the user came from, with a link back. */}
+                {fromLabel && (
+                  <div style={{ color: "#64748b", fontSize: 12, marginTop: 4 }}>
+                    Opened from{" "}
+                    {returnHref ? (
+                      <a href={returnHref} style={{ color: "#00c4b4", textDecoration: "underline" }}>
+                        {fromLabel}
+                      </a>
+                    ) : (
+                      <span style={{ color: "#94a3b8" }}>{fromLabel}</span>
+                    )}
+                  </div>
+                )}
+              </div>
+              <a
+                href="#governance-decision"
+                style={{
+                  background: "rgba(0,196,180,0.15)",
+                  border: "1px solid rgba(0,196,180,0.4)",
+                  color: "#00c4b4",
+                  borderRadius: 6,
+                  padding: "6px 12px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  textDecoration: "none",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Record decision →
+              </a>
+            </>
+          ) : (
+            // Provenance-only hand-off: fromLabel is non-null here (showHandoff true,
+            // not a governance hand-off).
+            <>
+              <div>
+                <div style={{ color: "#00c4b4", fontWeight: 600, fontSize: 14 }}>
+                  Opened from {fromLabel}
+                </div>
+                <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 2 }}>
+                  You’re reviewing this finding from your {fromLabel} queue.
+                </div>
+              </div>
+              {returnHref && (
+                <a
+                  href={returnHref}
+                  style={{
+                    background: "rgba(0,196,180,0.15)",
+                    border: "1px solid rgba(0,196,180,0.4)",
+                    color: "#00c4b4",
+                    borderRadius: 6,
+                    padding: "6px 12px",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    textDecoration: "none",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  ← Back to {fromLabel}
+                </a>
+              )}
+            </>
+          )}
         </div>
       )}
 
