@@ -47,6 +47,7 @@ import {
   sqlFindingClosed,
   sqlFindingOverdue,
   sqlFindingStrictlyOpen,
+  sqlFindingPendingIndependentReview,
 } from "../lib/metricDefinitions.js";
 import { resolveSlaDueDate } from "../lib/findingSlaPolicy.js";
 import { buildSignalFindingTitle, resolveSignalDomain } from "../lib/signalFindingShape.js";
@@ -468,7 +469,7 @@ router.get(
       // decision_state write — the system only exposes the prompt (R3).
       if (req.query.ready_for_decision === "true") {
         conditions.push(
-          `f.operational_status = 'remediated' AND f.decision_state NOT IN ('resolved', 'accepted_risk')`
+          sqlFindingPendingIndependentReview("f.operational_status", "f.decision_state")
         );
       }
 
@@ -484,6 +485,25 @@ router.get(
       if (ownerFilter.kind === "me") {
         params.push(ownerFilter.userId);
         conditions.push(`f.owner_user_id = $${params.length}`);
+      }
+
+      // review_owner=me — the caller's own INDEPENDENT-REVIEW assignments (the
+      // "Pending Independent Review" reviewer queue). Same anti-enumeration
+      // contract as owner=me: only the literal "me" is accepted, and the user id
+      // resolves SERVER-SIDE from the session — a reviewer assignment can never be
+      // enumerated by passing a user id. review_owner_user_id is the Closure Owner
+      // (distinct from owner_user_id, the remediation owner).
+      const reviewOwnerFilter = resolveOwnerMeFilter(
+        req.query.review_owner,
+        (req.userId as string | undefined) ?? null
+      );
+      if (reviewOwnerFilter.kind === "error") {
+        res.status(400).json({ error: reviewOwnerFilter.error });
+        return;
+      }
+      if (reviewOwnerFilter.kind === "me") {
+        params.push(reviewOwnerFilter.userId);
+        conditions.push(`f.review_owner_user_id = $${params.length}`);
       }
 
       // exploited=true — findings whose supporting intelligence shows active
@@ -807,8 +827,9 @@ router.get(
           COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND decision_state = 'needs_review')                  AS needs_review_open,
           COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND decision_state = 'mitigating')                    AS mitigating_open,
           COUNT(*) FILTER (WHERE decision_state = 'accepted_risk')                                                      AS accepted_risk_total,
-          -- Ready for decision (spec §1.3): work derived complete, governance pending.
-          COUNT(*) FILTER (WHERE operational_status = 'remediated' AND decision_state NOT IN ('resolved','accepted_risk')) AS ready_for_decision_open,
+          -- Ready for decision (spec §1.3) — ALSO the org-wide Pending Independent
+          -- Review population: work derived complete, governance decision pending.
+          COUNT(*) FILTER (WHERE ${sqlFindingPendingIndependentReview()}) AS ready_for_decision_open,
           -- Ops-center domain buckets (server truth at any scale) — additive.
           COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND domain = 'Regulatory')                            AS regulatory_open,
           COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND domain = 'AI Governance')                         AS ai_governance_open,
@@ -850,6 +871,20 @@ router.get(
           )
         : null;
 
+      // "My Pending Reviews" — findings assigned to the caller as independent
+      // governance reviewer (review_owner_user_id) that are awaiting the governance
+      // decision. The reviewer-scoped count behind the "Pending Independent Review"
+      // queue. Session identity only (same contract as My Work); omitted for
+      // API-key callers, so the UI shows an honest unknown rather than a wrong zero.
+      const myReviews = summaryUserId
+        ? await pg.query<{ mine: string }>(
+            `SELECT COUNT(*) AS mine FROM findings
+              WHERE organization_id = $1 AND review_owner_user_id = $2
+                AND ${sqlFindingPendingIndependentReview()}`,
+            [organizationId, summaryUserId]
+          )
+        : null;
+
       const row = result.rows[0];
       res.status(200).json({
         summary: {
@@ -878,6 +913,9 @@ router.get(
           mitigating_open:     parseInt((row as any)?.mitigating_open ?? "0", 10),
           accepted_risk_total: parseInt((row as any)?.accepted_risk_total ?? "0", 10),
           ready_for_decision_open: parseInt((row as any)?.ready_for_decision_open ?? "0", 10),
+          // Org-wide Pending Independent Review = the ready-for-decision population,
+          // named for the governance-review workflow (identical predicate).
+          pending_independent_review_open: parseInt((row as any)?.ready_for_decision_open ?? "0", 10),
           // Ops-center buckets (ERIP work-first) — additive.
           regulatory_open:        parseInt((row as any)?.regulatory_open ?? "0", 10),
           ai_governance_open:     parseInt((row as any)?.ai_governance_open ?? "0", 10),
@@ -885,6 +923,7 @@ router.get(
           exploited_open:         parseInt((row as any)?.exploited_open ?? "0", 10),
           pending_risk_approvals: parseInt(approvals.rows[0]?.pending ?? "0", 10),
           ...(myWork ? { my_work_open: parseInt(myWork.rows[0]?.mine ?? "0", 10) } : {}),
+          ...(myReviews ? { my_pending_reviews_open: parseInt(myReviews.rows[0]?.mine ?? "0", 10) } : {}),
         },
       });
     } catch (err) {

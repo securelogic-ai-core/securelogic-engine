@@ -128,12 +128,15 @@ function BucketGroup({
   group,
   counts,
   unknown,
+  independentReview = false,
 }: {
   group: OpsBucketGroup;
   counts: Record<OpsBucketId, number>;
   unknown: OpsBucketId[];
+  /** Surfaces the rollout-gated reviewer bucket in the decisions group. */
+  independentReview?: boolean;
 }) {
-  const buckets = bucketsInGroup(group);
+  const buckets = bucketsInGroup(group, { independentReview });
   return (
     <section className="mb-8">
       <h2 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "#94a3b8" }}>
@@ -152,6 +155,7 @@ export default function WorkFirstFindings({
   mode,
   counts,
   unknownCounts,
+  independentReview = false,
   summaryItems,
   generatedAt,
   ownerNames,
@@ -165,6 +169,8 @@ export default function WorkFirstFindings({
   mode: "home" | "bucket" | "entity";
   counts: Record<OpsBucketId, number>;
   unknownCounts: OpsBucketId[];
+  /** SECURELOGIC_INDEPENDENT_REVIEW_ENABLED — surfaces the reviewer queue bucket. */
+  independentReview?: boolean;
   summaryItems?: SummaryItem[];
   generatedAt?: string;
   ownerNames?: Record<string, string>;
@@ -482,7 +488,7 @@ export default function WorkFirstFindings({
         </div>
       )}
 
-      <BucketGroup group="decisions" counts={counts} unknown={unknownCounts} />
+      <BucketGroup group="decisions" counts={counts} unknown={unknownCounts} independentReview={independentReview} />
       <BucketGroup group="domains" counts={counts} unknown={unknownCounts} />
       <BucketGroup group="tracking" counts={counts} unknown={unknownCounts} />
 

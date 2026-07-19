@@ -14,6 +14,7 @@ import {
   bucketListParams,
   opsCounts,
   dueWorkCount,
+  INDEPENDENT_REVIEW_BUCKET,
   encodeCursor,
   decodeCursor,
   parseTrail,
@@ -52,6 +53,59 @@ describe("bucket registry", () => {
     expect(opsBucket("sla_breached")?.label).toBe("SLA Breached");
     expect(opsBucket("nope")).toBeNull();
     expect(opsBucket(undefined)).toBeNull();
+  });
+});
+
+describe("independent-review bucket — rollout-gated, flag-off byte-identical", () => {
+  it("is NOT in the default static registry (flag-off byte-identical)", () => {
+    // Keeping it out of OPS_BUCKETS is what makes flag-off identical: the pure
+    // iterators (grouping, due-work rollup) never see it.
+    expect(OPS_BUCKETS.map((b) => b.id)).not.toContain("pending_independent_review");
+  });
+
+  it("bucketsInGroup omits it by default and appends it to decisions only when the flag is on", () => {
+    expect(bucketsInGroup("decisions").map((b) => b.id)).not.toContain("pending_independent_review");
+    const shown = bucketsInGroup("decisions", { independentReview: true });
+    expect(shown.map((b) => b.id)).toContain("pending_independent_review");
+    // It joins the decisions group only — never leaks into other groups.
+    expect(
+      bucketsInGroup("domains", { independentReview: true }).map((b) => b.id)
+    ).not.toContain("pending_independent_review");
+  });
+
+  it("opsBucket resolves it ONLY when the flag is passed (unreachable subordinate view otherwise)", () => {
+    expect(opsBucket("pending_independent_review")).toBeNull();
+    expect(opsBucket("pending_independent_review", { independentReview: false })).toBeNull();
+    expect(opsBucket("pending_independent_review", { independentReview: true })?.label).toBe(
+      "Pending Independent Review"
+    );
+  });
+
+  it("is the REVIEWER-scoped twin of ready_to_close (ready_for_decision + review_owner=me)", () => {
+    expect(bucketListParams(INDEPENDENT_REVIEW_BUCKET)).toEqual({
+      ready_for_decision: true,
+      review_owner: "me",
+      sort: "created",
+      limit: BUCKET_PAGE_SIZE,
+    });
+  });
+
+  it("its count comes from my_pending_reviews_open (unknown, not a lying zero, when absent)", () => {
+    const withCount = opsCounts({ ...SUMMARY, my_pending_reviews_open: 3 } as FindingsSummary, 0);
+    expect(withCount.counts["pending_independent_review"]).toBe(3);
+    // Absent (API-key caller / older engine) → UNKNOWN, never 0.
+    const absent = opsCounts(SUMMARY, 0);
+    expect(absent.unknown).toContain("pending_independent_review");
+  });
+
+  it("never contributes to the due-work rollup (not in the static urgent set)", () => {
+    // dueWorkCount iterates OPS_BUCKETS; the gated bucket is absent, so it can never
+    // move the all-clear state when the flag is off.
+    const before = dueWorkCount(opsCounts(SUMMARY, 0).counts);
+    const after = dueWorkCount(
+      opsCounts({ ...SUMMARY, my_pending_reviews_open: 99 } as FindingsSummary, 0).counts
+    );
+    expect(after).toBe(before);
   });
 });
 
@@ -97,8 +151,12 @@ describe("bucket targets — server-side filters, never client filtering", () =>
 
 describe("opsCounts — server truth with honest unknowns", () => {
   it("maps every bucket to its summary/suggestions count", () => {
-    const { counts, unknown } = opsCounts({ ...SUMMARY, my_work_open: 4 }, 13);
+    const { counts, unknown } = opsCounts(
+      { ...SUMMARY, my_work_open: 4, my_pending_reviews_open: 8 },
+      13
+    );
     expect(counts.my_work).toBe(4);
+    expect(counts.pending_independent_review).toBe(8);
     expect(counts.sla_breached).toBe(7);
     expect(counts.needs_assignment).toBe(5);
     expect(counts.needs_decision).toBe(9);

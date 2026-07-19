@@ -242,6 +242,32 @@ export default async function DashboardPage({
         </div>
       </div>
 
+      {/* Pending Independent Review — leadership tile (finding-lifecycle-spec §1.3).
+          Remediation is derived complete but the governance decision is still pending;
+          the same org-wide population the ops-center Ready-to-Close queue works. Shown
+          only when there is work to surface, and links straight to that queue. */}
+      {isPlatformUser && (dashboardSummary?.findings?.pending_independent_review ?? 0) > 0 && (
+        <div className="mt-10">
+          <Link
+            href="/findings?bucket=ready_to_close"
+            className="flex items-center justify-between rounded-xl border px-5 py-4 transition-colors hover:bg-white/[0.02]"
+            style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(139,92,246,0.35)" }}
+          >
+            <div>
+              <p className="text-sm font-semibold" style={{ color: "#c4b5fd" }}>
+                Pending Independent Review
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: "#94a3b8" }}>
+                Remediation complete — governance decision pending
+              </p>
+            </div>
+            <span className="text-2xl font-bold tabular-nums" style={{ color: "#c4b5fd" }}>
+              {dashboardSummary?.findings?.pending_independent_review ?? 0}
+            </span>
+          </Link>
+        </div>
+      )}
+
       {/* Recent Findings — platform subscribers only */}
       {isPlatformUser && (
         <div className="mt-10">

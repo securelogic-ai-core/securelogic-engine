@@ -19,6 +19,7 @@
 
 import { logger } from "../infra/logger.js";
 import { sqlFindingActive } from "./metricDefinitions.js";
+import { independentReviewEnabled } from "./independentReviewFeatureFlag.js";
 import {
   resolveFindingEnterpriseContext,
   type FindingEnterpriseContext,
@@ -70,6 +71,20 @@ export interface FindingContext {
   risk: FindingRiskScore;
   business_impact: BusinessImpact;
   owner: { id: string; email: string } | null;
+  /**
+   * Independent Governance Review projection — drives the remediator's waiting state and the
+   * reviewer's decision controls. `independent_review_active` is true only when the workflow
+   * flag is on AND the org enforces closure separation of duties (require_finding_closure_sod);
+   * when false the UI behaves exactly as before this feature. `reviewer` is the assigned
+   * Closure Owner (review_owner_user_id); `remediator_user_id` is the actor who completed the
+   * remediation (latest operational→remediated event) so the UI can tell whether the current
+   * viewer is the remediator (waiting state) or an eligible reviewer (decision controls).
+   */
+  review: {
+    independent_review_active: boolean;
+    reviewer: { id: string; email: string; name: string | null } | null;
+    remediator_user_id: string | null;
+  };
   affected: {
     vendors: FindingAffectedEntity[];
     ai_systems: FindingAffectedEntity[];
@@ -392,6 +407,10 @@ export function describeChange(eventType: string, payload: unknown): string {
   switch (eventType) {
     case "finding.created":
       return "Finding created";
+    case "finding.review.assigned":
+      return "Assigned for independent review";
+    case "finding.remediated":
+      return "Remediation completed";
     case "finding.updated": {
       if (p["severity"]) return `Severity changed to ${String(p["severity"])}`;
       if (p["status"]) return `Status changed to ${String(p["status"])}`;
@@ -420,7 +439,7 @@ export async function resolveFindingContext(
   opts: { since?: string | null } = {}
 ): Promise<FindingContext | null> {
   const f = await client.query(
-    `SELECT id, source_type, source_id, owner_user_id, severity, priority, confidence, decision_state, operational_status
+    `SELECT id, source_type, source_id, owner_user_id, review_owner_user_id, severity, priority, confidence, decision_state, operational_status
        FROM findings
       WHERE id = $1 AND organization_id = $2`,
     [findingId, organizationId]
@@ -920,6 +939,41 @@ export async function resolveFindingContext(
       ).rows[0] ?? null
     : null;
 
+  // Independent Governance Review projection. Active only when the workflow flag is on AND
+  // the org enforces closure SoD — otherwise the UI is unchanged. All org-scoped.
+  const independentReviewActive =
+    independentReviewEnabled() &&
+    ((
+      await client.query(
+        `SELECT COALESCE((SELECT require_finding_closure_sod FROM risk_settings
+                           WHERE organization_id = $1), FALSE) AS enforced`,
+        [organizationId]
+      )
+    ).rows[0]?.enforced === true);
+
+  const reviewer = finding.review_owner_user_id
+    ? (
+        await client.query(
+          `SELECT id, email, name FROM users WHERE id = $1 AND organization_id = $2`,
+          [finding.review_owner_user_id, organizationId]
+        )
+      ).rows[0] ?? null
+    : null;
+
+  // The remediator: actor of the latest operational→remediated lifecycle event — the SAME
+  // identity the close-time SoD gate uses. Lets the UI decide waiting-state vs. controls
+  // without exposing assignment internals. Org-scoped.
+  const remediator_user_id =
+    (
+      await client.query(
+        `SELECT actor_user_id FROM finding_lifecycle_events
+          WHERE organization_id = $1 AND finding_id = $2
+            AND axis = 'operational' AND to_state = 'remediated'
+          ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [organizationId, findingId]
+      )
+    ).rows[0]?.actor_user_id ?? null;
+
   // Activity from the org-scoped security audit log: the finding's own events
   // PLUS its remediation actions' events (action.created / action.updated /
   // action.status_changed / action.unblocked carry status, owner and due-date
@@ -1012,6 +1066,13 @@ export async function resolveFindingContext(
     risk,
     business_impact,
     owner,
+    review: {
+      independent_review_active: independentReviewActive,
+      reviewer: reviewer
+        ? { id: reviewer.id, email: reviewer.email, name: reviewer.name ?? null }
+        : null,
+      remediator_user_id,
+    },
     affected: { vendors, ai_systems, controls, obligations, resolution, candidates },
     intelligence: { events, sources, timeline, signal_ids: signalIds },
     evidence,

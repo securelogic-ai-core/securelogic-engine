@@ -447,6 +447,90 @@ function CandidateLinks({
   );
 }
 
+/**
+ * Independent Governance Review — the waiting state (spec §6). Shown to the remediator
+ * (and any non-reviewer) when remediation is complete but the org's separation-of-duties
+ * policy means an INDEPENDENT reviewer must record the closure decision. It replaces the
+ * "record decision" hand-off with an honest status: what is done, what is received, and
+ * who now owns the call — never an error, and never a control the engine would refuse.
+ */
+function IndependentReviewWaitingCard({
+  reviewer,
+  evidenceCount,
+  fromLabel,
+  returnHref,
+}: {
+  reviewer: { id: string; email: string; name: string | null } | null;
+  evidenceCount: number;
+  fromLabel: string | null;
+  returnHref: string | null;
+}) {
+  const reviewerName = reviewer ? reviewer.name?.trim() || reviewer.email : null;
+  const Row = ({ done, label }: { done: boolean; label: string }) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#cbd5e1" }}>
+      <span style={{ color: done ? "#34d399" : "#64748b", fontWeight: 700 }}>{done ? "✓" : "•"}</span>
+      <span>{label}</span>
+    </div>
+  );
+  return (
+    <div
+      role="status"
+      style={{
+        background: "rgba(139,92,246,0.08)",
+        border: "1px solid rgba(139,92,246,0.35)",
+        borderRadius: 10,
+        padding: "14px 18px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ color: "#c4b5fd", fontWeight: 600, fontSize: 15 }}>
+          Pending Independent Review
+        </span>
+        <span style={{ color: "#94a3b8", fontSize: 12 }}>
+          Awaiting an independent governance decision
+        </span>
+      </div>
+      <div style={{ color: "#94a3b8", fontSize: 13, maxWidth: 620 }}>
+        Remediation is complete. Your organization requires separation of duties on closure,
+        so the person who performed the remediation can’t close this finding — an independent
+        reviewer must record the decision. Nothing is required from you here.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <Row done label="Remediation complete" />
+        <Row
+          done={evidenceCount > 0}
+          label={
+            evidenceCount > 0
+              ? `Evidence received (${evidenceCount})`
+              : "Evidence received — none attached yet"
+          }
+        />
+      </div>
+      <div style={{ fontSize: 13, color: "#cbd5e1" }}>
+        {reviewerName ? (
+          <>
+            Assigned reviewer: <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{reviewerName}</span>
+          </>
+        ) : (
+          // No eligible reviewer was assignable (spec §4): surfaced org-wide for an
+          // administrator to route — never a fabricated assignment.
+          <span style={{ color: "#94a3b8" }}>
+            No reviewer assigned yet — surfaced to your administrators for assignment.
+          </span>
+        )}
+      </div>
+      {fromLabel && returnHref && (
+        <a href={returnHref} style={{ color: "#c4b5fd", fontSize: 12, textDecoration: "underline" }}>
+          ← Back to {fromLabel}
+        </a>
+      )}
+    </div>
+  );
+}
+
 const CARD: React.CSSProperties = {
   background: "rgba(255,255,255,0.02)",
   border: "1px solid rgba(255,255,255,0.08)",
@@ -562,21 +646,54 @@ export function DecisionWorkspace({
   // write while the flag is on regardless of what the client fetched.
   const riskAcceptanceActive = riskAcceptanceFeatureOn;
   const decisionState = context.finding.decision_state;
+  const opStatus = context.finding.operational_status ?? null;
+
+  // ── Independent Governance Review (spec §6) ────────────────────────────────
+  // The engine projects `review.independent_review_active` (workflow flag ON AND the
+  // org enforces closure separation of duties). When active and a remediated finding
+  // still awaits its governance decision, the person who did the remediation — indeed
+  // anyone who is NOT the assigned reviewer — must NOT be offered the Resolved /
+  // Accept-Risk controls the close-time SoD gate would refuse. They see a waiting state
+  // instead; only the assigned reviewer keeps the close controls. When inactive (flag
+  // off or SoD not enforced) every value below is falsy → the workspace is unchanged.
+  const review = context.review;
+  const independentReviewActive = review?.independent_review_active ?? false;
+  const reviewer = review?.reviewer ?? null;
+  const pendingIndependentReview =
+    independentReviewActive &&
+    opStatus === "remediated" &&
+    decisionState !== "resolved" &&
+    decisionState !== "accepted_risk";
+  const viewerIsReviewer = !!(reviewer && currentUserId && reviewer.id === currentUserId);
+  // The waiting state applies to every viewer who is not the assigned reviewer (the
+  // remediator is the primary case). Null reviewer ⇒ nobody is the reviewer yet, so all
+  // viewers wait and the finding is surfaced org-wide for an administrator to route.
+  const remediatorWaiting = pendingIndependentReview && !viewerIsReviewer;
+
   const decisionTargets = legalDecisionTargets(
     decisionState,
-    context.finding.operational_status ?? null
-  ).filter((d) => !(riskAcceptanceActive && d === "accepted_risk" && d !== decisionState));
+    opStatus
+  )
+    .filter((d) => !(riskAcceptanceActive && d === "accepted_risk" && d !== decisionState))
+    // Under independent review, drop the CLOSE targets for a non-reviewer — keeping the
+    // finding's current value so it still renders. Non-close transitions are untouched.
+    .filter(
+      (d) =>
+        !(remediatorWaiting && (d === "resolved" || d === "accepted_risk") && d !== decisionState)
+    );
 
   // R-7 / R-19 / R-22: the operational + governance state as a single lifecycle
   // read, plus the next required action. Governance-pending means remediation is
   // DONE but no decision is recorded — the state the walkthrough found invisible.
-  const opStatus = context.finding.operational_status ?? null;
   const life = lifecycleSummary(opStatus, decisionState);
   const governancePending =
     opStatus === "remediated" && decisionState !== "resolved" && decisionState !== "accepted_risk";
   // The Ready-to-Close queue asserts remediation is done; honor that framing on
   // arrival even if the client-side state snapshot hasn't re-derived yet (R-19).
-  const governanceHandoff = governancePending || fromQueue === "ready_to_close";
+  // Suppressed for a non-reviewer under independent review: they get the dedicated
+  // waiting card below instead of a "record decision" call-to-action they cannot fulfil.
+  const governanceHandoff =
+    (governancePending || fromQueue === "ready_to_close") && !remediatorWaiting;
   // Show the banner whenever remediation-governance is pending OR we recognize the
   // originating queue (so a new tab always states its provenance and offers a way
   // back). A malformed/unknown `from` yields fromLabel === null → no banner.
@@ -589,6 +706,20 @@ export function DecisionWorkspace({
       {/* R-21 — compact lifecycle indicator: detected → assessed → remediation →
           governance → closed, derived from the two axes. */}
       <LifecycleIndicator operationalStatus={opStatus} decisionState={decisionState} />
+
+      {/* Independent Governance Review waiting state (spec §6) — shown to a non-reviewer
+          when remediation is complete but an independent reviewer must record the closure
+          decision under separation of duties. It stands in for the governance hand-off CTA
+          (suppressed above via governanceHandoff), and the close controls below are hidden
+          for this viewer — so the dead 409 action is never offered. No error banner. */}
+      {remediatorWaiting && (
+        <IndependentReviewWaitingCard
+          reviewer={reviewer}
+          evidenceCount={context.evidence.length}
+          fromLabel={fromLabel}
+          returnHref={returnHref}
+        />
+      )}
 
       {/* R-19 / R-20 / R-22 — originating-queue hand-off. Two shapes share one banner:
           (a) governance hand-off — remediation complete/undecided, or arrived from
@@ -777,8 +908,10 @@ export function DecisionWorkspace({
             <div style={{ display: "flex", gap: 8 }}>
               {/* DW-3: framed as formal governance actions, not context-free peer buttons.
                   The legacy one-click Accept Risk exists ONLY when the signed workflow is
-                  OFF (production); when on, accepted_risk is owned by propose → approve below. */}
-              {!riskAcceptanceFeatureOn && (
+                  OFF (production); when on, accepted_risk is owned by propose → approve below.
+                  Suppressed for a non-reviewer under independent review — accepting the risk
+                  is a closure decision the close-time SoD gate would refuse them. */}
+              {!riskAcceptanceFeatureOn && !remediatorWaiting && (
                 <button
                   type="button"
                   disabled={pending}

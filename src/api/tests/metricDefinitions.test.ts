@@ -11,8 +11,10 @@ import { describe, it, expect } from "vitest";
 import {
   FINDING_ACTIVE_STATUSES,
   FINDING_CLOSED_STATUS,
+  DECISION_TERMINAL_STATES,
   sqlFindingClosed,
   sqlFindingStrictlyOpen,
+  sqlFindingPendingIndependentReview,
   ACTION_ACTIVE_STATUSES,
   ACTION_TERMINAL_STATUSES,
   isFindingActive,
@@ -143,5 +145,35 @@ describe("Active / Closed / Strictly-Open — one definition each, and they comp
 
   it("supports table-aliased columns", () => {
     expect(sqlFindingStrictlyOpen("f.status")).toBe("f.status = 'open'");
+  });
+});
+
+describe("Pending Independent Review / ready-for-decision — the single predicate", () => {
+  it("terminal decision states = resolved + accepted_risk (closure calls)", () => {
+    expect([...DECISION_TERMINAL_STATES]).toEqual(["resolved", "accepted_risk"]);
+  });
+
+  it("predicate = remediated AND decision NOT terminal (spec §1.3)", () => {
+    expect(sqlFindingPendingIndependentReview()).toBe(
+      "operational_status = 'remediated' AND decision_state NOT IN ('resolved', 'accepted_risk')"
+    );
+  });
+
+  it("is REMEDIATED-scoped, not the general Active population", () => {
+    // The whole point: this counts work that is DONE and awaiting a governance call —
+    // not everything still open. It must read operational_status = 'remediated', never
+    // the <> 'closed' Active predicate.
+    expect(sqlFindingPendingIndependentReview()).toContain("operational_status = 'remediated'");
+    expect(sqlFindingPendingIndependentReview()).not.toBe(sqlFindingActive());
+    // Terminal decisions are EXCLUDED — a resolved/accepted finding is decided, not pending.
+    for (const s of DECISION_TERMINAL_STATES) {
+      expect(sqlFindingPendingIndependentReview()).toContain(`'${s}'`);
+    }
+  });
+
+  it("supports table-aliased columns at every call site (never request input)", () => {
+    expect(sqlFindingPendingIndependentReview("f.operational_status", "f.decision_state")).toBe(
+      "f.operational_status = 'remediated' AND f.decision_state NOT IN ('resolved', 'accepted_risk')"
+    );
   });
 });

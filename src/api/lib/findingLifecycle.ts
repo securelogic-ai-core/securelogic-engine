@@ -15,6 +15,8 @@
 import { pg } from "../infra/postgres.js";
 import { SQL_ACCEPTANCE_BINDING } from "./riskAcceptanceContract.js";
 import { riskAcceptanceEnabled } from "./riskAcceptanceFeatureFlag.js";
+import { independentReviewEnabled } from "./independentReviewFeatureFlag.js";
+import { assignIndependentReviewerIfNeeded } from "./independentReviewAssignment.js";
 import {
   deriveOperationalStatus,
   legacyStatusFor,
@@ -64,6 +66,14 @@ export interface RecomputeResult {
   toState?: FindingOperationalStatus;
   /** security_audit_log event name for the caller's projection */
   auditEvent?: string;
+  /**
+   * The independent governance reviewer assigned by this recompute, when the finding
+   * transitioned INTO 'remediated' under an SoD-enforcing org with the workflow flag on.
+   * Null on every other path. Returned so a caller MAY dispatch the reviewer notification
+   * post-commit (the notifier is currently fired fire-and-forget from within the assignment;
+   * moving it here is the prod-enable gate for notifications — see independentReviewAssignment).
+   */
+  assignedReviewerUserId?: string | null;
 }
 
 export interface RecomputeOptions {
@@ -201,5 +211,22 @@ export async function recomputeFindingOperationalStatus(
     actor,
   });
 
-  return { changed: true, fromState, toState, auditEvent: eventType };
+  // Independent Governance Review: on a real transition INTO 'remediated', route the
+  // governance decision to an assigned closure owner (admin ≠ remediator) when the org
+  // enforces closure SoD. Fully guarded by the workflow flag FIRST — with it off this
+  // branch issues ZERO extra SQL, so flag-off recompute is byte-identical. The remediator
+  // is the actor of this very transition (the person who completed the last Action), which
+  // is the same counterparty the close-time SoD gate resolves.
+  let assignedReviewerUserId: string | null = null;
+  if (toState === "remediated" && independentReviewEnabled()) {
+    const assignment = await assignIndependentReviewerIfNeeded(
+      organizationId,
+      findingId,
+      actor.actorUserId,
+      actor
+    );
+    assignedReviewerUserId = assignment.assignedReviewerUserId;
+  }
+
+  return { changed: true, fromState, toState, auditEvent: eventType, assignedReviewerUserId };
 }

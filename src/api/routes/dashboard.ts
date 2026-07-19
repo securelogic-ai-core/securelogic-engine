@@ -30,6 +30,7 @@ import {
   sqlActionActive,
   sqlActionOverdue,
   sqlFindingActive,
+  sqlFindingPendingIndependentReview,
   sqlRiskActive,
 } from "../lib/metricDefinitions.js";
 import { riskLifecycleEnabled } from "../lib/riskLifecycleFeatureFlag.js";
@@ -269,7 +270,11 @@ router.get(
           COUNT(CASE WHEN ${sqlFindingActive()}
             AND created_at <  NOW() - INTERVAL '7 days'
             AND created_at >= NOW() - INTERVAL '30 days'
-            THEN 1 END)::text AS older_than_7
+            THEN 1 END)::text AS older_than_7,
+          -- Pending Independent Review: remediation derived complete, governance decision
+          -- pending (finding-lifecycle-spec §1.3). Same population the ops-center
+          -- "Ready to Close" queue surfaces; exposed here as a leadership tile.
+          COUNT(*) FILTER (WHERE ${sqlFindingPendingIndependentReview()})::text AS pending_independent_review
         FROM findings
         WHERE organization_id = $1
         `,
@@ -281,6 +286,7 @@ router.get(
       const findingsMaxAge     = findingsAgingRow?.max_age_days != null ? parseInt(findingsAgingRow.max_age_days, 10) : null;
       const findingsOlderThan30 = parseInt(findingsAgingRow?.older_than_30 ?? "0", 10);
       const findingsOlderThan7  = parseInt(findingsAgingRow?.older_than_7  ?? "0", 10);
+      const findingsPendingIndependentReview = parseInt((findingsAgingRow as any)?.pending_independent_review ?? "0", 10);
 
       // -------------------------------------------------------
       // 4. Action counts — open, overdue, and aging
@@ -683,6 +689,8 @@ router.get(
           max_age_days:  findingsMaxAge,
           older_than_30: findingsOlderThan30,
           older_than_7:  findingsOlderThan7,
+          // Pending Independent Review — remediation complete, governance decision pending.
+          pending_independent_review: findingsPendingIndependentReview,
         },
         actions: {
           // Metric Contract: `active` (open|in_progress|blocked) is the

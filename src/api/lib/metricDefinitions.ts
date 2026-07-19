@@ -53,6 +53,14 @@ export const ACTION_ACTIVE_STATUSES = ["open", "in_progress", "blocked"] as cons
 export const ACTION_TERMINAL_STATUSES = ["closed", "accepted"] as const;
 
 /**
+ * Decision-axis states that mean governance has reached a TERMINAL call — the finding
+ * is no longer awaiting a human decision. `resolved` closes it; `accepted_risk` closes it
+ * via the accepted-risk path. A finding at `remediated` whose decision_state is NOT one of
+ * these is awaiting the governance decision (finding-lifecycle-spec §1.3).
+ */
+export const DECISION_TERMINAL_STATES = ["resolved", "accepted_risk"] as const;
+
+/**
  * Risk statuses that mean the risk is off the books. An ACTIVE risk is anything
  * else — the register's own framing ("open risks"), which includes accepted and
  * mitigating risks because they are still carried.
@@ -147,6 +155,26 @@ export function sqlFindingStrictlyOpen(col = "status"): string {
 /** `<col> IN ('open', 'in_progress', 'blocked')` — the one definition of an active action. */
 export function sqlActionActive(col = "status"): string {
   return `${col} IN (${quotedList(ACTION_ACTIVE_STATUSES)})`;
+}
+
+/**
+ * Pending Independent Review / ready-for-decision: remediation is DERIVED complete
+ * (`operational_status = 'remediated'`) but no terminal governance decision has been made
+ * (`decision_state NOT IN ('resolved','accepted_risk')`). This is the "ready-for-decision"
+ * population from finding-lifecycle-spec §1.3; it is ALSO the independent-governance-review
+ * population when the org enforces `require_finding_closure_sod`.
+ *
+ * THE single definition — previously copied inline in the /findings list filter and the
+ * /findings/summary count. Both operational and decision columns are compile-time constants
+ * at every call site (e.g. "operational_status" / "f.operational_status"); never request input.
+ */
+export function sqlFindingPendingIndependentReview(
+  operationalCol = "operational_status",
+  decisionCol = "decision_state"
+): string {
+  return `${operationalCol} = 'remediated' AND ${decisionCol} NOT IN (${quotedList(
+    DECISION_TERMINAL_STATES
+  )})`;
 }
 
 /**

@@ -23,6 +23,7 @@ export type OpsBucketId =
   | "sla_breached"
   | "needs_decision"
   | "ready_to_close"
+  | "pending_independent_review"
   | "awaiting_approval"
   | "review_links"
   | "active_exploitation"
@@ -86,19 +87,63 @@ export const OPS_BUCKETS: readonly OpsBucketDef[] = [
   { id: "accepted_risk", label: "Accepted Risk", ask: "Governance decisions on record — periodic review", group: "tracking", urgent: false, axisTag: "Governance", membershipReason: "Governance decision: risk accepted — on the periodic review record", target: { kind: "findings", params: { decision_state: "accepted_risk" } } },
 ];
 
+/**
+ * Independent Governance Review — the REVIEWER-scoped twin of `ready_to_close`.
+ * `ready_to_close` is the org-wide ready-for-decision population; this bucket is the
+ * subset a reviewer personally owns (review_owner=me) under separation of duties.
+ *
+ * DELIBERATELY NOT a member of the default OPS_BUCKETS grid: it is surfaced ONLY when
+ * the independent-review rollout flag is on (opts.independentReview). Keeping it out of
+ * the static array is what makes the flag-OFF operations center byte-identical — the pure
+ * iterators (dueWorkCount) never see it, and it is unreachable as a subordinate view
+ * (opsBucket returns null for its id) unless the flag is passed.
+ */
+export const INDEPENDENT_REVIEW_BUCKET: OpsBucketDef = {
+  id: "pending_independent_review",
+  label: "Pending Independent Review",
+  ask: "Assigned to you to validate and close — remediation is complete",
+  group: "decisions",
+  urgent: true,
+  axisTag: "Governance",
+  membershipReason: "Assigned to you for independent governance review — remediation complete",
+  target: { kind: "findings", params: { ready_for_decision: true, review_owner: "me" } },
+};
+
+/** Flag inputs that expose rollout-gated buckets. Default all-off ⇒ legacy behaviour. */
+export interface OpsBucketFlags {
+  /** SECURELOGIC_INDEPENDENT_REVIEW_ENABLED — surfaces the reviewer queue bucket. */
+  independentReview?: boolean;
+}
+
 export const OPS_GROUP_LABELS: Record<OpsBucketGroup, string> = {
   decisions: "Decision work",
   domains: "Risk domains",
   tracking: "Tracking — operational vs. governance",
 };
 
-export function opsBucket(id: string | undefined): OpsBucketDef | null {
+export function opsBucket(
+  id: string | undefined,
+  flags: OpsBucketFlags = {}
+): OpsBucketDef | null {
+  if (id === INDEPENDENT_REVIEW_BUCKET.id) {
+    return flags.independentReview ? INDEPENDENT_REVIEW_BUCKET : null;
+  }
   return OPS_BUCKETS.find((b) => b.id === id) ?? null;
 }
 
-/** Buckets in display order for one group. */
-export function bucketsInGroup(group: OpsBucketGroup): OpsBucketDef[] {
-  return OPS_BUCKETS.filter((b) => b.group === group);
+/**
+ * Buckets in display order for one group. Rollout-gated buckets are appended only when
+ * their flag is on (default off ⇒ the legacy static set, byte-identical).
+ */
+export function bucketsInGroup(
+  group: OpsBucketGroup,
+  flags: OpsBucketFlags = {}
+): OpsBucketDef[] {
+  const base = OPS_BUCKETS.filter((b) => b.group === group);
+  if (flags.independentReview && group === INDEPENDENT_REVIEW_BUCKET.group) {
+    base.push(INDEPENDENT_REVIEW_BUCKET);
+  }
+  return base;
 }
 
 /** The /findings URL that opens a bucket's subordinate view (or the owning surface). */
@@ -152,6 +197,10 @@ export function opsCounts(
     }
   };
   take("my_work", summary?.my_work_open);
+  // Reviewer-scoped independent-review queue (session-scoped field; absent for API-key
+  // callers → UNKNOWN em-dash, never a lying zero). Only rendered when the rollout flag
+  // surfaces the bucket, but the count is resolved here so the record stays complete.
+  take("pending_independent_review", summary?.my_pending_reviews_open);
   take("sla_breached", summary?.overdue_open);
   take("needs_assignment", summary?.unassigned_open);
   take("needs_decision", summary?.needs_review_open);

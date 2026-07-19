@@ -324,6 +324,10 @@ export type DashboardSummary = {
     max_age_days?:  number | null;
     older_than_30?: number;
     older_than_7?:  number;
+    // Independent Governance Review: remediation derived complete, governance decision
+    // pending (finding-lifecycle-spec §1.3) — the leadership view of the reviewer queue.
+    // Optional: absent on older engine builds → the tile falls back to hidden/em-dash.
+    pending_independent_review?: number;
   };
   actions: {
     open: number;
@@ -645,6 +649,11 @@ export type FindingsParams = {
   // "My Work": only the literal "me" is accepted; the engine resolves the user
   // from the SESSION identity (never a client-supplied id).
   owner?: "me";
+  // "Pending Independent Review" reviewer queue: the caller's own independent-
+  // governance-review assignments (review_owner_user_id). Same anti-enumeration
+  // contract as owner — only the literal "me" is accepted; the engine resolves the
+  // user from the SESSION identity, so a reviewer assignment can never be enumerated.
+  review_owner?: "me";
   // Still-requires-work statuses only (open / in_progress).
   active?: boolean;
   // Ready-for-decision queue (spec §1.3): all remediation work derived complete
@@ -719,6 +728,13 @@ export type FindingsSummary = {
   pending_risk_approvals?: number;
   // Session-scoped: present only when the caller has a user identity (owner=me contract).
   my_work_open?: number;
+  // Independent Governance Review (finding-lifecycle-spec §1.3 population, named for the
+  // review workflow). `pending_independent_review_open` is the ORG-WIDE ready-for-decision
+  // count (identical predicate to ready_for_decision_open). `my_pending_reviews_open` is the
+  // reviewer-scoped subset assigned to the caller (review_owner_user_id = me) — session-scoped,
+  // present only when the caller has a user identity. Both optional (older engine builds omit).
+  pending_independent_review_open?: number;
+  my_pending_reviews_open?: number;
 };
 
 export type Risk = {
@@ -2095,6 +2111,7 @@ export async function getFindings(
     if (params?.unassigned) qs.set("unassigned", "true");
     if (params?.exploited) qs.set("exploited", "true");
     if (params?.owner) qs.set("owner", params.owner);
+    if (params?.review_owner) qs.set("review_owner", params.review_owner);
     if (params?.active) qs.set("active", "true");
     if (params?.ready_for_decision) qs.set("ready_for_decision", "true");
     if (params?.intel_ref) qs.set("intel_ref", params.intel_ref);
@@ -2190,6 +2207,21 @@ export type FindingContext = {
     third_party: FindingImpactDimension;
   };
   owner: { id: string; email: string } | null;
+  /**
+   * Independent Governance Review projection (mirrors the engine). Drives the remediator's
+   * waiting state and the reviewer's decision controls. `independent_review_active` is true
+   * only when the workflow flag is on AND the org enforces closure separation of duties;
+   * when false the workspace behaves exactly as before this feature. `reviewer` is the
+   * assigned Closure Owner (review_owner_user_id); `remediator_user_id` is the actor who
+   * completed the remediation (latest operational→remediated event), so the UI can tell a
+   * remediator (waiting state) from the assigned reviewer (decision controls). Optional on
+   * older engine payloads → treated as inactive (unchanged UI).
+   */
+  review?: {
+    independent_review_active: boolean;
+    reviewer: { id: string; email: string; name: string | null } | null;
+    remediator_user_id: string | null;
+  };
   affected: {
     vendors: FindingAffectedEntity[];
     ai_systems: FindingAffectedEntity[];

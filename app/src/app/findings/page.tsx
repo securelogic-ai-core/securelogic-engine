@@ -192,6 +192,12 @@ export default async function FindingsPage({
   // untouched. Flag off = the legacy browse list, byte-for-byte unchanged.
   const queueEnabled = process.env.SECURELOGIC_FINDINGS_QUEUE_CONTROLS_ENABLED === "true";
 
+  // Independent Governance Review rollout — DARK, SECURELOGIC_INDEPENDENT_REVIEW_ENABLED.
+  // Surfaces the reviewer-scoped "Pending Independent Review" ops bucket (and makes it
+  // reachable as a subordinate view). Off = the bucket is neither shown nor resolvable,
+  // so the operations center is byte-identical to before this feature.
+  const independentReviewEnabled = process.env.SECURELOGIC_INDEPENDENT_REVIEW_ENABLED === "true";
+
   // MW-4: resolve owner ids → names so cards show WHO owns a finding, not a bare
   // "Assigned" chip. Best-effort: a failed/permission-limited fetch leaves the map
   // empty and cards fall back to "Assigned" rather than erroring.
@@ -214,7 +220,9 @@ export default async function FindingsPage({
   // search (?entity=<name>) and the browse escape hatch (?queue=all / any legacy
   // filter — keeps posture/dashboard deep links working) are subordinate views too.
   // Flag-off renders the unchanged legacy page.
-  const bucket = workspace ? opsBucket(sp.bucket) : null;
+  const bucket = workspace
+    ? opsBucket(sp.bucket, { independentReview: independentReviewEnabled })
+    : null;
   const entityQuery =
     workspace && typeof sp.entity === "string" && sp.entity.trim().length >= 2 ? sp.entity.trim() : "";
   // Under the queue-controls flag, a bucket URL carrying refinement params
@@ -351,6 +359,7 @@ export default async function FindingsPage({
           mode={workFirstMode}
           counts={wfCounts}
           unknownCounts={wfUnknown}
+          independentReview={independentReviewEnabled}
           summaryItems={summaryItems}
           generatedAt={generatedAt}
           ownerNames={ownerNames}
