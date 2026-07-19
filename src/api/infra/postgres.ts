@@ -3,8 +3,28 @@ import type { PoolClient } from "pg";
 import {
   tenantStorage,
   createSavepointClient,
-  type TenantContext
+  type TenantContext,
+  type AfterCommitCallback
 } from "./tenantContext.js";
+
+/**
+ * Run post-commit callbacks DETACHED (fire-and-forget): the transaction has already
+ * committed, so nothing here may block the caller/response or, by throwing, undo a
+ * durable write. Each callback is isolated — a rejection is swallowed (callbacks that
+ * matter self-log). With an empty list this is a no-op, so the hook is inert when unused.
+ */
+function runAfterCommit(callbacks: readonly AfterCommitCallback[]): void {
+  for (const cb of callbacks) {
+    try {
+      const p = cb();
+      if (p && typeof (p as Promise<void>).then === "function") {
+        (p as Promise<void>).catch(() => {});
+      }
+    } catch {
+      /* swallow: the transaction already committed */
+    }
+  }
+}
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -90,12 +110,18 @@ export const pg: Pool = new Proxy(pool, {
  */
 export async function withTenant<T>(orgId: string, fn: () => Promise<T>): Promise<T> {
   const client = await pool.connect();
-  const ctx: TenantContext = { client, orgId, savepoint: { n: 0 } };
+  const ctx: TenantContext = { client, orgId, savepoint: { n: 0 }, afterCommit: [] };
   try {
     await client.query("BEGIN");
     await client.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
     const result = await tenantStorage.run(ctx, fn);
     await client.query("COMMIT");
+    // COMMIT durably succeeded — and only now — fire any post-commit side effects
+    // (e.g. notifications). Detached (fire-and-forget) so they never delay the
+    // response or the caller; each isolated so one failure can't affect another or
+    // the already-committed result. The rollback path below never reaches here, so
+    // callbacks registered for a rolled-back transaction are silently discarded.
+    runAfterCommit(ctx.afterCommit);
     return result;
   } catch (err) {
     try {
@@ -127,4 +153,4 @@ export function withElevated<T>(fn: (client: PoolClient) => Promise<T>): Promise
   });
 }
 
-export { requireTenantContext, currentTenantContext } from "./tenantContext.js";
+export { requireTenantContext, currentTenantContext, registerAfterCommit } from "./tenantContext.js";

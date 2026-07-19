@@ -22,15 +22,15 @@
  * assigned reviewer has BECOME the new remediator, they are replaced (otherwise the close
  * gate would 409 the assigned reviewer, reintroducing the dead action this feature removes).
  *
- * Notification is fire-and-forget and dark by default (SECURELOGIC_GOVERNANCE_REVIEW_NOTIFICATIONS_ENABLED).
- * KNOWN LIMITATION (prod-enable gate, not a build gate): it dispatches from inside the still-open
- * transaction, so a subsequent rollback could announce an assignment that did not commit. That is
- * acceptable while the notification flag is OFF (staging validation sends nothing); before enabling
- * notifications in production the dispatch must move post-commit (recompute already returns the
- * assigned reviewer for that) or through an outbox.
+ * Notification is dark by default (SECURELOGIC_GOVERNANCE_REVIEW_NOTIFICATIONS_ENABLED) and is
+ * dispatched POST-COMMIT via registerAfterCommit: the reviewer is told about the assignment ONLY
+ * after the tenant transaction durably commits, so a rollback never announces an assignment that
+ * did not land. The dispatch reuses the reviewerId chosen here (no re-selection after commit) and
+ * fires only on a real NEW assignment (rowCount>0), so a retry that re-derives the same,
+ * already-assigned reviewer registers nothing and cannot send a duplicate email.
  */
 
-import { pg } from "../infra/postgres.js";
+import { pg, registerAfterCommit } from "../infra/postgres.js";
 import { writeAuditEvent } from "./auditLog.js";
 import { sendIndependentReviewAssignedNotification } from "./independentReviewNotifier.js";
 import { chooseReviewer, type ReviewerCandidate } from "./independentReviewSelection.js";
@@ -126,11 +126,18 @@ export async function assignIndependentReviewerIfNeeded(
     payload: { reviewer_user_id: reviewerId, remediator_user_id: remediatorUserId },
   });
 
-  // Tell the reviewer there is governance work to do. Dark by default; never fatal.
-  void sendIndependentReviewAssignedNotification({
-    organizationId,
-    findingId,
-    reviewerUserId: reviewerId,
+  // Tell the reviewer there is governance work to do — but ONLY after this transaction
+  // commits (registerAfterCommit), so a rollback never announces an assignment that did
+  // not land. Reuses the reviewerId chosen above (no post-commit re-selection). Reached
+  // only on a real new assignment (the UPDATE claimed the slot), so retries that re-derive
+  // the same reviewer register nothing here and cannot duplicate the email. Dark by
+  // default; the notifier itself is never fatal.
+  registerAfterCommit(async () => {
+    await sendIndependentReviewAssignedNotification({
+      organizationId,
+      findingId,
+      reviewerUserId: reviewerId,
+    });
   });
 
   return { assignedReviewerUserId: reviewerId, changed: true };

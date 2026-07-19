@@ -69,9 +69,9 @@ export interface RecomputeResult {
   /**
    * The independent governance reviewer assigned by this recompute, when the finding
    * transitioned INTO 'remediated' under an SoD-enforcing org with the workflow flag on.
-   * Null on every other path. Returned so a caller MAY dispatch the reviewer notification
-   * post-commit (the notifier is currently fired fire-and-forget from within the assignment;
-   * moving it here is the prod-enable gate for notifications — see independentReviewAssignment).
+   * Null on every other path. Informational for callers/telemetry; the reviewer
+   * notification is dispatched POST-COMMIT by the assignment itself (registerAfterCommit),
+   * so callers need not — and must not — dispatch it again from this value.
    */
   assignedReviewerUserId?: string | null;
 }
