@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFrameworks, getFrameworkReadiness, planDisplayName, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
+import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFindingsSummary, getFrameworks, getFrameworkReadiness, planDisplayName, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { IntelligenceBriefDashboardCard } from "@/components/IntelligenceBriefDashboardCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
@@ -11,7 +11,7 @@ import { CoverageBar } from "@/lib/frameworkCoverage";
 import { LastLoginBanner } from "./LastLoginBanner";
 import { IndustryTemplatesBanner } from "./IndustryTemplatesBanner";
 import { CompactEmptyState } from "./DashboardCharts";
-import { dashboardPanel } from "./dashboardState";
+import { dashboardPanel, pendingReviewTile } from "./dashboardState";
 
 export const revalidate = 0;
 
@@ -35,13 +35,18 @@ export default async function DashboardPage({
   // getMe() is the source of truth for entitlement — never rely on the
   // session cookie alone, which may be stale after a Stripe upgrade.
   // getAuthMe() provides user-level data (including suppression status) for JWT sessions.
-  const [me, issuesData, latestBrief, dashboardSummary, authMe, postureHistory] = await Promise.all([
+  const [me, issuesData, latestBrief, dashboardSummary, authMe, postureHistory, findingsSummaryData] = await Promise.all([
     getMe(token),
     getIssues(token),
     getLatestBrief(token),
     getDashboardSummary(token),
     session.jwtToken ? getAuthMe(session.jwtToken) : Promise.resolve(null),
     getPostureHistory(token, 90),
+    // Session-scoped findings summary — carries my_pending_reviews_open (the
+    // reviewer's OWN queue count) alongside the org-wide populations. Fetched so
+    // the Pending-Review tile can lead with the viewer's number instead of
+    // presenting the org-wide total under a personal-sounding label.
+    getFindingsSummary(token),
   ]);
 
   const entitlementLevelEarly = me?.entitlementLevel ?? "starter";
@@ -242,31 +247,65 @@ export default async function DashboardPage({
         </div>
       </div>
 
-      {/* Pending Independent Review — leadership tile (finding-lifecycle-spec §1.3).
-          Remediation is derived complete but the governance decision is still pending;
-          the same org-wide population the ops-center Ready-to-Close queue works. Shown
-          only when there is work to surface, and links straight to that queue. */}
-      {isPlatformUser && (dashboardSummary?.findings?.pending_independent_review ?? 0) > 0 && (
-        <div className="mt-10">
-          <Link
-            href="/findings?bucket=ready_to_close"
-            className="flex items-center justify-between rounded-xl border px-5 py-4 transition-colors hover:bg-white/[0.02]"
-            style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(139,92,246,0.35)" }}
-          >
-            <div>
-              <p className="text-sm font-semibold" style={{ color: "#c4b5fd" }}>
-                Pending Independent Review
-              </p>
-              <p className="text-xs mt-0.5" style={{ color: "#94a3b8" }}>
-                Remediation complete — governance decision pending
-              </p>
+      {/* Governance-review callout (finding-lifecycle-spec §1.3). Count-scope fix
+          (2026-07-20): the org-wide ready-for-decision population and the viewer's
+          OWN review queue (review_owner=me) are the same predicate at two scopes —
+          this tile previously showed the ORG-WIDE number under the personal queue's
+          label, telling a reviewer with 1 assigned review that "5" were pending.
+          pendingReviewTile() (pure, unit-tested) now picks the variant:
+            personal — lead with the viewer's number, org total as labeled context;
+            org      — explicitly organization-wide (leadership view). */}
+      {isPlatformUser &&
+        (() => {
+          const tile = pendingReviewTile(
+            dashboardSummary?.findings?.pending_independent_review ?? 0,
+            findingsSummaryData?.summary?.my_pending_reviews_open ?? null,
+            process.env.SECURELOGIC_INDEPENDENT_REVIEW_ENABLED === "true",
+          );
+          if (!tile) return null;
+          return (
+            <div className="mt-10">
+              <Link
+                href={tile.href}
+                className="flex items-center justify-between rounded-xl border px-5 py-4 transition-colors hover:bg-white/[0.02]"
+                style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(139,92,246,0.35)" }}
+              >
+                {tile.variant === "personal" ? (
+                  <>
+                    <div>
+                      <p className="text-sm font-semibold" style={{ color: "#c4b5fd" }}>
+                        My Pending Reviews
+                      </p>
+                      <p className="text-xs mt-0.5" style={{ color: "#94a3b8" }}>
+                        Assigned to you to validate and close
+                        {tile.orgWide > tile.mine
+                          ? ` · ${tile.orgWide} organization-wide ready to close`
+                          : ""}
+                      </p>
+                    </div>
+                    <span className="text-2xl font-bold tabular-nums" style={{ color: "#c4b5fd" }}>
+                      {tile.mine}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <p className="text-sm font-semibold" style={{ color: "#c4b5fd" }}>
+                        Ready to Close
+                      </p>
+                      <p className="text-xs mt-0.5" style={{ color: "#94a3b8" }}>
+                        Organization-wide — remediation complete, governance decision pending
+                      </p>
+                    </div>
+                    <span className="text-2xl font-bold tabular-nums" style={{ color: "#c4b5fd" }}>
+                      {tile.orgWide}
+                    </span>
+                  </>
+                )}
+              </Link>
             </div>
-            <span className="text-2xl font-bold tabular-nums" style={{ color: "#c4b5fd" }}>
-              {dashboardSummary?.findings?.pending_independent_review ?? 0}
-            </span>
-          </Link>
-        </div>
-      )}
+          );
+        })()}
 
       {/* Recent Findings — platform subscribers only */}
       {isPlatformUser && (

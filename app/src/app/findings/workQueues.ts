@@ -92,6 +92,12 @@ export const OPS_BUCKETS: readonly OpsBucketDef[] = [
  * `ready_to_close` is the org-wide ready-for-decision population; this bucket is the
  * subset a reviewer personally owns (review_owner=me) under separation of duties.
  *
+ * Labeled "My Pending Reviews" (count-scope fix, 2026-07-20): its previous label —
+ * "Pending Independent Review" — was also used by the dashboard tile for the ORG-WIDE
+ * population, so one name carried two scopes and a reviewer with 1 assigned review
+ * read the org total (5) as theirs. The personal scope is now in the name. The bucket
+ * ID is deliberately NOT renamed — in-flight links and open tabs must keep resolving.
+ *
  * DELIBERATELY NOT a member of the default OPS_BUCKETS grid: it is surfaced ONLY when
  * the independent-review rollout flag is on (opts.independentReview). Keeping it out of
  * the static array is what makes the flag-OFF operations center byte-identical — the pure
@@ -100,7 +106,7 @@ export const OPS_BUCKETS: readonly OpsBucketDef[] = [
  */
 export const INDEPENDENT_REVIEW_BUCKET: OpsBucketDef = {
   id: "pending_independent_review",
-  label: "Pending Independent Review",
+  label: "My Pending Reviews",
   ask: "Assigned to you to validate and close — remediation is complete",
   group: "decisions",
   urgent: true,

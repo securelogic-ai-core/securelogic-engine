@@ -76,8 +76,11 @@ describe("independent-review bucket — rollout-gated, flag-off byte-identical",
   it("opsBucket resolves it ONLY when the flag is passed (unreachable subordinate view otherwise)", () => {
     expect(opsBucket("pending_independent_review")).toBeNull();
     expect(opsBucket("pending_independent_review", { independentReview: false })).toBeNull();
+    // Label carries the PERSONAL scope in the name (count-scope fix): the org-wide
+    // twin is "Ready to Close"; this reviewer-scoped subset must never share a name
+    // with an org-wide count.
     expect(opsBucket("pending_independent_review", { independentReview: true })?.label).toBe(
-      "Pending Independent Review"
+      "My Pending Reviews"
     );
   });
 

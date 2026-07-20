@@ -9,7 +9,7 @@
  * never sees an href.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import {
   renderPage,
   expectRedirect,
@@ -24,6 +24,7 @@ import {
   aDomainScore,
   aFinding,
   aFindingsResponse,
+  aFindingsSummary,
   aFramework,
   aFrameworkReadiness,
   aMe,
@@ -41,6 +42,7 @@ const api = vi.hoisted(() => ({
   getDashboardSummary: vi.fn(),
   getPostureHistory: vi.fn(),
   getFindings: vi.fn(),
+  getFindingsSummary: vi.fn(),
   getFrameworks: vi.fn(),
   getFrameworkReadiness: vi.fn(),
 }));
@@ -73,6 +75,9 @@ beforeEach(() => {
   api.getFindings.mockResolvedValue(
     aFindingsResponse([aFinding({ id: "f-9", title: "Unencrypted backups", severity: "High" })])
   );
+  // Default: findings summary unavailable → the review tile can only ever be the
+  // org-wide variant (an unknown personal count must never be treated as one).
+  api.getFindingsSummary.mockResolvedValue(null);
   api.getFrameworks.mockResolvedValue({ frameworks: [aFramework()] });
   api.getFrameworkReadiness.mockResolvedValue(aFrameworkReadiness());
 });
@@ -420,5 +425,99 @@ describe("dashboard — no raw source_type enums reach the customer (walkthrough
     expect(container.textContent).not.toContain("intelligence_event");
     expect(screen.getByText("Signal")).toBeInTheDocument();
     expect(screen.getByText("Intelligence")).toBeInTheDocument();
+  });
+});
+
+// ── Governance-review tile: count SCOPE and labels (count-scope fix, 2026-07-20) ──
+// One predicate, two scopes. The defect: the tile showed the ORG-WIDE count (5)
+// under the personal queue's label, so a reviewer with 1 assigned review read
+// "5 pending" as theirs. These pin what the customer SEES for each scope.
+describe("dashboard — governance-review tile scope", () => {
+  const SUMMARY_WITH_REVIEWS = aDashboardSummary({
+    domains: [aDomainScore({ domain: "Third Party" }), aDomainScore({ domain: "Cyber" })],
+    findings: {
+      open: 8,
+      by_severity: { Critical: 2, High: 3, Moderate: 2, Low: 1 },
+      avg_age_days: 12,
+      max_age_days: 40,
+      older_than_30: 1,
+      older_than_7: 3,
+      pending_independent_review: 5,
+    },
+  });
+
+  it("a reviewer with assigned reviews sees THEIR count first, org-wide as labeled context", async () => {
+    vi.stubEnv("SECURELOGIC_INDEPENDENT_REVIEW_ENABLED", "true");
+    api.getDashboardSummary.mockResolvedValue(SUMMARY_WITH_REVIEWS);
+    api.getFindingsSummary.mockResolvedValue({
+      summary: aFindingsSummary({ my_pending_reviews_open: 1 }),
+    });
+
+    const { container } = await renderDashboard();
+
+    // Scope to the tile itself — the dashboard prints many numbers.
+    const tile = screen.getByText("My Pending Reviews").closest("a") as HTMLElement;
+    expect(tile).toBeTruthy();
+    expect(within(tile).getByText("1")).toBeInTheDocument();
+    // The org total is visible but explicitly organization-wide — never conflatable
+    // with the personal number.
+    expect(within(tile).getByText(/5 organization-wide ready to close/)).toBeInTheDocument();
+    // The headline links to the REVIEWER'S queue, which reproduces the number 1.
+    expect(hrefOf(container, /My Pending Reviews/)).toBe(
+      "/findings?bucket=pending_independent_review"
+    );
+    // The org-wide label must not render as the headline.
+    expect(screen.queryByText("Pending Independent Review")).toBeNull();
+  });
+
+  it("no assigned reviews → the org-wide tile, explicitly labeled organization-wide", async () => {
+    vi.stubEnv("SECURELOGIC_INDEPENDENT_REVIEW_ENABLED", "true");
+    api.getDashboardSummary.mockResolvedValue(SUMMARY_WITH_REVIEWS);
+    api.getFindingsSummary.mockResolvedValue({
+      summary: aFindingsSummary({ my_pending_reviews_open: 0 }),
+    });
+
+    const { container } = await renderDashboard();
+
+    const tile = screen.getByText("Ready to Close").closest("a") as HTMLElement;
+    expect(tile).toBeTruthy();
+    expect(within(tile).getByText(/Organization-wide/)).toBeInTheDocument();
+    expect(within(tile).getByText("5")).toBeInTheDocument();
+    expect(hrefOf(container, /Ready to Close/)).toBe("/findings?bucket=ready_to_close");
+    expect(screen.queryByText("My Pending Reviews")).toBeNull();
+  });
+
+  it("flag OFF → never the personal variant (its queue does not exist), even with a personal count", async () => {
+    // No env stub — SECURELOGIC_INDEPENDENT_REVIEW_ENABLED unset.
+    api.getDashboardSummary.mockResolvedValue(SUMMARY_WITH_REVIEWS);
+    api.getFindingsSummary.mockResolvedValue({
+      summary: aFindingsSummary({ my_pending_reviews_open: 1 }),
+    });
+
+    const { container } = await renderDashboard();
+
+    expect(screen.queryByText("My Pending Reviews")).toBeNull();
+    expect(screen.getByText("Ready to Close")).toBeInTheDocument();
+    expect(hrefOf(container, /Ready to Close/)).toBe("/findings?bucket=ready_to_close");
+  });
+
+  it("unknown personal count (summary fetch failed) falls back to the org-wide tile — never a fake personal zero", async () => {
+    vi.stubEnv("SECURELOGIC_INDEPENDENT_REVIEW_ENABLED", "true");
+    api.getDashboardSummary.mockResolvedValue(SUMMARY_WITH_REVIEWS);
+    api.getFindingsSummary.mockResolvedValue(null);
+
+    await renderDashboard();
+
+    expect(screen.queryByText("My Pending Reviews")).toBeNull();
+    expect(screen.getByText("Ready to Close")).toBeInTheDocument();
+  });
+
+  it("empty org-wide population → no review tile at all (unchanged gate)", async () => {
+    vi.stubEnv("SECURELOGIC_INDEPENDENT_REVIEW_ENABLED", "true");
+    // Default SUMMARY fixture has no pending_independent_review (0).
+    await renderDashboard();
+
+    expect(screen.queryByText("My Pending Reviews")).toBeNull();
+    expect(screen.queryByText("Ready to Close")).toBeNull();
   });
 });
