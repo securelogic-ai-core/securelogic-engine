@@ -47,7 +47,6 @@ import {
   lifecycleSummary,
 } from "@/lib/findingLifecycleVocab";
 import {
-  updateFindingStatusAction,
   updateFindingPriorityAction,
   updateFindingDecisionStateAction,
   markFindingReviewedAction,
@@ -57,17 +56,10 @@ import {
 // Canonical governance labels (shared module) — the Decision Workspace was one of
 // the screens that re-declared these; it now imports the single source of truth.
 const DECISION_LABELS = DECISION_STATE_LABELS;
-const STATUS_LABELS: Record<string, string> = {
-  open: "Open",
-  in_progress: "In Progress",
-  closed: "Closed",
-  accepted: "Accepted",
-};
-const STATUS_ORDER = ["open", "in_progress", "closed", "accepted"];
-/** Mirrors the engine's sqlActionActive(): status IN ('open','in_progress','blocked'). */
-const ACTION_ACTIVE = new Set(["open", "in_progress", "blocked"]);
-/** The legacy terminals — the writes the closure gate refuses when remediation is open. */
-const CLOSING_STATUSES = new Set(["closed", "accepted"]);
+// Legacy `finding.status` (open/in_progress/closed/accepted) is no longer surfaced
+// in the workspace — it is an internal migration concept superseded by the two
+// canonical axes (Governance Decision + Operational Status). The field and its
+// server-side enforcement are unchanged; only the customer-facing control is gone.
 
 const LEVEL_COLOR: Record<string, string> = {
   high: "#fca5a5",
@@ -538,6 +530,11 @@ const CARD: React.CSSProperties = {
   padding: 20,
 };
 const H: React.CSSProperties = { fontSize: 12, textTransform: "uppercase", letterSpacing: 0.6, color: "#64748b", marginBottom: 10 };
+/** Mini-label for the grouped operational attributes (Owner / SLA / Confidence). */
+const ATTR_LABEL: React.CSSProperties = { fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5, color: "#64748b" };
+const ATTR_VALUE: React.CSSProperties = { fontSize: 13, color: "#e2e8f0" };
+/** A thin divider between the stacked sections inside the Zone-A identity card. */
+const ZONE_A_DIVIDER: React.CSSProperties = { paddingTop: 14, marginTop: 14, borderTop: "1px solid rgba(255,255,255,0.06)" };
 
 export function DecisionWorkspace({
   finding,
@@ -567,7 +564,8 @@ export function DecisionWorkspace({
   riskAcceptanceFeatureOn?: boolean;
   /** The viewer, for separation-of-duties on approve/reject. */
   currentUserId?: string | null;
-  /** Non-terminal remediation Actions on this finding — see closureBlocked below. */
+  /** Non-terminal remediation Actions on this finding — passed to the Governance
+   *  Decision panel so it can warn before a close the engine would refuse. */
   openActionCount?: number;
   /**
    * What `/findings` is called for this viewer — "Operations Workspace" under the
@@ -622,14 +620,6 @@ export function DecisionWorkspace({
         setErrorHref(r.remediationHref ?? null);
       }
     });
-
-  /**
-   * Blocking remediation this page ALREADY knows about — the Remediation tab renders these
-   * very Actions, so the count is passed down rather than re-fetched. Used to relabel the
-   * closing controls up front instead of inviting a click the server will refuse.
-   * Courtesy, not security: the engine still enforces.
-   */
-  const closureBlocked = openActionCount > 0;
 
   const affected = context.affected;
   const affectedTotal =
@@ -690,6 +680,27 @@ export function DecisionWorkspace({
       (d) =>
         !(remediatorWaiting && (d === "resolved" || d === "accepted_risk") && d !== decisionState)
     );
+  // Closure (Resolved) is only a legal move once operational_status is remediated
+  // (or the risk is already accepted). When it is NOT yet offered we say so under
+  // the control, so a first-time analyst reads its absence as sequencing — "this
+  // decision comes later" — rather than a missing feature. The control itself stays
+  // editable: recording Mitigating (a plan is accepted) is a legitimate early
+  // decision that advances the lifecycle OUT of Assessed, so disabling it would
+  // break the state machine, not clarify it.
+  const closureAvailable = decisionTargets.includes("resolved");
+
+  // #7 — a finding that exists was, at minimum, CREATED. When the audit feed carries
+  // no explicit creation event, synthesize one from the finding's own authoritative
+  // created_at — a real, persisted fact, not a fabricated event — so a brand-new
+  // finding reads as "Finding created" on its Detected moment instead of the false
+  // "No recorded activity". Appended last (oldest) and subject to the same de-dupe +
+  // 20-row cap, so real audit events always take precedence.
+  const activityRows: ActivityItem[] = context.activity.some((a) => a.event_type === "finding.created")
+    ? context.activity
+    : [
+        ...context.activity,
+        { event_type: "finding.created", created_at: finding.created_at, payload: null } as ActivityItem,
+      ];
 
   // R-7 / R-19 / R-22: the operational + governance state as a single lifecycle
   // read, plus the next required action. Governance-pending means remediation is
@@ -703,10 +714,11 @@ export function DecisionWorkspace({
   // waiting card below instead of a "record decision" call-to-action they cannot fulfil.
   const governanceHandoff =
     (governancePending || fromQueue === "ready_to_close") && !remediatorWaiting;
-  // Show the banner whenever remediation-governance is pending OR we recognize the
-  // originating queue (so a new tab always states its provenance and offers a way
-  // back). A malformed/unknown `from` yields fromLabel === null → no banner.
-  const showHandoff = governanceHandoff || fromLabel !== null;
+  // Provenance-only hand-off: we recognize the originating queue but there is no
+  // governance CTA to make. A malformed/unknown `from` yields fromLabel === null →
+  // no indicator. Rendered as a light breadcrumb, not a full card — navigation
+  // history should never own a panel's worth of vertical space (#2).
+  const provenanceOnly = !governanceHandoff && fromLabel !== null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 1100, margin: "0 auto" }}>
@@ -730,13 +742,10 @@ export function DecisionWorkspace({
         />
       )}
 
-      {/* R-19 / R-20 / R-22 — originating-queue hand-off. Two shapes share one banner:
-          (a) governance hand-off — remediation complete/undecided, or arrived from
-              Ready to Close: state it plainly, make the governance decision primary;
-          (b) provenance hand-off — arrived from any other recognized queue: name the
-              queue and offer an exact link back.
-          Both work from the URL alone, so a NEW TAB shows the right banner. */}
-      {showHandoff && (
+      {/* R-19 / R-22 — governance hand-off. Remediation complete/undecided, or arrived
+          from Ready to Close: a prominent CTA, because there is a real decision to make.
+          Works from the URL alone, so a NEW TAB shows it. */}
+      {governanceHandoff && (
         <div
           role="status"
           style={{
@@ -751,78 +760,60 @@ export function DecisionWorkspace({
             flexWrap: "wrap",
           }}
         >
-          {governanceHandoff ? (
-            <>
-              <div>
-                <div style={{ color: "#00c4b4", fontWeight: 600, fontSize: 14 }}>
-                  Remediation complete. Governance decision required.
-                </div>
-                <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 2 }}>{life.nextAction}</div>
-                {/* Provenance line — where the user came from, with a link back. */}
-                {fromLabel && (
-                  <div style={{ color: "#64748b", fontSize: 12, marginTop: 4 }}>
-                    Opened from{" "}
-                    {returnHref ? (
-                      <a href={returnHref} style={{ color: "#00c4b4", textDecoration: "underline" }}>
-                        {fromLabel}
-                      </a>
-                    ) : (
-                      <span style={{ color: "#94a3b8" }}>{fromLabel}</span>
-                    )}
-                  </div>
+          <div>
+            <div style={{ color: "#00c4b4", fontWeight: 600, fontSize: 14 }}>
+              Remediation complete. Governance decision required.
+            </div>
+            <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 2 }}>{life.nextAction}</div>
+            {/* Provenance line — where the user came from, with a link back. */}
+            {fromLabel && (
+              <div style={{ color: "#64748b", fontSize: 12, marginTop: 4 }}>
+                Opened from{" "}
+                {returnHref ? (
+                  <a href={returnHref} style={{ color: "#00c4b4", textDecoration: "underline" }}>
+                    {fromLabel}
+                  </a>
+                ) : (
+                  <span style={{ color: "#94a3b8" }}>{fromLabel}</span>
                 )}
               </div>
-              {/* Opens the ACTUAL decision controls (options, consequences,
-                  rationale, confirm/cancel) — not an in-page scroll. */}
-              <button
-                type="button"
-                onClick={() => setDecisionPanelOpen(true)}
-                style={{
-                  background: "rgba(0,196,180,0.15)",
-                  border: "1px solid rgba(0,196,180,0.4)",
-                  color: "#00c4b4",
-                  borderRadius: 6,
-                  padding: "6px 12px",
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                Record decision →
-              </button>
-            </>
-          ) : (
-            // Provenance-only hand-off: fromLabel is non-null here (showHandoff true,
-            // not a governance hand-off).
-            <>
-              <div>
-                <div style={{ color: "#00c4b4", fontWeight: 600, fontSize: 14 }}>
-                  Opened from {fromLabel}
-                </div>
-                <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 2 }}>
-                  You’re reviewing this finding from {fromLabel}.
-                </div>
-              </div>
-              {returnHref && (
-                <a
-                  href={returnHref}
-                  style={{
-                    background: "rgba(0,196,180,0.15)",
-                    border: "1px solid rgba(0,196,180,0.4)",
-                    color: "#00c4b4",
-                    borderRadius: 6,
-                    padding: "6px 12px",
-                    fontSize: 13,
-                    fontWeight: 600,
-                    textDecoration: "none",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  ← Back to {fromLabel}
-                </a>
-              )}
-            </>
+            )}
+          </div>
+          {/* Opens the ACTUAL decision controls (options, consequences,
+              rationale, confirm/cancel) — not an in-page scroll. */}
+          <button
+            type="button"
+            onClick={() => setDecisionPanelOpen(true)}
+            style={{
+              background: "rgba(0,196,180,0.15)",
+              border: "1px solid rgba(0,196,180,0.4)",
+              color: "#00c4b4",
+              borderRadius: 6,
+              padding: "6px 12px",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Record decision →
+          </button>
+        </div>
+      )}
+
+      {/* #2 — provenance-only hand-off. A light breadcrumb line, NOT a card: it states
+          where the user came from and links back, without spending a panel on navigation
+          history. fromLabel is non-null here (provenanceOnly). */}
+      {provenanceOnly && (
+        <div
+          role="status"
+          style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "#64748b", flexWrap: "wrap" }}
+        >
+          <span>Opened from {fromLabel}</span>
+          {returnHref && (
+            <a href={returnHref} style={{ color: "#00c4b4", textDecoration: "none" }}>
+              ← Back to {fromLabel}
+            </a>
           )}
         </div>
       )}
@@ -848,12 +839,39 @@ export function DecisionWorkspace({
         <GovernanceBanner acceptances={riskAcceptances} currentUserId={currentUserId} />
       )}
 
-      {/* ZONE A — Decision header. DW-1: the two orthogonal axes are named and
-          separated — Governance Decision (human) vs Operational Status (system-
-          derived) — so the user never infers governance from an unlabeled control. */}
+      {/* ZONE A — Finding identity + decision. Visual hierarchy for a first-time
+          analyst: (1) WHAT this is — title, severity, risk; (2) WHERE it is and the
+          decision — the two orthogonal axes (DW-1: named + separated so governance is
+          never inferred from an unlabeled control); (3) WHO owns it / WHEN it's due /
+          HOW sure we are. The decision controls sit BELOW the identity so the eye reads
+          the finding before it is asked to act on it. */}
       <div style={CARD} id="governance-decision">
-        <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
-          <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
+        {/* (1) Identity — the first thing the eye should land on. */}
+        <h1 style={{ fontSize: 24, fontWeight: 700, color: "#f1f5f9", margin: "0 0 8px" }}>{finding.title}</h1>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+          <Chip text={finding.severity} color={LEVEL_COLOR[String(finding.severity).toLowerCase()] ?? "#fca5a5"} />
+          <Chip text={`Business impact: ${LEVEL_LABEL[topImpact]}`} color={LEVEL_COLOR[topImpact]} />
+          <Chip text={`Risk ${context.risk.score}/100 (${context.risk.band})`} color="#93c5fd" />
+          {finding.priority ? <Chip text={finding.priority} color="#fcd34d" /> : null}
+        </div>
+        {/* DW-4: risk-score explainability — the factors that produced the number,
+            already computed by the engine (context.risk.rationale) and previously dropped. */}
+        {context.risk.rationale.length > 0 && (
+          <details>
+            <summary style={{ cursor: "pointer", fontSize: 12, color: "#93c5fd" }}>
+              Why {context.risk.score}/100? — how this score was computed
+            </summary>
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18, color: "#94a3b8", fontSize: 12 }}>
+              {context.risk.rationale.map((r, i) => (
+                <li key={i}>{r}</li>
+              ))}
+            </ul>
+          </details>
+        )}
+
+        {/* (2) Decision + status — the two orthogonal axes, subordinate to identity. */}
+        <div style={{ ...ZONE_A_DIVIDER, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
+          <div style={{ display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap" }}>
             {/* Governance Decision axis */}
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "#c4b5fd", fontWeight: 600 }}>
@@ -875,9 +893,17 @@ export function DecisionWorkspace({
               <span style={{ fontSize: 11, color: "#64748b", maxWidth: 240 }}>
                 {DECISION_STATE_MEANINGS[context.finding.decision_state] ?? "The recorded risk-treatment decision."}
               </span>
+              {/* #1 — "this decision comes later" without disabling the control: the
+                  legal-moves filter already hides Resolved until remediation is done, so
+                  say why, and its absence reads as sequencing rather than a missing feature. */}
+              {!closureAvailable && decisionState !== "resolved" && (
+                <span style={{ fontSize: 11, color: "#475569", maxWidth: 240 }}>
+                  Closure (Resolved) unlocks once remediation is complete.
+                </span>
+              )}
             </div>
 
-            {/* Operational Status axis — system-derived, read-only. */}
+            {/* Operational Status axis — system-derived, read-only context (not an action). */}
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "#93c5fd", fontWeight: 600 }}>
                 {OPERATIONAL_AXIS_LABEL}
@@ -889,28 +915,6 @@ export function DecisionWorkspace({
                 Derived from linked remediation — you can&apos;t set it directly.
               </span>
             </div>
-
-            {/* Legacy lifecycle status — being superseded by the two axes above;
-                kept editable so no behavior changes, but clearly subordinate. */}
-            <details style={{ alignSelf: "center" }}>
-              <summary style={{ cursor: "pointer", fontSize: 11, color: "#64748b" }}>Legacy status</summary>
-              <select
-                value={finding.status}
-                disabled={pending}
-                onChange={(e) => run(() => updateFindingStatusAction(finding.id, e.target.value))}
-                style={{ background: "#0f172a", color: "#f1f5f9", border: "1px solid #334155", borderRadius: 6, padding: "4px 8px", fontSize: 13, marginTop: 4 }}
-              >
-                {/* Relabel + disable the CLOSING options when this page can already see open
-                    remediation. Server-side enforcement is unchanged and remains the authority. */}
-                {STATUS_ORDER.map((s) => (
-                  <option key={s} value={s} disabled={closureBlocked && CLOSING_STATUSES.has(s)}>
-                    {closureBlocked && CLOSING_STATUSES.has(s)
-                      ? `${STATUS_LABELS[s]} (remediation open)`
-                      : STATUS_LABELS[s]}
-                  </option>
-                ))}
-              </select>
-            </details>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
             <span style={{ fontSize: 11, color: "#64748b" }}>Governance actions</span>
@@ -960,35 +964,15 @@ export function DecisionWorkspace({
           </p>
         )}
 
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: "#f1f5f9", margin: "14px 0 6px" }}>{finding.title}</h1>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
-          <Chip text={finding.severity} color={LEVEL_COLOR[String(finding.severity).toLowerCase()] ?? "#fca5a5"} />
-          <Chip text={`Business impact: ${LEVEL_LABEL[topImpact]}`} color={LEVEL_COLOR[topImpact]} />
-          <Chip text={`Risk ${context.risk.score}/100 (${context.risk.band})`} color="#93c5fd" />
-          {finding.priority ? <Chip text={finding.priority} color="#fcd34d" /> : null}
-        </div>
-        {/* DW-4: risk-score explainability — the factors that produced the number,
-            already computed by the engine (context.risk.rationale) and previously dropped. */}
-        {context.risk.rationale.length > 0 && (
-          <details style={{ marginBottom: 8 }}>
-            <summary style={{ cursor: "pointer", fontSize: 12, color: "#93c5fd" }}>
-              Why {context.risk.score}/100? — how this score was computed
-            </summary>
-            <ul style={{ margin: "6px 0 0", paddingLeft: 18, color: "#94a3b8", fontSize: 12 }}>
-              {context.risk.rationale.map((r, i) => (
-                <li key={i}>{r}</li>
-              ))}
-            </ul>
-          </details>
-        )}
-        <div style={{ fontSize: 13, color: "#94a3b8", display: "flex", gap: 16, flexWrap: "wrap" }}>
-          {/* Ownership was read-only text. The engine has accepted owner_user_id on
-              PATCH /api/findings/:id since 20260410; the only way to set it was a
-              bulk op from the LIST that assigned to yourself. From the finding you
-              were actually looking at — the one place you have the context to decide
-              who should own it — you could not. */}
-          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-            Owner:
+        {/* (3) Operational attributes — WHO owns it, WHEN it's due, HOW sure we are.
+            #4: grouped into one labeled cluster so assignment and scanning are a single
+            motion, not three facts scattered along an unlabeled line. */}
+        <div style={{ ...ZONE_A_DIVIDER, display: "flex", gap: 24, flexWrap: "wrap" }}>
+          {/* Owner — assignable in place. The engine has accepted owner_user_id on
+              PATCH /api/findings/:id since 20260410; before this the only way to set it
+              was a bulk op from the LIST, never from the finding you were looking at. */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 150 }}>
+            <span style={ATTR_LABEL}>Owner</span>
             {owners.length > 0 ? (
               <select
                 value={context.owner?.id ?? ""}
@@ -1000,7 +984,7 @@ export function DecisionWorkspace({
                   background: "#0f1722",
                   border: "1px solid #1e293b",
                   color: "#e2e8f0",
-                  fontSize: 12,
+                  fontSize: 13,
                   borderRadius: 6,
                   padding: "2px 6px",
                 }}
@@ -1013,17 +997,27 @@ export function DecisionWorkspace({
                 ))}
               </select>
             ) : (
-              <span>{context.owner?.email ?? "Unassigned"}</span>
+              <span style={ATTR_VALUE}>{context.owner?.email ?? "Unassigned"}</span>
             )}
-          </span>
-          <span title="The committed remediation due date (SLA) for this finding.">
-            SLA: {fmt((finding as { due_date?: string | null }).due_date)}
-          </span>
+          </div>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: 3 }}
+            title="The committed remediation due date (SLA) for this finding."
+          >
+            <span style={ATTR_LABEL}>SLA · Due date</span>
+            <span style={ATTR_VALUE}>{fmt((finding as { due_date?: string | null }).due_date)}</span>
+          </div>
           {/* DW-5: Confidence is otherwise a bare, undefined value. */}
-          <span title="Confidence = how strongly the evidence supports this finding (higher = more certain). It discounts the risk score when low.">
-            Confidence: {finding.confidence ?? "—"}
-            <span style={{ color: "#475569" }}> ⓘ</span>
-          </span>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: 3 }}
+            title="Confidence = how strongly the evidence supports this finding (higher = more certain). It discounts the risk score when low."
+          >
+            <span style={ATTR_LABEL}>Confidence</span>
+            <span style={ATTR_VALUE}>
+              {finding.confidence ?? "—"}
+              <span style={{ color: "#475569" }}> ⓘ</span>
+            </span>
+          </div>
         </div>
       </div>
 
@@ -1083,21 +1077,27 @@ export function DecisionWorkspace({
           </div>
         ))}
 
-      {/* ZONE B — What's changed */}
-      <div style={CARD}>
-        <div style={H}>What&apos;s changed since your last review</div>
-        {context.whats_changed.changes.length === 0 ? (
-          <div style={{ fontSize: 13, color: "#94a3b8" }}>
-            {context.whats_changed.since ? "No changes since your last review." : "First review — no prior baseline."}
-          </div>
-        ) : (
+      {/* ZONE B — What's changed. #6: when there is nothing to show, it collapses to a
+          single muted line instead of a full padded card — an empty panel with an
+          uppercase header taught the eye that this whole region is skippable. It earns
+          its card only when there are actual changes to read. */}
+      {context.whats_changed.changes.length > 0 ? (
+        <div style={CARD}>
+          <div style={H}>What&apos;s changed since your last review</div>
           <ul style={{ margin: 0, paddingLeft: 18, color: "#e5e7eb", fontSize: 13 }}>
             {context.whats_changed.changes.map((c, i) => (
               <li key={i}>{c.label} <span style={{ color: "#64748b" }}>· {fmt(c.at)}</span></li>
             ))}
           </ul>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: "#64748b", padding: "0 4px" }}>
+          <span style={{ color: "#94a3b8", fontWeight: 500 }}>What&apos;s changed:</span>{" "}
+          {context.whats_changed.since
+            ? "Nothing new since your last review."
+            : "First review — no prior baseline yet."}
+        </div>
+      )}
 
       {/* ZONE C — Business impact */}
       <div style={CARD}>
@@ -1305,15 +1305,17 @@ export function DecisionWorkspace({
         </div>
         <div style={{ ...CARD, flex: 1, minWidth: 260 }}>
           <div style={H}>Activity</div>
-          {context.activity.length === 0 ? (
+          {activityRows.length === 0 ? (
             <span style={{ fontSize: 12, color: "#475569" }}>No recorded activity</span>
           ) : (
             // Audit-grade entries, newest-first (the resolver orders
             // created_at DESC, id DESC): exact UTC timestamp, WHO acted, the
             // specific transition, WHICH remediation action, and — for a
             // block/unblock — the preserved blocker metadata. Deduped against
-            // accidental double-writes, never collapsing distinct events.
-            dedupeActivity(context.activity)
+            // accidental double-writes, never collapsing distinct events. Includes
+            // the synthesized "Finding created" baseline (#7) when the feed carries
+            // no explicit creation event.
+            dedupeActivity(activityRows)
               .slice(0, 20)
               .map((a, i) => {
                 const identity = activityActionIdentity(a);
