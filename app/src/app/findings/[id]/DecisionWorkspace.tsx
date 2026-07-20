@@ -968,11 +968,18 @@ export function DecisionWorkspace({
             #4: grouped into one labeled cluster so assignment and scanning are a single
             motion, not three facts scattered along an unlabeled line. */}
         <div style={{ ...ZONE_A_DIVIDER, display: "flex", gap: 24, flexWrap: "wrap" }}>
-          {/* Owner — assignable in place. The engine has accepted owner_user_id on
-              PATCH /api/findings/:id since 20260410; before this the only way to set it
-              was a bulk op from the LIST, never from the finding you were looking at. */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 150 }}>
-            <span style={ATTR_LABEL}>Owner</span>
+          {/* Finding owner — assignable in place. The engine has accepted owner_user_id
+              on PATCH /api/findings/:id since 20260410; before this the only way to set it
+              was a bulk op from the LIST, never from the finding you were looking at.
+              DISTINCT from a remediation action's owner: this is who is accountable for the
+              finding and its governance decision; each Action is assigned separately (see
+              "Remediation owner" on the Remediation tab). Naming both "Owner" made an
+              unassigned finding look like it contradicted an assigned action. */}
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 150 }}
+            title="Accountable for this finding and its governance decision. Remediation actions are assigned separately — see the Remediation owner on each action."
+          >
+            <span style={ATTR_LABEL}>Finding owner</span>
             {owners.length > 0 ? (
               <select
                 value={context.owner?.id ?? ""}

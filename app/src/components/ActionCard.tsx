@@ -386,10 +386,13 @@ export function ActionCard({
         </div>
       )}
 
-      {/* Who is doing this. An unowned action is a wish, not a plan. */}
+      {/* Who is doing THIS remediation action — distinct from the finding owner shown in
+          the workspace summary. Named "Remediation owner" so an assigned action never
+          looks like it contradicts an unassigned finding. An unowned action is a wish,
+          not a plan. */}
       {canPlan && (
         <div className="text-xs mb-2" style={{ color: action.owner_user_id ? "#94a3b8" : "#64748b" }}>
-          {action.owner_user_id ? `Owner: ${ownerLabel}` : "Unassigned"}
+          {action.owner_user_id ? `Remediation owner: ${ownerLabel}` : "Remediation owner: Unassigned"}
         </div>
       )}
 
