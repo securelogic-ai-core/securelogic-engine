@@ -547,6 +547,7 @@ export function DecisionWorkspace({
   riskAcceptanceFeatureOn = false,
   currentUserId = null,
   openActionCount = 0,
+  homeLabel = "Findings",
   children,
 }: {
   finding: Finding;
@@ -568,6 +569,14 @@ export function DecisionWorkspace({
   currentUserId?: string | null;
   /** Non-terminal remediation Actions on this finding — see closureBlocked below. */
   openActionCount?: number;
+  /**
+   * What `/findings` is called for this viewer — "Operations Workspace" under the
+   * risk_workspace flag, else the legacy "Findings". Resolved server-side and passed
+   * in, because this Workspace has its OWN flag and the two can be on independently;
+   * a hardcoded label would promise a workspace the route may not render. Defaults to
+   * the legacy name so the back-link is never wrong when the prop is omitted.
+   */
+  homeLabel?: string;
   // The recommendation + remediation-actions block (Zone F) is composed by the
   // server page (reusing AddActionForm/ActionCard) and passed in as children.
   children: React.ReactNode;
@@ -701,7 +710,7 @@ export function DecisionWorkspace({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 1100, margin: "0 auto" }}>
-      <Link href="/findings" style={{ fontSize: 12, color: "#94a3b8" }}>← Findings</Link>
+      <Link href="/findings" style={{ fontSize: 12, color: "#94a3b8" }}>← {homeLabel}</Link>
 
       {/* R-21 — compact lifecycle indicator: detected → assessed → remediation →
           governance → closed, derived from the two axes. */}
@@ -792,7 +801,7 @@ export function DecisionWorkspace({
                   Opened from {fromLabel}
                 </div>
                 <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 2 }}>
-                  You’re reviewing this finding from your {fromLabel} queue.
+                  You’re reviewing this finding from {fromLabel}.
                 </div>
               </div>
               {returnHref && (

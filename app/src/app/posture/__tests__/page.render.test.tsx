@@ -57,9 +57,9 @@ describe("/posture — every findings number reconciles with the list it links t
     }
 
     // Every link that CARRIES A NUMBER must land on the population it counted. The one
-    // exception is the bare "/findings" browse-all link on the Domains tile — it makes no
-    // numeric claim, so it is free to show the unfiltered list.
-    for (const href of findingLinks.filter((h) => h !== "/findings")) {
+    // exception is the Finding Explorer link on the Domains tile ("/findings?queue=all")
+    // — it makes no numeric claim, so it is free to show the unfiltered inventory.
+    for (const href of findingLinks.filter((h) => h !== "/findings?queue=all")) {
       expect(href).toContain("active=true");
     }
   });

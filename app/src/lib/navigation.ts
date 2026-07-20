@@ -129,7 +129,8 @@ export const NAV_ITEMS: NavItem[] = [
 //   - "Intelligence" gathers the funnel INTO findings: Briefs (ungated — the
 //     wedge, must stay visible to Brief-tier) + "Review Links" (the reskinned
 //     matcher queue, platform-only via per-child gating).
-//   - "Risk Operations" is the Finding work hub (Findings first) and surfaces
+//   - "Risk Operations" is the risk work hub. It leads with the two task-oriented
+//     destinations (Operations Workspace, then Finding Explorer) and surfaces
 //     Approvals, which is otherwise reachable only from a /risks back-link.
 //   - "Assets" surfaces Vendor Assurance (otherwise nav-orphaned) and keeps the
 //     EAR asset_registry canonical-entry behavior (EAR-AD-1) unchanged.
@@ -146,12 +147,23 @@ export const WORKSPACE_NAV_ITEMS: NavItem[] = [
       { label: "Review Links", href: "/queue", platform: true },
     ],
   },
+  // Risk Operations exposes the two DISTINCT user intents that both live on the
+  // /findings route, which previously appeared as a single "Findings" item:
+  //   - "Operations Workspace" (/findings) — "take me where I do my daily work":
+  //     the work queues, assignments, governance workflow, SLA and independent
+  //     review surface. It lists no finding rows; it organizes work.
+  //   - "Finding Explorer" (/findings?queue=all) — "take me where I search and
+  //     investigate": the complete searchable inventory of findings.
+  // The Explorer was previously reachable ONLY from a link at the bottom of the
+  // workspace, so the inventory was effectively nav-orphaned. Both entries point
+  // at existing URLs — no route, param, or handler changed.
   { type: "group", label: "Risk Operations", platform: true,
     items: [
-      { label: "Findings",      href: "/findings" },
-      { label: "Actions",       href: "/actions" },
-      { label: "Risk Register", href: "/risks" },
-      { label: "Approvals",     href: "/approvals" },
+      { label: "Operations Workspace", href: "/findings" },
+      { label: "Finding Explorer",     href: "/findings?queue=all" },
+      { label: "Actions",              href: "/actions" },
+      { label: "Risk Register",        href: "/risks" },
+      { label: "Approvals",            href: "/approvals" },
     ],
   },
   { type: "group", label: "Assets", platform: true,
@@ -183,6 +195,87 @@ export const WORKSPACE_NAV_ITEMS: NavItem[] = [
  */
 export function getNavItems(flags?: NavFlags): NavItem[] {
   return flags?.risk_workspace ? WORKSPACE_NAV_ITEMS : NAV_ITEMS;
+}
+
+// ─── Risk Operations destination names ────────────────────────────────────────
+//
+// The two task-oriented destinations on the /findings route. Exported so back-links
+// and provenance copy on OTHER surfaces (the finding detail page, the CSV importer)
+// name the destination identically to the nav and the page heading, instead of each
+// hardcoding its own wording.
+
+/** "Take me where I do my daily work" — /findings under the risk_workspace flag. */
+export const OPERATIONS_WORKSPACE_LABEL = "Operations Workspace";
+/** "Take me where I search and investigate" — /findings?queue=all. */
+export const FINDING_EXPLORER_LABEL = "Finding Explorer";
+
+/**
+ * What `/findings` is CALLED right now. The route renders the Operations Workspace
+ * only under the risk_workspace flag; with the flag off it is still the legacy
+ * "Findings" list, so a back-link must not promise a workspace that isn't rendered.
+ * Pass the resolved flag (server components read the env; clients take a prop).
+ */
+export function findingsHomeLabel(riskWorkspaceEnabled: boolean): string {
+  return riskWorkspaceEnabled ? OPERATIONS_WORKSPACE_LABEL : "Findings";
+}
+
+/**
+ * What `/findings?queue=all` is CALLED right now. Flag off, that URL renders the
+ * same single legacy list as `/findings`, so naming it "Finding Explorer" would
+ * invent a destination the user cannot see; it keeps the generic wording instead.
+ */
+export function findingExplorerLabel(riskWorkspaceEnabled: boolean): string {
+  return riskWorkspaceEnabled ? FINDING_EXPLORER_LABEL : "All findings";
+}
+
+/**
+ * Whether a nav item points at the destination the user is currently viewing.
+ *
+ * Two Risk Operations children (Operations Workspace, Finding Explorer) share the
+ * `/findings` PATH and are distinguished only by the query string, so matching on
+ * `usePathname()` alone would highlight "Operations Workspace" while the user is
+ * in the Explorer and never highlight the Explorer at all. The rule:
+ *
+ *   - href WITHOUT a query → active on a path match, but NOT when the current URL
+ *     carries a query that another sibling claims exactly.
+ *   - href WITH a query → active only when the path matches AND every one of the
+ *     href's params is present with the same value. Extra params in the current URL
+ *     (a filter or a sort the user added inside the Explorer) do not break the match.
+ *
+ * `search` is the raw query string (with or without a leading "?"); pass "" when
+ * there is none. `matchDescendants` preserves the caller's EXISTING path semantics:
+ * the top-level links and the group button already lit up on descendant routes
+ * (`/risks` active on `/risks/abc`) while the dropdown children required an exact
+ * path match. Keeping that split means the legacy (flag-off) menu behaves exactly as
+ * it did before this helper existed. Pure and dependency-free so it stays unit-testable.
+ */
+export function isNavItemActive(
+  href: string,
+  pathname: string,
+  search: string,
+  siblingHrefs: readonly string[] = [],
+  matchDescendants = false,
+): boolean {
+  const [hrefPath, hrefQuery = ""] = href.split("?");
+  const pathMatches = matchDescendants
+    ? pathname === hrefPath || pathname.startsWith(hrefPath + "/")
+    : pathname === hrefPath;
+  if (!pathMatches) return false;
+
+  const current = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+
+  if (hrefQuery) {
+    for (const [k, v] of new URLSearchParams(hrefQuery)) {
+      if (current.get(k) !== v) return false;
+    }
+    return true;
+  }
+
+  // Query-less href: yield to a sibling that claims this exact URL, so the
+  // Explorer — not the Workspace — lights up on `/findings?queue=all`.
+  return !siblingHrefs.some(
+    s => s !== href && s.split("?")[1] && isNavItemActive(s, pathname, search, [], matchDescendants),
+  );
 }
 
 export function filterNav(

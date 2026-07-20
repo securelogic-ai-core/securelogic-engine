@@ -3,7 +3,7 @@
  * Decision Workspace drill-through (R-19).
  *
  * When a user opens a finding's Decision Workspace from a queue, the workspace
- * states WHERE they came from ("Opened from All Findings" / "Opened from Needs
+ * states WHERE they came from ("Opened from Finding Explorer" / "Opened from Needs
  * Governance Decision") and offers a link back that restores the exact queue.
  *
  * The whole handoff lives in the URL — `?from=<context>&return=<queue url>` — so a
@@ -20,7 +20,7 @@
 import { opsBucket } from "./workQueues";
 
 /**
- * The browse-queue handoff context — the scalable "All Findings" queue
+ * The browse-queue handoff context — the scalable Finding Explorer queue
  * (FindingsQueueToolbar + FindingCard). It is NOT an ops bucket, so it is handled
  * explicitly here rather than via opsBucket().
  */
@@ -36,13 +36,17 @@ const MAX_RETURN_LEN = 512;
  * missing, malformed, or UNRECOGNIZED value so the Decision Workspace fails safe
  * (renders no provenance banner) instead of echoing an attacker-supplied string.
  *
- * - "findings_queue"        → "All Findings"
+ * - "findings_queue"        → "Finding Explorer"
  * - any OpsBucketId         → that bucket's label (e.g. "Needs Governance Decision")
  * - anything else / junk    → null
+ *
+ * NOTE: the "findings_queue" SLUG is a URL value carried in `?from=` and is
+ * deliberately NOT renamed alongside the label — in-flight links and open tabs
+ * must keep resolving. Only the human label changed.
  */
 export function queueHandoffLabel(from: string | null | undefined): string | null {
   if (typeof from !== "string" || from.length === 0 || from.length > MAX_FROM_LEN) return null;
-  if (from === FINDINGS_QUEUE_CONTEXT) return "All Findings";
+  if (from === FINDINGS_QUEUE_CONTEXT) return "Finding Explorer";
   return opsBucket(from)?.label ?? null;
 }
 

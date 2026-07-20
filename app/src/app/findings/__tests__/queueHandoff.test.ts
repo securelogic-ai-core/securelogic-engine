@@ -18,9 +18,11 @@ import {
 import { OPS_BUCKETS } from "../workQueues";
 
 describe("queueHandoffLabel — every recognized queue names itself, junk fails safe", () => {
-  it("labels the browse queue 'All Findings'", () => {
-    expect(queueHandoffLabel(FINDINGS_QUEUE_CONTEXT)).toBe("All Findings");
-    expect(queueHandoffLabel("findings_queue")).toBe("All Findings");
+  it("labels the browse queue 'Finding Explorer'", () => {
+    expect(queueHandoffLabel(FINDINGS_QUEUE_CONTEXT)).toBe("Finding Explorer");
+    // The SLUG is a URL value and must not drift with the display name — an
+    // in-flight `?from=findings_queue` link still has to resolve.
+    expect(queueHandoffLabel("findings_queue")).toBe("Finding Explorer");
   });
 
   it("labels each Operations Center bucket with its own label", () => {

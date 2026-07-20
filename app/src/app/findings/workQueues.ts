@@ -116,7 +116,7 @@ export interface OpsBucketFlags {
 }
 
 export const OPS_GROUP_LABELS: Record<OpsBucketGroup, string> = {
-  decisions: "Decision work",
+  decisions: "Work queues",
   domains: "Risk domains",
   tracking: "Tracking — operational vs. governance",
 };

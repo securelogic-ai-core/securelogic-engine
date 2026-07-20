@@ -602,11 +602,11 @@ describe("Decision Workspace — walkthrough remediation (PR-B1)", () => {
   // these exercise the provenance branch: name the queue + link back, from the URL
   // alone (a new tab has no history/memory to fall back on).
 
-  it("names the originating queue on arrival from All Findings — 'Opened from All Findings'", async () => {
+  it("names the originating queue on arrival from Finding Explorer — 'Opened from Finding Explorer'", async () => {
     setClientSearchParams("from=findings_queue");
     workspaceOn();
     await renderPage(FindingDetailPage, props());
-    expect(screen.getByText("Opened from All Findings")).toBeInTheDocument();
+    expect(screen.getByText("Opened from Finding Explorer")).toBeInTheDocument();
   });
 
   it("names the originating Operations Center bucket — 'Opened from Needs Governance Decision'", async () => {
@@ -622,7 +622,7 @@ describe("Decision Workspace — walkthrough remediation (PR-B1)", () => {
     );
     workspaceOn();
     await renderPage(FindingDetailPage, props());
-    expect(screen.getByRole("link", { name: /Back to All Findings/i })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /Back to Finding Explorer/i })).toHaveAttribute(
       "href",
       "/findings?q=azure&severity=Critical&page=2",
     );
@@ -664,11 +664,11 @@ describe("Decision Workspace — walkthrough remediation (PR-B1)", () => {
     workspaceOn();
     const { container } = await renderPage(FindingDetailPage, props());
     // Provenance banner still renders (from is valid) ...
-    expect(screen.getByText("Opened from All Findings")).toBeInTheDocument();
+    expect(screen.getByText("Opened from Finding Explorer")).toBeInTheDocument();
     // ... but the unsafe return is rejected and no link points at the hostile host;
     // the back-link falls back to the safe canonical queue URL.
     expect(container.querySelector('a[href*="evil.example"]')).toBeNull();
-    expect(screen.getByRole("link", { name: /Back to All Findings/i })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /Back to Finding Explorer/i })).toHaveAttribute(
       "href",
       "/findings?queue=all",
     );

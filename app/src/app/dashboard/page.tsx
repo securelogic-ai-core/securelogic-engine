@@ -611,7 +611,7 @@ function RecentFindings({ findings, summaryActiveCount }: { findings: Finding[];
           Recent Findings
         </h2>
         <Link
-          href="/findings"
+          href="/findings?queue=all"
           className="text-xs font-medium transition-colors"
           style={{ color: "#00c4b4" }}
         >
@@ -637,7 +637,7 @@ function RecentFindings({ findings, summaryActiveCount }: { findings: Finding[];
             <p className="text-sm mb-2" style={{ color: "#94a3b8" }}>
               Could not load recent findings.
             </p>
-            <Link href="/findings" className="text-xs font-medium" style={{ color: "#00c4b4" }}>
+            <Link href="/findings?queue=all" className="text-xs font-medium" style={{ color: "#00c4b4" }}>
               View all findings →
             </Link>
           </div>

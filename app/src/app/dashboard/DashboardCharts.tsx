@@ -466,7 +466,7 @@ export function OpenItemsAging({
         <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
           Open Items Aging
         </p>
-        <Link href="/findings" className="text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+        <Link href="/findings?queue=all" className="text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
           View all →
         </Link>
       </div>

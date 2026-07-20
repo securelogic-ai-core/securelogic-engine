@@ -125,7 +125,7 @@ describe("ops center — the work queues render", () => {
   it("lands on decision buckets, risk domains and tracking — not a list of records", async () => {
     const { container } = await home();
 
-    expect(screen.getByText("Decision work")).toBeInTheDocument();
+    expect(screen.getByText("Work queues")).toBeInTheDocument();
     expect(screen.getByText("Risk domains")).toBeInTheDocument();
     expect(screen.getByText(/^Tracking/)).toBeInTheDocument();
     // getAllByText tolerates the F-1 summary bar, which repeats a few bucket names
@@ -136,7 +136,7 @@ describe("ops center — the work queues render", () => {
     // Work-first means work, not records: the landing view renders NO finding rows.
     // A page that shows both is the mixed state this mode exists to replace.
     expect(container.textContent).not.toContain("Bucket finding");
-    expect(screen.getByText(/Browse all findings/)).toBeInTheDocument();
+    expect(screen.getByText(/Finding Explorer/)).toBeInTheDocument();
   });
 
   it("opens each bucket where its work actually lives", async () => {
@@ -381,7 +381,7 @@ describe("ops center — paging a bucket never changes the filter", () => {
 
     // Falls back to the ops-center home (work queues), never an unfiltered list of
     // records dressed up as a queue.
-    expect(screen.getByText("Decision work")).toBeInTheDocument();
+    expect(screen.getByText("Work queues")).toBeInTheDocument();
     expect(container.textContent).not.toContain("Bucket finding");
   });
 });
@@ -390,7 +390,7 @@ describe("ops center — the flag is a clean switch, not a blend", () => {
   it("flag ON with no filters = work queues, and no legacy filter bar", async () => {
     const { container } = await home();
 
-    expect(screen.getByText("Decision work")).toBeInTheDocument();
+    expect(screen.getByText("Work queues")).toBeInTheDocument();
     // The legacy status/severity pills belong to the list experience. Both at once is
     // the mixed state.
     expect(container.querySelector('a[href="/findings?status=closed"]')).toBeNull();
@@ -403,7 +403,7 @@ describe("ops center — the flag is a clean switch, not a blend", () => {
 
     const { container } = await home();
 
-    expect(screen.queryByText("Decision work")).toBeNull();
+    expect(screen.queryByText("Work queues")).toBeNull();
     expect(screen.queryByText("My Work")).toBeNull();
     expect(container.querySelector('a[href*="bucket="]')).toBeNull();
     // The legacy experience is records + filters.

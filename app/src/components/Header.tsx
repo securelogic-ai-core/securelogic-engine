@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { LogoutButton } from "./LogoutButton";
 import UserMenu from "./UserMenu";
-import { getNavItems, filterNav, type NavFlags } from "@/lib/navigation";
+import { getNavItems, filterNav, isNavItemActive, type NavFlags } from "@/lib/navigation";
 import { getSiteBaseUrl } from "@/lib/siteUrl";
 
 // Marketing-site base for the logo/home link. Env-aware + build-time — see
@@ -72,10 +72,15 @@ function NavGroup({
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
+  // Query-aware: Operations Workspace and Finding Explorer share the /findings
+  // path, so path-only matching would highlight the wrong child (see
+  // isNavItemActive). Safe in the root layout — the tree is already dynamically
+  // rendered because layout.tsx awaits getSession() (cookies).
+  const search = useSearchParams()?.toString() ?? "";
+  const hrefs = items.map(i => i.href);
 
-  const isActive = items.some(
-    item => pathname === item.href || pathname.startsWith(item.href + "/"),
-  );
+  // Group button: descendant match, as before (`/risks/abc` keeps "Risk" lit).
+  const isActive = items.some(item => isNavItemActive(item.href, pathname, search, hrefs, true));
 
   useEffect(() => {
     if (!open) return;
@@ -126,8 +131,10 @@ function NavGroup({
               key={item.href}
               href={item.href}
               onClick={() => setOpen(false)}
-              className="block px-4 py-2.5 text-sm transition-colors hover:bg-white/5"
-              style={{ color: pathname === item.href ? "#00c4b4" : "#cbd5e1" }}
+              className="block px-4 py-2.5 text-sm whitespace-nowrap transition-colors hover:bg-white/5"
+              style={{
+                color: isNavItemActive(item.href, pathname, search, hrefs) ? "#00c4b4" : "#cbd5e1",
+              }}
             >
               {item.label}
             </Link>

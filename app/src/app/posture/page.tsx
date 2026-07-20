@@ -259,7 +259,7 @@ export default async function PosturePage() {
             </p>
             <p className="text-3xl font-bold mb-3" style={{ color: "#f1f5f9" }}>{domains.length}</p>
             <Link
-              href="/findings"
+              href="/findings?queue=all"
               className="text-xs font-medium transition-colors hover:opacity-80"
               style={{ color: "#00c4b4" }}
             >

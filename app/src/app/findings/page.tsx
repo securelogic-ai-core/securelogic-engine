@@ -319,12 +319,20 @@ export default async function FindingsPage({
       {/* Header */}
       <div className="flex items-start justify-between gap-4 mb-8 flex-wrap">
         <div>
+          {/* Two DISTINCT destinations share this route, and until now they shared
+              one title ("Risk Findings") — the work hub and the inventory were
+              indistinguishable. Under the workspace flag the heading follows the
+              mode: the work-first modes (home / bucket / entity) ARE the Operations
+              Workspace, while the browse mode IS the Finding Explorer. Flag off,
+              workFirstMode is always null and the legacy heading is unchanged. */}
           <h1 className="text-2xl font-bold mb-1" style={{ color: "#f1f5f9" }}>
-            {workspace ? "Risk Findings" : "Findings"}
+            {workspace ? (workFirstMode ? "Operations Workspace" : "Finding Explorer") : "Findings"}
           </h1>
           <p className="text-sm" style={{ color: "#94a3b8" }}>
             {workspace
-              ? "Your decision queue — what requires action now, most urgent first"
+              ? workFirstMode
+                ? "Your operational workspace for managing and governing cyber risk."
+                : "Search, investigate, filter, and manage findings across your environment."
               : "All findings across your organization"}
           </p>
         </div>

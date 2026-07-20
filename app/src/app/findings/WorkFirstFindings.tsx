@@ -206,7 +206,7 @@ export default function WorkFirstFindings({
       <>
         <div className="mb-6">
           <Link href="/findings" className="text-sm font-medium" style={{ color: "#00c4b4" }}>
-            ← Operations center
+            ← Operations Workspace
           </Link>
         </div>
         <div className="mb-4">
@@ -251,7 +251,7 @@ export default function WorkFirstFindings({
                   Pick up work from the queues — assign a finding to yourself from its Decision Workspace.
                 </p>
                 <Link href="/findings" className="text-sm font-medium" style={{ color: "#00c4b4" }}>
-                  Go to the operations center →
+                  Go to the Operations Workspace →
                 </Link>
               </>
             ) : (
@@ -305,7 +305,7 @@ export default function WorkFirstFindings({
       <>
         <div className="mb-6">
           <Link href="/findings" className="text-sm font-medium" style={{ color: "#00c4b4" }}>
-            ← Operations center
+            ← Operations Workspace
           </Link>
         </div>
         <div className="mb-6">
@@ -330,7 +330,7 @@ export default function WorkFirstFindings({
                   Pick up work from the queues — assign a finding to yourself from its Decision Workspace.
                 </p>
                 <Link href="/findings" className="text-sm font-medium" style={{ color: "#00c4b4" }}>
-                  Go to the operations center →
+                  Go to the Operations Workspace →
                 </Link>
               </>
             ) : hrefs.prevHref !== null ? (
@@ -395,7 +395,7 @@ export default function WorkFirstFindings({
       <>
         <div className="mb-6 flex items-center justify-between gap-4 flex-wrap">
           <Link href="/findings" className="text-sm font-medium" style={{ color: "#00c4b4" }}>
-            ← Operations center
+            ← Operations Workspace
           </Link>
           <EntitySearchForm initial={entityQuery} />
         </div>
@@ -494,7 +494,7 @@ export default function WorkFirstFindings({
 
       <div className="text-center">
         <Link href="/findings?queue=all" className="text-sm font-medium" style={{ color: "#64748b" }}>
-          Browse all findings →
+          Search the full inventory in Finding Explorer →
         </Link>
       </div>
     </>

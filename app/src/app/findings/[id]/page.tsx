@@ -16,6 +16,7 @@ import { AddActionForm } from "./AddActionForm";
 import { FindingStatusButtons } from "./FindingStatusButtons";
 import { DecisionWorkspace } from "./DecisionWorkspace";
 import { recommendationEmptyCopy } from "./findingSourceCopy";
+import { findingsHomeLabel } from "@/lib/navigation";
 import {
   updateFindingStatusAction,
   updateFindingPriorityAction,
@@ -483,6 +484,7 @@ export default async function FindingDetailPage({
             riskAcceptanceFeatureOn={riskAcceptanceFeatureOn}
             currentUserId={session.userId ?? null}
             openActionCount={actions.filter((a) => ACTION_ACTIVE.has(a.status)).length}
+            homeLabel={findingsHomeLabel(process.env.SECURELOGIC_RISK_WORKSPACE_ENABLED === "true")}
           >
             {/* R-3: the recommendation is ADVISORY guidance — distinct from the
                 executable actions below it. Labeled so the two are never conflated. */}
@@ -518,7 +520,7 @@ export default async function FindingDetailPage({
           className="inline-flex items-center gap-1.5 text-xs font-medium mb-4 transition-colors hover:opacity-80"
           style={{ color: "#94a3b8" }}
         >
-          ← Findings
+          ← {findingsHomeLabel(process.env.SECURELOGIC_RISK_WORKSPACE_ENABLED === "true")}
         </Link>
       </div>
 

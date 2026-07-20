@@ -4,6 +4,9 @@ import {
   WORKSPACE_NAV_ITEMS,
   getNavItems,
   filterNav,
+  isNavItemActive,
+  findingsHomeLabel,
+  findingExplorerLabel,
   type NavItem,
 } from "../navigation";
 
@@ -159,12 +162,29 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
     expect(allHrefs(ws(true, true))).not.toContain("/ask");
   });
 
-  it("makes Findings the first Risk Operations item and surfaces Approvals", () => {
+  it("leads Risk Operations with the two findings destinations and surfaces Approvals", () => {
+    // Operations Workspace (the work hub) then Finding Explorer (the searchable
+    // inventory) — one route, two distinct user intents, both reachable from the nav.
     expect(groupChildren(ws(true, false), "Risk Operations")).toEqual([
       "/findings",
+      "/findings?queue=all",
       "/actions",
       "/risks",
       "/approvals",
+    ]);
+  });
+
+  it("names the Risk Operations destinations by task, not by feature", () => {
+    const group = ws(true, false).find(
+      (i): i is Extract<typeof i, { type: "group" }> =>
+        i.type === "group" && i.label === "Risk Operations",
+    );
+    expect(group?.items.map((c) => c.label)).toEqual([
+      "Operations Workspace",
+      "Finding Explorer",
+      "Actions",
+      "Risk Register",
+      "Approvals",
     ]);
   });
 
@@ -204,5 +224,59 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
       "/ai-systems",
       "/vendor-assurance/queue",
     ]);
+  });
+});
+
+// ─── Risk Operations destination naming + active-state matching ───────────────
+//
+// Operations Workspace (/findings) and Finding Explorer (/findings?queue=all)
+// share a PATH and differ only by query, so path-only matching would highlight the
+// Workspace while the user is in the Explorer and never highlight the Explorer.
+
+describe("isNavItemActive — two destinations on one path", () => {
+  const RISK_OPS = ["/findings", "/findings?queue=all", "/actions", "/risks", "/approvals"];
+
+  it("highlights the Workspace on bare /findings, not the Explorer", () => {
+    expect(isNavItemActive("/findings", "/findings", "", RISK_OPS)).toBe(true);
+    expect(isNavItemActive("/findings?queue=all", "/findings", "", RISK_OPS)).toBe(false);
+  });
+
+  it("highlights the Explorer on /findings?queue=all — and yields the Workspace", () => {
+    expect(isNavItemActive("/findings?queue=all", "/findings", "?queue=all", RISK_OPS)).toBe(true);
+    expect(isNavItemActive("/findings", "/findings", "?queue=all", RISK_OPS)).toBe(false);
+  });
+
+  it("keeps the Explorer active as the user searches and sorts inside it", () => {
+    // Extra params the toolbar adds must not drop the highlight.
+    const search = "?queue=all&severity=High&sort=due";
+    expect(isNavItemActive("/findings?queue=all", "/findings", search, RISK_OPS)).toBe(true);
+  });
+
+  it("leaves the Workspace active in its own subordinate views (buckets, entity search)", () => {
+    // A bucket/entity URL is the Workspace, not the Explorer: no queue=all present.
+    expect(isNavItemActive("/findings", "/findings", "?bucket=sla_breached", RISK_OPS)).toBe(true);
+    expect(isNavItemActive("/findings?queue=all", "/findings", "?bucket=sla_breached", RISK_OPS))
+      .toBe(false);
+  });
+
+  it("preserves the caller's existing path semantics (group vs dropdown child)", () => {
+    // Group button matched descendants before this helper existed; children did not.
+    // Keeping that split is what makes the flag-off menu behave identically.
+    expect(isNavItemActive("/risks", "/risks/abc-123", "", RISK_OPS, true)).toBe(true);
+    expect(isNavItemActive("/risks", "/risks/abc-123", "", RISK_OPS, false)).toBe(false);
+    // Never a prefix-of-a-different-route false positive.
+    expect(isNavItemActive("/risks", "/risk-register", "", RISK_OPS, true)).toBe(false);
+  });
+});
+
+describe("destination labels follow the risk_workspace flag", () => {
+  it("names the workspace only when the flag actually renders it", () => {
+    expect(findingsHomeLabel(true)).toBe("Operations Workspace");
+    expect(findingsHomeLabel(false)).toBe("Findings");
+  });
+
+  it("does not invent a Finding Explorer the user cannot see", () => {
+    expect(findingExplorerLabel(true)).toBe("Finding Explorer");
+    expect(findingExplorerLabel(false)).toBe("All findings");
   });
 });
