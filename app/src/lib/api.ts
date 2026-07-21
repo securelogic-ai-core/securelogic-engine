@@ -5,6 +5,41 @@
  * The engine URL and API key never reach the browser.
  */
 
+// Relative, not "@/": the root vitest config runs app/src/lib tests without the
+// Next path aliases, so an aliased import here breaks collection of every test
+// that transitively imports api.ts.
+import { buildFindingEvidencePayload } from "../components/findings/findingEvidencePayload";
+import {
+  entitiesQuery,
+  relationshipsQuery,
+  graphQuery,
+  importQuery,
+  applicabilityQuery,
+  isFeatureDisabledStatus,
+  type EntityType,
+  type NodeType,
+  type EnterpriseEntity,
+  type EnterpriseRelationship,
+  type GraphNeighborhood,
+  type ImportEntityType,
+  type ImportPlan,
+  type ApplicabilityDecision,
+  type MatchTargetType,
+  type ApplicabilityAssessmentRow,
+  type ApplicabilityAssessmentDetail,
+  type ApplicabilityExplanation,
+  type EnterpriseContextStats,
+} from "./enterpriseContext";
+import { type AssetType, type CanonicalAsset, type DetailBackedType } from "./assetRegistry";
+import { type OrgConnector } from "./connectors";
+import type {
+  RiskTrendsResponse,
+  RiskKpisResponse,
+  PredictiveInsightsResponse,
+  PostureForecastResponse,
+  ConnectorHealthResponse,
+} from "./executiveRisk";
+
 const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
 
 // =========================================================
@@ -47,6 +82,13 @@ export function planDisplayName(
   }
   switch (entitlementLevel) {
     case "premium":      return "Platform Professional";
+    // 'platform' and 'team' are full platform entitlements (the dashboard's own
+    // isPlatformUser gates treat them exactly like 'premium'). They were missing
+    // here, so a platform-entitled org with no Stripe tier — e.g. a seeded or
+    // manually-provisioned org — displayed "Plan: Free" while correctly rendering
+    // every platform surface (July-15 walkthrough Step-0 defect).
+    case "platform":     return "Platform Professional";
+    case "team":         return "Platform Professional";
     case "professional": return "Brief Pro";
     case "admin":        return "Enterprise";
     default:             return "Free";
@@ -282,10 +324,19 @@ export type DashboardSummary = {
     max_age_days?:  number | null;
     older_than_30?: number;
     older_than_7?:  number;
+    // Independent Governance Review: remediation derived complete, governance decision
+    // pending (finding-lifecycle-spec §1.3) — the leadership view of the reviewer queue.
+    // Optional: absent on older engine builds → the tile falls back to hidden/em-dash.
+    pending_independent_review?: number;
   };
   actions: {
     open: number;
     in_progress: number;
+    // Metric Contract (optional: absent on older engine builds): `active` =
+    // open|in_progress|blocked — the SAME number the destination page's
+    // open_count shows, so the ring and its click-through reconcile exactly.
+    active?: number;
+    blocked?: number;
     overdue: number;
     avg_age_days?:  number | null;
     max_age_days?:  number | null;
@@ -296,6 +347,9 @@ export type DashboardSummary = {
     overdue: number;
   };
   risks_summary?: {
+    // Metric Contract: ALL open risks (status NOT IN closed/transferred) —
+    // the same population the /risks destination shows. Unscored risks are
+    // no longer silently excluded from the headline.
     open: number;
     // Legacy keys — populated from residual after Phase 1 backfill.
     // Retained so older dashboard code paths continue to work; new
@@ -306,12 +360,15 @@ export type DashboardSummary = {
       High: number;
       Moderate: number;
       Low: number;
+      // Open risks without a residual rating yet (optional: absent on older engines).
+      Unscored?: number;
     };
     by_residual_rating?: {
       Critical: number;
       High: number;
       Moderate: number;
       Low: number;
+      Unscored?: number;
     };
     by_inherent_rating?: {
       Critical: number;
@@ -376,6 +433,17 @@ export type Vendor = {
   last_reviewed_at: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Per-vendor finding counts, computed in the DATABASE by GET /api/vendors.
+   *
+   * The list and the risk board used to fetch the org's Vendor Risk findings with
+   * limit:100 and group them by vendor in the browser — past 100, a vendor's
+   * findings fell off the page and its card showed no badge at all. These are
+   * COUNT(*) over the whole matched set, per vendor. Optional because the single-
+   * vendor GET does not return them.
+   */
+  open_findings_count?: number;
+  active_findings_count?: number;
 };
 
 export type VendorsResponse = {
@@ -450,9 +518,20 @@ export type Finding = {
   time_sensitivity: string | null;
   scoring_rationale: string | null;
   status: string;
+  // The HUMAN decision axis (needs_review | mitigating | accepted_risk |
+  // resolved — finding-lifecycle-spec §1.2). Returned by the list since the
+  // work-first engine PR; may be absent on older cached payloads.
+  decision_state?: string;
+  // The SYSTEM-DERIVED operational axis (open | in_progress | remediated —
+  // spec §1.1). Derived from linked Actions; never hand-set. Optional: absent
+  // on older cached payloads.
+  operational_status?: string;
   owner_user_id: string | null;
   due_date: string | null;
   action_count: number;
+  // Attached evidence rows (source_type='finding'). Optional: absent on older
+  // engine payloads — surfaces must treat undefined as "unknown", not zero.
+  evidence_count?: number;
   created_at: string;
   updated_at: string;
 };
@@ -472,30 +551,86 @@ export type Action = {
   completed_at: string | null;
   created_at: string;
   updated_at: string;
+  // R-10: structured blocker metadata, populated when an action is blocked.
+  // All optional/nullable; absent on older cached payloads.
+  blocked_reason?: string | null;
+  blocked_dependency?: string | null;
+  blocked_owner_user_id?: string | null;
+  blocked_expected_unblock_date?: string | null;
+  /**
+   * Server-decided, per the Metric Contract (active AND due < CURRENT_DATE).
+   * Never re-derive this on the client: doing so with `new Date()` compares
+   * against NOW() rather than midnight, which made an action due TODAY overdue
+   * on this page and on-time on the dashboard.
+   */
+  is_overdue: boolean;
 };
 
 export type ActionsResponse = {
   count: number;
   limit?: number;
+  // Exact total for the applied filter set (cursor excluded) — pagination truth,
+  // mirroring FindingsResponse so a capped page can disclose "showing N of M".
+  total?: number;
   organizationId?: string;
   nextCursor?: { created_at: string; id: string } | null;
   actions: Action[];
+};
+
+// Authoritative org-wide action counts (server-computed COUNT(*) FILTER), the
+// single source of truth for the workspace attention tiles so they cannot drift
+// from a client-side scan of a truncated page slice.
+// Metric Contract: open_count = ACTIVE work (open | in_progress | blocked) —
+// the same definition the dashboard uses; open_only/in_progress/blocked are
+// its exact parts. overdue compares DATE against CURRENT_DATE everywhere.
+export type ActionsSummary = {
+  open_count: number;
+  // Exact parts of open_count (optional: absent on older engine builds).
+  open_only_count?: number;
+  in_progress_count?: number;
+  blocked_count: number;
+  overdue_count: number;
+  immediate_count: number;
+  closed_count: number;
+  // The same predicates narrowed to the signed-in user — what the "My Actions" tiles read.
+  // Server-computed, uncapped: deriving these by filtering a fetched page is exactly how a
+  // user's assigned work went missing. 0 for an API-key caller (no user identity).
+  // Optional: absent on older engine builds.
+  my_open_count?: number;
+  my_overdue_count?: number;
 };
 
 export type ActionsParams = {
   status?: string;
   priority?: string;
   overdue?: boolean;
+  /** Metric Contract active set (open|in_progress|blocked) — what an ACTIVE count links to. */
+  active?: boolean;
+  /**
+   * The caller's own remediation. The ONLY accepted value is the literal "me" — the engine
+   * resolves the user from the SESSION, so a user id can never be passed and assignments
+   * cannot be enumerated. Filtered in SQL, so a personal queue stays correct past one page.
+   */
+  owner?: "me";
   limit?: number;
 };
 
 export type FindingsResponse = {
   count: number;
   limit: number;
+  // Exact total for the applied filter set (cursor excluded) — pagination truth.
+  total?: number;
+  // Echoed OFFSET for the scalable queue's page math (0 for cursor/default paging).
+  offset?: number;
   organizationId: string;
   nextCursor: { created_at: string; id: string } | null;
   findings: Finding[];
 };
+
+/** The scalable-queue sort modes (queue) plus the legacy keyset `created`. */
+export type FindingsSort = "created" | "urgency" | "severity" | "due_date" | "newest" | "oldest";
+/** The queue's due-status partition. */
+export type FindingsDueStatus = "overdue" | "today" | "soon" | "none";
 
 export type FindingsParams = {
   domain?: string;
@@ -504,11 +639,70 @@ export type FindingsParams = {
   severity?: string;
   source_id?: string;
   priority?: string;
+  // Ops-center work filters (server-side — buckets stay correct at any scale).
+  decision_state?: string;
+  // The SYSTEM-DERIVED operational axis (open | in_progress | remediated | closed).
+  operational_status?: string;
+  overdue?: boolean;
+  unassigned?: boolean;
+  exploited?: boolean;
+  // "My Work": only the literal "me" is accepted; the engine resolves the user
+  // from the SESSION identity (never a client-supplied id).
+  owner?: "me";
+  // "Pending Independent Review" reviewer queue: the caller's own independent-
+  // governance-review assignments (review_owner_user_id). Same anti-enumeration
+  // contract as owner — only the literal "me" is accepted; the engine resolves the
+  // user from the SESSION identity, so a reviewer assignment can never be enumerated.
+  review_owner?: "me";
+  // Still-requires-work statuses only (open / in_progress).
+  active?: boolean;
+  // Ready-for-decision queue (spec §1.3): all remediation work derived complete
+  // (operational_status=remediated) but no governance decision yet.
+  ready_for_decision?: boolean;
+  // Resolve findings for one cyber-signal across BOTH intelligence channels
+  // (legacy per-signal AND event-native via the signal→event bridge). Used by
+  // the Brief decision affordance so event-sourced findings are reachable.
+  intel_ref?: string;
+  // ── Scalable Risk Findings queue controls (all server-side) ──
+  // Free-text search across title / description / finding id / CVE / vendor+asset name.
+  q?: string;
+  // Due-status partition (overdue | today | soon | none).
+  due?: FindingsDueStatus;
+  // Findings with at least one linked remediation Action / evidence item.
+  has_action?: boolean;
+  has_evidence?: boolean;
+  // Inclusive created-date range (YYYY-MM-DD).
+  created_from?: string;
+  created_to?: string;
+  // Queue sort mode. The queue defaults to "urgency".
+  sort?: FindingsSort;
+  // OFFSET page start (used with a queue sort; the queue's pagination model).
+  offset?: number;
+  // Keyset cursor from the previous page's nextCursor (legacy paging).
+  before?: { created_at: string; id: string };
   limit?: number;
 };
 
 export type FindingsSummary = {
+  // STRICTLY OPEN — the lifecycle population (status='open'): work nobody has
+  // started. A legitimate filter, but NOT the enterprise metric. Every tile in
+  // the product reads the *_active fields below.
   open_count: number;
+  // Metric Contract org-truth fields (optional: absent on older engine builds).
+  // active_total / critical_high_active use the SAME definitions as
+  // decisionQueue.isActiveStatus/isCriticalActive, so the workspace attention
+  // tiles are server truth instead of a capped-slice scan.
+  in_progress_open?: number;
+  active_total?: number;
+  critical_high_active?: number;
+  // ACTIVE by severity — THE enterprise severity population (operational_status
+  // <> 'closed'). Optional: absent on older engine builds, so callers fall back
+  // to the strictly-open twin rather than rendering a wrong zero.
+  critical_active?: number;
+  high_active?: number;
+  medium_active?: number;
+  low_active?: number;
+  // Strictly-open severity twins — the lifecycle population.
   critical_open: number;
   high_open: number;
   medium_open: number;
@@ -517,6 +711,30 @@ export type FindingsSummary = {
   immediate_priority: number;
   vendor_sourced: number;
   signal_sourced: number;
+  // Work-queue counts (ERIP work-first Findings page) — additive; optional so the
+  // page degrades if an older engine build omits them.
+  overdue_open?: number;
+  unassigned_open?: number;
+  needs_review_open?: number;
+  mitigating_open?: number;
+  accepted_risk_total?: number;
+  // Ready-for-decision queue (spec §1.3): operational_status=remediated, no
+  // governance decision yet.
+  ready_for_decision_open?: number;
+  regulatory_open?: number;
+  ai_governance_open?: number;
+  vendor_risk_open?: number;
+  exploited_open?: number;
+  pending_risk_approvals?: number;
+  // Session-scoped: present only when the caller has a user identity (owner=me contract).
+  my_work_open?: number;
+  // Independent Governance Review (finding-lifecycle-spec §1.3 population, named for the
+  // review workflow). `pending_independent_review_open` is the ORG-WIDE ready-for-decision
+  // count (identical predicate to ready_for_decision_open). `my_pending_reviews_open` is the
+  // reviewer-scoped subset assigned to the caller (review_owner_user_id = me) — session-scoped,
+  // present only when the caller has a user identity. Both optional (older engine builds omit).
+  pending_independent_review_open?: number;
+  my_pending_reviews_open?: number;
 };
 
 export type Risk = {
@@ -765,6 +983,10 @@ export type FrameworkReadiness = {
   satisfied: number;
   partial: number;
   unmapped: number;
+  /** The explicit coverage breakdown ("0 fully satisfied · 3 partial"),
+   *  formatted ONCE by the engine (src/api/lib/frameworkCoverage.ts) — item-7
+   *  ruling. Surfaces render it verbatim; never re-derive the wording. */
+  coverage_caption: string;
   requirements: ReadinessRequirement[];
 };
 
@@ -1320,19 +1542,23 @@ export async function getFramework(
   }
 }
 
-export type SelfAssessmentReadiness = {
+export type SelfAssessmentProgress = {
   total: number;
   pass: number;
   partial: number;
   fail: number;
   not_assessed: number;
-  readiness_score: number;
+  /** 0–100 share of requirements with a completed response. O-5 ruling:
+   *  this measures assessment PROGRESS (how much has been answered), never
+   *  readiness — readiness comes only from satisfied control mappings via
+   *  FrameworkReadiness.readiness_score. */
+  progress_pct: number;
 };
 
 export type FrameworkDetail = {
   framework: Framework;
-  assessment_readiness: {
-    self: SelfAssessmentReadiness;
+  assessment_progress: {
+    self: SelfAssessmentProgress;
   };
 };
 
@@ -1719,6 +1945,29 @@ export async function getDashboardPreferences(token: string): Promise<DashboardP
   }
 }
 
+/**
+ * The caller's saved Briefing layout (Briefing Initiative B2). `layout` is the
+ * raw stored envelope — parsed/enforced by moduleIdsFromEnvelope +
+ * filterRequestedModules app-side. null (fetch/flag-off/no-identity) and
+ * {layout: null} (no saved row) both mean "unsaved state" to the caller.
+ */
+export type BriefingLayoutResponse = {
+  layout: unknown | null;
+  updated_at: string | null;
+};
+
+export async function getBriefingLayout(
+  token: string
+): Promise<BriefingLayoutResponse | null> {
+  try {
+    const res = await engineFetch("/api/briefing/layout", token);
+    if (!res.ok) return null;
+    return res.json() as Promise<BriefingLayoutResponse>;
+  } catch {
+    return null;
+  }
+}
+
 export async function updateDashboardPreferences(
   token: string,
   layout: TileConfig[]
@@ -1879,6 +2128,30 @@ export async function getFindings(
     if (params?.severity) qs.set("severity", params.severity);
     if (params?.source_id) qs.set("source_id", params.source_id);
     if (params?.priority) qs.set("priority", params.priority);
+    if (params?.decision_state) qs.set("decision_state", params.decision_state);
+    if (params?.operational_status) qs.set("operational_status", params.operational_status);
+    if (params?.overdue) qs.set("overdue", "true");
+    if (params?.unassigned) qs.set("unassigned", "true");
+    if (params?.exploited) qs.set("exploited", "true");
+    if (params?.owner) qs.set("owner", params.owner);
+    if (params?.review_owner) qs.set("review_owner", params.review_owner);
+    if (params?.active) qs.set("active", "true");
+    if (params?.ready_for_decision) qs.set("ready_for_decision", "true");
+    if (params?.intel_ref) qs.set("intel_ref", params.intel_ref);
+    if (params?.q) qs.set("q", params.q);
+    if (params?.due) qs.set("due", params.due);
+    if (params?.has_action) qs.set("has_action", "true");
+    if (params?.has_evidence) qs.set("has_evidence", "true");
+    if (params?.created_from) qs.set("created_from", params.created_from);
+    if (params?.created_to) qs.set("created_to", params.created_to);
+    if (params?.sort) qs.set("sort", params.sort);
+    if (typeof params?.offset === "number" && params.offset > 0) {
+      qs.set("offset", String(params.offset));
+    }
+    if (params?.before) {
+      qs.set("before_created_at", params.before.created_at);
+      qs.set("before_id", params.before.id);
+    }
     qs.set("limit", String(params?.limit ?? 50));
     const res = await engineFetch(`/api/findings?${qs.toString()}`, apiKey);
     if (!res.ok) return null;
@@ -1908,6 +2181,339 @@ export async function getFinding(
     const res = await engineFetch(`/api/findings/${encodeURIComponent(id)}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<{ finding: Finding }>;
+  } catch {
+    return null;
+  }
+}
+
+// ─── Decision Workspace (ERIP Package 3) ─────────────────────────────────────
+// The engine 404s /api/findings/:id/context while SECURELOGIC_DECISION_WORKSPACE_ENABLED
+// is off, so getFindingContext returns null → the page renders the legacy detail.
+
+export type FindingAffectedEntity = { type: string; id: string; name: string };
+// Context Contract: how an affected bucket resolved (empty ≠ zero ≠ unknowable).
+/**
+ * Mirrors the engine's Context Contract. `resolver_error` is the state that says the
+ * emptiness is IGNORANCE, not a zero — the UI must never render it as "None found".
+ */
+export type AffectedResolution =
+  | "resolved"
+  | "none_found"
+  | "not_applicable"
+  | "resolver_error";
+// A matcher suggestion awaiting human review — a candidate, not certainty.
+export type FindingCandidateEntity = {
+  type: string;
+  id: string;
+  name: string;
+  status: "needs_review";
+  match_reason: string | null;
+  match_score: number | null;
+};
+export type FindingImpactDimension = { level: string; note: string };
+export type FindingContext = {
+  finding: {
+    id: string;
+    source_type: string;
+    source_id: string | null;
+    decision_state: string;
+    // System-derived operational axis (spec §1.1); optional on older payloads.
+    operational_status?: string;
+  };
+  risk: { score: number; band: string; rationale: string[] };
+  // `revenue` and `customer` were removed: they were hardcoded "not_assessed"
+  // literals with no schema column behind them and no code path that could ever
+  // set them otherwise. See findingRiskScore.ts BusinessImpact.
+  business_impact: {
+    operational: FindingImpactDimension;
+    regulatory: FindingImpactDimension;
+    third_party: FindingImpactDimension;
+  };
+  owner: { id: string; email: string } | null;
+  /**
+   * Independent Governance Review projection (mirrors the engine). Drives the remediator's
+   * waiting state and the reviewer's decision controls. `independent_review_active` is true
+   * only when the workflow flag is on AND the org enforces closure separation of duties;
+   * when false the workspace behaves exactly as before this feature. `reviewer` is the
+   * assigned Closure Owner (review_owner_user_id); `remediator_user_id` is the actor who
+   * completed the remediation (latest operational→remediated event), so the UI can tell a
+   * remediator (waiting state) from the assigned reviewer (decision controls). Optional on
+   * older engine payloads → treated as inactive (unchanged UI).
+   */
+  review?: {
+    independent_review_active: boolean;
+    reviewer: { id: string; email: string; name: string | null } | null;
+    remediator_user_id: string | null;
+  };
+  affected: {
+    vendors: FindingAffectedEntity[];
+    ai_systems: FindingAffectedEntity[];
+    controls: FindingAffectedEntity[];
+    obligations: FindingAffectedEntity[];
+    // Context Contract: per-bucket resolution outcome — distinguishes an
+    // honest zero ('none_found') from a bucket the resolver has no path for
+    // on this source type ('not_applicable'). Optional on older payloads.
+    resolution?: {
+      vendors: AffectedResolution;
+      ai_systems: AffectedResolution;
+      controls: AffectedResolution;
+      obligations: AffectedResolution;
+    };
+    // Matcher suggestions pending human review — candidate links, never
+    // merged into the buckets above. Optional on older payloads.
+    candidates?: FindingCandidateEntity[];
+  };
+  intelligence: {
+    events: Array<Record<string, unknown>>;
+    sources: Array<Record<string, unknown>>;
+    timeline: Array<Record<string, unknown>>;
+    // The signals this finding resolves to (post-bridge). Lets the UI scope the
+    // suggested-links queue to THIS finding. Optional: older payloads omit it.
+    signal_ids?: string[];
+  };
+  evidence: Array<Record<string, unknown>>;
+  // Tiers 1–4 of the relationship hierarchy, best-tier-first. Tier 5 (vendor) is
+  // never in this list — it is a count in `related_context`, so vendor stays
+  // supporting context and never becomes the workflow's organizing principle.
+  related_findings: Array<{
+    id: string;
+    title: string;
+    severity: string;
+    status: string;
+    relation_tier?: number;
+    relation?: string;
+  }>;
+  related_context?: {
+    same_vendor: Array<{ vendor_id: string; vendor_name: string; finding_count: number }>;
+  };
+  // Audit-grade activity entries. The core three (event_type / created_at /
+  // payload) are always present; the enrichment fields are optional so older
+  // payloads and fixtures stay valid. `resource_type`/`resource_id` scope the
+  // entry to a finding or a specific remediation action; `actor_*` is WHO;
+  // `action_title` + `blocked_owner_*` are the resolved WHAT/WHO the renderer
+  // shows instead of a bare id.
+  activity: Array<{
+    event_type: string;
+    created_at: string;
+    payload: unknown;
+    resource_type?: string;
+    resource_id?: string | null;
+    actor_user_id?: string | null;
+    actor_name?: string | null;
+    actor_email?: string | null;
+    action_title?: string | null;
+    blocked_owner_name?: string | null;
+    blocked_owner_email?: string | null;
+  }>;
+  whats_changed: { since: string | null; changes: Array<{ label: string; at: string }> };
+};
+
+export async function getFindingContext(
+  apiKey: string,
+  id: string
+): Promise<FindingContext | null> {
+  try {
+    const res = await engineFetch(`/api/findings/${encodeURIComponent(id)}/context`, apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { context: FindingContext };
+    return body.context;
+  } catch {
+    return null;
+  }
+}
+
+// Finding risk-acceptance (product ruling 2026-07-12). The engine subsystem
+// (/api/risk-acceptances) is the ONE approval workflow for accepting the risk of a
+// Finding — deliberately separate from `risk_approvals`, which approves Risk-Register
+// entries and cannot approve a Finding. Every route 404s while
+// SECURELOGIC_RISK_ACCEPTANCE_ENABLED is off (byte-identical flag-off).
+export type RiskAcceptanceState =
+  | "proposed"
+  | "approved"
+  | "rejected"
+  | "withdrawn"
+  | "expired"
+  | "legacy_unverified";
+
+export type RiskAcceptance = {
+  id: string;
+  organization_id: string;
+  finding_id: string;
+  state: RiskAcceptanceState;
+  owner_user_id: string | null;
+  rationale: string | null;
+  requested_by_user_id: string | null;
+  approver_user_id: string | null;
+  approved_at: string | null;
+  decision_rationale: string | null;
+  expires_at: string | null;
+  withdrawn_at: string | null;
+  // NB: withdrawn_by_user_id exists in the schema but the register SELECT does not
+  // project it — a withdrawal is dated in the UI, not attributed.
+  withdrawal_reason: string | null;
+  governance_review_required: boolean;
+  promoted_risk_id: string | null;
+  created_at: string;
+  updated_at: string;
+  // JOINed finding columns the register/per-finding read returns (optional).
+  finding_title?: string;
+  finding_severity?: string;
+  finding_priority?: string | null;
+  finding_domain?: string | null;
+  finding_operational_status?: string;
+  evidence_count?: number;
+  // Display names the register JOINs from users, so a governance surface can name the
+  // people involved instead of printing their uuids. Absent/deleted user → null.
+  requested_by_name?: string | null;
+  requested_by_email?: string | null;
+  owner_name?: string | null;
+  owner_email?: string | null;
+  approver_name?: string | null;
+  approver_email?: string | null;
+  // Computed by the engine against the SESSION user: this viewer proposed this acceptance,
+  // so separation of duties forbids them approving it. The engine enforces it regardless
+  // (409 sod_violation); the UI refuses before the round-trip.
+  is_self_proposed?: boolean;
+};
+
+/**
+ * A finding's current acceptance plus its terminal history, org-scoped by the engine.
+ *
+ * The return distinguishes two states the caller MUST NOT conflate:
+ *   null → the route is dark (404) or unreachable — the feature is NOT active for this
+ *          caller, so the UI keeps the legacy Accept-Risk control (byte-identical).
+ *   []   → the feature IS active and this finding simply has no acceptances yet — the UI
+ *          shows the "propose acceptance" affordance.
+ */
+export async function getRiskAcceptancesForFinding(
+  token: string,
+  findingId: string
+): Promise<RiskAcceptance[] | null> {
+  try {
+    const res = await engineFetch(
+      `/api/risk-acceptances?finding_id=${encodeURIComponent(findingId)}`,
+      token
+    );
+    if (!res.ok) return null;
+    const body = (await res.json()) as { acceptances?: RiskAcceptance[] };
+    return body.acceptances ?? [];
+  } catch {
+    return null;
+  }
+}
+
+export type RiskAcceptanceSummary = {
+  awaiting_approval: number;
+  active_acceptances: number;
+  review_due_30d: number;
+  lapsed_pending_sweep: number;
+  expired: number;
+  governance_review_required: number;
+};
+
+/**
+ * The org-wide risk-acceptance approver queue, for /approvals.
+ *
+ * Reads the SAME register route the per-finding panel reads — there is no second approval
+ * engine and no queue-specific endpoint. `?state=proposed` IS the pending queue: withdrawn,
+ * rejected and expired records carry a different state, so they leave the queue by virtue
+ * of the state machine rather than by any filtering the UI has to remember to do.
+ *
+ * ReadResult, not a bare array, because the three failure modes are NOT the same thing:
+ *   disabled (404) → the feature is dark for this org; the section must not render at all.
+ *   error          → the engine is reachable but unhappy; say so, don't render "0 pending".
+ *   ok + []        → genuinely nothing awaiting approval. An honest empty state.
+ * Collapsing these is how a dark or broken queue comes to read as "all clear".
+ */
+export async function getRiskAcceptanceQueueServer(
+  token: string,
+  opts: { state?: RiskAcceptanceState; limit?: number; offset?: number } = {}
+): Promise<ReadResult<{ acceptances: RiskAcceptance[]; total: number; limit: number; offset: number }>> {
+  const state = opts.state ?? "proposed";
+  const limit = opts.limit ?? 50;
+  const offset = opts.offset ?? 0;
+  try {
+    const res = await engineFetch(
+      `/api/risk-acceptances?state=${encodeURIComponent(state)}&limit=${limit}&offset=${offset}`,
+      token
+    );
+    if (!res.ok) {
+      return { ok: false, disabled: res.status === 404, error: await readError(res) };
+    }
+    const body = (await res.json()) as {
+      acceptances?: RiskAcceptance[];
+      total?: number;
+      limit?: number;
+      offset?: number;
+    };
+    return {
+      ok: true,
+      acceptances: body.acceptances ?? [],
+      total: body.total ?? 0,
+      limit: body.limit ?? limit,
+      offset: body.offset ?? offset,
+    };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+/** The governance counters (awaiting_approval is the queue's authoritative pending count). */
+export async function getRiskAcceptanceSummaryServer(
+  token: string
+): Promise<ReadResult<{ summary: RiskAcceptanceSummary }>> {
+  try {
+    const res = await engineFetch(`/api/risk-acceptances/summary`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: res.status === 404, error: await readError(res) };
+    }
+    const body = (await res.json()) as { summary: RiskAcceptanceSummary };
+    return { ok: true, summary: body.summary };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+// Findings saved views (ERIP §1) — per-user named filter presets. The engine route
+// 404s while SECURELOGIC_DECISION_WORKSPACE_ENABLED is off, so this returns [] and the
+// saved-views bar simply does not render (byte-identical flag-off).
+export type FindingSavedView = {
+  id: string;
+  name: string;
+  filters: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function getFindingSavedViews(apiKey: string): Promise<FindingSavedView[]> {
+  try {
+    const res = await engineFetch(`/api/finding-saved-views`, apiKey);
+    if (!res.ok) return [];
+    const body = (await res.json()) as { views?: FindingSavedView[] };
+    return body.views ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// Reverse entity→findings search (work-first Findings page). The engine route 404s
+// while SECURELOGIC_DECISION_WORKSPACE_ENABLED is off → null (search UI not shown).
+export type EntityFindingsResponse = {
+  query: string;
+  entities: Array<{ type: "vendor" | "ai_system" | "control" | "obligation"; id: string; name: string }>;
+  count: number;
+  findings: Finding[];
+};
+
+export async function getFindingsByEntity(
+  apiKey: string,
+  q: string
+): Promise<EntityFindingsResponse | null> {
+  try {
+    const qs = new URLSearchParams({ q });
+    const res = await engineFetch(`/api/findings/by-entity?${qs.toString()}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<EntityFindingsResponse>;
   } catch {
     return null;
   }
@@ -1996,10 +2602,31 @@ export async function getActions(
     if (params?.status) qs.set("status", params.status);
     if (params?.priority) qs.set("priority", params.priority);
     if (params?.overdue) qs.set("overdue", "true");
+    if (params?.active) qs.set("active", "true");
+    if (params?.owner) qs.set("owner", params.owner);
     qs.set("limit", String(params?.limit ?? 100));
     const res = await engineFetch(`/api/actions?${qs.toString()}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<ActionsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Org-wide action counts from GET /api/actions/summary. These are authoritative
+ * (server COUNT(*), org-scoped, uncapped) — the workspace attention tiles read
+ * these instead of scanning a paginated slice, so tile numbers reconcile with
+ * the dashboard Actions ring rather than drifting at >100 actions.
+ */
+export async function getActionsSummary(
+  apiKey: string
+): Promise<ActionsSummary | null> {
+  try {
+    const res = await engineFetch(`/api/actions/summary`, apiKey);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { summary?: ActionsSummary };
+    return body?.summary ?? null;
   } catch {
     return null;
   }
@@ -2012,6 +2639,9 @@ export async function getRisks(
     domain?:        string;
     risk_rating?:   string;
     review_status?: "overdue" | "due_soon" | "up_to_date";
+    archived?:      boolean;
+    /** Metric Contract: only risks still on the register — what an "open risks" count links to. */
+    active?:        boolean;
     limit?:         number;
   }
 ): Promise<RisksResponse | null> {
@@ -2021,6 +2651,8 @@ export async function getRisks(
     if (params?.domain)         qs.set("domain",        params.domain);
     if (params?.risk_rating)    qs.set("risk_rating",   params.risk_rating);
     if (params?.review_status)  qs.set("review_status", params.review_status);
+    if (params?.archived)       qs.set("archived",      "true");
+    if (params?.active)         qs.set("active",        "true");
     qs.set("limit", String(params?.limit ?? 50));
     const res = await engineFetch(`/api/risks?${qs.toString()}`, apiKey);
     if (!res.ok) return null;
@@ -2262,6 +2894,106 @@ export async function getVendorSignalContext(
   }
 }
 
+// ── Detail-page linkage reads (W5/W6 read-surface wiring) ──────────────────
+// The DB already connects vendors ↔ signals ↔ AI systems ↔ dependencies; these
+// surface that canonical linkage on the resting detail pages so "how risky is
+// this NOW / what does it depend on" is answered without page-hopping.
+
+// One external signal linked to an AI system (signal_ai_system_links + the
+// event bridge when the signal contributed to a canonical event).
+export type AiSystemLinkedSignal = {
+  link_id: string;
+  link_created_at: string;
+  id: string;
+  source: string | null;
+  signal_type: string | null;
+  severity: string | null;
+  normalized_summary: string | null;
+  affected_vendor: string | null;
+  affected_cve: string | null;
+  ingestion_timestamp: string | null;
+  intelligence_event_id: string | null;
+  event_summary: string | null;
+};
+
+export async function getAiSystemSignals(
+  apiKey: string,
+  aiSystemId: string,
+  limit = 10
+): Promise<AiSystemLinkedSignal[]> {
+  try {
+    const res = await engineFetch(
+      `/api/ai-systems/${encodeURIComponent(aiSystemId)}/signals?limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return [];
+    const body = (await res.json()) as { signals?: AiSystemLinkedSignal[] };
+    return body.signals ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// AI system → vendor dependency (ai_system_vendor_dependencies).
+export type AiVendorDependency = {
+  dependency_id: string;
+  dependency_role: string;
+  notes: string | null;
+  created_at: string;
+  vendor_id: string;
+  vendor_name: string;
+  vendor_criticality: string | null;
+  vendor_status: string | null;
+};
+
+export async function getAiSystemVendorDependencies(
+  apiKey: string,
+  aiSystemId: string,
+  limit = 25
+): Promise<AiVendorDependency[]> {
+  try {
+    const res = await engineFetch(
+      `/api/ai-systems/${encodeURIComponent(aiSystemId)}/vendors?limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return [];
+    const body = (await res.json()) as { dependencies?: AiVendorDependency[] };
+    return body.dependencies ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// Vendor → dependent AI systems (the reverse edge; concentration signal).
+export type VendorAiDependency = {
+  dependency_id: string;
+  dependency_role: string;
+  notes: string | null;
+  created_at: string;
+  ai_system_id: string;
+  ai_system_name: string;
+  ai_system_criticality: string | null;
+  ai_system_deployment_status: string | null;
+};
+
+export async function getVendorAiDependencies(
+  apiKey: string,
+  vendorId: string,
+  limit = 25
+): Promise<VendorAiDependency[]> {
+  try {
+    const res = await engineFetch(
+      `/api/vendors/${encodeURIComponent(vendorId)}/ai-systems?limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return [];
+    const body = (await res.json()) as { dependencies?: VendorAiDependency[] };
+    return body.dependencies ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export async function getControlComplianceContext(
   apiKey: string,
   controlId: string
@@ -2367,6 +3099,15 @@ export type Evidence = {
   collected_at: string | null;
   collected_by: string | null;
   external_ref: string | null;
+  // File attachment (nullable — reference-only evidence leaves these unset).
+  // `has_file` is the boolean the UI branches on; the raw storage key is never
+  // exposed (downloads go through the signed-URL redirect at /api/evidence/:id/file).
+  has_file?: boolean;
+  original_filename?: string | null;
+  mime_type?: string | null;
+  byte_size?: number | null;
+  sha256?: string | null;
+  uploaded_by_user_id?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -2497,6 +3238,137 @@ export async function getControlAssessmentsForControl(
   }
 }
 
+/**
+ * Browser-side evidence access for a finding, via the /api/evidence Next proxy.
+ *
+ * Distinct from `getEvidence` below, which is the SERVER-side variant taking an
+ * apiKey and calling the engine directly. These two run in the browser from the
+ * Decision Workspace's Remediation tab, so they carry no key — the proxy attaches
+ * the session token.
+ */
+export async function getFindingEvidence(
+  findingId: string
+): Promise<ReadResult<{ evidence: Evidence[] }>> {
+  try {
+    const qs = new URLSearchParams({ source_type: "finding", source_id: findingId });
+    const res = await fetch(`/api/evidence?${qs.toString()}`, { cache: "no-store" });
+    if (!res.ok) {
+      return { ok: false, disabled: res.status === 404, error: await readError(res) };
+    }
+    const body = (await res.json()) as EvidenceResponse;
+    return { ok: true, evidence: body.evidence ?? [] };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+/**
+ * Attach evidence to a finding. On the engine side this also recomputes the
+ * finding's operational_status (routes/evidence.ts:242), so satisfying an org's
+ * evidence gate advances the finding to `remediated` immediately — the caller
+ * should refresh the page to pick that up.
+ */
+export async function attachFindingEvidence(
+  findingId: string,
+  input: {
+    title: string;
+    evidence_type: string;
+    description?: string | null;
+    external_ref?: string | null;
+  }
+): Promise<ActionResult<{ evidence: Evidence }>> {
+  try {
+    const payload = buildFindingEvidencePayload(findingId, input);
+    const res = await fetch(`/api/evidence`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      return { ok: false, error: await readError(res), status: res.status };
+    }
+    const body = (await res.json()) as { evidence: Evidence };
+    return { ok: true, evidence: body.evidence };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+/** The authenticated download URL for a file-backed evidence row. The app proxy
+ *  attaches the session token and 302s to a short-lived, single-org signed URL —
+ *  there is never a public object URL. */
+export function evidenceFileHref(evidenceId: string): string {
+  return `/api/evidence/${encodeURIComponent(evidenceId)}/file`;
+}
+
+/**
+ * Upload a FILE as evidence for a finding (multipart). Uses XHR rather than fetch
+ * so the caller gets real upload-progress events. On success the engine has
+ * persisted the file AND recomputed the finding's operational_status, so an
+ * evidence-gated finding advances immediately — the caller should refresh.
+ */
+export function uploadFindingEvidence(
+  findingId: string,
+  file: File,
+  meta: {
+    title: string;
+    evidence_type: string;
+    description?: string | null;
+    external_ref?: string | null;
+  },
+  onProgress?: (pct: number) => void
+): Promise<ActionResult<{ evidence: Evidence }>> {
+  return new Promise((resolve) => {
+    const form = new FormData();
+    form.append("source_type", "finding");
+    form.append("source_id", findingId);
+    form.append("title", meta.title);
+    form.append("evidence_type", meta.evidence_type);
+    if (meta.description) form.append("description", meta.description);
+    if (meta.external_ref) form.append("external_ref", meta.external_ref);
+    // `file` last so the text fields are parsed first server-side.
+    form.append("file", file, file.name);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/evidence/upload");
+    xhr.responseType = "json";
+    if (onProgress && xhr.upload) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+    }
+    xhr.onload = () => {
+      const body = (xhr.response ?? {}) as {
+        evidence?: Evidence;
+        error?: string;
+        detail?: string;
+        details?: { reason?: string };
+      };
+      if (xhr.status >= 200 && xhr.status < 300 && body.evidence) {
+        resolve({ ok: true, evidence: body.evidence });
+        return;
+      }
+      // The hardened-server guards return `{error:"bad_request", details:{reason}}`
+      // (e.g. request_body_too_large) — a nested reason the UI can map precisely,
+      // unlike the flat top-level `error`. Prefer that reason when present so the
+      // message tells the user WHY (too large / malformed) rather than "bad_request".
+      const nestedReason = body.details?.reason;
+      const code =
+        body.error === "bad_request" && nestedReason
+          ? nestedReason
+          : body.error ?? "upload_failed";
+      resolve({
+        ok: false,
+        error: body.detail ? `${code}: ${body.detail}` : code,
+        status: xhr.status,
+      });
+    };
+    xhr.onerror = () => resolve({ ok: false, error: "network_error", status: 0 });
+    xhr.send(form);
+  });
+}
+
 export async function getEvidence(
   apiKey: string,
   sourceType: string,
@@ -2549,6 +3421,94 @@ export async function getAiSystem(
     if (!res.ok) return null;
     const body = (await res.json()) as { ai_system: AiSystem };
     return body.ai_system ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Findings linked to ONE AI system, resolved in the database.
+ *
+ * `total` / `active_total` / `open_total` are COUNT(*) over the whole matched set —
+ * never the length of `findings`, which is a bounded display page. The detail page
+ * used to fetch the org's findings with limit:50 and filter them down in the browser,
+ * so past 50 org findings a system's real findings fell off the page before the filter
+ * saw them and the tile printed a confident zero. A truncation is not a zero.
+ *
+ * Returns null on a non-OK/thrown response — a resolver failure, which the caller must
+ * NOT coalesce into an empty list (that would reproduce the same lie by another route).
+ */
+export type AiSystemFindingsResponse = {
+  findings: Finding[];
+  total: number;
+  active_total: number;
+  open_total: number;
+};
+
+export async function getAiSystemFindings(
+  apiKey: string,
+  systemId: string,
+  limit = 100
+): Promise<AiSystemFindingsResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/ai-systems/${encodeURIComponent(systemId)}/findings?limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<AiSystemFindingsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Findings linked to ONE obligation / ONE control, resolved in the database.
+ *
+ * Same contract as getAiSystemFindings, for the same reason: these pages used to
+ * fetch the org's findings with a cap and filter them down to the entity in the
+ * browser — past the cap, the entity's real findings fell off the page before the
+ * filter saw them and the page printed a confident zero. A truncation is not a zero.
+ *
+ * The counts are COUNT(*) over the whole matched set, never `findings.length`.
+ * A null return is a RESOLVER FAILURE and must not be coalesced into an empty list.
+ */
+export type ScopedFindingsResponse = {
+  findings: Finding[];
+  total: number;
+  active_total: number;
+  open_total: number;
+};
+
+export async function getObligationFindings(
+  apiKey: string,
+  obligationId: string,
+  limit = 100
+): Promise<ScopedFindingsResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/obligations/${encodeURIComponent(obligationId)}/findings?limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<ScopedFindingsResponse>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getControlFindings(
+  apiKey: string,
+  controlId: string,
+  limit = 100
+): Promise<ScopedFindingsResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/controls/${encodeURIComponent(controlId)}/findings?limit=${limit}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<ScopedFindingsResponse>;
   } catch {
     return null;
   }
@@ -3077,6 +4037,313 @@ export async function getControlsViaProxy(
 }
 
 // =========================================================
+// Risk lifecycle (R3) — browser-side, all go through the Next.js
+// proxies under /api/risks/[id]/lifecycle/* and /api/approvals.
+//
+// The engine returns 404 when SECURELOGIC_RISK_LIFECYCLE_ENABLED is off;
+// the read helpers surface that as { ok:false, disabled:true } so the UI
+// can render nothing rather than an error. Action helpers return the
+// engine's machine-readable `error` reason for inline gate feedback.
+// =========================================================
+
+export type LifecycleGates = {
+  owner:                  boolean;
+  score:                  boolean;
+  evidence:               boolean;
+  evidence_gate_enforced: boolean;
+  treatment_count:        number;
+  approval_granted:       boolean;
+  approval_required:      boolean;
+};
+
+export type RiskLifecycleState = {
+  lifecycle_state:     string;
+  gates:               LifecycleGates;
+  allowed_transitions: string[];
+};
+
+export type LifecycleEvent = {
+  id:               string;
+  from_state:       string | null;
+  to_state:         string;
+  transition:       string;
+  actor_user_id:    string | null;
+  actor_api_key_id: string | null;
+  actor_name:       string | null;
+  actor_email:      string | null;
+  comment:          string | null;
+  evidence_ids:     string[];
+  approval_id:      string | null;
+  created_at:       string;
+};
+
+export type RiskEvidence = {
+  id:            string;
+  title:         string;
+  description:   string | null;
+  evidence_type: string;
+  collected_at:  string | null;
+  collected_by:  string | null;
+  external_ref:  string | null;
+  created_at:    string;
+};
+
+export type PendingApproval = {
+  id:                   string;
+  risk_id:              string;
+  treatment_id:         string | null;
+  kind:                 string;
+  decision:             string;
+  requested_by_user_id: string | null;
+  approver_user_id:     string | null;
+  request_rationale:    string | null;
+  expires_at:           string | null;
+  created_at:           string;
+  risk_title:           string | null;
+  risk_domain:          string | null;
+  residual_rating:      string | null;
+  residual_score:       number | null;
+  lifecycle_state:      string | null;
+  is_self_proposed:     boolean;
+};
+
+type ReadResult<T> =
+  | ({ ok: true } & T)
+  | { ok: false; disabled: boolean; error: string };
+
+type ActionResult<T> =
+  | ({ ok: true } & T)
+  | { ok: false; error: string; status: number };
+
+async function readError(res: Response): Promise<string> {
+  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  return body?.error ?? `http_${res.status}`;
+}
+
+export async function getRiskLifecycle(
+  riskId: string
+): Promise<ReadResult<{ data: RiskLifecycleState }>> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/lifecycle`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) {
+      return { ok: false, disabled: res.status === 404, error: await readError(res) };
+    }
+    return { ok: true, data: (await res.json()) as RiskLifecycleState };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function getRiskLifecycleEvents(
+  riskId: string,
+  opts: { limit?: number; before?: string } = {}
+): Promise<ReadResult<{ events: LifecycleEvent[]; next_cursor: string | null }>> {
+  try {
+    const qs = new URLSearchParams();
+    if (opts.limit !== undefined) qs.set("limit", String(opts.limit));
+    if (opts.before) qs.set("before", opts.before);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/lifecycle/events${suffix}`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) {
+      return { ok: false, disabled: res.status === 404, error: await readError(res) };
+    }
+    const body = (await res.json()) as {
+      events: LifecycleEvent[];
+      next_cursor: string | null;
+    };
+    return { ok: true, events: body.events ?? [], next_cursor: body.next_cursor ?? null };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function getRiskEvidence(
+  riskId: string
+): Promise<ReadResult<{ evidence: RiskEvidence[] }>> {
+  try {
+    const res = await fetch(`/api/risks/${encodeURIComponent(riskId)}/evidence`, {
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      return { ok: false, disabled: res.status === 404, error: await readError(res) };
+    }
+    const body = (await res.json()) as { evidence: RiskEvidence[] };
+    return { ok: true, evidence: body.evidence ?? [] };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function attachRiskEvidence(
+  riskId: string,
+  input: {
+    title: string;
+    evidence_type: string;
+    description?: string | null;
+    collected_at?: string | null;
+    collected_by?: string | null;
+    external_ref?: string | null;
+  }
+): Promise<ActionResult<{ evidence: RiskEvidence }>> {
+  try {
+    const res = await fetch(`/api/risks/${encodeURIComponent(riskId)}/evidence`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      return { ok: false, error: await readError(res), status: res.status };
+    }
+    const body = (await res.json()) as { evidence: RiskEvidence };
+    return { ok: true, evidence: body.evidence };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function detachRiskEvidence(
+  riskId: string,
+  evidenceId: string
+): Promise<ActionResult<{ detached?: boolean }>> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/evidence/${encodeURIComponent(evidenceId)}`,
+      { method: "DELETE", cache: "no-store" }
+    );
+    if (!res.ok) {
+      return { ok: false, error: await readError(res), status: res.status };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function executeRiskTransition(
+  riskId: string,
+  input: { transition: string; comment: string; expected_from_state?: string }
+): Promise<ActionResult<{ lifecycle_state: string }>> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/lifecycle/transitions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) {
+      return { ok: false, error: await readError(res), status: res.status };
+    }
+    const body = (await res.json()) as { lifecycle_state: string };
+    return { ok: true, lifecycle_state: body.lifecycle_state };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function requestRiskApproval(
+  riskId: string,
+  input: {
+    kind?: "treatment_plan" | "risk_acceptance";
+    treatment_id?: string;
+    request_rationale?: string;
+    expires_at?: string;
+  } = {}
+): Promise<ActionResult<{ lifecycle_state: string }>> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/approvals`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) {
+      return { ok: false, error: await readError(res), status: res.status };
+    }
+    const body = (await res.json()) as { lifecycle_state: string };
+    return { ok: true, lifecycle_state: body.lifecycle_state };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function decideRiskApproval(
+  riskId: string,
+  approvalId: string,
+  input: { decision: "approved" | "rejected"; comment: string }
+): Promise<ActionResult<{ lifecycle_state: string }>> {
+  try {
+    const res = await fetch(
+      `/api/risks/${encodeURIComponent(riskId)}/approvals/${encodeURIComponent(approvalId)}/decision`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) {
+      return { ok: false, error: await readError(res), status: res.status };
+    }
+    const body = (await res.json()) as { lifecycle_state: string };
+    return { ok: true, lifecycle_state: body.lifecycle_state };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+/** Server-side approvals fetch (Bearer token via engineFetch) for the initial
+ *  render of the approvals page. Mirrors getPendingApprovals but does not go
+ *  through the browser proxy. Passing the JWT lets the engine compute
+ *  is_self_proposed for the current user. */
+export async function getApprovalsServer(
+  token: string,
+  status: "pending" | "approved" | "rejected" = "pending"
+): Promise<ReadResult<{ approvals: PendingApproval[] }>> {
+  try {
+    const res = await engineFetch(`/api/approvals?status=${status}`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: res.status === 404, error: `http_${res.status}` };
+    }
+    const body = (await res.json()) as { approvals: PendingApproval[] };
+    return { ok: true, approvals: body.approvals ?? [] };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function getPendingApprovals(
+  opts: { status?: "pending" | "approved" | "rejected"; limit?: number } = {}
+): Promise<ReadResult<{ approvals: PendingApproval[] }>> {
+  try {
+    const qs = new URLSearchParams();
+    if (opts.status) qs.set("status", opts.status);
+    if (opts.limit !== undefined) qs.set("limit", String(opts.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    const res = await fetch(`/api/approvals${suffix}`, { cache: "no-store" });
+    if (!res.ok) {
+      return { ok: false, disabled: res.status === 404, error: await readError(res) };
+    }
+    const body = (await res.json()) as { approvals: PendingApproval[] };
+    return { ok: true, approvals: body.approvals ?? [] };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+// =========================================================
 // Risk-obligation linkage helpers (RR-6) — browser-side, all
 // go through the Next.js proxy at /api/risks/[id]/obligations etc.
 // =========================================================
@@ -3593,7 +4860,11 @@ export type FrameworkRequirements = {
     partial: number;
     fail: number;
     not_assessed: number;
-    readiness_score: number;
+    /** 0–100 completion share — assessment progress, never readiness (O-5). */
+    progress_pct: number;
+    /** ISO timestamp of the most recent response, null when nothing answered.
+     *  Optional: absent on older engine payloads. */
+    last_response_at?: string | null;
   };
 };
 
@@ -3764,6 +5035,8 @@ export async function getSignalMatchSuggestions(
     status?: SignalMatchSuggestionStatus;
     target_type?: SignalMatchTargetType;
     signal_id?: string;
+    /** Free-text filter on the entity the suggestion is about (R3). */
+    q?: string;
     sort?: "created-desc" | "score-desc";
     limit?: number;
     offset?: number;
@@ -3774,6 +5047,7 @@ export async function getSignalMatchSuggestions(
     if (params.status)      qs.set("status",      params.status);
     if (params.target_type) qs.set("target_type", params.target_type);
     if (params.signal_id)   qs.set("signal_id",   params.signal_id);
+    if (params.q)           qs.set("q",           params.q);
     if (params.sort)        qs.set("sort",        params.sort);
     if (params.limit)       qs.set("limit",       String(params.limit));
     if (params.offset)      qs.set("offset",      String(params.offset));
@@ -4390,5 +5664,730 @@ export async function uploadVendorAssuranceDocument(
     }
   } catch {
     return { error: "upload_failed" };
+  }
+}
+
+// =========================================================
+// ENTERPRISE CONTEXT LAYER (ECL) — Tier-1 UI (goal Item 7, Phase 7A.1)
+// =========================================================
+//
+// READS run server-side via engineFetch(path, token) and return the gate-aware
+// ReadResult union: { ok:false, disabled:true } means the engine returned 404 (feature
+// off / not granted → hide it); { ok:false, disabled:false } is a real error. WRITES run
+// client-side through the Next proxy routes under /api/enterprise-context/** and return
+// ActionResult so the caller can map the engine error code via enterpriseContextErrorMessage.
+// The whole surface is dark until SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED is on.
+
+// ── Reads (Server Components) ──────────────────────────────────────────────────
+
+// ─── EAR Phase 4: unified Assets surface ────────────────────────────────────
+
+/** GET /api/assets — the unified cross-type list over asset_registry_v. */
+export async function getAssets(
+  token: string,
+  params: { asset_type?: AssetType; at_risk?: boolean; limit?: number; offset?: number } = {},
+): Promise<ReadResult<{ assets: CanonicalAsset[]; total: number; limit: number; offset: number }>> {
+  const q = new URLSearchParams();
+  if (params.asset_type) q.set("asset_type", params.asset_type);
+  // The population the executive "Assets at risk" tile counts (own_risk > 0 on the
+  // current applicability decision) — so that tile has a destination that reproduces it.
+  if (params.at_risk) q.set("at_risk", "true");
+  if (params.limit !== undefined) q.set("limit", String(params.limit));
+  if (params.offset !== undefined) q.set("offset", String(params.offset));
+  try {
+    const res = await engineFetch(`/api/assets?${q.toString()}`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as {
+      assets: CanonicalAsset[];
+      total: number;
+      limit: number;
+      offset: number;
+    };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+/** GET /api/assets/:id — canonical header + typed detail (detail-backed kinds). */
+export async function getAsset(
+  token: string,
+  id: string,
+): Promise<ReadResult<{ asset: CanonicalAsset; detail: Record<string, unknown> | null }>> {
+  try {
+    const res = await engineFetch(`/api/assets/${encodeURIComponent(id)}`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as { asset: CanonicalAsset; detail: Record<string, unknown> | null };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function getEnterpriseEntities(
+  token: string,
+  params: { entity_type?: EntityType; limit?: number; offset?: number } = {},
+): Promise<ReadResult<{ enterprise_entities: EnterpriseEntity[]; limit: number; offset: number }>> {
+  try {
+    const res = await engineFetch(`/api/enterprise-entities?${entitiesQuery(params)}`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as {
+      enterprise_entities: EnterpriseEntity[];
+      limit: number;
+      offset: number;
+    };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function getEnterpriseEntity(
+  token: string,
+  id: string,
+): Promise<ReadResult<{ enterprise_entity: EnterpriseEntity }>> {
+  try {
+    const res = await engineFetch(`/api/enterprise-entities/${encodeURIComponent(id)}`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as { enterprise_entity: EnterpriseEntity };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function getEnterpriseRelationships(
+  token: string,
+  params: { node_type?: NodeType; node_id?: string; limit?: number; offset?: number } = {},
+): Promise<
+  ReadResult<{ enterprise_relationships: EnterpriseRelationship[]; limit: number; offset: number }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/enterprise-relationships?${relationshipsQuery(params)}`,
+      token,
+    );
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as {
+      enterprise_relationships: EnterpriseRelationship[];
+      limit: number;
+      offset: number;
+    };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function getEnterpriseGraph(
+  token: string,
+  params: { node_type: NodeType; node_id: string; depth?: number },
+): Promise<ReadResult<{ enterprise_graph: GraphNeighborhood }>> {
+  try {
+    const res = await engineFetch(`/api/enterprise-graph?${graphQuery(params)}`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as { enterprise_graph: GraphNeighborhood };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+// ── Applicability decision reads (R5 — over the R4 engine routes) ──────────────
+
+export async function getApplicabilityAssessments(
+  token: string,
+  params: {
+    decision?: ApplicabilityDecision;
+    target_type?: MatchTargetType;
+    signal_id?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<
+  ReadResult<{ applicability_assessments: ApplicabilityAssessmentRow[]; limit: number; offset: number }>
+> {
+  try {
+    const res = await engineFetch(`/api/applicability-assessments?${applicabilityQuery(params)}`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as {
+      applicability_assessments: ApplicabilityAssessmentRow[];
+      limit: number;
+      offset: number;
+    };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+export async function getApplicabilityAssessment(
+  token: string,
+  id: string,
+): Promise<
+  ReadResult<{
+    applicability_assessment: ApplicabilityAssessmentDetail;
+    explanation: ApplicabilityExplanation;
+  }>
+> {
+  try {
+    const res = await engineFetch(`/api/applicability-assessments/${encodeURIComponent(id)}`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as {
+      applicability_assessment: ApplicabilityAssessmentDetail;
+      explanation: ApplicabilityExplanation;
+    };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+// ── Stats rollup (R6 — exec dashboard) ─────────────────────────────────────────
+
+export async function getEnterpriseContextStats(
+  token: string,
+): Promise<ReadResult<{ stats: EnterpriseContextStats }>> {
+  try {
+    const res = await engineFetch(`/api/enterprise-context/stats`, token);
+    if (!res.ok) {
+      return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    }
+    const body = (await res.json()) as { stats: EnterpriseContextStats };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+// ── Writes (Client Components → Next proxy routes) ─────────────────────────────
+
+export interface EnterpriseEntityCreateInput {
+  entity_type: EntityType;
+  name: string;
+  description?: string;
+  owner_user_id?: string;
+  status?: string;
+  criticality?: string;
+  confidence?: string;
+  external_ref?: string;
+  data_store?: {
+    data_classification?: string;
+    residency_region?: string;
+    retention_policy?: string;
+    encryption_at_rest?: boolean;
+  };
+}
+
+/**
+ * PATCH is partial with per-key replace semantics; a supplied key overwrites the column.
+ * Optional string/enum fields accept explicit null to CLEAR the stored value (the engine
+ * validator maps null → NULL; empty-string clears strings but is invalid for enums).
+ * A supplied `data_store` object replaces ALL four attributes (omitted attrs become null).
+ */
+export interface EnterpriseEntityUpdateInput {
+  name?: string;
+  description?: string | null;
+  owner_user_id?: string | null;
+  status?: string;
+  criticality?: string | null;
+  confidence?: string | null;
+  external_ref?: string | null;
+  data_store?: {
+    data_classification?: string | null;
+    residency_region?: string | null;
+    retention_policy?: string | null;
+    encryption_at_rest?: boolean | null;
+  };
+}
+
+export async function createEnterpriseEntity(
+  input: EnterpriseEntityCreateInput,
+): Promise<ActionResult<{ enterprise_entity: EnterpriseEntity }>> {
+  try {
+    const res = await fetch(`/api/enterprise-context/entities`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as { enterprise_entity: EnterpriseEntity };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function updateEnterpriseEntity(
+  id: string,
+  input: EnterpriseEntityUpdateInput,
+): Promise<ActionResult<{ enterprise_entity: EnterpriseEntity }>> {
+  try {
+    const res = await fetch(`/api/enterprise-context/entities/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as { enterprise_entity: EnterpriseEntity };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function deleteEnterpriseEntity(
+  id: string,
+): Promise<ActionResult<{ deleted: boolean; id: string }>> {
+  try {
+    const res = await fetch(`/api/enterprise-context/entities/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as { deleted: boolean; id: string };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export interface EnterpriseRelationshipCreateInput {
+  from_type: NodeType;
+  from_id: string;
+  to_type: NodeType;
+  to_id: string;
+  relationship_type: string;
+  note?: string;
+}
+
+export async function createEnterpriseRelationship(
+  input: EnterpriseRelationshipCreateInput,
+): Promise<ActionResult<{ enterprise_relationship: EnterpriseRelationship }>> {
+  try {
+    const res = await fetch(`/api/enterprise-context/relationships`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as { enterprise_relationship: EnterpriseRelationship };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function deleteEnterpriseRelationship(
+  id: string,
+): Promise<ActionResult<{ deleted: boolean; id: string }>> {
+  try {
+    const res = await fetch(`/api/enterprise-context/relationships/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as { deleted: boolean; id: string };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+// ─── EAR management: unified-surface CRUD for the four detail-backed types ─────
+//
+// Writes run client-side through the Next proxy routes under /api/assets/**,
+// which forward the session token to the engine (POST/PATCH/DELETE /api/assets).
+// The engine 404s the whole surface while SECURELOGIC_ASSET_REGISTRY_ENABLED is
+// off and 403s without the `enterprise_context` capability — statuses pass
+// straight through so the client maps the code via assetErrorMessage. Bodies are
+// FLAT (asset_type + name + criticality + status + external_ref + typed columns
+// as top-level keys), mirroring validateAssetDetailCreate / …Update.
+
+/** Create input: flat body; `asset_type` must be a detail-backed type. */
+export type AssetCreateInput = { asset_type: DetailBackedType; name: string } & Record<
+  string,
+  string | undefined
+>;
+
+/** Partial update: flat patch; explicit null clears a nullable column. */
+export type AssetUpdateInput = Record<string, string | null>;
+
+export async function createAsset(
+  input: AssetCreateInput,
+): Promise<ActionResult<{ asset: CanonicalAsset }>> {
+  try {
+    const res = await fetch(`/api/assets`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as { asset: CanonicalAsset };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function updateAsset(
+  id: string,
+  input: AssetUpdateInput,
+): Promise<ActionResult<{ asset: CanonicalAsset }>> {
+  try {
+    const res = await fetch(`/api/assets/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as { asset: CanonicalAsset };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function deleteAsset(
+  id: string,
+): Promise<ActionResult<{ deleted: boolean }>> {
+  try {
+    const res = await fetch(`/api/assets/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as { deleted: boolean };
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+// ── Import (Client Components → multipart Next proxy) ───────────────────────────
+
+async function runEnterpriseImport(
+  entity_type: ImportEntityType,
+  mode: "preview" | "commit",
+  file: File,
+): Promise<ActionResult<ImportPlan>> {
+  try {
+    const fd = new FormData();
+    fd.set("file", file);
+    const res = await fetch(`/api/enterprise-context/import?${importQuery(entity_type, mode)}`, {
+      method: "POST",
+      body: fd,
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as ImportPlan;
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export function previewEnterpriseImport(
+  entity_type: ImportEntityType,
+  file: File,
+): Promise<ActionResult<ImportPlan>> {
+  return runEnterpriseImport(entity_type, "preview", file);
+}
+
+export function commitEnterpriseImport(
+  entity_type: ImportEntityType,
+  file: File,
+): Promise<ActionResult<ImportPlan>> {
+  return runEnterpriseImport(entity_type, "commit", file);
+}
+
+// ── EAR P16: detail-backed asset import (unified /assets/import → thin route) ────
+
+async function runAssetImport(
+  asset_type: string,
+  mode: "preview" | "commit",
+  file: File,
+): Promise<ActionResult<ImportPlan>> {
+  try {
+    const fd = new FormData();
+    fd.set("file", file);
+    const q = new URLSearchParams({ asset_type, mode }).toString();
+    const res = await fetch(`/api/assets/import?${q}`, {
+      method: "POST",
+      body: fd,
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const body = (await res.json()) as ImportPlan;
+    return { ok: true, ...body };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export function previewAssetImport(asset_type: string, file: File): Promise<ActionResult<ImportPlan>> {
+  return runAssetImport(asset_type, "preview", file);
+}
+
+export function commitAssetImport(asset_type: string, file: File): Promise<ActionResult<ImportPlan>> {
+  return runAssetImport(asset_type, "commit", file);
+}
+
+// ── EAR P16: connector configuration mutations (admin-only; /assets/connect/[id]) ─
+//
+// Client → Next proxy (/api/connectors/*) → engine PUT/DELETE/POST. The engine
+// fences these on admin role (requireAdminRole) + the ECL/registry flags + the
+// enterprise_context capability; a 403 surfaces as insufficient_permissions/
+// forbidden, classified by the caller.
+
+export interface ConnectorConfigBody {
+  config?: Record<string, string>;
+  enabled?: boolean;
+  sync_interval_minutes?: number | null;
+}
+
+export async function saveConnectorConfig(
+  id: string,
+  body: ConnectorConfigBody,
+): Promise<ActionResult<{ connector?: unknown }>> {
+  try {
+    const res = await fetch(`/api/connectors/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const data = (await res.json().catch(() => ({}))) as { connector?: unknown };
+    return { ok: true, ...data };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function disconnectConnector(id: string): Promise<ActionResult<{ deleted?: boolean }>> {
+  try {
+    const res = await fetch(`/api/connectors/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const data = (await res.json().catch(() => ({}))) as { deleted?: boolean };
+    return { ok: true, ...data };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+export async function syncConnector(id: string): Promise<ActionResult<{ status?: string }>> {
+  try {
+    const res = await fetch(`/api/connectors/${encodeURIComponent(id)}/sync`, {
+      method: "POST",
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false, error: await readError(res), status: res.status };
+    const data = (await res.json().catch(() => ({}))) as { status?: string };
+    return { ok: true, ...data };
+  } catch {
+    return { ok: false, error: "network_error", status: 0 };
+  }
+}
+
+// =========================================================
+// ERIP Executive Risk dashboard reads (Server Components)
+//
+// All dark behind their engine feature flags (risk-intelligence /
+// predictive-intelligence / knowledge-graph / connectors), so each returns the
+// ReadResult<T> union: { ok:false, disabled:true } == the engine 404'd (feature
+// off / not granted → the page hides the panel); { ok:false, disabled:false }
+// is a real error. Types live in ./executiveRisk (client-safe, shared with the
+// chart components).
+// =========================================================
+
+/** GET /api/risk/trends — per-dimension executive trend lines over risk_history. */
+export async function getRiskTrends(token: string, days = 90): Promise<ReadResult<RiskTrendsResponse>> {
+  try {
+    const res = await engineFetch(`/api/risk/trends?days=${encodeURIComponent(String(days))}`, token);
+    if (!res.ok) return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    return { ok: true, ...((await res.json()) as RiskTrendsResponse) };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+/** GET /api/risk/kpis — executive KPI scorecard (enterprise current vs window start). */
+export async function getRiskKpis(token: string, days = 90): Promise<ReadResult<RiskKpisResponse>> {
+  try {
+    const res = await engineFetch(`/api/risk/kpis?days=${encodeURIComponent(String(days))}`, token);
+    if (!res.ok) return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    return { ok: true, ...((await res.json()) as RiskKpisResponse) };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+/** GET /api/predictive/insights — LLM-assisted (or deterministic) forecast narrative. */
+export async function getPredictiveInsights(token: string): Promise<ReadResult<PredictiveInsightsResponse>> {
+  try {
+    const res = await engineFetch(`/api/predictive/insights`, token);
+    if (!res.ok) return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    return { ok: true, ...((await res.json()) as PredictiveInsightsResponse) };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+/** GET /api/predictive/posture-forecast — posture score observations + projection. */
+export async function getPostureForecast(token: string, horizonDays = 30): Promise<ReadResult<PostureForecastResponse>> {
+  try {
+    const res = await engineFetch(`/api/predictive/posture-forecast?horizon_days=${encodeURIComponent(String(horizonDays))}`, token);
+    if (!res.ok) return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    return { ok: true, ...((await res.json()) as PostureForecastResponse) };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+/** GET /api/connectors/health — per-connector health band + org rollup. */
+export async function getConnectorHealth(token: string): Promise<ReadResult<ConnectorHealthResponse>> {
+  try {
+    const res = await engineFetch(`/api/connectors/health`, token);
+    if (!res.ok) return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    return { ok: true, ...((await res.json()) as ConnectorHealthResponse) };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+/**
+ * GET /api/connectors — the org's connectors merged with the registry catalog
+ * (the "Connect Enterprise Systems" catalog behind /assets/connect). Double-
+ * fenced on the engine (ECL + asset-registry flags) + `enterprise_context`
+ * capability; a 404 → disabled, 403 → capability_required, classified by
+ * connectorsReadFailure.
+ */
+export async function getConnectors(
+  token: string,
+): Promise<ReadResult<{ connectors: OrgConnector[] }>> {
+  try {
+    const res = await engineFetch(`/api/connectors`, token);
+    if (!res.ok) return { ok: false, disabled: isFeatureDisabledStatus(res.status), error: await readError(res) };
+    return { ok: true, ...((await res.json()) as { connectors: OrgConnector[] }) };
+  } catch {
+    return { ok: false, disabled: false, error: "network_error" };
+  }
+}
+
+// ─── Intelligence Event drill-through (ERIP Package 3.3) ──────────────────────
+// Read one canonical Intelligence Event for the drill-through page
+// (/intelligence/[id]). The engine route GET /api/intelligence/events/:id is
+// gated by its OWN pre-existing flag (SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED)
+// and returns a bare 404 while dark — so this fetcher fail-softs to null on any
+// non-200, exactly like getFindingContext. The drill-through page treats null as
+// "no canonical enrichment available" and renders from the finding-context
+// payload (or the honest-unavailable state); it never blocks on this call.
+//
+// These types mirror the engine reader's IntelligenceEventDetail
+// (src/api/lib/signals/intelligenceEventReader.ts) field-for-field. The engine
+// responds with the detail object directly (not wrapped), matching getEventDetail.
+
+export type IntelligenceEventRow = {
+  id: string;
+  canonical_key: string;
+  title: string;
+  executive_summary: string;
+  summary_status: string;
+  event_type: string;
+  severity: string;
+  status: string;
+  affected_cve: string | null;
+  affected_vendor: string | null;
+  source_count: number;
+  confidence: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  revision: number;
+};
+
+/** A corroborating source (citation = attribution + timestamps; no URL field). */
+export type IntelligenceEventSource = {
+  source: string;
+  external_id: string | null;
+  relation: string;
+  first_contributed_at: string;
+  last_contributed_at: string;
+};
+
+export type IntelligenceEventTimelineEntry = {
+  entry_type: string;
+  occurred_at: string;
+  summary: string;
+  source: string | null;
+};
+
+export type IntelligenceRelatedFinding = {
+  id: string;
+  title: string;
+  severity: string;
+  status: string;
+  domain: string | null;
+};
+
+export type IntelligenceAffectedAsset = {
+  kind: "vendor";
+  id: string;
+  name: string;
+};
+
+export type IntelligenceRecommendedAction = {
+  action: string;
+  urgency: "immediate" | "near_term" | "planned" | "watch";
+};
+
+export type IntelligenceEventDetail = {
+  event: IntelligenceEventRow;
+  sources: IntelligenceEventSource[];
+  timeline: IntelligenceEventTimelineEntry[];
+  related_findings: IntelligenceRelatedFinding[];
+  affected_assets: IntelligenceAffectedAsset[];
+  recommended_actions: IntelligenceRecommendedAction[];
+};
+
+/**
+ * Fetch one canonical Intelligence Event by id. Returns null when the event is
+ * not found OR the engine's Intelligence Events surface is dark (bare 404) OR
+ * the request errors — the caller degrades honestly and never throws.
+ */
+export async function getIntelligenceEvent(
+  apiKey: string,
+  id: string,
+): Promise<IntelligenceEventDetail | null> {
+  try {
+    const res = await engineFetch(`/api/intelligence/events/${encodeURIComponent(id)}`, apiKey);
+    if (!res.ok) return null;
+    return (await res.json()) as IntelligenceEventDetail;
+  } catch {
+    return null;
   }
 }

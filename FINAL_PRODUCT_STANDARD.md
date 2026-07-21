@@ -48,6 +48,32 @@ Every premium intelligence output must help a user:
 - understand what should happen next
 - understand who should act and by when
 
+### 5. Read-surface taxonomy standard (ratified 2026-07-21, Briefing Initiative)
+The platform has three distinct kinds of read surface. They answer different
+questions and must never be collapsed into one experience:
+
+- **The Briefing** (`/dashboard`, the opening experience) — *"What matters to
+  me now?"* Personalized, priority-ordered, assignment-aware. Every number
+  carries an explicit scope ("You" vs "Organization"); a personal count is
+  omitted — never faked as zero — when the session has no user identity.
+- **Operational Views** (queues and explorers: Operations Workspace, Finding
+  Explorer, Actions, Approvals, Review Links) — *"What do I want to inspect or
+  investigate?"* Where work is listed, filtered, and acted on.
+- **Dashboards** (`/posture`, `/executive`, framework readiness, heatmaps,
+  reports) — *"How is the organization performing?"* Analytical, org-wide.
+
+Rules:
+- A Briefing module SUMMARIZES and LINKS to an operational view or dashboard;
+  it never reproduces a data explorer or an analytical grid on the opening
+  screen.
+- Operational views and dashboards remain first-class destinations; the
+  Briefing must preserve clear access to them, and personalization never
+  removes a user's authorized access to any of them.
+- Permissions override personalization: a saved layout, template, or profile
+  never grants access to data the session is not authorized to read.
+- Every module/tile number must link to a destination that reproduces it, at
+  the same scope it displays.
+
 ## Environment and release standards
 ### 1. Environment roles
 SecureLogic AI operates:

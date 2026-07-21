@@ -372,7 +372,7 @@ describe("computePosture — riskSignalCount in computation_rationale", () => {
   });
 
   it("rationale note includes risk breakdown when riskSignalCount > 0", () => {
-    const result = computePosture([signal], 0, 0, FALLBACK_CONTEXT, 1);
+    const result = computePosture([], 0, 0, FALLBACK_CONTEXT, 1, [signal]);
     const note = result.computation_rationale["note"] as string;
     expect(note).toContain("1 open risk");
   });
@@ -380,7 +380,7 @@ describe("computePosture — riskSignalCount in computation_rationale", () => {
   it("rationale note includes finding count when riskSignalCount > 0", () => {
     const f = makeFinding("f1", "Critical", "General");
     const r = makeFinding("r1", "High", "Vendor Risk");
-    const result = computePosture([f, r], 0, 0, FALLBACK_CONTEXT, 1);
+    const result = computePosture([f], 0, 0, FALLBACK_CONTEXT, 1, [r]);
     const note = result.computation_rationale["note"] as string;
     expect(note).toContain("1 finding");
     expect(note).toContain("1 open risk");
@@ -392,7 +392,7 @@ describe("computePosture — riskSignalCount in computation_rationale", () => {
   });
 
   it("risk_signals_included matches riskSignalCount when provided", () => {
-    const result = computePosture([signal], 0, 0, FALLBACK_CONTEXT, 1);
+    const result = computePosture([], 0, 0, FALLBACK_CONTEXT, 1, [signal]);
     expect(result.computation_rationale["risk_signals_included"]).toBe(1);
   });
 
@@ -443,7 +443,7 @@ describe("computePosture — synthetic vendor-inventory signals", () => {
       makeSyntheticVendorSignal("v6", "High"),
     ];
 
-    const result = computePosture(synthetic, 0, 0, NEUTRAL);
+    const result = computePosture([], 0, 0, NEUTRAL, 0, synthetic);
 
     expect(result.domain_scores).toHaveLength(1);
     const vrDomain = result.domain_scores[0]!;
@@ -452,7 +452,11 @@ describe("computePosture — synthetic vendor-inventory signals", () => {
     // boost (log2(7)*15 capped at 30) = 70 + ~30 = 100. Six entries
     // saturate the accumulation cap.
     expect(vrDomain.score).toBeGreaterThanOrEqual(70);
-    expect(vrDomain.finding_count).toBe(6);
+    // Reconciliation ruling (2026-07-17): synthetic inventory signals drive
+    // the SCORE but never the headline finding count. Zero real findings →
+    // finding_count 0, even though six signals were scored.
+    expect(vrDomain.finding_count).toBe(0);
+    expect(result.open_finding_count).toBe(0);
     expect(result.overall_score).not.toBeNull();
   });
 
@@ -465,7 +469,7 @@ describe("computePosture — synthetic vendor-inventory signals", () => {
     const synthetic = makeSyntheticVendorSignal("v1", "Critical");
 
     const justReal = computePosture([realFinding], 0, 0, NEUTRAL);
-    const both = computePosture([realFinding, synthetic], 0, 0, NEUTRAL);
+    const both = computePosture([realFinding], 0, 0, NEUTRAL, 0, [synthetic]);
 
     // Both reach the same domain. The two-signal case should never
     // score LOWER than the one-signal case (engine accumulation is
@@ -474,7 +478,9 @@ describe("computePosture — synthetic vendor-inventory signals", () => {
     expect(justReal.domain_scores).toHaveLength(1);
     const bothVR = both.domain_scores[0]!;
     const justRealVR = justReal.domain_scores[0]!;
-    expect(bothVR.finding_count).toBe(2);
+    // Reconciliation ruling (2026-07-17): both signals are SCORED, but only
+    // the real finding is COUNTED — the headline count stays 1 either way.
+    expect(bothVR.finding_count).toBe(1);
     expect(justRealVR.finding_count).toBe(1);
     expect(bothVR.score! >= justRealVR.score!).toBe(true);
   });
@@ -514,7 +520,7 @@ describe("computePosture — residual-rating consumption (Phase 2 contract)", ()
       domain: "Vendor Risk",
       severity: "High",
     };
-    const r = computePosture([riskSignal], 0, 0, NEUTRAL, /* riskSignalCount */ 1);
+    const r = computePosture([], 0, 0, NEUTRAL, /* riskSignalCount */ 1, [riskSignal]);
     expect(r.domain_scores).toHaveLength(1);
     expect(r.domain_scores[0]!.domain).toBe("Vendor Risk");
     // Engine's `severity` is the final computed severity (from score),
@@ -522,7 +528,8 @@ describe("computePosture — residual-rating consumption (Phase 2 contract)", ()
     // domain score in the High-or-Critical band depending on
     // accumulation. Confirm it's a recognized engine band.
     expect(["High", "Critical"]).toContain(r.domain_scores[0]!.severity);
-    expect(r.domain_scores[0]!.finding_count).toBe(1);
+    // Risk signals are scored, not counted (2026-07-17 ruling).
+    expect(r.domain_scores[0]!.finding_count).toBe(0);
   });
 
   it("scores backfilled data identically to legacy data — no discontinuity on deploy day", () => {
@@ -540,8 +547,8 @@ describe("computePosture — residual-rating consumption (Phase 2 contract)", ()
       { id: "1", title: "r1", domain: "Vendor Risk", severity: "Critical" },
       { id: "2", title: "r2", domain: "Vendor Risk", severity: "High" },
     ];
-    const a = computePosture(legacyShape, 0, 0, NEUTRAL, 2);
-    const b = computePosture(residualShape, 0, 0, NEUTRAL, 2);
+    const a = computePosture([], 0, 0, NEUTRAL, 2, legacyShape);
+    const b = computePosture([], 0, 0, NEUTRAL, 2, residualShape);
     expect(a.overall_score).toBe(b.overall_score);
     expect(a.domain_scores[0]!.score).toBe(b.domain_scores[0]!.score);
   });
@@ -566,5 +573,114 @@ describe("computePosture — residual-rating consumption (Phase 2 contract)", ()
     // engine produces zero domain output.
     const r = computePosture([], 0, 0, NEUTRAL, 0);
     expect(r.domain_scores).toEqual([]);
+  });
+});
+
+// ====================================================================
+// Domain-count reconciliation ruling (2026-07-17)
+//
+// Product ruling: Total Active Findings = unique active findings; the
+// domain breakdown counts every active finding exactly once under its
+// primary domain; auxiliary signals (open risks, synthetic inventory
+// signals) still drive SCORING but must never inflate the headline
+// rollup; domain counts must sum to the active-finding total on the
+// same snapshot.
+// ====================================================================
+
+describe("computePosture — domain rollup reconciliation (2026-07-17 ruling)", () => {
+  it("a finding sharing its domain with aux signals is counted exactly once, in its primary domain", () => {
+    const finding = makeFinding("f1", "High", "Vendor Risk");
+    const riskSignal = makeFinding("r1", "Critical", "Vendor Risk");
+    const inventorySignal = makeSyntheticVendorSignal("v1", "High");
+
+    const result = computePosture([finding], 0, 0, NEUTRAL, 1, [riskSignal, inventorySignal]);
+
+    const vr = result.domain_scores.find((d) => d.domain === "Vendor Risk");
+    expect(vr).toBeDefined();
+    expect(vr!.finding_count).toBe(1);
+    expect(result.open_finding_count).toBe(1);
+  });
+
+  it("domain finding counts sum to the unique active-finding total, aux-only domains count 0", () => {
+    const findings = [
+      makeFinding("f1", "Critical", "Access Control"),
+      makeFinding("f2", "High", "Access Control"),
+      makeFinding("f3", "Moderate", "Vendor Risk"),
+      makeFinding("f4", "Moderate", "AI Governance"),
+      makeFinding("f5", "High", null), // buckets under General
+    ];
+    const aux = [
+      makeFinding("r1", "High", "Vendor Risk"),          // open risk, shared domain
+      makeSyntheticVendorSignal("v1", "Critical"),        // inventory, shared domain
+      makeFinding("r2", "High", "Compliance"),            // aux-only domain
+    ];
+
+    const result = computePosture(findings, 0, 0, NEUTRAL, 2, aux);
+
+    const sum = result.domain_scores.reduce((s, d) => s + d.finding_count, 0);
+    expect(sum).toBe(findings.length);
+    expect(result.open_finding_count).toBe(findings.length);
+
+    // Primary domains receive their counts.
+    const byDomain = new Map(result.domain_scores.map((d) => [d.domain, d.finding_count]));
+    expect(byDomain.get("Access Control")).toBe(2);
+    expect(byDomain.get("Vendor Risk")).toBe(1);
+    expect(byDomain.get("AI Governance")).toBe(1);
+    expect(byDomain.get("General")).toBe(1);
+    // Aux-only domain still gets a scored row, but counts zero findings.
+    expect(byDomain.get("Compliance")).toBe(0);
+    const compliance = result.domain_scores.find((d) => d.domain === "Compliance");
+    expect(compliance!.score).not.toBeNull();
+  });
+
+  it("scores and severities are identical to the pre-split behaviour (no posture-score regression)", () => {
+    // The old pipeline merged findings + aux into the first parameter. The
+    // engine input is unchanged by the split, so every score and severity
+    // must match exactly — only the counts moved.
+    const findings = [
+      makeFinding("f1", "Critical", "Access Control"),
+      makeFinding("f2", "Moderate", "Vendor Risk"),
+    ];
+    const aux = [
+      makeFinding("r1", "High", "Vendor Risk"),
+      makeSyntheticVendorSignal("v1", "High"),
+    ];
+
+    const merged = computePosture([...findings, ...aux], 0, 0, REGULATED, 1);
+    const split = computePosture(findings, 0, 0, REGULATED, 1, aux);
+
+    expect(split.overall_score).toBe(merged.overall_score);
+    expect(split.overall_severity).toBe(merged.overall_severity);
+
+    const mergedByDomain = new Map(merged.domain_scores.map((d) => [d.domain, d]));
+    for (const d of split.domain_scores) {
+      const m = mergedByDomain.get(d.domain)!;
+      expect(m).toBeDefined();
+      expect(d.score).toBe(m.score);
+      expect(d.severity).toBe(m.severity);
+    }
+    expect(split.domain_scores).toHaveLength(merged.domain_scores.length);
+  });
+
+  it("open_finding_count excludes aux signals even when findings are empty", () => {
+    const aux = [
+      makeSyntheticVendorSignal("v1", "High"),
+      makeFinding("r1", "Critical", "Vendor Risk"),
+    ];
+    const result = computePosture([], 0, 0, NEUTRAL, 1, aux);
+    expect(result.open_finding_count).toBe(0);
+    // Score still computed — aux signals keep driving posture.
+    expect(result.overall_score).not.toBeNull();
+  });
+
+  it("inventory_signals_included reported in rationale", () => {
+    const aux = [
+      makeFinding("r1", "High", "Vendor Risk"),
+      makeSyntheticVendorSignal("v1", "High"),
+      makeSyntheticVendorSignal("v2", "Low"),
+    ];
+    const result = computePosture([makeFinding("f1", "Low", "General")], 0, 0, NEUTRAL, 1, aux);
+    expect(result.computation_rationale["risk_signals_included"]).toBe(1);
+    expect(result.computation_rationale["inventory_signals_included"]).toBe(2);
   });
 });

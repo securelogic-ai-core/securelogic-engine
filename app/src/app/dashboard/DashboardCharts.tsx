@@ -1,5 +1,9 @@
 import Link from "next/link";
 import type { DashboardSummary, DomainScore, Framework, FrameworkReadiness } from "@/lib/api";
+import { orgActionsHref } from "@/app/actions/myActions";
+import { activeActionsCount } from "@/lib/actionsMetrics";
+import { formatDateOnlyUTC } from "@/lib/dates";
+import { CoverageBar } from "@/lib/frameworkCoverage";
 
 const CRIT_COLORS: Record<string, { bar: string; badge: string; text: string }> = {
   critical:      { bar: "#ef4444", badge: "rgba(239,68,68,0.15)",   text: "#fca5a5" },
@@ -39,10 +43,8 @@ const DONUT_CIRC   = 2 * Math.PI * DONUT_R;
  * Use for: framework readiness % (satisfied / total_requirements),
  * compliance coverage %, control implementation %.
  *
- * High score → green; low score → red.
- *
- * DO NOT use for the posture engine's domain risk scores — those are
- * RISK-style (higher = worse). Use riskColor for those.
+ * High score → green; low score → red. Posture scores qualify too: the API's
+ * canonical mapper serves them health-style (posture display ruling 2026-07-15).
  */
 function scoreColor(score: number): string {
   if (score >= 80) return "#22c55e";
@@ -51,27 +53,11 @@ function scoreColor(score: number): string {
   return "#ef4444";
 }
 
-/**
- * riskColor — colorizer for RISK-style metrics (higher = worse).
- *
- * Use for: posture engine's domain risk scores
- * (DomainRiskAggregationEngineV2 output, materialized as
- * domain_scores.score). The engine's bands are Critical ≥85,
- * High ≥65, Moderate ≥40, else Low — see
- * src/engine/policy/defaultScoringPolicy.ts and
- * src/engine/scoring/v2/DomainRiskAggregationEngineV2.ts:49-54.
- *
- * High score → red; low score → green. The bar color matches the
- * severity badge already shown alongside the score.
- *
- * DO NOT use for posture-style metrics — use scoreColor instead.
- */
-function riskColor(score: number): string {
-  if (score >= 85) return "#ef4444"; // Critical
-  if (score >= 65) return "#f97316"; // High
-  if (score >= 40) return "#f59e0b"; // Moderate
-  return "#22c55e";                   // Low
-}
+// riskColor (higher = worse) was deleted with the posture display ruling
+// (2026-07-15): every posture score now arrives HEALTH-style from the API's
+// canonical mapper (src/api/lib/postureDisplay.ts), so scoreColor is the one
+// colorizer for every 0–100 metric on this page. The engine's internal
+// risk-style math is unchanged — the inversion happens once, at the API.
 
 /**
  * CompactEmptyState — shared empty-state body used inside cards whose
@@ -88,7 +74,8 @@ function riskColor(score: number): string {
  *   - FrameworkGaps       (no frameworks activated)
  *   - DomainPostureBars   (no domain data — single-populated renders
  *                          the actual bar, not a stub)
- *   - RiskHeatmap         (no risk data)
+ *   - RiskHeatmap         (empty risk register)
+ *   - RisksBreakdown      (empty risk register — same message, same CTA)
  *
  * Exported and reused in:
  *   - PostureTrendChart.tsx (insufficient snapshots)
@@ -151,7 +138,7 @@ export function FindingsDonut({
   return (
     <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
       <p className="text-xs font-semibold uppercase tracking-wide mb-4" style={{ color: TEXT_MUTED }}>
-        Open Findings
+        Active Findings
       </p>
       <div className="flex items-center gap-5">
         <div className="flex-shrink-0">
@@ -196,7 +183,7 @@ export function FindingsDonut({
             return (
               <Link
                 key={sev}
-                href={`/findings?severity=${sev}&status=open`}
+                href={`/findings?severity=${sev}&active=true`}
                 className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity"
               >
                 <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: SEVERITY_COLORS[sev] }} />
@@ -209,8 +196,8 @@ export function FindingsDonut({
           })}
         </div>
       </div>
-      <Link href="/findings?status=open" className="block mt-4 text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
-        View all open findings →
+      <Link href="/findings?active=true" className="block mt-4 text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+        View all active findings →
       </Link>
     </div>
   );
@@ -229,6 +216,10 @@ export function DomainPostureBars({ domains }: { domains: DomainScore[] }) {
           Full breakdown →
         </Link>
       </div>
+      {/* Posture display ruling: scores arrive HEALTH-style from the API mapper. */}
+      <p className="text-[11px] -mt-3 mb-4" style={{ color: TEXT_MUTED }}>
+        Health score (0–100) · higher = better
+      </p>
       {domains.length === 0 ? (
         <CompactEmptyState
           message="No domain data yet."
@@ -239,15 +230,15 @@ export function DomainPostureBars({ domains }: { domains: DomainScore[] }) {
         <div className="space-y-3">
           {domains.slice(0, 6).map((d) => {
             const score = d.score ?? 0;
-            // riskColor (not scoreColor): the engine produces a risk
-            // score where higher = more risk. Pre-fix the bar
-            // colorizer was inverted, rendering Critical-risk
-            // domains green.
-            const color = riskColor(score);
+            // Posture display ruling (2026-07-15): the API's canonical mapper
+            // (src/api/lib/postureDisplay.ts) now serves HEALTH-style domain
+            // scores (higher = better), so the posture-style colorizer applies —
+            // a healthy domain is green, a Critical one reads as a LOW number.
+            const color = scoreColor(score);
             return (
               <Link
                 key={d.domain}
-                href={`/findings?domain=${encodeURIComponent(d.domain)}&status=open`}
+                href={`/findings?domain=${encodeURIComponent(d.domain)}&active=true`}
                 className="block hover:opacity-80 transition-opacity"
               >
                 <div className="flex items-center justify-between mb-1">
@@ -277,10 +268,15 @@ export function DomainPostureBars({ domains }: { domains: DomainScore[] }) {
 export function ActionsRing({ actions }: { actions: DashboardSummary["actions"] }) {
   const openCount       = actions.open        ?? 0;
   const inProgressCount = actions.in_progress ?? 0;
+  const blockedCount    = actions.blocked     ?? 0;
   const overdueCount    = actions.overdue      ?? 0;
-  const total = openCount + inProgressCount;
+  // Metric Contract: the ring total is ACTIVE work (open|in_progress|blocked) —
+  // the SAME number the destination page's Open tile shows (blocked work is
+  // still work; it was previously invisible here and the totals diverged).
+  const total = activeActionsCount(actions);
   const openArc        = total > 0 ? (openCount        / total) * DONUT_CIRC : 0;
   const inProgressArc  = total > 0 ? (inProgressCount  / total) * DONUT_CIRC : 0;
+  const blockedArc     = total > 0 ? (blockedCount     / total) * DONUT_CIRC : 0;
 
   return (
     <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
@@ -313,6 +309,16 @@ export function ActionsRing({ actions }: { actions: DashboardSummary["actions"] 
                     strokeLinecap="butt"
                   />
                 )}
+                {blockedCount > 0 && (
+                  <circle
+                    cx={DONUT_C} cy={DONUT_C} r={DONUT_R}
+                    fill="none" stroke="#94a3b8" strokeWidth={DONUT_STROKE}
+                    strokeDasharray={`${blockedArc} ${DONUT_CIRC - blockedArc}`}
+                    strokeDashoffset={-(openArc + inProgressArc)}
+                    transform={`rotate(-90 ${DONUT_C} ${DONUT_C})`}
+                    strokeLinecap="butt"
+                  />
+                )}
               </>
             ) : (
               <circle
@@ -331,18 +337,25 @@ export function ActionsRing({ actions }: { actions: DashboardSummary["actions"] 
           </svg>
         </div>
         <div className="flex-1 space-y-2">
-          <Link href="/actions?status=open" className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity">
+          <Link href={orgActionsHref({ status: "open" })} className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity">
             <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: TEAL }} />
             <span style={{ color: "#94a3b8" }}>Open</span>
             <span className="ml-auto font-bold tabular-nums" style={{ color: "#f1f5f9" }}>{openCount}</span>
           </Link>
-          <Link href="/actions?status=in_progress" className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity">
+          <Link href={orgActionsHref({ status: "in_progress" })} className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity">
             <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: AMBER }} />
             <span style={{ color: "#94a3b8" }}>In Progress</span>
             <span className="ml-auto font-bold tabular-nums" style={{ color: "#f1f5f9" }}>{inProgressCount}</span>
           </Link>
+          {blockedCount > 0 && (
+            <Link href={orgActionsHref({ status: "blocked" })} className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity">
+              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: "#94a3b8" }} />
+              <span style={{ color: "#94a3b8" }}>Blocked</span>
+              <span className="ml-auto font-bold tabular-nums" style={{ color: "#f1f5f9" }}>{blockedCount}</span>
+            </Link>
+          )}
           {overdueCount > 0 && (
-            <Link href="/actions?overdue=true" className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity">
+            <Link href={orgActionsHref({ overdue: true })} className="flex items-center gap-2 text-xs hover:opacity-80 transition-opacity">
               <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 bg-red-500" />
               <span style={{ color: "#fca5a5" }}>Overdue</span>
               <span className="ml-auto font-bold tabular-nums" style={{ color: "#fca5a5" }}>{overdueCount}</span>
@@ -350,8 +363,8 @@ export function ActionsRing({ actions }: { actions: DashboardSummary["actions"] 
           )}
         </div>
       </div>
-      <Link href="/actions" className="block mt-4 text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
-        View all actions →
+      <Link href={orgActionsHref({ active: true })} className="block mt-4 text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+        View all open actions →
       </Link>
     </div>
   );
@@ -390,9 +403,11 @@ function AgingSection({
         {label}
       </p>
 
-      {/* Avg age */}
+      {/* Avg age — 0 is a real average (items younger than half a day),
+          not absence of data. The engine only returns null when there are
+          no active rows to average; dash on null alone (item 8). */}
       <p className="font-bold leading-none mb-0.5" style={{ fontSize: "26px", color: open > 0 ? "#f1f5f9" : TEXT_MUTED }}>
-        {avgAge != null && avgAge > 0 ? Math.round(avgAge) : "—"}
+        {avgAge != null ? Math.round(avgAge) : "—"}
       </p>
       <p className="text-xs mb-3" style={{ color: TEXT_MUTED }}>avg days open</p>
 
@@ -441,7 +456,9 @@ export function OpenItemsAging({
   actions:  DashboardSummary["actions"];
 }) {
   const findingsOpen = findings.open;
-  const actionsOpen  = (actions.open ?? 0) + (actions.in_progress ?? 0);
+  // Metric Contract: active = open|in_progress|blocked (same total as the ring
+  // and the destination page); fallback for older engine payloads.
+  const actionsOpen  = activeActionsCount(actions);
   const bothEmpty    = findingsOpen === 0 && actionsOpen === 0;
 
   return (
@@ -450,7 +467,7 @@ export function OpenItemsAging({
         <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
           Open Items Aging
         </p>
-        <Link href="/findings" className="text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+        <Link href="/findings?queue=all" className="text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
           View all →
         </Link>
       </div>
@@ -464,7 +481,7 @@ export function OpenItemsAging({
         <div className="flex flex-col sm:flex-row gap-4 sm:gap-8">
           <AgingSection
             label="Findings"
-            href="/findings?status=open"
+            href="/findings?active=true"
             open={findingsOpen}
             avgAge={findings.avg_age_days}
             maxAge={findings.max_age_days}
@@ -474,7 +491,7 @@ export function OpenItemsAging({
           <div className="hidden sm:block" style={{ width: "1px", background: SLATE_LINE, flexShrink: 0 }} />
           <AgingSection
             label="Actions"
-            href="/actions"
+            href={orgActionsHref({ active: true })}
             open={actionsOpen}
             avgAge={actions.avg_age_days}
             maxAge={actions.max_age_days}
@@ -661,8 +678,12 @@ export function VendorRiskCard({
 
 export function PostureScoreTile({
   posture,
+  findings = null,
 }: {
   posture: DashboardSummary["posture"];
+  /** Active-findings counts for the findings-fact chip (ruling: the score and
+   *  the findings are different truths and get different elements). */
+  findings?: DashboardSummary["findings"] | null;
 }) {
   const score = posture.overall_score;
   const severity = posture.overall_severity;
@@ -682,17 +703,23 @@ export function PostureScoreTile({
     severity === "Critical" ? { background: "rgba(239,68,68,0.15)",   color: severityColor } :
     { background: "rgba(100,116,139,0.12)", color: severityColor };
 
-  const formattedDate = date
-    ? new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-    : null;
+  // Item 2b: DATE fields format in UTC via the shared helper so this tile can
+  // never disagree with the trend chart about the same snapshot_date.
+  const formattedDate = formatDateOnlyUTC(date);
 
   return (
     <div
       className="rounded-xl border p-5 flex flex-col justify-between"
       style={{ background: SURFACE, borderColor: SLATE_LINE, borderLeft: `4px solid ${TEAL}` }}
     >
-      <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: TEXT_MUTED }}>
+      <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
         Posture Score
+      </p>
+      {/* Posture display ruling (2026-07-15): scores arrive HEALTH-style from the
+          API's canonical mapper — higher is better, matching executive instinct.
+          A Critical posture now reads as a LOW number beside its Critical badge. */}
+      <p className="text-[11px] mb-3" style={{ color: TEXT_MUTED }}>
+        Health score (0–100) · higher = better
       </p>
       {score == null ? (
         <div>
@@ -701,13 +728,36 @@ export function PostureScoreTile({
         </div>
       ) : (
         <>
-          <p className="text-4xl font-bold leading-none" style={{ color: severityColor }}>{score}</p>
-          <div className="mt-2 flex items-center gap-2">
+          <p className="text-4xl font-bold leading-none" style={{ color: severityColor }}>
+            {score}
+            <span className="text-lg font-medium" style={{ color: TEXT_MUTED }}>/100</span>
+          </p>
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
             {severity && (
               <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold" style={badgeStyle}>
                 {severity}
               </span>
             )}
+            {/* The findings FACT, as its own chip — never folded into the score
+                badge (ruling: score and findings are different truths). */}
+            {(() => {
+              const crit = findings?.by_severity?.Critical ?? 0;
+              const high = findings?.by_severity?.High ?? 0;
+              if (crit === 0 && high === 0) return null;
+              const parts = [
+                ...(crit > 0 ? [`${crit} critical`] : []),
+                ...(high > 0 ? [`${high} high`] : []),
+              ];
+              return (
+                <Link
+                  href="/findings?active=true"
+                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium hover:opacity-80"
+                  style={{ background: "rgba(239,68,68,0.1)", color: "#fca5a5" }}
+                >
+                  {parts.join(" · ")} finding{crit + high === 1 ? "" : "s"}
+                </Link>
+              );
+            })()}
           </div>
           {formattedDate && (
             <p className="mt-2 text-xs" style={{ color: TEXT_MUTED }}>as of {formattedDate}</p>
@@ -722,6 +772,17 @@ export function PostureScoreTile({
 }
 
 // ── RisksBreakdown ─────────────────────────────────────────────
+
+// An empty risk register is a workflow state, not missing data: findings
+// never auto-create risks (the only INSERT INTO risks is user-initiated
+// POST /api/risks), so zero risks legitimately coexists with many active
+// findings. Both risk tiles must explain that with the SAME words — two
+// adjacent tiles telling different stories about the same emptiness reads
+// as a contradiction (walkthrough items 3+10).
+const RISKS_EMPTY_MESSAGE =
+  "No risks promoted yet — findings don't become risks automatically. Review findings to decide what belongs on the risk register.";
+const RISKS_EMPTY_CTA_LABEL = "Review findings →";
+const RISKS_EMPTY_CTA_HREF = "/findings?active=true";
 
 export function RisksBreakdown({
   risks_summary,
@@ -745,6 +806,10 @@ export function RisksBreakdown({
     { label: "High",     count: ratings.High,     color: "#f97316" },
     { label: "Moderate", count: ratings.Moderate, color: "#f59e0b" },
     { label: "Low",      count: ratings.Low,      color: "#22c55e" },
+    // Metric Contract: open risks without a residual rating are shown, not
+    // silently excluded — the bars always sum to the headline, and the
+    // headline always matches the /risks destination list.
+    ...(ratings.Unscored ? [{ label: "Unscored", count: ratings.Unscored, color: "#94a3b8" }] : []),
   ];
 
   return (
@@ -753,29 +818,40 @@ export function RisksBreakdown({
         <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
           Open Risks
         </p>
-        <Link href="/risks" className="text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
+        <Link href="/risks?active=true" className="text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
           View all →
         </Link>
       </div>
       <p className="text-3xl font-bold mb-3" style={{ color: total > 0 ? "#f1f5f9" : TEXT_MUTED }}>
         {total}
       </p>
-      <div className="space-y-2.5">
-        {bars.map(({ label, count, color }) => {
-          const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-          return (
-            <div key={label}>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs" style={{ color: "#94a3b8" }}>{label}</span>
-                <span className="text-xs font-bold tabular-nums" style={{ color: count > 0 ? color : TEXT_MUTED }}>{count}</span>
+      {total === 0 ? (
+        // Item 10: the all-zero severity ladder collapses into the
+        // explanatory empty state — four zero bars imply "we measured and
+        // found nothing", which is not what an unpopulated register means.
+        <CompactEmptyState
+          message={RISKS_EMPTY_MESSAGE}
+          ctaLabel={RISKS_EMPTY_CTA_LABEL}
+          ctaHref={RISKS_EMPTY_CTA_HREF}
+        />
+      ) : (
+        <div className="space-y-2.5">
+          {bars.map(({ label, count, color }) => {
+            const pct = Math.round((count / total) * 100);
+            return (
+              <div key={label}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs" style={{ color: "#94a3b8" }}>{label}</span>
+                  <span className="text-xs font-bold tabular-nums" style={{ color: count > 0 ? color : TEXT_MUTED }}>{count}</span>
+                </div>
+                <div className="h-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }}>
+                  <div className="h-1.5 rounded-full" style={{ width: `${pct}%`, background: color }} />
+                </div>
               </div>
-              <div className="h-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }}>
-                <div className="h-1.5 rounded-full" style={{ width: `${pct}%`, background: color }} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -860,9 +936,9 @@ export function RiskHeatmap({
 
       {!hasData ? (
         <CompactEmptyState
-          message="No risk data available."
-          ctaLabel="Open risk register →"
-          ctaHref="/risks"
+          message={RISKS_EMPTY_MESSAGE}
+          ctaLabel={RISKS_EMPTY_CTA_LABEL}
+          ctaHref={RISKS_EMPTY_CTA_HREF}
         />
       ) : (
         <div>
@@ -957,14 +1033,20 @@ export function FrameworkGaps({
 
   return (
     <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
-      <div className="flex items-baseline justify-between mb-4">
+      <div className="flex items-baseline justify-between mb-1">
         <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
-          Framework Gaps
+          Largest Readiness Gaps
         </p>
         <Link href="/frameworks" className="text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: TEAL }}>
           All frameworks →
         </Link>
       </div>
+      {/* Same clarifier pattern as Framework Readiness / Compliance Coverage —
+          "Framework Gaps" never said WHAT a gap was or why these frameworks
+          were listed. */}
+      <p className="text-xs mb-4" style={{ color: TEXT_MUTED }}>
+        Your activated frameworks furthest from audit-ready.
+      </p>
       {sorted.length === 0 ? (
         <CompactEmptyState
           message="No frameworks activated yet."
@@ -974,16 +1056,7 @@ export function FrameworkGaps({
       ) : (
         <div className="space-y-4">
           {sorted.map(({ framework, readiness }) => {
-            const score     = readiness?.readiness_score   ?? 0;
-            const satisfied = readiness?.satisfied         ?? 0;
-            const partial   = readiness?.partial           ?? 0;
-            const unmapped  = readiness?.unmapped          ?? 0;
-            const color     = scoreColor(score);
-            const breakdown = [
-              satisfied > 0 ? `${satisfied} satisfied` : null,
-              partial   > 0 ? `${partial} partial`     : null,
-              unmapped  > 0 ? `${unmapped} unmapped`   : null,
-            ].filter(Boolean);
+            const score = readiness?.readiness_score ?? 0;
             return (
               <div key={framework.id}>
                 <div className="flex items-baseline justify-between mb-1.5">
@@ -991,7 +1064,7 @@ export function FrameworkGaps({
                     {framework.name}
                   </span>
                   <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                    <span className="text-xs font-bold tabular-nums" style={{ color }}>{score}%</span>
+                    <span className="text-xs font-bold tabular-nums" style={{ color: scoreColor(score) }}>{score}%</span>
                     <Link
                       href={`/frameworks/${framework.id}`}
                       className="text-xs font-medium hover:opacity-80 transition-opacity"
@@ -1001,14 +1074,18 @@ export function FrameworkGaps({
                     </Link>
                   </div>
                 </div>
-                <div className="h-2 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }}>
-                  <div className="h-2 rounded-full" style={{ width: `${score}%`, background: color }} />
-                </div>
-                {breakdown.length > 0 && (
-                  <p className="mt-1 text-xs" style={{ color: TEXT_MUTED }}>
-                    {breakdown.join(" • ")}
-                  </p>
-                )}
+                {/* Item-7 ruling: segmented bar (solid = fully satisfied,
+                    hatched = partial) + the engine's caption verbatim. The old
+                    breakdown dropped zero counts, so "0 satisfied · 3 partial"
+                    rendered as just "3 partial" beside an unexplained 0%. */}
+                <CoverageBar
+                  satisfied={readiness?.satisfied ?? 0}
+                  partial={readiness?.partial ?? 0}
+                  total={readiness?.total_requirements ?? 0}
+                />
+                <p className="mt-1 text-xs" style={{ color: TEXT_MUTED }}>
+                  {readiness?.coverage_caption}
+                </p>
               </div>
             );
           })}
@@ -1042,7 +1119,7 @@ export function ComplianceCoverage({
 
   return (
     <div className="rounded-xl border p-5 h-full flex flex-col" style={{ background: SURFACE, borderColor: SLATE_LINE }}>
-      <div className="flex items-baseline justify-between mb-4">
+      <div className="flex items-baseline justify-between mb-1">
         <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: TEXT_MUTED }}>
           Compliance Coverage
         </p>
@@ -1050,6 +1127,11 @@ export function ComplianceCoverage({
           All frameworks →
         </Link>
       </div>
+      {/* D-5: distinguish from Framework Readiness — this is the share of mapped
+          requirements currently satisfied, not overall audit-readiness. */}
+      <p className="text-[11px] mb-4" style={{ color: TEXT_MUTED }}>
+        Share of mapped requirements currently satisfied.
+      </p>
 
       {/* Single empty state when no frameworks have been assessed.
           Pre-fix: both the aggregate-number block AND the per-framework
@@ -1072,46 +1154,36 @@ export function ComplianceCoverage({
                 {overallPct}%
               </p>
               <p className="mt-1 text-xs" style={{ color: "#94a3b8" }}>
-                {totalSatisfied} of {totalRequirements} requirements satisfied
+                {totalSatisfied} of {totalRequirements} requirements fully satisfied
               </p>
             </div>
           )}
         <div className="space-y-3">
           {sorted.map(({ framework, readiness }) => {
-            const score     = readiness?.readiness_score   ?? 0;
             const satisfied = readiness?.satisfied         ?? 0;
             const total     = readiness?.total_requirements ?? 0;
-            const partial   = readiness?.partial           ?? 0;
-            const unmapped  = readiness?.unmapped          ?? 0;
-            const color =
-              score >= 80 ? "#22c55e" :
-              score >= 60 ? "#f59e0b" :
-              "#ef4444";
             return (
               <div key={framework.id}>
                 <div className="flex items-baseline justify-between mb-1">
                   <span className="text-xs truncate max-w-[120px]" style={{ color: "#cbd5e1" }}>
                     {framework.name}
                   </span>
-                  <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-                    <span className="text-xs tabular-nums" style={{ color: TEXT_MUTED }}>
-                      {satisfied}/{total}
-                    </span>
-                    {partial > 0 && (
-                      <span className="text-xs" style={{ color: "#f59e0b" }}>
-                        {partial} partial
-                      </span>
-                    )}
-                    {unmapped > 0 && (
-                      <span className="text-xs" style={{ color: "#475569" }}>
-                        {unmapped} unmapped
-                      </span>
-                    )}
-                  </div>
+                  <span className="text-xs tabular-nums flex-shrink-0 ml-2" style={{ color: TEXT_MUTED }}>
+                    {satisfied}/{total}
+                  </span>
                 </div>
-                <div className="h-1 rounded-full" style={{ background: SLATE_LINE }}>
-                  <div className="h-1 rounded-full" style={{ width: `${Math.min(score, 100)}%`, background: color }} />
-                </div>
+                {/* Item-7 ruling: shared segmented bar + the engine's caption
+                    verbatim — this tile may not phrase or color coverage its
+                    own way (it previously had its own 80/60 color bands). */}
+                <CoverageBar
+                  satisfied={satisfied}
+                  partial={readiness?.partial ?? 0}
+                  total={total}
+                  heightClass="h-1"
+                />
+                <p className="mt-0.5 text-[11px]" style={{ color: TEXT_MUTED }}>
+                  {readiness?.coverage_caption}
+                </p>
               </div>
             );
           })}

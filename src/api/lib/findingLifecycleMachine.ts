@@ -1,0 +1,372 @@
+/**
+ * findingLifecycleMachine.ts — the PURE Finding two-axis lifecycle machine (C6).
+ *
+ * Authority: docs/specs/finding-lifecycle-spec.md (RATIFIED 2026-07-10).
+ * Modelled on riskLifecycleStateMachine.ts (pure decision core) plus the
+ * in-transaction event-stream write pattern of riskLifecycle.ts.
+ *
+ * Two orthogonal axes, single writer each (spec §1, §7):
+ *
+ *   operational_status — SYSTEM-DERIVED from linked Actions. Never hand-set.
+ *     `recomputeFindingOperationalStatus` is the ONLY writer; it runs inside
+ *     the caller's asTenant() transaction (the ambient pg routes to the tenant
+ *     client), so the Action write and the parent recompute are atomic (§5).
+ *
+ *   decision_state — HUMAN-GOVERNED. `evaluateFindingDecisionTransition` is
+ *     the pure guard (spec §4); the PATCH route applies it. The system never
+ *     writes decision_state except the initial value on creation (R3).
+ *
+ * Every state change writes one finding_lifecycle_events row IN the same
+ * transaction (the audit stream, spec §6.2) plus the fire-and-forget
+ * security_audit_log projection via the caller.
+ */
+
+// ── Operational axis (spec §1.1) ────────────────────────────────────────────
+
+export const OPERATIONAL_STATUSES = ["open", "in_progress", "remediated", "closed"] as const;
+export type FindingOperationalStatus = (typeof OPERATIONAL_STATUSES)[number];
+
+/** Action statuses that mean "work is underway". */
+const ACTION_ACTIVE = new Set(["in_progress", "blocked"]);
+/** Action statuses that mean "this work item is finished". */
+const ACTION_TERMINAL = new Set(["closed", "accepted"]);
+
+/**
+ * Legacy `status` values that mean the finding is CLOSED. 'accepted' is a legal
+ * legacy value that no system path writes, and the pre-migration canonical
+ * predicate (`status IN ('open','in_progress')`) excluded it from Active — so it
+ * is terminal here, preserving that population exactly. See the 20260906
+ * migration header for why reconciling 'accepted' with the two-axis model's
+ * `accepted_risk` (which does NOT close a finding) is a product decision, not
+ * an implementation one.
+ */
+const LEGACY_TERMINAL = new Set(["closed", "accepted"]);
+
+/**
+ * The inputs that can close a finding. `operational_status` remains
+ * SYSTEM-DERIVED and is still never hand-set (spec §7) — it simply now derives
+ * from governance and the legacy compat axis as well as from workflow.
+ */
+export interface ClosureInputs {
+  /** the HUMAN-GOVERNED axis; 'resolved' is the governance closure */
+  decisionState?: string | null;
+  /** legacy `status`, still directly writable during the migration */
+  legacyStatus?: string | null;
+  /**
+   * A BINDING risk acceptance exists: an approved, unexpired `finding_risk_acceptances`
+   * record (ruling 2026-07-12). This is the third — and only new — way a finding closes.
+   *
+   * It is deliberately a boolean, not the acceptance row: the caller
+   * (recomputeFindingOperationalStatus) resolves "approved AND not past expires_at"
+   * against the database, because expiry is a function of TODAY and this module must
+   * stay pure. Resolving it there also means a lapsed acceptance stops closing the
+   * finding on the very next recompute, even if the expiry worker has not run yet —
+   * an acceptance that has run out is not an acceptance.
+   *
+   * False when the enforcement flag is off, which is why flag-off behaviour is
+   * byte-identical to before this package.
+   */
+  hasBindingAcceptance?: boolean;
+}
+
+/**
+ * Pure derivation (spec §1.1, AMENDED by the 2026-07-12 ruling): a function of
+ * governance, the legacy compat axis, and the linked Actions — in that priority
+ * order. Still pure; still never hand-set.
+ *
+ *   closed      — decision_state = 'resolved' (governance closure), OR legacy
+ *                 status is terminal (the compat bridge, below)
+ *   in_progress — ≥1 linked Action is in_progress/blocked
+ *   remediated  — every linked Action is terminal (closed/accepted) and ≥1
+ *                 existed, AND the evidence gate is satisfied if org-enforced
+ *   open        — otherwise (no Actions, or none started)
+ *
+ * THE COMPAT BRIDGE. Legacy `status` stays directly writable (PATCH, importers,
+ * flag-off behaviour) and is the only closure signal those writers have. If
+ * `closed` derived from governance ALONE, a legacy `status='closed'` write would
+ * leave operational_status='open' — and the new Active predicate would count a
+ * closed finding as Active, which is precisely the bug this whole package exists
+ * to prevent. Deriving from both axes means they cannot contradict; the database
+ * enforces it (findings_closure_axes_agree). The bridge retires when `status` does.
+ *
+ * `remediated` is NOT closed: remediation done, awaiting validation/governance.
+ * It stays Active, by design.
+ *
+ * Evidence gate (spec §1.1 — the same org policy the Risk lifecycle enforces via
+ * risk_settings.require_evidence_gate): when the org enforces the gate, completed
+ * work WITHOUT attached evidence stays `in_progress` — for a gate-enforcing org
+ * the evidence IS part of the remediation, and validation (ready-for-decision)
+ * must not be offered without it.
+ */
+export interface EvidenceGate {
+  /** org policy: risk_settings.require_evidence_gate (default false) */
+  enforced: boolean;
+  /** ≥1 evidence record with source_type='finding' for this finding */
+  hasEvidence: boolean;
+}
+
+export function deriveOperationalStatus(
+  actionStatuses: readonly string[],
+  gate?: EvidenceGate,
+  closure?: ClosureInputs
+): FindingOperationalStatus {
+  // Governance closure, the legacy compat bridge, and an approved risk acceptance all
+  // dominate workflow: a closed finding is closed however much Action churn sits
+  // underneath it.
+  if (closure?.decisionState === "resolved") return "closed";
+  if (closure?.legacyStatus != null && LEGACY_TERMINAL.has(closure.legacyStatus)) return "closed";
+  // Accepting a risk is a decision that no remediation work remains — but ONLY once the
+  // approval is complete. `decision_state = 'accepted_risk'` alone does NOT close a
+  // finding: a proposal is not an approval, and a finding whose acceptance is still
+  // awaiting sign-off is very much still live work.
+  if (closure?.hasBindingAcceptance === true) return "closed";
+
+  if (actionStatuses.some((s) => ACTION_ACTIVE.has(s))) return "in_progress";
+  if (actionStatuses.length > 0 && actionStatuses.every((s) => ACTION_TERMINAL.has(s))) {
+    if (gate?.enforced && !gate.hasEvidence) return "in_progress";
+    return "remediated";
+  }
+  return "open";
+}
+
+/**
+ * The legacy `status` a given operational_status projects to (spec §3), used to
+ * keep the compat axis from contradicting the authoritative one.
+ *
+ * Applied ONLY across the closure boundary — when a finding closes, or reopens.
+ * It deliberately does NOT rewrite an open finding's status, because legacy
+ * `status` cannot represent `remediated` (§3 projects it to 'in_progress') and a
+ * full projection would silently overwrite a caller's own `status` write. Narrow
+ * on purpose: this preserves every existing open/in_progress behaviour and fixes
+ * only the axis that must agree.
+ *
+ * Returns null when no legacy write is needed.
+ */
+export function projectLegacyStatusOnClosureChange(
+  operational: FindingOperationalStatus,
+  currentLegacy: string | null | undefined
+): string | null {
+  const legacyIsTerminal = currentLegacy != null && LEGACY_TERMINAL.has(currentLegacy);
+
+  // Closing: the legacy axis must say closed too. An existing 'accepted' is left
+  // alone — it is already terminal, and rewriting it would destroy the distinction.
+  if (operational === "closed") return legacyIsTerminal ? null : "closed";
+
+  // Reopening: the legacy axis must stop saying closed. It projects to the
+  // operational state per §3 (remediated has no legacy spelling → 'in_progress').
+  if (legacyIsTerminal) return legacyStatusFor(operational);
+  return null;
+}
+
+/**
+ * The legacy `status` that an operational state projects to (spec §3). Used when a
+ * finding LEAVES closure and the legacy axis has to be re-derived wholesale rather
+ * than merely un-closed — see `projectLegacy` in recomputeFindingOperationalStatus.
+ */
+export function legacyStatusFor(operational: FindingOperationalStatus): string {
+  if (operational === "closed") return "closed";
+  // §3: `remediated` has no legacy spelling — the work is done but not closed by a
+  // human, so it projects to 'in_progress'.
+  if (operational === "in_progress" || operational === "remediated") return "in_progress";
+  return "open";
+}
+
+export function isLegacyTerminal(status: string | null | undefined): boolean {
+  return status != null && LEGACY_TERMINAL.has(status);
+}
+
+/** Audit event name for an operational change (spec §4 audit column). */
+export function operationalAuditEvent(
+  from: string,
+  to: FindingOperationalStatus
+): { eventType: string; transition: string } {
+  if (to === "closed") {
+    return { eventType: "finding.operational.closed", transition: "operational_closed" };
+  }
+  // Leaving the terminal state — the finding is live work again. Named so the
+  // audit stream shows a reopen as a reopen, not as a generic recompute.
+  if (from === "closed") {
+    return { eventType: "finding.operational.reopened", transition: "operational_reopened" };
+  }
+  if (to === "remediated") {
+    return { eventType: "finding.remediated", transition: "operational_remediated" };
+  }
+  if (from === "open" && to === "in_progress") {
+    return { eventType: "finding.operational.advanced", transition: "operational_advanced" };
+  }
+  return { eventType: "finding.operational.recomputed", transition: "operational_recomputed" };
+}
+
+// ── Decision axis (spec §1.2, §4) ───────────────────────────────────────────
+
+export const DECISION_STATES = [
+  "needs_review",
+  "mitigating",
+  "accepted_risk",
+  "resolved",
+] as const;
+export type FindingDecisionState = (typeof DECISION_STATES)[number];
+
+const VALID_DECISION = new Set<string>(DECISION_STATES);
+
+export type DecisionTransitionReason =
+  | "unknown_state"
+  | "invalid_decision_state"
+  | "invalid_decision_transition"
+  | "close_requires_remediated_or_accepted_risk"
+  | "actor_identity_required"
+  | "separation_of_duties";
+
+export interface DecisionTransitionDecision {
+  allowed: boolean;
+  /** true when target === current (idempotent no-op; nothing to write) */
+  noop?: boolean;
+  reason?: DecisionTransitionReason;
+  fromState?: FindingDecisionState;
+  toState?: FindingDecisionState;
+  /** finding_lifecycle_events.transition + security_audit_log event name */
+  transition?: "accept_plan" | "accept_risk" | "close" | "reopen";
+  auditEvent?: string;
+}
+
+/**
+ * Separation-of-duties inputs for the close transition (spec §7 — "separation-
+ * of-duties where the Risk lifecycle requires it"; mirrors the Risk machine's
+ * gate exactly: actor must be identified and must differ from the counterparty).
+ * For findings, the counterparty is the actor who completed the remediation —
+ * the actor of the most recent operational→remediated lifecycle event. When
+ * that actor is unknown (system/API-key remediation), an identified human may
+ * still close — the same null-counterparty semantics as the Risk machine's
+ * proposer gate.
+ */
+export interface ClosureSodGate {
+  /** org policy: risk_settings.require_finding_closure_sod (default false) */
+  enforced: boolean;
+  /** the session actor attempting the close — null on API-key-only calls */
+  actorUserId: string | null;
+  /** actor of the latest operational→remediated lifecycle event (null if unknown) */
+  remediatorUserId: string | null;
+}
+
+/**
+ * Pure decision-transition guard (spec §4). No I/O; never throws.
+ *
+ *   needs_review → mitigating            (accept plan)
+ *   any          → accepted_risk         (governance override; always audited)
+ *   *            → resolved              (close) — ONLY when operational_status
+ *                                        = remediated OR current = accepted_risk;
+ *                                        org-enforced SoD additionally requires
+ *                                        an identified actor ≠ the remediator
+ *   resolved     → needs_review          (reopen)
+ */
+export function evaluateFindingDecisionTransition(
+  currentRaw: string | null | undefined,
+  targetRaw: string,
+  gates: {
+    operationalStatus: string | null | undefined;
+    sod?: ClosureSodGate;
+    /**
+     * Does this Finding have ANY linked remediation Actions? (ruling 2026-07-14)
+     *
+     * `remediated` is only reachable when a Finding HAS Actions and all of them are
+     * terminal — deriveOperationalStatus returns 'open' for a Finding with none. So
+     * demanding `remediated` unconditionally made a Finding that never needed remediation
+     * PERMANENTLY unclosable on the governance axis: a false positive could not be
+     * resolved without first inventing a fake Action and closing it.
+     *
+     * When there is no remediation to complete, "remediation is complete" is vacuously
+     * true, and an authorized explicit resolution may close the Finding. Undefined is
+     * treated as "unknown → do not relax", so an omitting caller keeps the old, stricter
+     * guard rather than silently gaining a new closure path.
+     */
+    hasRemediation?: boolean;
+  }
+): DecisionTransitionDecision {
+  const current = typeof currentRaw === "string" && VALID_DECISION.has(currentRaw)
+    ? (currentRaw as FindingDecisionState)
+    : undefined;
+  if (current === undefined) return { allowed: false, reason: "unknown_state" };
+
+  if (!VALID_DECISION.has(targetRaw)) {
+    return { allowed: false, reason: "invalid_decision_state", fromState: current };
+  }
+  const target = targetRaw as FindingDecisionState;
+
+  if (target === current) {
+    return { allowed: true, noop: true, fromState: current, toState: target };
+  }
+
+  switch (target) {
+    case "mitigating":
+      if (current === "needs_review") {
+        return {
+          allowed: true, fromState: current, toState: target,
+          transition: "accept_plan", auditEvent: "finding.decision.mitigating",
+        };
+      }
+      return { allowed: false, reason: "invalid_decision_transition", fromState: current, toState: target };
+
+    case "accepted_risk":
+      // spec §4: "any | accept risk" — an explicit, audited governance override.
+      return {
+        allowed: true, fromState: current, toState: target,
+        transition: "accept_risk", auditEvent: "finding.decision.accepted_risk",
+      };
+
+    case "resolved": {
+      // Three ways remediation can be "not outstanding" (ruling 2026-07-14):
+      //   - it was done            → operational_status === 'remediated'
+      //   - the risk was accepted  → current === 'accepted_risk'
+      //   - there was none to do   → hasRemediation === false
+      // The third limb is not a loosening of the rule, it is the rule applied honestly: a
+      // Finding with no Actions has no incomplete remediation. Requiring 'remediated' for
+      // it forced callers to fabricate a remediation item purely to reach 'closed'.
+      const guard =
+        gates.operationalStatus === "remediated" ||
+        current === "accepted_risk" ||
+        gates.hasRemediation === false;
+      if (!guard) {
+        return {
+          allowed: false,
+          reason: "close_requires_remediated_or_accepted_risk",
+          fromState: current, toState: target,
+        };
+      }
+      // Org-enforced separation of duties (spec §7): the closer must be an
+      // identified user and must not be the person who completed the
+      // remediation. Mirrors the Risk machine's actor_identity_required /
+      // separation_of_duties gates.
+      if (gates.sod?.enforced) {
+        if (gates.sod.actorUserId === null) {
+          return {
+            allowed: false, reason: "actor_identity_required",
+            fromState: current, toState: target,
+          };
+        }
+        if (
+          gates.sod.remediatorUserId !== null &&
+          gates.sod.actorUserId === gates.sod.remediatorUserId
+        ) {
+          return {
+            allowed: false, reason: "separation_of_duties",
+            fromState: current, toState: target,
+          };
+        }
+      }
+      return {
+        allowed: true, fromState: current, toState: target,
+        transition: "close", auditEvent: "finding.decision.resolved",
+      };
+    }
+
+    case "needs_review":
+      if (current === "resolved") {
+        return {
+          allowed: true, fromState: current, toState: target,
+          transition: "reopen", auditEvent: "finding.reopened",
+        };
+      }
+      return { allowed: false, reason: "invalid_decision_transition", fromState: current, toState: target };
+  }
+}
+

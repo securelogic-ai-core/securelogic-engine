@@ -39,7 +39,9 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import {
   validateVendorReviewCreate,
@@ -119,8 +121,8 @@ router.post(
   "/vendor-reviews",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -218,7 +220,7 @@ router.post(
     } finally {
       client.release();
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -231,8 +233,8 @@ router.get(
   "/vendor-reviews",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -330,7 +332,7 @@ router.get(
       );
       res.status(500).json({ error: "vendor_reviews_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -343,8 +345,8 @@ router.get(
   "/vendor-reviews/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -404,7 +406,7 @@ router.get(
       );
       res.status(500).json({ error: "vendor_review_get_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -426,8 +428,8 @@ router.patch(
   "/vendor-reviews/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -677,7 +679,7 @@ router.patch(
     } finally {
       client.release();
     }
-  }
+  })
 );
 
 export default router;

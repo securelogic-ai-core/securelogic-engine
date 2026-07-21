@@ -1,0 +1,6 @@
+{
+  "signalId": "golden-not-affected",
+  "candidates": [
+    { "target_type": "vendor", "target_id": "vendor-unrelated", "match_score": 12, "match_reason": "weak_token_overlap" }
+  ]
+}

@@ -4,9 +4,10 @@ import { getSession } from "@/lib/session";
 import {
   getVendors,
   getVendorAssessments,
-  getFindings,
   type Vendor,
 } from "@/lib/api";
+// EAR Phase 4: badges come from the cross-domain kit (was a local duplicate).
+import { CriticalityBadge, MetaChip } from "@/components/assetKit";
 
 const CRIT_ORDER: Record<string, number> = {
   critical: 0, high: 1, medium: 2, low: 3,
@@ -39,36 +40,31 @@ export default async function VendorsPage({
   const critFilter = sp.criticality ?? null;
   const showInactive = sp.show_inactive === "1";
 
-  const [activeData, archivedData, assessmentsData, findingsData] = await Promise.all([
+  const [activeData, archivedData, assessmentsData] = await Promise.all([
     getVendors(token, "active"),
     showInactive ? getVendors(token, "archived") : Promise.resolve(null),
     getVendorAssessments(token, 100),
-    getFindings(token, { domain: "Vendor Risk", status: "open", limit: 100 }),
   ]);
 
   const vendorsData = activeData;
 
-  // Build vendor_id → assessment count and assessmentId → vendorId map.
+  // Build vendor_id → assessment count.
   const assessmentCountByVendor = new Map<string, number>();
-  const assessmentVendorMap = new Map<string, string>();
   for (const a of assessmentsData?.assessments ?? []) {
     assessmentCountByVendor.set(
       a.vendor_id,
       (assessmentCountByVendor.get(a.vendor_id) ?? 0) + 1
     );
-    assessmentVendorMap.set(a.id, a.vendor_id);
   }
 
-  // Build vendorId → open finding count.
-  const openFindingsByVendor = new Map<string, number>();
-  for (const f of findingsData?.findings ?? []) {
-    if (f.source_type === "vendor_review" && f.source_id) {
-      const vendorId = assessmentVendorMap.get(f.source_id);
-      if (vendorId) {
-        openFindingsByVendor.set(vendorId, (openFindingsByVendor.get(vendorId) ?? 0) + 1);
-      }
-    }
-  }
+  // The open-finding count now arrives ON the vendor, computed in the database.
+  //
+  // It used to be grouped in this file from getFindings(domain:'Vendor Risk',
+  // status:'open', limit:100) — the org's findings, capped, then bucketed by vendor
+  // via an assessment map that was ITSELF capped at 100 assessments. Past either cap
+  // a vendor's findings simply vanished, and its card showed no badge at all: a
+  // confident zero for a vendor that had open findings. A count derived from a
+  // bounded page is a cap wearing a count's clothes.
 
   const activeVendors = vendorsData?.vendors ?? [];
   const archivedVendors = archivedData?.vendors ?? [];
@@ -250,7 +246,7 @@ export default async function VendorsPage({
               <VendorRow
                 vendor={vendor}
                 assessmentCount={assessmentCountByVendor.get(vendor.id) ?? 0}
-                openFindingCount={openFindingsByVendor.get(vendor.id) ?? 0}
+                activeFindingCount={vendor.active_findings_count ?? 0}
               />
             </Link>
           ))}
@@ -280,41 +276,14 @@ function FilterPill({ label, href, active }: { label: string; href: string; acti
   );
 }
 
-const CRITICALITY_BADGE_STYLES: Record<string, React.CSSProperties> = {
-  critical: { background: "rgba(239,68,68,0.15)",   color: "#fca5a5" },
-  high:     { background: "rgba(249,115,22,0.15)",  color: "#fdba74" },
-  medium:   { background: "rgba(245,158,11,0.15)",  color: "#fcd34d" },
-  low:      { background: "rgba(34,197,94,0.15)",   color: "#86efac" },
-};
-
-function CriticalityBadge({ value }: { value: string | null }) {
-  if (!value) return <span className="text-xs" style={{ color: "#475569" }}>—</span>;
-  const style = CRITICALITY_BADGE_STYLES[value] ?? { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
-  return (
-    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold" style={style}>
-      {value.charAt(0).toUpperCase() + value.slice(1)}
-    </span>
-  );
-}
-
-function MetaChip({ label, value }: { label: string; value: string | null }) {
-  if (!value) return null;
-  return (
-    <span className="inline-flex items-center gap-1 text-xs">
-      <span style={{ color: "#94a3b8" }}>{label}:</span>
-      <span style={{ color: "#cbd5e1" }}>{value}</span>
-    </span>
-  );
-}
-
 function VendorRow({
   vendor,
   assessmentCount,
-  openFindingCount,
+  activeFindingCount,
 }: {
   vendor: Vendor;
   assessmentCount: number;
-  openFindingCount: number;
+  activeFindingCount: number;
 }) {
   const lastReviewed = vendor.last_reviewed_at
     ? new Date(vendor.last_reviewed_at).toLocaleDateString("en-US", {
@@ -368,10 +337,10 @@ function VendorRow({
                 : "No assessments"}
             </span>
           </div>
-          {openFindingCount > 0 && (
+          {activeFindingCount > 0 && (
             <div>
               <span className="text-xs font-semibold" style={{ color: "#fdba74" }}>
-                {openFindingCount} open finding{openFindingCount !== 1 ? "s" : ""}
+                {activeFindingCount} active finding{activeFindingCount !== 1 ? "s" : ""}
               </span>
             </div>
           )}

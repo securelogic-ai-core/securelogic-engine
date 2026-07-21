@@ -117,6 +117,8 @@ tables once the `app_request` flip lands).
 | `user_alert_preferences` | user_id | low | pending | |
 | `alert_sends` | user_id | low | pending | Dedup ledger. |
 | `dashboard_preferences` | user_id | low | pending | `org_default` rows (user_id NULL) are effectively D — leave them. |
+| `finding_saved_views` | user_id | low | **enabled** | Per-user Findings filter presets. Reclassified C→B (B2 GDPR rider): purely user-scoped preference; the users-row CASCADE never fires (tombstone), so the reaper deletes explicitly. |
+| `briefing_layouts` | user_id | low | **enabled** | Per-user Briefing layout envelope (B2). Whitelisted module ids only — no PII. Reaper deletes explicitly; excluded from export like all preference objects. |
 | `legal_consents` | user_id | high | pending | Holds `ip_address` + `user_agent`. **No RLS today** (not an RLS template). |
 | `org_invites` | invited_by_user_id | medium | pending | FK is `ON DELETE CASCADE`; tombstone preserves pending invites this user sent. Export omits `token` (live invite capability). |
 
@@ -155,6 +157,8 @@ tables once the `app_request` flip lands).
 | `signal_ai_system_links` | created_by_user_id | low | pending |
 | `signal_control_links` | created_by_user_id | low | pending |
 | `signal_obligation_links` | created_by_user_id | low | pending |
+| `enterprise_entities` | owner_user_id | low | **enabled** |
+| `enterprise_relationships` | created_by_user_id | none | **enabled** |
 
 > **Deprecated TEXT `reviewer_id`.** Five tables (`risk_treatments`,
 > `obligation_assessments`, `vendor_reviews`, `ai_governance_assessments`,
@@ -170,15 +174,25 @@ tables once the `app_request` flip lands).
 `evidence` (⚠ `collected_by` is free TEXT — may embed a name/email, see O-7),
 `reports`, `posture_snapshots` (**RLS enabled**), `domain_scores`,
 `organization_risk_scales`, `webhook_endpoints`, `webhook_deliveries`,
-`org_sso_configs`, `api_usage_daily`.
+`org_sso_configs`, `api_usage_daily`,
+`enterprise_data_stores` (**RLS enabled**; typed child of a `data_store` enterprise_entity, CASCADE with parent — ECL Slice 1),
+`applicability_assessments` / `applicability_evidence` / `applicability_affected_entities`
+(**RLS enabled**, **WORM/append-only** — the immutable, hash-chained applicability
+decision record + by-value evidence + normalized blast radius; no user ref; ECL Slice 4b;
+empty until the Slice 4c writer. UPDATE/DELETE/TRUNCATE blocked by trigger regardless of
+role — the reaper must never attempt to mutate these; org deletion is tombstone-last so the
+org-FK CASCADE never fires).
 
 ### E — System-wide / operational (leave alone)
 `signals`, `insights`, `trends`, `trend_signals`, `cyber_signals`,
 `intelligence_briefs`, `intelligence_brief_items`, `intelligence_brief_sends`,
 `intelligence_brief_sources`, `newsletter_issues`, `newsletter_issue_insights`,
 `published_artifacts`, `worker_runs`, `auth_anomaly_alerts`, `risk_scale_presets`,
-`webhook_events_processed`, **`jobs`** (new), **`data_export_files`** (new), plus
-the special-handling tables below.
+`webhook_events_processed`, **`jobs`** (new), **`data_export_files`** (new),
+**`canonical_products`** + **`canonical_product_aliases`** +
+**`canonical_product_external_ids`** + **`canonical_product_versions`** (new — the
+GLOBAL, org-neutral Canonical Product reference; ERG convergence C1b; no
+organization_id, no RLS, no PII), plus the special-handling tables below.
 
 ### F — Billing / financial
 `api_keys` — carries legacy Stripe mirror fields (`stripe_customer_id`,

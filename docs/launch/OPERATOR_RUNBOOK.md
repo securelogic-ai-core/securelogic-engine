@@ -1,6 +1,8 @@
 # SecureLogic AI — Operator Runbook (Production Launch)
 
-> **Status:** definitive launch runbook for the **operator-only** gates that block the first `develop → main` promotion. Part A (app hardening, A1–A5) is complete on `develop`; this document reduces **Part B** to a precise, executable checklist.
+> **Status:** definitive launch runbook for the **operator-only** gates that block the `develop → main` promotion.
+>
+> **⚠ RE-BASELINED 2026-07-21 (Sprint-1 operator rulings D-A–D-E — see `SPRINT_1.md`).** The promotion object is now the composite `develop` head (266 commits / 65 staged migrations), promoted as a single true merge; the 2026-07-02 promote (`main` = `512cfa5a`) is archived historical evidence. **Gates 1–4 below remain valid as written** (correct display labels: Brief Pro / **Brief Team**). **The Gate 5 body below is OBSOLETE** — its `20260706`–`20260712` set and seat-cap pre-flight are already applied to production; execute **Gate 5′** from `PART_B_PREFLIGHT.md` §1 instead (65-file F-1 SQL, PF-1 staging-grant check, batch-application ruling). **Gate 6 (NEW, ruling D-D):** the authenticated staging walkthrough is a formal gate — see `SPRINT_1.md` §Gate 6.
 >
 > **Relationship to other docs:**
 > - `RELEASE_CHECKLIST.md` — the reusable, *mechanical* `develop → main` procedure (CI, true-merge, branch invariants, post-deploy). Use it for **every** release.
@@ -25,7 +27,7 @@ Engine `resolvePriceId()` — `src/api/routes/billing.ts:89-98`; entitlement map
 | Plan token | Stripe Price-ID env var | Billing | Expected amount | DB `entitlement_level` | Product name |
 |---|---|---|---|---|---|
 | `professional` | `STRIPE_PRICE_ID_PROFESSIONAL` | monthly | **$49/mo** | `professional` | Brief Pro |
-| `teams` | `STRIPE_PRICE_ID_TEAMS` | monthly | **$199/mo** | `professional` | Team Professional |
+| `teams` | `STRIPE_PRICE_ID_TEAMS` | monthly | **$199/mo** | `professional` | Brief Team |
 | `platform` | `STRIPE_PRICE_ID_PLATFORM` | monthly | **$800/mo** | `premium` | Platform Professional (monthly) |
 | `platform_annual` | `STRIPE_PRICE_ID_PLATFORM_ANNUAL` | annual | **$7,200/yr** (= $600/mo billed annually) | `premium` | Platform Professional (annual) |
 
@@ -39,15 +41,23 @@ One resolved decision and two webhook behaviours to keep in mind. None require a
 - **D-3 (Gate 4) — member seats (`max_members`) are not metered by the webhook.** The webhook raises only the *entity* cap (`max_monitored_entities`, `GREATEST(…,50)`, `stripeWebhook.ts:381`); it never writes `max_members`. Seat caps come from the seat-cap migration (Gate 5) + app default `DEFAULT_MAX_SEATS = 6` (`src/api/lib/seatLimit.ts:33`). So a Team→Platform upgrade does **not** auto-raise seats via Stripe. Confirm this matches intent before validating Gate 4 "entitlement correct."
 
 ### 0.4 Evidence log (fill one row per gate)
-Attach to the promotion PR / launch record.
+Attach to the promotion PR / launch record. **This log is the INDEX of authoritative
+evidence — point at artifacts, never duplicate them** (reconciled 2026-07-21). Record
+the promotion-candidate SHA each row was collected against (`SPRINT_1.md`
+§Promotion-candidate SHA + quiescence rule).
+
+> **Promotion-candidate SHA: `a8898368`** — declared 2026-07-21T17:40Z at M2 start
+> (develop HEAD; quiescence verified: zero non-docs commits since). All rows below
+> attach to this candidate unless a re-declaration is recorded here.
 
 | Gate | Result (PASS/FAIL) | Operator | Timestamp (UTC) | Evidence artifact |
 |---|---|---|---|---|
-| 1 | | | | Render env screenshot + redeploy ts + portal-opens screenshot |
-| 2 | | | | Stripe portal-config screenshot (capabilities + allowed prices) |
-| 3 | | | | 4× checkout screenshots (amount + interval) + Stripe Price amounts |
-| 4 | | | | 5× before/after `entitlement_level` query + webhook event IDs |
-| 5 | | | | F-1 count output + seat-cap pre-flight output + staging apply log |
+| 1 | **PASS (carry-forward re-confirmed)** | Operator (info@securelogicai.com) | 2026-07-21T17:40Z | **CARRY-FORWARD** — authoritative PASS: `docs/validation/billing-portal/GATE_1_RESULT.md` (2026-07-01). Operator attested completion of the 3 re-confirmation criteria (`SPRINT_1.md` §Gate 1: (a) both portal vars set/unchanged on both engine services; (b) no Stripe portal-config change since the PASS; (c) staging "Manage billing" click-through opens the portal). Attestation received in-session 2026-07-21; no new artifacts required by the carry-forward definition — append screenshot/dashboard paths here if captured. Candidate SHA: `a8898368` |
+| 2 | **PASS** | Operator (info@securelogicai.com) | 2026-07-21T17:41Z | Operator attested full run per `SPRINT_1.md` §Gate 2: test-mode portal capabilities validated (subscription_update, price changes, prorations, cancellations per decision) with all 4 test Price IDs in the allowed-plan list. Attestation received in-session 2026-07-21 — append the Stripe portal-config screenshot (capabilities + allowed prices) path here when filed. Candidate SHA: `a8898368` |
+| 3 | **PASS** | Operator (info@securelogicai.com) | 2026-07-21T17:51Z | **Engineering half (carried forward):** authoritative PASS `docs/validation/billing-portal/GATE_3_RESULT.md` (2026-07-01; carries — `billing.ts` unchanged in range). **Operator half (completed 2026-07-21):** operator attested the 4× checkout-page screenshots (amount + interval: Brief Pro $49/mo, Brief Team $199/mo, Platform Professional $800/mo, Platform Professional — Annual $7,200/yr) and the 4× Stripe Price-object cross-checks received. Gate closes on both halves together; neither half alone certifies (production readiness is determined only by the promotion-readiness gate, not by this row). Append filed screenshot paths here when archived. Candidate SHA: `a8898368` |
+| 4 | **PASS (full run)** | Operator (info@securelogicai.com) | 2026-07-21T17:59Z | **FULL RUN — no carry-forward by design** (webhook surface changed in-range: PR-D1 `5389f620`, `api_key_id` resolver fallback). Operator attested completion of all 5 staging portal upgrade/downgrade transitions per `SPRINT_1.md` §Gate 4: Stripe sub updated + webhook fired + `entitlement_level` correct + return-to-app for each. Required evidence collected: 5× before/after `entitlement_level` query outputs + webhook event IDs (attested received 2026-07-21; append archived query-output/event-ID artifact paths here when filed). Engineering validation of the changed surface remains the in-range CI record (webhook tests green on the candidate); this row records **operator validation only** — production readiness is determined solely by the promotion-readiness gate. Candidate SHA: `a8898368` |
+| 5′ | **PASS** | Operator (info@securelogicai.com) | 2026-07-21T18:06Z | **Engineering evidence (carried forward):** the 2026-07-21 pre-flight audit — additive-only + RLS-conformant staged set, runnable F-1 SQL (`PART_B_PREFLIGHT.md` §1). **Operator evidence (completed 2026-07-21):** (i) F-1 filename-key check executed with expected results — 65 staged filenames return **0 rows in prod**, **65 applied in staging**, no deploy-log migration errors; (ii) PF-1 `app_request` grant check executed on staging (§1.3 SQL); (iii) batch-application rehearse-or-accept ruling made and recorded by operator. Attested in-session 2026-07-21 — **append the archived F-1/PF-1 query outputs, the PF-1 outcome (grants present vs re-applied), and the ruling disposition (rehearsed vs risk-accepted) here when filed**; PF-1 outcome also syncs to `KNOWN_ISSUES.md` D-13 (conditions the Sprint-3 RLS flip, not promotion). This row completes Gate 5′'s own criteria only — promotion readiness is determined solely by the promotion-readiness gate. Candidate SHA: `a8898368` |
+| 6 | **PASS** | Operator (info@securelogicai.com) | 2026-07-21T18:26Z | **FULL RUN — formal gate per ruling D-D (no carry-forward possible; gate created 2026-07-21).** Operator attested completion of the authenticated staging walkthrough per `SPRINT_1.md` §Gate 6, all four surfaces: (i) The Briefing on `/dashboard` (flag-on); (ii) the Posture Dashboard on `/posture` — analytics grid, Executive Report PDF export, back-link; (iii) workspace navigation; (iv) the three-surface boundary sanity check (Briefing = "what matters to me now", Operational Views = "what do I inspect/execute", Posture = "how is the organization performing"). Walkthrough executed against staging serving `51e665cb` (docs-only descendant of the candidate; zero non-docs commits since `a8898368`, quiescence re-verified at recording). Automated correctness remains the CI record on the candidate; this row records the usability half required by D-D. Attestation received in-session 2026-07-21 — **append the walkthrough screenshot paths here when filed** (required evidence per §Gate 6). This row completes Gate 6's own criteria only — promotion readiness is determined solely by the promotion-readiness gate. Candidate SHA: `a8898368` |
 
 ---
 
@@ -160,7 +170,7 @@ Checkout sends only `{ price: priceId, quantity: 1 }` (`billing.ts:165`) — the
 ### Step-by-step operator instructions
 For each plan, on **staging**, start checkout and read the Stripe-hosted page total (use a Stripe test card `4242 4242 4242 4242`):
 1. **Brief Pro** — `…/signup?plan=professional` → verify email → auto-redirect to checkout (or **Briefs → upgrade**). Expect **$49.00 / month**.
-2. **Team Professional** — `plan=teams`. Expect **$199.00 / month**.
+2. **Brief Team** — `plan=teams`. Expect **$199.00 / month**.
 3. **Platform Annual** — `plan=platform_annual`. Expect **$7,200.00 / year** (Stripe may show "$600.00/month billed annually" depending on the Price's interval config — confirm the **annual total is $7,200**).
 4. **Platform monthly** — `plan=platform` → expect **$800.00 / month** (self-serve, per §0.3 D-1).
 5. Cross-check each Stripe **Price** object's `unit_amount` × interval in the Stripe dashboard equals the above.
@@ -259,6 +269,13 @@ For each transition above, on **staging** (test mode):
 
 ## Gate 5 — Migration validation + production pre-flight
 
+> **⚠ OBSOLETE (re-baselined 2026-07-21).** Everything below validates the
+> `20260706`–`20260712` set + seat-cap pre-flight — **already applied to production**
+> via the archived 2026-07-02 promote. Do not execute it. Execute **Gate 5′** instead:
+> `PART_B_PREFLIGHT.md` §1 (65-file F-1 SQL, PF-1 staging-grant check,
+> batch-application ruling). This body is preserved as the historical record and as
+> the reference pattern for migration-gate mechanics.
+
 ### Objective
 Confirm the seven staged migrations (`20260706`–`20260712`) apply cleanly on staging, are not silently skipped by the filename-keyed runner (F-1), and that the seat-cap migration won't wrongly lower a legitimately-provisioned 10-seat org.
 
@@ -344,7 +361,63 @@ Expected: all seven present with recent `applied_at`, and no migration errors in
 ---
 
 ## Done — what "all gates green" means
-When Gates 1–5 each have a **PASS** row in §0.4 with attached evidence, Part B's operator gates are cleared. Promotion itself is a **separate, explicitly-authorized step**: follow `RELEASE_CHECKLIST.md` §7–§10 (true-merge only, branch invariant, `/version` post-deploy, close-out). Do not promote, open a promotion PR, or enable flags as part of this runbook.
+When Gates 1–4, 5′, and 6 each have a **PASS** row in §0.4 with attached evidence, Part B's operator gates are cleared. Promotion itself is a **separate, explicitly-authorized step**: follow `RELEASE_CHECKLIST.md` §7–§10 (true-merge only, branch invariant, `/version` post-deploy, close-out). Do not promote, open a promotion PR, or enable flags as part of this runbook.
 
 ### Total estimated operator time
 **~2.5–3.5 hours** across Gates 1–5 (plus the separate promotion window).
+
+---
+
+## Appendix A — Staging enablement: risk acceptance (NOT a launch gate)
+
+> **Scope:** staging only. This is **not** one of Gates 1–5, does not block promotion, and is not part of the `develop → main` path. It is recorded here because the runbook is the operator's canonical reference and this procedure previously lived nowhere in the repo.
+>
+> It does **not** violate the hard rule in the header ("do not enable any feature flag while executing it") — that rule governs Gates 1–5 and **production**. Production stays OFF throughout; see below.
+
+### What
+| | |
+|---|---|
+| **Flag** | `SECURELOGIC_RISK_ACCEPTANCE_ENABLED=true` |
+| **Service** | `securelogic-engine-staging` |
+| **Source of truth** | `render.yaml` / Blueprint-managed IaC — **already declared** (`render.yaml:469-470`, PR #647) |
+| **Production** | Remains **OFF** (the key is absent from the prod service block, so the flag helper reads `false`). **GATE B unchanged.** |
+
+### Why a dashboard toggle is the wrong method
+`render.yaml` is *declarative desired state*: committing it records the intent but does **not** mutate a running service. The value is already in IaC and is waiting to be applied.
+
+**Do not set this flag by hand in the Render dashboard as the durable method.** A manual value is not the source of truth, and **a future Blueprint sync will restore the IaC value over it** — silently reverting a hand-set flag, or resurrecting one you thought you had turned off. Change the flag in `render.yaml`, then sync.
+
+### Operator action
+1. Render → Blueprint → **sync** from `develop`.
+2. Confirm `securelogic-engine-staging` **redeploys from `develop`** (check the deploy log's commit SHA).
+
+### Verification
+No credentials required — the route is flag-gated *before* auth, so an unauthenticated probe is sufficient and safe:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" \
+  https://securelogic-engine-staging.onrender.com/api/risk-acceptances
+```
+
+| Result | Meaning |
+|---|---|
+| **`401`** | Flag is **live** and the gated route exists (auth is now the only thing refusing you). Proceed. |
+| **`404`** | Blueprint has **not** synced/redeployed, or the flag is still off. Do not proceed. |
+
+The 404 is deliberate: `riskAcceptanceFeatureFlag` short-circuits to a bare 404 when the flag is off — a disabled feature must not admit that it exists. A useful control probe is `/api/findings`, which should return `401`; if it does and `/api/risk-acceptances` still returns `404`, the flag — not the deploy — is the problem.
+
+### Next step after verification
+Run the deterministic walkthrough seed, then validate the lifecycle **propose → approve → withdraw/expiry → reopen**:
+
+```bash
+# In the staging Render shell (DATABASE_URL is already present):
+npx tsx scripts/validation/seed-walkthrough-org.ts --summary   # writes nothing; rolls back
+npx tsx scripts/validation/seed-walkthrough-org.ts --reset     # teardown + reseed
+```
+
+`--summary` prints the connected database name and **hard-refuses** to run against production (`current_database() = 'securelogic'`). It seeds `[SEED] Walkthrough Org` (slug `seed-walkthrough`) with a proposer and an approver — two distinct users, because approval requires a different user than the requester (separation of duties, enforced by the API and a DB CHECK).
+
+> **The 4,000+ Finding tenant must NOT be used for the deterministic workflow walkthrough.** Use `[SEED] Walkthrough Org`. The large tenant is for validating the same behaviour **at scale, afterwards** — it is not a substitute for a deterministic dataset, and a workflow bug is not diagnosable in it.
+
+### Handling secrets
+Do **not** paste Render API tokens, database URLs, password hashes, or unrelated environment variables into tickets, transcripts, or evidence logs. The walkthrough's temporary seed credentials are the *only* credentials intended to be shared, and they are staging-only, non-prod, and deterministic by design.

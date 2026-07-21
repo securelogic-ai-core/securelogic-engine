@@ -1,0 +1,6 @@
+{
+  "signalId": "golden-needs-review",
+  "candidates": [
+    { "target_type": "obligation", "target_id": "obl-hipaa-164", "match_score": null, "match_reason": "regulation_family_match" }
+  ]
+}

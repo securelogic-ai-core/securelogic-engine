@@ -116,6 +116,14 @@ export type PutObjectArgs = {
   relativeKey: string;
   bytes: Uint8Array | Buffer;
   contentType: string;
+  /**
+   * Optional Content-Disposition stored ON the object and returned by R2 on GET.
+   * Set to `attachment; filename="…"` for user-uploaded artifacts so a signed URL
+   * downloads (never renders inline in the browser) — defense in depth against a
+   * file whose bytes are attacker-controlled. Omitted by existing callers, whose
+   * PutObjectCommand is therefore byte-identical.
+   */
+  contentDisposition?: string;
 };
 
 export type PutObjectResult = {
@@ -140,7 +148,9 @@ export async function putObject(args: PutObjectArgs): Promise<PutObjectResult> {
       Bucket: config.bucket,
       Key: key,
       Body: args.bytes,
-      ContentType: args.contentType
+      ContentType: args.contentType,
+      // Only set when provided, so existing callers' commands are unchanged.
+      ...(args.contentDisposition ? { ContentDisposition: args.contentDisposition } : {})
     })
   );
 

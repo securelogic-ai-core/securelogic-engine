@@ -12,7 +12,7 @@
  *   5. Active Treatments — list of risk_treatments rows. Each row is a
  *      Link to /risks/[id]/treatments/[tid] for state management. New
  *      treatments via "+ Add Treatment" button at section header.
- *   6. Linked Findings — open findings with source_type='risk' and
+ *   6. Linked Findings — active findings with source_type='risk' and
  *      source_id=this risk's id. Title + severity per row.
  *
  * Edit, treatment create, and treatment-transition UIs landed in
@@ -21,10 +21,14 @@
  */
 
 import Link from "next/link";
+import { useState } from "react";
 import type { Risk, RiskScaleLevel, RiskTreatment, Finding } from "@/lib/api";
 import { RiskHistorySection } from "@/components/risks/RiskHistorySection";
 import { LinkedControlsSection } from "@/components/risks/LinkedControlsSection";
+import { LinkedEvidenceSection } from "@/components/risks/LinkedEvidenceSection";
 import { LinkedObligationsSection } from "@/components/risks/LinkedObligationsSection";
+import { LifecyclePanel } from "@/components/risks/LifecyclePanel";
+import { LifecycleEventStream } from "@/components/risks/LifecycleEventStream";
 import { ReviewCadenceCard } from "./ReviewCadenceCard";
 import { MarkReviewedButton } from "./MarkReviewedButton";
 
@@ -99,19 +103,31 @@ export function RiskDetailClient({
   risk,
   treatments,
   findings,
+  findingsTotal,
   scaleLevels,
   effectiveCadenceByRating,
+  userRole,
 }: {
   risk: Risk;
   treatments: RiskTreatment[];
   findings: Finding[];
+  /** Exact server-side total for the same filter. The list below is capped at 50. */
+  findingsTotal: number;
   scaleLevels: RiskScaleLevel[];
   effectiveCadenceByRating: Record<string, number>;
+  /** users.role via getAuthMe — drives approver-only affordances. Null when
+   *  role is unavailable (e.g. API-key session); the engine still enforces. */
+  userRole: string | null;
 }) {
   // Header pill displays residual_rating per Decision §5 — the
   // post-controls "current state" rating is the headline number.
   const ratingStyle = ratingStyleFromScale(risk.residual_rating, scaleLevels);
   const statusStyle = STATUS_STYLES[risk.status] ?? { background: "rgba(148,163,184,0.12)", color: "#94a3b8" };
+
+  // Shared refresh counter so the lifecycle history re-fetches after the panel
+  // executes a transition. Both lifecycle components render nothing when the
+  // feature flag is off (engine 404), so the affordances simply don't appear.
+  const [lifecycleRefresh, setLifecycleRefresh] = useState(0);
 
   // The metadata grid carries the workflow / ownership fields.
   // Likelihood / Impact / Rating are split into Inherent + Residual
@@ -216,6 +232,14 @@ export function RiskDetailClient({
           ))}
         </div>
       </div>
+
+      {/* Lifecycle panel (R3) — current stage, gates, and transition actions.
+          Renders nothing when the risk-lifecycle flag is off. */}
+      <LifecyclePanel
+        riskId={risk.id}
+        userRole={userRole}
+        onChanged={() => setLifecycleRefresh((k) => k + 1)}
+      />
 
       {/*
         Rating block — three rows × two columns (Inherent | Residual).
@@ -365,6 +389,11 @@ export function RiskDetailClient({
       {/* Mitigating Controls (RR-4) */}
       <LinkedControlsSection riskId={risk.id} />
 
+      {/* Assessment evidence (R4) — attach/detach; renders nothing when the
+          risk-lifecycle flag is off. Bumps the lifecycle refresh so the evidence
+          gate requirement + event stream update after a change. */}
+      <LinkedEvidenceSection riskId={risk.id} onChanged={() => setLifecycleRefresh((k) => k + 1)} />
+
       {/* Affected Obligations (RR-6) */}
       <LinkedObligationsSection riskId={risk.id} />
 
@@ -375,6 +404,10 @@ export function RiskDetailClient({
           effectiveCadenceByRating={effectiveCadenceByRating}
         />
       </div>
+
+      {/* Lifecycle history (R3) — the authoritative, append-only event stream,
+          distinct from the RR-3 audit projection below. */}
+      <LifecycleEventStream riskId={risk.id} refreshKey={lifecycleRefresh} />
 
       {/* History (RR-3) */}
       <RiskHistorySection riskId={risk.id} />
@@ -393,9 +426,20 @@ export function RiskDetailClient({
             </Link>
           )}
         </div>
+
+        {/* The list is bounded at 50. When there are more, SAY so — a list that just
+            stops at 50 reads as "these are all of them", which is a truncation
+            pretending to be a complete answer. The total is the server's exact count
+            for the same filter, so the disclosure cannot itself be a lie. */}
+        {findingsTotal > findings.length && (
+          <p className="text-xs mb-2" style={{ color: "#fbbf24" }}>
+            Showing {findings.length} of {findingsTotal} active findings — use “View all”
+            to see the rest.
+          </p>
+        )}
         {findings.length === 0 ? (
           <p className="text-sm" style={{ color: "#475569" }}>
-            No open findings link to this risk.
+            No active findings link to this risk.
           </p>
         ) : (
           <ul className="space-y-2 list-none p-0 m-0">

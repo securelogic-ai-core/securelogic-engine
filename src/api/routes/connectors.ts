@@ -1,0 +1,614 @@
+/**
+ * connectors.ts — EAR Phase 3b: the connector configuration + sync surface.
+ *
+ *   GET    /api/connectors                — registry adapters merged with the
+ *                                           org's configured state (keys only,
+ *                                           NEVER secret values or ciphertext)
+ *   PUT    /api/connectors/:id            — validate (adapter.validateConfig)
+ *                                           + encrypt + upsert config
+ *   DELETE /api/connectors/:id            — remove config (credential hygiene)
+ *   POST   /api/connectors/:id/sync       — enqueue one connector_sync job
+ *                                           (202; deduped against pending runs)
+ *
+ * Route chain mirrors assets.ts with BOTH flags first (double-fenced — 404
+ * while either is dark): connectors are an ECL surface AND their syncs create
+ * registry assets. Same per-org `enterprise_context` capability (one
+ * commercial boundary). org_id from context only; asTenant on every handler.
+ */
+
+import { Router, type Request, type Response } from "express";
+import { pg } from "../infra/postgres.js";
+import { requireApiKey } from "../middleware/requireApiKey.js";
+import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { requireCapability } from "../lib/enterpriseContextCapability.js";
+import { requireAdminRole } from "../middleware/requireRole.js";
+import { asTenant } from "../middleware/asTenant.js";
+import { enterpriseContextFeatureFlag } from "../lib/enterpriseContextFeatureFlag.js";
+import { assetRegistryFeatureFlag } from "../lib/assetRegistryFeatureFlag.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
+import { listConnectors, getConnector } from "../lib/connectors/registry.js";
+import {
+  getConnectorRow,
+  listConnectorRows,
+  upsertConnectorConfig,
+  updateConnectorSchedule,
+  deleteConnectorConfig,
+  redactConnectorRow
+} from "../lib/connectorConfigStore.js";
+import { CONNECTOR_SYNC_JOB_TYPE } from "../lib/connectorSyncCore.js";
+import { parseSyncIntervalMinutes } from "../lib/connectorScheduleCore.js";
+import { connectorWritebackEnabled } from "../lib/connectorWritebackFlag.js";
+import {
+  enqueueWritebackIntents,
+  listWritebackIntents,
+  writebackStatusCounts,
+  type WritebackIntentInput
+} from "../lib/connectorWritebackStore.js";
+import {
+  listDeadLetters,
+  redriveDeadLetter,
+  ignoreDeadLetter,
+  type DeadLetterFilter
+} from "../lib/connectorDeadLetterStore.js";
+import { gatherConnectorHealth, type ConnectorHealthRaw } from "../lib/connectorHealthStore.js";
+import {
+  assessConnectorHealth,
+  rollupHealth,
+  type ConnectorHealthSignals,
+  type ConnectorHealthAssessment
+} from "../lib/connectorHealthCore.js";
+
+const router = Router();
+
+function getOrgId(req: Request): string | null {
+  return (
+    (req as { organizationContext?: { organizationId?: string | null } })
+      .organizationContext?.organizationId ?? null
+  );
+}
+
+function auditActor(req: Request): { actorApiKeyId: string | null; actorUserId: string | null; ipAddress: string | null } {
+  return {
+    actorApiKeyId: (req as { apiKey?: { id?: string } }).apiKey?.id ?? null,
+    actorUserId: (req as { userId?: string }).userId ?? null,
+    ipAddress: req.ip ?? null
+  };
+}
+
+export async function listOrgConnectors(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+
+  const rows = await listConnectorRows(orgId);
+  const byId = new Map(rows.map((r) => [r.connector_id, r]));
+
+  const connectors = listConnectors().map((adapter) => {
+    const row = byId.get(adapter.id);
+    return {
+      display_name: adapter.displayName,
+      category: adapter.category,
+      adapter_status: adapter.status,
+      config_fields: adapter.configFields.map((f) => ({
+        key: f.key,
+        label: f.label,
+        required: f.required,
+        kind: f.kind
+      })),
+      ...(row
+        ? redactConnectorRow(row)
+        : {
+            connector_id: adapter.id,
+            configured: false,
+            config_keys: [],
+            enabled: false,
+            last_sync_at: null,
+            last_sync_status: null,
+            last_sync_summary: null,
+            sync_interval_minutes: null,
+            next_sync_at: null,
+            consecutive_failures: 0
+          })
+    };
+  });
+
+  res.status(200).json({ connectors });
+}
+
+export async function putConnectorConfig(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const connectorId = req.params.id;
+  const adapter = typeof connectorId === "string" ? getConnector(connectorId) : undefined;
+  if (!adapter) {
+    res.status(404).json({ error: "unknown_connector" });
+    return;
+  }
+
+  const body = req.body as { config?: unknown; enabled?: unknown; sync_interval_minutes?: unknown } | null;
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  if (body.enabled !== undefined && typeof body.enabled !== "boolean") {
+    res.status(400).json({ error: "enabled_must_be_boolean" });
+    return;
+  }
+  // E2.P1: optional schedule. undefined = leave unchanged; null = manual-only.
+  const interval =
+    body.sync_interval_minutes !== undefined ? parseSyncIntervalMinutes(body.sync_interval_minutes) : undefined;
+  if (interval !== undefined && "error" in interval) {
+    res.status(400).json(interval);
+    return;
+  }
+
+  const validated = adapter.validateConfig(body.config);
+  if ("error" in validated) {
+    res.status(400).json(validated);
+    return;
+  }
+
+  let row = await upsertConnectorConfig(orgId, adapter.id, validated.config, body.enabled === true);
+  if (interval !== undefined) {
+    row = (await updateConnectorSchedule(orgId, adapter.id, interval.value)) ?? row;
+  }
+
+  writeAuditEvent({
+    organizationId: orgId,
+    ...auditActor(req),
+    eventType: "connector.configured",
+    resourceType: "enterprise_connector",
+    resourceId: row.id,
+    // Field KEYS only — never config values (they include credentials).
+    payload: {
+      connector_id: adapter.id,
+      config_keys: Object.keys(validated.config).sort(),
+      enabled: row.enabled,
+      sync_interval_minutes: row.sync_interval_minutes
+    }
+  });
+
+  res.status(200).json({ connector: redactConnectorRow(row) });
+}
+
+export async function deleteConnector(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const connectorId = req.params.id;
+  if (typeof connectorId !== "string" || !getConnector(connectorId)) {
+    res.status(404).json({ error: "unknown_connector" });
+    return;
+  }
+
+  const removed = await deleteConnectorConfig(orgId, connectorId);
+  if (!removed) {
+    res.status(404).json({ error: "not_configured" });
+    return;
+  }
+
+  writeAuditEvent({
+    organizationId: orgId,
+    ...auditActor(req),
+    eventType: "connector.deleted",
+    resourceType: "enterprise_connector",
+    resourceId: null,
+    payload: { connector_id: connectorId }
+  });
+
+  res.status(200).json({ deleted: true });
+}
+
+export async function triggerConnectorSync(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const connectorId = req.params.id;
+  if (typeof connectorId !== "string" || !getConnector(connectorId)) {
+    res.status(404).json({ error: "unknown_connector" });
+    return;
+  }
+
+  const row = await getConnectorRow(orgId, connectorId);
+  if (!row) {
+    res.status(409).json({ error: "not_configured" });
+    return;
+  }
+  if (!row.enabled) {
+    res.status(409).json({ error: "connector_disabled" });
+    return;
+  }
+
+  // One pending run per (org, connector) — the reassessment enqueue-dedup shape.
+  const payload = JSON.stringify({ connector_id: connectorId });
+  const enqueued = await pg.query<{ id: string }>(
+    `INSERT INTO jobs (organization_id, requested_by_user_id, job_type, payload)
+     SELECT $1::uuid, NULL, $2, $3::jsonb
+      WHERE NOT EXISTS (
+        SELECT 1 FROM jobs j
+         WHERE j.organization_id = $1::uuid
+           AND j.job_type = $2
+           AND j.status IN ('queued', 'processing')
+           AND j.payload = $3::jsonb
+      )
+     RETURNING id`,
+    [orgId, CONNECTOR_SYNC_JOB_TYPE, payload]
+  );
+  const jobId = enqueued.rows[0]?.id ?? null;
+  if (!jobId) {
+    res.status(409).json({ error: "sync_already_pending" });
+    return;
+  }
+
+  writeAuditEvent({
+    organizationId: orgId,
+    ...auditActor(req),
+    eventType: "connector.sync_requested",
+    resourceType: "enterprise_connector",
+    resourceId: row.id,
+    payload: { connector_id: connectorId, job_id: jobId }
+  });
+
+  res.status(202).json({ job_id: jobId, connector_id: connectorId, status: "queued" });
+}
+
+// ERIP E2a: bidirectional writeback. Limits keep one request bounded; the field
+// whitelist is the adapter's (only writable columns can be enqueued).
+const MAX_WRITEBACK_INTENTS_PER_REQUEST = 500;
+const MAX_EXTERNAL_REF_LEN = 200;
+const MAX_DESIRED_VALUE_LEN = 1000;
+
+/**
+ * POST /api/connectors/:id/writeback — enqueue writeback intents (push
+ * whitelisted external fields back to the source). Dark behind the writeback
+ * flag (404 while off). The connector must support writeback and be configured.
+ * Each intent's `field` must be in the adapter's writeback whitelist.
+ */
+export async function enqueueConnectorWriteback(req: Request, res: Response): Promise<void> {
+  if (!connectorWritebackEnabled()) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const connectorId = req.params.id;
+  if (typeof connectorId !== "string") {
+    res.status(404).json({ error: "unknown_connector" });
+    return;
+  }
+  const adapter = getConnector(connectorId);
+  if (!adapter) {
+    res.status(404).json({ error: "unknown_connector" });
+    return;
+  }
+  if (!adapter.writeback) {
+    res.status(400).json({ error: "writeback_not_supported" });
+    return;
+  }
+
+  const body = req.body as { intents?: unknown } | null;
+  const rawIntents = body && Array.isArray(body.intents) ? body.intents : null;
+  if (!rawIntents || rawIntents.length === 0) {
+    res.status(400).json({ error: "intents_required" });
+    return;
+  }
+  if (rawIntents.length > MAX_WRITEBACK_INTENTS_PER_REQUEST) {
+    res.status(400).json({ error: "too_many_intents", detail: `max ${MAX_WRITEBACK_INTENTS_PER_REQUEST}` });
+    return;
+  }
+  const allowed = new Set(adapter.writeback.fields);
+  const intents: WritebackIntentInput[] = [];
+  for (const raw of rawIntents) {
+    const o = raw as { external_ref?: unknown; field?: unknown; desired_value?: unknown };
+    if (typeof o.external_ref !== "string" || o.external_ref.trim().length === 0 || o.external_ref.length > MAX_EXTERNAL_REF_LEN) {
+      res.status(400).json({ error: "invalid_external_ref" });
+      return;
+    }
+    if (typeof o.field !== "string" || !allowed.has(o.field)) {
+      res.status(400).json({ error: "field_not_writable", detail: `writable fields: ${[...allowed].join(", ")}` });
+      return;
+    }
+    if (typeof o.desired_value !== "string" || o.desired_value.length > MAX_DESIRED_VALUE_LEN) {
+      res.status(400).json({ error: "invalid_desired_value" });
+      return;
+    }
+    intents.push({ external_ref: o.external_ref.trim(), field: o.field, desired_value: o.desired_value });
+  }
+
+  // Must be configured for this org (worker only writes when also enabled).
+  const row = await getConnectorRow(orgId, connectorId);
+  if (!row) {
+    res.status(409).json({ error: "not_configured" });
+    return;
+  }
+
+  const userId = (req as { userId?: string }).userId ?? null;
+  const enqueued = await enqueueWritebackIntents(orgId, connectorId, intents, "operator", userId);
+
+  writeAuditEvent({
+    organizationId: orgId,
+    ...auditActor(req),
+    eventType: "connector.writeback_requested",
+    resourceType: "enterprise_connector",
+    resourceId: row.id,
+    // Field/ref identities only — desired values are the org's own data but
+    // kept out of the audit payload to stay minimal.
+    payload: {
+      connector_id: connectorId,
+      intent_count: enqueued,
+      fields: [...new Set(intents.map((i) => i.field))].sort()
+    }
+  });
+
+  res.status(202).json({ connector_id: connectorId, enqueued });
+}
+
+/** GET /api/connectors/:id/writeback — intent list + per-status counts. */
+export async function listConnectorWriteback(req: Request, res: Response): Promise<void> {
+  if (!connectorWritebackEnabled()) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const connectorId = req.params.id;
+  if (typeof connectorId !== "string") {
+    res.status(404).json({ error: "unknown_connector" });
+    return;
+  }
+  const adapter = getConnector(connectorId);
+  if (!adapter) {
+    res.status(404).json({ error: "unknown_connector" });
+    return;
+  }
+
+  const [counts, intents] = await Promise.all([
+    writebackStatusCounts(orgId, connectorId),
+    listWritebackIntents(orgId, connectorId)
+  ]);
+  res.status(200).json({
+    connector_id: connectorId,
+    writeback_supported: Boolean(adapter.writeback),
+    writeback_fields: adapter.writeback ? [...adapter.writeback.fields] : [],
+    status_counts: counts,
+    intents: intents.map((i) => ({
+      external_ref: i.external_ref,
+      field: i.field,
+      desired_value: i.desired_value,
+      status: i.status,
+      attempts: i.attempts,
+      last_pushed_value: i.last_pushed_value,
+      external_prev_value: i.external_prev_value,
+      detail: i.detail,
+      applied_at: i.applied_at,
+      updated_at: i.updated_at
+    }))
+  });
+}
+
+// ---------------------------------------------------------------------------
+// ERIP E2b: dead-letter recovery — inspect + re-drive terminally-failed
+// connector operations (sync jobs / writeback pushes). Behind the connectors
+// chain (ECL + EAR), dark in production.
+// ---------------------------------------------------------------------------
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DEAD_LETTER_STATUSES = new Set(["open", "redriven", "ignored"]);
+
+/** GET /api/connectors/dead-letters — list terminally-failed operations. */
+export async function listConnectorDeadLetters(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const filter: DeadLetterFilter = {};
+  const status = req.query.status;
+  if (typeof status === "string") {
+    if (!DEAD_LETTER_STATUSES.has(status)) {
+      res.status(400).json({ error: "invalid_status" });
+      return;
+    }
+    filter.status = status as "open" | "redriven" | "ignored";
+  }
+  const connectorId = req.query.connector_id;
+  if (typeof connectorId === "string") filter.connectorId = connectorId;
+
+  const rows = await listDeadLetters(orgId, filter);
+  res.status(200).json({
+    dead_letters: rows.map((r) => ({
+      id: r.id,
+      source: r.source,
+      connector_id: r.connector_id,
+      external_ref: r.external_ref,
+      field: r.field,
+      attempts: r.attempts,
+      error: r.error,
+      status: r.status,
+      created_at: r.created_at,
+      resolved_at: r.resolved_at
+    }))
+  });
+}
+
+/** POST /api/connectors/dead-letters/:id/redrive — re-enqueue a failed op. */
+export async function redriveConnectorDeadLetter(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = req.params.id;
+  if (typeof id !== "string" || !UUID_RE.test(id)) {
+    res.status(400).json({ error: "invalid_id" });
+    return;
+  }
+  const userId = (req as { userId?: string }).userId ?? null;
+  const result = await redriveDeadLetter(orgId, id, userId);
+  if (!result.ok) {
+    const code = result.error === "not_found" ? 404 : 409;
+    res.status(code).json({ error: result.error });
+    return;
+  }
+  writeAuditEvent({
+    organizationId: orgId,
+    ...auditActor(req),
+    eventType: "connector.dead_letter_redriven",
+    resourceType: "connector_dead_letter",
+    resourceId: id,
+    payload: { action: result.action, ...result.detail }
+  });
+  res.status(202).json({ redriven: true, action: result.action, ...result.detail });
+}
+
+/** POST /api/connectors/dead-letters/:id/ignore — dismiss without re-driving. */
+export async function ignoreConnectorDeadLetter(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = req.params.id;
+  if (typeof id !== "string" || !UUID_RE.test(id)) {
+    res.status(400).json({ error: "invalid_id" });
+    return;
+  }
+  const userId = (req as { userId?: string }).userId ?? null;
+  const done = await ignoreDeadLetter(orgId, id, userId);
+  if (!done) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  writeAuditEvent({
+    organizationId: orgId,
+    ...auditActor(req),
+    eventType: "connector.dead_letter_ignored",
+    resourceType: "connector_dead_letter",
+    resourceId: id,
+    payload: {}
+  });
+  res.status(200).json({ ignored: true });
+}
+
+// ---------------------------------------------------------------------------
+// ERIP E2c: connector health monitoring. Aggregates sync/writeback/drift/dead-
+// letter signals into a per-connector band + org rollup. Behind the connectors
+// chain (ECL + EAR), dark in production.
+// ---------------------------------------------------------------------------
+
+function toSignals(r: ConnectorHealthRaw, now: number): ConnectorHealthSignals {
+  const parse = (v: string | null): number | null => (v ? Date.parse(v) : null);
+  return {
+    configured: true,
+    enabled: r.enabled,
+    last_sync_status: r.last_sync_status,
+    last_sync_at: parse(r.last_sync_at),
+    consecutive_failures: r.consecutive_failures,
+    sync_interval_minutes: r.sync_interval_minutes,
+    next_sync_at: parse(r.next_sync_at),
+    stale_observations: r.stale_observations,
+    writeback_pending: r.writeback_pending,
+    writeback_conflict: r.writeback_conflict,
+    writeback_failed: r.writeback_failed,
+    open_dead_letters: r.open_dead_letters,
+    now
+  };
+}
+
+const UNCONFIGURED_SIGNALS = (now: number): ConnectorHealthSignals => ({
+  configured: false, enabled: false, last_sync_status: null, last_sync_at: null,
+  consecutive_failures: 0, sync_interval_minutes: null, next_sync_at: null,
+  stale_observations: 0, writeback_pending: 0, writeback_conflict: 0, writeback_failed: 0,
+  open_dead_letters: 0, now
+});
+
+/** GET /api/connectors/health — per-connector health band + org rollup. */
+export async function getConnectorHealth(req: Request, res: Response): Promise<void> {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const raw = await gatherConnectorHealth(orgId);
+  const now = Date.now();
+
+  const configuredAssessments: ConnectorHealthAssessment[] = [];
+  const connectors = listConnectors().map((adapter) => {
+    const r = raw.get(adapter.id);
+    const signals = r ? toSignals(r, now) : UNCONFIGURED_SIGNALS(now);
+    const assessment = assessConnectorHealth(signals);
+    if (r) configuredAssessments.push(assessment);
+    return {
+      connector_id: adapter.id,
+      display_name: adapter.displayName,
+      category: adapter.category,
+      band: assessment.band,
+      reasons: assessment.reasons,
+      severity: assessment.severity,
+      signals: {
+        enabled: r?.enabled ?? false,
+        last_sync_status: r?.last_sync_status ?? null,
+        last_sync_at: r?.last_sync_at ?? null,
+        consecutive_failures: r?.consecutive_failures ?? 0,
+        next_sync_at: r?.next_sync_at ?? null,
+        stale_observations: r?.stale_observations ?? 0,
+        writeback_pending: r?.writeback_pending ?? 0,
+        writeback_conflict: r?.writeback_conflict ?? 0,
+        writeback_failed: r?.writeback_failed ?? 0,
+        open_dead_letters: r?.open_dead_letters ?? 0
+      }
+    };
+  });
+
+  const byBand: Record<string, number> = {};
+  for (const c of connectors) byBand[c.band] = (byBand[c.band] ?? 0) + 1;
+
+  res.status(200).json({
+    overall_band: rollupHealth(configuredAssessments),
+    configured_count: raw.size,
+    by_band: byBand,
+    connectors
+  });
+}
+
+const chain = [
+  enterpriseContextFeatureFlag,
+  assetRegistryFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireCapability("enterprise_context")
+];
+
+router.get("/connectors", ...chain, asTenant(listOrgConnectors));
+// EAR P16: connector credential/config mutations are admin-only. requireAdminRole
+// 403s non-admin JWT users (API keys are admin-level and bypass). The catalog
+// read above stays open to any capable member so analysts/viewers still see
+// live connector status; only configure / disconnect / sync are gated.
+router.put("/connectors/:id", ...chain, requireAdminRole, asTenant(putConnectorConfig));
+router.delete("/connectors/:id", ...chain, requireAdminRole, asTenant(deleteConnector));
+router.post("/connectors/:id/sync", ...chain, requireAdminRole, asTenant(triggerConnectorSync));
+router.post("/connectors/:id/writeback", ...chain, asTenant(enqueueConnectorWriteback));
+router.get("/connectors/:id/writeback", ...chain, asTenant(listConnectorWriteback));
+// E2b dead-letter recovery. Literal 'dead-letters' segment — distinct from the
+// :id routes by arity/method, so no route-shadowing.
+router.get("/connectors/health", ...chain, asTenant(getConnectorHealth));
+router.get("/connectors/dead-letters", ...chain, asTenant(listConnectorDeadLetters));
+router.post("/connectors/dead-letters/:id/redrive", ...chain, asTenant(redriveConnectorDeadLetter));
+router.post("/connectors/dead-letters/:id/ignore", ...chain, asTenant(ignoreConnectorDeadLetter));
+
+export default router;

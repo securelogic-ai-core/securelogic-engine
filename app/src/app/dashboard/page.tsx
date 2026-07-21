@@ -1,15 +1,28 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFrameworks, getFrameworkReadiness, planDisplayName, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
+import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFindingsSummary, getFrameworks, getFrameworkReadiness, getActionsSummary, getBriefingLayout, getDashboardPreferences, planDisplayName, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { IntelligenceBriefDashboardCard } from "@/components/IntelligenceBriefDashboardCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
 import { BillingPortalForm } from "@/components/BillingPortalForm";
 import { PostureDashboard } from "./PostureDashboard";
+import { CoverageBar } from "@/lib/frameworkCoverage";
 import { LastLoginBanner } from "./LastLoginBanner";
 import { IndustryTemplatesBanner } from "./IndustryTemplatesBanner";
 import { CompactEmptyState } from "./DashboardCharts";
+import { dashboardPanel, pendingReviewTile } from "./dashboardState";
+import { RecentFindings } from "./RecentFindings";
+import { TheBriefing } from "./briefing/TheBriefing";
+import { composeBriefing } from "@/lib/briefing/composeBriefing";
+import { filterRequestedModules, resolveEligibleModules } from "@/lib/briefing/resolveBriefing";
+import {
+  defaultBriefingModulesForRole,
+  moduleIdsFromEnvelope,
+  projectLegacyPreferences,
+  suggestBriefingModules,
+} from "@/lib/briefing/layout";
+import { TILE_LABELS } from "./PostureDashboard";
 
 export const revalidate = 0;
 
@@ -33,20 +46,53 @@ export default async function DashboardPage({
   // getMe() is the source of truth for entitlement — never rely on the
   // session cookie alone, which may be stale after a Stripe upgrade.
   // getAuthMe() provides user-level data (including suppression status) for JWT sessions.
-  const [me, issuesData, latestBrief, dashboardSummary, authMe, postureHistory] = await Promise.all([
+  const [me, issuesData, latestBrief, dashboardSummary, authMe, postureHistory, findingsSummaryData] = await Promise.all([
     getMe(token),
     getIssues(token),
     getLatestBrief(token),
     getDashboardSummary(token),
     session.jwtToken ? getAuthMe(session.jwtToken) : Promise.resolve(null),
     getPostureHistory(token, 90),
+    // Session-scoped findings summary — carries my_pending_reviews_open (the
+    // reviewer's OWN queue count) alongside the org-wide populations. Fetched so
+    // the Pending-Review tile can lead with the viewer's number instead of
+    // presenting the org-wide total under a personal-sounding label.
+    getFindingsSummary(token),
   ]);
 
   const entitlementLevelEarly = me?.entitlementLevel ?? "starter";
   const isPlatformEarly = ["premium", "platform", "team"].includes(entitlementLevelEarly);
+
+  // Briefing Initiative B1 — dark flag. OFF (the default everywhere but staging)
+  // renders the legacy dashboard byte-for-byte; ON swaps the platform-tier
+  // composition for The Briefing (personal work first, explicit scope chips).
+  const briefingEnabled = process.env.SECURELOGIC_DASHBOARD_BRIEFING_ENABLED === "true";
+  // Briefing-only fetches — REUSE the existing GET /api/actions/summary (the
+  // Metric Contract my_open_count / my_overdue_count fields) and, for B2, the
+  // caller's saved layout. Never fetched on the legacy path, so flag-off
+  // behavior is unchanged.
+  const briefingIdentity = Boolean(session.jwtToken && session.userId);
+  const [actionsSummary, briefingLayoutRes] =
+    briefingEnabled && isPlatformEarly
+      ? await Promise.all([
+          getActionsSummary(token),
+          briefingIdentity ? getBriefingLayout(token) : Promise.resolve(null),
+        ])
+      : [null, null];
+  const savedBriefingIds =
+    briefingLayoutRes?.layout != null
+      ? moduleIdsFromEnvelope(briefingLayoutRes.layout)
+      : null;
+  // Legacy-preference projection input (B2 migration) — REUSES the existing
+  // GET /api/dashboard/preferences {layout, source}, fetched ONLY flag-on with
+  // no saved layout (spec ruling C5: no sunset yet, cost accepted pre-launch).
+  const legacyPrefs =
+    briefingEnabled && isPlatformEarly && briefingIdentity && !savedBriefingIds
+      ? await getDashboardPreferences(token)
+      : null;
   const [recentFindingsData, frameworksData] = isPlatformEarly
     ? await Promise.all([
-        getFindings(token, { status: "open", limit: 5 }),
+        getFindings(token, { active: true, limit: 5 }),
         getFrameworks(token),
       ])
     : [null, null];
@@ -72,6 +118,58 @@ export default async function DashboardPage({
   const planName = planDisplayName(entitlementLevel, me?.stripeSubscriptionTier);
   const displayName = session.name ?? me?.organizationName ?? session.organizationName ?? null;
   const orgName = me?.organizationName ?? session.organizationName;
+
+  // D-2: the org has posture data when ANY platform object exists — a posture
+  // snapshot, an open finding/action/risk, a computed domain, or an activated
+  // framework. The "complete setup to start tracking posture" nudge must not show
+  // to a tenant that is already tracking posture. (If a tenant's entitlement is
+  // mis-seeded, that is an operator/data concern — the dashboard's own signals are
+  // kept internally consistent so it cannot contradict itself.)
+  const hasPlatformData = Boolean(
+    (postureHistory?.snapshots?.length ?? 0) > 0 ||
+      dashboardSummary?.posture?.snapshot_date ||
+      (dashboardSummary?.findings?.open ?? 0) > 0 ||
+      (dashboardSummary?.actions?.open ?? 0) > 0 ||
+      (dashboardSummary?.domains?.length ?? 0) > 0 ||
+      recentFindings.length > 0 ||
+      frameworks.length > 0 ||
+      (dashboardSummary?.risks_summary?.open ?? 0) > 0,
+  );
+
+  // Briefing Initiative B2 — resolve the render order + personalization surface.
+  // Precedence: saved layout → legacy-preference projection → role default.
+  // filterRequestedModules re-resolves eligibility on EVERY render (requested ⊆
+  // eligible) — a stored layout never grants access.
+  const briefingCtx = {
+    isPlatformUser,
+    hasUserIdentity: briefingIdentity,
+    flags: {
+      independent_review:
+        process.env.SECURELOGIC_INDEPENDENT_REVIEW_ENABLED === "true",
+    },
+  };
+  const roleDefaultIds = defaultBriefingModulesForRole(session.userRole ?? null);
+  const legacyProjection =
+    !savedBriefingIds && legacyPrefs && legacyPrefs.source !== "system_default"
+      ? projectLegacyPreferences(legacyPrefs.layout, roleDefaultIds)
+      : null;
+  const briefingLayoutSource =
+    savedBriefingIds ? ("saved" as const)
+    : legacyProjection ? ("legacy_projection" as const)
+    : ("role_default" as const);
+  const briefingModules = filterRequestedModules(
+    savedBriefingIds ?? legacyProjection?.seededIds ?? roleDefaultIds,
+    briefingCtx,
+  );
+  const briefingEligible = resolveEligibleModules(briefingCtx);
+  const briefingVm = composeBriefing({
+    summary: dashboardSummary,
+    findingsSummary: findingsSummaryData?.summary ?? null,
+    actionsSummary,
+  });
+  // Viewers cannot persist a layout (platform-wide viewer-mutation block) —
+  // the customize surface is withheld rather than offering a save that 403s.
+  const briefingCanCustomize = briefingIdentity && session.userRole !== "viewer";
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-12">
@@ -105,7 +203,11 @@ export default async function DashboardPage({
           <div>
             <p className="text-teal-200 font-semibold text-sm">Upgrade successful!</p>
             <p className="text-teal-300/80 text-xs mt-0.5">
-              Your account has been upgraded. Full brief access is now enabled.
+              {/* A platform tenant just bought the platform, not "brief access" —
+                  the copy must match what they purchased. */}
+              {isPlatformUser
+                ? `Your account has been upgraded. ${planName} is now active.`
+                : "Your account has been upgraded. Full brief access is now enabled."}
             </p>
           </div>
         </div>
@@ -115,18 +217,64 @@ export default async function DashboardPage({
           Self-gates on env var + user state; renders null when not applicable. */}
       <IndustryTemplatesBanner authMe={authMe} />
 
-      {/* Onboarding banner — shown until onboarding is complete */}
-      {isPlatformUser && !onboardingCompleted && (
+      {/* Onboarding banner — only when setup is genuinely incomplete (D-2): a
+          tenant already tracking posture must not be told to "complete setup". */}
+      {isPlatformUser && !onboardingCompleted && !hasPlatformData && (
         <OnboardingBanner />
       )}
 
+      {/* Briefing Initiative B1: flag ON + platform tier → The Briefing replaces
+          the composition below. Flag OFF (or a non-platform tier, which keeps the
+          brief-centric page and the sample-dashboard upsell) → the legacy page,
+          byte-for-byte. The entitlement branch is load-bearing: dashboardSummary
+          is fetched for every tier, so only THIS branch keeps platform UI from
+          leaking to Brief-only tiers. */}
+      {briefingEnabled && isPlatformUser ? (
+        <TheBriefing
+          displayName={displayName}
+          orgName={orgName}
+          planName={planName}
+          modules={briefingModules}
+          vm={briefingVm}
+          latestBrief={latestBrief}
+          latestIssue={latestIssue}
+          issuesCount={issuesData?.count ?? 0}
+          recentFindings={recentFindings}
+          summaryActiveFindings={dashboardSummary?.findings?.open ?? 0}
+          layoutSource={briefingLayoutSource}
+          droppedTileLabels={(legacyProjection?.droppedTiles ?? []).map(
+            (t) => TILE_LABELS[t] ?? t,
+          )}
+          customize={
+            briefingCanCustomize
+              ? {
+                  eligible: briefingEligible,
+                  currentIds: briefingModules.map((m) => m.id),
+                  roleDefaultIds,
+                  suggestions: suggestBriefingModules({
+                    currentIds: briefingModules.map((m) => m.id),
+                    eligibleIds: briefingEligible.map((m) => m.id),
+                    roleDefaultIds,
+                    pendingReviewsMine: briefingVm.myPendingReviews?.mine ?? null,
+                  }),
+                }
+              : null
+          }
+        />
+      ) : (
+        <>
       {/* Welcome */}
       <div className="mb-10">
         <h1 className="text-2xl font-bold text-slate-100 mb-1">
           Welcome back{displayName ? `, ${displayName}` : ""}.
         </h1>
+        {/* D-1 / D-4: separate enterprise platform framing from consumer newsletter
+            framing. A platform/enterprise tenant is not a "Brief Lite" subscriber and
+            must not be addressed as one. */}
         <p className="text-slate-400 text-sm">
-          {isPaid
+          {isPlatformUser
+            ? `You have ${planName} access to the SecureLogic platform.`
+            : isPaid
             ? `You have ${planName} access to the Intelligence Brief.`
             : "You're receiving the weekly Intelligence Brief Lite. Upgrade for the full brief."}
         </p>
@@ -142,7 +290,16 @@ export default async function DashboardPage({
           {latestBrief ? (
             <IntelligenceBriefDashboardCard brief={latestBrief} />
           ) : latestIssue ? (
-            <BriefCard issue={latestIssue} />
+            // Legacy newsletter-issue fallback (no intelligence brief yet).
+            // viewerIsPlatform: a platform tenant must never see the Free/
+            // Brief Pro teaser even if the engine returns locked (drift →
+            // neutral unavailable card). showStaleWarning: this is a "Latest
+            // Brief" surface — an old issue must declare its age.
+            <BriefCard
+              issue={latestIssue}
+              viewerIsPlatform={isPlatformUser}
+              showStaleWarning
+            />
           ) : (
             <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
               <p className="text-slate-400 text-sm">
@@ -204,10 +361,70 @@ export default async function DashboardPage({
         </div>
       </div>
 
+      {/* Governance-review callout (finding-lifecycle-spec §1.3). Count-scope fix
+          (2026-07-20): the org-wide ready-for-decision population and the viewer's
+          OWN review queue (review_owner=me) are the same predicate at two scopes —
+          this tile previously showed the ORG-WIDE number under the personal queue's
+          label, telling a reviewer with 1 assigned review that "5" were pending.
+          pendingReviewTile() (pure, unit-tested) now picks the variant:
+            personal — lead with the viewer's number, org total as labeled context;
+            org      — explicitly organization-wide (leadership view). */}
+      {isPlatformUser &&
+        (() => {
+          const tile = pendingReviewTile(
+            dashboardSummary?.findings?.pending_independent_review ?? 0,
+            findingsSummaryData?.summary?.my_pending_reviews_open ?? null,
+            process.env.SECURELOGIC_INDEPENDENT_REVIEW_ENABLED === "true",
+          );
+          if (!tile) return null;
+          return (
+            <div className="mt-10">
+              <Link
+                href={tile.href}
+                className="flex items-center justify-between rounded-xl border px-5 py-4 transition-colors hover:bg-white/[0.02]"
+                style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(139,92,246,0.35)" }}
+              >
+                {tile.variant === "personal" ? (
+                  <>
+                    <div>
+                      <p className="text-sm font-semibold" style={{ color: "#c4b5fd" }}>
+                        My Pending Reviews
+                      </p>
+                      <p className="text-xs mt-0.5" style={{ color: "#94a3b8" }}>
+                        Assigned to you to validate and close
+                        {tile.orgWide > tile.mine
+                          ? ` · ${tile.orgWide} organization-wide ready to close`
+                          : ""}
+                      </p>
+                    </div>
+                    <span className="text-2xl font-bold tabular-nums" style={{ color: "#c4b5fd" }}>
+                      {tile.mine}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <p className="text-sm font-semibold" style={{ color: "#c4b5fd" }}>
+                        Ready to Close
+                      </p>
+                      <p className="text-xs mt-0.5" style={{ color: "#94a3b8" }}>
+                        Organization-wide — remediation complete, governance decision pending
+                      </p>
+                    </div>
+                    <span className="text-2xl font-bold tabular-nums" style={{ color: "#c4b5fd" }}>
+                      {tile.orgWide}
+                    </span>
+                  </>
+                )}
+              </Link>
+            </div>
+          );
+        })()}
+
       {/* Recent Findings — platform subscribers only */}
       {isPlatformUser && (
         <div className="mt-10">
-          <RecentFindings findings={recentFindings} summaryOpenCount={dashboardSummary?.findings?.open ?? 0} />
+          <RecentFindings findings={recentFindings} summaryActiveCount={dashboardSummary?.findings?.open ?? 0} />
         </div>
       )}
 
@@ -218,22 +435,49 @@ export default async function DashboardPage({
         </div>
       )}
 
-      {/* Posture Dashboard — platform subscribers only */}
-      {isPlatformUser ? (
-        dashboardSummary && (
+      {/* Posture Dashboard — platform subscribers only.
+          A failed summary fetch (null) must render an EXPLICIT error, not
+          silently drop the panel — otherwise a load failure is indistinguishable
+          from an org that genuinely has no data (a zeros object still renders). */}
+      {(() => {
+        const panel = dashboardPanel(isPlatformUser, dashboardSummary !== null);
+        if (panel === "sample") {
+          return (
+            <div className="mt-10">
+              <SamplePostureDashboard />
+            </div>
+          );
+        }
+        if (panel === "error") {
+          return (
+            <div className="mt-10">
+              <div
+                className="rounded-xl border p-8 text-center"
+                style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(239,68,68,0.25)" }}
+              >
+                <p className="text-sm font-semibold mb-1" style={{ color: "#fca5a5" }}>
+                  We couldn&apos;t load your posture data.
+                </p>
+                <p className="text-xs" style={{ color: "#64748b" }}>
+                  This is a temporary problem loading your dashboard — it does not mean your
+                  posture is clear. Refresh to try again.
+                </p>
+              </div>
+            </div>
+          );
+        }
+        return (
           <div className="mt-10">
             <PostureDashboard
-              summary={dashboardSummary}
+              summary={dashboardSummary!}
               frameworkPairs={frameworkReadinessPairs}
               postureSnapshots={postureHistory?.snapshots ?? []}
               userRole={session.userRole ?? "viewer"}
             />
           </div>
-        )
-      ) : (
-        <div className="mt-10">
-          <SamplePostureDashboard />
-        </div>
+        );
+      })()}
+        </>
       )}
     </div>
   );
@@ -319,6 +563,7 @@ function SamplePostureDashboard() {
             {/* Posture score */}
             <div className="lg:col-span-1 bg-brand-surface border border-brand-line rounded-xl p-5 flex flex-col justify-between">
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Posture Score</p>
+              <p className="text-[11px] text-slate-500 mb-1">Health score · higher = better</p>
               <p className="text-4xl font-bold text-slate-100 leading-none">67</p>
               <span className="mt-2 self-start inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-900/40 text-amber-300">
                 Moderate
@@ -326,9 +571,9 @@ function SamplePostureDashboard() {
               <p className="mt-2 text-xs text-slate-500">as of Apr 14, 2026</p>
             </div>
 
-            {/* Open findings */}
+            {/* Active findings */}
             <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Open Findings</p>
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Active Findings</p>
               <p className="text-3xl font-bold text-slate-100">4</p>
               <div className="mt-3 space-y-1">
                 <div className="flex items-center gap-2 text-xs text-slate-400">
@@ -395,27 +640,8 @@ function SamplePostureDashboard() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Recent Findings — compact list for platform dashboard
+// Recent Findings lives in ./RecentFindings.tsx (shared with The Briefing).
 // ─────────────────────────────────────────────────────────────
-
-const SEVERITY_BADGE_STYLES: Record<string, React.CSSProperties> = {
-  Critical: { background: "rgba(239,68,68,0.15)",  color: "#fca5a5" },
-  High:     { background: "rgba(249,115,22,0.15)", color: "#fdba74" },
-  Moderate: { background: "rgba(245,158,11,0.15)", color: "#fcd34d" },
-  Low:      { background: "rgba(34,197,94,0.15)",  color: "#86efac" },
-};
-
-const SOURCE_COMPACT_LABELS: Record<string, string> = {
-  vendor_review:        "Vendor",
-  control_test:         "Control",
-  obligation_review:    "Obligation",
-  ai_review:            "AI Review",
-  ai_governance_review: "AI Gov",
-  manual:               "Manual",
-  assessment:           "Assessment",
-  signal:               "Signal",
-  risk:                 "Risk",
-};
 
 function FrameworkReadinessWidget({
   pairs,
@@ -424,7 +650,7 @@ function FrameworkReadinessWidget({
 }) {
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-1">
         <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">
           Framework Readiness
         </h2>
@@ -436,6 +662,11 @@ function FrameworkReadinessWidget({
           {pairs.length === 0 ? "Add Framework →" : "View all →"}
         </Link>
       </div>
+      {/* D-5: distinguish from Compliance Coverage below — this is how close each
+          activated framework is to audit-ready, not the share of requirements met. */}
+      <p className="text-xs mb-4" style={{ color: "#64748b" }}>
+        How close each activated framework is to being audit-ready.
+      </p>
 
       {pairs.length === 0 ? (
         <div className="bg-brand-surface border border-brand-line rounded-xl">
@@ -450,9 +681,9 @@ function FrameworkReadinessWidget({
           {pairs.map(({ framework, readiness }) => {
             const score = readiness?.readiness_score ?? 0;
             const color =
-              score >= 75 ? "#22c55e" :
-              score >= 50 ? "#f59e0b" :
-              score >= 25 ? "#f97316" :
+              score >= 80 ? "#22c55e" :
+              score >= 60 ? "#f59e0b" :
+              score >= 40 ? "#f97316" :
               "#ef4444";
             return (
               <Link
@@ -465,15 +696,22 @@ function FrameworkReadinessWidget({
                   <p className="text-sm font-medium truncate" style={{ color: "#f1f5f9" }}>
                     {framework.name}
                   </p>
+                  {/* Item-7 ruling: the engine's coverage caption, verbatim —
+                      the score is satisfied-only, and this line is what makes
+                      a low score beside visible partial work read as fact. */}
                   <p className="text-xs mt-0.5" style={{ color: "#475569" }}>
                     v{framework.version}
+                    {readiness ? <> · {readiness.coverage_caption}</> : null}
                   </p>
                 </div>
                 <div className="w-32 flex items-center gap-2 flex-shrink-0">
-                  <div className="flex-1 rounded-full h-1.5" style={{ background: "rgba(255,255,255,0.08)" }}>
-                    <div
-                      className="h-1.5 rounded-full"
-                      style={{ width: `${score}%`, background: color }}
+                  {/* Shared segmented bar: solid = fully satisfied, hatched = partial. */}
+                  <div className="flex-1">
+                    <CoverageBar
+                      satisfied={readiness?.satisfied ?? 0}
+                      partial={readiness?.partial ?? 0}
+                      total={readiness?.total_requirements ?? 0}
+                      heightClass="h-1.5"
                     />
                   </div>
                   <span className="text-xs font-bold tabular-nums w-8 text-right" style={{ color }}>
@@ -489,82 +727,3 @@ function FrameworkReadinessWidget({
   );
 }
 
-function RecentFindings({ findings, summaryOpenCount }: { findings: Finding[]; summaryOpenCount: number }) {
-  const noFindings = findings.length === 0;
-  const summaryConfirmsZero = summaryOpenCount === 0;
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">
-          Recent Findings
-        </h2>
-        <Link
-          href="/findings"
-          className="text-xs font-medium transition-colors"
-          style={{ color: "#00c4b4" }}
-        >
-          View all findings →
-        </Link>
-      </div>
-
-      {noFindings ? (
-        summaryConfirmsZero ? (
-          <div
-            className="rounded-xl border p-6 text-center"
-            style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(34,197,94,0.2)" }}
-          >
-            <p className="text-sm" style={{ color: "#86efac" }}>
-              No open findings. Your organization is in good shape.
-            </p>
-          </div>
-        ) : (
-          <div
-            className="rounded-xl border p-6 text-center"
-            style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}
-          >
-            <p className="text-sm mb-2" style={{ color: "#94a3b8" }}>
-              Could not load recent findings.
-            </p>
-            <Link href="/findings" className="text-xs font-medium" style={{ color: "#00c4b4" }}>
-              View all findings →
-            </Link>
-          </div>
-        )
-      ) : (
-        <div
-          className="rounded-xl border divide-y"
-          style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b", "--tw-divide-opacity": "1" } as React.CSSProperties}
-        >
-          {findings.map((f) => {
-            const sevStyle = SEVERITY_BADGE_STYLES[f.severity ?? ""] ?? { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
-            const sourceLabel = SOURCE_COMPACT_LABELS[f.source_type] ?? f.source_type;
-            return (
-              <div
-                key={f.id}
-                className="flex items-center gap-3 px-4 py-3"
-                style={{ borderColor: "#1e293b" }}
-              >
-                <span
-                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold shrink-0"
-                  style={sevStyle}
-                >
-                  {f.severity}
-                </span>
-                <span className="text-sm font-medium flex-1 truncate" style={{ color: "#f1f5f9" }}>
-                  {f.title}
-                </span>
-                <span
-                  className="text-xs shrink-0 px-2 py-0.5 rounded"
-                  style={{ background: "rgba(148,163,184,0.08)", color: "#64748b" }}
-                >
-                  {f.domain ?? sourceLabel}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}

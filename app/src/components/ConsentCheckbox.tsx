@@ -1,18 +1,25 @@
 "use client";
 
 import type { ConsentDocumentType } from "@/lib/api";
+import { getSiteBaseUrl } from "@/lib/siteUrl";
 
 /**
  * Canonical labels + marketing-site URLs for the three legal documents.
  * Single source of truth shared by the signup/invite consent checkbox and the
  * ConsentInterstitial. Keep the keys in sync with the engine's DOCUMENT_TYPES.
+ *
+ * Hrefs are built from the env-aware marketing base (getSiteBaseUrl) so the
+ * staging app links to the staging legal pages, not production. BUILD-TIME:
+ * requires NEXT_PUBLIC_SITE_URL at compile time + a rebuild per environment.
  */
+const SITE = getSiteBaseUrl();
+
 export const LEGAL_DOC_LINKS: Record<ConsentDocumentType, { label: string; href: string }> = {
-  terms_of_service: { label: "Terms of Service", href: "https://securelogicai.com/terms/" },
-  privacy_policy: { label: "Privacy Policy", href: "https://securelogicai.com/privacy/" },
+  terms_of_service: { label: "Terms of Service", href: `${SITE}/terms/` },
+  privacy_policy: { label: "Privacy Policy", href: `${SITE}/privacy/` },
   ai_transparency_policy: {
     label: "AI Transparency & Responsible Use Policy",
-    href: "https://securelogicai.com/ai-policy/",
+    href: `${SITE}/ai-policy/`,
   },
 };
 

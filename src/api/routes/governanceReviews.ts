@@ -27,7 +27,9 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import { validateGovernanceReviewCreate } from "../lib/governanceReviewValidation.js";
 import { severityToPriority } from "../lib/postureComputation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
@@ -77,8 +79,8 @@ router.post(
   "/governance-reviews",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -266,7 +268,7 @@ router.post(
     } finally {
       client.release();
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -279,8 +281,8 @@ router.get(
   "/governance-reviews",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -361,7 +363,7 @@ router.get(
       );
       res.status(500).json({ error: "governance_reviews_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -378,8 +380,8 @@ router.get(
   "/governance-reviews/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -455,7 +457,7 @@ router.get(
       );
       res.status(500).json({ error: "governance_review_get_failed" });
     }
-  }
+  })
 );
 
 export default router;

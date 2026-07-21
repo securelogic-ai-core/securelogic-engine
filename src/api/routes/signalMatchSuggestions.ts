@@ -63,6 +63,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
 import {
   validateSignalMatchSuggestionAccept,
   validateSignalMatchSuggestionDismiss,
@@ -110,6 +111,7 @@ const SUGGESTION_BASE_COLS = `
   id,
   organization_id,
   signal_id,
+  intelligence_event_id,
   target_type,
   target_id,
   match_reason,
@@ -132,6 +134,7 @@ const SUGGESTION_ENRICHED_SELECT = `
   s.id,
   s.organization_id,
   s.signal_id,
+  s.intelligence_event_id,
   s.target_type,
   s.target_id,
   s.match_reason,
@@ -143,7 +146,12 @@ const SUGGESTION_ENRICHED_SELECT = `
   s.dismissed_at,
   s.dismissed_by_user_id,
   s.dismissal_reason,
-  COALESCE(v.name, ai.name, c.name, o.title) AS target_name
+  COALESCE(v.name, ai.name, c.name, o.title, ar.name) AS target_name,
+  ie.title      AS event_title,
+  ie.status     AS event_status,
+  ie.severity   AS event_severity,
+  ie.confidence AS event_confidence,
+  ie.canonical_key AS event_canonical_key
 `;
 
 // Reusable LEFT JOIN block paired with SUGGESTION_ENRICHED_SELECT. Each join
@@ -155,6 +163,9 @@ const SUGGESTION_ENRICH_JOIN = `
   LEFT JOIN ai_systems  ai ON s.target_type = 'ai_system'  AND ai.id = s.target_id
   LEFT JOIN controls    c  ON s.target_type = 'control'    AND c.id  = s.target_id
   LEFT JOIN obligations o  ON s.target_type = 'obligation' AND o.id  = s.target_id
+  LEFT JOIN asset_registry_v ar ON s.target_type = 'asset' AND ar.asset_id = s.target_id
+                               AND ar.organization_id = s.organization_id
+  LEFT JOIN intelligence_events ie ON ie.id = s.intelligence_event_id
 `;
 
 /**
@@ -337,16 +348,43 @@ export async function listSignalMatchSuggestions(req: Request, res: Response): P
   }
 
   const rawTargetType = req.query.target_type;
-  let targetTypeFilter: TargetType | null = null;
+  let targetTypeFilter: TargetType | "asset" | null = null;
   if (rawTargetType !== undefined && String(rawTargetType).trim() !== "") {
-    if (!isTargetType(rawTargetType)) {
+    // EAR Phase 2: 'asset' rows exist only when the registry matcher (flag-
+    // gated) writes them; the filter value is fenced on the same flag so the
+    // API surface does not advertise the vocabulary while dark.
+    const assetAllowed = assetRegistryEnabled() && rawTargetType === "asset";
+    if (!isTargetType(rawTargetType) && !assetAllowed) {
       res.status(400).json({
         error: "invalid_target_type",
         detail: "target_type must be one of: vendor, ai_system, control, obligation"
       });
       return;
     }
-    targetTypeFilter = rawTargetType;
+    targetTypeFilter = assetAllowed ? "asset" : (rawTargetType as TargetType);
+  }
+
+  // R3 — entity-name search. Same 2..120 bounds as the Findings entity search
+  // (findingEntitySearch.ts) so the two surfaces behave identically, and the same
+  // escaping of LIKE metacharacters so a literal "%" is a literal "%".
+  let nameQuery: string | null = null;
+  const rawQ = req.query.q;
+  if (rawQ !== undefined) {
+    if (typeof rawQ !== "string") {
+      res.status(400).json({ error: "invalid_q", detail: "q must be a string" });
+      return;
+    }
+    const trimmed = rawQ.trim();
+    if (trimmed.length > 0) {
+      if (trimmed.length < 2 || trimmed.length > 120) {
+        res.status(400).json({
+          error: "invalid_q",
+          detail: "q must be between 2 and 120 characters",
+        });
+        return;
+      }
+      nameQuery = `%${trimmed.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+    }
   }
 
   const stateClause =
@@ -374,6 +412,18 @@ export async function listSignalMatchSuggestions(req: Request, res: Response): P
   if (targetTypeFilter !== null) {
     params.push(targetTypeFilter);
     sql += ` AND s.target_type = $${params.length}`;
+  }
+  // R3 — free-text filter on the ENTITY the suggestion is about, so the queue is
+  // searchable the way the Findings page is. Matches the same COALESCE the enriched
+  // SELECT already exposes as target_name (vendor / AI system / control name, or an
+  // obligation's title), so a search finds exactly what the row displays.
+  //
+  // The pattern is parameterised and the operand is a fixed column expression, never
+  // interpolated input. LIKE metacharacters in the user's string are escaped so a
+  // query of "100%" means the literal text, not "anything".
+  if (nameQuery !== null) {
+    params.push(nameQuery);
+    sql += ` AND COALESCE(v.name, ai.name, c.name, o.title, ar.name) ILIKE $${params.length}`;
   }
   sql += ` ${SORT_DISPATCH[sort]}`;
   params.push(limit);
@@ -480,6 +530,19 @@ export async function acceptSignalMatchSuggestion(req: Request, res: Response): 
       return;
     }
 
+    if (suggestion.target_type === "asset") {
+      // EAR Phase 2: 'asset' suggestions are DELIBERATELY not acceptable yet —
+      // accepting means writing a link row, and the link-store shape for
+      // registry targets (generic table vs per-type — ECL AD-13) is a Phase-3
+      // decision. Explicit 409, not the defensive 500 below. Dismissal works
+      // normally (type-agnostic).
+      await client.query("ROLLBACK");
+      res.status(409).json({
+        error: "asset_target_accept_unsupported",
+        detail: "Accepting asset-registry suggestions ships with the registry link store (Phase 3). Dismissal is supported."
+      });
+      return;
+    }
     if (!isTargetType(suggestion.target_type)) {
       // Defensive: the CHECK constraint should make this impossible, but if a
       // future migration loosens it, fail closed rather than mis-route.

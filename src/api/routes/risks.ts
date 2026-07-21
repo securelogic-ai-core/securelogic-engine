@@ -24,12 +24,15 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
+import { sqlRiskActive } from "../lib/metricDefinitions.js";
 import {
   validateRiskCreate,
   validateRiskUpdate,
   validateRiskListQuery
 } from "../lib/riskValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { sendOwnerAssignedNotification } from "../lib/riskLifecycleNotifier.js";
+import { riskLifecycleEnabled } from "../lib/riskLifecycleFeatureFlag.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { resolveOwnerUserSameOrg } from "../lib/ownerUserResolver.js";
 import { resolveCadenceDays } from "../lib/riskCadence.js";
@@ -473,6 +476,14 @@ router.get(
         conditions.push(`status = $${params.length}`);
       }
 
+      // Metric Contract: `active=true` = still on the register. This list applied NO
+      // default status filter, so a dashboard tile reading "N open risks" landed on a
+      // page that also listed closed and transferred ones — the tile's number was not
+      // reproducible by any URL. Opt-in, so the unfiltered list stays available.
+      if (input.active) {
+        conditions.push(sqlRiskActive());
+      }
+
       if (input.domain !== null) {
         params.push(input.domain);
         conditions.push(`domain = $${params.length}`);
@@ -481,6 +492,20 @@ router.get(
       if (input.risk_rating !== null) {
         params.push(input.risk_rating);
         conditions.push(`risk_rating = $${params.length}`);
+      }
+
+      // Archived filter (Epic R4, §4.6) — archived is a lifecycle_state, so this
+      // is ONLY applied when the risk-lifecycle flag is on. When the flag is off
+      // no predicate is added and the list is byte-for-byte identical to before.
+      //   default:          hide archived (IS DISTINCT FROM keeps NULL/never-in-
+      //                     lifecycle rows visible)
+      //   ?archived=true:   show ONLY archived (the explicit archived view)
+      if (riskLifecycleEnabled()) {
+        if (input.archived === true) {
+          conditions.push(`lifecycle_state = 'archived'`);
+        } else {
+          conditions.push(`lifecycle_state IS DISTINCT FROM 'archived'`);
+        }
       }
 
       // RR-5: review_status filter — three buckets relative to today.
@@ -766,7 +791,7 @@ router.get(
          AND f.organization_id = $1
          AND f.status = 'open'
         WHERE r.organization_id = $1
-          AND r.status NOT IN ('closed', 'transferred')
+          AND ${sqlRiskActive("r.status")}
         GROUP BY r.id, r.title, r.domain, r.risk_rating, r.inherent_rating,
                  r.residual_rating, r.status, r.likelihood, r.owner
         ORDER BY
@@ -1469,6 +1494,24 @@ router.patch(
         },
         ipAddress: req.ip ?? null
       });
+
+      // Owner-assigned notification (Epic R4) — when the PATCH assigns a NEW
+      // owner (to a real user). Fire-and-forget on pgElevated + the shared
+      // sender, decoupled from this committed transaction; no-ops entirely when
+      // SECURELOGIC_RISK_LIFECYCLE_NOTIFICATIONS_ENABLED is off, so flag-off
+      // behavior is unchanged.
+      if (
+        input.owner_user_id !== undefined &&
+        risk.owner_user_id &&
+        before.owner_user_id !== risk.owner_user_id
+      ) {
+        void sendOwnerAssignedNotification({
+          organizationId,
+          riskId: risk.id as string,
+          riskTitle: (risk.title as string) ?? "a risk",
+          ownerUserId: risk.owner_user_id as string,
+        }).catch(() => {});
+      }
 
       // Webhook on PATCH — closes the gap flagged in earlier
       // investigation (item 1 from Decision §11 scope). Same payload

@@ -49,6 +49,7 @@ They must not be re-declared differently in each module.
 | Signal Control Link | signal_control_links | POST /api/signal-control-links, DELETE /api/signal-control-links/:id, GET /api/controls/:id/signals, GET /api/cyber-signals/:id/controls | Complete — package signal-to-control-linkage |
 | Signal Obligation Link | signal_obligation_links | POST /api/signal-obligation-links, DELETE /api/signal-obligation-links/:id, GET /api/obligations/:id/signals, GET /api/cyber-signals/:id/obligations | Complete — package signal-to-obligation-linkage |
 | Signal Match Suggestion | signal_match_suggestions | GET /api/signal-match-suggestions (?sort, ?offset), GET /api/signal-match-suggestions/counts, POST /api/signal-match-suggestions/:id/accept, POST /api/signal-match-suggestions/:id/dismiss | Complete — packages signal-match-suggestions + matcher-queue-ui. Primary consumption surface is /queue with embedded views planned on signal and entity detail pages. |
+| Canonical Product | canonical_products (+ children canonical_product_aliases / _external_ids / _versions; migration `20260830_canonical_products.sql`) | (internal normalizer `src/api/lib/canonicalProduct.ts` + writer `canonicalProductStore.ts`; no public route) | Convergence Phase C1/C1b (DARK, additive). **INTERMEDIATE reference entity (ruling R1)** that normalizes external product/version/package/service identities BEFORE tenant-asset resolution — NOT the primary customer-risk object; impact attaches to canonical tenant assets, never to products or vendors. **Org-neutral** (like `cyber_signals`, no tenant data). **R2 invariant:** vendor identity ALONE is never product-identifiable and must never yield an `affected` determination. Reuses the single `canonicalizeVendorName` normalizer (no second normalizer). See `docs/architecture/proposals/CONVERGENCE-ROADMAP.md` (C1). |
 | Industry Starter Template | (no table — static TS modules in src/templates/; loaded data lands in vendors/ai_systems/obligations/controls with template_source attribution) | GET /api/templates, GET /api/templates/:industry, POST /api/templates/load | Complete — package industry-starter-templates. v1 ships dark in production behind SECURELOGIC_INDUSTRY_TEMPLATES_ENABLED until domain expert review clears `needs_review:true` entries. Surfaces: /templates page, dashboard banner (first 7 days). |
 | AI System Vendor Dependency | ai_system_vendor_dependencies | POST /api/ai-system-vendor-dependencies, DELETE /api/ai-system-vendor-dependencies/:id, GET /api/ai-systems/:id/vendors, GET /api/vendors/:id/ai-systems | Complete — package ai-system-vendor-dependencies (matcher cascade is a separate package) |
 | Risk Scoring Weights | risk_scoring_weights | GET /api/risk-scoring-weights, PUT /api/risk-scoring-weights, POST /api/signal-match-suggestions/:id/recompute-score | Complete — package obligation-aware-risk-scoring (matcher rewire to invoke at suggestion-creation is a separate package) |
@@ -74,6 +75,14 @@ They must not be re-declared differently in each module.
 | Dependency Assessment | dependency_assessments | POST /api/dependency-assessments, GET /api/dependency-assessments, GET /api/dependency-assessments/:id, PATCH /api/dependency-assessments/:id | Complete — package dependency-review-workflow |
 | Vendor Assurance Document | vendor_assurance_documents | POST /api/vendor-assurance/documents, GET /api/vendor-assurance/documents, GET /api/vendor-assurance/documents/:id, GET /api/vendor-assurance/documents/:id/extraction, GET /api/vendor-assurance/documents/:id/pdf, POST /api/vendor-assurance/extractions/:id/review-decisions, POST /api/vendor-assurance/documents/:id/finalize | Phase 1 — package vendor-assurance-intelligence-phase-1. Staging-only behind SECURELOGIC_VENDOR_ASSURANCE_ENABLED. PDF stored in Cloudflare R2 via the Phase 0 blob primitive at org/{organizationId}/vendor-assurance/{documentId}/original.pdf. Extraction is one-per-document (no re-extraction). Review decisions are APPEND-ONLY — no UNIQUE on (extraction_id, field_name); current decision per field = latest by (decided_at DESC, id DESC). Finalize requires every material field to have a current decision. Reviewed values display on the vendor detail card via projection-at-read-time; no stored snapshot table. No writes to findings, vendor_assessments, vendor_reviews, risks, signal_*_links, or vendors.current_risk_score. |
 
+
+| Enterprise Entity | enterprise_entities (+ typed child enterprise_data_stores) | GET /api/enterprise-entities, POST /api/enterprise-entities, GET /api/enterprise-entities/:id, PATCH /api/enterprise-entities/:id, DELETE /api/enterprise-entities/:id | Slice 1 — package enterprise-context-layer-foundation (Priority 5). Canonical HEADER for NEW customer-context objects; `vendors`/`ai_systems` keep their own tables and are NOT valid `entity_type`s (referenced later, never copied). Typed load-bearing attributes (classification/residency/retention/encryption) live in the child `enterprise_data_stores`, never a JSON blob. Behind SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED (default off; **do NOT enable in prod until the AD-17 capability grant ships** — else reaches all rank-4 orgs, per §9). Per-org cap `organizations.max_enterprise_entities`, SEPARATE from max_monitored_entities (does not touch enforceEntityLimit). RLS inert (NOT FORCE). OUT of Slice 1: relationship graph, applicability engine, CSV import, connectors, UI, entity↔risk/finding links. |
+| Enterprise Relationship | enterprise_relationships | GET /api/enterprise-relationships (?node_type,&node_id), POST /api/enterprise-relationships, DELETE /api/enterprise-relationships/:id | Slice 2 — package enterprise-context-layer-foundation (Priority 5). Generic ADDITIVE intra-org edge for NEW relationships; polymorphic endpoints (enterprise_entity/vendor/ai_system/user), no FK; soft-delete. The read-time resolver UNIONs the existing TYPED edges (typed-authoritative, AD-13) — a later slice **S2b**; this ships the edge substrate + CRUD only. Two-endpoint same-org pre-flight; behind SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED; RLS inert (NOT FORCE). |
+| Enterprise Graph (read-time) | (no table — resolver over enterprise_relationships + ai_system_vendor_dependencies) | GET /api/enterprise-graph (?node_type,&node_id,&depth) | Slice 2b — bounded (MAX_DEPTH 5, default 3) cycle-safe outbound traversal (`enterpriseGraphResolver.ts`, the repo's first WITH RECURSIVE). Typed-edge-authoritative UNION (AD-13): generic edges + the typed ai_system↔vendor dependency; other typed edges (dependencies, signal_*_links with global-signal endpoints, risk_*_links) are a documented later extension. Org-isolated by the `organization_id=$org` edge filter + seed-node same-org pre-flight. ⚠ NOT load-tested at Fortune-500 fan-out (AR-4) — do not raise MAX_DEPTH without the load test; materialized-adjacency fallback is the designed escape. |
+| Applicability Assessment | applicability_assessments (+ children applicability_evidence, applicability_affected_entities) | (no public route yet — internal writer `applicabilityAssessmentWriter`, Slice 4c `cb15c788`; explainability render layer Slice 5 `cb1c2be2`) | Slice 4b (Priority 5). The **immutable, by-value, hash-chained, reproducible** record of a per-org applicability decision (AD-16): `decision` (5-value enum) + `confidence` 0–100 + band + ordered `reasoning_steps` (JSONB narration trace, by value) + `content_hash`/`prev_hash` chain. Produced by the pure `ApplicabilityEngineV1` (Slice 4a, `src/engine/applicability/v1/`). **WORM** — UPDATE/DELETE/TRUNCATE blocked by trigger regardless of role (survives the app_request/FORCE flip); app_request granted SELECT,INSERT only. `applicability_evidence` = by-value input snapshots (reproducibility); `applicability_affected_entities` = normalized blast radius (queryable). **Ships NON-PARTITIONED** (partition strategy deferred to S3.5/pre-4c-write per that gate) and with **no `is_current` column** (WORM forbids the flip; "current" is derived from the `(org,signal,target,created_at DESC)` index) — both reconcile ENTERPRISE_CONTEXT_ARCHITECTURE.md via the S4b doc-sync. Behind SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED; RLS inert (NOT FORCE). **Written by the Slice 4c internal worker** (`cb15c788`; migration `20260727_applicability_assessments_seq.sql`; runs `ApplicabilityEngineV1` and persists under `withTenant` with an advisory-locked `prev_hash` for the hash chain). Rendered by the pure **Slice 5 explainability** layer (`src/engine/applicability/v1/explainability.ts`, `cb1c2be2`). **Slice 6 workflow-recommendation core** (`src/engine/applicability/v1/workflowRecommendations.ts`, `b82bd4cb`) and **Slice 7 signal-linkage / reassessment+drift core** (`33f4a929`) derive downstream recommendations — all pure/inert (no callers). |
+| Enterprise Capability & Caps | `organizations.enterprise_context_capability` (bool, NULL=inherit Platform default) + `organizations.max_enterprise_edges` / `max_enterprise_entities` (caps, SEPARATE from `max_monitored_entities`) | (gate applied in-route via `requireCapability`, not a standalone route) | Slice 9 — package enterprise-context-layer-foundation (Priority 5), **GATE A ruled 2026-07-04**, `c495dc0c`. Access = Platform Professional + Enterprise; capability-based grant (`src/api/lib/enterpriseContextCapability.ts`, capability key `enterprise_context`, Platform default on, per-org override). Migrations `20260728_org_enterprise_context_caps.sql` + `20260729_org_enterprise_context_capability.sql`. Caps default 10k entities / 50k edges; edge-cap enforcement returns 409. Operator grant/tune = ledger L-7 (`UPDATE organizations …`, no DDL). Still behind `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (GATE B) until prod enable. |
+| Connector Framework | (no domain table — pluggable registry `src/api/lib/connectors/`) | (no public route — dark ingestion adapters) | Slice 8 — package enterprise-context-layer-foundation (Priority 5), `d0351c1c`. Connector registry + normalized-import contract; reference adapter `servicenow_cmdb` (`d0351c1c`) + **all 8 remaining adapters IMPLEMENTED in R7** (Defender/CrowdStrike/Wiz via OAuth client-credentials — `HttpClient` gained optional postForm/postJson; Tenable/Qualys/Rapid7 header-keyed; cloud inventory via a documented v1 pre-authorized-export-URL ingestion; identity provider Okta-first SSWS), each with mock-backed tests. `IMPORT_ENTITY_TYPES` extended with `identity` so IdP users flow through `planImport`. Real-credential round-trips are operator work (ledger L-5.1..L-5.9). Dark — no route/worker calls any connector. |
+
 ---
 
 ## Canonical Enums
@@ -97,12 +106,88 @@ These are the single source of truth. Do not redefine them anywhere else.
 - `in_progress`
 - `closed`
 
+> **Two-axis model (ratified 2026-07-10; C6 SHIPPED #607).** The legacy single
+> `status` above is generalized into two orthogonal axes, per
+> `docs/specs/finding-lifecycle-spec.md` (RATIFIED):
+> - **`operational_status`** — SYSTEM-DERIVED from linked Actions (shipped #607,
+>   migration `20260901`): `open | in_progress | remediated`. Never hand-set;
+>   the ONLY writer is `findingLifecycle.recomputeFindingOperationalStatus`,
+>   invoked in the SAME tenant transaction as any Action create/status write
+>   (spec §5 cascade). `remediated` is not closure — it routes the finding into
+>   the **ready-for-decision queue** (a query: `operational_status='remediated'
+>   AND decision_state NOT IN ('resolved','accepted_risk')`; summary field
+>   `ready_for_decision_open`; ops-center bucket "Ready to Close").
+> - **`decision_state`** — HUMAN-GOVERNED (shipped #562; transitions GUARDED
+>   #607): `needs_review | mitigating | accepted_risk | resolved`. The system
+>   writes only its *initial* value (R3). PATCH transitions run through the pure
+>   state machine (`findingLifecycleMachine.evaluateFindingDecisionTransition`):
+>   accept-plan, accept-risk (audited override from any state), close (ONLY when
+>   `operational_status='remediated'` or from `accepted_risk`), reopen. Illegal
+>   moves are 409s. The pre-ratification `in_progress` decision value was
+>   normalized to `mitigating` (`20260901`).
+> - **`finding_lifecycle_events`** (shipped #607) — the append-only,
+>   in-transaction, RLS'd audit stream of BOTH axes (mirrors
+>   `risk_lifecycle_events`); `security_audit_log` remains the fire-and-forget
+>   projection with spec event names (`finding.operational.advanced`,
+>   `finding.remediated`, `finding.decision.*`, `finding.reopened`).
+> - Legacy `status` is still hand-set today; it becomes a **derived projection**
+>   of the two axes (spec §3) in a later reader-migration package.
+> - `finding_review_marks` is a per-user "last reviewed" cursor — NOT a lifecycle state.
+>
+> Invariant: *operational_status is never hand-set; decision_state is never computed
+> except its initial value.*
+
 ### Status (actions)
 - `open`
 - `in_progress`
 - `blocked`
 - `closed`
 - `accepted`
+
+### The Action Contract (authoritative — operational-architecture goal, Contract 4)
+
+**"Action" and "remediation item" are the SAME object** — one row in `actions`.
+There is no `remediation_plans`, `remediation_items`, or `tasks` table, and none
+may be created. UI copy ("Remediation Actions", "Add Remediation Action") always
+refers to an Action with `source_type='finding'`. A finding's "remediation" =
+its `recommendation` column (guidance TEXT) + its child Actions. Nothing else.
+
+The authoritative chain:
+
+```
+Finding
+  ├─ recommendation (guidance text on the finding — not a work object)
+  └─ Actions (source_type='finding', source_id=finding.id)   ← the remediation items
+       ├─ assignee: actions.owner_user_id (independent of the finding's owner)
+       ├─ SLA: actions.due_date; overdue = ACTIVE AND due_date < CURRENT_DATE
+       ├─ completion: status → closed|accepted (sets completed_at)
+       │    └─ CASCADE (spec §5, shipped #607): every Action create/status write
+       │       recomputes the parent finding's operational_status in the SAME
+       │       transaction — all children terminal ⇒ parent 'remediated'
+       ├─ validation: 'remediated' surfaces the finding in the ready-for-decision
+       │    queue; the system NEVER closes it (R3)
+       └─ closure: a HUMAN sets decision_state='resolved' (guarded: requires
+            remediated or accepted_risk) — the only path to closed
+```
+
+Metric derivation (Contract 1): every count of this chain — dashboard tiles,
+My Work, queues, summaries — derives from `src/api/lib/metricDefinitions.ts`:
+ACTIVE action = `open|in_progress|blocked` (blocked work is still work); ACTIVE
+finding = `open|in_progress`; OVERDUE = active AND `due_date < CURRENT_DATE`.
+"My Work" resolves ONLY the literal `owner=me` from the session — never a
+client-supplied user id. Do not hand-roll these predicates.
+
+### Review / Validation / Approval / Acceptance / Closure (distinct concepts — Contract 5)
+
+These five words are NOT interchangeable. Each has exactly one meaning:
+
+| Concept | Object / state | Actor | Effect |
+|---|---|---|---|
+| **Review** (Mark Reviewed) | `finding_review_marks` upsert + `finding.reviewed` audit event | any user (per-user) | advances THAT user's "What's Changed" baseline in the Decision Workspace. A personal read-cursor — never changes `status`, `decision_state`, or any queue. **Ruling: KEEP** — it has actor, timestamp, persisted state, audit event, and a defined workflow effect. |
+| **Validation** | the human check of completed remediation — operationally, working the **ready-for-decision queue** (`operational_status='remediated'`, bucket "Ready to Close") | finding owner / leadership | ends in a governance decision (close or send back by adding work, which regresses the derived axis) |
+| **Approval** | `risk_approvals` (risk-lifecycle treatments pending executive sign-off; separation-of-duties) | approver ≠ proposer | gates the RISK lifecycle's pending_approval → mitigation transition. Findings have no approval object; the ops-center "Awaiting Approval" bucket cross-links to `/approvals`. |
+| **Acceptance** | `decision_state='accepted_risk'` (finding) / risk acceptance (register) | entitled human | an explicit, audited governance override — permits closure without remediation |
+| **Closure** | `decision_state='resolved'` — human-only, guarded (requires `operational_status='remediated'` OR current `accepted_risk`); org-enforced separation of duties (`risk_settings.require_finding_closure_sod`, migration `20260902`): the closer must be an identified user ≠ the remediator | entitled human | the ONLY path to derived legacy `status='closed'`; reopen = `resolved → needs_review` |
 
 ### Source Type (findings)
 DB-canonical (findings.source_type CHECK constraint — authoritative):
@@ -114,9 +199,11 @@ DB-canonical (findings.source_type CHECK constraint — authoritative):
 - `ai_governance_review` — AI governance assessment workflow (mutable, `ai_governance_assessments`)
 - `obligation_review` — obligation assessment workflow (`obligation_assessments`)
 - `dependency_review` — dependency assessment workflow (mutable, `dependency_assessments`)
+- `cyber_signal` — findings auto-created by the cyber-signal ingestion matcher (distinct from `signal`, the Intelligence Brief pipeline)
 - `signal` — signal-sourced findings
 - `manual` — manually entered findings
 - `risk` — posture signals derived from open risk register entries
+- `applicability_assessment` — findings auto-drafted by the ECL applicability workflow dispatcher (R2/Slice 6, migration `20260730`); `source_id` = `applicability_assessments.id`, one generated finding per assessment (partial unique index)
 
 ### Source Type (actions)
 - `assessment`
@@ -124,6 +211,8 @@ DB-canonical (findings.source_type CHECK constraint — authoritative):
 - `signal`
 - `manual`
 - `risk`
+- `obligation` — GAP-3 increment 3 (`20260628`); `source_id` = obligation UUID
+- `applicability_assessment` — ECL applicability workflow dispatcher (R2/Slice 6, `20260730`); `source_id` = `applicability_assessments.id`; generated markers `auto_applicability_risk_review` / `auto_applicability_evidence_request` / `auto_applicability_human_review`, each with its own partial unique dedup index
 
 ### Domain (non-exhaustive — extend as needed)
 - `Access Management`
@@ -218,6 +307,57 @@ Maps to canonical Severity enum: `Critical`, `High`, `Moderate`, `Low`
 - `needs_remediation` (triggers finding on first transition)
 
 ---
+
+### Enterprise Entity Type (enterprise_entities.entity_type CHECK constraint)
+Controlled taxonomy for the Enterprise Context Layer header. `vendor` and `ai_system`
+are intentionally NOT members — those concepts own their own tables (One concept, one
+object). Additive-only; extend via migration + this list together.
+- asset
+- application
+- business_service
+- business_unit
+- department
+- data_store
+- data_classification
+- identity
+- business_process  (added via migration 20260827; projects to asset_type `business_process`)
+
+### Enterprise Data Classification (enterprise_data_stores.data_classification CHECK constraint)
+- public
+- internal
+- confidential
+- restricted
+
+### Enterprise Relationship Node Type (enterprise_relationships.from_type / to_type CHECK constraint)
+Node types an edge endpoint may reference. `enterprise_entity` is a NEW ECL node; the
+others are existing canonical objects the graph points AT (never contains — AD-3).
+- enterprise_entity
+- vendor
+- ai_system
+- user
+
+### Enterprise Relationship Type (enterprise_relationships.relationship_type CHECK constraint)
+- depends_on
+- runs_on
+- owned_by
+- part_of
+- serves
+- processes_data_in
+
+### Applicability Decision (applicability_assessments.decision CHECK constraint)
+Single source of truth: `APPLICABILITY_DECISIONS` in `src/engine/applicability/v1/types.ts`
+(the pure engine's output enum) — the DB CHECK mirrors it; keep in lockstep.
+- affected
+- potentially_affected
+- not_affected
+- needs_review
+- unknown
+
+### Applicability Confidence Band (applicability_assessments.confidence_band CHECK constraint)
+Single source of truth: `CONFIDENCE_BANDS` in `src/engine/applicability/v1/types.ts`.
+- low
+- medium
+- high
 
 ## Key Relationships
 
@@ -344,6 +484,31 @@ These must always be structured records. Never store as free text:
 - Posture Snapshots
 
 If a future module is tempted to store these as JSON blobs in a publication object, that is a domain model violation.
+
+---
+
+## Ratified architecture direction — Enterprise Risk Graph convergence (2026-07-10)
+
+The canonical **noun is the tenant Asset as a node in an Enterprise Risk Graph** — not
+the Vendor (one asset type) and not the Finding (a work-queue projection of an Observed
+Condition). Vulnerability/threat intelligence **resolves to canonical tenant assets via
+the single `ApplicabilityEngineV1`** (EAR-AD-3), never directly to vendors. This is a
+**convergence** program onto existing (currently dark) machinery — there is exactly ONE
+applicability engine, ONE evidence model (WORM by-value `applicability_evidence`), ONE
+risk model, ONE lifecycle (the two-axis Finding/Risk model), ONE graph, ONE asset model.
+No vendor-specific resolver, no second applicability engine, no parallel affected-vendor
+contract.
+
+Governing documents (authoritative for this direction):
+- `docs/architecture/proposals/ENTERPRISE-RISK-GRAPH.md` — architecture + rulings R1–R3.
+- `docs/architecture/proposals/CONVERGENCE-ROADMAP.md` — executable phases C0–C9, flags,
+  gates, deprecation/deletion criteria.
+- `docs/specs/finding-lifecycle-spec.md` — the ratified two-axis Finding lifecycle.
+
+**Status:** direction ratified; implementation is dark behind existing flags (+ the new
+engine-only `SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED`), flag-off byte-identical, GATE-B
+for production. The legacy signal→vendor path (`signal_vendor_links` as affected-truth)
+is retained for compatibility until the operator-approved cutover gate, then retired.
 
 ---
 

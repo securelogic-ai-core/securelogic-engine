@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { isActiveStatus } from "@/app/findings/decisionQueue";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import {
@@ -6,12 +7,20 @@ import {
   getVendorAssessmentsForVendor,
   getVendorReviews,
   getVendorFindings,
+  getVendorSignalContext,
+  getVendorAiDependencies,
   listVendorAssuranceDocuments,
   getVendorAssuranceExtraction,
+  getFrameworks,
+  getFrameworkRequirements,
+  type Framework,
+  type FrameworkRequirements,
   type Vendor,
   type VendorAssessment,
   type VendorReview,
   type VendorFinding,
+  type VendorSignalContext,
+  type VendorAiDependency,
   type VendorAssuranceDocument,
   type VendorAssuranceExtractionResponse,
 } from "@/lib/api";
@@ -176,6 +185,38 @@ function assessmentTypeLabel(raw: string): string {
   return ASSESSMENT_TYPE_LABELS[raw] ?? raw;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Compact empty state (V-1 layout balance)
+// A sparse vendor stacks several sections, each otherwise a tall centered
+// "No X recorded" card, which reads as an unbalanced column of near-empty
+// boxes against a dense sidebar. This renders empty sections as a single
+// slim, quiet row instead — the sections remain, but they stop shouting.
+// An optional inline action lets an empty section point at its create path.
+// ─────────────────────────────────────────────────────────────
+
+function SectionEmpty({
+  children,
+  action,
+}: {
+  children: React.ReactNode;
+  action?: { href: string; label: string };
+}) {
+  return (
+    <div className="bg-brand-surface border border-brand-line rounded-lg px-4 py-3 flex items-center justify-between gap-3">
+      <p className="text-xs" style={{ color: "#64748b" }}>{children}</p>
+      {action && (
+        <Link
+          href={action.href}
+          className="text-xs font-medium flex-shrink-0 transition-opacity hover:opacity-80"
+          style={{ color: "#00c4b4" }}
+        >
+          {action.label} →
+        </Link>
+      )}
+    </div>
+  );
+}
+
 function OpenFindingsSectionClient({
   findings,
   vendorId,
@@ -183,32 +224,33 @@ function OpenFindingsSectionClient({
   findings: VendorFinding[];
   vendorId: string;
 }) {
-  const openFindings = findings.filter((f) => f.status === "open" || f.status === "in_progress");
+  const activeFindings = findings.filter((f) => isActiveStatus(f.status));
 
   return (
     <section>
       <div className="flex items-center gap-2 mb-4">
         <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
-          Open Findings
+          Active Findings
         </h2>
         <span
           className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold"
           style={{
-            background: openFindings.length > 0 ? "rgba(239,68,68,0.15)" : "rgba(148,163,184,0.12)",
-            color: openFindings.length > 0 ? "#fca5a5" : "#475569",
+            background: activeFindings.length > 0 ? "rgba(239,68,68,0.15)" : "rgba(148,163,184,0.12)",
+            color: activeFindings.length > 0 ? "#fca5a5" : "#475569",
           }}
         >
-          {openFindings.length}
+          {activeFindings.length}
         </span>
       </div>
 
-      {openFindings.length === 0 ? (
-        <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>No open findings</p>
-        </div>
+      {activeFindings.length === 0 ? (
+        <SectionEmpty action={{ href: `/vendors/${vendorId}/assess`, label: "Run an assessment" }}>
+          No active findings for this vendor — findings appear here when an
+          assessment or review cycle identifies an issue.
+        </SectionEmpty>
       ) : (
         <div className="space-y-3">
-          {openFindings.map((f) => {
+          {activeFindings.map((f) => {
             const sevStyle =
               f.severity === "Critical" ? { background: "rgba(239,68,68,0.15)", color: "#fca5a5" } :
               f.severity === "High"     ? { background: "rgba(249,115,22,0.15)", color: "#fdba74" } :
@@ -252,15 +294,109 @@ function OpenFindingsSectionClient({
 }
 
 // ─────────────────────────────────────────────────────────────
+// Section: Framework Assessments (per-vendor progress)
+// ─────────────────────────────────────────────────────────────
+
+type VendorFrameworkProgress = {
+  framework: Framework;
+  summary: FrameworkRequirements["summary"];
+};
+
+/** date-only render of an ISO timestamp; em-dash when absent. */
+function fmtDateOnly(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function FrameworkAssessmentsSection({
+  progress,
+  vendorId,
+}: {
+  progress: VendorFrameworkProgress[];
+  vendorId: string;
+}) {
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
+          Framework Assessments
+        </h2>
+      </div>
+      {/* O-5: this is assessment PROGRESS — how much of the questionnaire has
+          been answered for THIS vendor. It is not readiness and not the vendor
+          risk score; the bar stays a single neutral color so completion can
+          never read as a verdict. */}
+      {progress.length === 0 ? (
+        <SectionEmpty
+          action={{ href: `/vendors/${vendorId}/assess/framework`, label: "Assess against a framework" }}
+        >
+          No framework assessments started for this vendor
+        </SectionEmpty>
+      ) : (
+        <div className="space-y-3">
+          {progress.map(({ framework, summary }) => {
+            const assessed = summary.total - summary.not_assessed;
+            return (
+              <div
+                key={framework.id}
+                className="bg-brand-surface border border-brand-line rounded-xl p-5"
+              >
+                <div className="flex items-start justify-between gap-3 mb-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
+                      {framework.name}{" "}
+                      <span style={{ color: "#475569" }}>v{framework.version}</span>
+                    </p>
+                    <p className="text-xs mt-0.5" style={{ color: "#64748b" }}>
+                      {assessed} of {summary.total} requirements assessed ·{" "}
+                      {summary.progress_pct}% — completion, not readiness
+                    </p>
+                  </div>
+                  <Link
+                    href={`/vendors/${vendorId}/assess/framework?frameworkId=${framework.id}`}
+                    className="text-xs font-medium hover:underline flex-shrink-0"
+                    style={{ color: "#00c4b4" }}
+                  >
+                    Continue assessment →
+                  </Link>
+                </div>
+                <div className="rounded-full h-1.5" style={{ background: "rgba(255,255,255,0.08)" }}>
+                  <div
+                    className="h-1.5 rounded-full"
+                    style={{ width: `${summary.progress_pct}%`, background: "#00c4b4" }}
+                  />
+                </div>
+                <p className="text-xs mt-2" style={{ color: "#475569" }}>
+                  Last updated: {fmtDateOnly(summary.last_response_at)}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Section: Assessment History
 // ─────────────────────────────────────────────────────────────
 
 function AssessmentHistorySection({
   assessments,
   assessmentIdsWithFindings,
+  vendorId,
 }: {
   assessments: VendorAssessment[];
   assessmentIdsWithFindings: Set<string>;
+  vendorId: string;
 }) {
   return (
     <section>
@@ -277,9 +413,9 @@ function AssessmentHistorySection({
       </div>
 
       {assessments.length === 0 ? (
-        <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>No assessments recorded</p>
-        </div>
+        <SectionEmpty action={{ href: `/vendors/${vendorId}/assess`, label: "New assessment" }}>
+          No assessments recorded
+        </SectionEmpty>
       ) : (
         <div className="space-y-3">
           {assessments.map((a) => (
@@ -332,7 +468,13 @@ function AssessmentHistorySection({
 // Section: Review Cycle History
 // ─────────────────────────────────────────────────────────────
 
-function ReviewCyclesSection({ reviews }: { reviews: VendorReview[] }) {
+function ReviewCyclesSection({
+  reviews,
+  vendorId,
+}: {
+  reviews: VendorReview[];
+  vendorId: string;
+}) {
   return (
     <section>
       <div className="flex items-center gap-2 mb-4">
@@ -348,9 +490,9 @@ function ReviewCyclesSection({ reviews }: { reviews: VendorReview[] }) {
       </div>
 
       {reviews.length === 0 ? (
-        <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>No review cycles recorded</p>
-        </div>
+        <SectionEmpty action={{ href: `/vendors/${vendorId}/review`, label: "Start a review cycle" }}>
+          No review cycles recorded
+        </SectionEmpty>
       ) : (
         <div className="space-y-3">
           {reviews.map((r) => (
@@ -477,15 +619,49 @@ function riskLevelFromScore(score: number | null): string | null {
   return "Critical Risk";
 }
 
+// The order the engine's pure formula (src/api/lib/vendorRiskScore.ts) weights
+// open findings by. Used only to render the SAME factors the engine scored on —
+// this never recomputes or changes the score itself.
+const FINDING_SEVERITY_ORDER = ["Critical", "High", "Moderate", "Low"] as const;
+
+// V-4: explain the score the engine already returned in terms of the two inputs
+// the page already holds — the vendor's criticality and its open findings by
+// severity — so the number is attributable, not opaque. Null-safe: a vendor with
+// no criticality and no findings still yields a truthful sentence.
+function riskScoreDerivation(
+  criticality: string | null,
+  severityCounts: Record<string, number>,
+  totalOpenFindings: number,
+): string {
+  const critLabel = criticality
+    ? criticality.charAt(0).toUpperCase() + criticality.slice(1)
+    : "unspecified";
+
+  const breakdown = FINDING_SEVERITY_ORDER
+    .filter((s) => (severityCounts[s] ?? 0) > 0)
+    .map((s) => `${severityCounts[s]} ${s}`)
+    .join(", ");
+
+  const findingsPhrase =
+    totalOpenFindings === 0
+      ? "no open findings"
+      : `${totalOpenFindings} open finding${totalOpenFindings === 1 ? "" : "s"}` +
+        (breakdown ? ` (${breakdown})` : "");
+
+  return `Based on ${critLabel} criticality and ${findingsPhrase}.`;
+}
+
 function RiskSummaryCard({
   vendor,
-  openFindingCount,
+  activeFindingCount,
+  findingSeverityCounts,
   assessmentCount,
   reviewCount,
   lastActivityDate,
 }: {
   vendor: Vendor;
-  openFindingCount: number;
+  activeFindingCount: number;
+  findingSeverityCounts: Record<string, number>;
   assessmentCount: number;
   reviewCount: number;
   lastActivityDate: string | null;
@@ -493,6 +669,11 @@ function RiskSummaryCard({
   const score = vendor.current_risk_score ?? null;
   const scoreColor = riskScoreColor(score);
   const riskLevel = riskLevelFromScore(score);
+  const derivation = riskScoreDerivation(
+    vendor.criticality,
+    findingSeverityCounts,
+    activeFindingCount,
+  );
 
   const riskLevelBadgeStyle: React.CSSProperties =
     riskLevel === "Low Risk"      ? { background: "rgba(34,197,94,0.15)",   color: "#86efac" } :
@@ -525,14 +706,25 @@ function RiskSummaryCard({
             No score yet — create an assessment to compute
           </p>
         )}
+        {/* V-4: attribute the score to the factors the engine weighted it on. */}
+        {score != null && (
+          <div className="mt-3">
+            <p className="text-xs font-medium mb-0.5" style={{ color: "#64748b" }}>
+              How this score is derived
+            </p>
+            <p className="text-xs leading-relaxed" style={{ color: "#94a3b8" }}>
+              {derivation}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Counts */}
       <div className="space-y-2 mb-4">
         <div className="flex items-center justify-between">
-          <span className="text-xs" style={{ color: "#94a3b8" }}>Open findings</span>
-          <span className="text-xs font-semibold" style={{ color: openFindingCount > 0 ? "#fca5a5" : "#cbd5e1" }}>
-            {openFindingCount}
+          <span className="text-xs" style={{ color: "#94a3b8" }}>Active findings</span>
+          <span className="text-xs font-semibold" style={{ color: activeFindingCount > 0 ? "#fca5a5" : "#cbd5e1" }}>
+            {activeFindingCount}
           </span>
         </div>
         <div className="flex items-center justify-between">
@@ -648,14 +840,40 @@ export default async function VendorDetailPage({
     entitlementLevel === "team";
   if (!isPlatformUser) redirect("/dashboard");
 
-  const [vendor, assessmentsData, reviewsData, vendorFindingsData] = await Promise.all([
+  const [vendor, assessmentsData, reviewsData, vendorFindingsData, signalContext, aiDeps] = await Promise.all([
     getVendor(token, id),
     getVendorAssessmentsForVendor(token, id, 20),
     getVendorReviews(token, id, 20),
     getVendorFindings(token, id),
+    // Live intelligence: matched external signals for this vendor (previously
+    // only fetched on the assess page — the resting detail view answered "how
+    // risky is this vendor NOW" with a stale point-in-time card).
+    getVendorSignalContext(token, id),
+    // Concentration signal: which AI systems depend on this vendor.
+    getVendorAiDependencies(token, id),
   ]);
 
   if (!vendor) redirect("/vendors");
+
+  // Framework assessment progress for THIS vendor: activated frameworks with
+  // at least one recorded response. Answered here means the vendor-scoped
+  // questionnaire (assessment_type='vendor', subject_id=vendor) — a separate
+  // truth from org readiness and from the vendor risk score (O-5).
+  const frameworksData = await getFrameworks(token);
+  const activeFrameworks = frameworksData?.frameworks ?? [];
+  const frameworkProgress: VendorFrameworkProgress[] = (
+    await Promise.all(
+      activeFrameworks.map(async (fw) => {
+        const reqs = await getFrameworkRequirements(token, fw.id, "vendor", vendor.id);
+        if (!reqs || reqs.summary.total === 0) return null;
+        // Only frameworks where this vendor's assessment has started — an
+        // untouched framework belongs behind the "Assess against a framework"
+        // CTA, not as a wall of 0% rows.
+        if (reqs.summary.total - reqs.summary.not_assessed === 0) return null;
+        return { framework: fw, summary: reqs.summary };
+      })
+    )
+  ).filter((p): p is VendorFrameworkProgress => p !== null);
 
   // Vendor-Assurance read: latest finalized document + its extraction +
   // current decision per field projected at read time. No stored snapshot.
@@ -675,8 +893,18 @@ export default async function VendorDetailPage({
   const reviews = reviewsData?.reviews ?? [];
   const vendorFindings = vendorFindingsData?.findings ?? [];
 
-  const openFindings = vendorFindings.filter(
-    (f) => f.status === "open" || f.status === "in_progress"
+  const activeFindings = vendorFindings.filter(
+    (f) => isActiveStatus(f.status)
+  );
+  // Open findings by severity — the finding half of the vendor risk-score
+  // derivation (V-4). Built from data already on the page; no extra fetch.
+  const findingSeverityCounts = activeFindings.reduce<Record<string, number>>(
+    (acc, f) => {
+      const sev = f.severity ?? "";
+      if (sev) acc[sev] = (acc[sev] ?? 0) + 1;
+      return acc;
+    },
+    {}
   );
   const inProgressReviews = reviews.filter((r) => r.status === "in_progress");
 
@@ -731,12 +959,15 @@ export default async function VendorDetailPage({
       <div className="flex flex-col lg:flex-row gap-8">
         {/* Left: main content */}
         <div className="flex-1 min-w-0 space-y-8">
-          <OpenFindingsSectionClient findings={openFindings} vendorId={vendor.id} />
+          <OpenFindingsSectionClient findings={activeFindings} vendorId={vendor.id} />
+          <LiveIntelligenceSection context={signalContext} vendorId={vendor.id} />
+          <FrameworkAssessmentsSection progress={frameworkProgress} vendorId={vendor.id} />
           <AssessmentHistorySection
             assessments={assessments}
             assessmentIdsWithFindings={assessmentIdsWithFindings}
+            vendorId={vendor.id}
           />
-          <ReviewCyclesSection reviews={reviews} />
+          <ReviewCyclesSection reviews={reviews} vendorId={vendor.id} />
           <CompleteReviewSection
             inProgressReviews={inProgressReviews}
             vendorId={vendor.id}
@@ -746,9 +977,11 @@ export default async function VendorDetailPage({
         {/* Right: sidebar */}
         <div className="w-full lg:w-72 flex-shrink-0 space-y-4">
           <VendorDetailsCard vendor={vendor} />
+          <DependentAiSystemsCard dependencies={aiDeps} />
           <RiskSummaryCard
             vendor={vendor}
-            openFindingCount={openFindings.length}
+            activeFindingCount={activeFindings.length}
+            findingSeverityCounts={findingSeverityCounts}
             assessmentCount={assessments.length}
             reviewCount={reviews.length}
             lastActivityDate={lastActivityDate}
@@ -761,6 +994,133 @@ export default async function VendorDetailPage({
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Live Intelligence (W5 read-surface wiring): matched external signals for
+// this vendor, on the RESTING detail view — previously fetched only on the
+// assess page, so "how risky is this vendor NOW" had no live answer here.
+// ─────────────────────────────────────────────────────────────
+
+const RELEVANCE_COLOR: Record<string, string> = {
+  high: "#fca5a5",
+  medium: "#fcd34d",
+  low: "#86efac",
+};
+
+function LiveIntelligenceSection({
+  context,
+  vendorId,
+}: {
+  context: VendorSignalContext | null;
+  vendorId: string;
+}) {
+  const matches = context?.matchedSignals ?? [];
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
+          Live Intelligence
+        </h2>
+        <span
+          className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
+          style={{
+            background: matches.length > 0 ? "rgba(245,158,11,0.15)" : "rgba(148,163,184,0.12)",
+            color: matches.length > 0 ? "#fcd34d" : "#475569",
+          }}
+        >
+          {matches.length}
+        </span>
+      </div>
+      {matches.length === 0 ? (
+        <div className="bg-brand-surface border border-brand-line rounded-lg px-4 py-3">
+          <p className="text-xs leading-relaxed" style={{ color: "#64748b" }}>
+            Live Intelligence matches external threat and vendor signals to this vendor
+            as they arrive. No signals currently match — new intelligence will appear here
+            automatically as the pipeline links it to this vendor.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {context?.overallRiskSummary && (
+            <p className="text-sm" style={{ color: "#cbd5e1" }}>{context.overallRiskSummary}</p>
+          )}
+          {matches.map((m, i) => (
+            <div
+              key={i}
+              className="rounded-lg border p-3"
+              style={{ background: "rgba(255,255,255,0.02)", borderColor: "#1e2d45" }}
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className="text-xs font-semibold"
+                  style={{ color: RELEVANCE_COLOR[(m.relevance ?? "").toLowerCase()] ?? "#94a3b8" }}
+                >
+                  {m.severity}
+                </span>
+                <span className="text-sm" style={{ color: "#e2e8f0" }}>{m.title}</span>
+              </div>
+            </div>
+          ))}
+          <Link
+            href={`/vendors/${vendorId}/assess`}
+            className="inline-block text-xs font-medium"
+            style={{ color: "#00c4b4" }}
+          >
+            Reassess with this intelligence →
+          </Link>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Dependent AI Systems (W5 read-surface wiring): the reverse supply-chain
+// edge — which AI systems break if this vendor does (concentration risk).
+// ─────────────────────────────────────────────────────────────
+
+const DEP_ROLE_LABELS: Record<string, string> = {
+  model_provider: "Model provider",
+  runtime: "Runtime",
+  registry: "Registry",
+  training_data: "Training data",
+};
+
+function DependentAiSystemsCard({ dependencies }: { dependencies: VendorAiDependency[] }) {
+  return (
+    <div
+      className="rounded-lg border p-4"
+      style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e2d45" }}
+    >
+      <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "#64748b" }}>
+        Dependent AI Systems ({dependencies.length})
+      </h3>
+      {dependencies.length === 0 ? (
+        <p className="text-xs" style={{ color: "#475569" }}>
+          No AI systems record a dependency on this vendor. Dependencies are
+          declared on an AI system's detail page —{" "}
+          <Link href="/ai-systems" style={{ color: "#93c5fd" }}>
+            review your AI inventory
+          </Link>{" "}
+          if this vendor powers one.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {dependencies.map((d) => (
+            <div key={d.dependency_id} className="flex items-center gap-2 text-sm">
+              <Link href={`/ai-systems/${d.ai_system_id}`} style={{ color: "#93c5fd" }}>
+                {d.ai_system_name}
+              </Link>
+              <span className="text-xs ml-auto" style={{ color: "#64748b" }}>
+                {DEP_ROLE_LABELS[d.dependency_role] ?? d.dependency_role}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

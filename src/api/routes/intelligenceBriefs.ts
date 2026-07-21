@@ -33,7 +33,13 @@ import {
   finalizeBrief,
   type CyberSignalForBrief
 } from "../lib/intelligenceBriefGenerator.js";
+import { intelligenceEventsEnabled } from "../lib/signals/intelligenceEventsFeatureFlag.js";
+import { signalRecencyEnabled } from "../lib/signalRecencyFeatureFlag.js";
+import { briefRelevanceEnabled, filterSignalsByOrgRelevance } from "../lib/briefRelevance.js";
+import { canonicalizeVendorName } from "../lib/cyberSignalProcessingService.js";
+import { fetchBriefEventRows } from "../lib/signals/eventBriefSource.js";
 import { personalizeBriefItems } from "../lib/briefPersonalizationService.js";
+import { fetchApplicabilityCitations } from "../lib/briefApplicabilityCitations.js";
 import { sendBrief } from "../lib/briefEmailSender.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { encryptField } from "../lib/fieldEncryption.js";
@@ -42,7 +48,6 @@ import {
   fetchPriorBriefContext
 } from "../lib/briefSynthesizer.js";
 import { parseContentJson } from "../lib/parseBriefContentJson.js";
-import { getSourceDisplayName } from "../lib/sourceDisplayNames.js";
 
 const router = Router();
 
@@ -147,31 +152,82 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
 
     // Pull cyber signals in the window — include global signals (organization_id IS NULL)
     // because the pipeline bridges all ingested signals as global (no org scope).
-    const signalsResult = await client.query<CyberSignalForBrief>(
-      `SELECT
-         id,
-         signal_type,
-         severity,
-         normalized_summary,
-         affected_cve,
-         affected_vendor,
-         source,
-         ingestion_timestamp,
-         raw_payload
-       FROM cyber_signals
-       WHERE (organization_id = $1 OR organization_id IS NULL)
-         AND ingestion_timestamp >= $2
-         AND ingestion_timestamp < $3
-       ORDER BY ingestion_timestamp DESC`,
-      [orgId, periodStart.toISOString(), periodEnd.toISOString()]
-    );
+    // Event-native (IE-AD-11): when the flag is on, build the brief from canonical
+    // Intelligence Events (normalized, deduplicated, quality-gated); flag OFF →
+    // the exact legacy raw cyber_signals query, byte-identical.
+    // IQP Q2 (audit defect #4): recency flag ON → window on the EFFECTIVE
+    // event date COALESCE(published_at, ingestion_timestamp), so source-dated
+    // old items are suppressed. Flag OFF → the exact legacy query.
+    const signals: CyberSignalForBrief[] = intelligenceEventsEnabled()
+      ? await fetchBriefEventRows(client, periodStart.toISOString(), periodEnd.toISOString())
+      : (
+          await client.query<CyberSignalForBrief>(
+            signalRecencyEnabled()
+              ? `SELECT
+                   id,
+                   signal_type,
+                   severity,
+                   normalized_summary,
+                   affected_cve,
+                   affected_vendor,
+                   source,
+                   ingestion_timestamp,
+                   raw_payload
+                 FROM cyber_signals
+                 WHERE (organization_id = $1 OR organization_id IS NULL)
+                   AND COALESCE(published_at, ingestion_timestamp) >= $2
+                   AND COALESCE(published_at, ingestion_timestamp) < $3
+                 ORDER BY ingestion_timestamp DESC`
+              : `SELECT
+                   id,
+                   signal_type,
+                   severity,
+                   normalized_summary,
+                   affected_cve,
+                   affected_vendor,
+                   source,
+                   ingestion_timestamp,
+                   raw_payload
+                 FROM cyber_signals
+                 WHERE (organization_id = $1 OR organization_id IS NULL)
+                   AND ingestion_timestamp >= $2
+                   AND ingestion_timestamp < $3
+                 ORDER BY ingestion_timestamp DESC`,
+            [orgId, periodStart.toISOString(), periodEnd.toISOString()]
+          )
+        ).rows;
 
-    const signals = signalsResult.rows;
+    // IQP Q3 (#5a): INTERIM org-relevance gate — same rule as the scheduler.
+    // Vendor-keyed breach claims (third_party_breach) render only when their
+    // vendor canonically matches an ACTIVE org vendor (the matcher's own
+    // comparison). Flag OFF ⇒ skipped ⇒ byte-identical.
+    let relevantSignals = signals;
+    if (briefRelevanceEnabled()) {
+      const vendorResult = await client.query<{ name: string }>(
+        `SELECT name FROM vendors WHERE organization_id = $1 AND status = 'active'`,
+        [orgId]
+      );
+      const canonicalVendorSet = new Set(
+        vendorResult.rows.map((v) => canonicalizeVendorName(v.name))
+      );
+      const { kept, suppressed } = filterSignalsByOrgRelevance(
+        signals,
+        canonicalVendorSet,
+        canonicalizeVendorName
+      );
+      relevantSignals = kept;
+      if (suppressed.length > 0) {
+        logger.info(
+          { event: "irrelevant_signal_suppressed", organizationId: orgId, count: suppressed.length },
+          "Org-relevance gate suppressed unmatched vendor-keyed signals from the brief"
+        );
+      }
+    }
 
     // Run pure generation — returns the pre-enrichment shortlist (top
     // ENRICHMENT_SHORTLIST items by composite ranking key). Enrichment runs
     // on the shortlist, then capByUrgencyBuckets reduces to BRIEF_MAX_ITEMS.
-    const base = generateBrief(signals);
+    const base = generateBrief(relevantSignals);
 
     // Enrich items with Claude analyst commentary (non-fatal — always resolves)
     const enrichedItems = await enrichBriefItems(base.shortlist, orgId);
@@ -903,6 +959,14 @@ router.get("/intelligence-briefs/:id", async (req, res) => {
       [id, orgId]
     );
 
+    // EAR P11 — applicability citations (double-fenced dark, fail-open):
+    // {} unless BOTH the citation flag and the ECL flag are on, so the
+    // response below is byte-identical to today while dark.
+    const citations = await fetchApplicabilityCitations(
+      orgId,
+      itemsResult.rows.map((item) => item.cyber_signal_id)
+    );
+
     return res.status(200).json({
       id: brief.id,
       period_start: brief.period_start,
@@ -915,26 +979,35 @@ router.get("/intelligence-briefs/:id", async (req, res) => {
       generated_at: brief.generated_at,
       published_at: brief.published_at,
       created_at: brief.created_at,
-      items: itemsResult.rows.map((item) => ({
-        id: item.id,
-        category: item.category,
-        relevance: item.relevance,
-        title: item.title,
-        summary: item.summary,
-        affected_cve: item.affected_cve,
-        affected_vendor: item.affected_vendor,
-        source_slug: item.source_slug,
-        source_display: getSourceDisplayName(item.source_slug),
-        signal_type: item.signal_type,
-        severity: item.severity,
-        cyber_signal_id: item.cyber_signal_id,
-        ingestion_timestamp: item.ingestion_timestamp,
-        sort_order: parseInt(item.sort_order, 10),
-        why_it_matters: item.why_it_matters,
-        recommended_actions: item.recommended_actions,
-        analyst_notes: item.analyst_notes,
-        urgency: item.urgency
-      }))
+      items: itemsResult.rows.map((item) => {
+        const itemCitations =
+          item.cyber_signal_id !== null ? citations[item.cyber_signal_id] : undefined;
+        return {
+          id: item.id,
+          category: item.category,
+          relevance: item.relevance,
+          title: item.title,
+          summary: item.summary,
+          affected_cve: item.affected_cve,
+          affected_vendor: item.affected_vendor,
+          // R1: source_slug / source_display are no longer returned on the
+          // CUSTOMER brief payload. Which feed an item arrived through is our
+          // operational detail. Retained internally on brief_items.source_slug and
+          // intelligence_brief_item_provenance for audit and lineage.
+          signal_type: item.signal_type,
+          severity: item.severity,
+          cyber_signal_id: item.cyber_signal_id,
+          ingestion_timestamp: item.ingestion_timestamp,
+          sort_order: parseInt(item.sort_order, 10),
+          why_it_matters: item.why_it_matters,
+          recommended_actions: item.recommended_actions,
+          analyst_notes: item.analyst_notes,
+          urgency: item.urgency,
+          ...(itemCitations && itemCitations.length > 0
+            ? { applicability_citations: itemCitations }
+            : {})
+        };
+      })
     });
   } catch (err) {
     logger.error(

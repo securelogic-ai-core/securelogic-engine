@@ -1,22 +1,26 @@
 /**
- * gapReport.ts — SOC 2 Gap Analysis PDF Report
+ * gapReport.ts — Framework Gap Analysis PDF Report
  *
  * Produces a management-level PDF gap report for a compliance framework:
  * executive summary, full requirements coverage table grouped by category,
- * per-gap remediation guidance, and open findings summary.
+ * per-gap remediation guidance, and open findings summary. All titles and
+ * narrative language derive from the selected framework's name/version —
+ * never from a hard-coded framework.
  *
  * Routes:
  *   GET /api/frameworks/:frameworkId/gap-report.pdf
  */
 
 import { Router } from "express";
-import type { Response } from "express";
 import PDFDocument from "pdfkit";
 import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { sqlFindingActive } from "../lib/metricDefinitions.js";
+import { readinessScore, coverageCaption } from "../lib/frameworkCoverage.js";
+import { secureLogicLogo, stampFooters } from "../lib/reportBranding.js";
 
 const router = Router();
 
@@ -38,7 +42,10 @@ const TEXT_PRIMARY  = "#0F172A";
 const TEXT_MUTED    = "#64748B";
 const WHITE         = "#FFFFFF";
 
-// ─── SOC 2 category labels ─────────────────────────────────────────────────────
+// ─── Well-known category labels ────────────────────────────────────────────────
+// Keyed by requirement reference-id prefix. Only activates when a framework's
+// reference ids actually use these prefixes (SOC 2 TSC today); any other
+// framework's categories fall back to the raw prefix.
 
 const CATEGORY_NAMES: Record<string, string> = {
   CC1: "Control Environment",
@@ -78,7 +85,7 @@ type FindingCount = {
   count:    number;
 };
 
-type GapReportData = {
+export type GapReportData = {
   generated_at:          string;
   org_name:              string;
   framework:             { id: string; name: string; version: string };
@@ -180,7 +187,7 @@ async function assembleGapReport(
     `SELECT severity, COUNT(*)::text AS count
        FROM findings
        WHERE organization_id = $1
-         AND status IN ('open', 'in_progress')
+         AND ${sqlFindingActive()}
        GROUP BY severity
        ORDER BY CASE severity
          WHEN 'Critical' THEN 1 WHEN 'High'     THEN 2
@@ -273,7 +280,8 @@ async function assembleGapReport(
   });
 
   const total         = requirements.length;
-  const readiness_score   = total === 0 ? 0 : Math.round((satisfied / total) * 100);
+  // Item-7 ruling: satisfied-only, via the one shared coverage rule.
+  const readiness_score   = readinessScore(satisfied, total);
   const total_mapped_controls = allControlIds.length;
 
   return {
@@ -296,19 +304,23 @@ async function assembleGapReport(
 
 // ─── PDF generation ────────────────────────────────────────────────────────────
 
-function generateGapReportPDF(data: GapReportData, res: Response): void {
+export function generateGapReportPDF(data: GapReportData, out: NodeJS.WritableStream): void {
+  // Every title/label below derives from the selected framework — a NIST CSF
+  // report must never carry SOC 2 language (staging REP-2).
+  const fwLabel = `${data.framework.name} ${data.framework.version}`.trim();
+
   const doc = new PDFDocument({
     margin:      50,
     size:        "A4",
     bufferPages: true,
     info: {
-      Title:   `SOC 2 Gap Analysis — ${data.org_name}`,
+      Title:   `${data.framework.name} Gap Analysis — ${data.org_name}`,
       Author:  "SecureLogic AI",
-      Subject: "SOC 2 Type II Gap Analysis",
+      Subject: `${fwLabel} Gap Analysis`,
     },
   });
 
-  doc.pipe(res);
+  doc.pipe(out);
 
   const pageW          = doc.page.width;    // 595.28
   const pageH          = doc.page.height;   // 841.89
@@ -321,24 +333,30 @@ function generateGapReportPDF(data: GapReportData, res: Response): void {
   // Top accent bar
   doc.rect(0, 0, pageW, 8).fill(TEAL);
 
-  // Logo
-  doc
-    .fillColor(TEAL)
-    .font("Helvetica-Bold")
-    .fontSize(20)
-    .text("SecureLogic AI", margin, 80, { width: contentW });
-  doc
-    .fillColor(TEXT_MUTED)
-    .font("Helvetica")
-    .fontSize(10)
-    .text("Security Intelligence Platform", margin, 104, { width: contentW });
+  // Logo — the canonical SecureLogic AI logo asset; text wordmark only if
+  // the asset is unavailable (never a substitute logo).
+  const logo = secureLogicLogo();
+  if (logo) {
+    doc.image(logo, margin, 64, { width: 90 });
+  } else {
+    doc
+      .fillColor(TEAL)
+      .font("Helvetica-Bold")
+      .fontSize(20)
+      .text("SecureLogic AI", margin, 80, { width: contentW });
+    doc
+      .fillColor(TEXT_MUTED)
+      .font("Helvetica")
+      .fontSize(10)
+      .text("Security Intelligence Platform", margin, 104, { width: contentW });
+  }
 
   // Main title block
   doc
     .fillColor(TEXT_PRIMARY)
     .font("Helvetica-Bold")
     .fontSize(28)
-    .text("SOC 2 Type II Gap Analysis", margin, 200, { width: contentW });
+    .text(`${fwLabel} Gap Analysis`, margin, 200, { width: contentW });
   doc
     .fillColor(TEXT_MUTED)
     .font("Helvetica")
@@ -458,11 +476,14 @@ function generateGapReportPDF(data: GapReportData, res: Response): void {
   doc.y = gridTop + 2 * (boxH + gap) + 20;
 
   // Assessment summary paragraph
+  // Item-7 ruling: the breakdown sentence is the shared caption, so this PDF
+  // can never phrase coverage differently from the dashboard.
   const summaryText =
     `As of ${fmtDate(data.generated_at)}, ${data.org_name} has achieved ${data.readiness_score}% ` +
     `readiness against ${data.framework.name} ${data.framework.version} requirements. ` +
-    `${data.satisfied} of ${data.total_requirements} requirements are fully satisfied by mapped ` +
-    `and assessed controls. ` +
+    `Of ${data.total_requirements} requirements: ` +
+    `${coverageCaption({ satisfied: data.satisfied, partial: data.partial, unmapped: data.unmapped })} ` +
+    `(partially covered requirements earn no score credit). ` +
     `${gapCount} requirement${gapCount !== 1 ? "s have" : " has"} been identified as ` +
     `gap${gapCount !== 1 ? "s" : ""} requiring immediate or near-term remediation.`;
 
@@ -488,11 +509,11 @@ function generateGapReportPDF(data: GapReportData, res: Response): void {
     riskColor  = AMBER;
   } else if (data.readiness_score >= 40) {
     riskLabel  = "ELEVATED RISK";
-    riskDetail = "Significant control gaps exist. Remediation required before SOC 2 audit.";
+    riskDetail = `Significant control gaps exist. Remediation required to reach ${data.framework.name} readiness.`;
     riskColor  = AMBER;
   } else {
     riskLabel  = "HIGH RISK";
-    riskDetail = "Major coverage gaps. SOC 2 audit readiness is not achievable without substantial remediation.";
+    riskDetail = `Major coverage gaps. ${data.framework.name} readiness is not achievable without substantial remediation.`;
     riskColor  = RED;
   }
 
@@ -832,7 +853,7 @@ function generateGapReportPDF(data: GapReportData, res: Response): void {
     .fillColor(TEXT_MUTED)
     .font("Helvetica")
     .fontSize(9)
-    .text("Active findings that may affect SOC 2 compliance.", margin, findY, { width: contentW });
+    .text(`Active findings that may affect ${data.framework.name} compliance.`, margin, findY, { width: contentW });
   findY = doc.y + 20;
 
   const totalFindings = data.findings_by_severity.reduce((s, f) => s + f.count, 0);
@@ -887,8 +908,8 @@ function generateGapReportPDF(data: GapReportData, res: Response): void {
         .font("Helvetica-Oblique")
         .fontSize(8)
         .text(
-          "Open findings should be reviewed and remediated prior to SOC 2 audit. " +
-          "Critical and High findings in particular represent material risk to audit outcomes.",
+          `Open findings should be reviewed and remediated to support ${data.framework.name} readiness. ` +
+          "Critical and High findings in particular represent material risk to assessment outcomes.",
           margin, findY,
           { width: contentW, lineGap: 1 }
         );
@@ -897,28 +918,14 @@ function generateGapReportPDF(data: GapReportData, res: Response): void {
 
   // ─── Stamp footers on all pages ───────────────────────────────────────────────
 
-  const range      = (doc as any).bufferedPageRange() as { start: number; count: number };
-  const totalPages = range.count;
-
-  for (let i = 0; i < totalPages; i++) {
-    doc.switchToPage(i);
-    const footerY = pageH - 28;
-    doc.rect(margin, footerY - 8, contentW, 0.5).fill(RULE_COLOR);
-    doc
-      .fillColor(TEXT_MUTED)
-      .font("Helvetica")
-      .fontSize(8)
-      .text("SecureLogic AI \u2014 Confidential", margin, footerY, {
-        width: contentW / 2, lineBreak: false,
-      });
-    doc
-      .fillColor(TEXT_MUTED)
-      .font("Helvetica")
-      .fontSize(8)
-      .text(`Page ${i + 1} of ${totalPages}`, margin + contentW / 2, footerY, {
-        width: contentW / 2, align: "right", lineBreak: false,
-      });
-  }
+  // stampFooters zeroes the bottom margin while writing, so footer text in the
+  // margin zone can no longer trigger pdfkit's implicit page break (the source
+  // of the footer-only artifact pages \u2014 staging REP-3).
+  stampFooters(doc, {
+    leftText:  "SecureLogic AI \u2014 Confidential",
+    textColor: TEXT_MUTED,
+    ruleColor: RULE_COLOR,
+  });
 
   doc.end();
 }
@@ -960,7 +967,7 @@ router.get(
     }
 
     const fileDate = new Date().toISOString().slice(0, 10);
-    const filename = `soc2-gap-report-${safeFilename(data.org_name)}-${fileDate}.pdf`;
+    const filename = `${safeFilename(data.framework.name)}-gap-report-${safeFilename(data.org_name)}-${fileDate}.pdf`;
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);

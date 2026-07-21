@@ -35,6 +35,7 @@ import { severityToPriority } from "../lib/postureComputation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { computeVendorRiskScore } from "../lib/vendorRiskScore.js";
+import { sqlFindingActive } from "../lib/metricDefinitions.js";
 
 const router = Router();
 
@@ -306,7 +307,7 @@ router.post(
                JOIN vendor_assessments va ON va.id::text = f.source_id::text
                WHERE va.vendor_id = $1
                  AND f.organization_id = $2
-                 AND f.status IN ('open', 'in_progress')`,
+                 AND ${sqlFindingActive("f.operational_status")}`,
               [input.vendor_id, organizationId]
             );
 

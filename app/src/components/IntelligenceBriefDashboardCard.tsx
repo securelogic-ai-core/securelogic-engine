@@ -3,17 +3,19 @@ import type {
   IntelligenceBriefDetailResponse,
   IntelligenceBriefItem,
 } from "@/lib/api";
+import { formatDateOnlyUTC } from "@/lib/dates";
+import { briefAgeDays, staleAgeLabel, STALE_AFTER_DAYS } from "@/lib/briefStaleness";
 
 interface IntelligenceBriefDashboardCardProps {
   brief: IntelligenceBriefDetailResponse;
 }
 
+// period_end is a Postgres DATE — format through the UTC-pinned helper
+// (item 2b) so the card can never disagree with the brief page's date.
 function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
+  return (
+    formatDateOnlyUTC(dateStr, { year: "numeric", month: "long", day: "numeric" }) ?? dateStr
+  );
 }
 
 type UrgencyCounts = {
@@ -46,7 +48,7 @@ type CardAccent = {
  *
  *   any immediate>0 → red    ("Immediate action")
  *   else any near_term>0 → amber ("Near-term focus")
- *   else                 → teal  ("Today's intelligence")
+ *   else                 → teal  ("Current intelligence")
  *
  * Hex codes rather than Tailwind tokens because the inline-style stripe
  * needs an exact value and the eyebrow contrasts against slate-800.
@@ -58,8 +60,21 @@ function cardAccent(counts: UrgencyCounts): CardAccent {
   if (counts.near_term > 0) {
     return { stripe: "#EF9F27", eyebrow: "Near-term focus", eyebrowColor: "#854F0B" };
   }
-  return { stripe: "#1D9E75", eyebrow: "Today's intelligence", eyebrowColor: "#0F6E56" };
+  return { stripe: "#1D9E75", eyebrow: "Current intelligence", eyebrowColor: "#0F6E56" };
 }
+
+/**
+ * Staleness (walkthrough item 4): rule and label live in @/lib/briefStaleness —
+ * shared with the legacy newsletter-issue BriefCard so both Latest Brief
+ * surfaces warn identically. A stale brief additionally drops its urgency
+ * accent here (an 8-week-old "Immediate action" stripe is itself a false
+ * claim) and carries the explicit age warning instead.
+ */
+const STALE_ACCENT: CardAccent = {
+  stripe: "#64748b",
+  eyebrow: "Previous brief",
+  eyebrowColor: "#94a3b8",
+};
 
 /**
  * Fallback teaser built from the urgency mix when synthesis.teaser is null.
@@ -85,9 +100,11 @@ export function IntelligenceBriefDashboardCard({
   const synthesis = brief.content_json?.synthesis ?? null;
   const headline = synthesis?.headline ?? null;
   const counts = countByUrgency(brief.items);
-  const accent = cardAccent(counts);
+  const ageDays = briefAgeDays(brief.period_end);
+  const isStale = ageDays > STALE_AFTER_DAYS;
+  const accent = isStale ? STALE_ACCENT : cardAccent(counts);
   const teaser = synthesis?.teaser ?? urgencyTeaser(counts);
-  const title = headline ?? "Daily Intelligence Brief";
+  const title = headline ?? "Intelligence Brief";
 
   return (
     <Link href={`/briefs/${brief.id}`} className="block group">
@@ -104,6 +121,11 @@ export function IntelligenceBriefDashboardCard({
         <p className="text-xs text-slate-500 font-medium mt-0.5">
           Intelligence Brief · {date}
         </p>
+        {isStale && (
+          <p className="text-xs font-semibold mt-1.5" style={{ color: "#f59e0b" }}>
+            {staleAgeLabel(ageDays)}
+          </p>
+        )}
 
         <h3 className="text-slate-100 font-bold text-base leading-snug mt-2 mb-2 group-hover:text-brand-teal transition-colors">
           {title}

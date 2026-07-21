@@ -26,6 +26,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { validateRequirementCreate } from "../lib/requirementValidation.js";
 import { validateRequirementResponseUpsert } from "../lib/requirementResponseValidation.js";
+import { assessmentProgress } from "../lib/frameworkCoverage.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 
 const router = Router();
@@ -353,7 +354,9 @@ router.get(
      - subject_id: uuid (required for vendor; defaults to org_id for self)
 
    Response includes per-requirement response (or null) and a
-   summary with readiness_score = (pass + partial * 0.5) / total.
+   summary with progress_pct = assessed / total (0–100).
+   O-5 ruling: responses measure assessment PROGRESS only — readiness
+   comes from satisfied control mappings (/frameworks/:id/readiness).
    ========================================================= */
 
 router.get(
@@ -474,8 +477,17 @@ router.get(
       let partial = 0;
       let fail = 0;
       let not_assessed = 0;
+      // Most recent response timestamp — "last updated" for progress surfaces.
+      // pg returns timestamptz as Date; compare by epoch and emit ISO.
+      let lastResponseMs: number | null = null;
 
       const requirementList = requirements.map((row) => {
+        if (row.response_assessed_at) {
+          const ms = new Date(row.response_assessed_at as unknown as string).getTime();
+          if (!Number.isNaN(ms) && (lastResponseMs === null || ms > lastResponseMs)) {
+            lastResponseMs = ms;
+          }
+        }
         const hasResponse = row.response_id !== null;
         if (!hasResponse || row.response_status === "not_assessed") {
           not_assessed++;
@@ -503,9 +515,6 @@ router.get(
         };
       });
 
-      const readiness_score =
-        total === 0 ? 0 : (pass + partial * 0.5) / total;
-
       res.status(200).json({
         framework: { id: framework.id, name: framework.name, version: framework.version },
         requirements: requirementList,
@@ -515,7 +524,8 @@ router.get(
           partial,
           fail,
           not_assessed,
-          readiness_score: Math.round(readiness_score * 10000) / 10000
+          progress_pct: assessmentProgress(pass + partial + fail, total),
+          last_response_at: lastResponseMs === null ? null : new Date(lastResponseMs).toISOString()
         }
       });
     } catch (err) {

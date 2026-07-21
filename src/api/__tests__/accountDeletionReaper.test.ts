@@ -99,6 +99,25 @@ describe("erasure ordering + completeness", () => {
     expect(consentScrub).toBeLessThan(tombstone); // tombstone is LAST (scrubs the email)
   });
 
+  it("Category-B deletes every per-user preference/state table, org+user scoped where org-scoped", async () => {
+    installDefaultQueries();
+    await processReapJob(job());
+    // user-scoped only
+    for (const t of ["password_history", "user_alert_preferences", "alert_sends"]) {
+      const call = mockQuery.mock.calls.find((c) => new RegExp(`DELETE FROM ${t} WHERE user_id`).test(String(c[0])));
+      expect(call, t).toBeTruthy();
+      expect(call![1]).toEqual([USER]);
+    }
+    // org+user scoped (CASCADE never fires — the users row is tombstoned).
+    // briefing_layouts / finding_saved_views: Briefing Initiative B2 (+ the
+    // pre-existing saved-views erasure gap closed with it).
+    for (const t of ["dashboard_preferences", "finding_saved_views", "briefing_layouts"]) {
+      const call = mockQuery.mock.calls.find((c) => new RegExp(`DELETE FROM ${t} WHERE organization_id`).test(String(c[0])));
+      expect(call, t).toBeTruthy();
+      expect(call![1]).toEqual([ORG, USER]);
+    }
+  });
+
   it("scrubs the deprecated reviewer_id in all 5 TEXT tables, matched by the captured email", async () => {
     installDefaultQueries();
     await processReapJob(job());

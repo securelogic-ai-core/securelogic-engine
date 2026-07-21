@@ -25,6 +25,8 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { renderProductKnowledge } from "../lib/productKnowledge.js";
+import { sqlFindingActive, sqlFindingClosed } from "../lib/metricDefinitions.js";
+import { toDisplayScore } from "../lib/postureDisplay.js";
 
 const router = Router();
 
@@ -216,28 +218,36 @@ router.post(
           [organizationId]
         );
 
-        // 3. Findings summary
+        // 3. Findings summary — the ACTIVE population (Metric Contract), so the
+        // assistant answers with the same numbers the product shows.
+        //
+        // Two defects fixed here: the severity literals were lower-cased
+        // ('critical', 'high', 'medium', 'low') and matched NOTHING — the domain
+        // is 'Critical' | 'High' | 'Moderate' | 'Low' (findings.ts VALID_SEVERITIES),
+        // so all four counts were permanently 0 and 'medium' was not even a value.
+        // And `closed_count` was `status != 'open'`, reporting in-progress work as
+        // closed. The assistant was reasoning from a posture of zero severe findings.
         const findingsSummaryResult = await pg.query<{
-          open_count: string;
-          critical_open: string;
-          high_open: string;
-          medium_open: string;
-          low_open: string;
+          active_count: string;
+          critical_active: string;
+          high_active: string;
+          medium_active: string;
+          low_active: string;
           closed_count: string;
           immediate_priority: string;
           vendor_sourced: string;
           signal_sourced: string;
         }>(
           `SELECT
-             COUNT(*) FILTER (WHERE status = 'open')                                 AS open_count,
-             COUNT(*) FILTER (WHERE status = 'open' AND severity = 'critical')       AS critical_open,
-             COUNT(*) FILTER (WHERE status = 'open' AND severity = 'high')           AS high_open,
-             COUNT(*) FILTER (WHERE status = 'open' AND severity = 'medium')         AS medium_open,
-             COUNT(*) FILTER (WHERE status = 'open' AND severity = 'low')            AS low_open,
-             COUNT(*) FILTER (WHERE status != 'open')                                AS closed_count,
-             COUNT(*) FILTER (WHERE status = 'open' AND priority = 'immediate')      AS immediate_priority,
-             COUNT(*) FILTER (WHERE source_type = 'vendor_review')                   AS vendor_sourced,
-             COUNT(*) FILTER (WHERE source_type = 'signal')                          AS signal_sourced
+             COUNT(*) FILTER (WHERE ${sqlFindingActive()})                              AS active_count,
+             COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND severity = 'Critical')    AS critical_active,
+             COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND severity = 'High')        AS high_active,
+             COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND severity = 'Moderate')    AS medium_active,
+             COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND severity = 'Low')         AS low_active,
+             COUNT(*) FILTER (WHERE ${sqlFindingClosed()})                              AS closed_count,
+             COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND priority = 'immediate')   AS immediate_priority,
+             COUNT(*) FILTER (WHERE source_type = 'vendor_review')                      AS vendor_sourced,
+             COUNT(*) FILTER (WHERE source_type = 'signal')                             AS signal_sourced
            FROM findings
            WHERE organization_id = $1`,
           [organizationId]
@@ -403,11 +413,11 @@ router.post(
       };
 
       const findingsSummary = {
-        open_count:         parseInt(fs?.open_count ?? "0", 10),
-        critical_open:      parseInt(fs?.critical_open ?? "0", 10),
-        high_open:          parseInt(fs?.high_open ?? "0", 10),
-        medium_open:        parseInt(fs?.medium_open ?? "0", 10),
-        low_open:           parseInt(fs?.low_open ?? "0", 10),
+        active_count:       parseInt(fs?.active_count ?? "0", 10),
+        critical_active:    parseInt(fs?.critical_active ?? "0", 10),
+        high_active:        parseInt(fs?.high_active ?? "0", 10),
+        medium_active:      parseInt(fs?.medium_active ?? "0", 10),
+        low_active:         parseInt(fs?.low_active ?? "0", 10),
         closed_count:       parseInt(fs?.closed_count ?? "0", 10),
         immediate_priority: parseInt(fs?.immediate_priority ?? "0", 10),
         vendor_sourced:     parseInt(fs?.vendor_sourced ?? "0", 10),
@@ -426,7 +436,9 @@ router.post(
         risk_scale: riskScaleContext,
         posture: posture
           ? {
-              overall_score:    posture.overall_score,
+              // Health-style display value (walkthrough ruling): Ask answers must
+              // quote the same number the dashboard shows.
+              overall_score:    toDisplayScore(posture.overall_score),
               overall_severity: posture.overall_severity,
               open_findings:    posture.open_finding_count,
               open_actions:     posture.open_action_count,
@@ -436,7 +448,7 @@ router.post(
           : null,
         domains: domainResult.rows.map((d) => ({
           domain:   d.domain,
-          score:    d.score,
+          score:    toDisplayScore(d.score),
           severity: d.severity,
           trend:    d.trend_direction,
           findings: d.finding_count,
@@ -492,8 +504,10 @@ router.post(
       res.status(200).json({
         answer,
         context_used: {
-          posture_score:   posture?.overall_score ?? null,
-          findings_count:  findingsSummary.open_count,
+          // Same mapper as the LLM context above — context_used is customer-visible
+          // and must quote the same health-style number the answer was built from.
+          posture_score:   toDisplayScore(posture?.overall_score ?? null),
+          findings_count:  findingsSummary.active_count,
           risks_count:     topRisksResult.rows.length,
           vendors_count:   parseInt(vendorCountResult.rows[0]?.total ?? "0", 10),
           as_of:           posture?.snapshot_date ?? null,

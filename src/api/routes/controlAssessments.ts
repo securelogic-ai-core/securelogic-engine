@@ -37,7 +37,9 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import {
   validateControlAssessmentCreate,
   validateControlAssessmentStatusTransition,
@@ -111,8 +113,8 @@ router.post(
   "/control-assessments",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -222,7 +224,7 @@ router.post(
     } finally {
       client.release();
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -235,8 +237,8 @@ router.get(
   "/control-assessments",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -318,7 +320,7 @@ router.get(
       );
       res.status(500).json({ error: "control_assessments_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -334,8 +336,8 @@ router.get(
   "/control-assessments/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -396,7 +398,7 @@ router.get(
       );
       res.status(500).json({ error: "control_assessment_get_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -417,8 +419,8 @@ router.patch(
   "/control-assessments/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -713,7 +715,7 @@ router.patch(
     } finally {
       client.release();
     }
-  }
+  })
 );
 
 export default router;

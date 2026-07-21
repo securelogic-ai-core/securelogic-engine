@@ -9,16 +9,17 @@
  * immutable, always creates a finding at POST using source_type='ai_review').
  */
 
-const VALID_STATUSES = new Set([
-  "not_started",
-  "in_progress",
-  "compliant",
-  "non_compliant",
-  "partially_compliant"
-]);
+// Status-machine data delegates to the AssessmentTypeSpec registry (EAR P10,
+// EAR-AD-5) — the single source of truth for assessment lifecycles. Values are
+// byte-identical to the historical literals (asserted by the spec lockstep test).
+import { ASSESSMENT_TYPE_SPECS } from "./assessmentSpec.js";
+
+const SPEC = ASSESSMENT_TYPE_SPECS.ai_governance;
+
+const VALID_STATUSES = SPEC.statuses;
 
 // Statuses that trigger finding creation on first transition.
-export const FINDING_STATUSES = new Set(["non_compliant", "partially_compliant"]);
+export const FINDING_STATUSES = SPEC.findingStatuses;
 
 const VALID_SEVERITIES = new Set(["Critical", "High", "Moderate", "Low"]);
 

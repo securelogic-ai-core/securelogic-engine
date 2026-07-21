@@ -4,15 +4,16 @@
  * No I/O. Returns a discriminated union: { input } | { error, detail? }.
  */
 
-const VALID_STATUSES = new Set([
-  "not_started",
-  "in_progress",
-  "passed",
-  "failed",
-  "remediation_required"
-]);
+// Status-machine data delegates to the AssessmentTypeSpec registry (EAR P10,
+// EAR-AD-5) — the single source of truth for assessment lifecycles. Values are
+// byte-identical to the historical literals (asserted by the spec lockstep test).
+import { ASSESSMENT_TYPE_SPECS } from "./assessmentSpec.js";
 
-const FINDING_STATUSES = new Set(["failed", "remediation_required"]);
+const SPEC = ASSESSMENT_TYPE_SPECS.control;
+
+const VALID_STATUSES = SPEC.statuses;
+
+const FINDING_STATUSES = SPEC.findingStatuses;
 
 const VALID_SEVERITIES = new Set(["Critical", "High", "Moderate", "Low"]);
 

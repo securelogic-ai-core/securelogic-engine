@@ -129,3 +129,29 @@ If `lifetime_total` becomes load-bearing on a hot path later, switch to
 - Posture / brief surfacing of accepted suggestions. The accept handler
   writes a regular `signal_*_links` row, which existing posture and brief
   consumers already read; no extra wiring needed in this package.
+
+## "Review Suggested Links" reskin (ERIP Packages 1+2 — dark)
+
+The queue is a RATIFIED customer surface (this doc + `CANONICAL_DOMAIN_MODEL.md`).
+The Enterprise Risk Workspace program does **not** remove it — it reskins it in
+plain enterprise language behind the `SECURELOGIC_RISK_WORKSPACE_ENABLED` flag
+(default off). **Flag off is byte-for-byte the legacy "Matcher queue"** page; flag
+on renders "Review Suggested Links".
+
+What changes only when the flag is on (see `app/src/app/queue/page.tsx`,
+`components/queue/SuggestionList.tsx`, `components/queue/reviewLanguage.ts`):
+
+- Title/description/empty-states drop pipeline vocabulary ("matcher", "signal").
+- Rows lead with the **affected entity + a confidence band + a plain "why matched"**
+  sentence (`describeMatchReason`) — never a raw `match_reason` code.
+- The intelligence line uses the canonical **Intelligence Event title**
+  (`event_title` from `SUGGESTION_ENRICHED_SELECT`), degrading to "External
+  intelligence signal" when the Intelligence Events layer is dark — **never a raw
+  signal UUID**. This also fixes the pre-existing field-name mismatch where the row
+  read `signal_title` while the endpoint returns `event_title`.
+
+The engine query, the accept/dismiss server actions, the 5-second local-undo model,
+and the "no signal-detail route / no bulk actions" decisions above are **unchanged**.
+Enrichment on the list endpoint is now live (`event_*` + `target_name`), superseding
+the "What this package does not include → server-side enrichment" bullet above for
+the workspace layout only.

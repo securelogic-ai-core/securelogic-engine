@@ -39,7 +39,9 @@ type Props = {
 // the IDs validated by the engine (src/api/routes/dashboardPreferences.ts).
 // ─────────────────────────────────────────────────────────────
 
-const TILE_LABELS: Record<string, string> = {
+// Exported for the Briefing's legacy-projection disclosure (B2) — ONE label
+// vocabulary for the 12 legacy tiles, not a second hand-synced copy.
+export const TILE_LABELS: Record<string, string> = {
   posture_score:       "Posture Score",
   risks_breakdown:     "Risks",
   risk_heatmap:        "Risk Heatmap",
@@ -49,7 +51,8 @@ const TILE_LABELS: Record<string, string> = {
   actions_ring:        "Actions",
   open_items_aging:    "Open Items Aging",
   vendor_risk:         "Vendor Risk",
-  framework_gaps:      "Framework Gaps",
+  // Display label only — the tile id stays framework_gaps (persisted layouts).
+  framework_gaps:      "Largest Readiness Gaps",
   compliance_coverage: "Compliance",
   inventory_grid:      "Inventory",
 };
@@ -125,7 +128,7 @@ export function PostureDashboard({ summary, frameworkPairs, postureSnapshots, us
 
   function renderTile(id: string) {
     switch (id) {
-      case "posture_score":       return <PostureScoreTile posture={posture} />;
+      case "posture_score":       return <PostureScoreTile posture={posture} findings={summary.findings} />;
       case "risks_breakdown":     return <RisksBreakdown risks_summary={risks_summary} />;
       case "risk_heatmap":        return <RiskHeatmap risks_summary={risks_summary} />;
       case "posture_trend":       return <PostureTrendChart snapshots={postureSnapshots} />;

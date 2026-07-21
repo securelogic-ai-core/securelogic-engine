@@ -1,8 +1,23 @@
 import Link from "next/link";
 import type { NewsletterIssue, BriefSignal, BriefSections } from "@/lib/api";
+import { briefAgeDays, staleAgeLabel, isBriefStale } from "@/lib/briefStaleness";
 
 interface BriefCardProps {
   issue: NewsletterIssue;
+  /**
+   * True when the viewer holds a platform-family entitlement (premium /
+   * platform / team). A platform tenant must NEVER be shown Free-tier or
+   * Brief Pro upsell messaging — if the engine returns a locked issue anyway
+   * (entitlement drift), the card degrades to a neutral unavailable state
+   * instead of the consumer teaser.
+   */
+  viewerIsPlatform?: boolean;
+  /**
+   * Enable the stale-age warning. Set on "Latest Brief" surfaces (dashboard),
+   * where an old brief silently presenting as current is a defect — NOT on
+   * the /briefs archive grid, where old issues are simply the archive.
+   */
+  showStaleWarning?: boolean;
 }
 
 function parseRiskCounts(sectionsJson: BriefSections | null): {
@@ -85,11 +100,79 @@ function formatDate(dateStr: string) {
   });
 }
 
+function issueDateForStaleness(issue: NewsletterIssue): string {
+  return issue.publish_date ?? issue.created_at;
+}
+
+/**
+ * Amber stale-content warning (walkthrough item 4, extended to the legacy
+ * newsletter-issue fallback). Same rule + label as the canonical
+ * IntelligenceBriefDashboardCard, via @/lib/briefStaleness.
+ */
+function StaleNotice({ issue }: { issue: NewsletterIssue }) {
+  const ageDays = briefAgeDays(issueDateForStaleness(issue));
+  return (
+    <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-700/50 bg-amber-900/30 px-3 py-2">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5">
+        <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495ZM10 5a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 5Zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clipRule="evenodd" />
+      </svg>
+      <p className="text-xs font-semibold text-amber-300">
+        {staleAgeLabel(ageDays)} Last published {formatDate(issueDateForStaleness(issue))}.
+      </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Neutral unavailable card — a platform-entitled viewer holding a locked
+// issue. That combination is entitlement drift (the platform plan includes
+// the full brief), so the card states unavailability plainly: no Free-tier
+// framing, no Brief Pro upsell, no checkout link.
+// ---------------------------------------------------------------------------
+
+function PlatformUnavailableCard({ issue, stale }: { issue: NewsletterIssue; stale: boolean }) {
+  const date = issue.publish_date
+    ? formatDate(issue.publish_date)
+    : formatDate(issue.created_at);
+
+  const teaser = issue.thesis_headline ?? issue.summary;
+
+  return (
+    <div className="bg-brand-surface border border-brand-line border-l-4 border-l-slate-600 rounded-xl p-6">
+      <p className="text-xs text-slate-500 font-semibold uppercase tracking-wide mb-2">
+        {date}
+      </p>
+
+      {stale && <StaleNotice issue={issue} />}
+
+      <h3 className="text-slate-100 font-bold text-base leading-snug mb-2">
+        {issue.title}
+      </h3>
+
+      {teaser && (
+        <p className="text-slate-400 text-sm leading-relaxed mb-4">{teaser}</p>
+      )}
+
+      <div className="pt-4 border-t border-brand-line">
+        <p className="text-slate-400 text-sm">
+          The full content of this brief isn&apos;t available right now. Your plan
+          includes the Intelligence Brief — no upgrade is needed. If this
+          persists, contact{" "}
+          <a href="mailto:hello@securelogicai.com" className="text-brand-teal hover:text-teal-300 transition-colors">
+            hello@securelogicai.com
+          </a>
+          .
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Locked card — value-demonstrating teaser for free plan users
 // ---------------------------------------------------------------------------
 
-function LockedCard({ issue }: { issue: NewsletterIssue }) {
+function LockedCard({ issue, stale }: { issue: NewsletterIssue; stale: boolean }) {
   const date = issue.publish_date
     ? formatDate(issue.publish_date)
     : formatDate(issue.created_at);
@@ -112,6 +195,8 @@ function LockedCard({ issue }: { issue: NewsletterIssue }) {
       <p className="text-xs text-slate-500 font-semibold uppercase tracking-wide mb-2 pr-40">
         {date}
       </p>
+
+      {stale && <StaleNotice issue={issue} />}
 
       <h3 className="text-slate-100 font-bold text-base leading-snug mb-2">
         {issue.title}
@@ -170,13 +255,15 @@ function LockedCard({ issue }: { issue: NewsletterIssue }) {
 // Unlocked card
 // ---------------------------------------------------------------------------
 
-function UnlockedCard({ issue }: { issue: NewsletterIssue }) {
+function UnlockedCard({ issue, stale }: { issue: NewsletterIssue; stale: boolean }) {
   const date = issue.publish_date
     ? formatDate(issue.publish_date)
     : formatDate(issue.created_at);
 
   const { critical, high, signalCount, domains } = parseRiskCounts(issue.sections_json);
-  const borderAccent = cardBorderAccent(critical, high);
+  // A stale brief drops its risk accent — an 8-week-old critical stripe is
+  // itself a false claim of currency (same rule as the canonical card).
+  const borderAccent = stale ? "border-l-slate-600" : cardBorderAccent(critical, high);
 
   // Prefer thesis_headline as the descriptive hook; fall back to summary
   const hook = issue.thesis_headline ?? issue.summary;
@@ -190,6 +277,7 @@ function UnlockedCard({ issue }: { issue: NewsletterIssue }) {
           </p>
           <RiskBadges critical={critical} high={high} />
         </div>
+        {stale && <StaleNotice issue={issue} />}
         <h3 className="text-slate-100 font-bold text-base leading-snug mb-2 group-hover:text-brand-teal transition-colors">
           {issue.title}
         </h3>
@@ -226,9 +314,17 @@ function UnlockedCard({ issue }: { issue: NewsletterIssue }) {
   );
 }
 
-export function BriefCard({ issue }: BriefCardProps) {
-  if (issue.locked) return <LockedCard issue={issue} />;
-  return <UnlockedCard issue={issue} />;
+export function BriefCard({
+  issue,
+  viewerIsPlatform = false,
+  showStaleWarning = false,
+}: BriefCardProps) {
+  const stale = showStaleWarning && isBriefStale(issueDateForStaleness(issue));
+  if (issue.locked && viewerIsPlatform) {
+    return <PlatformUnavailableCard issue={issue} stale={stale} />;
+  }
+  if (issue.locked) return <LockedCard issue={issue} stale={stale} />;
+  return <UnlockedCard issue={issue} stale={stale} />;
 }
 
 function LockIcon() {

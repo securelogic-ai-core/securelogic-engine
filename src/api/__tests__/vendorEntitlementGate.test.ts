@@ -54,8 +54,13 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "vendorReviews.ts": 4,
   "vendorAssessmentAnalysis.ts": 1,
   "vendorSignalContext.ts": 1,
-  // findings family (#244)
-  "findings.ts": 5,
+  // findings family (#244); +3 for GET /findings/:id/context (P3.0),
+  // POST /findings/:id/review (P3.2a), and GET /findings/by-entity (#587,
+  // work-first entity search) — all dark ERIP Decision Workspace routes, each
+  // premium-gated (never standard; the STD==0 assertion below still holds).
+  // +1 for POST /findings/from-signal (Brief → Finding promotion): it CREATES a
+  // finding, so it is gated exactly like every other finding write.
+  "findings.ts": 10,
   "findingsExport.ts": 1,
   // risk engine
   "risks.ts": 8,
@@ -72,7 +77,8 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "signalObligationLinks.ts": 4,
   "signalMatchSuggestions.ts": 5,
   // controls / frameworks
-  "controls.ts": 5,
+  // 6 since GET /controls/:id/findings — dual-gated like the rest.
+  "controls.ts": 6,
   "controlMappings.ts": 2,
   "controlAssessments.ts": 4,
   "controlComplianceContext.ts": 1,
@@ -81,12 +87,14 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "frameworkReadiness.ts": 1,
   "requirements.ts": 6,
   // obligations
-  "obligations.ts": 5,
+  // 6 since GET /obligations/:id/findings — dual-gated like the rest.
+  "obligations.ts": 6,
   "obligationMappings.ts": 2,
   "obligationAssessments.ts": 4,
   "obligationComplianceContext.ts": 1,
   // AI governance
-  "aiSystems.ts": 5,
+  // 6 since GET /ai-systems/:id/findings — dual-gated like the rest.
+  "aiSystems.ts": 6,
   "aiGovernanceAssessments.ts": 4,
   "aiSystemGovernanceContext.ts": 1,
   "aiSystemVendorDependencies.ts": 4,
@@ -94,11 +102,13 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   // assessments / evidence / dependencies
   "assess.ts": 1,
   "assessments.ts": 2,
-  "evidence.ts": 4,
+  // 6 since POST /evidence/upload + GET /evidence/:id/file (file attachments).
+  "evidence.ts": 6,
   "dependencies.ts": 5,
   "dependencyAssessments.ts": 4,
   // findings/actions/policies
-  "actions.ts": 5,
+  // 6 since POST /actions/:id/unblock (dual-gated like the rest).
+  "actions.ts": 6,
   "policies.ts": 6,
   // reports
   "executiveReport.ts": 2,
@@ -117,12 +127,30 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "auditLog.ts": 3,
 };
 
+// EAR P9 (Track C): these ten core-domain files mount the DUAL-GATE
+// `requirePremiumOrCorePlatform` (= requireEntitlementOrCapability("premium") —
+// same premium rank; flag-off behavior byte-identical, see
+// corePlatformCapability.ts). Their premium-rank gates are counted via the
+// dual-gate token instead of the bare requireEntitlement("premium").
+const DUAL_GATE_FILES: ReadonlySet<string> = new Set([
+  "vendors.ts", "aiSystems.ts", "controls.ts", "obligations.ts", "actions.ts",
+  "aiGovernanceAssessments.ts", "controlAssessments.ts", "obligationAssessments.ts",
+  "governanceReviews.ts", "vendorReviews.ts"
+]);
+const DUAL = "requirePremiumOrCorePlatform";
+
 describe("entitlement gate — Bucket A (core platform) is premium, never standard", () => {
   for (const [file, expectedPremium] of Object.entries(BUCKET_A_PREMIUM)) {
     it(`${file}: zero standard, ${expectedPremium} premium`, () => {
       const src = readRoute(file);
       expect(count(src, STD)).toBe(0);
-      expect(count(src, PREM)).toBe(expectedPremium);
+      if (DUAL_GATE_FILES.has(file)) {
+        // import + route mounts; the count below excludes the import line.
+        expect(count(src, DUAL) - count(src, `import { ${DUAL} }`)).toBe(expectedPremium);
+        expect(count(src, PREM)).toBe(0);
+      } else {
+        expect(count(src, PREM)).toBe(expectedPremium);
+      }
     });
   }
 });

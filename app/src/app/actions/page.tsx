@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getMe, getActions, type Action } from "@/lib/api";
+import { getMe, getActions, getActionsSummary, type Action } from "@/lib/api";
+import { myActionsRedirect, actionScope, showingOfTotal } from "./myActions";
+import MyActionsView from "./MyActionsView";
 
 const PRIORITY_STYLES: Record<string, React.CSSProperties> = {
   immediate: { background: "rgba(239,68,68,0.15)",   color: "#fca5a5" },
@@ -76,18 +78,15 @@ function FilterPill({
   );
 }
 
-function isOverdue(action: Action): boolean {
-  if (!action.due_date) return false;
-  if (action.status === "closed" || action.status === "accepted") return false;
-  return new Date(action.due_date) < new Date();
-}
-
 function ActionRow({ action }: { action: Action }) {
   const priorityStyle = PRIORITY_STYLES[action.priority] ?? PRIORITY_STYLES.watch!;
   const priorityLabel = PRIORITY_LABELS[action.priority] ?? action.priority;
   const statusStyle = STATUS_STYLES[action.status] ?? STATUS_STYLES.open!;
   const statusLabel = STATUS_LABELS[action.status] ?? action.status;
-  const overdue = isOverdue(action);
+  // Straight from the server (Metric Contract). The local re-derivation this
+  // replaces used NOW() instead of CURRENT_DATE, so a due-today action was
+  // overdue here and on-time on the dashboard — the same action, two answers.
+  const overdue = action.is_overdue;
 
   const dueDate = action.due_date
     ? new Date(action.due_date).toLocaleDateString("en-US", {
@@ -174,24 +173,114 @@ export default async function ActionsPage({
   const isPlatformUser = ["premium", "platform", "team"].includes(entitlementLevel);
   if (!isPlatformUser) redirect("/dashboard");
 
+  // ERIP Package 3 (Decision Workspace) — DARK. When on, /actions is the "My
+  // Actions" view (the caller's own actions across findings); a bare /actions
+  // redirects to the canonical ?view=mine form so the route reads as a redirect,
+  // not a standalone org-wide list. Flag-off = the unchanged legacy list
+  // (byte-identical). This is the minimal bridge, NOT the P3.4 saved-views system.
+  const workspace = process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true";
+  const dest = myActionsRedirect(workspace, sp.view);
+  if (dest) redirect(dest);
+
+  // Workspace remediation queue (§5 depth): SLA framing, ownership, source linkage.
+  // Scope "mine" filters to the SESSION user (R5 — never request input); "team"
+  // shows all open remediation. Flag-off falls through to the unchanged legacy list.
+  const scope = workspace ? actionScope(sp.view) : null;
+  if (scope) {
+    // R5 fail-closed: "assigned to me" is unanswerable without a user identity (an
+    // API-key caller has none). Answer it with an empty queue rather than asking the
+    // engine for something it would have to reject — and NEVER widen to the org's
+    // actions, which is the failure this guard exists to prevent.
+    if (scope === "mine" && !session.userId) {
+      return (
+        <MyActionsView
+          actions={[]}
+          scope="mine"
+          sessionUserId={undefined}
+          nowMs={Date.now()}
+          summary={null}
+          total={undefined}
+        />
+      );
+    }
+
+    // "team" (All open) is where the org-wide dashboard Actions counts now land
+    // (orgActionsHref → ?view=team). Its attention tiles must be authoritative
+    // org-wide COUNTs — not a scan of the ≤100 fetched slice — so they reconcile
+    // with the dashboard ring. `total` drives the honest "Showing N of M"
+    // disclosure.
+    //
+    // Metric Contract: honour ?status=… and ?overdue=true in the team view — a
+    // dashboard tile that says "Open" (or "Overdue") must land on a list
+    // filtered the same way (previously both params were silently dropped and
+    // every tile landed on the same unfiltered list).
+    const statusFilter = scope === "team" && sp.status ? sp.status : undefined;
+    const overdueFilter = scope === "team" && sp.overdue === "true" ? true : undefined;
+    // ?active=true is what the dashboard's ACTIVE tiles link to. Honouring it here
+    // is what finally lets the destination reproduce the tile's number instead of
+    // listing closed and accepted actions under a heading that promised N active.
+    const activeFilter = scope === "team" && sp.active === "true" ? true : undefined;
+
+    // "mine" is now filtered by the ENGINE (?owner=me), not by slicing a fetched page.
+    //
+    // It used to ask for the org's actions and filter them here. The engine caps a page at
+    // 100, so in any org with more than 100 actions a user's own assigned work could sit
+    // outside the fetched page and simply never appear — and `total` was withheld for this
+    // scope, so nothing even disclosed the truncation. A queue that silently drops your
+    // work is worse than one that says it is empty.
+    //
+    // The Findings "My Work" bucket has always done this correctly, server-side. This makes
+    // the two agree, and it is the codebase's own stated rule (workQueues.ts): never
+    // client-side filtering of a page, so queues stay correct at scale.
+    const [data, summary] = await Promise.all([
+      getActions(token, {
+        limit: 200,
+        status: statusFilter,
+        overdue: overdueFilter,
+        active: activeFilter,
+        owner: scope === "mine" ? "me" : undefined,
+      }),
+      getActionsSummary(token),
+    ]);
+    const scoped = data?.actions ?? [];
+    return (
+      <MyActionsView
+        actions={scoped}
+        scope={scope}
+        sessionUserId={session.userId}
+        nowMs={Date.now()}
+        summary={summary}
+        // `total` now shown in BOTH scopes: the engine's count of the whole matched set, so
+        // "Showing N of M" is honest for a personal queue too.
+        total={data?.total}
+        statusFilter={overdueFilter ? `${statusFilter ? `${statusFilter} · ` : ""}overdue` : statusFilter}
+      />
+    );
+  }
+
   const activeStatus   = sp.status   ?? "";
   const activePriority = sp.priority ?? "";
   const activeOverdue  = sp.overdue  === "true";
+  const activeOnly     = sp.active   === "true";
 
   const actionsData = await getActions(token, {
     status:   activeStatus   || undefined,
     priority: activePriority || undefined,
     overdue:  activeOverdue  || undefined,
+    // Honoured with the workspace flag OFF too, so the dashboard tile reconciles
+    // with its destination in BOTH flag states rather than only the new one.
+    active:   activeOnly     || undefined,
     limit: 100,
   });
 
+  // Legacy list (workspace flag off): the org-wide remediation list, unchanged.
   const actions = actionsData?.actions ?? [];
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // Honest pagination: the list is capped (≤100). Disclose "Showing N of M"
+  // whenever the true filtered total exceeds the rendered slice.
+  const truncationNote = showingOfTotal(actions.length, actionsData?.total);
 
   const openCount      = actions.filter((a) => a.status === "open" || a.status === "in_progress").length;
-  const overdueCount   = actions.filter((a) => isOverdue(a)).length;
+  const overdueCount   = actions.filter((a) => a.is_overdue).length;
   const highPrioCount  = actions.filter((a) => a.priority === "immediate" || a.priority === "near_term").length;
 
   const currentSp: Params = {
@@ -267,6 +356,13 @@ export default async function ActionsPage({
           <FilterPill label="Watch"     href={filterHref(currentSp, "priority", "watch")}         active={activePriority === "watch"} />
         </div>
       </div>
+
+      {/* Honest pagination disclosure — no silent truncation at 100. */}
+      {truncationNote && (
+        <p className="mb-3 text-xs" style={{ color: "#64748b" }}>
+          {truncationNote} — refine the filters above to narrow the list.
+        </p>
+      )}
 
       {/* Action list */}
       {actions.length === 0 ? (

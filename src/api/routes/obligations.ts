@@ -25,12 +25,15 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import {
   validateObligationCreate,
   validateObligationPatch
 } from "../lib/obligationValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { sqlFindingActive } from "../lib/metricDefinitions.js";
 
 const router = Router();
 
@@ -121,8 +124,8 @@ router.post(
   "/obligations",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -211,7 +214,7 @@ router.post(
       );
       res.status(500).json({ error: "obligation_create_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -226,8 +229,8 @@ router.get(
   "/obligations",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -320,7 +323,7 @@ router.get(
       );
       res.status(500).json({ error: "obligations_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -334,8 +337,8 @@ router.get(
   "/obligations/summary",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -380,7 +383,7 @@ router.get(
       );
       res.status(500).json({ error: "obligation_summary_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -393,8 +396,8 @@ router.get(
   "/obligations/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -437,7 +440,106 @@ router.get(
       );
       res.status(500).json({ error: "obligation_get_failed" });
     }
-  }
+  })
+);
+
+/* =========================================================
+   GET /api/obligations/:id/findings
+
+   The findings linked to ONE obligation, resolved in the database.
+
+   This exists because the detail page improvised the scoping in the browser: it
+   fetched the org's `obligation_review` findings with `limit: 100` and filtered
+   them down to the assessments of THIS obligation — assessments it had itself
+   fetched with `limit: 20`. A double truncation, and the cap was applied BEFORE
+   the filter both times. Past 100 obligation findings in the org (or 20
+   assessments on the obligation), a real finding fell off the end of the page
+   before the filter ever saw it, and the page printed a confident "0 open
+   findings" for an obligation that had them.
+
+   A truncation is not a zero. The linkage is a join, so it belongs in the join.
+
+   Findings link to the ASSESSMENT (source_id = obligation_assessments.id), never
+   to the obligation directly — the obligation is reached through it.
+
+   `total` / `active_total` / `open_total` are COUNT(*) over the WHOLE matched set,
+   never the length of the returned page: the rows are for display and are bounded;
+   the counts are the truth a tile is allowed to print.
+   ========================================================= */
+
+router.get(
+  "/obligations/:id/findings",
+  requireApiKey,
+  attachOrganizationContext,
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const obligationId = String(req.params.id ?? "").trim();
+      if (!isUuid(obligationId)) {
+        res.status(400).json({ error: "obligation_id_must_be_uuid" });
+        return;
+      }
+
+      const limit = parseLimit(req.query.limit);
+
+      // The matched set, defined ONCE and reused by both the page and the counts,
+      // so the number on the tile and the rows beneath it cannot disagree.
+      const linked = `
+        SELECT f.id, f.title, f.severity, f.status, f.operational_status,
+               f.domain, f.description, f.source_type, f.source_id,
+               f.created_at, f.updated_at
+          FROM findings f
+          JOIN obligation_assessments oa
+            ON oa.id::text = f.source_id::text
+           AND f.source_type = 'obligation_review'
+         WHERE oa.obligation_id = $1
+           AND oa.organization_id = $2
+           AND f.organization_id = $2
+      `;
+
+      const [rowsResult, countResult] = await Promise.all([
+        pg.query(
+          `WITH linked AS (${linked})
+           SELECT * FROM linked ORDER BY created_at DESC LIMIT $3`,
+          [obligationId, organizationId, limit]
+        ),
+        pg.query<{ total: string; active_total: string; open_total: string }>(
+          `WITH linked AS (${linked})
+           SELECT COUNT(*)::text                                      AS total,
+                  COUNT(*) FILTER (WHERE ${sqlFindingActive()})::text AS active_total,
+                  COUNT(*) FILTER (WHERE status = 'open')::text       AS open_total
+             FROM linked`,
+          [obligationId, organizationId]
+        )
+      ]);
+
+      const counts = countResult.rows[0];
+      res.status(200).json({
+        findings: rowsResult.rows,
+        total: parseInt(counts?.total ?? "0", 10),
+        // Both populations, both true counts. active_total is the canonical
+        // enterprise metric (operational_status <> 'closed'); open_total is the
+        // strictly-open population this page has always displayed. The route
+        // reports both honestly and lets the surface choose — converging the
+        // vocabulary is a platform decision, not a detail page's to prejudge.
+        active_total: parseInt(counts?.active_total ?? "0", 10),
+        open_total: parseInt(counts?.open_total ?? "0", 10),
+      });
+    } catch (err) {
+      logger.error(
+        { event: "obligation_findings_failed", err },
+        "GET /api/obligations/:id/findings failed"
+      );
+      res.status(500).json({ error: "obligation_findings_failed" });
+    }
+  })
 );
 
 /* =========================================================
@@ -450,8 +552,8 @@ router.patch(
   "/obligations/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -570,7 +672,7 @@ router.patch(
       );
       res.status(500).json({ error: "obligation_patch_failed" });
     }
-  }
+  })
 );
 
 export default router;

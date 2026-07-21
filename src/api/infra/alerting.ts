@@ -50,6 +50,9 @@ type SecurityAlertKind =
   | "provider_quota_exhausted"
   | "vendor_queue_backlog"
   | "feed_source_down"
+  // IQP Q5 — enrichment reliability (the April-incident detectors)
+  | "brief_enrichment_degraded"
+  | "brief_enrichment_auth_failure"
 
 const KIND_META: Record<SecurityAlertKind, { emoji: string; label: string; color: number }> = {
   account_locked:           { emoji: "🔒", label: "Account locked",           color: COLOR_SECURITY_HIGH },
@@ -57,7 +60,9 @@ const KIND_META: Record<SecurityAlertKind, { emoji: string; label: string; color
   api_key_probing:          { emoji: "🔑", label: "API key probing",          color: COLOR_SECURITY_HIGH },
   provider_quota_exhausted: { emoji: "💸", label: "Provider quota exhausted", color: COLOR_OPERATIONAL  },
   vendor_queue_backlog:     { emoji: "📥", label: "Vendor queue backlog",     color: COLOR_OPERATIONAL  },
-  feed_source_down:         { emoji: "📡", label: "Feed source down",         color: COLOR_OPERATIONAL  }
+  feed_source_down:         { emoji: "📡", label: "Feed source down",         color: COLOR_OPERATIONAL  },
+  brief_enrichment_degraded:     { emoji: "🧩", label: "Brief enrichment degraded",   color: COLOR_OPERATIONAL },
+  brief_enrichment_auth_failure: { emoji: "🔑", label: "Anthropic auth failure",      color: COLOR_OPERATIONAL }
 }
 
 function truncate(s: string, max: number): string {

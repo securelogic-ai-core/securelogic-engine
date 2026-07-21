@@ -25,6 +25,16 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { buildEvidenceSummary } from "./evidence.js";
+import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
+import {
+  sqlActionActive,
+  sqlActionOverdue,
+  sqlFindingActive,
+  sqlFindingPendingIndependentReview,
+  sqlRiskActive,
+} from "../lib/metricDefinitions.js";
+import { riskLifecycleEnabled } from "../lib/riskLifecycleFeatureFlag.js";
+import { toDisplayScore, toDisplayDomain } from "../lib/postureDisplay.js";
 
 const router = Router();
 
@@ -196,18 +206,35 @@ router.get(
         domainRows = domainResult.rows;
       }
 
+      // Archived risks are HIDDEN by the /risks list (its default is
+      // `lifecycle_state IS DISTINCT FROM 'archived'`), but the risk tiles counted
+      // them — so an archived-but-open risk inflated the tile and was then missing
+      // from the page the tile linked to. This mirrors the list's default under the
+      // SAME flag, so the tile and its destination agree in BOTH flag states. Flag
+      // off: no predicate, byte-identical to before.
+      const riskArchivedFilter = riskLifecycleEnabled()
+        ? `AND lifecycle_state IS DISTINCT FROM 'archived'`
+        : ``;
+
       // -------------------------------------------------------
-      // 3. Finding counts — open findings by severity
+      // 3. Finding counts — findings that still require work, by severity
       // -------------------------------------------------------
       const findingCountResult = await pg.query<{
         severity: string;
         count: string;
       }>(
         `
+        -- Metric Contract. This hand-rolled 'status = open' was the last finding
+        -- metric outside the contract, and it broke the tile against ITSELF: the
+        -- aging numbers rendered inside this very tile count sqlFindingActive()
+        -- (open + in_progress), so "12 older than 30 days" could sit under a
+        -- headline of "9 open". It also made the word "findings" mean one number on
+        -- the dashboard and a different one in the Operations Center, which reads
+        -- active_total. One definition: a finding that still requires work.
         SELECT severity, COUNT(*)::text AS count
         FROM findings
         WHERE organization_id = $1
-          AND status = 'open'
+          AND ${sqlFindingActive()}
         GROUP BY severity
         `,
         [organizationId]
@@ -228,22 +255,26 @@ router.get(
         `
         SELECT
           ROUND(AVG(
-            CASE WHEN status NOT IN ('resolved', 'closed', 'accepted')
+            CASE WHEN ${sqlFindingActive()}
             THEN EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
             ELSE NULL END
           ))::text AS avg_age_days,
           MAX(
-            CASE WHEN status NOT IN ('resolved', 'closed', 'accepted')
+            CASE WHEN ${sqlFindingActive()}
             THEN EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
             ELSE NULL END
           )::int::text AS max_age_days,
-          COUNT(CASE WHEN status NOT IN ('resolved', 'closed', 'accepted')
+          COUNT(CASE WHEN ${sqlFindingActive()}
             AND created_at < NOW() - INTERVAL '30 days'
             THEN 1 END)::text AS older_than_30,
-          COUNT(CASE WHEN status NOT IN ('resolved', 'closed', 'accepted')
+          COUNT(CASE WHEN ${sqlFindingActive()}
             AND created_at <  NOW() - INTERVAL '7 days'
             AND created_at >= NOW() - INTERVAL '30 days'
-            THEN 1 END)::text AS older_than_7
+            THEN 1 END)::text AS older_than_7,
+          -- Pending Independent Review: remediation derived complete, governance decision
+          -- pending (finding-lifecycle-spec §1.3). Same population the ops-center
+          -- "Ready to Close" queue surfaces; exposed here as a leadership tile.
+          COUNT(*) FILTER (WHERE ${sqlFindingPendingIndependentReview()})::text AS pending_independent_review
         FROM findings
         WHERE organization_id = $1
         `,
@@ -255,13 +286,20 @@ router.get(
       const findingsMaxAge     = findingsAgingRow?.max_age_days != null ? parseInt(findingsAgingRow.max_age_days, 10) : null;
       const findingsOlderThan30 = parseInt(findingsAgingRow?.older_than_30 ?? "0", 10);
       const findingsOlderThan7  = parseInt(findingsAgingRow?.older_than_7  ?? "0", 10);
+      const findingsPendingIndependentReview = parseInt((findingsAgingRow as any)?.pending_independent_review ?? "0", 10);
 
       // -------------------------------------------------------
       // 4. Action counts — open, overdue, and aging
       // -------------------------------------------------------
+      // Metric Contract: predicates from metricDefinitions — the SAME ones the
+      // /api/actions/summary destination uses, so the dashboard tile and its
+      // click-through page reconcile exactly. ACTIVE = open|in_progress|blocked
+      // (blocked work is still work); overdue = active AND date-before-today.
       const actionCountResult = await pg.query<{
+        active_count: string;
         open_count: string;
         in_progress_count: string;
+        blocked_count: string;
         overdue_count: string;
         avg_age_days: string | null;
         max_age_days: string | null;
@@ -270,38 +308,34 @@ router.get(
       }>(
         `
         SELECT
+          COUNT(*)::text                                            AS active_count,
           COUNT(CASE WHEN status = 'open' THEN 1 END)::text        AS open_count,
           COUNT(CASE WHEN status = 'in_progress' THEN 1 END)::text AS in_progress_count,
-          COUNT(CASE WHEN due_date < CURRENT_DATE
-            AND status NOT IN ('closed', 'accepted')
-            THEN 1 END)::text AS overdue_count,
+          COUNT(CASE WHEN status = 'blocked' THEN 1 END)::text     AS blocked_count,
+          COUNT(CASE WHEN ${sqlActionOverdue()} THEN 1 END)::text  AS overdue_count,
           ROUND(AVG(
-            CASE WHEN status NOT IN ('closed', 'accepted')
-            THEN EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
-            ELSE NULL END
+            EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
           ))::text AS avg_age_days,
           MAX(
-            CASE WHEN status NOT IN ('closed', 'accepted')
-            THEN EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
-            ELSE NULL END
+            EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400
           )::int::text AS max_age_days,
-          COUNT(CASE WHEN status NOT IN ('closed', 'accepted')
-            AND created_at < NOW() - INTERVAL '30 days'
+          COUNT(CASE WHEN created_at < NOW() - INTERVAL '30 days'
             THEN 1 END)::text AS older_than_30,
-          COUNT(CASE WHEN status NOT IN ('closed', 'accepted')
-            AND created_at <  NOW() - INTERVAL '7 days'
+          COUNT(CASE WHEN created_at <  NOW() - INTERVAL '7 days'
             AND created_at >= NOW() - INTERVAL '30 days'
             THEN 1 END)::text AS older_than_7
         FROM actions
         WHERE organization_id = $1
-          AND status NOT IN ('closed', 'accepted')
+          AND ${sqlActionActive()}
         `,
         [organizationId]
       );
 
       const actionRow = actionCountResult.rows[0];
+      const activeActionCount      = actionRow ? parseInt(actionRow.active_count, 10)      : 0;
       const openActionCount        = actionRow ? parseInt(actionRow.open_count, 10)        : 0;
       const inProgressActionCount  = actionRow ? parseInt(actionRow.in_progress_count, 10) : 0;
+      const blockedActionCount     = actionRow ? parseInt(actionRow.blocked_count, 10)     : 0;
       const overdueActionCount     = actionRow ? parseInt(actionRow.overdue_count, 10)      : 0;
       const actionsAvgAge          = actionRow?.avg_age_days != null ? parseFloat(actionRow.avg_age_days) : null;
       const actionsMaxAge          = actionRow?.max_age_days != null ? parseInt(actionRow.max_age_days, 10) : null;
@@ -331,17 +365,22 @@ router.get(
       // -------------------------------------------------------
       // 5a. Open risk counts by RESIDUAL rating (Decision §4)
       // -------------------------------------------------------
+      // Metric Contract: the headline counts ALL open risks — the same
+      // population the /risks destination page shows. Risks without a residual
+      // rating land in an explicit 'Unscored' bucket instead of being silently
+      // excluded (the old IS-NOT-NULL filter made the tile total diverge from
+      // its click-through list whenever any open risk was unscored).
       const riskCountResult = await pg.query<{
         residual_rating: string;
         count: string;
       }>(
         `
-        SELECT residual_rating, COUNT(*)::text AS count
+        SELECT COALESCE(residual_rating, 'Unscored') AS residual_rating, COUNT(*)::text AS count
         FROM risks
         WHERE organization_id = $1
-          AND status NOT IN ('closed', 'transferred')
-          AND residual_rating IS NOT NULL
-        GROUP BY residual_rating
+          AND ${sqlRiskActive()}
+          ${riskArchivedFilter}
+        GROUP BY COALESCE(residual_rating, 'Unscored')
         `,
         [organizationId]
       );
@@ -350,7 +389,8 @@ router.get(
         Critical: 0,
         High: 0,
         Moderate: 0,
-        Low: 0
+        Low: 0,
+        Unscored: 0
       };
       let totalOpenRisks = 0;
       for (const row of riskCountResult.rows) {
@@ -373,7 +413,8 @@ router.get(
         SELECT inherent_rating, COUNT(*)::text AS count
         FROM risks
         WHERE organization_id = $1
-          AND status NOT IN ('closed', 'transferred')
+          AND ${sqlRiskActive()}
+          ${riskArchivedFilter}
           AND inherent_rating IS NOT NULL
         GROUP BY inherent_rating
         `,
@@ -403,7 +444,8 @@ router.get(
         SELECT domain, COUNT(*)::text AS count
         FROM risks
         WHERE organization_id = $1
-          AND status NOT IN ('closed', 'transferred')
+          AND ${sqlRiskActive()}
+          ${riskArchivedFilter}
           AND domain IS NOT NULL
         GROUP BY domain
         `,
@@ -436,7 +478,8 @@ router.get(
                COUNT(*)::text      AS count
         FROM risks
         WHERE organization_id = $1
-          AND status NOT IN ('closed', 'transferred')
+          AND ${sqlRiskActive()}
+          ${riskArchivedFilter}
           AND residual_likelihood IS NOT NULL
           AND residual_impact IS NOT NULL
         GROUP BY residual_likelihood, residual_impact
@@ -466,7 +509,8 @@ router.get(
                COUNT(*)::text      AS count
         FROM risks
         WHERE organization_id = $1
-          AND status NOT IN ('closed', 'transferred')
+          AND ${sqlRiskActive()}
+          ${riskArchivedFilter}
           AND inherent_likelihood IS NOT NULL
           AND inherent_impact IS NOT NULL
         GROUP BY inherent_likelihood, inherent_impact
@@ -591,24 +635,71 @@ router.get(
         else                        vendorByCriticality.uncategorized += n;
       }
 
+      // -------------------------------------------------------
+      // 9. EAR Phase 5: registry-wide asset rollup (asset_registry_v).
+      // Flag-gated ADDITIVE key — while SECURELOGIC_ASSET_REGISTRY_ENABLED is
+      // off the response is byte-identical to today (this is a LIVE route).
+      // -------------------------------------------------------
+      let assetsSummary: { total: number; by_type: Record<string, number> } | undefined;
+      if (assetRegistryEnabled()) {
+        const registryResult = await pg.query<{ asset_type: string; count: string }>(
+          `
+          SELECT asset_type, COUNT(*)::text AS count
+          FROM asset_registry_v
+          WHERE organization_id = $1
+          GROUP BY asset_type
+          `,
+          [organizationId]
+        );
+        const byType: Record<string, number> = {};
+        let assetTotal = 0;
+        for (const row of registryResult.rows) {
+          const n = parseInt(row.count, 10);
+          byType[row.asset_type] = n;
+          assetTotal += n;
+        }
+        assetsSummary = { total: assetTotal, by_type: byType };
+      }
+
       res.status(200).json({
+        ...(assetsSummary ? { assets: assetsSummary } : {}),
+        // Walkthrough items 1+2 ruling: posture is HEALTH-style (higher = better)
+        // on every customer surface. The DB/engine stay risk-style; the canonical
+        // mapper inverts exactly once, here at the API boundary.
         posture: {
-          overall_score: snapshotRow?.overall_score ?? null,
+          overall_score: toDisplayScore(snapshotRow?.overall_score ?? null),
           overall_severity: snapshotRow?.overall_severity ?? null,
           snapshot_date: snapshotRow?.snapshot_date ?? null
         },
-        domains: domainRows,
+        domains: domainRows.map(toDisplayDomain),
         findings: {
+          // Metric Contract, mirroring `actions` below: `active` (open|in_progress)
+          // is the authoritative "work remaining" total and equals the Operations
+          // Center's active_total and the /findings?active=true list.
+          //
+          // `open` is a DEPRECATED ALIAS carrying the identical value. It used to be
+          // `status='open'` only — a different, smaller population than the aging
+          // numbers in this same tile, so "12 older than 30 days" could appear under
+          // a headline of "9 open". Keeping it as an alias rather than a second
+          // definition means no consumer breaks and no two numbers can disagree.
+          active:        totalOpenFindings,
           open:          totalOpenFindings,
           by_severity:   bySeverity,
           avg_age_days:  findingsAvgAge,
           max_age_days:  findingsMaxAge,
           older_than_30: findingsOlderThan30,
           older_than_7:  findingsOlderThan7,
+          // Pending Independent Review — remediation complete, governance decision pending.
+          pending_independent_review: findingsPendingIndependentReview,
         },
         actions: {
+          // Metric Contract: `active` (open|in_progress|blocked) is the
+          // authoritative "work remaining" total and equals the destination
+          // page's open_count; open/in_progress/blocked are its exact parts.
+          active:        activeActionCount,
           open:          openActionCount,
           in_progress:   inProgressActionCount,
+          blocked:       blockedActionCount,
           overdue:       overdueActionCount,
           avg_age_days:  actionsAvgAge,
           max_age_days:  actionsMaxAge,

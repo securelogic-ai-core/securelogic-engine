@@ -4,31 +4,26 @@
  * No I/O. Returns a discriminated union: { input } | { error, detail? }.
  */
 
-const VALID_STATUSES = new Set([
-  "not_started",
-  "in_progress",
-  "compliant",
-  "non_compliant",
-  "partially_compliant"
-]);
+// Status-machine data delegates to the AssessmentTypeSpec registry (EAR P10,
+// EAR-AD-5) — the single source of truth for assessment lifecycles. Values are
+// byte-identical to the historical literals (asserted by the spec lockstep test).
+import { ASSESSMENT_TYPE_SPECS, specTransitionAllowed } from "./assessmentSpec.js";
+
+const SPEC = ASSESSMENT_TYPE_SPECS.obligation;
+
+const VALID_STATUSES = SPEC.statuses;
 
 // Terminal statuses — assessment cannot be modified once it reaches these states.
-export const TERMINAL_STATUSES = new Set(["compliant", "non_compliant", "partially_compliant"]);
+export const TERMINAL_STATUSES = SPEC.terminalStatuses!;
 
 // Statuses that trigger finding creation on first transition.
-export const FINDING_STATUSES = new Set(["non_compliant", "partially_compliant"]);
+export const FINDING_STATUSES = SPEC.findingStatuses;
 
 // Legal status transitions. Terminal states have empty arrays (no exit).
-export const VALID_TRANSITIONS: Record<string, readonly string[]> = {
-  not_started: ["in_progress"],
-  in_progress: ["compliant", "non_compliant", "partially_compliant"],
-  compliant: [],
-  non_compliant: [],
-  partially_compliant: []
-};
+export const VALID_TRANSITIONS = SPEC.transitions!;
 
 export function isValidTransition(from: string, to: string): boolean {
-  return (VALID_TRANSITIONS[from] ?? []).includes(to);
+  return specTransitionAllowed(SPEC, from, to);
 }
 
 const VALID_SEVERITIES = new Set(["Critical", "High", "Moderate", "Low"]);

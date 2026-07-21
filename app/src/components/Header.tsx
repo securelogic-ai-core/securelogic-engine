@@ -2,18 +2,22 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { LogoutButton } from "./LogoutButton";
 import UserMenu from "./UserMenu";
-import { NAV_ITEMS, filterNav, type NavItem } from "@/lib/navigation";
+import { getNavItems, filterNav, isNavItemActive, type NavFlags } from "@/lib/navigation";
+import { getSiteBaseUrl } from "@/lib/siteUrl";
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.securelogicai.com";
+// Marketing-site base for the logo/home link. Env-aware + build-time — see
+// getSiteBaseUrl(). Staging must set NEXT_PUBLIC_SITE_URL or this links back to prod.
+const SITE_URL = getSiteBaseUrl();
 
 // ─── Nav config ───────────────────────────────────────────────────────────────
 
-// NAV_ITEMS, filterNav, and the NavItem type are imported from
-// `@/lib/navigation` (the single source of truth shared with the Application
-// Knowledge Index generator).
+// getNavItems (legacy vs risk-workspace model), filterNav, and the NavItem type
+// come from `@/lib/navigation` (the single source of truth shared with the
+// Application Knowledge Index generator). getNavItems picks the workspace IA when
+// the risk_workspace flag is on; otherwise the legacy menu, byte-for-byte.
 
 // ─── Inline chevron (no icon-lib dependency) ──────────────────────────────────
 
@@ -68,10 +72,15 @@ function NavGroup({
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
+  // Query-aware: Operations Workspace and Finding Explorer share the /findings
+  // path, so path-only matching would highlight the wrong child (see
+  // isNavItemActive). Safe in the root layout — the tree is already dynamically
+  // rendered because layout.tsx awaits getSession() (cookies).
+  const search = useSearchParams()?.toString() ?? "";
+  const hrefs = items.map(i => i.href);
 
-  const isActive = items.some(
-    item => pathname === item.href || pathname.startsWith(item.href + "/"),
-  );
+  // Group button: descendant match, as before (`/risks/abc` keeps "Risk" lit).
+  const isActive = items.some(item => isNavItemActive(item.href, pathname, search, hrefs, true));
 
   useEffect(() => {
     if (!open) return;
@@ -122,8 +131,10 @@ function NavGroup({
               key={item.href}
               href={item.href}
               onClick={() => setOpen(false)}
-              className="block px-4 py-2.5 text-sm transition-colors hover:bg-white/5"
-              style={{ color: pathname === item.href ? "#00c4b4" : "#cbd5e1" }}
+              className="block px-4 py-2.5 text-sm whitespace-nowrap transition-colors hover:bg-white/5"
+              style={{
+                color: isNavItemActive(item.href, pathname, search, hrefs) ? "#00c4b4" : "#cbd5e1",
+              }}
             >
               {item.label}
             </Link>
@@ -147,6 +158,12 @@ interface HeaderProps {
   isAdminUser?: boolean;
   /** SSO settings link for professional+ orgs */
   isSsoEligible?: boolean;
+  /**
+   * Server-resolved feature flags for flag-gated nav items (fail-closed: a flagged
+   * item is hidden unless its key is true). Resolved in app/layout.tsx from env —
+   * this is a client component and can't read non-NEXT_PUBLIC env itself.
+   */
+  navFlags?: NavFlags;
   userName?: string;
   userEmail?: string;
   userRole?: string;
@@ -159,6 +176,7 @@ export function Header({
   isPremiumUser = false,
   isAdminUser = false,
   isSsoEligible = false,
+  navFlags,
   userName,
   userEmail,
   userRole,
@@ -176,7 +194,10 @@ export function Header({
     return () => document.removeEventListener("click", handleClick);
   }, [mobileOpen]);
 
-  const visibleNav = filterNav(NAV_ITEMS, isPlatformUser, isPremiumUser, isAdminUser);
+  const visibleNav = filterNav(getNavItems(navFlags), isPlatformUser, isPremiumUser, isAdminUser, navFlags);
+  // When the workspace IA is on, Ask leaves the primary nav and lives in the user
+  // menu (demoted, not removed). Ask is a platform-tier surface.
+  const showAskInMenu = navFlags?.risk_workspace === true && isPlatformUser;
 
   return (
     <header className="relative sticky top-0 z-50 bg-navy-900/95 backdrop-blur-md border-b border-slate-800 shadow-[0_1px_0_rgba(255,255,255,0.06),0_4px_24px_rgba(0,0,0,0.5)]">
@@ -222,6 +243,7 @@ export function Header({
                   organizationName={organizationName}
                   isPlatformUser={isPlatformUser}
                   isSsoEligible={isSsoEligible}
+                  showAskLink={showAskInMenu}
                 />
               ) : (
                 <>
@@ -306,6 +328,11 @@ export function Header({
                   );
                 })}
                 <div className="mt-2 pt-2" style={{ borderTop: "1px solid #1e293b" }}>
+                  {showAskInMenu && (
+                    <Link href="/ask" onClick={closeMobile} className="block py-2 px-3 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors">
+                      Ask SecureLogic
+                    </Link>
+                  )}
                   <Link href="/account" onClick={closeMobile} className="block py-2 px-3 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors">
                     Account
                   </Link>

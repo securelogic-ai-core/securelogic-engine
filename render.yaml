@@ -195,8 +195,63 @@ services:
         value: "true"
       - key: SECURELOGIC_ACTION_ENGINE_ENABLED        # item 1 — idempotent action writes, free
         value: "true"
+      - key: SECURELOGIC_RISK_LIFECYCLE_ENABLED       # Epic R1 — risk lifecycle, DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL (Priority 5) — DARK (default off); do NOT enable in prod until AD-17 grant + edge cap (H1) + graph load test (H2)
+        value: "false"
+      - key: SECURELOGIC_ASSET_REGISTRY_ENABLED       # EAR Phase 0 (asset registry) — DARK (default off); GATE B posture, do NOT enable in prod under the EAR goal
+        value: "false"
+      - key: SECURELOGIC_CONNECTOR_SCHEDULED_SYNC_ENABLED # ERIP E2.P1 (scheduled connector sync) — DARK (default off); triple fence: also requires ECL + asset-registry flags
+        value: "false"
+      - key: SECURELOGIC_CONNECTOR_WRITEBACK_ENABLED  # ERIP E2a (bidirectional connector writeback) — DARK (default off); only external-mutation fence; also requires ECL + asset-registry flags
+        value: "false"
+      - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED   # ERIP Package 3 (Decision Workspace) — DARK (default off); gates GET /api/findings/:id/context (read-only)
+        value: "false"
+      - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED   # Briefing Initiative B2 — DARK (default off); engine half of the two-switch: gates /api/briefing/layout (per-user Briefing layout persistence). Prod flip is GATE B.
+        value: "false"
+      - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED # ERIP E6 (approval-gated orchestration) — DARK (default off); human approval required
+        value: "false"
+      - key: SECURELOGIC_KNOWLEDGE_GRAPH_ENABLED      # ERIP E7 (knowledge graph / blast-radius) — DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_CAPABILITY_GATING_ENABLED    # EAR P9 (Track C dual-gate) — DARK (default off); flag on = entitlement OR per-org core_platform grant; entitlement-leg removal is a product STOP GATE, never this flag
+        value: "false"
+      - key: SECURELOGIC_BRIEF_APPLICABILITY_CITATION_ENABLED # EAR P11 (Brief cites applicability) — DARK (default off); double-fenced: also requires SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
+        value: "false"
+      - key: SECURELOGIC_BRIEF_QUALITY_ENABLED # IQP Q4 title/summary quality contract. OFF = titles are cut mid-word at 77 chars and stored that way. BLOCKED ON STAGING VALIDATION — flip to "true" after staging confirms headings
+        value: "false"
+      - key: SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED # ECL R2/S6 dispatcher — DARK (default off); requires ECL flag too
+        value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
+
+      # Canonical Intelligence Event projection (Pipeline Hardening / IE) — DARK.
+      # Projects cyber_signals into the global intelligence_events layer
+      # (corroboration ledger + timeline). Off => zero DB work, legacy behaviour.
+      - key: SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED
+        value: "false"
+
+      # Finding closure gate (ruling 2026-07-14) — DARK, and DELIBERATELY "false" in
+      # PRODUCTION. Refuses to close a Finding whose remediation Actions are still open
+      # (409 close_requires_remediation_complete) unless an approved risk acceptance
+      # carries the risk. This CHANGES A CUSTOMER-REACHABLE API CONTRACT: a PATCH that
+      # returns 200 today returns 409 with the gate on. Production enablement is a
+      # SEPARATE operator ruling, taken only after staging validation and an inventory of
+      # the clients/integrations that would begin receiving the 409. Off => the gate is
+      # never consulted: no query, no 409, legacy behaviour byte for byte.
+      - key: SECURELOGIC_FINDING_CLOSURE_GATE_ENABLED
+        value: "false"
+
+      # Intelligence Brief missed-week catch-up (boot-time recovery of a missed
+      # weekly Tuesday send) — DARK (default off). Initiates outbound email, so
+      # operator-owned: enable only after staging validation. Idempotency in
+      # briefEmailSender guarantees it can never double-deliver. Runs in the
+      # engine web service (server boot), not a worker.
+      - key: SECURELOGIC_BRIEF_CATCHUP_ENABLED
+        value: "false"
 
   # =========================================================
   # SECURELOGIC ENGINE — STAGING (web)
@@ -385,8 +440,77 @@ services:
         value: "true"
       - key: SECURELOGIC_ACTION_ENGINE_ENABLED        # item 1 — idempotent action writes, free
         value: "true"
+      - key: SECURELOGIC_RISK_LIFECYCLE_ENABLED       # Epic R1 — risk lifecycle, DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL (Priority 5) — DARK (default off); do NOT enable in prod until AD-17 grant + edge cap (H1) + graph load test (H2)
+        value: "false"
+      - key: SECURELOGIC_ASSET_REGISTRY_ENABLED       # EAR Phase 0 (asset registry) — DARK (default off); GATE B posture, do NOT enable in prod under the EAR goal
+        value: "false"
+      - key: SECURELOGIC_CONNECTOR_SCHEDULED_SYNC_ENABLED # ERIP E2.P1 (scheduled connector sync) — DARK (default off); triple fence: also requires ECL + asset-registry flags
+        value: "false"
+      - key: SECURELOGIC_CONNECTOR_WRITEBACK_ENABLED  # ERIP E2a (bidirectional connector writeback) — DARK (default off); only external-mutation fence; also requires ECL + asset-registry flags
+        value: "false"
+      - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED   # ERIP Package 3 (Decision Workspace) — DARK (default off); gates GET /api/findings/:id/context (read-only)
+        value: "true"
+      - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED   # Briefing Initiative B2 — ENABLED on STAGING: engine half of the two-switch; opens /api/briefing/layout (per-user Briefing layout persistence) for the staging app (app half is "true" below)
+        value: "true"
+      - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED # ERIP E6 (approval-gated orchestration) — DARK (default off); human approval required
+        value: "false"
+      - key: SECURELOGIC_KNOWLEDGE_GRAPH_ENABLED      # ERIP E7 (knowledge graph / blast-radius) — DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_CAPABILITY_GATING_ENABLED    # EAR P9 (Track C dual-gate) — DARK (default off); flag on = entitlement OR per-org core_platform grant; entitlement-leg removal is a product STOP GATE, never this flag
+        value: "false"
+      - key: SECURELOGIC_BRIEF_APPLICABILITY_CITATION_ENABLED # EAR P11 (Brief cites applicability) — DARK (default off); double-fenced: also requires SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
+        value: "false"
+      - key: SECURELOGIC_BRIEF_QUALITY_ENABLED # IQP Q4 title/summary quality contract. OFF = titles are cut mid-word at 77 chars and stored that way. ON — staging validates the Q4 title/summary quality contract
+        value: "true"
+      - key: SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED # ECL R2/S6 dispatcher — DARK (default off); requires ECL flag too
+        value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
+
+      # Finding risk-acceptance lifecycle (ruling 2026-07-12, PR #646) — STAGING
+      # ONLY, for staging validation. Gates ENFORCEMENT: approved acceptance
+      # closes a Finding; expiry/withdrawal reopens it; routes 404 when off.
+      # The production engine block intentionally does not receive this var
+      # (absent reads false) — production enablement is a separate GATE-B
+      # operator decision after staging validation passes. Flag is read only by
+      # the engine web service (routes + in-process expiry worker); the legacy
+      # accepted population is held closed by the compat bridge, not this flag.
+      - key: SECURELOGIC_RISK_ACCEPTANCE_ENABLED
+        value: "true"
+      # P2 (2026-07-15): email notifications for the risk-acceptance workflow — proposal to
+      # the org's approvers, decision to the requester. DELIBERATELY separate from the
+      # workflow flag so email can be validated (or held) independently. Staging = "true";
+      # production intentionally omits it (absent reads false) — a separate operator
+      # decision after staging validation, and production has the workflow off anyway so no
+      # acceptance events are produced. Read only by the engine web service (the routes).
+      - key: SECURELOGIC_RISK_ACCEPTANCE_NOTIFICATIONS_ENABLED
+        value: "true"
+
+      # Canonical Intelligence Event projection (Pipeline Hardening / IE) — DARK.
+      # Projects cyber_signals into the global intelligence_events layer
+      # (corroboration ledger + timeline). Off => zero DB work, legacy behaviour.
+      - key: SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED
+        value: "false"
+
+      # Finding closure gate (ruling 2026-07-14) — ships OFF, and is the FIRST place it
+      # gets turned on. Staging validation (direct close, remediation completion,
+      # validation close, accepted-risk close) is the gate on any production ruling, so
+      # flip THIS key to "true" — and only this one — when validation begins. The prod
+      # engine block keeps its own "false" and is not touched by that flip.
+      - key: SECURELOGIC_FINDING_CLOSURE_GATE_ENABLED
+        value: "true" # ENABLED 2026-07-14 — staging closure-gate validation. Prod block stays "false".
+
+      # Intelligence Brief missed-week catch-up — enable in staging FIRST to
+      # validate missed-week recovery; idempotency prevents any double-delivery.
+      # The prod engine block keeps its own "false" and is not touched.
+      - key: SECURELOGIC_BRIEF_CATCHUP_ENABLED
+        value: "true" # ENABLED 2026-07-17 — O-6: staging brief dormant since May 19; the weekly cron's single Tuesday-07:00 firing chance lives in a service that redeploys on every develop commit. Catch-up recovers a missed Tuesday at next boot. Prod stays "false".
 
       # Sentry error tracking (engine — staging). Kept in lockstep with the
       # production engine block above; set SENTRY_ENV=staging in the dashboard.
@@ -480,8 +604,42 @@ services:
         value: "true"
       - key: SECURELOGIC_ACTION_ENGINE_ENABLED        # item 1 — idempotent action writes, free
         value: "true"
+      - key: SECURELOGIC_RISK_LIFECYCLE_ENABLED       # Epic R1 — risk lifecycle, DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL (Priority 5) — DARK (default off); do NOT enable in prod until AD-17 grant + edge cap (H1) + graph load test (H2)
+        value: "false"
+      - key: SECURELOGIC_ASSET_REGISTRY_ENABLED       # EAR Phase 0 (asset registry) — DARK (default off); GATE B posture, do NOT enable in prod under the EAR goal
+        value: "false"
+      - key: SECURELOGIC_CONNECTOR_SCHEDULED_SYNC_ENABLED # ERIP E2.P1 (scheduled connector sync) — DARK (default off); triple fence: also requires ECL + asset-registry flags
+        value: "false"
+      - key: SECURELOGIC_CONNECTOR_WRITEBACK_ENABLED  # ERIP E2a (bidirectional connector writeback) — DARK (default off); only external-mutation fence; also requires ECL + asset-registry flags
+        value: "false"
+      - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED   # ERIP Package 3 (Decision Workspace) — DARK (default off); gates GET /api/findings/:id/context (read-only)
+        value: "false"
+      - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED # ERIP E6 (approval-gated orchestration) — DARK (default off); human approval required
+        value: "false"
+      - key: SECURELOGIC_KNOWLEDGE_GRAPH_ENABLED      # ERIP E7 (knowledge graph / blast-radius) — DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_CAPABILITY_GATING_ENABLED    # EAR P9 (Track C dual-gate) — DARK (default off); flag on = entitlement OR per-org core_platform grant; entitlement-leg removal is a product STOP GATE, never this flag
+        value: "false"
+      - key: SECURELOGIC_BRIEF_APPLICABILITY_CITATION_ENABLED # EAR P11 (Brief cites applicability) — DARK (default off); double-fenced: also requires SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
+        value: "false"
+      - key: SECURELOGIC_BRIEF_QUALITY_ENABLED # IQP Q4 title/summary quality contract. OFF = titles are cut mid-word at 77 chars and stored that way. BLOCKED ON STAGING VALIDATION — flip to "true" after staging confirms headings
+        value: "false"
+      - key: SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED # ECL R2/S6 dispatcher — DARK (default off); requires ECL flag too
+        value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
+
+      # Canonical Intelligence Event projection (Pipeline Hardening / IE) — DARK.
+      # Projects cyber_signals into the global intelligence_events layer
+      # (corroboration ledger + timeline). Off => zero DB work, legacy behaviour.
+      - key: SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED
+        value: "false"
 
   # =========================================================
   # INTELLIGENCE WORKER — STAGING (background)
@@ -565,8 +723,42 @@ services:
         value: "true"
       - key: SECURELOGIC_ACTION_ENGINE_ENABLED        # item 1 — idempotent action writes, free
         value: "true"
+      - key: SECURELOGIC_RISK_LIFECYCLE_ENABLED       # Epic R1 — risk lifecycle, DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL (Priority 5) — DARK (default off); do NOT enable in prod until AD-17 grant + edge cap (H1) + graph load test (H2)
+        value: "false"
+      - key: SECURELOGIC_ASSET_REGISTRY_ENABLED       # EAR Phase 0 (asset registry) — DARK (default off); GATE B posture, do NOT enable in prod under the EAR goal
+        value: "false"
+      - key: SECURELOGIC_CONNECTOR_SCHEDULED_SYNC_ENABLED # ERIP E2.P1 (scheduled connector sync) — DARK (default off); triple fence: also requires ECL + asset-registry flags
+        value: "false"
+      - key: SECURELOGIC_CONNECTOR_WRITEBACK_ENABLED  # ERIP E2a (bidirectional connector writeback) — DARK (default off); only external-mutation fence; also requires ECL + asset-registry flags
+        value: "false"
+      - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED   # ERIP Package 3 (Decision Workspace) — DARK (default off); gates GET /api/findings/:id/context (read-only)
+        value: "false"
+      - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED # ERIP E6 (approval-gated orchestration) — DARK (default off); human approval required
+        value: "false"
+      - key: SECURELOGIC_KNOWLEDGE_GRAPH_ENABLED      # ERIP E7 (knowledge graph / blast-radius) — DARK (default off)
+        value: "false"
+      - key: SECURELOGIC_CAPABILITY_GATING_ENABLED    # EAR P9 (Track C dual-gate) — DARK (default off); flag on = entitlement OR per-org core_platform grant; entitlement-leg removal is a product STOP GATE, never this flag
+        value: "false"
+      - key: SECURELOGIC_BRIEF_APPLICABILITY_CITATION_ENABLED # EAR P11 (Brief cites applicability) — DARK (default off); double-fenced: also requires SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
+        value: "false"
+      - key: SECURELOGIC_BRIEF_QUALITY_ENABLED # IQP Q4 title/summary quality contract. OFF = titles are cut mid-word at 77 chars and stored that way. ON — staging validates the Q4 title/summary quality contract
+        value: "true"
+      - key: SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED # ECL R2/S6 dispatcher — DARK (default off); requires ECL flag too
+        value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
+
+      # Canonical Intelligence Event projection (Pipeline Hardening / IE) — DARK.
+      # Projects cyber_signals into the global intelligence_events layer
+      # (corroboration ledger + timeline). Off => zero DB work, legacy behaviour.
+      - key: SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED
+        value: "false"
 
   # =========================================================
   # POSTURE WORKER (background)
@@ -897,6 +1089,78 @@ services:
       - key: NEXT_PUBLIC_ENGINE_URL
         sync: false
 
+      # Public URL of the marketing website (securelogic-website), used by the
+      # app Header (logo/home link) and the consent legal links
+      # (terms/privacy/ai-policy). Set each environment to its OWN marketing site
+      # so the STAGING app never links users back to the production site.
+      # Prod: https://www.securelogicai.com · Staging: the staging website URL.
+      # BUILD-TIME (NEXT_PUBLIC_*): a value change requires an app REBUILD.
+      # The securelogic-app-staging service is now defined below in this file;
+      # set its staging value on that service. Code falls back to the prod apex if
+      # unset, so an unset prod build stays correct while an unset staging build
+      # leaks prod.
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+
+      # ECL (Priority 5) nav visibility — DARK (default off). App half of the
+      # two-switch model: this only reveals the "Context" header item; the engine's
+      # own SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED independently 404s every ECL
+      # route. RUNTIME (not NEXT_PUBLIC): a restart applies it, no rebuild.
+      # The securelogic-app-staging service is defined below in this file — set it
+      # true there for staging validation. Prod flip is GATE B (operator ledger L-2).
+      - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
+        value: "false"
+
+      # EAR Phase 4 nav visibility — DARK (default off). App half of the
+      # two-switch model for the unified Assets surface: this only reveals the
+      # "Asset Registry" header item; the engine's own
+      # SECURELOGIC_ASSET_REGISTRY_ENABLED independently 404s every registry
+      # route. RUNTIME (not NEXT_PUBLIC): a restart applies it, no rebuild.
+      # Prod flip is out of scope for the EAR goal (GATE B posture).
+      - key: SECURELOGIC_ASSET_REGISTRY_ENABLED
+        value: "false"
+
+      # Enterprise Risk Workspace IA/nav (ERIP Packages 1+2) — DARK (default off).
+      # Flips the app header to the enterprise-workflow information architecture
+      # (Intelligence / Risk Operations / Assets / Compliance) and the "Review
+      # Suggested Links" queue reskin. RUNTIME (not NEXT_PUBLIC): a restart applies
+      # it, no rebuild. Presentation-only — no engine/query/schema change; flag off
+      # is byte-for-byte the legacy nav. The securelogic-app-staging service is
+      # defined below in this file — set it true there for staging validation. Prod
+      # flip is GATE B.
+      - key: SECURELOGIC_RISK_WORKSPACE_ENABLED
+        value: "false"
+
+      # ERIP Package 3 (Decision Workspace) — DARK (default off). App half of the
+      # two-switch model: renders the Decision Workspace on /findings/:id when on
+      # AND the engine returns a context (engine flag on too). RUNTIME (not
+      # NEXT_PUBLIC): a restart applies it. Flag off = legacy finding detail
+      # byte-for-byte. Staging app is defined below in this file; prod flip is GATE B.
+      - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED
+        value: "false"
+
+      # Scalable Risk Findings queue controls — DARK (default off). Adds the
+      # search/filter/sort toolbar, due-status urgency labels, and server-side
+      # OFFSET pagination to the BROWSE findings queue (never the Operations
+      # Center). RUNTIME (not NEXT_PUBLIC): a restart applies it. Flag off = the
+      # legacy browse list, byte-for-byte. Staging app is defined below; prod flip
+      # is GATE B. Engine-side: GET /api/findings already serves the new query
+      # params (additive), so no engine flag is needed.
+      - key: SECURELOGIC_FINDINGS_QUEUE_CONTROLS_ENABLED
+        value: "false"
+
+      # The Briefing (Briefing Initiative B1) — DARK (default off). Replaces the
+      # /dashboard composition for platform tiers with the personalized Briefing
+      # (My Work first, explicit "You" vs "Organization" scope chips) and relabels
+      # the workspace nav's home entry. App-only — no engine route branches on it;
+      # all module data comes from existing engine endpoints. RUNTIME (not
+      # NEXT_PUBLIC): a restart applies it. Flag off = legacy dashboard
+      # byte-for-byte. Staging app is defined below; prod flip is GATE B.
+      # NAMING: deliberately DASHBOARD_BRIEFING — the SECURELOGIC_BRIEF* namespace
+      # belongs to the Intelligence Brief product flags; do not shorten.
+      - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED
+        value: "false"
+
       # Secret used to encrypt the iron-session cookie.
       # Must be at least 32 characters. Generate with: openssl rand -hex 32
       - key: SESSION_SECRET
@@ -930,6 +1194,132 @@ services:
       - key: NEXT_PUBLIC_SENTRY_DSN_APP
         sync: false
 
+      - key: NEXT_PUBLIC_SENTRY_ENV
+        sync: false
+
+  # =========================================================
+  # SECURELOGIC APP — STAGING (Next.js, tracks develop)
+  # Staging peer of securelogic-app. Serves the customer-facing
+  # UI whose workspace/Decision branches are gated by the app-side
+  # SECURELOGIC_*_ENABLED flags below (read by the Next server:
+  # findings/page.tsx, findings/[id]/page.tsx, actions/page.tsx,
+  # queue/page.tsx, layout.tsx). This is where those flags must be
+  # true for staging validation — the engine flags alone change no UI.
+  #
+  # ADOPTION NOTE: a dashboard-managed securelogic-app-staging service
+  # has existed OUTSIDE this file (see the prior prod-app comments).
+  # Render Blueprints match services BY NAME, so syncing this Blueprint
+  # ADOPTS that existing service rather than creating a second one —
+  # PROVIDED the operator reconciles it (operator ledger L-4). No
+  # `domains:` block is declared, so the service keeps its unique
+  # Render-assigned *.onrender.com URL and no custom domain is duplicated.
+  # Nothing here creates or mutates a live Render service; the sync is an
+  # operator action.
+  #
+  # STAGING-SAFE: every secret is `sync: false` (values set on the
+  # staging service in the dashboard — NEVER prod secrets), engine/site
+  # URLs point at the STAGING engine/website (not prod), telemetry is the
+  # staging Sentry env. All four feature flags default OFF (dark).
+  # =========================================================
+
+  - type: web
+    name: securelogic-app-staging
+    region: virginia          # co-located with securelogic-engine-staging
+    env: node
+    plan: starter
+    branch: develop
+    buildCommand: cd app && npm ci --include=dev && rm -rf .next && npm run build
+    startCommand: cd app && npx next start -p $PORT
+    autoDeploy: true
+    healthCheckPath: /login    # public, client-rendered 200; no engine/DB coupling
+    envVars:
+      - key: NODE_ENV
+        value: production      # required for `next start` (prod build); env identity is APP_ENV
+      - key: APP_ENV
+        value: staging
+
+      # STAGING engine URLs — established pattern is `sync: false` (set on the
+      # service in the dashboard). Point ENGINE_API_URL at the securelogic-engine-
+      # staging PRIVATE URL and NEXT_PUBLIC_ENGINE_URL at its PUBLIC URL. NEVER the
+      # production engine. NEXT_PUBLIC_* is build-time — a value change needs a rebuild.
+      - key: ENGINE_API_URL
+        sync: false
+      - key: NEXT_PUBLIC_ENGINE_URL
+        sync: false
+
+      # STAGING marketing site (securelogic-website-staging) — never the prod apex,
+      # so the staging app never links users back to production. Build-time.
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+
+      # Feature flags — DARK (default off). App half of the two-switch model; a
+      # RESTART applies them (RUNTIME, not NEXT_PUBLIC). Set to "true" on THIS
+      # staging service to activate the redesign for staging validation:
+      #   RISK_WORKSPACE     -> /findings decision queue, /queue "Review Suggested
+      #                         Links" reskin + bulk select, enterprise nav IA
+      #   DECISION_WORKSPACE  -> /findings/:id Decision Workspace (needs the engine
+      #                         flag on too), /findings saved-views bar, /actions
+      #                         My Actions depth, Brief -> Decision/Event
+      # Prod enablement stays GATE B (operator ledger).
+      - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
+        value: "false"
+      - key: SECURELOGIC_ASSET_REGISTRY_ENABLED
+        value: "false"
+      # ENABLED on STAGING (Option B) so a Blueprint sync activates the Findings
+      # decision queue, the "Review Suggested Links" queue reskin + bulk select, and
+      # the enterprise nav IA — durably (dashboard edits get reverted on sync; the
+      # Blueprint must own the "true"). STAGING ONLY — production securelogic-app
+      # keeps these "false" (GATE B). RUNTIME env: a restart applies, no rebuild.
+      - key: SECURELOGIC_RISK_WORKSPACE_ENABLED
+        value: "true"
+      # ENABLED on STAGING (Option B): Decision Workspace on /findings/:id (also needs
+      # the engine flag on — two-switch), Findings saved-views bar, My Actions depth,
+      # Brief -> Decision/Event. STAGING ONLY; prod stays "false" (GATE B).
+      - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED
+        value: "true"
+      # ENABLED on STAGING (Option B): the app half of the risk-acceptance two-switch.
+      # The engine flag (staging engine block above) opens /api/risk-acceptances; THIS
+      # one lets the app call it — findings/[id]/page.tsx reads it on the app service
+      # and, when unset, never fetches the acceptances, so the Decision Workspace keeps
+      # the legacy one-click Accept-Risk control and the whole subsystem renders
+      # nowhere. Both switches are required for the workflow to render AND function.
+      # RUNTIME env (not NEXT_PUBLIC): a restart applies, no rebuild. STAGING ONLY —
+      # the production app block intentionally does not receive this var (absent reads
+      # false), matching the production engine block; prod enablement is GATE B.
+      - key: SECURELOGIC_RISK_ACCEPTANCE_ENABLED
+        value: "true"
+      # ENABLED on STAGING: the scalable Risk Findings queue controls (search /
+      # filter / sort toolbar, due-status urgency, server OFFSET pagination) on the
+      # BROWSE queue. Because the staging app also runs RISK_WORKSPACE=true, the
+      # enhanced queue renders via the browse escape hatch at /findings?queue=all
+      # (the Operations Center home is unchanged). STAGING ONLY; prod stays "false"
+      # (GATE B). RUNTIME env — a restart applies, no rebuild.
+      - key: SECURELOGIC_FINDINGS_QUEUE_CONTROLS_ENABLED
+        value: "true"
+      # ENABLED on STAGING: The Briefing (Briefing Initiative B1) — the /dashboard
+      # personalized composition + the workspace nav "Briefing" home label (label
+      # only renders because RISK_WORKSPACE is also true here). App-only, reads
+      # existing engine endpoints. STAGING ONLY; prod stays "false" (GATE B).
+      # RUNTIME env — a restart applies, no rebuild.
+      - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED
+        value: "true"
+
+      # STAGING session secret — a distinct 32+ char value, NEVER the prod secret.
+      - key: SESSION_SECRET
+        sync: false
+      - key: SESSION_TIMEOUT_SECONDS
+        sync: false
+      - key: SESSION_IDLE_SECONDS
+        sync: false
+      - key: SESSION_ABSOLUTE_SECONDS
+        sync: false
+
+      # Sentry (app) — STAGING project/env only (never the prod telemetry env).
+      # All optional; unset = Sentry disabled. NEXT_PUBLIC_* are build-time.
+      - key: SENTRY_DSN_APP
+        sync: false
+      - key: NEXT_PUBLIC_SENTRY_DSN_APP
+        sync: false
       - key: NEXT_PUBLIC_SENTRY_ENV
         sync: false
 

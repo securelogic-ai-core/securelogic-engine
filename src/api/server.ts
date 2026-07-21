@@ -11,7 +11,15 @@ import { ensureRedisConnected, redisReady } from "./infra/redis.js";
 import { logger } from "./infra/logger.js";
 
 import { startScheduler } from "./lib/schedulerRunner.js";
+import { runBriefCatchupIfMissed } from "./lib/briefCatchup.js";
 import { startAccountDeletionReaperEnqueuer } from "./lib/accountDeletionEnqueuer.js";
+import { startApplicabilityReassessmentWorker } from "./workers/applicabilityReassessmentWorker.js";
+import { startConnectorSyncWorker } from "./workers/connectorSyncWorker.js";
+import { startConnectorWritebackWorker } from "./workers/connectorWritebackWorker.js";
+import { startRiskHistoryWorker } from "./workers/riskHistoryWorker.js";
+import { startRiskAcceptanceExpiryWorker } from "./workers/riskAcceptanceExpiryWorker.js";
+import { startPredictiveForecastWorker } from "./workers/predictiveForecastWorker.js";
+import { startOrchestrationPlaybookWorker } from "./workers/orchestrationPlaybookWorker.js";
 import { createApp } from "./app.js";
 
 /* =========================================================
@@ -122,7 +130,37 @@ await connectDatabase();
 await startupCheck();
 
 startScheduler();
+// Missed-week recovery for the weekly Brief cron. Called always; self-gates on
+// SECURELOGIC_BRIEF_CATCHUP_ENABLED (DARK by default → zero DB access, no send).
+// Fire-and-forget so it never blocks boot/listen; it swallows its own errors.
+void runBriefCatchupIfMissed().catch((err) => {
+  logger.error({ event: "brief_catchup_boot_failed", err }, "Brief catch-up failed at boot (non-fatal)");
+});
 startAccountDeletionReaperEnqueuer();
+// ECL R3: in-process reassessment worker. Registered always; every tick
+// self-gates on SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED (zero DB access while
+// off), so this line is inert until the operator enables the ECL.
+startApplicabilityReassessmentWorker();
+// EAR Phase 3b: connector sync worker. Registered always; every tick
+// self-gates on SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED AND
+// SECURELOGIC_ASSET_REGISTRY_ENABLED (zero DB access while either is off).
+startConnectorSyncWorker();
+// ERIP E2a: bidirectional writeback. Registered always; each tick self-gates on
+// SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED + SECURELOGIC_ASSET_REGISTRY_ENABLED +
+// SECURELOGIC_CONNECTOR_WRITEBACK_ENABLED (the only external-MUTATION path).
+startConnectorWritebackWorker();
+// ERIP F2: daily risk-history snapshot. Registered always; each tick self-gates
+// on SECURELOGIC_RISK_INTELLIGENCE_ENABLED AND SECURELOGIC_ASSET_REGISTRY_ENABLED.
+startRiskHistoryWorker();
+// Accepted risk is time-boxed: expired acceptances reopen their findings. Self-gates
+// on SECURELOGIC_RISK_ACCEPTANCE_ENABLED.
+startRiskAcceptanceExpiryWorker();
+// ERIP E5: daily predictive forecast inference/retraining. Registered always;
+// self-gates on SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED + asset-registry flag.
+startPredictiveForecastWorker();
+// ERIP E6b: scheduled playbook instantiation (creates proposals; still human-
+// approved). Registered always; self-gates on SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED.
+startOrchestrationPlaybookWorker();
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   logger.info(

@@ -41,6 +41,10 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "platform",
       "children": [
         {
+          "label": "Asset Registry",
+          "href": "/assets"
+        },
+        {
           "label": "Vendors",
           "href": "/vendors"
         },
@@ -49,6 +53,18 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
           "href": "/ai-systems"
         }
       ]
+    },
+    {
+      "type": "link",
+      "label": "Context",
+      "href": "/enterprise-context",
+      "access": "platform"
+    },
+    {
+      "type": "link",
+      "label": "Executive",
+      "href": "/executive",
+      "access": "platform"
     },
     {
       "type": "group",
@@ -125,6 +141,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "group": null
     },
     {
+      "label": "Asset Registry",
+      "href": "/assets",
+      "access": "platform",
+      "group": "Assets"
+    },
+    {
       "label": "Vendors",
       "href": "/vendors",
       "access": "platform",
@@ -135,6 +157,18 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "href": "/ai-systems",
       "access": "platform",
       "group": "Assets"
+    },
+    {
+      "label": "Context",
+      "href": "/enterprise-context",
+      "access": "platform",
+      "group": null
+    },
+    {
+      "label": "Executive",
+      "href": "/executive",
+      "access": "platform",
+      "group": null
     },
     {
       "label": "Controls",
@@ -289,9 +323,57 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "platform"
     },
     {
+      "path": "/approvals",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
       "path": "/ask",
       "dynamic": false,
       "navLabel": "Ask",
+      "access": "platform"
+    },
+    {
+      "path": "/assets",
+      "dynamic": false,
+      "navLabel": "Asset Registry",
+      "access": "platform"
+    },
+    {
+      "path": "/assets/[id]",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/assets/[id]/edit",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/assets/connect",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/assets/connect/[id]",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/assets/import",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/assets/new",
+      "dynamic": false,
+      "navLabel": null,
       "access": "platform"
     },
     {
@@ -391,6 +473,72 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "all"
     },
     {
+      "path": "/enterprise-context",
+      "dynamic": false,
+      "navLabel": "Context",
+      "access": "platform"
+    },
+    {
+      "path": "/enterprise-context/applicability",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/enterprise-context/applicability/[id]",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/enterprise-context/applicability/[id]/evidence",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/enterprise-context/dashboard",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/enterprise-context/entities/[id]",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/enterprise-context/entities/[id]/edit",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/enterprise-context/entities/new",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/enterprise-context/graph",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/enterprise-context/import",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/executive",
+      "dynamic": false,
+      "navLabel": "Executive",
+      "access": "platform"
+    },
+    {
       "path": "/findings",
       "dynamic": false,
       "navLabel": "Findings",
@@ -429,6 +577,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     {
       "path": "/getting-started",
       "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/intelligence/[id]",
+      "dynamic": true,
       "navLabel": null,
       "access": "all"
     },

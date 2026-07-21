@@ -1,7 +1,15 @@
 import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
 import { getSession } from "@/lib/session";
-import { getIntelligenceBrief } from "@/lib/api";
+import { getIntelligenceBrief, getFindings, getFindingContext } from "@/lib/api";
+import { intelligenceEventHref } from "@/lib/intelligenceLinks";
+import PromoteSignalButton from "./PromoteSignalButton";
+import {
+  briefDecisionAffordance,
+  shouldResolveBriefDecision,
+  briefSupportingEventId,
+  type BriefDecisionAffordance,
+} from "./briefDecision";
 import type {
   IntelligenceBriefDetailResponse,
   IntelligenceBriefItem,
@@ -97,13 +105,10 @@ function parseActions(raw: string | null): string[] {
 // Source block — render only when at least one source-bearing field exists
 // ---------------------------------------------------------------------------
 
+// R1: the feed slug is no longer part of what makes a "source" section worth
+// rendering — it is internal plumbing, not something a customer should read.
 function hasAnySource(item: IntelligenceBriefItem): boolean {
-  return Boolean(
-    item.affected_cve ||
-      item.affected_vendor ||
-      item.source_slug ||
-      item.ingestion_timestamp
-  );
+  return Boolean(item.affected_cve || item.affected_vendor || item.ingestion_timestamp);
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +216,31 @@ export default async function SignalDetailPage({ params }: Props) {
   const showSource = hasAnySource(item);
   const analysis = findAnalysisInContentJson(brief.content_json, item);
 
+  // Brief → Decision flow (ERIP) — DARK, SECURELOGIC_DECISION_WORKSPACE_ENABLED.
+  // When on, resolve the org's finding for this item's signal and route the
+  // reader into the Decision Workspace (or Review Suggested Links if none yet).
+  // The lookup is org-scoped by the caller's token (tenant-safe). Flag-off shows
+  // no affordance (byte-identical brief item).
+  const workspace = process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true";
+  let decision: BriefDecisionAffordance | null = null;
+  let eventHref: string | null = null;
+  if (shouldResolveBriefDecision(workspace, item.cyber_signal_id)) {
+    // intel_ref resolves across BOTH intelligence channels — the legacy
+    // per-signal finding AND the event-native finding reached through the
+    // signal→event bridge. Without it, findings created by the event pipeline
+    // (source_type='intelligence_event') were unreachable from the brief.
+    const related = await getFindings(token, { intel_ref: item.cyber_signal_id!, limit: 1 });
+    decision = briefDecisionAffordance(related?.findings?.[0] ?? null, item.cyber_signal_id!);
+    // D5 — Brief → Intelligence Event bridge: for a linked item, resolve the finding
+    // context's supporting event and offer a direct drill-through. Reuses the existing
+    // /context resolver (same DECISION_WORKSPACE gate); degrades to no link otherwise.
+    if (decision.state === "linked") {
+      const context = await getFindingContext(token, decision.findingId);
+      const eventId = briefSupportingEventId(context);
+      if (eventId) eventHref = intelligenceEventHref(eventId, decision.findingId);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-brand-bg">
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -275,6 +305,48 @@ export default async function SignalDetailPage({ params }: Props) {
               </section>
             )}
 
+            {/* Brief → Decision (ERIP, dark). Routes the reader into action. */}
+            {decision && (
+              <section className="mb-6">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
+                  Decision
+                </p>
+                {decision.state === "linked" ? (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Link
+                      href={decision.href}
+                      className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold"
+                      style={{ background: "rgba(0,196,180,0.12)", color: "#00c4b4", border: "1px solid rgba(0,196,180,0.4)" }}
+                    >
+                      Open the Decision Workspace for this finding →
+                    </Link>
+                    {eventHref && (
+                      <Link
+                        href={eventHref}
+                        className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium"
+                        style={{ background: "rgba(148,163,184,0.1)", color: "#93c5fd", border: "1px solid #334155" }}
+                      >
+                        View supporting intelligence →
+                      </Link>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-sm text-slate-300 leading-relaxed max-w-prose">
+                    <p className="mb-3">
+                      No finding has been tracked for this intelligence in your organization yet.
+                      Create one to assign an owner, plan remediation, and record the decision.
+                    </p>
+                    {/* Promotion — the first hop of Brief → Finding → Decision. This used to
+                        be a link to /queue ("Review suggested links"), which could not create
+                        a finding: a control that promised the next step and could not perform
+                        it. The engine is idempotent per (org, signal), so a double submit
+                        lands in the same workspace rather than making a second finding. */}
+                    <PromoteSignalButton signalId={decision.signalId} />
+                  </div>
+                )}
+              </section>
+            )}
+
             {item.why_it_matters && (
               <section className="mb-6">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
@@ -315,12 +387,13 @@ export default async function SignalDetailPage({ params }: Props) {
                       <dd className="text-slate-300">{item.affected_vendor}</dd>
                     </div>
                   )}
-                  {item.source_slug && (
-                    <div>
-                      <dt className="text-xs text-slate-500 uppercase tracking-wide mb-0.5">Feed</dt>
-                      <dd className="text-slate-300">{item.source_display || item.source_slug}</dd>
-                    </div>
-                  )}
+                  {/* R1: the "Feed" row (CISA KEV / NVD / BleepingComputer ...) is
+                      gone. Which pipe an item arrived through is our operational
+                      detail, not the executive's. The CVE, the vendor and the link to
+                      the primary source all remain — the reader can still verify the
+                      claim, which is the part that was ever load-bearing. Feed
+                      attribution is retained internally (intelligence_brief_item_
+                      provenance, cyber_signals.source) for audit. */}
                   {item.ingestion_timestamp && (
                     <div>
                       <dt className="text-xs text-slate-500 uppercase tracking-wide mb-0.5">Ingested</dt>

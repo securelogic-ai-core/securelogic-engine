@@ -3,6 +3,39 @@
 ## Purpose
 This document defines the build order for SecureLogic AI. It exists to stop architectural drift, local optimization, and out-of-sequence package work.
 
+## Governing documentation hierarchy
+These are the controlling operational documents and their scopes. Each owns a
+distinct concern — consult the one that matches the question rather than
+duplicating content across them:
+
+1. **BUILD_SEQUENCE.md** (this file) — program roadmap, build order, and the
+   implementation record (what shipped, in what order, under which PR/SHA).
+2. **EAR / ERIP trackers** (`docs/validation/enterprise-asset-registry-tracker.md`,
+   `docs/validation/erip-tracker.md`) — per-item implementation **status**
+   (built / merged / done) and the evidence trail.
+3. **Enablement Runbooks** (`docs/architecture/enterprise-asset-registry/ENABLEMENT-RUNBOOK.md`,
+   `docs/runbooks/intelligence-events-enable-rollback.md`, and peers) — the
+   step-by-step **operator procedures** to enable, validate, and roll back a
+   specific goal in staging.
+4. **Feature Flag Enablement Matrix** (`docs/runbooks/FEATURE-FLAG-ENABLEMENT-MATRIX.md`)
+   — the authoritative cross-cutting reference for **every feature flag**: its
+   **service ownership** (which of App / Engine / Intelligence Worker requires
+   it, and why), **environment-variable defaults**, **staging enablement**
+   order + exact service names, **validation sequencing**, **rollback
+   guidance**, and the **GATE B operational controls** (dark-by-default posture,
+   no production enablement without an operator ruling). It answers the single
+   question "which service needs this flag?" and is the map that sits above the
+   per-goal runbooks (which own the deep validation detail). Grounded in
+   `render.yaml` + the actual flag reads; it is documentation only and enables
+   nothing.
+5. **Architecture Decision Records / design docs** (`docs/architecture/**`,
+   `ARCHITECTURE_REVIEW.md`, the ratified `*-ARCHITECTURE.md` blueprints) —
+   technical **design decisions** and their rationale.
+
+These sit under the canonical product/build governing set declared in `CLAUDE.md`
+(PRODUCT_VISION → CURRENT_STATE_ARCHITECTURE → CANONICAL_DOMAIN_MODEL →
+TENANT_ISOLATION_STANDARD → BUILD_SEQUENCE → FINAL_PRODUCT_STANDARD → CLAUDE.md).
+
 ## Execution rules
 - Build one package at a time.
 - Do not infer the next package from convenience.
@@ -24,6 +57,13 @@ Release rules:
 - seeded demo data belongs in Demo unless a non-production seed package explicitly targets another environment
 
 Release gates (must be cleared before any `develop → main` promotion):
+
+> **Re-baseline note (2026-07-21):** for the current re-baselined Sprint-1 promotion, the
+> F-1 check below is executed across the **full 65-file staged set** via
+> `docs/launch/PART_B_PREFLIGHT.md` §1.5 (the `20260706` file itself is already applied to
+> production via the archived 2026-07-02 promote). The F-1 principle is unchanged and
+> applies to every future promotion.
+
 - **F-1 — migration `20260706_risk_numeric_score.sql` not previously applied.**
   The migration runner is filename-keyed (`scripts/runMigrations.ts`): a
   reshaped migration whose filename already exists in `schema_migrations` is
@@ -55,15 +95,344 @@ These categories are treated as materially established:
 The commercial model that all future product and packaging work must respect is:
 - Intelligence Brief — Free
 - Brief Pro
-- Team Professional
+- Brief Team
 - Platform Professional
 - Enterprise
 
 Billing note:
 - Platform Annual is not a product tier; it is the annual billing option for Platform Professional
 
+## Active governing program (2026-07-06): Enterprise Risk Intelligence Platform (ERIP)
+
+> **Program update (2026-07-06 — supersedes the workstream updates below as the statement of
+> what is ACTIVE; prior entries are preserved as dated history, not erased.)**
+> The **Enterprise Asset Registry (EAR) goal is COMPLETE** — P0–P11 shipped dark to `develop`
+> as PRs #496–#510 (develop `7a81f857`; record: `docs/validation/enterprise-asset-registry-tracker.md`
+> + `docs/validation/enterprise-asset-registry-final-report.md`; those documents are the
+> preserved historical record and must not be rewritten). The **Enterprise Risk Intelligence
+> Platform (ERIP)** is now the **active governing engineering program**, with the completed
+> EAR recorded as its **Epic 1 ✅**. Authoritative roadmap:
+> **`docs/architecture/enterprise-risk-intelligence-platform.md`** — Epics: 1 EAR ✅ ·
+> 2 Enterprise Discovery & Connectors · 3 Enterprise Risk Intelligence · 4 Executive
+> Intelligence · 5 Predictive Intelligence · 6 Autonomous Operations · 7 Enterprise Knowledge
+> Graph / Digital Twin. Living tracker: `docs/validation/erip-tracker.md`. Every future
+> implementation must reference that roadmap. Governance unchanged: develop-only (`main`
+> frozen), dark launches (flags default off, no production enablement — GATE B), additive
+> migrations only, tenant scoping everywhere, reuse before rewrite, per-epic design memo
+> before implementation, operator actions ledgered never executed. The two pre-declared
+> product decisions from Epic 1 (GATE B prod enablement; P9 entitlement-leg cutover) remain
+> reserved for the operator and are NOT part of ERIP.
+
+> **EAR P12 follow-on — COMPLETE (2026-07-07; additive to the P0–P11 record above, which is
+> preserved unchanged).** The **Enterprise Asset Registry Management UI (P12) is COMPLETE**,
+> shipped dark to `develop`: **#541** (`f2741b01`) management UI — create/edit/archive/delete for
+> the four detail-backed types + federated entry points (EAR-AD-1) — with canonical-surface nav;
+> **#543** (`09239f84`) revising the "Assets" menu to a **single canonical entry**; **#542**
+> (`f926b960`) making the Enablement Runbook Step 1 self-contained. **Final `develop` SHA:
+> `09239f84`.** The **Enterprise Asset Registry is now the canonical asset management experience**:
+> when `SECURELOGIC_ASSET_REGISTRY_ENABLED` is on, the "Assets" nav exposes only **Asset
+> Registry**. **Vendors and AI Systems are managed as asset types/filters INSIDE the registry, not
+> as primary navigation**; their legacy direct routes (`/vendors`, `/ai-systems` and children)
+> remain for backward compatibility (and stay in the knowledge index with their platform access).
+> All of it remains **dark behind `SECURELOGIC_ASSET_REGISTRY_ENABLED`** (default off; flag-off nav
+> is byte-for-byte the legacy `[Vendors, AI Systems]` menu) — **no production enablement; GATE B in
+> effect.** Consistent with: `docs/validation/enterprise-asset-registry-tracker.md` (P12 row →
+> DONE), `docs/validation/erip-tracker.md` (Epic 1 EAR ✅), the Enablement Runbook Step 1, and the
+> EAR/ERIP final reports (P0–P11 records unchanged; P12 is a post-close follow-on, not a rewrite of
+> Epic 1 scope).
+
+> **EAR P13 follow-on — COMPLETE (2026-07-07; additive to the P0–P11 / P12 record above, which is
+> preserved unchanged).** **P13 = Setup Wizard ↔ Asset Registry onboarding integration + the
+> canonical "Connect Enterprise Systems" page** — shipped dark to `develop` as **#545**
+> (`03b753d9`). **Create, Import, and Connect Enterprise Systems are all available through the
+> single canonical Asset Registry onboarding flow** (`/assets/new` → create manually / import CSV /
+> connect; the new `/assets/connect` lists the connector catalog with live status from
+> `GET /api/connectors`). The **Setup Wizard (`/getting-started`) reuses that same flow** — when
+> `SECURELOGIC_ASSET_REGISTRY_ENABLED` is on, wizard step 2 becomes "Build your asset inventory"
+> and its CTA launches `/assets/new`; the wizard owns no separate onboarding logic (one canonical
+> implementation, no duplication). **SOC upload and analysis remain under Vendor Management** — they
+> are deliberately NOT in this flow. The feature stays **dark behind
+> `SECURELOGIC_ASSET_REGISTRY_ENABLED`** (connectors additionally double-fenced behind
+> `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED`); flag-off is byte-for-byte the legacy vendor step and
+> the neutral panels — **no production enablement; GATE B in effect.** Remaining work is
+> **operator-only: staging validation (Enablement Runbook Step 1), connector credentials
+> (operator-owned, ledger L-5.*), and the GATE-B production-enablement ruling.** Consistent with:
+> `docs/validation/enterprise-asset-registry-tracker.md` (P13 row → DONE), the Enablement Runbook
+> Step 1 (Connect + Setup-Wizard bullets), and the EAR/ERIP final reports (P0–P11 unchanged).
+
+> **EAR P14 follow-on — COMPLETE (2026-07-08; PR #549, additive to the P0–P13 record above, which is
+> preserved unchanged).** **P14 = one canonical Asset Registry asset-creation flow** — shipped dark
+> to `develop` as **#549** (squash `3fc927ec`; `develop` head now `3fc927ec`; branch deleted).
+> Collapses the prior two/three-step type re-selection into **choose the type once → land on the
+> right Create screen with the type preselected and LOCKED**. A single routing helper
+> (`app/src/lib/assetRegistry.ts` `assetCreateHref`) is used by the `/assets` list "+ Add" button
+> (now carries the active type filter + labels by type) and the `/assets/new` picker: detail-backed
+> types (cloud_resource/endpoint/api/identity_system) render the native inline type-aware form;
+> application/database/business_process open Add-Entity with `entity_type`+`asset_type` preselected
+> and locked, titled by asset type ("Create Database"); vendor/ai_system open their dedicated screens
+> **framed as registry flows** via `?from=registry` + a **shared `CreateFlowBackLink`** breadcrumb
+> (AI System refactored to the Vendor server-wrapper pattern — **token-only gate preserved, no access
+> regression**; no duplicated breadcrumb). **`business_process` promoted to a first-class
+> `enterprise_entities.entity_type`** so a record lands as its own type instead of collapsing to
+> `generic` — **additive, non-destructive migration `20260827`** (widen entity_type CHECK + repoint
+> `asset_registry_v`; `ENTITY_TYPE_TO_ASSET_TYPE` + engine/app `ENTITY_TYPES` + labels in lockstep).
+> **Deferred (documented, not faked):** typed children for `business_process` (rto/rpo/owner_dept)
+> and `application` (tech stack/hosting) — each one detail table + RLS migration per the ECL S0 rule.
+> Stays **dark behind `SECURELOGIC_ASSET_REGISTRY_ENABLED`** (+ `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED`
+> for the ECL-backed types); **flag-off byte-identical; no render.yaml change; GATE B in effect — no
+> production enablement.** EAR-AD-2 preserved (registry spine identity-only). **CI 8/8 green**
+> (incl. cross-org-isolation). Docs: `docs/architecture/enterprise-asset-registry/CANONICAL-ASSET-CREATE-FLOW.md`,
+> `ARCHITECTURE.md` §2.3. Consistent with the P14 row in
+> `docs/validation/enterprise-asset-registry-tracker.md`. **Remaining work is operator-only:
+> staging validation, and the GATE-B production-enablement ruling.**
+
+> **EAR P15 follow-on — COMPLETE (2026-07-08; folded into the P14 PR, additive to P0–P14 which are
+> preserved unchanged).** **P15 = the canonical Asset Registry create surface (`/assets/new`) now
+> exposes the THREE onboarding methods as co-equal, first-class options:** **(1) Create manually**
+> (federated per-type picker — native inline form for the four detail types, `assetCreateHref`
+> federation for the rest), **(2) Bulk upload** (reuses the EXISTING CSV/XLSX importers via
+> `assetImportSurfaces()` — `/vendors/import`, `/ai-systems/import`, ECL-fenced
+> `/enterprise-context/import`; **no duplicate importer** — preview/validation/de-dup/row-errors/plan
+> caps all stay in those surfaces), and **(3) Connect enterprise systems** (reuses the EXISTING
+> `/assets/connect` connector catalog, EAR Phase 3b — **linked directly, never "coming soon"**).
+> Driven by the pure, unit-tested `assetOnboardingMethods()` helper. **SOC upload stays under Vendor
+> Management** — deliberately absent from Asset Registry onboarding. **Flag-off unchanged** (registry
+> off → neutral panel, no sections; ECL importer + connectors additionally ECL-fenced). **UI verified
+> by an SSR render** (all three sections emitted; import + `/assets/connect` hrefs present). No
+> engine/schema/flag/`render.yaml`/operator change; GATE B untouched. Docs:
+> `docs/architecture/enterprise-asset-registry/CANONICAL-ASSET-CREATE-FLOW.md`; P15 row in
+> `docs/validation/enterprise-asset-registry-tracker.md`.
+>
+> **EAR P16 follow-on = Unified Enterprise Asset Import — COMPLETE (2026-07-08; merged to `develop`
+> via PR #551, squash `1bc2ccf3`; additive to P0–P15, which are preserved unchanged).** **P16 finishes
+> the two onboarding methods P13/P15 only stubbed, so the canonical Asset Registry create surface
+> (`/assets/new`) now supports all THREE canonical onboarding methods end-to-end: (1) Create Asset,
+> (2) Bulk Upload / Import Assets (the unified `/assets/import` flow), and (3) Connect Enterprise
+> Systems. The Setup Wizard reuses this SAME onboarding flow (its CTA launches `/assets/new`).**
+> **(1) Connect Enterprise Systems** was a read-only status board — P16 adds the admin-gated config
+> path (`/assets/connect/[id]` + `ConnectorConfigForm`) reusing the EXISTING mutation endpoints
+> (`PUT`/`DELETE /api/connectors/:id`, `POST /:id/sync` — only app wrappers + Next proxies were
+> missing); non-admins get a clear gated message, and `requireAdminRole` now enforces admin-only
+> config on the engine (catalog read stays open; API keys bypass). **(2) Bulk upload** covered only
+> 4 of 10 real types — P16 adds a unified `/assets/import` (one flow, all 10) via the **hybrid**
+> chosen approach: extend the ECL bulk endpoint for `business_process` (reuses
+> `validateEnterpriseEntityCreate`) + a thin `POST /api/assets/import` for the four detail-backed
+> types that reuses the shared parser, the EXTRACTED generic `planRows` precedence, the existing
+> `validateAssetDetailCreate`, and the existing `createDetailAsset` lane — **no new tables /
+> validators / migrations, no duplicated importer logic.** **Taxonomy is the 10 REAL canonical types
+> only** — `data_store`/`custom` are UI aliases of `database`/`generic`; **`server` / `network_device`
+> / `facility` do NOT exist and are deferred to a future backend package**
+> (`FUTURE-ASSET-TYPES.md`), never aliased or faked. Legacy `/vendors/import` + `/ai-systems/import`
+> preserved unchanged; **SOC upload stays under Vendor Management.** Setup Wizard reuse path unchanged
+> (its CTA still launches `/assets/new`, which now carries the finished flows). **Vendor and AI assets
+> route through the unified importer** (`assetImportOptions()` maps them to the ECL bulk endpoint with
+> `entity_type` `vendor`/`ai_system`), so they onboard through the same one flow as every other type.
+> **`server` / `network_device` / `facility` remain documented as a FUTURE taxonomy package — not
+> implemented, never aliased/faked** (`FUTURE-ASSET-TYPES.md`). **Sequencing note:** this is a
+> deliberate REOPEN of the completed EAR Epic 1 onboarding (recorded as a P13/P15 follow-on), NOT the
+> active `Priority 4 — Signal Ingestion Hardening` package. **Engine-side `requireAdminRole` remains in
+> place for connector management** (`PUT`/`DELETE /api/connectors/:id`, `POST /:id/sync`; catalog read
+> stays open; API keys admin-level bypass). **All functionality remains dark behind the appropriate
+> feature flags — flag-off byte-identical** (`SECURELOGIC_ASSET_REGISTRY_ENABLED` default off; ECL-backed
+> import types + connectors additionally `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED`-fenced; connector
+> mutations additionally admin-only). No `render.yaml`/env/flag change; **GATE B remains intact — no
+> production enablement.** **Remaining work is operator-only:** (1) staging feature-flag enablement,
+> (2) connector credential configuration, (3) staging validation, (4) production enablement after
+> successful validation. Docs synchronized: P16 tracker row, `FUTURE-ASSET-TYPES.md`, runbook Step 1,
+> `CANONICAL-ASSET-CREATE-FLOW.md`, `CANONICAL_DOMAIN_MODEL.md` entity_type list corrected.
+
+> **Enterprise Risk Graph (ERG) convergence — C0–C3b COMPLETE (2026-07-10; merged to
+> `develop`, additive to all records above which are preserved unchanged).** A dark,
+> additive convergence program that routes external intelligence toward canonical
+> **tenant assets** via the **existing** `ApplicabilityEngineV1` — *convergence and
+> measurement, NOT a rebuild, NOT a retirement.* Authoritative design + measurement
+> docs: `docs/architecture/proposals/ENTERPRISE-RISK-GRAPH.md` (rulings R1–R3),
+> `CONVERGENCE-ROADMAP.md`, and `CONVERGENCE-REPORT.md` (**the single source of the
+> convergence metrics — not duplicated here**); `docs/specs/finding-lifecycle-spec.md`
+> (ratified two-axis lifecycle, no implementation yet).
+>
+> **Shipped phases (all on `develop`, all dark, flag-off byte-identical):**
+> - **C0 — governance (PR #597, `c4b0d719`):** ratified the ERG architecture, rulings
+>   R1–R3, roadmap, finding-lifecycle spec, and canonical-model doc-sync. Foundational.
+> - **C1 — Canonical Product normalization core (PR #598, `ffc1cd0c`) + C1b migration
+>   (PR #599, `6ca79325`):** the global, organization-neutral Canonical Product
+>   reference (identity + aliases + external ids + versions), pure normalizer.
+>   Foundational.
+> - **C2 — asset applicability target (re-scoped) (PR #600, `3c4378f4`):** the `asset`
+>   applicability target was **already shipped** (migration `20260804`), so C2
+>   **reused** it rather than duplicating — adding only the route read-set + a WORM-safe
+>   `asset_id` FK fix. No Canonical Product rebuild.
+> - **C2b — Canonical Product → Tenant Asset Resolver (PR #601, `2c9cdd33`):** a
+>   reusable, **organization-scoped**, source-agnostic resolver. Ambiguous matches
+>   resolve to **`needs_review`** (never guessed); vendor-only / no-product-name inputs
+>   also `needs_review` (R2). Writes nothing.
+> - **C3 — applicability(asset) vs legacy shadow (PR #602, `d3d6f83b`):** the shadow
+>   comparison of the product→asset resolution against the legacy asset match, behind
+>   `SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED`; counts-only `signal_applicability_shadow`
+>   telemetry; surfaces nothing.
+> - **C3b — vendor/ai_system → asset grain (PR #603, `83340aff`):** extended the SAME
+>   shadow framework (same comparator, resolver, flag; telemetry gained a `grain`
+>   field — no parallel framework, no schema) to **vendor → asset** and
+>   **ai_system → asset**.
+>
+> **Architectural outcome:** the **legacy vendor linkage and legacy AI-system linkage
+> remain AUTHORITATIVE.** The shadow implementation is **dark, read-only, additive,
+> try/catch-isolated, and flag-off byte-identical** — it writes nothing to authoritative
+> applicability / vendor links / ai-system links / findings / asset-registry records.
+> **No retirement occurred. No cutover occurred. No production enablement occurred.**
+>
+> **Deployment state — `SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED`:** default **false**;
+> **shadow-only** (sub-mode `SECURELOGIC_SIGNAL_APPLICABILITY_MODE` defaults to
+> `shadow`; `surface` unbuilt). A **staging operator MAY enable it on engine-staging for
+> telemetry collection**; **production is untouched** and **GATE B is unchanged** — no
+> `render.yaml`/env/flag change was made by this program.
+>
+> **Remaining work.** *Operator-owned:* enable the shadow on **engine-staging** → execute
+> a representative ingestion window → collect the `signal_applicability_shadow` telemetry
+> (grouped by `grain`) → produce the convergence report from `CONVERGENCE-REPORT.md`.
+> *Architecture-owned:* an **explicit retirement decision after convergence is measured**
+> — **no implementation is implied** by these records; the legacy path stays authoritative
+> until a ratified cutover.
+>
+> **Sequencing note:** ERG convergence is a **dark, additive program distinct from** the
+> active `Priority 4 — Signal Ingestion Hardening` package below; it did not change the
+> active package.
+
+> **The Briefing Initiative — operator-directed program registered 2026-07-21; phase B1
+> COMPLETE (shipped dark to `develop`, additive to all records above, which are preserved
+> unchanged).** A phased program (B1 foundation → B2 role-aware defaults + personalization →
+> B3 profiles → B4 organizational Briefings → B5 intelligent Briefing) transforming the
+> generic `/dashboard` into **The Briefing** — a personalized, scope-explicit opening
+> experience — while keeping Operational Views and Dashboards distinct first-class surfaces
+> (the read-surface taxonomy is now an explicit standard: `FINAL_PRODUCT_STANDARD.md`
+> §Product standards 5). Authoritative decision record: `docs/specs/briefing-initiative-b1-spec.md`.
+> **B1 (VERIFIED, operator-approved):** canonical module registry + eligibility resolver +
+> composer (`app/src/lib/briefing/`), The Briefing composition on `/dashboard`
+> (`app/src/app/dashboard/briefing/`), workspace-nav home label **"Briefing"**
+> (operator-ratified; legacy `NAV_ITEMS` + Application Knowledge Index byte-identical) —
+> **app-only, zero engine surface, zero schema, no migration**; module data reuses the
+> existing Metric Contract endpoints (dashboard/findings/actions summaries, incl. the
+> previously-unused session-scoped `my_*` counts). B1 deliberately IGNORES the legacy
+> `dashboard_preferences` rows (flag-off keeps them untouched); the ratified
+> `legacyTileToModule()` projection is B2's migration key. **Dark behind
+> `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED`** (app prod `"false"`, app staging `"true"` in
+> `render.yaml`; flag-off byte-identical; rollback = flag off) — **GATE B in effect, no
+> production enablement.** Validation: full app suite green (83 files / 1105 tests incl. the
+> mandatory entitlement-branch render test), engine knowledge-index + workflow drift tests
+> green, `next build` green; no engine SQL changed → no isolation-lane additions.
+> **Sequencing note:** operator-directed program distinct from the active
+> `Priority 4 — Signal Ingestion Hardening` package below; it did not change the active
+> package. **B2 is NOT authorized** — starting it requires separate operator approval, and
+> its hard precondition is an engine-side module manifest GENERATED from the registry
+> (drift-tested) before any write path accepts module ids.
+> **B1 hardening follow-on — COMPLETE (2026-07-21, operator-directed; additive).** The B2
+> hard precondition is **DISCHARGED**: `src/api/lib/briefingModuleManifest.generated.ts` is
+> generated from the app registry (`npm run generate:briefing-manifest`) and drift-tested
+> (`src/api/tests/briefingModuleManifest.test.ts`); validation surface
+> `briefingModuleManifest.ts` is INERT (no route imports it) until B2's write path consumes
+> it. The triplicated ACTIVE-actions client fallback is centralized in
+> `app/src/lib/actionsMetrics.ts`. `SECURELOGIC_INDEPENDENT_REVIEW_ENABLED` remains
+> operator-owned (deliberately NOT Blueprint-claimed by B1 — another feature's rollout);
+> staging validation of the My Pending Reviews module requires the operator to enable it.
+> B2 authorization state unchanged at that point: NOT authorized (superseded below).
+>
+> **B2 — role-aware defaults & personalization: COMPLETE (operator-authorized 2026-07-21;
+> built same day, dark, additive).** Authoritative decision record:
+> `docs/specs/briefing-initiative-b2-spec.md`. Per-user Briefing layout persistence:
+> `briefing_layouts` (migration `20260721`; canonical NULLIF RLS + `app_request` grants;
+> one row per org+user via the NAMED constraint `briefing_layouts_one_per_user` — B3 relaxes
+> it additively); engine surface `GET/PUT/DELETE /api/briefing/layout` dark behind
+> `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED` on the ENGINE services (engine half of the
+> two-switch; prod `"false"`, staging `"true"` in `render.yaml`; chain
+> `requireApiKey → attachOrganizationContext → requireEntitlement("premium")` + viewer-
+> mutation block + `asTenant`; layout envelopes validated against the generated engine
+> manifest — its first consumer, discharging the B1-hardening precondition's purpose).
+> Role-aware defaults are code, not rows (computed at request time per role; never
+> persisted implicitly); deterministic dismissible suggestions; legacy
+> `dashboard_preferences` migrate via lazy read-time `legacyTileToModule()` projection with
+> a disclosure banner — persist-on-save only, no bulk migration, no writes to the legacy
+> table. GDPR: `briefing_layouts` added to the account-deletion reaper's per-user delete
+> block, plus a clearly-marked rider fixing the pre-existing `finding_saved_views` erasure
+> gap (`docs/DATA_CLASSIFICATION.md` updated; preference objects remain excluded from the
+> data-rights export, consistent with existing policy). Validation: engine suite green
+> (375 files / 6449 tests), isolation lane green incl. new `briefingLayouts` cross-org/
+> cross-user + RLS fail-closed tests, app suite green (85 files / 1133 tests), typecheck +
+> `next build` green on both surfaces; flag-off remains byte-identical; rollback = flag off.
+> **GATE B unchanged at that point — no production enablement**; the `/posture`
+> analytical-home gap (B1 weakness recorded in the B2 spec) had to be resolved before the
+> Briefing prod flip (resolved below — read-surface D1, superseding this blocker).
+> **B3 (profiles) is NOT authorized** — starting it requires separate operator approval.
+>
+> **D1 — read-surface architecture / GATE B closure: COMPLETE (operator-ratified & shipped
+> 2026-07-21). The GATE B architectural blocker for `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED`
+> is CLOSED.** Authoritative decision record: `docs/specs/read-surface-architecture-spec.md`
+> (Status: RATIFIED & IMPLEMENTED; committed together with the implementation). Diagnosis
+> was missing-destination, not taxonomy: nine analytical capabilities, layout customize, and
+> the Executive Report PDF export existed ONLY on the flag-off `/dashboard`, so enabling the
+> Briefing removed them from the product. D1 (app-only; no schema, engine, or flag change):
+> `/posture` is now the canonical **Posture Dashboard** — a fixed canonical analytics
+> composition (`PostureAnalyticsGrid`, reusing the existing `DashboardCharts` components
+> 1:1; deliberately NO per-user customization — dashboards are shared organizational truth,
+> personalization is a Briefing property) plus the Executive Report export entry point and a
+> flag-aware home back-link; the dark `WORKSPACE_NAV_ITEMS` gains a platform-gated
+> **"Posture"** link (legacy `NAV_ITEMS` + Application Knowledge Index untouched); the B2
+> migration-disclosure copy now truthfully states tile parity. The legacy flag-off
+> `/dashboard` stays byte-identical (it keeps its own export until it retires with the
+> flag). **Exit criterion met: with the Briefing flag ON, no analytical capability, export,
+> or destination is lost anywhere in the product.**
+>
+> **Completed engineering work (verified):** D1 shipped `develop` `a971f2a4`; B2
+> (`11ee6b9e`) + D1 pushed to `origin/develop`; the CI audit lane (red since 2026-07-20 on
+> an upstream `brace-expansion` advisory) restored by the lockfile-only, operator-authorized
+> `b91fbdd5` (`npm audit fix`; 0 vulnerabilities) → **all 8 CI lanes green on `develop` HEAD
+> `b91fbdd5`** (audit, build, lint, test, typecheck, cross-org-isolation, tenant-coverage,
+> url-drift); **staging deploy VERIFIED** (app + engine `/version` = `b91fbdd5`; `/posture`,
+> `/dashboard`, and the export endpoint live and auth-gated; engine `/api/briefing/layout`
+> returns 401 = flag ON + auth enforced; app suite 85 files / 1138 tests, engine suite 375
+> files / 6450 tests, both green).
+>
+> **Remaining operational approvals (operator-owned):** (1) authenticated staging
+> walkthrough of the Briefing + Posture Dashboard (visual pass; automated sessions hold no
+> staging credentials — promoted to formal Gate 6 by the 2026-07-21 re-baseline ruling D-D);
+> (2) Sprint 1 Part B promotion gates 1–6 (`docs/launch/SPRINT_1.md`, **re-baselined
+> 2026-07-21** — operator rulings D-A–D-E: the 2026-07-02 promote `512cfa5a` is the archived
+> historical baseline, the prior main freeze is superseded, and the promotion object is the
+> composite `develop` head via a single true merge; pre-flight evidence
+> `docs/launch/PART_B_PREFLIGHT.md`) — prerequisite for any `develop → main` promotion.
+>
+> **Remaining production rollout activities (not started; each a separate operator
+> ruling):** promote `develop → main` per `RELEASE_CHECKLIST.md`, then flip
+> `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED` on BOTH production services (engine + app —
+> two-switch). **Production remains dark and is explicitly PENDING OPERATOR APPROVAL;
+> nothing is enabled in production by this program.** **B3 (profiles) remains NOT
+> authorized.**
+
 ## Active package
 `Priority 4 — Signal Ingestion Hardening` — **status: ACTIVE — IMPLEMENTATION AUTHORIZED & UNDERWAY (2026-06-26).**
+
+> **Active-workstream update (2026-07-04):** the live build workstream has moved to the
+> **Enterprise Context Layer (ECL)** — authorized as the *Priority-5 foundation* (PRs #458,
+> #459; distinct from BUILD_SEQUENCE's own "Priority 5 — Signal-to-platform linkage" numbering
+> below, which is a different axis). ECL **Slices 1–10 are shipped dark to `develop`** (flag
+> `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` off; nothing wired/enabled): S1 entities+data_stores,
+> S2/S2b relationship graph + recursive resolver, S3 CSV import, S4a–c applicability engine +
+> WORM decision store + writer, S5 explainability, S6 workflow-recommendation core, S7
+> signal-linkage core, S8 connector framework + ServiceNow reference adapter, S9 Enterprise
+> capability gating (GATE A ruled), S10 graph-resolver scale harness. **Remaining:** Item 7
+> (UI/CX) and Item 11 (this governance-doc sync). Full item ledger and per-slice SHAs:
+> `docs/validation/enterprise-context-goal-tracker.md`; operator actions:
+> `docs/validation/enterprise-context-operator-ledger.md`. Priority 4's own B/C/D shipped-record
+> reconciliation is tracked separately (PR #461) and is not restated here.
+>
+> **Completion update (2026-07-05):** Items 7 and 11 are now also DONE — the ECL goal's
+> **build scope is complete (Items 1–11 all merged to `develop`, all dark)**. Item 7 (Tier-1
+> UI/CX) shipped as five slices: #480 CI lane, #481 api client, #484 entity screens, #485
+> relationships + graph view, #486 CSV import UI + fail-closed nav (`SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED`
+> now also declared `false` on `securelogic-app` — nav is the presentation half of the
+> two-switch model). Nothing is enabled anywhere; prod enablement remains **GATE B**
+> (runbook `docs/runbooks/enterprise-context-enable-rollback.md`). Recorded follow-ups:
+> engine stats/rollup endpoint (then dashboards), Tier-2 read routes + surfaces, S6/S7 live
+> adapters, remaining connector adapters, L-6 true-volume load run.
 
 > **History (preserved):** this package was **BLOCKED (set 2026-06-25, operator-approved)** pending three technical prerequisites and a separate build-scope authorization. It was **unblocked on 2026-06-26** when all three prerequisites (#5/#6/#7) were satisfied **and** the operator authorized the build scope (the §10 decisions D1–D7 were operator-approved, PR #370; the implementation plan was accepted, PR #369). The prior BLOCKED decision is retained below as dated record, not erased.
 
@@ -242,6 +611,44 @@ Required outcomes:
 Done when:
 - external intelligence no longer floats separately from the platform operating model
 
+#### Sub-package (Slice 1): enterprise-context-layer-foundation — DOCS-ONLY (awaiting review; no SQL/code authorized)
+**Status (2026-07-03):** Adopted by the operator as the concrete **Priority-5 substrate for Signal-to-Platform Linkage**. This is the **Enterprise Context Layer foundation** — the durable customer-context objects that later Priority-5 linkage (D6/D7: dependency linkage, reassessment triggers) will resolve signals against. **This BUILD_SEQUENCE amendment is docs-only; it authorizes no schema, migration, route, or application code.** Stop for review before any SQL or implementation.
+
+**Feature flag:** the entire slice is gated behind **`SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED`** (default off); prod remains inert until the operator flips it.
+
+**BUILD AUTHORIZATION (2026-07-03 — operator-approved). This SUPERSEDES the "docs-only / authorizes no schema, migration, route, or application code / stop for review" language in the Status line above and the "Priority-4-complete + explicit-authorization gate remain unchanged" clause in the S0 note below.** The operator **explicitly authorized building ECL Slice 1 AND Slice 2** during the build session and **waived the "Priority 4 complete" prerequisite** for the ECL build (operator instructions: "work priority 4 first and then continue to the goal"; "ignore anything operator owned that hinders you from completing the goal"; "proceed to S2 relationship graph"). Priority 4's *code* is complete (PRs **#461** doc-sync, **#462** C2b, **#463** C2c); its operator-owned validation / staging-soak / promotion tail is tracked separately and does **not** gate ECL.
+- **Slice 1 — BUILT (PR #464), flag-inert, to `develop` only.** Migrations `20260717`–`20260719` (`enterprise_entities` header + `enterprise_data_stores` typed child + `organizations.max_enterprise_entities` cap + inert RLS + `app_request` grant), lib (flag / metering / validator), org-scoped CRUD routes, unit + cross-org isolation tests, GDPR classification, `CANONICAL_DOMAIN_MODEL.md` registration. CI 8/8 green.
+- **Slice 2 + 2b — BUILT (PR #465, stacked on #464), flag-inert, to `develop` only.** Migrations `20260720`–`20260721` (`enterprise_relationships` generic edge substrate + inert RLS + grant), edge CRUD (two-endpoint same-org pre-flight, soft-delete), and the read-time **bounded graph resolver** (`GET /api/enterprise-graph` — the repo's first `WITH RECURSIVE`; AD-13 typed-edge union of generic edges + `ai_system_vendor_dependencies`).
+- **PROD-ENABLE GATE (still in force — gates *enablement*, NOT *merge*).** The flag stays **OFF in production** until: (a) the **AD-17 per-org capability grant** ships (else ECL reaches every rank-4 org, not Enterprise-only); (b) the **companion edge cap** on `enterprise_relationships` (pre-merge-audit finding H1) lands; and (c) the **graph resolver is load-tested** at enterprise fan-out (finding H2 / AR-4), with the materialized-adjacency fallback built if it fails.
+- **Merge:** #464 then #465 (stacked) → `develop` only. `main` untouched; launch freeze intact.
+
+**S0 decision (2026-07-03 — operator-approved; docs-only, still no implementation authorized).** The Slice-1 S0 review accepted both **B** recommendations from the ratified blueprint `docs/architecture/enterprise-context/ENTERPRISE_CONTEXT_ARCHITECTURE.md` (merged as PR #459) and its `ARCHITECTURE_REVIEW.md`, resolving review findings **AR-1 (Critical — load-bearing attributes must not live in JSONB)** and **AR-15 (High — meter at the moment the write path opens)**. This revises only the *table shape* and the *metering timing* of the two "(approved)" decisions below; the feature flag, the no-backfill rule, the out-of-scope list, the "extend `signal_match_suggestions`" rule, and the **Priority-4-complete + explicit-authorization gate remain unchanged.**
+
+**Table strategy (approved — updated 2026-07-03 S0):**
+- Introduce a shared **`enterprise_entities` header** table (org-scoped; standard A04-G1 tenant-isolation) holding the columns common to every context type (name, description, `owner_user_id` → `users`, status, criticality, confidence, provenance via `source_type`/`source_id`, `external_ref`), plus a **typed child table per load-bearing type** for that type's type-specific, compliance-relevant, queryable attributes. **Slice 1 ships the header + exactly one typed child, `enterprise_data_stores`** (e.g. `data_classification`, `residency_region`, `retention_policy`, `encryption_at_rest`), to prove the pattern before it is replicated. Any `metadata JSONB` is restricted to genuinely-freeform customer custom fields — **never** compliance-load-bearing attributes, which must be typed columns. Later typed children (`enterprise_assets`, `enterprise_business_services`, `enterprise_identities`, …) each land in their own later slice/migration. *Rationale (AR-1):* load-bearing / regulator-relevant attributes must be typed, constrained, indexed and queryable for the later Applicability Engine's blast-radius query and for legal defensibility; a single generic table would strand them in unindexed JSONB and force a future migration over live customer data.
+- Keep the existing **`vendors`** and **`ai_systems`** tables **as-is** — they remain the canonical stores for those two entity types, referenced (never copied) by the header/graph.
+- **Do not** force-migrate existing `vendors`/`ai_systems` rows into `enterprise_entities`. No backfill, no dual-write in Slice 1. Unification of the read surface (if ever) is a separate, later decision.
+
+**Metering (approved — updated 2026-07-03 S0):**
+- `enterprise_entities` rows do **NOT** count toward **`max_monitored_entities`**.
+- **Do not touch `enforceEntityLimit`** or its callers in this slice.
+- A **per-org cap on `enterprise_entities` (and a companion edge cap) ships in Slice 1**, enforced at the write path (count-and-compare → `409`) as a **separate counter, decoupled from `max_monitored_entities` and without touching `enforceEntityLimit`** (the two bullets above remain in force). Slice 1 ships the *mechanism* with a conservative default cap; the exact per-tier cap *value* remains an operator / commercial decision (blueprint §24 Q1), tunable without a schema change. The later CSV / bulk-import row-limit (S3) **reuses this same mechanism**. *Rationale (AR-15):* Slice 1 opens an org-scoped API write route, so an unmetered, scriptable create path would be a commercial / scale exposure the moment it ships.
+
+**Explicitly OUT of scope for Slice 1 (do not build):**
+- CSV / bulk import
+- Applicability Assessment
+- any matcher or `signal_match_suggestions` changes
+- connectors / external ingestion of entities
+- any UI
+- any scoring/posture changes
+- any risk creation or `risks` writes
+
+**Slice 1 scope (not yet authorized to build):** the `enterprise_entities` header + the `enterprise_data_stores` typed child + provenance columns, the (RLS-ready) tenant-isolation policy, the per-org entity/edge cap enforced at the write path, and the minimal org-scoped read/write route surface behind the flag. Entity↔risk / entity↔finding link tables and applicability assessment follow in later slices. Prefer **extending** `signal_match_suggestions` for linkage rather than duplicating it (see the ratified `external-signal-architecture.md` baseline).
+
+**Sequencing note:** this overlaps the previously deferred "Enterprise Context" concept; it is now the named Priority-5 Slice-1 substrate. It is **not** the current Active package (Priority 4 remains active) — Slice 1 build is gated on completing Priority 4 and on operator authorization of this scope.
+
+**Canonical-model forward note:** `enterprise_entities` is a new table not yet present in `CANONICAL_DOMAIN_MODEL.md`. When/if Slice 1 is authorized to build, `CANONICAL_DOMAIN_MODEL.md` must be updated to register `enterprise_entities`, its typed child tables (starting with `enterprise_data_stores`), and its entity-type taxonomy so the domain-model authority stays in sync — no CANONICAL change is made by this docs-only amendment.
+
 ### Priority 6 — Intelligence Brief premiumization
 #### Package: brief-premiumization
 Objective:
@@ -255,7 +662,7 @@ Required outcomes:
 - free vs paid brief differentiation is clear across:
   - Intelligence Brief — Free
   - Brief Pro
-  - Team Professional
+  - Brief Team
 - platform relationship remains explicit
 
 Done when:
@@ -341,6 +748,8 @@ Do not:
 - allow docs to become stale after major package work
 
 ## Backlog (deferred until prerequisites land)
+
+- **Risk lifecycle (epics R1–R4).** A formal, flag-gated risk-management lifecycle (12-stage journey → 9-state machine, executive approval with separation of duties, transactional audit stream). Full engineering blueprint: `docs/specs/risk-lifecycle-spec.md` (merged to develop `4b41cb96`, PR #450) — **the authority for the R1–R4 build prompts**. Supersedes RR-3 (`risk_lifecycle_events`) and subsumes RR-8 (`risk_approvals`) per the risk-register roadmap. Flag `SECURELOGIC_RISK_LIFECYCLE_ENABLED` (default off). Not yet authorized; Open Question #1 (approver model) must be answered before R1 starts.
 Items surfaced during package work that are out of scope for the active package and waiting on a specific prerequisite. Not a wishlist — each entry must name the prerequisite and the reason it cannot be done now.
 
 - **HTTP test harness for link routes.** Prerequisite: all four link tables landed — **prerequisite met** (signal-to-vendor, signal-to-AI-system, signal-to-control, signal-to-obligation all shipped). Pullable now. Behavioral coverage on the four shipped link routes is currently limited to the `parseLimit` fractional-input path and the `ON CONFLICT` insert-race path (per `link-route-template-hardening` — see the "Behavioral tests" section in `signalVendorLinks.test.ts`, `signalAiSystemLinks.test.ts`, `signalControlLinks.test.ts`, and `signalObligationLinks.test.ts`). The harness package will introduce a uniform behavioral test surface across all four routes — first behavioral test infrastructure in the repo that doesn't follow the existing template, so it needs its own scoping conversation before build. **Sequence after pull: this package first, then `Codify link-slice template in CLAUDE.md` (so the codified template can reference real behavioral coverage, not aspirational coverage).**

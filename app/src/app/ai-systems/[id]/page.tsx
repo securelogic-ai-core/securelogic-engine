@@ -1,15 +1,20 @@
 import Link from "next/link";
+import { isActiveStatus } from "@/app/findings/decisionQueue";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import {
   getAiSystem,
   getGovernanceReviewsForSystem,
   getAiGovernanceAssessments,
-  getFindings,
+  getAiSystemFindings,
+  getAiSystemSignals,
+  getAiSystemVendorDependencies,
   type AiSystem,
   type GovernanceReview,
   type AiGovernanceAssessment,
   type Finding,
+  type AiSystemLinkedSignal,
+  type AiVendorDependency,
 } from "@/lib/api";
 import { FindingCard } from "@/components/FindingCard";
 import { AssessmentStatusCard } from "./AssessmentStatusCard";
@@ -107,30 +112,50 @@ function DeploymentStatusChip({ value }: { value: string | null }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Section: Open Findings
+// Section: Active Findings
 // ─────────────────────────────────────────────────────────────
 
-function OpenFindingsSection({ findings, systemId }: { findings: Finding[]; systemId: string }) {
+function OpenFindingsSection({
+  findings,
+  count,
+  unavailable,
+  systemId,
+}: {
+  findings: Finding[];
+  /** The engine's COUNT over the whole matched set — not `findings.length`, which is a page. */
+  count: number;
+  unavailable: boolean;
+  systemId: string;
+}) {
   return (
     <section>
       <div className="flex items-center gap-2 mb-4">
         <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
-          Open Findings
+          Active Findings
         </h2>
         <span
           className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold"
           style={{
-            background: findings.length > 0 ? "rgba(239,68,68,0.15)" : "rgba(148,163,184,0.12)",
-            color: findings.length > 0 ? "#fca5a5" : "#475569",
+            background: count > 0 ? "rgba(239,68,68,0.15)" : "rgba(148,163,184,0.12)",
+            color: count > 0 ? "#fca5a5" : "#475569",
           }}
         >
-          {findings.length}
+          {unavailable ? "—" : count}
         </span>
       </div>
 
-      {findings.length === 0 ? (
+      {unavailable ? (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>No open findings for this AI system.</p>
+          {/* Could not resolve — this is not a zero. Saying "no active findings" here would
+              be the same lie the truncation used to tell, with a different cause. */}
+          <p className="text-sm" style={{ color: "#fbbf24" }}>
+            Could not load findings for this AI system. This is not a zero — retry, or
+            escalate if it persists.
+          </p>
+        </div>
+      ) : findings.length === 0 ? (
+        <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
+          <p className="text-sm" style={{ color: "#94a3b8" }}>No active findings for this AI system.</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -147,7 +172,13 @@ function OpenFindingsSection({ findings, systemId }: { findings: Finding[]; syst
 // Section: Governance Reviews (immutable)
 // ─────────────────────────────────────────────────────────────
 
-function GovernanceReviewsSection({ reviews }: { reviews: GovernanceReview[] }) {
+function GovernanceReviewsSection({
+  reviews,
+  reviewIdsWithFindings,
+}: {
+  reviews: GovernanceReview[];
+  reviewIdsWithFindings: Set<string>;
+}) {
   return (
     <section>
       <div className="flex items-center gap-2 mb-4">
@@ -177,12 +208,18 @@ function GovernanceReviewsSection({ reviews }: { reviews: GovernanceReview[] }) 
                       {r.review_type}
                     </span>
                     <SeverityBadge severity={(r as GovernanceReview & { overall_severity?: string | null }).overall_severity ?? null} />
-                    <span
-                      className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
-                      style={{ background: "rgba(0,196,180,0.12)", color: "#00c4b4" }}
-                    >
-                      Finding created
-                    </span>
+                    {/* Gated on a finding that actually exists, exactly as the
+                        assessments section below already does. Rendered unconditionally,
+                        this told an auditor a finding had been raised by a review that
+                        produced none — a fabricated linkage claim on a governance surface. */}
+                    {reviewIdsWithFindings.has(r.id) && (
+                      <span
+                        className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                        style={{ background: "rgba(0,196,180,0.12)", color: "#00c4b4" }}
+                      >
+                        Finding created
+                      </span>
+                    )}
                   </div>
                   {r.outcome && (
                     <p className="text-xs mb-1" style={{ color: "#cbd5e1" }}>
@@ -341,26 +378,31 @@ function SystemDetailsCard({ system }: { system: AiSystem }) {
 // Sidebar: Governance Summary
 // ─────────────────────────────────────────────────────────────
 
-function governanceSummaryColor(openFindings: Finding[]): string {
-  if (openFindings.some((f) => f.severity === "Critical")) return "#fca5a5";
-  if (openFindings.some((f) => f.severity === "High"))     return "#fdba74";
-  if (openFindings.some((f) => f.severity === "Moderate")) return "#fcd34d";
-  if (openFindings.length > 0) return "#86efac";
+function governanceSummaryColor(activeFindings: Finding[]): string {
+  if (activeFindings.some((f) => f.severity === "Critical")) return "#fca5a5";
+  if (activeFindings.some((f) => f.severity === "High"))     return "#fdba74";
+  if (activeFindings.some((f) => f.severity === "Moderate")) return "#fcd34d";
+  if (activeFindings.length > 0) return "#86efac";
   return "#00c4b4";
 }
 
 function GovernanceSummaryCard({
-  openFindings,
+  activeFindings,
+  count,
+  unavailable,
   reviewCount,
   assessmentCount,
   latestAssessment,
 }: {
-  openFindings: Finding[];
+  /** The rows on this page — used ONLY to tone the number by severity, never to count it. */
+  activeFindings: Finding[];
+  count: number;
+  unavailable: boolean;
   reviewCount: number;
   assessmentCount: number;
   latestAssessment: AiGovernanceAssessment | null;
 }) {
-  const countColor = governanceSummaryColor(openFindings);
+  const countColor = governanceSummaryColor(activeFindings);
 
   return (
     <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
@@ -369,11 +411,12 @@ function GovernanceSummaryCard({
       </h3>
 
       <div className="mb-4">
-        <p className="text-4xl font-bold leading-none" style={{ color: countColor }}>
-          {openFindings.length}
+        {/* The engine's COUNT, not the length of the rows rendered beside it. */}
+        <p className="text-4xl font-bold leading-none" style={{ color: unavailable ? "#fbbf24" : countColor }}>
+          {unavailable ? "—" : count}
         </p>
         <p className="text-xs mt-1" style={{ color: "#475569" }}>
-          open finding{openFindings.length !== 1 ? "s" : ""}
+          {unavailable ? "findings unavailable" : `active finding${count !== 1 ? "s" : ""}`}
         </p>
       </div>
 
@@ -437,6 +480,123 @@ function ActionsCard({ systemId }: { systemId: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Section: External Intelligence (linked signals — W6 read-surface wiring)
+// ─────────────────────────────────────────────────────────────
+
+const SEV_COLOR: Record<string, string> = {
+  critical: "#fca5a5",
+  high: "#fdba74",
+  moderate: "#fcd34d",
+  medium: "#fcd34d",
+  low: "#86efac",
+};
+
+function ExternalIntelligenceSection({ signals }: { signals: AiSystemLinkedSignal[] }) {
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
+          External Intelligence
+        </h2>
+        <span
+          className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
+          style={{
+            background: signals.length > 0 ? "rgba(245,158,11,0.15)" : "rgba(148,163,184,0.12)",
+            color: signals.length > 0 ? "#fcd34d" : "#475569",
+          }}
+        >
+          {signals.length}
+        </span>
+      </div>
+      {signals.length === 0 ? (
+        <p className="text-sm" style={{ color: "#475569" }}>
+          No external signals are linked to this system. New matches appear in the{" "}
+          <Link href="/queue" style={{ color: "#93c5fd" }}>review queue</Link> for confirmation.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {signals.map((s) => (
+            <div
+              key={s.link_id}
+              className="rounded-lg border p-3"
+              style={{ background: "rgba(255,255,255,0.02)", borderColor: "#1e2d45" }}
+            >
+              <div className="flex items-center gap-2 flex-wrap">
+                {s.severity && (
+                  <span className="text-xs font-semibold" style={{ color: SEV_COLOR[s.severity.toLowerCase()] ?? "#94a3b8" }}>
+                    {s.severity}
+                  </span>
+                )}
+                {s.affected_cve && <span className="text-xs" style={{ color: "#94a3b8" }}>{s.affected_cve}</span>}
+                {s.source && <span className="text-xs" style={{ color: "#475569" }}>via {s.source}</span>}
+                <span className="text-xs ml-auto" style={{ color: "#475569" }}>linked {fmt(s.link_created_at)}</span>
+              </div>
+              <p className="text-sm mt-1" style={{ color: "#cbd5e1" }}>
+                {s.event_summary ?? s.normalized_summary ?? "External signal"}
+              </p>
+              {s.intelligence_event_id && (
+                <Link
+                  href={`/intelligence/${encodeURIComponent(s.intelligence_event_id)}`}
+                  className="text-xs"
+                  style={{ color: "#93c5fd" }}
+                >
+                  View intelligence event →
+                </Link>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Section: Vendor Dependencies (supply chain — W6 read-surface wiring)
+// ─────────────────────────────────────────────────────────────
+
+const ROLE_LABELS: Record<string, string> = {
+  model_provider: "Model provider",
+  runtime: "Runtime",
+  registry: "Registry",
+  training_data: "Training data",
+};
+
+function VendorDependenciesCard({ dependencies }: { dependencies: AiVendorDependency[] }) {
+  return (
+    <div className="rounded-xl border p-4" style={{ background: "rgba(255,255,255,0.02)", borderColor: "#1e2d45" }}>
+      <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "#64748b" }}>
+        Vendor Dependencies ({dependencies.length})
+      </h3>
+      {dependencies.length === 0 ? (
+        <p className="text-xs" style={{ color: "#475569" }}>
+          No vendor dependencies recorded. A model provider or runtime dependency lets vendor
+          incidents cascade to this system automatically.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {dependencies.map((d) => (
+            <div key={d.dependency_id} className="flex items-center gap-2 text-sm">
+              <Link href={`/vendors/${d.vendor_id}`} style={{ color: "#93c5fd" }}>
+                {d.vendor_name}
+              </Link>
+              <span className="text-xs" style={{ color: "#64748b" }}>
+                {ROLE_LABELS[d.dependency_role] ?? d.dependency_role}
+              </span>
+              {d.vendor_criticality && (
+                <span className="text-xs ml-auto" style={{ color: SEV_COLOR[d.vendor_criticality.toLowerCase()] ?? "#64748b" }}>
+                  {d.vendor_criticality}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Page
 // ─────────────────────────────────────────────────────────────
 
@@ -451,37 +611,62 @@ export default async function AiSystemDetailPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const [system, reviewsData, assessmentsData, findingsData] = await Promise.all([
+  // Entitlement gate — identical to /vendors/[id], its sibling platform surface. This
+  // page had none: a session alone was enough, so a free-tier caller rendered the full
+  // AI-system detail. The engine still scopes by org (no cross-tenant leak), but the
+  // two sibling surfaces disagreed on who may open them, and only one of them was right.
+  const entitlementLevel = session.entitlementLevel ?? "free";
+  const isPlatformUser =
+    entitlementLevel === "premium" ||
+    entitlementLevel === "platform" ||
+    entitlementLevel === "team";
+  if (!isPlatformUser) redirect("/dashboard");
+
+  const [system, reviewsData, assessmentsData, findingsData, linkedSignals, vendorDeps] = await Promise.all([
     getAiSystem(token, id),
     getGovernanceReviewsForSystem(token, id, 20),
     getAiGovernanceAssessments(token, id, 20),
-    getFindings(token, { limit: 50 }),
+    // Resolved in the database, scoped to THIS system. This used to be
+    // getFindings(token, { limit: 50 }) — the org's findings, filtered down to this
+    // system in the browser. Past 50 org findings, a system's own findings fell off
+    // the end of the page before the filter ever saw them, and this page printed
+    // "0 active findings" for a system that had them. A truncation is not a zero.
+    getAiSystemFindings(token, id),
+    getAiSystemSignals(token, id, 10),
+    getAiSystemVendorDependencies(token, id),
   ]);
 
   if (!system) redirect("/ai-systems");
 
   const reviews = reviewsData?.reviews ?? [];
   const assessments = assessmentsData?.assessments ?? [];
-  const allFindings = findingsData?.findings ?? [];
 
-  // Build ID sets for both source types.
-  const reviewIds = new Set(reviews.map((r) => r.id));
-  const assessmentIds = new Set(assessments.map((a) => a.id));
+  // A failed resolve is NOT an empty result. Coalescing null to [] here would print the
+  // same confident zero the truncation used to, just by a different route.
+  const findingsUnavailable = findingsData === null;
+  const systemFindings = findingsData?.findings ?? [];
 
-  // Filter findings: ai_review links to governance_reviews; ai_governance_review links to assessments.
-  const systemFindings = allFindings.filter(
-    (f) =>
-      (f.source_type === "ai_review" && f.source_id != null && reviewIds.has(f.source_id)) ||
-      (f.source_type === "ai_governance_review" && f.source_id != null && assessmentIds.has(f.source_id))
-  );
-
-  const openFindings = systemFindings.filter((f) => f.status === "open");
+  // The COUNT the engine computed over the whole matched set — never the length of the
+  // page above, which is bounded and would silently become a cap.
+  // Metric Contract: the ACTIVE population (operational_status <> 'closed'), not
+  // the strictly-open one. A finding under active remediation still belongs to this
+  // entity's risk picture; counting only untouched work told the owner the entity
+  // was clean the moment somebody started fixing it. The engine serves both
+  // populations (active_total / open_total) — this reads the enterprise one.
+  const activeFindingCount = findingsData?.active_total ?? 0;
+  const activeFindings = systemFindings.filter((f) => isActiveStatus(f.status));
 
   // Track which assessments have findings (for "Finding created" indicator).
   const assessmentIdsWithFindings = new Set<string>();
+  // ...and which REVIEWS do. An `ai_review` finding points at a review; an
+  // `ai_governance_review` finding points at an assessment (see systemFindings above).
+  const reviewIdsWithFindings = new Set<string>();
   for (const f of systemFindings) {
     if (f.source_type === "ai_governance_review" && f.source_id) {
       assessmentIdsWithFindings.add(f.source_id);
+    }
+    if (f.source_type === "ai_review" && f.source_id) {
+      reviewIdsWithFindings.add(f.source_id);
     }
   }
 
@@ -523,8 +708,14 @@ export default async function AiSystemDetailPage({
       <div className="flex flex-col lg:flex-row gap-8">
         {/* Left: main content */}
         <div className="flex-1 min-w-0 space-y-8">
-          <OpenFindingsSection findings={openFindings} systemId={system.id} />
-          <GovernanceReviewsSection reviews={reviews} />
+          <OpenFindingsSection
+            findings={activeFindings}
+            count={activeFindingCount}
+            unavailable={findingsUnavailable}
+            systemId={system.id}
+          />
+          <ExternalIntelligenceSection signals={linkedSignals} />
+          <GovernanceReviewsSection reviews={reviews} reviewIdsWithFindings={reviewIdsWithFindings} />
           <GovernanceAssessmentsSection
             assessments={assessments}
             assessmentIdsWithFindings={assessmentIdsWithFindings}
@@ -534,8 +725,11 @@ export default async function AiSystemDetailPage({
         {/* Right: sidebar */}
         <div className="w-full lg:w-72 flex-shrink-0 space-y-4">
           <SystemDetailsCard system={system} />
+          <VendorDependenciesCard dependencies={vendorDeps} />
           <GovernanceSummaryCard
-            openFindings={openFindings}
+            activeFindings={activeFindings}
+            count={activeFindingCount}
+            unavailable={findingsUnavailable}
             reviewCount={reviews.length}
             assessmentCount={assessments.length}
             latestAssessment={latestAssessment}

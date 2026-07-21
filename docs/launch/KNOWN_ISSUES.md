@@ -1,7 +1,7 @@
 # Known Issues & Limitations at Launch
 
 > **Purpose:** An honest, verified catalogue of limitations, technical debt, and intentionally-inert paths at launch. Per `FINAL_PRODUCT_STANDARD.md`, stale or dishonest docs are treated as defects — this list is deliberately candid.
-> **Last reconciled:** 2026-07-02 (`develop` `17353bb9`, `main` `959951b9`).
+> **Last reconciled:** 2026-07-21 (`develop` `cb934b05`; `main` `512cfa5a` — archived 2026-07-02 historical baseline per Sprint-1 ruling D-A; 266 commits / 65 staged migrations ahead).
 > **Severity key:** 🔴 launch-blocking · 🟠 ship-with-mitigation · 🟡 known-debt (post-launch) · 🟢 cosmetic/orientation.
 
 This file does **not** track CI bugs or transient failures. It tracks structural limitations a customer, auditor, or future engineer must know about.
@@ -18,7 +18,10 @@ These are the only items that hold the **NO-GO**. All are operator-only gates; n
 | L-2 | Stripe test-mode portal capabilities (update/proration/cancel + Price IDs) not validated | Operator |
 | L-3 | Staging checkout amounts not confirmed ($49 / $199 / $7,200) | Operator |
 | L-4 | Staging portal upgrade/downgrade × 5 transitions (entitlement correctness) not validated | Operator |
-| L-5 | 6 staged migrations not validated on staging + prod pre-flight (F-1 + seat-cap) | Operator |
+| L-5′ | **65-migration pre-flight** (Gate 5′): F-1 filename-key check (0 in prod / 65 in staging), PF-1 staging-grant verification, batch-application rehearse-or-accept ruling (`PART_B_PREFLIGHT.md` §1) | Operator |
+| L-6 | **Authenticated staging walkthrough** (formal Gate 6 per ruling D-D): Briefing + Posture Dashboard + nav + Executive Report export, usability pass with evidence | Operator |
+
+*(Re-baselined 2026-07-21: the original L-5 — the `20260706`–`20260712` set + seat-cap pre-flight — is retired; that set is already applied to production via the archived 2026-07-02 promote (`main` = `512cfa5a`, Sprint-1 ruling D-A). The `OPERATOR_RUNBOOK.md` §0.4 evidence log is empty — no gate has recorded evidence against the current baseline. Full gate detail: `SPRINT_1.md` + `PART_B_PREFLIGHT.md`.)*
 
 ---
 
@@ -51,6 +54,7 @@ These are the only items that hold the **NO-GO**. All are operator-only gates; n
 
 ### D-3 — GDPR deletion (Art. 17) not built
 - Export rights exist; erasure rights do not. Phase-0 design is settled (10 locks; D-9 cleared) but the reaper is unbuilt. → **Sprint 3.2**.
+- **Blocked by D-12:** the reaper cannot work as designed. WORM triggers fire on FK cascade, so deleting an org raises for any tenant whose findings have been decided on. Settle D-12 first.
 
 ### D-4 — Priority-4 signal ingestion is foundation-only
 - Only the additive 4A contract/registry stubs shipped; the scheduler does not yet consume `API_SOURCES`. Source qualification, clustering, and provenance are flag-gated OFF and unimplemented at runtime. External ingestion remains the weakest layer vs. the vision. → **Sprint 3.3**.
@@ -80,6 +84,16 @@ These are the only items that hold the **NO-GO**. All are operator-only gates; n
 ### D-11 — Ask navigation now auto-derived from an Application Knowledge Index (drift risk RESOLVED)
 - Ask SecureLogic's **platform navigation answers** (menus, dropdowns, labels, routes, page titles, per-item permissions) are now rendered from a **machine-generated Application Knowledge Index** (`src/api/lib/applicationKnowledgeIndex.generated.ts`), derived from the live source of truth — `app/src/lib/navigation.ts` (the header menu) + the `app/src/app/**` route tree — via `npm run generate:knowledge-index`. **Drift is structurally prevented:** `src/api/tests/applicationKnowledgeIndex.test.ts` rebuilds the index from the live sources and fails CI if the committed artifact is stale, asserts every menu destination resolves to a real `page.tsx`, and asserts every route an Ask workflow cites exists in the index. If someone renames a menu item or moves a page without regenerating, the `test` lane goes red.
 - **Residual (minor):** the workflow *how-to prose* (the semantic intent→action mapping, e.g. "click + Add Vendor") remains curated in `productKnowledge.ts`, but **every path/label it cites is verified against the generated index** by the same test — so it cannot reference a UI that doesn't exist. Regenerate the index (`npm run generate:knowledge-index`) whenever the menu or routes change.
+
+### D-12 — WORM triggers fire on FK cascade, so tenant offboarding / GDPR erasure is IMPOSSIBLE (blocks D-3)
+- **What:** Six append-only tables (`finding_lifecycle_events`, `security_audit_log`, `risk_lifecycle_events`, `applicability_assessments`, `applicability_evidence`, `applicability_affected_entities`) are each guarded by a `BEFORE UPDATE OR DELETE … FOR EACH ROW` trigger that unconditionally `RAISE`s — no role and no session-var escape hatch. Postgres fires row triggers on **FK cascade** deletes. `finding_lifecycle_events.finding_id` and `.organization_id` are both `ON DELETE CASCADE`, so `DELETE FROM findings` — and therefore `DELETE FROM organizations` — **raises** for any org whose findings have ever been decided on. `finding_risk_acceptances` adds a second, independent barrier: its own `trg_finding_risk_acceptances_forbid_delete` (correct: an acceptance is a governance artifact, withdrawn not erased) plus `finding_id ON DELETE RESTRICT`.
+- **Consequence:** erasing a tenant is not merely unbuilt (D-3) — it is currently **impossible** for any real org. D-3 cannot be delivered by writing a reaper; the trigger/FK design must be resolved first (e.g. a session-var escape hatch honoured by the WORM triggers, or an explicit erasure path that suspends them under audit).
+- **Verified:** against a real database, not inferred. Reproduced by the validation teardown in `scripts/validation/seed-walkthrough-org.ts`, which can only delete its own seeded org by `ALTER TABLE … DISABLE TRIGGER` inside its transaction.
+- **NOT a workaround:** that teardown is an explicitly-invoked, org-scoped **validation** path for a `[SEED]` org on a non-prod database. It is not an offboarding mechanism and must not be generalised into one. Production FKs, WORM constraints, triggers and runtime deletion behaviour are unchanged.
+- **Resolution:** unowned. Must be settled before D-3 (Art. 17 erasure) can be built. → **architecture backlog**.
+
+### D-13 — PF-1: possible skipped `app_request` grants on staging (reshaped migration)
+- `20260719_enterprise_entities_rls.sql` was reshaped 59 minutes after first commit to add `app_request` DML grants on `enterprise_entities` + `data_stores`; the filename-keyed runner may have applied v1 and silently skipped v2 on staging (push/deploy timing UNKNOWN from repo). Prod is unaffected (applies v2 at promotion). Inert today; **would fail the staging A04-G1 RLS flip closed** on those tables. Verification SQL + remediation: `PART_B_PREFLIGHT.md` §1.3. → verify at Gate 5′; must be resolved before the staging RLS flip.
 
 ---
 

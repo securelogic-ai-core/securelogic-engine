@@ -27,6 +27,8 @@ export function isContentTypeEnforcementExempt(originalUrl: string): boolean {
     originalUrl.startsWith("/webhooks/email/resend") ||
     originalUrl.startsWith("/api/vendor-assessments/analyze-document") ||
     /^\/api\/vendor-assurance\/documents(\?|$)/.test(originalUrl) ||
+    // Remediation Evidence file upload receives multipart/form-data.
+    /^\/api\/evidence\/upload(\?|$)/.test(originalUrl) ||
     // Ask voice transcription receives multipart/form-data audio uploads.
     originalUrl.startsWith("/api/ask/transcribe") ||
     /^\/api\/sso\/[^/]+\/acs/.test(originalUrl)

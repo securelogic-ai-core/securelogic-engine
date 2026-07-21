@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getSession } from "@/lib/session";
 import {
   getMe,
+  getAuthMe,
   getRiskById,
   getRiskTreatments,
   getRiskScale,
@@ -30,20 +31,29 @@ export default async function RiskDetailPage({
   //   1. risk row     — for header, metadata grid, treatment-approach prose
   //   2. treatments   — read-only list of risk_treatments rows for this risk
   //   3. scale levels — display-preset relabeling
-  //   4. linked open findings — title + severity per finding (intelligence
+  //   4. linked active findings — title + severity per finding (intelligence
   //      endpoint only gives counts; this fetch fills in detail)
   // Fifth fetch — org cadence policy (RR-5). Drives the
   // "(org default)" subtitle on the Review Cadence card. The endpoint
   // always returns four rating keys (defaults if no row); a null
   // response here is rare (network) and the card falls back to the
   // documented defaults via residual_rating lookup.
-  const [risk, treatmentsData, scale, findingsData, riskSettings] = await Promise.all([
+  // Sixth fetch — the caller's role (getAuthMe needs a JWT; API-key sessions
+  // resolve to null role). Drives approver-only affordances in the lifecycle
+  // panel; the engine remains the authority regardless of what the UI shows.
+  const [risk, treatmentsData, scale, findingsData, riskSettings, authMe] = await Promise.all([
     getRiskById(token, id),
     getRiskTreatments(token, { risk_id: id, limit: 50 }),
     getRiskScale(token),
-    getFindings(token, { source_type: "risk", source_id: id, status: "open", limit: 50 }),
+    // Server-scoped (source_id = this risk), so this is NOT the cap-before-filter
+    // defect the other detail pages had — the filter runs in the database. But the
+    // page IS bounded at 50, so the exact `total` travels with it and the card
+    // discloses when it is showing a subset, rather than quietly ending at 50.
+    getFindings(token, { source_type: "risk", source_id: id, active: true, limit: 50 }),
     getRiskSettingsServer(token),
+    session.jwtToken ? getAuthMe(session.jwtToken) : Promise.resolve(null),
   ]);
+  const userRole = authMe?.role ?? null;
 
   if (!risk) notFound();
 
@@ -69,8 +79,10 @@ export default async function RiskDetailPage({
         risk={risk}
         treatments={treatmentsData?.treatments ?? []}
         findings={findingsData?.findings ?? []}
+        findingsTotal={findingsData?.total ?? findingsData?.findings.length ?? 0}
         scaleLevels={scale?.levels ?? []}
         effectiveCadenceByRating={effectiveCadenceByRating}
+        userRole={userRole}
       />
     </div>
   );

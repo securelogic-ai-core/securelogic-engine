@@ -13,6 +13,7 @@
  *   POST   /api/ai-systems       — create AI system
  *   GET    /api/ai-systems       — list AI systems (cursor paginated)
  *   GET    /api/ai-systems/:id   — get single AI system
+ *   GET    /api/ai-systems/:id/findings — findings linked to one system, with TRUE counts
  *   PATCH  /api/ai-systems/:id   — update AI system metadata
  *   DELETE /api/ai-systems/:id   — delete AI system (pre-flight check)
  *
@@ -22,12 +23,17 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
+import { registerAsset, deregisterAsset } from "../lib/assetRegistrar.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { requireAdminRole } from "../middleware/requireRole.js";
 import { validateAiSystemCreate } from "../lib/aiSystemValidation.js";
+import { sqlFindingActive } from "../lib/metricDefinitions.js";
 import { enforceEntityLimit } from "../lib/entityLimit.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 
@@ -74,8 +80,8 @@ router.post(
   "/ai-systems",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -106,34 +112,42 @@ router.post(
 
       let result;
       try {
-        result = await pg.query(
-          `
-          INSERT INTO ai_systems (
-            organization_id,
-            name,
-            use_case,
-            owner_user_id,
-            model_type,
-            data_classification,
-            deployment_status,
-            criticality,
-            risk_classification
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-          RETURNING ${AI_SYSTEM_SELECT}
-          `,
-          [
-            organizationId,
-            input.name,
-            input.use_case ?? null,
-            input.owner_user_id ?? (req as any).autoUserId ?? null,
-            input.model_type ?? null,
-            input.data_classification ?? null,
-            input.deployment_status ?? null,
-            input.criticality ?? null,
-            input.risk_classification ?? null
-          ]
-        );
+        // Single tx via the route's asTenant wrap (P8) — the EAR registry
+        // upsert (flag-gated, dark by default) stays atomic with the INSERT.
+        {
+          const created = await pg.query(
+            `
+            INSERT INTO ai_systems (
+              organization_id,
+              name,
+              use_case,
+              owner_user_id,
+              model_type,
+              data_classification,
+              deployment_status,
+              criticality,
+              risk_classification
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING ${AI_SYSTEM_SELECT}
+            `,
+            [
+              organizationId,
+              input.name,
+              input.use_case ?? null,
+              input.owner_user_id ?? (req as any).autoUserId ?? null,
+              input.model_type ?? null,
+              input.data_classification ?? null,
+              input.deployment_status ?? null,
+              input.criticality ?? null,
+              input.risk_classification ?? null
+            ]
+          );
+          if (assetRegistryEnabled()) {
+            await registerAsset(organizationId, "ai_system", "ai_systems", (created.rows[0] as { id: string }).id);
+          }
+          result = created;
+        }
       } catch (err: any) {
         if (err?.code === "23505") {
           res.status(409).json({
@@ -174,7 +188,7 @@ router.post(
       );
       res.status(500).json({ error: "ai_system_create_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -187,8 +201,8 @@ router.get(
   "/ai-systems",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -276,7 +290,7 @@ router.get(
       );
       res.status(500).json({ error: "ai_systems_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -289,8 +303,8 @@ router.get(
   "/ai-systems/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -333,7 +347,139 @@ router.get(
       );
       res.status(500).json({ error: "ai_system_get_failed" });
     }
-  }
+  })
+);
+
+/* =========================================================
+   GET /api/ai-systems/:id/findings
+
+   The findings linked to ONE AI system, resolved in the database.
+
+   This exists because the detail page had no scoped route and improvised one:
+   it fetched the org's findings with `limit: 50` and filtered them down to this
+   system in the browser. Past 50 findings in the org, a system's real findings
+   fell off the end of the page before the filter ever saw them — and the tile
+   rendered "0 open findings" for a system that had them. A truncation is not a
+   zero (the #637 rule), and a client-side filter over a truncated page is a
+   truncation wearing a filter's clothes.
+
+   Both linkage conventions are unioned, per their migrations:
+     source_type 'ai_review'             → source_id = governance_reviews.id
+     source_type 'ai_governance_review'  → source_id = ai_governance_assessments.id
+   Neither ever holds an ai_system_id — the system is reached through the join.
+
+   `total` and `active_total` are COUNT(*) over the WHOLE matched set, never the
+   length of the returned page: the rows are for display and are bounded; the
+   counts are the truth a tile is allowed to print.
+   ========================================================= */
+
+router.get(
+  "/ai-systems/:id/findings",
+  requireApiKey,
+  attachOrganizationContext,
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const aiSystemId = String(req.params.id ?? "").trim();
+      if (!aiSystemId) {
+        res.status(400).json({ error: "ai_system_id_required" });
+        return;
+      }
+      if (!UUID_RE.test(aiSystemId)) {
+        res.status(400).json({ error: "ai_system_id_must_be_uuid" });
+        return;
+      }
+
+      const limit = Math.min(parseLimit(req.query.limit), MAX_LIMIT);
+
+      // The matched set, defined once and reused by both the page and the counts,
+      // so the number on the tile and the rows beneath it can never disagree.
+      const linkedFindings = `
+        SELECT f.id, f.title, f.severity, f.status, f.operational_status,
+               f.domain, f.description,
+               f.source_type, f.source_id, f.created_at, f.updated_at
+        FROM findings f
+        JOIN governance_reviews gr
+          ON gr.id::text = f.source_id::text
+         AND f.source_type = 'ai_review'
+        WHERE gr.ai_system_id = $1
+          AND gr.organization_id = $2
+          AND f.organization_id = $2
+
+        UNION ALL
+
+        SELECT f.id, f.title, f.severity, f.status, f.operational_status,
+               f.domain, f.description,
+               f.source_type, f.source_id, f.created_at, f.updated_at
+        FROM findings f
+        JOIN ai_governance_assessments aga
+          ON aga.id::text = f.source_id::text
+         AND f.source_type = 'ai_governance_review'
+        WHERE aga.ai_system_id = $1
+          AND aga.organization_id = $2
+          AND f.organization_id = $2
+      `;
+
+      const [rowsResult, countResult] = await Promise.all([
+        pg.query(
+          `
+          WITH linked AS (${linkedFindings})
+          SELECT * FROM linked
+          ORDER BY created_at DESC
+          LIMIT $3
+          `,
+          [aiSystemId, organizationId, limit]
+        ),
+        pg.query<{ total: string; active_total: string; open_total: string }>(
+          `
+          WITH linked AS (${linkedFindings})
+          SELECT
+            COUNT(*)::text                                        AS total,
+            COUNT(*) FILTER (WHERE ${sqlFindingActive()})::text   AS active_total,
+            COUNT(*) FILTER (WHERE status = 'open')::text         AS open_total
+          FROM linked
+          `,
+          [aiSystemId, organizationId]
+        )
+      ]);
+
+      const counts = countResult.rows[0];
+      res.status(200).json({
+        findings: rowsResult.rows,
+        total: parseInt(counts?.total ?? "0", 10),
+        // BOTH populations are carried, and both are true counts.
+        //
+        // active_total is the Metric Contract population (operational_status <>
+        // 'closed') — the definition every enterprise surface counts, and what this
+        // page now displays. open_total is the strictly-open LIFECYCLE population,
+        // retained as an explicit filter, never as the enterprise metric.
+        //
+        // They are both here on purpose. The word "open findings" currently denotes
+        // THREE different populations across the product (dashboard: active; vendor
+        // detail: active; AI-system and obligation detail: strictly open), and
+        // resolving that is a platform vocabulary decision, not a detail-page one.
+        // This route refuses to prejudge it: it reports both honestly and lets the
+        // surface choose, so whichever way the decision lands, the number is already
+        // on the wire and no caller has to re-derive it from a truncated page.
+        active_total: parseInt(counts?.active_total ?? "0", 10),
+        open_total: parseInt(counts?.open_total ?? "0", 10),
+      });
+    } catch (err) {
+      logger.error(
+        { event: "ai_system_findings_failed", err },
+        "GET /api/ai-systems/:id/findings failed"
+      );
+      res.status(500).json({ error: "ai_system_findings_failed" });
+    }
+  })
 );
 
 function isUuid(v: unknown): v is string {
@@ -350,8 +496,8 @@ router.patch(
   "/ai-systems/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -493,7 +639,7 @@ router.patch(
       logger.error({ event: "ai_system_patch_failed", err }, "PATCH /api/ai-systems/:id failed");
       res.status(500).json({ error: "ai_system_patch_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -506,10 +652,10 @@ router.delete(
   "/ai-systems/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requirePremiumOrCorePlatform,
   requireAdminRole,
   requireAuth,
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -547,11 +693,16 @@ router.delete(
         return;
       }
 
+      // Single tx via the route's asTenant wrap (P8) — registry
+      // deregistration (flag-gated) stays atomic with the DELETE.
       const result = await pg.query(
         `DELETE FROM ai_systems
          WHERE id = $1 AND organization_id = $2`,
         [aiSystemId, organizationId]
       );
+      if ((result.rowCount ?? 0) > 0 && assetRegistryEnabled()) {
+        await deregisterAsset(organizationId, "ai_systems", aiSystemId);
+      }
 
       if ((result.rowCount ?? 0) === 0) {
         res.status(404).json({ error: "ai_system_not_found" });
@@ -574,7 +725,7 @@ router.delete(
       logger.error({ event: "ai_system_delete_failed", err }, "DELETE /api/ai-systems/:id failed");
       res.status(500).json({ error: "ai_system_delete_failed" });
     }
-  }
+  })
 );
 
 export default router;

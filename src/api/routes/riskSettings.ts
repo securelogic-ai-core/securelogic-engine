@@ -41,6 +41,9 @@ const SETTINGS_SELECT = `
   id,
   organization_id,
   cadence_by_rating,
+  finding_sla_by_severity,
+  require_finding_closure_sod,
+  require_evidence_gate,
   created_at,
   updated_at,
   updated_by_user_id
@@ -103,6 +106,9 @@ export async function getRiskSettings(req: Request, res: Response): Promise<void
         is_default: true,
         organization_id: organizationId,
         cadence_by_rating: { ...DEFAULT_CADENCE_BY_RATING },
+        finding_sla_by_severity: null,
+        require_finding_closure_sod: false,
+        require_evidence_gate: false,
         created_at: null,
         updated_at: null,
         updated_by_user_id: null
@@ -117,6 +123,9 @@ export async function getRiskSettings(req: Request, res: Response): Promise<void
       cadence_by_rating: buildEffectiveCadenceByRating(
         (row.cadence_by_rating as Record<string, unknown> | null) ?? null
       ),
+      finding_sla_by_severity: (row as Record<string, unknown>)["finding_sla_by_severity"] ?? null,
+      require_finding_closure_sod: (row as Record<string, unknown>)["require_finding_closure_sod"] === true,
+      require_evidence_gate: (row as Record<string, unknown>)["require_evidence_gate"] === true,
       created_at: row.created_at,
       updated_at: row.updated_at,
       updated_by_user_id: row.updated_by_user_id
@@ -147,7 +156,15 @@ export async function putRiskSettings(req: Request, res: Response): Promise<void
     return;
   }
 
-  const { cadence_by_rating } = validated.input;
+  const {
+    cadence_by_rating,
+    finding_sla_by_severity,
+    require_finding_closure_sod,
+    require_evidence_gate,
+  } = validated.input;
+  // Distinguish "field absent" (leave stored value unchanged) from an explicit
+  // value (incl. null to clear the SLA policy).
+  const slaProvided = "finding_sla_by_severity" in validated.input;
   const userId = req.userId ?? null;
 
   try {
@@ -172,15 +189,32 @@ export async function putRiskSettings(req: Request, res: Response): Promise<void
 
     const result = await pg.query(
       `INSERT INTO risk_settings (
-         organization_id, cadence_by_rating, updated_by_user_id
+         organization_id, cadence_by_rating, updated_by_user_id,
+         finding_sla_by_severity, require_finding_closure_sod, require_evidence_gate
        )
-       VALUES ($1, $2::jsonb, $3)
+       VALUES ($1, $2::jsonb, $3, $4::jsonb, COALESCE($5, FALSE), COALESCE($6, FALSE))
        ON CONFLICT (organization_id) DO UPDATE
          SET cadence_by_rating  = EXCLUDED.cadence_by_rating,
+             -- $7 = caller provided the SLA field (possibly null-to-clear);
+             -- absent leaves the stored policy untouched.
+             finding_sla_by_severity = CASE WHEN $7 THEN EXCLUDED.finding_sla_by_severity
+                                            ELSE risk_settings.finding_sla_by_severity END,
+             require_finding_closure_sod = COALESCE($5, risk_settings.require_finding_closure_sod),
+             require_evidence_gate       = COALESCE($6, risk_settings.require_evidence_gate),
              updated_at         = NOW(),
              updated_by_user_id = EXCLUDED.updated_by_user_id
        RETURNING ${SETTINGS_SELECT}`,
-      [organizationId, JSON.stringify(cadence_by_rating), userId]
+      [
+        organizationId,
+        JSON.stringify(cadence_by_rating),
+        userId,
+        finding_sla_by_severity === undefined || finding_sla_by_severity === null
+          ? null
+          : JSON.stringify(finding_sla_by_severity),
+        require_finding_closure_sod ?? null,
+        require_evidence_gate ?? null,
+        slaProvided,
+      ]
     );
 
     const row = result.rows[0]!;
@@ -221,7 +255,10 @@ export async function putRiskSettings(req: Request, res: Response): Promise<void
       resourceId:    row.id as string,
       payload:       {
         cadence_by_rating,
-        cadence_diff
+        cadence_diff,
+        ...(slaProvided ? { finding_sla_by_severity } : {}),
+        ...(require_finding_closure_sod !== undefined ? { require_finding_closure_sod } : {}),
+        ...(require_evidence_gate !== undefined ? { require_evidence_gate } : {}),
       },
       ipAddress:     req.ip ?? null
     });
@@ -232,6 +269,9 @@ export async function putRiskSettings(req: Request, res: Response): Promise<void
       cadence_by_rating: buildEffectiveCadenceByRating(
         (row.cadence_by_rating as Record<string, unknown> | null) ?? null
       ),
+      finding_sla_by_severity: (row as Record<string, unknown>)["finding_sla_by_severity"] ?? null,
+      require_finding_closure_sod: (row as Record<string, unknown>)["require_finding_closure_sod"] === true,
+      require_evidence_gate: (row as Record<string, unknown>)["require_evidence_gate"] === true,
       created_at: row.created_at,
       updated_at: row.updated_at,
       updated_by_user_id: row.updated_by_user_id

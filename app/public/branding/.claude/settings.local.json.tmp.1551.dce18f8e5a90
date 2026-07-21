@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//workspaces/securelogic-engine/**)",
+      "Bash(ls -la app/src/api/services/dataExport)",
+      "Bash(find . -path ./node_modules -prune -o -name '*.ts' -path '*dataExport*' -print)",
+      "Bash(awk '/CREATE TABLE users/,/\\\\\\);/' db/migrations/001_securelogic_platform.sql)",
+      "Bash(npx vitest *)",
+      "Bash(npm run *)",
+      "Bash(gh pr *)",
+      "Bash(npx tsc *)",
+      "Bash(npx eslint *)",
+      "Bash(node -e \"console.log\\(JSON.stringify\\(require\\('./package.json'\\).scripts,null,1\\)\\)\")",
+      "Bash(gh run *)",
+      "Bash(npm test *)",
+      "Bash(node -e \"console.log\\(JSON.stringify\\(require\\('./app/package.json'\\).scripts,null,2\\)\\)\")",
+      "Bash(node -e \"console.log\\(JSON.stringify\\(require\\('./package.json'\\).scripts,null,2\\)\\)\")",
+      "Bash(node -e \"const p=require\\('/workspaces/securelogic-engine/package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\)\")",
+      "Bash(node -e \"const p=require\\('/workspaces/securelogic-engine/app/package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\)\")",
+      "Bash(node -e \"const p=require\\('./app/package.json'\\);console.log\\(JSON.stringify\\(p.devDependencies,null,2\\)\\)\")",
+      "Bash(xargs -I{} basename {})",
+      "Bash(bash scripts/harness-db-up.sh)",
+      "Bash(export TEST_DATABASE_URL='postgresql://harness:harness@127.0.0.1:55432/harness' PGSSLMODE=disable)",
+      "Bash(python3 -)",
+      "Bash(npx next *)",
+      "Bash(bash scripts/check-tenant-coverage.sh)",
+      "Bash(node scripts/check-env-url-drift.mjs)",
+      "Bash(python3 -c ' *)",
+      "Bash(node *)",
+      "Bash(git ls-remote *)",
+      "Bash(gh api *)",
+      "Bash(git checkout *)",
+      "Bash(git add *)"
+    ]
+  }
+}

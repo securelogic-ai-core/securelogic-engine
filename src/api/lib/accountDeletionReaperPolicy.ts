@@ -85,6 +85,11 @@ export const CATEGORY_B_DELETE_TABLES: readonly string[] = [
   "user_alert_preferences",
   "alert_sends",
   "dashboard_preferences",
+  // B2 GDPR rider: finding_saved_views was missing from the reaper (its C
+  // classification repeated the CASCADE fallacy — reclassified B), and
+  // briefing_layouts is B2's new per-user layout table. Both org+user-keyed.
+  "finding_saved_views",
+  "briefing_layouts",
 ];
 
 /**

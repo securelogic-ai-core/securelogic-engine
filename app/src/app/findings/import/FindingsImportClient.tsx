@@ -220,7 +220,10 @@ function ProgressBar({ step }: { step: Step }) {
 // Main component
 // ─────────────────────────────────────────────────────────────
 
-export function FindingsImportClient() {
+export function FindingsImportClient({
+  homeLabel = "Findings",
+  explorerCta = "View all findings →",
+}: { homeLabel?: string; explorerCta?: string } = {}) {
   const [step, setStep]               = useState<Step>("upload");
   const [rawHeaders, setRawHeaders]   = useState<string[]>([]);
   const [rawRows, setRawRows]         = useState<Record<string, string>[]>([]);
@@ -331,7 +334,7 @@ export function FindingsImportClient() {
   return (
     <div className="max-w-4xl mx-auto px-6 py-12">
       <Link href="/findings" className="inline-flex items-center gap-1.5 text-xs font-medium mb-6 transition-colors hover:opacity-80" style={{ color: "#94a3b8" }}>
-        ← Findings
+        ← {homeLabel}
       </Link>
       <h1 className="text-2xl font-bold mb-2" style={{ color: "#f1f5f9" }}>Import Findings</h1>
       <p className="text-sm mb-8" style={{ color: "#94a3b8" }}>
@@ -362,7 +365,7 @@ export function FindingsImportClient() {
         />
       )}
       {step === "results" && importResult && (
-        <ResultsStep result={importResult} onReset={resetToUpload} />
+        <ResultsStep result={importResult} onReset={resetToUpload} explorerCta={explorerCta} />
       )}
     </div>
   );
@@ -589,7 +592,7 @@ const STATUS_BADGE_STYLES: Record<string, React.CSSProperties> = {
 };
 const STATUS_LABELS: Record<string, string> = { created: "Created", skipped: "Already exists", error: "Error" };
 
-function ResultsStep({ result, onReset }: { result: FindingImportResult; onReset: () => void }) {
+function ResultsStep({ result, onReset, explorerCta }: { result: FindingImportResult; onReset: () => void; explorerCta: string }) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-3 gap-4">
@@ -618,7 +621,10 @@ function ResultsStep({ result, onReset }: { result: FindingImportResult; onReset
         </div>
       </div>
       <div className="flex items-center gap-4">
-        <Link href="/findings" className="px-6 py-2 rounded-lg text-sm font-semibold transition-colors hover:opacity-90" style={{ background: "#00c4b4", color: "#0a0f1a" }}>View all findings →</Link>
+        {/* Post-import the user wants to SEE what landed, which is the searchable
+            inventory — not the work hub, which renders no finding rows. Points at
+            the Explorer URL; flag-off that same URL is the one legacy list. */}
+        <Link href="/findings?queue=all" className="px-6 py-2 rounded-lg text-sm font-semibold transition-colors hover:opacity-90" style={{ background: "#00c4b4", color: "#0a0f1a" }}>{explorerCta}</Link>
         <button onClick={onReset} className="text-sm font-medium transition-colors hover:opacity-80" style={{ color: "#94a3b8" }}>Import another file</button>
       </div>
     </div>

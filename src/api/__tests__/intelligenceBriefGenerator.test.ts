@@ -731,8 +731,22 @@ describe("buildContentMarkdown — structure", () => {
     expect(md).toContain("Vendor: OpenSSL");
   });
 
-  it("includes source in metadata", () => {
-    expect(md).toContain("Source: cisa-kev");
+  it("does NOT leak the feed slug into the customer-facing markdown (R1)", () => {
+    // Was: expect(md).toContain("Source: cisa-kev").
+    //
+    // The brief body used to carry the internal feed slug literally — "Source:
+    // cisa-kev" — in the payload returned by GET /api/intelligence-briefs/:id. Which
+    // pipe an item arrived down is our operational detail, not the executive's; it is
+    // not something they can act on or verify. Feed attribution is retained
+    // internally (brief_items.source_slug, intelligence_brief_item_provenance).
+    //
+    // What the reader CAN act on stays: the CVE, the vendor, the severity, and the
+    // link to the primary source.
+    expect(md).not.toContain("Source: cisa-kev");
+    expect(md).not.toContain("cisa-kev");
+    expect(md).toContain("CVE: CVE-2024-12345");
+    expect(md).toContain("Vendor: OpenSSL");
+    expect(md).toContain("Severity: Critical");
   });
 
   it("includes severity in metadata", () => {

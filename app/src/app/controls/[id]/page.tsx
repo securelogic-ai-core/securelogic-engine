@@ -1,10 +1,11 @@
 import Link from "next/link";
+import { isActiveStatus } from "@/app/findings/decisionQueue";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import {
   getControl,
   getControlAssessmentsForControl,
-  getFindings,
+  getControlFindings,
   getFrameworks,
   getFrameworkReadiness,
   getEvidence,
@@ -116,30 +117,49 @@ function AssessmentStatusBadge({ status }: { status: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Section: Open Findings
+// Section: Active Findings
 // ─────────────────────────────────────────────────────────────
 
-function OpenFindingsSection({ findings, controlId }: { findings: Finding[]; controlId: string }) {
+function OpenFindingsSection({
+  findings,
+  count,
+  unavailable,
+  controlId,
+}: {
+  findings: Finding[];
+  /** The engine's COUNT over the whole matched set — not findings.length, which is a page. */
+  count: number;
+  unavailable: boolean;
+  controlId: string;
+}) {
   return (
     <section>
       <div className="flex items-center gap-2 mb-4">
         <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
-          Open Findings
+          Active Findings
         </h2>
         <span
           className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold"
           style={{
-            background: findings.length > 0 ? "rgba(239,68,68,0.15)" : "rgba(148,163,184,0.12)",
-            color: findings.length > 0 ? "#fca5a5" : "#475569",
+            background: count > 0 ? "rgba(239,68,68,0.15)" : "rgba(148,163,184,0.12)",
+            color: count > 0 ? "#fca5a5" : "#475569",
           }}
         >
-          {findings.length}
+          {unavailable ? "—" : count}
         </span>
       </div>
 
-      {findings.length === 0 ? (
+      {unavailable ? (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>No open findings</p>
+          {/* Could not resolve — this is not a zero. */}
+          <p className="text-sm" style={{ color: "#fbbf24" }}>
+            Could not load findings for this control. This is not a zero — retry, or
+            escalate if it persists.
+          </p>
+        </div>
+      ) : findings.length === 0 ? (
+        <div className="bg-brand-surface border border-brand-line rounded-xl p-6 text-center">
+          <p className="text-sm" style={{ color: "#94a3b8" }}>No active findings</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -312,35 +332,41 @@ function ControlDetailsCard({ control }: { control: Control }) {
   );
 }
 
-function findingSummaryColor(openFindings: Finding[]): string {
-  if (openFindings.some((f) => f.severity === "Critical")) return "#fca5a5";
-  if (openFindings.some((f) => f.severity === "High"))     return "#fdba74";
-  if (openFindings.some((f) => f.severity === "Moderate")) return "#fcd34d";
-  if (openFindings.length > 0) return "#86efac";
+function findingSummaryColor(activeFindings: Finding[]): string {
+  if (activeFindings.some((f) => f.severity === "Critical")) return "#fca5a5";
+  if (activeFindings.some((f) => f.severity === "High"))     return "#fdba74";
+  if (activeFindings.some((f) => f.severity === "Moderate")) return "#fcd34d";
+  if (activeFindings.length > 0) return "#86efac";
   return "#00c4b4";
 }
 
 function ComplianceSummaryCard({
-  openFindings,
+  activeFindings,
+  count,
+  unavailable,
   assessmentCount,
   latestAssessment,
 }: {
-  openFindings: Finding[];
+  /** The rows on this page — used ONLY to tone the number by severity, never to count it. */
+  activeFindings: Finding[];
+  count: number;
+  unavailable: boolean;
   assessmentCount: number;
   latestAssessment: ControlAssessment | null;
 }) {
-  const countColor = findingSummaryColor(openFindings);
+  const countColor = findingSummaryColor(activeFindings);
   return (
     <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
       <h3 className="text-xs font-semibold uppercase tracking-wide mb-4" style={{ color: "#94a3b8" }}>
         Compliance Summary
       </h3>
       <div className="mb-4">
-        <p className="text-4xl font-bold leading-none" style={{ color: countColor }}>
-          {openFindings.length}
+        {/* The engine's COUNT, not the length of the rows rendered beside it. */}
+        <p className="text-4xl font-bold leading-none" style={{ color: unavailable ? "#fbbf24" : countColor }}>
+          {unavailable ? "—" : count}
         </p>
         <p className="text-xs mt-1" style={{ color: "#475569" }}>
-          open finding{openFindings.length !== 1 ? "s" : ""}
+          {unavailable ? "findings unavailable" : `active finding${count !== 1 ? "s" : ""}`}
         </p>
       </div>
       <div className="space-y-2">
@@ -403,7 +429,12 @@ export default async function ControlDetailPage({
   const [control, assessmentsData, findingsData, frameworksData, linkedPoliciesData] = await Promise.all([
     getControl(token, id),
     getControlAssessmentsForControl(token, id, 20),
-    getFindings(token, { source_type: "control_test", limit: 100 }),
+    // Resolved in the DATABASE, scoped to THIS control. This used to be
+    // getFindings(source_type:'control_test', limit:100) filtered in the browser
+    // against an assessment list ITSELF capped at 20 — a double truncation, cap
+    // applied BEFORE the filter both times. Past either cap the control's real
+    // findings vanished and this page printed a confident "0 active findings".
+    getControlFindings(token, id),
     getFrameworks(token),
     getPolicies(token, { linked_to_control: id }),
   ]);
@@ -419,7 +450,6 @@ export default async function ControlDetailPage({
     : null;
   const latestEvidence: Evidence[] = evidenceData?.evidence ?? [];
 
-  const allFindings = findingsData?.findings ?? [];
   const frameworks: Framework[] = frameworksData?.frameworks ?? [];
 
   // Fetch readiness per framework to derive which requirements this control satisfies
@@ -450,12 +480,18 @@ export default async function ControlDetailPage({
     }
   });
 
-  // Findings link to assessment IDs (source_id = assessment.id).
-  const assessmentIds = new Set(assessments.map((a) => a.id));
-  const controlFindings = allFindings.filter(
-    (f) => f.source_type === "control_test" && f.source_id !== null && assessmentIds.has(f.source_id)
-  );
-  const openFindings = controlFindings.filter((f) => f.status === "open");
+  // A failed resolve is NOT an empty result — coalescing null to [] would print the
+  // same confident zero the truncation used to, by a different route.
+  const findingsUnavailable = findingsData === null;
+  const controlFindings = findingsData?.findings ?? [];
+  // The engine's COUNT over the WHOLE matched set — never the length of the page.
+  // Metric Contract: the ACTIVE population (operational_status <> 'closed'), not
+  // the strictly-open one. A finding under active remediation still belongs to this
+  // entity's risk picture; counting only untouched work told the owner the entity
+  // was clean the moment somebody started fixing it. The engine serves both
+  // populations (active_total / open_total) — this reads the enterprise one.
+  const activeFindingCount = findingsData?.active_total ?? 0;
+  const activeFindings = controlFindings.filter((f) => isActiveStatus(f.status));
 
   const assessmentIdsWithFindings = new Set<string>();
   for (const f of controlFindings) {
@@ -500,7 +536,12 @@ export default async function ControlDetailPage({
       <div className="flex flex-col lg:flex-row gap-8">
         {/* Left: main content */}
         <div className="flex-1 min-w-0 space-y-8">
-          <OpenFindingsSection findings={openFindings} controlId={control.id} />
+          <OpenFindingsSection
+            findings={activeFindings}
+            count={activeFindingCount}
+            unavailable={findingsUnavailable}
+            controlId={control.id}
+          />
           <AssessmentHistorySection
             assessments={assessments}
             assessmentIdsWithFindings={assessmentIdsWithFindings}
@@ -518,7 +559,9 @@ export default async function ControlDetailPage({
           <CadenceSection control={control} />
           <LinkedPoliciesCard policies={linkedPolicies} controlId={control.id} />
           <ComplianceSummaryCard
-            openFindings={openFindings}
+            activeFindings={activeFindings}
+            count={activeFindingCount}
+            unavailable={findingsUnavailable}
             assessmentCount={assessments.length}
             latestAssessment={latestAssessment}
           />

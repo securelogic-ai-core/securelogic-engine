@@ -319,9 +319,15 @@ function ExecutiveSummarySection({
                         <span className="text-xs font-bold tabular-nums flex-shrink-0 w-4 text-right" style={{ color: '#94a3b8' }}>
                           {i + 1}.
                         </span>
+                        {/* line-clamp-1 clipped every heading to a single line with
+                            a CSS ellipsis — a RENDER-time truncation that survives
+                            any generation-side fix. The generator caps titles at 120
+                            chars (sentence-safe, IQP Q4), which needs two lines here.
+                            Clamping at 2 keeps the row compact without cutting a
+                            heading that was already trimmed to fit. */}
                         <Link
                           href={href}
-                          className="text-sm font-medium text-slate-800 hover:text-teal-700 transition-colors line-clamp-1"
+                          className="text-sm font-medium text-slate-800 hover:text-teal-700 transition-colors line-clamp-2"
                         >
                           {s.title}
                         </Link>
@@ -452,18 +458,16 @@ function PrioritySignalCard({
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-600 hover:text-teal-700 transition-colors"
             >
+              {/* R1: the feed name is gone; the LINK stays. Which pipe the item
+                  arrived through is our plumbing. Being able to read the primary
+                  advisory is the part that was ever load-bearing — removing that
+                  would be a downgrade, not a fix. */}
               <span>Source</span>
-              {signal.source && (
-                <>
-                  <span className="text-teal-300">·</span>
-                  <span className="font-medium text-slate-400">{signal.source}</span>
-                </>
-              )}
               <span>→</span>
             </a>
-          ) : signal.source ? (
-            <p className="text-xs text-slate-400 font-medium">Source: {signal.source}</p>
           ) : (
+            // No link and no feed name = nothing honest to show. The bare
+            // "Source: cisa_kev" line is gone rather than replaced.
             <span />
           )}
 

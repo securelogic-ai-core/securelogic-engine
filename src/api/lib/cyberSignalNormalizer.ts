@@ -37,6 +37,10 @@
 import { createHash } from "crypto";
 import type { CyberSignalIngestInput } from "./cyberSignalValidation.js";
 import { clusterKey } from "./signals/clusterKey.js";
+import { stripHtmlToText } from "./sanitize.js";
+import { signalSanitizeEnabled } from "./signalSanitizeFeatureFlag.js";
+import { trimToSentence } from "./signals/contentQuality.js";
+import { briefQualityEnabled } from "./briefQualityFeatureFlag.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -52,6 +56,15 @@ export type NormalizedCyberSignal = {
   affected_cve: string | null;
   external_id: string | null;
   dedup_hash: string;
+  /**
+   * IQP Q2: SOURCE-AUTHORITATIVE event date (ISO string), derived from the
+   * raw_payload's known date keys (KEV dateAdded, NVD published, RSS pubDate,
+   * Federal Register publication_date, EDGAR file_date). null = unknown →
+   * consumers fall back to ingestion_timestamp. The write is unconditional
+   * (an unread nullable column is behavior-neutral); READING it is gated on
+   * SECURELOGIC_SIGNAL_RECENCY_ENABLED.
+   */
+  published_at: string | null;
   /**
    * C2 (P4/4C): soft corroboration grouping from clusterKey() — BESIDE
    * dedup_hash, never part of it. null ⇒ singleton. Computed here as the single
@@ -123,7 +136,12 @@ export function deriveSummaryFromPayload(
   payload: Record<string, unknown>,
   signalType: string,
   affectedCve: string | null,
-  affectedVendor: string | null
+  affectedVendor: string | null,
+  // IQP Q4 (audit defect #1): when true, the 500-char cap lands on a SENTENCE/
+  // WORD boundary (contentQuality.trimToSentence) instead of the mechanical
+  // slice(0, 497) + "..." that produced broken sentences. Default false ⇒
+  // byte-identical legacy behavior.
+  qualityEnabled = false
 ): string {
   // Field names in priority order, covering known feed formats.
   const candidates = [
@@ -143,6 +161,10 @@ export function deriveSummaryFromPayload(
     if (typeof val === "string" && val.trim().length > 0) {
       // Truncate extremely long descriptions to 500 chars for storage efficiency.
       const trimmed = val.trim();
+      if (qualityEnabled) {
+        // IQP Q4: sentence/word-boundary cap — never a broken sentence.
+        return trimToSentence(trimmed, 500);
+      }
       return trimmed.length > 500 ? `${trimmed.slice(0, 497)}...` : trimmed;
     }
   }
@@ -152,6 +174,44 @@ export function deriveSummaryFromPayload(
   if (affectedCve !== null) parts.push(affectedCve);
   if (affectedVendor !== null) parts.push(`— affecting ${affectedVendor}`);
   return parts.join(" ");
+}
+
+// ---------------------------------------------------------------------------
+// derivePublishedAt
+// ---------------------------------------------------------------------------
+
+/** raw_payload date keys, in priority order, per source family. */
+const PUBLISHED_AT_KEYS = [
+  "dateAdded",         // CISA KEV
+  "published",         // NVD
+  "pubDate",           // RSS/Atom
+  "publication_date",  // Federal Register
+  "file_date",         // SEC EDGAR
+  "date"               // generic
+] as const;
+
+/**
+ * IQP Q2: derive the source-authoritative event date from the raw payload.
+ *
+ * Returns an ISO-8601 string, or null when no key parses to a plausible date.
+ * Bounds guard mirrors the 20260828 backfill migration: dates before 1990 or
+ * more than 1 day in the future are treated as unknown (null). Pure —
+ * `now` is injectable for deterministic tests.
+ */
+export function derivePublishedAt(
+  payload: Record<string, unknown>,
+  now: Date = new Date()
+): string | null {
+  for (const key of PUBLISHED_AT_KEYS) {
+    const val = payload[key];
+    if (typeof val !== "string" || val.trim() === "") continue;
+    const parsed = new Date(val.trim());
+    if (Number.isNaN(parsed.getTime())) continue;
+    if (parsed.getTime() < Date.UTC(1990, 0, 1)) continue;
+    if (parsed.getTime() > now.getTime() + 24 * 60 * 60 * 1000) continue;
+    return parsed.toISOString();
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,17 +230,32 @@ export function normalizeSignal(
   input: CyberSignalIngestInput,
   // Ingestion moment for clusterKey()'s CVE-less day-bucket. Injectable for
   // determinism in tests; defaults to now (≈ the INSERT's ingestion_timestamp).
-  at: Date = new Date()
+  at: Date = new Date(),
+  // IQP Q1: HTML sanitization of the stored summary. Defaults to the feature
+  // flag so all existing call sites pick it up unchanged; injectable so tests
+  // are deterministic. OFF ⇒ byte-identical to pre-Q1.
+  sanitizeEnabled: boolean = signalSanitizeEnabled(),
+  // IQP Q4: sentence-safe summary derivation (see deriveSummaryFromPayload).
+  // Same default-from-flag pattern; OFF ⇒ byte-identical to pre-Q4.
+  qualityEnabled: boolean = briefQualityEnabled()
 ): NormalizedCyberSignal {
-  const normalizedSummary =
+  let normalizedSummary =
     input.normalized_summary !== null
       ? input.normalized_summary
       : deriveSummaryFromPayload(
           input.raw_payload,
           input.signal_type,
           input.affected_cve,
-          input.affected_vendor
+          input.affected_vendor,
+          qualityEnabled
         );
+
+  // IQP Q1 (audit defect #3): the ONE ingest-side sanitization point. Both
+  // summary routes (caller-supplied and payload-derived) pass through here.
+  // raw_payload itself stays raw — it is the provenance record.
+  if (sanitizeEnabled) {
+    normalizedSummary = stripHtmlToText(normalizedSummary);
+  }
 
   const externalId =
     typeof input.external_id === "string" && input.external_id.trim() !== ""
@@ -215,6 +290,9 @@ export function normalizeSignal(
     affected_cve: input.affected_cve,
     external_id: externalId,
     dedup_hash: dedupHash,
-    cluster_key: clusterKeyValue
+    cluster_key: clusterKeyValue,
+    // IQP Q2: source-authoritative event date (write unconditional; read
+    // gated on SECURELOGIC_SIGNAL_RECENCY_ENABLED).
+    published_at: derivePublishedAt(input.raw_payload, at)
   };
 }

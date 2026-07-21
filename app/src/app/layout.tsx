@@ -44,6 +44,23 @@ export default async function RootLayout({
     entitlementLevel === "standard";
   const isAdminUser = session.userRole === "admin";
 
+  // Feature-flagged nav items (fail-closed). Runtime env — a restart applies it, no
+  // rebuild. The engine's own flag still 404s every ECL route independently, so nav
+  // visibility is presentation only; this is the app half of the two-switch model.
+  const navFlags = {
+    enterprise_context: process.env.SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED === "true",
+    asset_registry: process.env.SECURELOGIC_ASSET_REGISTRY_ENABLED === "true",
+    risk_intelligence: process.env.SECURELOGIC_RISK_INTELLIGENCE_ENABLED === "true",
+    // Enterprise Risk Workspace IA/nav (ERIP Packages 1+2) — DARK (default off).
+    // Flips the header to the enterprise-workflow information architecture and the
+    // "Review Suggested Links" queue reskin. Flag off = legacy nav byte-for-byte.
+    risk_workspace: process.env.SECURELOGIC_RISK_WORKSPACE_ENABLED === "true",
+    // The Briefing (Briefing Initiative B1) — DARK (default off). Relabels the
+    // workspace nav's home entry "Briefing"; only takes effect together with
+    // risk_workspace (the legacy nav is never touched).
+    briefing: process.env.SECURELOGIC_DASHBOARD_BRIEFING_ENABLED === "true",
+  };
+
   return (
     <html lang="en">
       <body className="min-h-screen flex flex-col bg-brand-bg text-slate-100" suppressHydrationWarning>
@@ -53,6 +70,7 @@ export default async function RootLayout({
           isPremiumUser={isPremiumUser}
           isAdminUser={isAdminUser}
           isSsoEligible={isSsoEligible}
+          navFlags={navFlags}
           organizationName={session.organizationName}
           userName={session.name}
           userEmail={session.email}

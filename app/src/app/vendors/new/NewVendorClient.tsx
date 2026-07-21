@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { CreateFlowBackLink } from "@/components/CreateFlowBackLink";
 import { createVendor, type CreateVendorResult } from "./actions";
 
 const inputClass =
@@ -23,7 +24,15 @@ function FieldLabel({ children, required }: { children: React.ReactNode; require
   );
 }
 
-export default function NewVendorClient() {
+export default function NewVendorClient({
+  backHref = "/vendors",
+  backLabel = "Vendors",
+}: {
+  /** Where the back/cancel links return to — the registry (Assets) frames this
+   *  as an asset-type flow; defaults to the Vendors list. */
+  backHref?: string;
+  backLabel?: string;
+} = {}) {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -44,14 +53,8 @@ export default function NewVendorClient() {
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-12">
-      {/* Back link */}
-      <Link
-        href="/vendors"
-        className="inline-flex items-center gap-1.5 text-xs font-medium mb-6 transition-colors hover:opacity-80"
-        style={{ color: "#94a3b8" }}
-      >
-        ← Vendors
-      </Link>
+      {/* Back link — shared with the AI System create flow (CreateFlowBackLink) */}
+      <CreateFlowBackLink href={backHref} label={backLabel} />
 
       <h1 className="text-2xl font-bold mb-8" style={{ color: "#f1f5f9" }}>
         Add Vendor
@@ -188,7 +191,7 @@ export default function NewVendorClient() {
               {submitting ? "Adding…" : "Add Vendor"}
             </button>
             <Link
-              href="/vendors"
+              href={backHref}
               className="text-sm font-medium transition-colors hover:opacity-80"
               style={{ color: "#94a3b8" }}
             >

@@ -31,6 +31,13 @@ const TABLE_COLUMNS: TableColumns = {
     "stripe_subscription_status", "payment_failed_at", "promo_code", "created_at",
   ],
   webhook_endpoints: ["id", "organization_id", "url", "secret", "description", "status", "event_types", "created_at"],
+  enterprise_connectors: [
+    "id", "organization_id", "connector_id", "config_encrypted", "enabled",
+    "last_sync_at", "last_sync_status", "last_sync_summary", "created_at", "updated_at",
+  ],
+  orchestration_integrations: [
+    "id", "organization_id", "integration_id", "config_encrypted", "enabled", "created_at", "updated_at",
+  ],
 };
 
 function build(): ExportQuery[] {

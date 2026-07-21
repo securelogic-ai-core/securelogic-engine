@@ -39,6 +39,19 @@ import { z } from "zod";
 import { logger } from "../infra/logger.js";
 import { CLUSTER_KEY_FP_PREFIX } from "./signals/clusterKey.js";
 import type { BriefSynthesis } from "./briefSynthesizer.js";
+import { stripHtmlToText } from "./sanitize.js";
+import { signalSanitizeEnabled } from "./signalSanitizeFeatureFlag.js";
+import { briefRelevanceEnabled, refineCategory } from "./briefRelevance.js";
+import { trimToSentence } from "./signals/contentQuality.js";
+import { SIGNAL_TYPE_PHRASE } from "./signals/signalTypeLabels.js";
+import { briefQualityEnabled } from "./briefQualityFeatureFlag.js";
+// IQP Q5: reliability guard + alerting. The grounding guard lives in the
+// PURE signals/actionGrounding module (extracted from briefSynthesizer, which
+// re-exports it) so this no-I/O layer never imports the synthesizer's
+// postgres dependency.
+import { buildAllowedCveSet, validateActionGrounding } from "./signals/actionGrounding.js";
+import { enrichmentReliabilityEnabled } from "./enrichmentReliabilityFeatureFlag.js";
+import { sendSecurityAlert } from "../infra/alerting.js";
 
 function getClient(): Anthropic | null {
   const key = process.env.ANTHROPIC_API_KEY?.trim();
@@ -150,6 +163,15 @@ export type BriefItem = {
    * changes brief output (output-inert).
    */
   contributing_signal_ids?: string[];
+  /**
+   * IQP Q5: whether this item carries real Claude enrichment ("enriched") or
+   * the deterministic template fallback ("fallback"). Pure telemetry — set by
+   * enrichItemWithClaude, counted by enrichBriefItems' per-cycle
+   * brief_enrichment_summary, and INTERNAL: stripped from content_json by
+   * buildContentJson (output-inert; fallback must never be silent, but the
+   * marker itself is operator-facing, not customer-facing).
+   */
+  enrichment_status?: "enriched" | "fallback";
 };
 
 export type BriefCategoryGroup = {
@@ -674,27 +696,53 @@ export function buildBriefItems(
   priorityOf: (source: string) => number = sourcePriority,
   // C3b: when true, collapse CVE-less fingerprint (fp:) clusters and surface
   // corroboration counts. Default false ⇒ byte-identical to pre-C3b.
-  clusteringEnabled = false
+  clusteringEnabled = false,
+  // IQP Q1: sanitize the brief item's customer-facing text at THIS boundary —
+  // title is derived from RAW raw_payload provenance (never ingest-sanitized),
+  // and summary sanitization here also covers pre-flag legacy rows still in
+  // the brief window. Defaults to the flag; OFF ⇒ byte-identical to pre-Q1.
+  sanitizeEnabled: boolean = signalSanitizeEnabled(),
+  // IQP Q3 (#5b): classification correction — an item bucketed `regulatory`
+  // by its ARRIVAL FEED re-buckets to `general` unless its visible text
+  // carries regulatory intent. Defaults to the flag; OFF ⇒ byte-identical.
+  relevanceEnabled: boolean = briefRelevanceEnabled(),
+  // IQP Q4 (#1/#2): title/summary quality contract — word/sentence-boundary
+  // title cap (no mid-word "..."), summary must not restate the title, and
+  // duplicate titles collapse. Defaults to the flag; OFF ⇒ byte-identical.
+  qualityEnabled: boolean = briefQualityEnabled()
 ): BriefItem[] {
   const RELEVANCE_RANK: Record<BriefRelevance, number> = { high: 0, medium: 1, low: 2 };
 
-  const rawItems: BriefItem[] = signals.map((s) => ({
-    cyber_signal_id: s.id,
-    category: mapSignalToCategory(s.signal_type),
-    relevance: scoreRelevance(s.severity, s.affected_cve),
-    title: buildItemTitle(s),
-    summary: s.normalized_summary,
-    affected_cve: s.affected_cve,
-    affected_vendor: s.affected_vendor,
-    source_slug: s.source,
-    signal_type: s.signal_type,
-    severity: s.severity,
-    ingestion_timestamp: new Date(s.ingestion_timestamp).toISOString(),
-    // D2: default lineage = just this signal; merges override the canonical with
-    // the full contributing set. Internal (stripped from content_json).
-    contributing_signal_ids: [s.id],
-    sort_order: 0 // assigned below
-  }));
+  const rawItems: BriefItem[] = signals.map((s) => {
+    const title = buildItemTitle(s, sanitizeEnabled, qualityEnabled);
+    let summary = sanitizeEnabled ? stripHtmlToText(s.normalized_summary) : s.normalized_summary;
+    // IQP Q4 (#2): a summary that merely restates the title (equal, or one is
+    // a prefix of the other, case/whitespace-insensitive) adds no intelligence
+    // — synthesize a deterministic entity-based executive line instead.
+    if (qualityEnabled && restatesTitle(title, summary)) {
+      summary = synthesizeSummaryFromEntities(s);
+    }
+    const mappedCategory = mapSignalToCategory(s.signal_type);
+    return {
+      cyber_signal_id: s.id,
+      category: relevanceEnabled
+        ? (refineCategory(mappedCategory, title, summary) as BriefCategory)
+        : mappedCategory,
+      relevance: scoreRelevance(s.severity, s.affected_cve),
+      title,
+      summary,
+      affected_cve: s.affected_cve,
+      affected_vendor: s.affected_vendor,
+      source_slug: s.source,
+      signal_type: s.signal_type,
+      severity: s.severity,
+      ingestion_timestamp: new Date(s.ingestion_timestamp).toISOString(),
+      // D2: default lineage = just this signal; merges override the canonical with
+      // the full contributing set. Internal (stripped from content_json).
+      contributing_signal_ids: [s.id],
+      sort_order: 0 // assigned below
+    };
+  });
 
   let items = mergeBriefItemsByCve(rawItems, priorityOf);
 
@@ -722,11 +770,67 @@ export function buildBriefItems(
     return b.ingestion_timestamp.localeCompare(a.ingestion_timestamp);
   });
 
+  // IQP Q4 (gate G2): no duplicated titles across one brief. Post-sort, the
+  // FIRST occurrence is the highest-relevance/most-recent — keep it, drop the
+  // rest (same story reported by another source without a shared CVE/cluster).
+  if (qualityEnabled) {
+    const seenTitles = new Set<string>();
+    items = items.filter((item) => {
+      const key = item.title.trim().toLowerCase();
+      if (seenTitles.has(key)) return false;
+      seenTitles.add(key);
+      return true;
+    });
+  }
+
   items.forEach((item, i) => {
     item.sort_order = i;
   });
 
   return items;
+}
+
+// ---------------------------------------------------------------------------
+// IQP Q4 helpers — summary-restates-title detection + entity synthesis
+// ---------------------------------------------------------------------------
+
+/** Case/whitespace-insensitive normalization for title↔summary comparison. */
+function normalizeForCompare(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/**
+ * True when the summary merely restates the title: equal after normalization,
+ * or one is a prefix of the other (the classic feed shape — summary = title,
+ * or title = the summary's truncated head).
+ */
+export function restatesTitle(title: string, summary: string): boolean {
+  const t = normalizeForCompare(title).replace(/\s*(\.{3}|…|\[…\])\s*$/, "");
+  const s = normalizeForCompare(summary).replace(/\s*(\.{3}|…|\[…\])\s*$/, "");
+  if (t === "" || s === "") return false;
+  return t === s || s.startsWith(t) || t.startsWith(s);
+}
+
+// Shared customer-language vocabulary — moved to signals/signalTypeLabels.ts so
+// brief synthesis, finding titles, and event projection use ONE map (walkthrough
+// item 6: raw signal_type enums were leaking into finding titles).
+// This module keeps its own "security development" fallback below, unchanged.
+
+/**
+ * Deterministic executive summary from the signal's structured entities, for
+ * items whose feed summary just repeats the title. States severity, what kind
+ * of intelligence it is, and who/what it touches — never a copy of the title.
+ */
+export function synthesizeSummaryFromEntities(signal: {
+  signal_type: string;
+  severity: string;
+  affected_cve: string | null;
+  affected_vendor: string | null;
+}): string {
+  const kind = SIGNAL_TYPE_PHRASE[signal.signal_type] ?? "security development";
+  const vendor = signal.affected_vendor ? ` affecting ${signal.affected_vendor}` : "";
+  const cve = signal.affected_cve ? ` (${signal.affected_cve})` : "";
+  return `${signal.severity}-severity ${kind}${vendor}${cve}. Review the source advisory for scope, exposure, and remediation guidance.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -758,21 +862,43 @@ function cleanSummaryForTitle(raw: string): string {
  *      whitespace collapsed, same truncation rule.
  *   3. If both are empty, build from CVE/vendor/signal_type.
  */
-function buildItemTitle(signal: CyberSignalForBrief): string {
+/** IQP Q4: title length budget under the quality contract (≤120 chars,
+ * word/sentence-boundary trim — never a mid-word cut or a bare "..."). */
+const TITLE_MAX_QUALITY = 120;
+
+function capTitle(text: string, qualityEnabled: boolean): string {
+  if (qualityEnabled) {
+    // Word/sentence-safe cap; short titles pass through whole. An over-budget
+    // headline trims at a word boundary with the explicit […] marker.
+    return trimToSentence(text, TITLE_MAX_QUALITY);
+  }
+  return text.length <= 80 ? text : `${text.slice(0, 77)}...`;
+}
+
+function buildItemTitle(
+  signal: CyberSignalForBrief,
+  sanitizeEnabled = false,
+  qualityEnabled = false
+): string {
   // Stage 1 — source-feed title from raw_payload.
   const payloadTitle =
     signal.raw_payload && typeof signal.raw_payload === "object"
       ? (signal.raw_payload as Record<string, unknown>)["title"]
       : null;
   if (typeof payloadTitle === "string") {
-    const trimmed = payloadTitle.trim();
+    // IQP Q1: raw_payload.title is RAW provenance — it never passed through
+    // normalizeSignal, so this is its one sanitization point.
+    const trimmed = sanitizeEnabled ? stripHtmlToText(payloadTitle) : payloadTitle.trim();
     if (trimmed.length > 0) {
-      return trimmed.length <= 80 ? trimmed : `${trimmed.slice(0, 77)}...`;
+      return capTitle(trimmed, qualityEnabled);
     }
   }
 
   // Stage 2 — fall back to normalized_summary with boilerplate stripped.
-  const summary = cleanSummaryForTitle(signal.normalized_summary);
+  // (Legacy pre-flag rows may still carry markup — same one sanitization point.)
+  const summary = cleanSummaryForTitle(
+    sanitizeEnabled ? stripHtmlToText(signal.normalized_summary) : signal.normalized_summary
+  );
   if (summary.length === 0) {
     // Stage 3 — synthesize from metadata.
     const parts: string[] = [];
@@ -781,7 +907,7 @@ function buildItemTitle(signal: CyberSignalForBrief): string {
     parts.push(signal.signal_type.toUpperCase());
     return parts.join(" — ");
   }
-  return summary.length <= 80 ? summary : `${summary.slice(0, 77)}...`;
+  return capTitle(summary, qualityEnabled);
 }
 
 // ---------------------------------------------------------------------------
@@ -796,6 +922,8 @@ function buildItemTitle(signal: CyberSignalForBrief): string {
 function stripInternalBriefItemFields(item: BriefItem): BriefItem {
   const copy = { ...item };
   delete copy.contributing_signal_ids;
+  // IQP Q5: operator-facing telemetry marker, never serialized to customers.
+  delete copy.enrichment_status;
   return copy;
 }
 
@@ -896,7 +1024,10 @@ export function buildContentMarkdown(content: BriefContentJson): string {
       const meta: string[] = [];
       if (item.affected_cve) meta.push(`CVE: ${item.affected_cve}`);
       if (item.affected_vendor) meta.push(`Vendor: ${item.affected_vendor}`);
-      meta.push(`Source: ${item.source_slug}`);
+      // R1: the feed slug no longer rides in the customer-facing markdown body.
+      // It used to render literally as "Source: cisa_kev" in the payload returned by
+      // GET /api/intelligence-briefs/:id. Feed attribution is retained internally
+      // (brief_items.source_slug, intelligence_brief_item_provenance) for audit.
       meta.push(`Severity: ${item.severity}`);
 
       lines.push("");
@@ -1010,6 +1141,31 @@ const EnrichmentResponseSchema = z.object({
   urgency: z.string().max(50).optional()
 });
 
+// IQP Q5: an Anthropic auth failure alerts once per process (mirrors
+// providerQuotaAlert's once-per-process semantics) — the most likely April
+// root cause (invalid key → runtime 401 → silent fallback) becomes loud.
+let authFailureAlerted = false;
+
+/** Test hook: reset the once-per-process auth-alert latch. */
+export function resetEnrichmentAuthAlertLatch(): void {
+  authFailureAlerted = false;
+}
+
+function buildFallbackItem(item: BriefItem): BriefItem {
+  return {
+    ...item,
+    analysis: null,
+    why_it_matters: fallbackWhyItMatters(item),
+    recommended_actions: fallbackRecommendedActions(item),
+    analyst_notes: null,
+    urgency: URGENCY_FALLBACK,
+    // IQP Q5: fallback is never indistinguishable — every degraded item is
+    // marked (internal; counted by the per-cycle summary, stripped from
+    // content_json).
+    enrichment_status: "fallback"
+  };
+}
+
 async function enrichItemWithClaude(
   item: BriefItem,
   organizationId: string | null = null
@@ -1020,21 +1176,16 @@ async function enrichItemWithClaude(
       { event: "brief_enrichment_fallback", reason: "ANTHROPIC_API_KEY not set", signal_id: item.cyber_signal_id, organizationId },
       "Brief enrichment falling back to defaults"
     );
-    return {
-      ...item,
-      analysis: null,
-      why_it_matters: fallbackWhyItMatters(item),
-      recommended_actions: fallbackRecommendedActions(item),
-      analyst_notes: null,
-      urgency: URGENCY_FALLBACK
-    };
+    return buildFallbackItem(item);
   }
 
   logger.info(
     {
       event: "llm_call_start",
       purpose: "brief_item_enrichment",
-      model: "claude-haiku-4-5",
+      // IQP Q5: log the model actually sent (was hardcoded "claude-haiku-4-5"
+      // while the call used CLAUDE_MODEL — a telemetry mislabel).
+      model: CLAUDE_MODEL,
       organizationId,
       signal_id: item.cyber_signal_id
     },
@@ -1124,14 +1275,7 @@ async function enrichItemWithClaude(
     // Strip markdown code fences if Claude wrapped the JSON
     const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
 
-    const fallbackItem: BriefItem = {
-      ...item,
-      analysis: null,
-      why_it_matters: fallbackWhyItMatters(item),
-      recommended_actions: fallbackRecommendedActions(item),
-      analyst_notes: null,
-      urgency: URGENCY_FALLBACK
-    };
+    const fallbackItem: BriefItem = buildFallbackItem(item);
 
     let parsedUnknown: unknown;
     try {
@@ -1179,6 +1323,28 @@ async function enrichItemWithClaude(
         ? parsed.recommended_actions.trim()
         : fallbackRecommendedActions(item);
 
+    // IQP Q5 (flag-gated): CVE-grounding guard — built after the PR #25
+    // hallucination incident (briefSynthesizer) but never wired into the live
+    // enrichment call. A response citing a CVE that does not appear anywhere
+    // in THIS item's source fields is contaminated: template fallback, never
+    // shipped. Zero-CVE actions are legitimate and pass.
+    if (enrichmentReliabilityEnabled()) {
+      const allowed = buildAllowedCveSet([item]);
+      const grounding = validateActionGrounding(recommendedActions.split("\n"), allowed);
+      if (grounding.dropped.length > 0) {
+        logger.warn(
+          {
+            event: "brief_enrichment_ungrounded",
+            signal_id: item.cyber_signal_id,
+            organizationId,
+            dropped: grounding.dropped.slice(0, 5)
+          },
+          "Brief enrichment: response cited CVEs absent from the source — using fallback"
+        );
+        return fallbackItem;
+      }
+    }
+
     const urgency: BriefUrgency = isBriefUrgency(parsed.urgency)
       ? parsed.urgency
       : URGENCY_FALLBACK;
@@ -1189,21 +1355,35 @@ async function enrichItemWithClaude(
       why_it_matters: whyItMatters,
       recommended_actions: recommendedActions,
       analyst_notes: null,
-      urgency
+      urgency,
+      enrichment_status: "enriched"
     };
   } catch (err) {
+    // IQP Q5: classify auth failures (invalid/revoked key → 401/403) — the
+    // most likely April root cause. providerQuotaAlert only classifies
+    // quota/429, so without this an invalid key was a fully SILENT fallback.
+    const status = (err as { status?: number } | null)?.status;
+    const isAuthError = status === 401 || status === 403;
     logger.warn(
-      { event: "brief_enrichment_fallback", reason: "Exception during enrichment", signal_id: item.cyber_signal_id, organizationId, err },
+      {
+        event: "brief_enrichment_fallback",
+        reason: isAuthError ? "anthropic_auth_failure" : "Exception during enrichment",
+        status,
+        signal_id: item.cyber_signal_id,
+        organizationId,
+        err
+      },
       "Brief enrichment falling back to defaults"
     );
-    return {
-      ...item,
-      analysis: null,
-      why_it_matters: fallbackWhyItMatters(item),
-      recommended_actions: fallbackRecommendedActions(item),
-      analyst_notes: null,
-      urgency: URGENCY_FALLBACK
-    };
+    if (isAuthError && !authFailureAlerted && enrichmentReliabilityEnabled()) {
+      authFailureAlerted = true;
+      void sendSecurityAlert({
+        kind: "brief_enrichment_auth_failure",
+        summary: `Anthropic API rejected the configured key (HTTP ${status}) — every brief item is degrading to template fallback until the key is fixed.`,
+        detail: { status: status ?? null, organizationId }
+      }).catch(() => { /* alert channel failure never breaks enrichment */ });
+    }
+    return buildFallbackItem(item);
   }
 }
 
@@ -1217,11 +1397,52 @@ async function enrichItemWithClaude(
  * @param items  Items produced by buildBriefItems().
  * @returns      Same items with why_it_matters and recommended_actions populated.
  */
+/** IQP Q5: a batch with ≥ this fraction of fallback items is "degraded" —
+ * the April-incident signature (100% identical template Actions). */
+const ENRICHMENT_DEGRADED_THRESHOLD = 0.5;
+
 export async function enrichBriefItems(
   items: ReadonlyArray<BriefItem>,
   organizationId: string | null = null
 ): Promise<BriefItem[]> {
-  return Promise.all(items.map((item) => enrichItemWithClaude(item, organizationId)));
+  const enriched = await Promise.all(
+    items.map((item) => enrichItemWithClaude(item, organizationId))
+  );
+
+  // IQP Q5: per-cycle enrichment telemetry — fallback is observable and
+  // measurable on EVERY run (log always; warn when anything degraded). The
+  // April incident ran for weeks on scattered per-item warns; this single
+  // summary line is the heartbeat operators grep/alert on.
+  const fallbackCount = enriched.filter((i) => i.enrichment_status === "fallback").length;
+  const total = enriched.length;
+  const summaryPayload = {
+    event: "brief_enrichment_summary",
+    organizationId,
+    total,
+    enriched_count: total - fallbackCount,
+    fallback_count: fallbackCount,
+    fallback_rate: total > 0 ? Number((fallbackCount / total).toFixed(2)) : 0
+  };
+  if (fallbackCount > 0) {
+    logger.warn(summaryPayload, "Brief enrichment cycle completed with fallbacks");
+  } else if (total > 0) {
+    logger.info(summaryPayload, "Brief enrichment cycle completed");
+  }
+
+  // Flag-gated degraded-batch alert (inert without ALERT_WEBHOOK_URL).
+  if (
+    enrichmentReliabilityEnabled() &&
+    total > 0 &&
+    fallbackCount / total >= ENRICHMENT_DEGRADED_THRESHOLD
+  ) {
+    void sendSecurityAlert({
+      kind: "brief_enrichment_degraded",
+      summary: `Brief enrichment degraded: ${fallbackCount}/${total} items fell back to template content this cycle.`,
+      detail: summaryPayload
+    }).catch(() => { /* alert channel failure never breaks the brief */ });
+  }
+
+  return enriched;
 }
 
 // ---------------------------------------------------------------------------

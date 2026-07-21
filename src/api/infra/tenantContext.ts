@@ -60,6 +60,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { PoolClient, QueryResult } from "pg";
 
+/** A side effect to run ONLY after the tenant transaction durably commits. */
+export type AfterCommitCallback = () => void | Promise<void>;
+
 export interface TenantContext {
   /** The request/iteration-scoped client. Transaction is already open and the GUC is set. */
   readonly client: PoolClient;
@@ -71,6 +74,43 @@ export interface TenantContext {
    * unique even when explicit-transaction blocks nest.
    */
   readonly savepoint: { n: number };
+  /**
+   * Callbacks queued to run AFTER this transaction commits (post-commit side
+   * effects — e.g. notifications that must never fire for a rolled-back write).
+   * `withTenant` drains this ONLY on the COMMIT path; the rollback path discards
+   * it untouched. Empty by default, so a scope that registers nothing is
+   * byte-identical to before this hook existed.
+   */
+  readonly afterCommit: AfterCommitCallback[];
+}
+
+/**
+ * Queue a side effect to run once the active tenant transaction COMMITS. The
+ * canonical way to make a post-commit notification transactionally correct: the
+ * callback fires only after a durable commit and is discarded on rollback, so a
+ * write and its announcement can never disagree.
+ *
+ * Registered against the CURRENT tenant scope (the request/iteration transaction),
+ * so it fires at the true commit boundary even when the caller sits inside a
+ * savepoint. With no tenant scope in play there is no transaction to wait on, so
+ * the callback runs immediately (best-effort, detached) — the honest equivalent of
+ * "already committed". Never throws to the caller.
+ */
+export function registerAfterCommit(fn: AfterCommitCallback): void {
+  const ctx = tenantStorage.getStore();
+  if (ctx) {
+    ctx.afterCommit.push(fn);
+    return;
+  }
+  // No transaction to gate on — run detached, never surfacing an error.
+  try {
+    const p = fn();
+    if (p && typeof (p as Promise<void>).then === "function") {
+      (p as Promise<void>).catch(() => {});
+    }
+  } catch {
+    /* swallow: a post-commit side effect must never break its caller */
+  }
 }
 
 export const tenantStorage = new AsyncLocalStorage<TenantContext>();

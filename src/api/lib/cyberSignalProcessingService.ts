@@ -38,6 +38,14 @@
 import type { PoolClient } from "pg";
 import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { canonicalizeVendorName } from "./vendorNameCanonical.js";
+import { buildSignalFindingTitle, resolveSignalDomain } from "./signalFindingShape.js";
+import { signalApplicabilityEnabled } from "./signalApplicabilityFeatureFlag.js";
+import { runSignalApplicabilityShadow, backingAssetIds } from "./signalApplicabilityShadowRunner.js";
+import { extractSignalProductEvidence } from "./signalProductEvidence.js";
+import { upsertCanonicalProduct } from "./canonicalProductStore.js";
+import { intelligenceEventsEnabled } from "./signals/intelligenceEventsFeatureFlag.js";
+import { resolveEventIdForSignal } from "./signals/eventSignalResolver.js";
 import {
   computePosture,
   FALLBACK_CONTEXT,
@@ -50,6 +58,7 @@ import {
   buildScoringRationaleExtension
 } from "./workflowScoringIntegration.js";
 import { vendorCriticalityToSignals } from "./inventoryToSignals.js";
+import { sqlFindingActive } from "./metricDefinitions.js";
 import {
   computeRiskScore,
   DEFAULT_WEIGHTS,
@@ -60,6 +69,12 @@ import {
   MIN_MATCH_SCORE,
   SUGGESTION_CAP
 } from "./signalTargetMatching.js";
+import { ASSET_TYPE_SPECS } from "./assetRegistry.js";
+import { assetRegistryEnabled } from "./assetRegistryFeatureFlag.js";
+
+/** EAR Phase 2: cap on generic-asset-matcher suggestions per signal (canonical-
+ * exact only, so >1 means several same-named entities — cap defensively). */
+const ASSET_SUGGESTION_CAP = 10;
 import {
   fuzzyVendorMatchEnabled,
   vendorNameSimilarity,
@@ -74,6 +89,8 @@ import {
   buildObligationActionDraft
 } from "./actionRecommendationEngine.js";
 import { runLlmControlMatcherForSignal } from "./llmControlMatcher.js";
+import { enqueueApplicabilityReassessment } from "./applicabilityReassessment.js";
+import { resolveSlaDueDateWith } from "./findingSlaPolicyRules.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -141,80 +158,20 @@ export type MatcherResult = {
  * also runs AI systems. AI Governance only applies when the matched entity
  * is exclusively an AI system (no vendor record matched the name).
  */
-function resolveSignalDomain(
-  signalType: string,
-  hasVendorMatch: boolean,
-  hasAiSystemMatch: boolean
-): string {
-  if (hasVendorMatch) return "Vendor Risk";
-  if (hasAiSystemMatch) return "AI Governance";
+// resolveSignalDomain and the finding-title rules now live in the pure, shared
+// signalFindingShape module: user promotion (POST /api/findings/from-signal) must
+// shape a Finding from a signal the SAME way this path does, or the same signal
+// would read as two different findings depending on who created it.
 
-  // No platform entity match — route by signal type.
-  switch (signalType) {
-    case "cve":
-    case "patch":
-    case "malware":
-    case "advisory":
-    case "threat_actor":
-      return "Vulnerability";
-    case "breach":
-      return "Vendor Risk";
-    case "geopolitical":
-    default:
-      return "General";
-  }
-}
 
 // ---------------------------------------------------------------------------
-// canonicalizeVendorName (pure — exported for testing)
+// canonicalizeVendorName — the single canonical normalizer, now defined in the
+// pure, side-effect-free module `vendorNameCanonical.ts` (C1) and RE-EXPORTED
+// here so every existing `import { canonicalizeVendorName } from
+// "./cyberSignalProcessingService.js"` keeps working unchanged. There remains
+// exactly one normalizer (imported at the top of this file for internal use).
 // ---------------------------------------------------------------------------
-
-/**
- * Trailing legal/entity suffixes stripped during canonicalization. Stripped
- * ONLY when they are the last remaining token(s) — a suffix word that appears
- * mid-name is kept (e.g. "Corp of America" → "corp of america"). The point is
- * to collapse the dominant cross-feed gap: the same brand arrives as a bare
- * name (KEV "Microsoft"), a CPE slug (NVD "microsoft"), and a formal legal name
- * (EDGAR "MICROSOFT CORP"). All must canonicalize identically.
- */
-const VENDOR_LEGAL_SUFFIXES = new Set<string>([
-  "corp", "corporation", "inc", "incorporated", "llc", "ltd", "limited",
-  "plc", "co", "company", "gmbh", "sa", "ag", "nv", "holding", "holdings"
-]);
-
-/**
- * Canonicalize a vendor name for EXACT comparison. The SAME function is applied
- * to both the signal's affected_vendor and each candidate vendors.name — using
- * one helper for both sides is the whole point: asymmetric normalization would
- * silently drop true matches.
- *
- * Transform (deterministic, order matters):
- *   1. lowercase
- *   2. every run of non-[a-z0-9] becomes a single space (punctuation → space)
- *   3. trim + collapse whitespace
- *   4. strip TRAILING legal suffix tokens, repeatedly (e.g. "foo holdings inc"
- *      → "foo"), but never the last remaining token (so a vendor literally
- *      named "Co" or "Holdings" survives).
- *
- * This is normalization-then-EXACT: the result is compared with === . There is
- * no wildcard/substring/fuzzy step, so a 2-char canonical ("hp") matches only a
- * vendor whose canonical is exactly "hp" — short names cannot leak. Fuzzy /
- * suggest-only recall is a deferred Phase 2 and deliberately not done here.
- */
-export function canonicalizeVendorName(input: string): string {
-  const base = input
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-
-  if (base === "") return "";
-
-  const tokens = base.split(" ");
-  while (tokens.length > 1 && VENDOR_LEGAL_SUFFIXES.has(tokens[tokens.length - 1]!)) {
-    tokens.pop();
-  }
-  return tokens.join(" ");
-}
+export { canonicalizeVendorName } from "./vendorNameCanonical.js";
 
 // ---------------------------------------------------------------------------
 // runMatcherForSignal
@@ -337,12 +294,24 @@ export async function runMatcherForSignal(
         ? canonicalizeVendorName(signal.affected_vendor)
         : "";
 
+    // EAR Phase 2 (ARCHITECTURE.md §1.4 chokepoint 2): WHICH types are
+    // name-matched risk targets comes from the asset-type spec, not per-type
+    // hard-codes. vendor/ai_system are spec-true → the two live branches below
+    // behave identically; enterprise_entities-backed spec targets
+    // (application/database) are handled by the generic registry branch
+    // further down, which activates only behind SECURELOGIC_ASSET_REGISTRY_ENABLED.
+    const nameCanonicalTargets = new Set(
+      Object.values(ASSET_TYPE_SPECS)
+        .filter((s) => s.isRiskTarget && s.matchStrategy === "name_canonical")
+        .map((s) => s.type)
+    );
+
     // Hoisted so the Phase-2 fuzzy branch (below) can reuse the org's active
     // vendor rows without a second query. Populated only when we enter the
     // exact branch — which is exactly the precondition for fuzzy to run.
     let activeVendorRows: Array<{ id: string; name: string; criticality: string | null }> = [];
 
-    if (canonicalSignalVendor !== "") {
+    if (canonicalSignalVendor !== "" && nameCanonicalTargets.has("vendor")) {
       // Normalization-then-exact: fetch this org's active vendors and compare
       // canonical forms in TS using the SAME canonicalizeVendorName as the
       // signal side. SQL regexp_replace would be a SECOND implementation of the
@@ -380,7 +349,7 @@ export async function runMatcherForSignal(
       // 2. AI system matching — only if no vendor match.
       // ---------------------------------------------------------------
 
-      if (matchedVendorId === null) {
+      if (matchedVendorId === null && nameCanonicalTargets.has("ai_system")) {
         // Same canonical-exact approach as the vendor branch, against the
         // org's AI systems. Reuses canonicalSignalVendor (already non-empty here).
         const aiResult = await client.query<{
@@ -424,17 +393,21 @@ export async function runMatcherForSignal(
       const entityName = matchedVendorName ?? matchedAiSystemName ?? "Unknown";
       const priority = severityToPriority(severity);
 
-      let findingTitle: string;
-      if (hasVendorMatch) {
-        findingTitle = signal.affected_cve !== null
-          ? `${signal.affected_cve} affects vendor: ${entityName}`
-          : `Cyber signal (${signalType}): ${entityName} — ${severity} severity`;
-      } else {
-        findingTitle = signal.affected_cve !== null
-          ? `${signal.affected_cve} affects AI system: ${entityName}`
-          : `Cyber signal (${signalType}): ${entityName} — ${severity} severity`;
-      }
+      // Same shared builder user promotion uses. This branch always has a matched
+      // entity (it is the condition for creating a finding here at all), so the
+      // wording is the one this path has always produced.
+      const findingTitle = buildSignalFindingTitle({
+        signalType,
+        severity,
+        affectedCve: signal.affected_cve,
+        entity: hasVendorMatch
+          ? { kind: "vendor", name: entityName }
+          : { kind: "ai_system", name: entityName },
+      });
 
+      // SLA policy (20260903): automated signal findings get an org-policy
+      // due date at creation (client keeps the read inside this transaction).
+      const slaDueDate = await resolveSlaDueDateWith(client, orgId, severity);
       const findingResult = await client.query(
         `
         INSERT INTO findings (
@@ -447,9 +420,10 @@ export async function runMatcherForSignal(
           severity,
           domain,
           priority,
-          status
+          status,
+          due_date
         )
-        VALUES ($1, NULL, 'cyber_signal', $2::uuid, $3, $4, $5, $6, $7, 'open')
+        VALUES ($1, NULL, 'cyber_signal', $2::uuid, $3, $4, $5, $6, $7, 'open', $8)
         RETURNING
           id,
           organization_id,
@@ -472,7 +446,8 @@ export async function runMatcherForSignal(
           signal.normalized_summary,
           severity,
           domain,
-          priority
+          priority,
+          slaDueDate
         ]
       );
 
@@ -574,16 +549,24 @@ export async function runMatcherForSignal(
         matched_string: matchedString
       };
 
+      // NOT EXISTS across ALL states, not ON CONFLICT against the pending partial
+      // unique index. Step 3c below auto-accepts this suggestion, and the partial
+      // index only constrains PENDING rows — so an ON CONFLICT guard would stop
+      // seeing the accepted row and happily insert a fresh duplicate on every
+      // matcher re-run. (The fuzzy and obligation branches stay pending, so they
+      // keep the ON CONFLICT form, which is still correct for them.)
       const suggestionInsert = await client.query<{ id: string }>(
         `
         INSERT INTO signal_match_suggestions (
           organization_id, signal_id, target_type, target_id,
           match_reason, match_score, match_metadata
         )
-        VALUES ($1, $2::uuid, $3, $4::uuid, $5, $6, $7::jsonb)
-        ON CONFLICT (organization_id, signal_id, target_type, target_id)
-          WHERE accepted_at IS NULL AND dismissed_at IS NULL
-          DO NOTHING
+        SELECT $1, $2::uuid, $3, $4::uuid, $5, $6, $7::jsonb
+         WHERE NOT EXISTS (
+           SELECT 1 FROM signal_match_suggestions e
+            WHERE e.organization_id = $1 AND e.signal_id = $2::uuid
+              AND e.target_type = $3 AND e.target_id = $4::uuid
+         )
         RETURNING id
         `,
         [
@@ -605,6 +588,79 @@ export async function runMatcherForSignal(
         // Surface as null suggestion_id; matcher is idempotent.
         matchScore = null;
       }
+
+      // ---------------------------------------------------------------
+      // 3c. Confirm the deterministic match as a LINK.
+      //
+      //     Phase 1 matched by canonical-EXACT equality — not a fuzzy or scored
+      //     guess. That match is the PRECONDITION of this finding existing at
+      //     all: step 3a only creates the finding `if (hasVendorMatch ||
+      //     hasAiMatch)`, and titles it "<CVE> affects vendor: <name>".
+      //
+      //     Recording that association only as a *suggestion* made the product
+      //     contradict itself. findingContextResolver.affected() and
+      //     findingEntitySearch read the signal_*_links tables and nothing else,
+      //     so the Decision Workspace rendered "Vendors (0) — No affected
+      //     vendors" directly beneath a finding whose own title named the vendor,
+      //     and a Risk Findings search for "Microsoft" returned zero against
+      //     1000+ Microsoft findings. Only a human clicking Accept in the queue
+      //     could fix it — for every signal finding ever generated.
+      //
+      //     A proposal is something we might be wrong about. This is not: it is
+      //     the reason the finding exists. So it is written as a link. Genuinely
+      //     uncertain matches — the fuzzy vendor branch (Phase 2) and the scored
+      //     obligation branch (GAP-1) — stay suggest-only below.
+      //
+      //     A human DISMISSAL is final: if someone rejected this pairing we do
+      //     not resurrect it, and no link is written.
+      // ---------------------------------------------------------------
+
+      const linkTable =
+        targetType === "vendor" ? "signal_vendor_links" : "signal_ai_system_links";
+      const linkFk = targetType === "vendor" ? "vendor_id" : "ai_system_id";
+
+      // Write the link. The NOT EXISTS clause is the dismissal guard: if a human
+      // rejected this pairing, no link is ever written. created_by_user_id NULL
+      // marks it machine-asserted (the human accept routes stamp the actor).
+      // ON CONFLICT makes it idempotent against the live partial unique index.
+      await client.query(
+        `
+        INSERT INTO ${linkTable} (organization_id, signal_id, ${linkFk}, note, created_by_user_id)
+        SELECT $1, $2::uuid, $3::uuid, $4, NULL::uuid
+         WHERE NOT EXISTS (
+           SELECT 1 FROM signal_match_suggestions d
+            WHERE d.organization_id = $1 AND d.signal_id = $2::uuid
+              AND d.target_type = $5 AND d.target_id = $3::uuid
+              AND d.dismissed_at IS NOT NULL
+         )
+        ON CONFLICT (organization_id, signal_id, ${linkFk})
+          WHERE deleted_at IS NULL
+          DO NOTHING
+        `,
+        [orgId, signalId, targetId, `Auto-confirmed: ${matchedBranch}`, targetType]
+      );
+
+      // Reflect the confirmation on the suggestion so the review queue does not
+      // ask a human to re-approve what the matcher already asserted. The row is
+      // KEPT (not deleted) as the audit trail of how the link came to exist;
+      // accepted_by_user_id stays NULL to mark it machine-accepted. The join
+      // resolves the link id (whether just inserted or pre-existing), and the
+      // pending-only predicate means a dismissed row is never touched.
+      await client.query(
+        `
+        UPDATE signal_match_suggestions s
+           SET accepted_at = NOW(), accepted_link_id = l.id
+          FROM ${linkTable} l
+         WHERE l.organization_id = s.organization_id
+           AND l.signal_id = s.signal_id
+           AND l.${linkFk} = s.target_id
+           AND l.deleted_at IS NULL
+           AND s.organization_id = $1 AND s.signal_id = $2::uuid
+           AND s.target_type = $3 AND s.target_id = $4::uuid
+           AND s.accepted_at IS NULL AND s.dismissed_at IS NULL
+        `,
+        [orgId, signalId, targetType, targetId]
+      );
     }
 
     // ---------------------------------------------------------------
@@ -668,6 +724,192 @@ export async function runMatcherForSignal(
               similarity: cand.score
             })
           ]
+        );
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // EAR Phase 2: generic asset matcher — the §1.3 plane convergence.
+    // SUGGEST-ONLY and FLAG-GATED (SECURELOGIC_ASSET_REGISTRY_ENABLED,
+    // default off → byte-for-byte inert in prod). Canonical-exact match of
+    // the signal's affected_vendor against enterprise_entities-backed
+    // registry assets whose spec is a name_canonical risk target
+    // (application/database today; Phase-3 types join by spec flip alone).
+    // Writes signal_match_suggestions with target_type='asset' + asset_id
+    // (EAR-AD-3 — the quartet enum stops growing). No findings, no links,
+    // no risk flagging — the accept path for 'asset' targets is a Phase-3
+    // decision (link-store shape).
+    // ---------------------------------------------------------------
+    if (assetRegistryEnabled() && canonicalSignalVendor !== "") {
+      // Every spec-declared name_canonical risk target that is NOT one of the
+      // two live branches (vendor/ai_system) matches here, uniformly through
+      // the registry view: application/database (enterprise_entities-backed)
+      // and the Phase-3a detail-backed types (cloud_resource/endpoint/api/
+      // identity_system). Registered rows only (a.id join) — the suggestion
+      // target is the Tier-0 asset id.
+      const registryTargets = Object.values(ASSET_TYPE_SPECS)
+        .filter(
+          (s) =>
+            s.isRiskTarget &&
+            s.matchStrategy === "name_canonical" &&
+            s.backingKind !== "vendors" &&
+            s.backingKind !== "ai_systems"
+        )
+        .map((s) => s.type);
+      if (registryTargets.length > 0) {
+        const assetRows = await client.query<{ asset_id: string; asset_type: string; name: string }>(
+          `
+          SELECT a.id AS asset_id, a.asset_type, rv.name
+          FROM assets a
+          JOIN asset_registry_v rv
+            ON rv.asset_id = a.id AND rv.organization_id = a.organization_id
+          WHERE a.organization_id = $1
+            AND a.asset_type = ANY($2)
+            AND rv.status = 'active'
+          ORDER BY rv.name ASC
+          `,
+          [orgId, registryTargets]
+        );
+        const assetMatches = assetRows.rows
+          .filter((r) => canonicalizeVendorName(r.name) === canonicalSignalVendor)
+          .slice(0, ASSET_SUGGESTION_CAP);
+        for (const m of assetMatches) {
+          await client.query(
+            `
+            INSERT INTO signal_match_suggestions (
+              organization_id, signal_id, target_type, target_id, asset_id,
+              match_reason, match_score, match_metadata
+            )
+            VALUES ($1, $2::uuid, 'asset', $3::uuid, $3::uuid, 'asset_name_canonical', 100, $4::jsonb)
+            ON CONFLICT (organization_id, signal_id, target_type, target_id)
+              WHERE accepted_at IS NULL AND dismissed_at IS NULL
+              DO NOTHING
+            `,
+            [
+              orgId,
+              signalId,
+              m.asset_id,
+              JSON.stringify({
+                source: signal.source,
+                matched_branch: "asset_generic",
+                matched_string: signal.affected_vendor,
+                candidate_name: m.name,
+                asset_type: m.asset_type
+              })
+            ]
+          );
+        }
+        if (assetMatches.length > 0) {
+          logger.info(
+            { event: "signal_asset_suggestions_created", organizationId: orgId, signalId, count: assetMatches.length },
+            "Generic asset matcher wrote registry-target suggestions"
+          );
+        }
+
+        // ERG convergence C3 — SHADOW (SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED,
+        // default off). Runs the NEW product→tenant-asset resolution ALONGSIDE the
+        // legacy asset match and records counts-only convergence telemetry. It
+        // writes nothing customer-visible and is fully try/catch-isolated, so the
+        // authoritative legacy path is unaffected; flag-off is byte-identical.
+        if (signalApplicabilityEnabled()) {
+          try {
+            await runSignalApplicabilityShadow(
+              client,
+              orgId,
+              { productHint: signal.affected_vendor, cve: signal.affected_cve, grain: "asset" },
+              assetMatches.map((m) => m.asset_id)
+            );
+          } catch (err) {
+            logger.warn(
+              { event: "signal_applicability_shadow_failed", organizationId: orgId, signalId, grain: "asset", err },
+              "signal applicability shadow failed (non-fatal — legacy path authoritative)"
+            );
+          }
+        }
+      }
+    }
+
+    // ERG convergence C4 (ADR-0003 D1) — persist the PRODUCT the signal is about.
+    //
+    // The product was never lost, only never read: cisaKevAdapter stores the whole feed
+    // entry in `raw_payload` but persists only `vendorProject` as affected_vendor. So the
+    // pipeline had a vendor and no product — and ERG R2 forbids inferring `affected` from
+    // vendor identity alone. That is precisely why the shadow runner had to feed the
+    // vendor name in AS the product just to produce candidates.
+    //
+    // Here the real product token is extracted and upserted into the ORG-NEUTRAL
+    // canonical_products (+ alias) — which is what the tenant-asset resolver's evidence
+    // path joins against. Writes NO tenant data, so ERIP-AD-8 is not engaged. Flag-gated
+    // and try/catch-isolated: a failure here must never break ingestion, and the legacy
+    // path stays authoritative until C8.
+    if (signalApplicabilityEnabled()) {
+      try {
+        // raw_payload is not on CyberSignalRecord (the matcher's narrow view), and
+        // widening it would silently yield NO product evidence for any caller that
+        // forgot to populate it. Read it from the row instead — one query, flag-gated.
+        const payloadRow = await client.query<{ raw_payload: Record<string, unknown> | null }>(
+          `SELECT raw_payload FROM cyber_signals WHERE id = $1::uuid`,
+          [signalId]
+        );
+        const evidence = extractSignalProductEvidence({
+          source: signal.source,
+          affected_vendor: signal.affected_vendor,
+          affected_cve: signal.affected_cve,
+          raw_payload: payloadRow.rows[0]?.raw_payload ?? null,
+        });
+        if (evidence) {
+          await upsertCanonicalProduct(client, {
+            identity: {
+              vendor: evidence.vendor_raw,
+              product: evidence.product_raw,
+              // Deliberately NO cve: a product is a product regardless of which
+              // vulnerability is being assessed today, and canonical_key embeds the cve —
+              // passing it would mint a fresh product row per advisory.
+              cve: null,
+            },
+            aliases: [{ raw: evidence.product_raw, source: evidence.evidence_ref }],
+          });
+        }
+      } catch (err) {
+        logger.warn(
+          { event: "canonical_product_upsert_failed", organizationId: orgId, signalId, err },
+          "canonical product upsert failed (non-fatal — legacy path authoritative)"
+        );
+      }
+    }
+
+    // ERG convergence C3b — SHADOW at the vendor / ai_system → tenant-asset grain
+    // (SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED, default off). Measures whether the
+    // legacy vendor/ai_system match resolves to the SAME canonical tenant asset(s)
+    // as the product→asset resolver. legacy side = the matched entity's Tier-0
+    // backing asset(s); shadow side = resolve the entity's own name product→asset.
+    // Read-only, writes NOTHING (no applicability, vendor/ai links, findings, or
+    // registry writes); try/catch-isolated; flag-off byte-identical; legacy
+    // linkage stays authoritative. Unresolved/ambiguous are recorded, never guessed.
+    if (signalApplicabilityEnabled()) {
+      try {
+        if (matchedVendorId !== null && matchedVendorName !== null) {
+          const legacy = await backingAssetIds(client, orgId, "vendors", matchedVendorId);
+          await runSignalApplicabilityShadow(
+            client,
+            orgId,
+            { productHint: matchedVendorName, cve: signal.affected_cve, grain: "vendor" },
+            legacy
+          );
+        }
+        if (matchedAiSystemId !== null && matchedAiSystemName !== null) {
+          const legacy = await backingAssetIds(client, orgId, "ai_systems", matchedAiSystemId);
+          await runSignalApplicabilityShadow(
+            client,
+            orgId,
+            { productHint: matchedAiSystemName, cve: signal.affected_cve, grain: "ai_system" },
+            legacy
+          );
+        }
+      } catch (err) {
+        logger.warn(
+          { event: "signal_applicability_shadow_failed", organizationId: orgId, signalId, grain: "vendor_ai", err },
+          "vendor/ai-system applicability shadow failed (non-fatal — legacy path authoritative)"
         );
       }
     }
@@ -870,6 +1112,29 @@ export async function runMatcherForSignal(
       }
     }
 
+    // Event-native linkage (IE-AD-11): stamp the canonical Intelligence Event on
+    // every suggestion this signal produced, so the accept/dismiss workflow and
+    // all linkage services reference the authoritative model. Flag-gated: NULL
+    // (legacy, signal-only) when off. Best-effort — never blocks the matcher.
+    if (intelligenceEventsEnabled()) {
+      try {
+        const eventId = await resolveEventIdForSignal(client, signalId, signal.affected_cve);
+        if (eventId) {
+          await client.query(
+            `UPDATE signal_match_suggestions
+                SET intelligence_event_id = $1
+              WHERE organization_id = $2 AND signal_id = $3 AND intelligence_event_id IS NULL`,
+            [eventId, orgId, signalId]
+          );
+        }
+      } catch (err) {
+        logger.warn(
+          { event: "matcher_event_link_failed", orgId, signalId, err },
+          "Failed to stamp canonical event on suggestions (non-fatal)"
+        );
+      }
+    }
+
     if (ownsTransaction) await client.query("COMMIT");
 
     logger.info(
@@ -1020,6 +1285,15 @@ export async function processSignal(
     // so the worker fan-out gets them natively. The count is surfaced on the
     // MatcherResult; no separate UPDATE risks here.
     risksUpdated = matcherResult.risks_flagged;
+
+    // ECL R3 (Slice 7): enqueue an applicability-reassessment job for this
+    // (org, signal) on the SAME client — committed iff the processing commits.
+    // Self-gating: a zero-DB no-op unless SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED,
+    // so this line is inert in every environment where the ECL is dark.
+    await enqueueApplicabilityReassessment(client, orgId, {
+      type: "signal_changed",
+      signal_id: signalId
+    });
 
     await client.query("COMMIT");
 
@@ -1176,12 +1450,18 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
     treatedRiskResult,
     vendorInventoryResult,
   ] = await Promise.all([
+      // Metric Contract: posture computes over the ACTIVE finding population,
+      // matching postureSnapshot.ts (which documents why `status = 'open'` was
+      // retired there). This path had drifted — a snapshot written after signal
+      // ingestion used a smaller population than the worker/route snapshot for
+      // the same org, so domain counts could not reconcile with the dashboard's
+      // Active headline depending on which writer ran last.
       pgElevated.query<DbFindingForPosture>(
         `
         SELECT id, title, domain, severity
         FROM findings
         WHERE organization_id = $1
-          AND status = 'open'
+          AND ${sqlFindingActive()}
         `,
         [orgId]
       ),
@@ -1202,7 +1482,7 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
         SELECT source_type, COUNT(*)::text AS count
         FROM findings
         WHERE organization_id = $1
-          AND status = 'open'
+          AND ${sqlFindingActive()}
         GROUP BY source_type
         `,
         [orgId]
@@ -1242,11 +1522,11 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
     vendorInventoryResult.rows
   );
 
-  const openFindings = [
-    ...findingsResult.rows,
-    ...riskSignals,
-    ...vendorInventorySignals,
-  ];
+  // Domain-count reconciliation ruling (2026-07-17): risk + inventory signals
+  // feed SCORING only — passed to computePosture separately (mirrors
+  // postureSnapshot.ts; both pipelines must stay in sync) so headline counts
+  // cover unique active findings exactly once, under their primary domain.
+  const auxSignals = [...riskSignals, ...vendorInventorySignals];
   const riskSignalCount = riskSignals.length;
 
   // Count open and overdue actions.
@@ -1286,11 +1566,12 @@ async function computeAndPersistPostureSnapshot(orgId: string): Promise<void> {
 
   const rationaleExtension = buildScoringRationaleExtension(signalBreakdown);
   const computed = computePosture(
-    openFindings,
+    findingsResult.rows,
     openActionCount,
     overdueActionCount,
     orgContext,
-    riskSignalCount
+    riskSignalCount,
+    auxSignals
   );
 
   const enrichedRationale = { ...computed.computation_rationale, ...rationaleExtension };

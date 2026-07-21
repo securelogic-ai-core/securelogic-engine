@@ -1,7 +1,18 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getMe, getDashboardSummary, type DomainScore } from "@/lib/api";
+import {
+  getMe,
+  getDashboardSummary,
+  getPostureHistory,
+  getFrameworks,
+  getFrameworkReadiness,
+  type Framework,
+  type FrameworkReadiness,
+} from "@/lib/api";
+import { formatDateOnlyUTC } from "@/lib/dates";
+import { briefingHomeLabel } from "@/lib/navigation";
+import { PostureAnalyticsGrid } from "./PostureAnalyticsGrid";
 
 const SEVERITY_STYLES: Record<string, { badge: string; bar: string; label: string; color: string }> = {
   Critical: { badge: "bg-red-900/40 text-red-300",      bar: "bg-red-500",    label: "Critical", color: "#fca5a5" },
@@ -22,58 +33,6 @@ const STAT_CARD_STYLE: React.CSSProperties = {
   padding: "16px 20px",
 };
 
-function DomainRow({ domain }: { domain: DomainScore }) {
-  const s = severityStyle(domain.severity);
-  const score = domain.score ?? 0;
-  const findingsHref = `/findings?domain=${encodeURIComponent(domain.domain)}&status=open`;
-
-  return (
-    <tr className="border-t" style={{ borderColor: "#1e293b" }}>
-      <td className="py-3 pr-4">
-        <span className="text-sm font-medium" style={{ color: "#f1f5f9" }}>
-          {domain.domain}
-        </span>
-      </td>
-      <td className="py-3 pr-4">
-        <div className="flex items-center gap-2">
-          <div className="w-20 rounded-full h-1.5" style={{ background: "rgba(255,255,255,0.08)" }}>
-            <div
-              className={`h-1.5 rounded-full ${s.bar}`}
-              style={{ width: `${Math.min(score, 100)}%` }}
-            />
-          </div>
-          <span className="text-sm font-bold tabular-nums w-8" style={{ color: s.color }}>
-            {score}
-          </span>
-        </div>
-      </td>
-      <td className="py-3 pr-4">
-        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${s.badge}`}>
-          {s.label}
-        </span>
-      </td>
-      <td className="py-3 pr-4">
-        {domain.finding_count > 0 ? (
-          <Link
-            href={findingsHref}
-            className="text-sm font-medium transition-colors hover:text-teal-300"
-            style={{ color: "#00c4b4" }}
-          >
-            {domain.finding_count}
-          </Link>
-        ) : (
-          <span className="text-sm" style={{ color: "#334155" }}>0</span>
-        )}
-      </td>
-      <td className="py-3">
-        <span className="text-sm" style={{ color: domain.action_count > 0 ? "#94a3b8" : "#334155" }}>
-          {domain.action_count}
-        </span>
-      </td>
-    </tr>
-  );
-}
-
 export default async function PosturePage() {
   const session = await getSession();
   const token = session.jwtToken ?? session.apiKey ?? null;
@@ -84,13 +43,34 @@ export default async function PosturePage() {
   const isPlatformUser = ["premium", "platform", "team"].includes(entitlementLevel);
   if (!isPlatformUser) redirect("/dashboard");
 
-  const summary = await getDashboardSummary(token);
+  // Read-surface architecture D1: /posture is the canonical Posture Dashboard.
+  // It now carries the full analytics composition, so it needs the same inputs
+  // the legacy dashboard grid used — the 90-day trend history and the
+  // framework readiness pairs — alongside the summary. Existing endpoints
+  // only; no new calculations.
+  const [summary, postureHistory, frameworksData] = await Promise.all([
+    getDashboardSummary(token),
+    getPostureHistory(token, 90),
+    getFrameworks(token),
+  ]);
+  const frameworks = frameworksData?.frameworks ?? [];
+  const frameworkReadinessResults = frameworks.length > 0
+    ? await Promise.all(frameworks.map((f) => getFrameworkReadiness(token, f.id)))
+    : [];
+  const frameworkPairs: Array<{ framework: Framework; readiness: FrameworkReadiness | null }> =
+    frameworks.map((f, i) => ({ framework: f, readiness: frameworkReadinessResults[i] ?? null }));
+
+  // The home route renders The Briefing only under the briefing flag; the
+  // back-link must name the experience that is actually there (helper rule).
+  const homeLabel = briefingHomeLabel(
+    process.env.SECURELOGIC_DASHBOARD_BRIEFING_ENABLED === "true",
+  );
 
   if (!summary) {
     return (
       <div className="max-w-5xl mx-auto px-6 py-12">
         <Link href="/dashboard" className="text-xs font-medium mb-6 inline-block transition-colors hover:opacity-80" style={{ color: "#64748b" }}>
-          ← Dashboard
+          ← {homeLabel}
         </Link>
         <div className="rounded-xl border p-10 text-center" style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}>
           <p className="text-sm" style={{ color: "#94a3b8" }}>Unable to load posture data.</p>
@@ -111,7 +91,7 @@ export default async function PosturePage() {
         className="text-xs font-medium mb-6 inline-block transition-colors hover:opacity-80"
         style={{ color: "#64748b" }}
       >
-        ← Dashboard
+        ← {homeLabel}
       </Link>
 
       {/* Header */}
@@ -120,9 +100,24 @@ export default async function PosturePage() {
           <h1 className="text-2xl font-bold mb-1" style={{ color: "#f1f5f9" }}>
             Security Posture
           </h1>
+          {/* Posture display ruling (2026-07-15): scores arrive HEALTH-style from
+              the API's canonical mapper (src/api/lib/postureDisplay.ts). */}
           <p className="text-sm" style={{ color: "#94a3b8" }}>
-            Overall risk position across all domains
+            Overall security health across all domains · higher = better
           </p>
+          {/* Executive Report export lives HERE (D1): the PDF is an
+              org-performance artifact, so its entry point is the Posture
+              Dashboard, not the opening experience. */}
+          <a
+            href="/api/export/executive-report"
+            download="executive-report.pdf"
+            target="_blank"
+            rel="noreferrer"
+            className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold"
+            style={{ border: "1px solid rgba(0,196,180,0.4)", color: "#00c4b4", textDecoration: "none" }}
+          >
+            &#8595; Executive Report
+          </a>
         </div>
 
         {hasSnapshot && (
@@ -139,23 +134,21 @@ export default async function PosturePage() {
             <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${scoreStyle.badge}`}>
               {scoreStyle.label}
             </span>
+            {/* Item 2b: DATE fields format in UTC via the shared helper so this
+                page can never disagree with the dashboard about the same date. */}
             {posture.snapshot_date && (
               <p className="mt-2 text-xs" style={{ color: "#475569" }}>
-                as of {new Date(posture.snapshot_date).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
+                as of {formatDateOnlyUTC(posture.snapshot_date)}
               </p>
             )}
           </div>
         )}
       </div>
 
-      {/* Open Findings by Severity */}
+      {/* Active Findings by Severity */}
       <div className="mb-8">
         <h2 className="text-sm font-semibold uppercase tracking-wide mb-4" style={{ color: "#64748b" }}>
-          Open Findings by Severity
+          Active Findings by Severity
         </h2>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {(["Critical", "High", "Moderate", "Low"] as const).map((sev) => {
@@ -164,7 +157,7 @@ export default async function PosturePage() {
             return (
               <Link
                 key={sev}
-                href={`/findings?severity=${sev}&status=open`}
+                href={`/findings?severity=${sev}&active=true`}
                 className="block rounded-xl border p-5 transition-colors hover:border-teal-800"
                 style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b", textDecoration: "none" }}
               >
@@ -188,6 +181,12 @@ export default async function PosturePage() {
             <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: "#64748b" }}>
               Domain Breakdown
             </h2>
+            {/* Metric Contract honesty: these counts are frozen at snapshot
+                time; the links open the LIVE findings list, which may differ.
+                Say so instead of letting the two look contradictory. */}
+            <p className="text-xs mt-1" style={{ color: "#475569" }}>
+              Health score (0–100) · higher = better. Counts are from this snapshot — links open the live findings list, which may have changed since.
+            </p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -239,7 +238,7 @@ export default async function PosturePage() {
                     <td className="px-5 py-3">
                       {d.finding_count > 0 ? (
                         <Link
-                          href={`/findings?domain=${encodeURIComponent(d.domain)}&status=open`}
+                          href={`/findings?domain=${encodeURIComponent(d.domain)}&active=true`}
                           className="text-sm font-medium transition-colors hover:text-teal-300"
                           style={{ color: "#00c4b4" }}
                         >
@@ -287,15 +286,15 @@ export default async function PosturePage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div style={STAT_CARD_STYLE}>
             <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-              Total Open Findings
+              Total Active Findings
             </p>
             <p className="text-3xl font-bold mb-3" style={{ color: "#f1f5f9" }}>{findings.open}</p>
             <Link
-              href="/findings?status=open"
+              href="/findings?active=true"
               className="text-xs font-medium transition-colors hover:opacity-80"
               style={{ color: "#00c4b4" }}
             >
-              View all open findings →
+              View all active findings →
             </Link>
           </div>
           <div style={STAT_CARD_STYLE}>
@@ -304,7 +303,7 @@ export default async function PosturePage() {
             </p>
             <p className="text-3xl font-bold mb-3" style={{ color: "#f1f5f9" }}>{domains.length}</p>
             <Link
-              href="/findings"
+              href="/findings?queue=all"
               className="text-xs font-medium transition-colors hover:opacity-80"
               style={{ color: "#00c4b4" }}
             >
@@ -313,6 +312,15 @@ export default async function PosturePage() {
           </div>
         </div>
       )}
+
+      {/* Canonical analytics composition (D1) — fixed order, org scope, no
+          per-user customize. Each tile carries its own empty state, so the
+          grid renders whenever the summary loaded. */}
+      <PostureAnalyticsGrid
+        summary={summary}
+        frameworkPairs={frameworkPairs}
+        postureSnapshots={postureHistory?.snapshots ?? []}
+      />
     </div>
   );
 }

@@ -44,12 +44,27 @@ import type {
   SignalMatchSuggestion,
   SignalMatchTargetType,
 } from "@/lib/api";
+import { queueIntelligenceHref } from "@/lib/intelligenceLinks";
 import {
   acceptSuggestionAction,
   dismissSuggestionAction,
+  bulkDecideSuggestionsAction,
 } from "@/app/actions/signalMatchSuggestion";
+import {
+  toggleSelection,
+  isAllSelected,
+  toggleSelectAll,
+  pruneSelection,
+  summarizeBulkResult,
+} from "./bulkSelection";
 import { useTimedNotice } from "@/hooks/useTimedNotice";
 import { Notice } from "./Notice";
+import {
+  confidenceBand,
+  describeMatchReason,
+  signalHeadline,
+  type ConfidenceTone,
+} from "./reviewLanguage";
 
 const UNDO_WINDOW_MS = 5000;
 
@@ -76,17 +91,31 @@ export type EnrichedSuggestion = SignalMatchSuggestion & {
   // Server-rendered enrichments — joined into the row at page-load time
   // so the list itself is dumb. Optional because legacy rows or partial
   // joins may be missing fields.
+  target_name?: string | null;
+  // Legacy field names read by the pre-workspace row layout. The engine list
+  // endpoint does NOT return these (it returns event_* below), so today they are
+  // undefined and the legacy row falls back to a truncated signal UUID. Kept so
+  // the flag-off render path is byte-for-byte unchanged (GATE B).
   signal_title?: string | null;
   signal_severity?: string | null;
   signal_source?: string | null;
   signal_cve?: string | null;
-  target_name?: string | null;
+  // Canonical Intelligence Event enrichment actually returned by the engine
+  // (SUGGESTION_ENRICHED_SELECT: ie.title/severity/confidence/canonical_key).
+  // Populated when the Intelligence Events layer is on; null when dark. The
+  // workspace "Review Suggested Links" layout consumes these.
+  intelligence_event_id?: string | null;
+  event_title?: string | null;
+  event_severity?: string | null;
+  event_confidence?: number | null;
+  event_canonical_key?: string | null;
 };
 
 export function SuggestionList({
   initialSuggestions,
   embeddedRevalidatePath,
   emptyState,
+  workspace = false,
 }: {
   initialSuggestions: EnrichedSuggestion[];
   // Set when the list is mounted on a vendor/ai_system/control/obligation
@@ -95,6 +124,11 @@ export function SuggestionList({
   // Rendered when initialSuggestions is empty. The page decides which
   // empty state copy to show (filtered-empty vs first-time-empty).
   emptyState: React.ReactNode;
+  // When true (risk_workspace flag on), render the "Review Suggested Links"
+  // enterprise layout: business language, confidence bands, intelligence-event
+  // titles — no raw signal IDs or match_reason codes. Off = legacy layout,
+  // byte-for-byte unchanged (GATE B).
+  workspace?: boolean;
 }) {
   const router = useRouter();
   const { notice, show: showNotice, dismiss: dismissNotice } = useTimedNotice(UNDO_WINDOW_MS);
@@ -272,12 +306,87 @@ export function SuggestionList({
     [initialSuggestions, rowState]
   );
 
+  // Bulk "Select mode" (ERIP §3) — an OPT-IN mode, mutually exclusive with the
+  // per-row undo timers above (in select mode the row shows a checkbox, not
+  // Accept/Dismiss). Only offered under the workspace reskin; legacy is untouched.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [bulkPending, startBulk] = useTransition();
+  const visibleIds = useMemo(() => visible.map((s) => s.id), [visible]);
+
+  // Keep the selection to still-visible rows (e.g. after a refresh).
+  useEffect(() => {
+    setSelected((cur) => {
+      const pruned = pruneSelection(cur, visibleIds);
+      return pruned.length === cur.length ? cur : pruned;
+    });
+  }, [visibleIds]);
+
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false);
+    setSelected([]);
+  }, []);
+
+  const runBulk = useCallback(
+    (decision: "accept" | "dismiss") => {
+      if (selected.length === 0) return;
+      const ids = [...selected];
+      startBulk(async () => {
+        const res = await bulkDecideSuggestionsAction(ids, decision, { embeddedRevalidatePath });
+        showNotice({
+          id: `bulk-${decision}-${ids.length}`,
+          message: summarizeBulkResult(decision, res.succeeded.length, res.failed.length),
+        });
+        exitSelectMode();
+        router.refresh();
+      });
+    },
+    [selected, embeddedRevalidatePath, showNotice, exitSelectMode, router]
+  );
+
   if (initialSuggestions.length === 0) {
     return <>{emptyState}</>;
   }
 
+  const allSelected = isAllSelected(selected, visibleIds);
+
   return (
     <>
+      {/* Bulk toolbar — workspace reskin only (legacy queue unchanged). */}
+      {workspace && visible.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
+          {!selectMode ? (
+            <button
+              type="button"
+              onClick={() => setSelectMode(true)}
+              style={{ fontSize: 13, color: "#94a3b8", border: "1px solid #1e293b", borderRadius: 8, padding: "5px 12px", background: "transparent" }}
+            >
+              Select
+            </button>
+          ) : (
+            <>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, color: "#cbd5e1" }}>
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={() => setSelected((cur) => toggleSelectAll(cur, visibleIds))}
+                  aria-label="Select all visible suggestions"
+                />
+                {allSelected ? "Clear all" : `Select all (${visibleIds.length})`}
+              </label>
+              <span style={{ fontSize: 13, color: "#64748b" }}>{selected.length} selected</span>
+              <button
+                type="button"
+                onClick={exitSelectMode}
+                style={{ fontSize: 13, color: "#64748b", border: "1px solid #1e293b", borderRadius: 8, padding: "5px 12px", background: "transparent" }}
+              >
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {visible.length === 0 ? (
         <div
           style={{
@@ -306,28 +415,88 @@ export function SuggestionList({
             <SuggestionRow
               key={s.id}
               suggestion={s}
+              workspace={workspace}
+              selectMode={selectMode}
+              checked={selected.includes(s.id)}
+              onToggleSelect={() => setSelected((cur) => toggleSelection(cur, s.id))}
               onAccept={() => beginPending(s.id, "accept")}
               onDismiss={() => beginPending(s.id, "dismiss")}
             />
           ))}
         </ul>
       )}
+
+      {/* Sticky bulk action bar when a selection exists. */}
+      {selectMode && selected.length > 0 && (
+        <div
+          style={{
+            position: "sticky",
+            bottom: 16,
+            marginTop: 12,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            padding: "10px 16px",
+            borderRadius: 12,
+            background: "rgba(15,23,42,0.96)",
+            border: "1px solid #1e293b",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+          }}
+        >
+          <span style={{ fontSize: 13, color: "#cbd5e1" }}>{selected.length} selected</span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              disabled={bulkPending}
+              onClick={() => runBulk("dismiss")}
+              style={{ fontSize: 13, fontWeight: 600, color: "#fca5a5", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, padding: "7px 14px", opacity: bulkPending ? 0.6 : 1 }}
+            >
+              {bulkPending ? "Working…" : "Dismiss selected"}
+            </button>
+            <button
+              type="button"
+              disabled={bulkPending}
+              onClick={() => runBulk("accept")}
+              style={{ fontSize: 13, fontWeight: 600, color: "#00c4b4", background: "rgba(0,196,180,0.12)", border: "1px solid rgba(0,196,180,0.4)", borderRadius: 8, padding: "7px 14px", opacity: bulkPending ? 0.6 : 1 }}
+            >
+              {bulkPending ? "Working…" : "Accept selected"}
+            </button>
+          </div>
+        </div>
+      )}
+
       <Notice notice={notice} onDismiss={dismissNotice} />
     </>
   );
 }
 
+const CONFIDENCE_COLOR: Record<ConfidenceTone, string> = {
+  high: "#fca5a5",
+  medium: "#fcd34d",
+  low: "#86efac",
+};
+
 function SuggestionRow({
   suggestion,
+  workspace,
+  selectMode = false,
+  checked = false,
+  onToggleSelect,
   onAccept,
   onDismiss,
 }: {
   suggestion: EnrichedSuggestion;
+  workspace: boolean;
+  selectMode?: boolean;
+  checked?: boolean;
+  onToggleSelect?: () => void;
   onAccept: () => void;
   onDismiss: () => void;
 }) {
   const targetHref = `${TARGET_ROUTE[suggestion.target_type]}/${suggestion.target_id}`;
   const score = suggestion.match_score;
+  const band = confidenceBand(score);
 
   return (
     <li
@@ -362,7 +531,23 @@ function SuggestionRow({
           >
             {suggestion.target_name ?? suggestion.target_id}
           </Link>
-          {score !== null ? (
+          {workspace ? (
+            band ? (
+              <span
+                title={`SecureLogic's confidence that this signal applies (match score ${score}/100).`}
+                style={{
+                  marginLeft: "auto",
+                  fontSize: 11,
+                  color: CONFIDENCE_COLOR[band.tone],
+                  padding: "2px 8px",
+                  border: `1px solid ${CONFIDENCE_COLOR[band.tone]}`,
+                  borderRadius: 999,
+                }}
+              >
+                {band.label}
+              </span>
+            ) : null
+          ) : score !== null ? (
             <span
               title="Match score (0–100). Higher = more confidence the signal applies."
               style={{
@@ -377,59 +562,101 @@ function SuggestionRow({
           ) : null}
         </div>
 
-        <div style={{ fontSize: 13, color: "#d1d5db" }}>
-          {suggestion.signal_title ?? `Signal ${suggestion.signal_id.slice(0, 8)}…`}
-        </div>
-
-        <div
-          style={{
-            fontSize: 12,
-            color: "#9ca3af",
-            display: "flex",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
-          {suggestion.signal_source ? <span>Source: {suggestion.signal_source}</span> : null}
-          {suggestion.signal_severity ? <span>Severity: {suggestion.signal_severity}</span> : null}
-          {suggestion.signal_cve ? <span>{suggestion.signal_cve}</span> : null}
-          {suggestion.match_reason ? <span>Match: {suggestion.match_reason}</span> : null}
-        </div>
+        {workspace ? (
+          <>
+            <div style={{ fontSize: 13, color: "#d1d5db" }}>
+              {signalHeadline(suggestion.event_title)}
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: "#9ca3af",
+                display: "flex",
+                gap: 12,
+                flexWrap: "wrap",
+              }}
+            >
+              {suggestion.event_severity ? <span>Severity: {suggestion.event_severity}</span> : null}
+              {suggestion.event_canonical_key ? <span>{suggestion.event_canonical_key}</span> : null}
+              <span>Why: {describeMatchReason(suggestion.match_reason, suggestion.target_type)}</span>
+              {(() => {
+                // Reciprocal drill-through to the canonical intelligence event —
+                // workspace reskin only, and only when the row carries an event id.
+                const href = queueIntelligenceHref(workspace, suggestion.intelligence_event_id);
+                return href ? (
+                  <Link href={href} style={{ color: "#93c5fd" }}>View intelligence</Link>
+                ) : null;
+              })()}
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 13, color: "#d1d5db" }}>
+              {suggestion.signal_title ?? `Signal ${suggestion.signal_id.slice(0, 8)}…`}
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: "#9ca3af",
+                display: "flex",
+                gap: 12,
+                flexWrap: "wrap",
+              }}
+            >
+              {suggestion.signal_source ? <span>Source: {suggestion.signal_source}</span> : null}
+              {suggestion.signal_severity ? <span>Severity: {suggestion.signal_severity}</span> : null}
+              {suggestion.signal_cve ? <span>{suggestion.signal_cve}</span> : null}
+              {suggestion.match_reason ? <span>Match: {suggestion.match_reason}</span> : null}
+            </div>
+          </>
+        )}
       </div>
 
-      <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-        <button
-          type="button"
-          onClick={onDismiss}
-          style={{
-            background: "transparent",
-            border: "1px solid rgba(255,255,255,0.16)",
-            color: "#d1d5db",
-            borderRadius: 6,
-            padding: "6px 12px",
-            fontSize: 13,
-            cursor: "pointer",
-          }}
-        >
-          Dismiss
-        </button>
-        <button
-          type="button"
-          onClick={onAccept}
-          style={{
-            background: "#2563eb",
-            border: "1px solid #1d4ed8",
-            color: "white",
-            borderRadius: 6,
-            padding: "6px 12px",
-            fontSize: 13,
-            cursor: "pointer",
-            fontWeight: 500,
-          }}
-        >
-          Accept
-        </button>
-      </div>
+      {selectMode ? (
+        <div style={{ display: "flex", alignItems: "flex-start", paddingTop: 2 }}>
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={onToggleSelect}
+            aria-label={`Select suggested link for ${suggestion.target_name ?? suggestion.target_id}`}
+            style={{ width: 18, height: 18, cursor: "pointer" }}
+          />
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+          <button
+            type="button"
+            onClick={onDismiss}
+            style={{
+              background: "transparent",
+              border: "1px solid rgba(255,255,255,0.16)",
+              color: "#d1d5db",
+              borderRadius: 6,
+              padding: "6px 12px",
+              fontSize: 13,
+              cursor: "pointer",
+            }}
+          >
+            Dismiss
+          </button>
+          <button
+            type="button"
+            onClick={onAccept}
+            style={{
+              background: "#2563eb",
+              border: "1px solid #1d4ed8",
+              color: "white",
+              borderRadius: 6,
+              padding: "6px 12px",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: 500,
+            }}
+          >
+            Accept
+          </button>
+        </div>
+      )}
     </li>
   );
 }

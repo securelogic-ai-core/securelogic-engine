@@ -73,12 +73,29 @@ import riskTreatmentsRouter from "./riskTreatments.js";
 import riskControlLinksRouter from "./riskControlLinks.js";
 import riskObligationLinksRouter from "./riskObligationLinks.js";
 import riskSettingsRouter from "./riskSettings.js";
+import riskLifecycleRouter from "./riskLifecycle.js";
+import riskApprovalsRouter from "./riskApprovals.js";
+import riskAcceptancesRouter from "./riskAcceptances.js";
 import cyberSignalsRouter from "./cyberSignals.js";
 import signalVendorLinksRouter from "./signalVendorLinks.js";
 import signalAiSystemLinksRouter from "./signalAiSystemLinks.js";
 import signalControlLinksRouter from "./signalControlLinks.js";
 import signalObligationLinksRouter from "./signalObligationLinks.js";
 import signalMatchSuggestionsRouter from "./signalMatchSuggestions.js";
+import enterpriseEntitiesRouter from "./enterpriseEntities.js";
+import enterpriseRelationshipsRouter from "./enterpriseRelationships.js";
+import enterpriseGraphRouter from "./enterpriseGraph.js";
+import enterpriseContextImportRouter from "./enterpriseContextImport.js";
+import applicabilityAssessmentsRouter from "./applicabilityAssessments.js";
+import enterpriseContextStatsRouter from "./enterpriseContextStats.js";
+import assetsRouter from "./assets.js";
+import riskIntelligenceRouter from "./riskIntelligence.js";
+import intelligenceEventsRouter from "./intelligenceEvents.js";
+import predictiveIntelligenceRouter from "./predictiveIntelligence.js";
+import orchestrationRouter from "./orchestration.js";
+import knowledgeGraphRouter from "./knowledgeGraph.js";
+import assetAssessmentsRouter from "./assetAssessments.js";
+import connectorsRouter from "./connectors.js";
 import templatesRouter from "./templates.js";
 import aiSystemVendorDependenciesRouter from "./aiSystemVendorDependencies.js";
 import riskScoringWeightsRouter from "./riskScoringWeights.js";
@@ -104,6 +121,8 @@ import gapReportRouter from "./gapReport.js";
 import findingsExportRouter from "./findingsExport.js";
 import alertPreferencesRouter from "./alertPreferences.js";
 import dashboardPreferencesRouter from "./dashboardPreferences.js";
+import findingSavedViewsRouter from "./findingSavedViews.js";
+import briefingLayoutsRouter from "./briefingLayouts.js";
 import policiesRouter from "./policies.js";
 import ssoRouter from "./sso.js";
 import customerApiKeysRouter from "./customerApiKeys.js";
@@ -417,6 +436,10 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", billingRouter);
   router.use("/api", assessRouter);
   router.use("/api", assessmentsRouter);
+  // findingsExportRouter MUST mount before findingsRouter: its literal path
+  // /findings/export.csv is otherwise captured by GET /findings/:id, which
+  // rejects "export.csv" as a non-UUID id (staging EXP-1).
+  router.use("/api", findingsExportRouter);
   router.use("/api", findingsRouter);
   router.use("/api", actionsRouter);
   router.use("/api", vendorsRouter);
@@ -449,12 +472,41 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", riskControlLinksRouter);
   router.use("/api", riskObligationLinksRouter);
   router.use("/api", riskSettingsRouter);
+router.use("/api", riskLifecycleRouter);
+router.use("/api", riskApprovalsRouter);
+router.use("/api", riskAcceptancesRouter);
   router.use("/api", cyberSignalsRouter);
   router.use("/api", signalVendorLinksRouter);
   router.use("/api", signalAiSystemLinksRouter);
   router.use("/api", signalControlLinksRouter);
   router.use("/api", signalObligationLinksRouter);
   router.use("/api", signalMatchSuggestionsRouter);
+  // Enterprise Context Layer (Slice 1). Unconditional mount; the ECL feature flag
+  // (SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED, default off → 404 before auth) gates
+  // the surface in-router.
+  router.use("/api", enterpriseEntitiesRouter);
+  router.use("/api", enterpriseRelationshipsRouter);
+  router.use("/api", enterpriseGraphRouter);
+  router.use("/api", enterpriseContextImportRouter);
+  router.use("/api", applicabilityAssessmentsRouter);
+  router.use("/api", enterpriseContextStatsRouter);
+  // Enterprise Asset Registry (Phase 0). Same unconditional-mount pattern; its
+  // OWN flag (SECURELOGIC_ASSET_REGISTRY_ENABLED, default off → 404 before
+  // auth) gates the surface in-router.
+  router.use("/api", assetsRouter);
+  router.use("/api", riskIntelligenceRouter);
+  // Intelligence Pipeline Hardening / IE.P7: canonical event read surface. OWN
+  // flag (SECURELOGIC_INTELLIGENCE_EVENTS_ENABLED, default off → 404 before auth).
+  router.use("/api", intelligenceEventsRouter);
+  router.use("/api", predictiveIntelligenceRouter);
+  router.use("/api", orchestrationRouter);
+  router.use("/api", knowledgeGraphRouter);
+  // EAR P10: generic asset-assessment service — same registry flag (404
+  // before auth, default off).
+  router.use("/api", assetAssessmentsRouter);
+  // EAR Phase 3b: connector config + sync. Double-fenced in-router (ECL flag
+  // AND registry flag, both default off → 404 before auth).
+  router.use("/api", connectorsRouter);
   router.use("/api", templatesRouter);
   router.use("/api", aiSystemVendorDependenciesRouter);
   router.use("/api", riskScoringWeightsRouter);
@@ -470,13 +522,14 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", teamInvitesRouter);
   router.use("/api", auditPackageRouter);
   router.use("/api", gapReportRouter);
-  router.use("/api", findingsExportRouter);
   // GDPR self-export intake + authenticated list/download (each route owns
   // requireApiKey + attachOrganizationContext). The session-optional tokenized
   // download lives in dataExportPublicDownloadRouter, mounted above.
   router.use("/api", dataExportsRouter);
   router.use("/api", alertPreferencesRouter);
   router.use("/api", dashboardPreferencesRouter);
+  router.use("/api", findingSavedViewsRouter);
+  router.use("/api", briefingLayoutsRouter);
   router.use("/api", policiesRouter);
   router.use("/api", webhooksRouter);
   router.use("/api", askRouter);

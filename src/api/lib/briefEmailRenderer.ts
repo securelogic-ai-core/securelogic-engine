@@ -610,8 +610,8 @@ function renderFooter(orgName: string, appBaseUrl: string): string {
               <div style="color:#64748b;font-size:12px;font-family:Arial,Helvetica,sans-serif;line-height:1.6;">
                 You are receiving this brief as a subscriber to
                 <strong style="color:#94a3b8;">SecureLogic AI Intelligence</strong>.
-                This brief is generated weekly from live threat intelligence sources
-                including CISA KEV, NVD, CISA Alerts, and regulatory feeds.
+                This brief is generated weekly from live threat intelligence and
+                regulatory sources.
               </div>
             </td>
           </tr>

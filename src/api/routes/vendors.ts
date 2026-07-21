@@ -26,14 +26,19 @@ import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
+import { registerAsset } from "../lib/assetRegistrar.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import { enforceEntityLimit } from "../lib/entityLimit.js";
 import {
   validateVendorCreate,
   validateVendorPatch
 } from "../lib/vendorValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { sqlFindingActive } from "../lib/metricDefinitions.js";
 import { computeVendorRiskScore } from "../lib/vendorRiskScore.js";
 
 const router = Router();
@@ -81,8 +86,8 @@ router.post(
   "/vendors",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -113,35 +118,43 @@ router.post(
 
       let result;
       try {
-        result = await pg.query(
-          `
-          INSERT INTO vendors (
-            organization_id,
-            name,
-            service_description,
-            category,
-            criticality,
-            data_sensitivity,
-            access_level,
-            website,
-            owner_user_id,
-            status
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active')
-          RETURNING ${VENDOR_SELECT}
-          `,
-          [
-            organizationId,
-            input.name,
-            input.service_description ?? null,
-            input.category ?? null,
-            input.criticality ?? null,
-            input.data_sensitivity ?? null,
-            input.access_level ?? null,
-            input.website ?? null,
-            input.owner_user_id ?? (req as any).autoUserId ?? null
-          ]
-        );
+        // Single tx via the route's asTenant wrap (P8) — the EAR registry
+        // upsert (flag-gated, dark by default) stays atomic with the INSERT.
+        {
+          const created = await pg.query(
+            `
+            INSERT INTO vendors (
+              organization_id,
+              name,
+              service_description,
+              category,
+              criticality,
+              data_sensitivity,
+              access_level,
+              website,
+              owner_user_id,
+              status
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active')
+            RETURNING ${VENDOR_SELECT}
+            `,
+            [
+              organizationId,
+              input.name,
+              input.service_description ?? null,
+              input.category ?? null,
+              input.criticality ?? null,
+              input.data_sensitivity ?? null,
+              input.access_level ?? null,
+              input.website ?? null,
+              input.owner_user_id ?? (req as any).autoUserId ?? null
+            ]
+          );
+          if (assetRegistryEnabled()) {
+            await registerAsset(organizationId, "vendor", "vendors", (created.rows[0] as { id: string }).id);
+          }
+          result = created;
+        }
       } catch (err: any) {
         if (err?.code === "23505") {
           res.status(409).json({
@@ -182,7 +195,7 @@ router.post(
       );
       res.status(500).json({ error: "vendor_create_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -196,8 +209,8 @@ router.get(
   "/vendors",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -262,9 +275,39 @@ router.get(
 
       const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
+      // Per-vendor finding counts, computed HERE, in the database.
+      //
+      // The vendor list and the vendor risk board used to fetch the org's Vendor
+      // Risk findings with `limit: 100` and group them by vendor in the browser.
+      // Past 100 such findings in the org, a vendor's findings fell off the end of
+      // the page before the grouping ever saw them — and the card printed no badge
+      // at all for a vendor that had open findings. A truncation is not a zero, and
+      // a count derived from a bounded page is a cap wearing a count's clothes.
+      //
+      // Findings link to the ASSESSMENT (source_id = vendor_assessments.id), never
+      // to the vendor directly — the vendor is reached through the join, the same
+      // linkage GET /api/vendors/:id/findings uses.
+      //
+      // Both populations are returned: active_findings_count is the canonical
+      // enterprise metric (operational_status <> 'closed'); open_findings_count is
+      // the strictly-open population these surfaces display today.
+      const findingCounts = (predicate: string) => `
+        (SELECT COUNT(*)
+           FROM findings f
+           JOIN vendor_assessments va
+             ON va.id::text = f.source_id::text
+            AND f.source_type = 'vendor_review'
+          WHERE va.vendor_id = vendors.id
+            AND va.organization_id = vendors.organization_id
+            AND f.organization_id = vendors.organization_id
+            AND ${predicate})::int
+      `;
+
       const result = await pg.query(
         `
-        SELECT ${VENDOR_SELECT}
+        SELECT ${VENDOR_SELECT},
+               ${findingCounts("f.status = 'open'")}                  AS open_findings_count,
+               ${findingCounts(sqlFindingActive("f.operational_status"))} AS active_findings_count
         FROM vendors
         ${whereClause}
         ORDER BY
@@ -301,7 +344,7 @@ router.get(
       );
       res.status(500).json({ error: "vendors_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -313,8 +356,8 @@ router.get(
   "/vendors/summary",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -344,14 +387,14 @@ router.get(
             v.name,
             v.criticality,
             COUNT(f.id) FILTER (
-              WHERE f.status = 'open'
+              WHERE ${sqlFindingActive("f.operational_status")}
             )                                                                AS open_findings,
             COUNT(f.id) FILTER (
-              WHERE f.status = 'open'
+              WHERE ${sqlFindingActive("f.operational_status")}
                 AND f.severity = 'Critical'
             )                                                                AS critical_findings,
             COUNT(f.id) FILTER (
-              WHERE f.status = 'open'
+              WHERE ${sqlFindingActive("f.operational_status")}
                 AND f.severity = 'High'
             )                                                                AS high_findings
           FROM vendors v
@@ -408,7 +451,7 @@ router.get(
       logger.error({ event: "vendors_summary_failed", err }, "GET /api/vendors/summary failed");
       res.status(500).json({ error: "vendors_summary_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -429,7 +472,7 @@ router.get(
   "/vendors/export.csv",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requirePremiumOrCorePlatform,
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -542,8 +585,8 @@ router.get(
   "/vendors/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -582,7 +625,7 @@ router.get(
       );
       res.status(500).json({ error: "vendor_get_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -596,8 +639,8 @@ router.patch(
   "/vendors/:id",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -722,7 +765,7 @@ router.patch(
       );
       res.status(500).json({ error: "vendor_patch_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -735,8 +778,8 @@ router.get(
   "/vendors/:id/risk-score",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -771,7 +814,7 @@ router.get(
           AND f.source_type = 'vendor_review'
         WHERE va.vendor_id = $1
           AND f.organization_id = $2
-          AND f.status IN ('open', 'in_progress')
+          AND ${sqlFindingActive("f.operational_status")}
 
         UNION ALL
 
@@ -782,7 +825,7 @@ router.get(
           AND f.source_type = 'vendor_cycle_review'
         WHERE vr.vendor_id = $1
           AND f.organization_id = $2
-          AND f.status IN ('open', 'in_progress')
+          AND ${sqlFindingActive("f.operational_status")}
         `,
         [vendorId, organizationId]
       );
@@ -810,7 +853,7 @@ router.get(
       logger.error({ event: "vendor_risk_score_failed", err }, "GET /api/vendors/:id/risk-score failed");
       res.status(500).json({ error: "vendor_risk_score_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -826,8 +869,8 @@ router.get(
   "/vendors/:id/findings",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
-  async (req, res) => {
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId ?? null;
@@ -931,7 +974,7 @@ router.get(
       logger.error({ event: "vendor_findings_failed", err }, "GET /api/vendors/:id/findings failed");
       res.status(500).json({ error: "vendor_findings_failed" });
     }
-  }
+  })
 );
 
 export default router;

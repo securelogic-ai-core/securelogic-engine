@@ -1,14 +1,30 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
-import { getFinding, getActionsForFinding, type Finding, type Action } from "@/lib/api";
+import {
+  getFinding,
+  getActionsForFinding,
+  getFindingContext,
+  getTeamMembers,
+  getRiskAcceptancesForFinding,
+  type Finding,
+  type Action,
+} from "@/lib/api";
 import { ActionCard } from "@/components/ActionCard";
+import { FindingEvidenceSection } from "@/components/findings/FindingEvidenceSection";
 import { AddActionForm } from "./AddActionForm";
+import { FindingStatusButtons } from "./FindingStatusButtons";
+import { DecisionWorkspace } from "./DecisionWorkspace";
+import { recommendationEmptyCopy } from "./findingSourceCopy";
+import { findingsHomeLabel } from "@/lib/navigation";
 import {
   updateFindingStatusAction,
   updateFindingPriorityAction,
   updateFindingDueDateAction,
   updateActionStatusAction,
+  updateActionAction,
+  unblockAction,
+  completeAction,
 } from "./actions";
 
 // ─────────────────────────────────────────────────────────────
@@ -110,8 +126,13 @@ const STATUS_TRANSITIONS: Record<string, StatusTransition[]> = {
 
 const PRIORITY_OPTIONS = ["immediate", "near_term", "planned", "watch"] as const;
 
-function StatusPriorityCard({ finding }: { finding: Finding }) {
+/** The one definition of "this remediation is still outstanding" — mirrors the engine's
+ *  sqlActionActive(): status IN ('open','in_progress','blocked'). */
+const ACTION_ACTIVE = new Set(["open", "in_progress", "blocked"]);
+
+function StatusPriorityCard({ finding, actions }: { finding: Finding; actions: Action[] }) {
   const transitions = STATUS_TRANSITIONS[finding.status] ?? [];
+  const openActionCount = actions.filter((a) => ACTION_ACTIVE.has(a.status)).length;
 
   return (
     <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
@@ -124,34 +145,14 @@ function StatusPriorityCard({ finding }: { finding: Finding }) {
         <StatusBadge status={finding.status} />
       </div>
 
-      {/* Status transitions */}
+      {/* Status transitions. A client component: these were server-action forms that threw
+          the result away, so a refused close showed the customer nothing at all. */}
       {transitions.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-4">
-          {transitions.map((t) => (
-            <form
-              key={t.to}
-              action={async () => {
-                "use server";
-                await updateFindingStatusAction(finding.id, t.to);
-              }}
-            >
-              <button
-                type="submit"
-                className="text-xs font-medium transition-colors"
-                style={{
-                  border: "1px solid #1e293b",
-                  color: "#94a3b8",
-                  padding: "3px 10px",
-                  borderRadius: "6px",
-                  background: "transparent",
-                  cursor: "pointer",
-                }}
-              >
-                {t.label}
-              </button>
-            </form>
-          ))}
-        </div>
+        <FindingStatusButtons
+          findingId={finding.id}
+          transitions={transitions.map((t) => ({ to: t.to, label: t.label }))}
+          openActionCount={openActionCount}
+        />
       )}
 
       {/* Priority */}
@@ -276,15 +277,81 @@ function FindingDetailsCard({ finding }: { finding: Finding }) {
 function RemediationActionsSection({
   finding,
   actions,
+  owners,
+  operationalStatus,
 }: {
   finding: Finding;
   actions: Action[];
+  // Optional: the legacy (flag-off) detail page renders this section WITHOUT owners,
+  // so it stays byte-identical — no owner chip, no assign control, exactly as before.
+  // Only the Decision Workspace passes them.
+  owners?: { id: string; label: string }[];
+  // The AUTHORITATIVE, system-derived operational status — the SAME source the
+  // header and lifecycle indicator read (context.finding.operational_status). The
+  // "what's next" message below is derived from THIS, not from raw action counts,
+  // so the remediation section can never contradict the header. Completing every
+  // action does not always mean remediation is complete: when the org enforces the
+  // evidence gate, the finding stays In Progress until evidence is attached, and
+  // this section must say so rather than falsely send the user to governance.
+  operationalStatus?: string | null;
 }) {
+  // R-4: completion progress (workspace only — owners present). ACTION_ACTIVE is
+  // the shared "still outstanding" set; terminal = closed|accepted.
+  const total = actions.length;
+  const remaining = actions.filter((a) => ACTION_ACTIVE.has(a.status)).length;
+  const done = total - remaining;
+  const showWorkspaceExtras = owners !== undefined;
+  // Reconcile with the header: remediation is "done" only when the derived
+  // operational status says so — not merely when the action list is empty of work.
+  const remediationComplete = operationalStatus === "remediated";
+  const findingClosed = operationalStatus === "closed";
+
   return (
     <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
-      <h3 className="text-xs font-semibold uppercase tracking-wide mb-4" style={{ color: "#94a3b8" }}>
-        Remediation Actions ({actions.length})
-      </h3>
+      <div className="flex items-baseline justify-between gap-3 flex-wrap mb-1">
+        <h3 className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
+          Remediation Actions ({actions.length})
+        </h3>
+        {/* R-3: name these as the EXECUTABLE work, distinct from the advisory
+            recommendation above. */}
+        {showWorkspaceExtras && (
+          <span className="text-xs" style={{ color: "#475569" }}>Executable — tracked to completion</span>
+        )}
+      </div>
+
+      {/* R-4: progress. R-7: when remediation is genuinely complete, point at the
+          governance step — but derive "complete" from the authoritative operational
+          status so this line never contradicts the header. */}
+      {showWorkspaceExtras && total > 0 && (
+        <div className="mb-4">
+          {remaining > 0 ? (
+            <p className="text-xs" style={{ color: "#94a3b8" }}>
+              {done} of {total} complete · <span style={{ color: "#fcd34d" }}>{remaining} remaining</span>
+            </p>
+          ) : remediationComplete ? (
+            // Every action done AND the derived status advanced → remediation is
+            // complete; the header shows "Remediation complete" and the governance
+            // hand-off banner is up. The two surfaces now agree.
+            <p className="text-xs" style={{ color: "#00c4b4" }}>
+              All {total} actions complete — remediation done. Next: record the governance decision above.
+            </p>
+          ) : findingClosed ? (
+            <p className="text-xs" style={{ color: "#86efac" }}>
+              All {total} actions complete. This finding is closed.
+            </p>
+          ) : (
+            // Every action is done but the derived status is still In Progress: the
+            // org's evidence gate holds remediation open until evidence is attached.
+            // Say so — and point at the evidence section below — instead of sending
+            // the user to a governance decision the finding is not ready for.
+            <p className="text-xs" style={{ color: "#fcd34d" }}>
+              All {total} actions complete, but remediation isn’t finished yet — this
+              organization requires evidence before a finding is marked Remediation
+              complete. Attach evidence below to advance to the governance decision.
+            </p>
+          )}
+        </div>
+      )}
 
       {actions.length === 0 ? (
         <div className="mb-4">
@@ -300,17 +367,61 @@ function RemediationActionsSection({
               key={action.id}
               action={action}
               findingId={finding.id}
+              owners={owners}
               onStatusChange={async (actionId, newStatus) => {
                 "use server";
                 await updateActionStatusAction(finding.id, actionId, newStatus);
               }}
+              onPlanChange={owners ? async (actionId, patch) => {
+                "use server";
+                await updateActionAction(finding.id, actionId, patch);
+              } : undefined}
+              onUnblock={owners ? async (actionId) => {
+                "use server";
+                await unblockAction(finding.id, actionId);
+              } : undefined}
+              onComplete={owners ? async (actionId, note) => {
+                "use server";
+                await completeAction(finding.id, actionId, note);
+              } : undefined}
             />
           ))}
         </div>
       )}
 
-      <AddActionForm findingId={finding.id} />
+      <AddActionForm findingId={finding.id} owners={owners} />
     </div>
+  );
+}
+
+// Remediation tab body: the actions list, then the evidence a gate-enforcing org
+// requires before the finding may be called remediated. Evidence lives here, not
+// on Overview, because attaching it IS part of doing the work — Overview only
+// reports the resulting count.
+function RemediationTab({
+  finding,
+  actions,
+  owners,
+  operationalStatus,
+}: {
+  finding: Finding;
+  actions: Action[];
+  owners: { id: string; label: string }[];
+  // The authoritative operational status (context.finding.operational_status) —
+  // threaded so the progress line reconciles with the header, not with a re-derived
+  // action count.
+  operationalStatus?: string | null;
+}) {
+  return (
+    <>
+      <RemediationActionsSection
+        finding={finding}
+        actions={actions}
+        owners={owners}
+        operationalStatus={operationalStatus}
+      />
+      <FindingEvidenceSection findingId={finding.id} />
+    </>
   );
 }
 
@@ -329,15 +440,77 @@ export default async function FindingDetailPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const [findingData, actionsData] = await Promise.all([
+  const [findingData, actionsData, teamData] = await Promise.all([
     getFinding(token, id),
     getActionsForFinding(token, id),
+    // Org members, so remediation work can be ASSIGNED from the finding you are
+    // looking at. Read-only and best-effort: if the team endpoint is unavailable the
+    // owner controls simply do not render, and the tab degrades to what it was.
+    getTeamMembers(token),
   ]);
 
   if (!findingData) redirect("/findings");
 
   const finding = findingData.finding;
   const actions = actionsData?.actions ?? [];
+  const owners = (teamData?.members ?? [])
+    .filter((m) => m.status === "active")
+    .map((m) => ({ id: m.id, label: m.name?.trim() || m.email }));
+
+  // ERIP Package 3 (Decision Workspace) — DARK. When the flag is on AND the engine
+  // returns a context (its own flag on too — two-switch), render the Decision
+  // Workspace. Otherwise fall through to the unchanged legacy detail below
+  // (byte-identical flag-off).
+  if (process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED === "true") {
+    const context = await getFindingContext(token, id);
+    if (context) {
+      // The signed risk-acceptance lifecycle (product ruling 2026-07-12). Whether the
+      // workflow OWNS accepted_risk is decided by this flag — passed explicitly so the
+      // client never infers "feature off" from a null fetch (P0, 2026-07-15). When on we
+      // read the finding's acceptances; a null result is a transient failure, and the
+      // workspace shows an "unavailable" notice rather than the one-click side door.
+      const riskAcceptanceFeatureOn =
+        process.env.SECURELOGIC_RISK_ACCEPTANCE_ENABLED === "true";
+      const riskAcceptances = riskAcceptanceFeatureOn
+        ? await getRiskAcceptancesForFinding(token, id)
+        : null;
+      return (
+        <div className="max-w-6xl mx-auto px-6 py-12">
+          <DecisionWorkspace
+            finding={finding}
+            context={context}
+            owners={owners}
+            riskAcceptances={riskAcceptances}
+            riskAcceptanceFeatureOn={riskAcceptanceFeatureOn}
+            currentUserId={session.userId ?? null}
+            openActionCount={actions.filter((a) => ACTION_ACTIVE.has(a.status)).length}
+            homeLabel={findingsHomeLabel(process.env.SECURELOGIC_RISK_WORKSPACE_ENABLED === "true")}
+          >
+            {/* R-3: the recommendation is ADVISORY guidance — distinct from the
+                executable actions below it. Labeled so the two are never conflated. */}
+            <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: "#64748b" }}>
+              Advisory guidance
+            </p>
+            {finding.recommendation ? (
+              <p className="text-sm mb-4" style={{ color: "#cbd5e1", whiteSpace: "pre-wrap" }}>
+                {finding.recommendation}
+              </p>
+            ) : (
+              <p className="text-sm mb-4" style={{ color: "#64748b" }}>
+                {recommendationEmptyCopy(finding.source_type)}
+              </p>
+            )}
+            <RemediationTab
+              finding={finding}
+              actions={actions}
+              owners={owners}
+              operationalStatus={context.finding.operational_status}
+            />
+          </DecisionWorkspace>
+        </div>
+      );
+    }
+  }
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-12">
@@ -347,7 +520,7 @@ export default async function FindingDetailPage({
           className="inline-flex items-center gap-1.5 text-xs font-medium mb-4 transition-colors hover:opacity-80"
           style={{ color: "#94a3b8" }}
         >
-          ← Findings
+          ← {findingsHomeLabel(process.env.SECURELOGIC_RISK_WORKSPACE_ENABLED === "true")}
         </Link>
       </div>
 
@@ -404,7 +577,7 @@ export default async function FindingDetailPage({
 
         {/* Right: sidebar */}
         <div className="w-full lg:w-72 flex-shrink-0 space-y-4">
-          <StatusPriorityCard finding={finding} />
+          <StatusPriorityCard finding={finding} actions={actions} />
           <FindingDetailsCard finding={finding} />
         </div>
       </div>

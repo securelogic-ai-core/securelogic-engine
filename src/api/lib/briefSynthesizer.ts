@@ -244,86 +244,15 @@ export function repairTruncatedJson(input: string): string {
   return repaired;
 }
 
-const CVE_PATTERN = /CVE-\d{4}-\d{4,7}/gi;
-
-/**
- * Build the set of CVE identifiers that appear anywhere in the brief's
- * source items. Used to validate that LLM-generated text only references
- * CVEs that are actually in the input — anything else is a hallucination.
- *
- * Scans every text-bearing field on each item. CVE strings are normalized
- * to uppercase before insertion so lookup is case-insensitive.
- */
-export function buildAllowedCveSet(items: BriefItem[]): Set<string> {
-  const cves = new Set<string>();
-  for (const item of items) {
-    const fields: Array<string | null | undefined> = [
-      item.affected_cve,
-      item.title,
-      item.summary,
-      item.why_it_matters,
-      item.analysis,
-      item.recommended_actions ?? null
-    ];
-    for (const field of fields) {
-      if (typeof field !== "string") continue;
-      const matches = field.match(CVE_PATTERN);
-      if (matches) {
-        for (const m of matches) cves.add(m.toUpperCase());
-      }
-    }
-  }
-  return cves;
-}
-
-export type GroundingResult = {
-  kept: string[];
-  dropped: Array<{ action: string; offendingCves: string[] }>;
-};
-
-/**
- * Filter LLM-generated action strings against an allowed-CVE set.
- *
- * Decision rules:
- * - Zero CVE citations → kept. Vendor/product-only actions are legitimate.
- * - All cited CVEs in the allowed set → kept.
- * - One or more cited CVEs not in the allowed set → dropped entirely.
- *   Mixed grounding is treated as contaminated; partial fabrication poisons
- *   the surrounding claim.
- *
- * Empty or non-string entries are silently skipped.
- */
-export function validateActionGrounding(
-  actions: string[],
-  allowedCves: Set<string>
-): GroundingResult {
-  const kept: string[] = [];
-  const dropped: Array<{ action: string; offendingCves: string[] }> = [];
-
-  for (const action of actions) {
-    if (typeof action !== "string" || action.trim().length === 0) {
-      continue;
-    }
-
-    const cited = action.match(CVE_PATTERN) ?? [];
-    if (cited.length === 0) {
-      kept.push(action);
-      continue;
-    }
-
-    const offending = cited.filter(
-      (c) => !allowedCves.has(c.toUpperCase())
-    );
-
-    if (offending.length === 0) {
-      kept.push(action);
-    } else {
-      dropped.push({ action, offendingCves: offending });
-    }
-  }
-
-  return { kept, dropped };
-}
+// IQP Q5: buildAllowedCveSet / validateActionGrounding moved VERBATIM to the
+// pure module signals/actionGrounding.ts so the no-I/O brief generator can
+// wire the guard into the live enrichment call without importing this
+// module's postgres dependency. Re-exported here — public API unchanged.
+export {
+  buildAllowedCveSet,
+  validateActionGrounding,
+  type GroundingResult
+} from "./signals/actionGrounding.js";
 
 // ---------------------------------------------------------------------------
 // generateHeadline — single declarative sentence, max 12 words
