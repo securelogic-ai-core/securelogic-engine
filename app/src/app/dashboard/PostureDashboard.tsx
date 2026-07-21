@@ -39,7 +39,9 @@ type Props = {
 // the IDs validated by the engine (src/api/routes/dashboardPreferences.ts).
 // ─────────────────────────────────────────────────────────────
 
-const TILE_LABELS: Record<string, string> = {
+// Exported for the Briefing's legacy-projection disclosure (B2) — ONE label
+// vocabulary for the 12 legacy tiles, not a second hand-synced copy.
+export const TILE_LABELS: Record<string, string> = {
   posture_score:       "Posture Score",
   risks_breakdown:     "Risks",
   risk_heatmap:        "Risk Heatmap",

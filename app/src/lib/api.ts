@@ -1945,6 +1945,29 @@ export async function getDashboardPreferences(token: string): Promise<DashboardP
   }
 }
 
+/**
+ * The caller's saved Briefing layout (Briefing Initiative B2). `layout` is the
+ * raw stored envelope — parsed/enforced by moduleIdsFromEnvelope +
+ * filterRequestedModules app-side. null (fetch/flag-off/no-identity) and
+ * {layout: null} (no saved row) both mean "unsaved state" to the caller.
+ */
+export type BriefingLayoutResponse = {
+  layout: unknown | null;
+  updated_at: string | null;
+};
+
+export async function getBriefingLayout(
+  token: string
+): Promise<BriefingLayoutResponse | null> {
+  try {
+    const res = await engineFetch("/api/briefing/layout", token);
+    if (!res.ok) return null;
+    return res.json() as Promise<BriefingLayoutResponse>;
+  } catch {
+    return null;
+  }
+}
+
 export async function updateDashboardPreferences(
   token: string,
   layout: TileConfig[]

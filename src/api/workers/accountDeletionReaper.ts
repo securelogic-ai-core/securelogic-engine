@@ -81,6 +81,14 @@ async function eraseAccount(job: JobRow, now: Date): Promise<"erased" | "skipped
       `DELETE FROM dashboard_preferences WHERE organization_id = $1 AND user_id = $2`,
       [orgId, userId]
     );
+    await pg.query(
+      `DELETE FROM finding_saved_views WHERE organization_id = $1 AND user_id = $2`,
+      [orgId, userId]
+    );
+    await pg.query(
+      `DELETE FROM briefing_layouts WHERE organization_id = $1 AND user_id = $2`,
+      [orgId, userId]
+    );
 
     // 4. legal_consents — D-2 retain-with-scrub (Art.17(3)(b)/(e)): keep the
     //    consent skeleton, scrub the captured PII.

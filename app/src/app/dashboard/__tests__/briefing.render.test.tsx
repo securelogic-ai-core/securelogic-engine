@@ -39,6 +39,9 @@ const api = vi.hoisted(() => ({
   getFrameworks: vi.fn(),
   getFrameworkReadiness: vi.fn(),
   getActionsSummary: vi.fn(),
+  // B2 — saved layout + legacy-preference projection inputs.
+  getBriefingLayout: vi.fn(),
+  getDashboardPreferences: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -83,6 +86,9 @@ beforeEach(() => {
   api.getActionsSummary.mockResolvedValue(
     anActionsSummary({ my_open_count: 2, my_overdue_count: 1 })
   );
+  // B2 defaults: no saved layout, no legacy customization → role default.
+  api.getBriefingLayout.mockResolvedValue({ layout: null, updated_at: null });
+  api.getDashboardPreferences.mockResolvedValue({ layout: [], source: "system_default" });
 });
 
 async function renderDashboard() {
@@ -240,6 +246,137 @@ describe("flag ON + API-key session — honest omission", () => {
     expect(container.querySelector('[data-briefing-module="my_work"]')).toBeNull();
     expect(screen.queryByText("My Pending Reviews")).toBeNull();
     // Org modules unaffected.
+    expect(container.querySelector('[data-briefing-module="needs_attention"]')).not.toBeNull();
+  });
+});
+
+// ── B2: role-aware defaults & personalization ────────────────────────────────
+
+function envelope(ids: string[]) {
+  return {
+    version: 1,
+    modules: ids.map((moduleId) => ({ moduleId, instanceKey: moduleId, config: {} })),
+  };
+}
+
+function moduleOrder(container: HTMLElement): string[] {
+  return Array.from(container.querySelectorAll("[data-briefing-module]")).map(
+    (el) => el.getAttribute("data-briefing-module") ?? ""
+  );
+}
+
+describe("flag ON + B2 — saved layouts", () => {
+  it("renders modules in the SAVED order, not the canonical order", async () => {
+    vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
+    api.getBriefingLayout.mockResolvedValue({
+      layout: envelope(["posture_score", "needs_attention", "my_work", "latest_brief"]),
+      updated_at: "2026-07-21T00:00:00Z",
+    });
+
+    const { container } = await renderDashboard();
+
+    expect(moduleOrder(container)).toEqual([
+      "posture_score",
+      "needs_attention",
+      "my_work",
+      "latest_brief",
+    ]);
+    // A reordered layout keeps zone titles over contiguous runs — the personal
+    // module mid-layout still gets its own "Your Work" section.
+    expect(container.querySelector('[data-briefing-zone="your_work"]')).not.toBeNull();
+    // No projection fetch when a saved layout exists.
+    expect(api.getDashboardPreferences).not.toHaveBeenCalled();
+    // No disclosure banner for a saved layout.
+    expect(container.querySelector("[data-briefing-migration-disclosure]")).toBeNull();
+  });
+
+  it("a saved layout HIDES absent modules and can never grant an ineligible one", async () => {
+    vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
+    vi.stubEnv("SECURELOGIC_INDEPENDENT_REVIEW_ENABLED", "false");
+    api.getBriefingLayout.mockResolvedValue({
+      // my_pending_reviews is stored (C4: writes accept it) but the flag is off
+      // — it must NOT render. overdue_actions is absent → hidden.
+      layout: envelope(["my_work", "my_pending_reviews", "needs_attention"]),
+      updated_at: "2026-07-21T00:00:00Z",
+    });
+
+    const { container } = await renderDashboard();
+
+    expect(moduleOrder(container)).toEqual(["my_work", "needs_attention"]);
+    expect(container.querySelector('[data-briefing-module="overdue_actions"]')).toBeNull();
+    expect(screen.queryByText("My Pending Reviews")).toBeNull();
+  });
+
+  it("a malformed stored envelope falls back to the unsaved state (role default)", async () => {
+    vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
+    api.getBriefingLayout.mockResolvedValue({ layout: { version: 99 }, updated_at: null });
+
+    const { container } = await renderDashboard();
+
+    // member (unknown role) → canonical composition, same as B1.
+    expect(container.querySelector('[data-briefing-module="my_work"]')).not.toBeNull();
+    expect(container.querySelector('[data-briefing-module="posture_score"]')).not.toBeNull();
+  });
+});
+
+describe("flag ON + B2 — role-aware defaults", () => {
+  it("viewer default omits workflow modules and withholds the customize surface", async () => {
+    vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
+    signedIn({ userRole: "viewer" });
+
+    const { container } = await renderDashboard();
+
+    expect(container.querySelector('[data-briefing-module="my_work"]')).toBeNull();
+    expect(container.querySelector('[data-briefing-module="overdue_actions"]')).toBeNull();
+    expect(container.querySelector('[data-briefing-module="posture_score"]')).not.toBeNull();
+    // Viewers cannot persist a layout — no customize affordance at all.
+    expect(container.querySelector("[data-briefing-customize-open]")).toBeNull();
+    expect(container.querySelector("[data-briefing-customize]")).toBeNull();
+  });
+
+  it("analyst default triages: recent findings before the posture score; customize offered", async () => {
+    vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
+    signedIn({ userRole: "analyst" });
+
+    const { container } = await renderDashboard();
+
+    const order = moduleOrder(container);
+    expect(order.indexOf("recent_findings")).toBeLessThan(order.indexOf("posture_score"));
+    expect(container.querySelector("[data-briefing-customize-open]")).not.toBeNull();
+  });
+});
+
+describe("flag ON + B2 — legacy-preference projection (the migration path)", () => {
+  it("carries superseded tile visibility, discloses dropped tiles by LABEL, and stays unsaved", async () => {
+    vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
+    api.getBriefingLayout.mockResolvedValue({ layout: null, updated_at: null });
+    api.getDashboardPreferences.mockResolvedValue({
+      source: "personal",
+      layout: [
+        { id: "posture_score", visible: true, order: 0 },
+        { id: "findings_donut", visible: false, order: 1 }, // hidden → hides needs_attention
+        { id: "actions_ring", visible: true, order: 2 },
+        { id: "risk_heatmap", visible: true, order: 3 }, // no counterpart → disclosed
+      ],
+    });
+
+    const { container } = await renderDashboard();
+
+    // The hidden superseded tile hides its module.
+    expect(container.querySelector('[data-briefing-module="needs_attention"]')).toBeNull();
+    expect(container.querySelector('[data-briefing-module="overdue_actions"]')).not.toBeNull();
+    // The disclosure banner names the dropped tile by its display label.
+    const banner = container.querySelector("[data-briefing-migration-disclosure]");
+    expect(banner).not.toBeNull();
+    expect(banner?.textContent).toContain("Risk Heatmap");
+  });
+
+  it("system_default preferences mean NO projection and NO banner", async () => {
+    vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
+
+    const { container } = await renderDashboard();
+
+    expect(container.querySelector("[data-briefing-migration-disclosure]")).toBeNull();
     expect(container.querySelector('[data-briefing-module="needs_attention"]')).not.toBeNull();
   });
 });

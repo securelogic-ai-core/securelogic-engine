@@ -22,6 +22,7 @@ import type { BriefingViewModel } from "@/lib/briefing/composeBriefing";
 import { IntelligenceBriefDashboardCard } from "@/components/IntelligenceBriefDashboardCard";
 import { BriefCard } from "@/components/BriefCard";
 import { RecentFindings } from "../RecentFindings";
+import { CustomizeBriefing, type CustomizeBriefingProps } from "./CustomizeBriefing";
 
 const ZONE_TITLES: Record<BriefingModuleDef["zone"], string> = {
   your_work: "Your Work",
@@ -84,6 +85,7 @@ export type TheBriefingProps = {
   displayName: string | null;
   orgName: string | null | undefined;
   planName: string;
+  /** Eligible modules in RENDER order (saved layout / projection / role default). */
   modules: BriefingModuleDef[];
   vm: BriefingViewModel;
   latestBrief: IntelligenceBriefDetailResponse | null;
@@ -91,20 +93,112 @@ export type TheBriefingProps = {
   issuesCount: number;
   recentFindings: Finding[];
   summaryActiveFindings: number;
+  /**
+   * Where the render order came from (B2). "legacy_projection" additionally
+   * renders the dropped-tiles disclosure banner until the user saves or resets.
+   */
+  layoutSource?: "saved" | "role_default" | "legacy_projection";
+  /** Display labels of visible legacy tiles with no Briefing counterpart. */
+  droppedTileLabels?: string[];
+  /** Customize panel props; null = session cannot personalize (viewer/API-key). */
+  customize?: CustomizeBriefingProps | null;
 };
 
 export function TheBriefing(props: TheBriefingProps) {
   const { modules, vm } = props;
-  const zones: Array<BriefingModuleDef["zone"]> = [
-    "your_work",
-    "organization",
-    "intelligence",
-  ];
+
+  // Contiguous zone runs over the RENDER order (B2): the canonical order yields
+  // exactly the B1 three-section rendering; a reordered saved layout keeps each
+  // module's zone title over its run. Interleaved orders repeat a title —
+  // accepted behavior, not a bug (spec ruling C6). The scope chip, not the
+  // zone, is the invariant that survives re-zoning (contracts.ts B1.1).
+  //
+  // A FAILED summary load: organization modules collapse into ONE explicit
+  // error panel at the first organization run — never silently missing modules,
+  // never zeros.
+  const orgFailed = !vm.orgLoaded;
+  const groups: Array<{ zone: BriefingModuleDef["zone"]; defs: BriefingModuleDef[] }> = [];
+  for (const def of modules) {
+    if (orgFailed && def.zone === "organization") continue;
+    const last = groups[groups.length - 1];
+    if (last && last.zone === def.zone) last.defs.push(def);
+    else groups.push({ zone: def.zone, defs: [def] });
+  }
+  const firstOrgIndex = orgFailed && modules.some((m) => m.zone === "organization")
+    ? modules.findIndex((m) => m.zone === "organization")
+    : -1;
+
+  const orgErrorSection = (
+    <section key="org-error" className="mb-10" data-briefing-zone="organization">
+      <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-4">
+        {ZONE_TITLES.organization}
+      </h2>
+      <div
+        className="rounded-xl border p-8 text-center"
+        style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(239,68,68,0.25)" }}
+      >
+        <p className="text-sm font-semibold mb-1" style={{ color: "#fca5a5" }}>
+          We couldn&apos;t load your organization&apos;s data.
+        </p>
+        <p className="text-xs" style={{ color: "#64748b" }}>
+          This is a temporary problem loading your briefing — it does not
+          mean your posture is clear. Refresh to try again.
+        </p>
+      </div>
+    </section>
+  );
+
+  const sections: React.ReactNode[] = [];
+  let orgErrorPlaced = false;
+  let modulesPlaced = 0;
+  for (const group of groups) {
+    // Place the org error panel where the first organization module would have
+    // rendered (before the group that follows it in the original order).
+    if (firstOrgIndex >= 0 && !orgErrorPlaced && modulesPlaced >= firstOrgIndex) {
+      sections.push(orgErrorSection);
+      orgErrorPlaced = true;
+    }
+    modulesPlaced += group.defs.length;
+
+    const rendered = group.defs
+      .map((def) => ({ def, node: renderModule(def, props) }))
+      .filter((r) => r.node !== null);
+    if (rendered.length === 0) continue;
+
+    sections.push(
+      <section
+        key={`${group.zone}-${rendered[0].def.id}`}
+        className="mb-10"
+        data-briefing-zone={group.zone}
+      >
+        <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-4">
+          {ZONE_TITLES[group.zone]}
+        </h2>
+        {group.zone === "intelligence" ? (
+          <div>{rendered.map((r) => <div key={r.def.id}>{r.node}</div>)}</div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {rendered.map((r) => (
+              <div
+                key={r.def.id}
+                className={r.def.id === "recent_findings" ? "md:col-span-2" : undefined}
+              >
+                {r.node}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    );
+  }
+  if (firstOrgIndex >= 0 && !orgErrorPlaced) {
+    sections.push(orgErrorSection);
+  }
 
   return (
     <div data-briefing>
       {/* Identity header — the experience is The Briefing; the URL stays /dashboard. */}
-      <div className="mb-10">
+      <div className="mb-6">
         <p
           className="text-xs font-semibold uppercase tracking-widest mb-1"
           style={{ color: "#00c4b4" }}
@@ -120,61 +214,53 @@ export function TheBriefing(props: TheBriefingProps) {
         </p>
       </div>
 
-      {zones.map((zone) => {
-        const zoneModules = modules.filter((m) => m.zone === zone);
-        if (zoneModules.length === 0) return null;
+      {/* Personalization entry (B2) — absent for sessions that cannot save
+          (viewer role, API-key sessions). */}
+      {props.customize ? (
+        <div className="mb-6">
+          <div className="flex justify-end">
+            <CustomizeBriefing {...props.customize} />
+          </div>
+        </div>
+      ) : (
+        <div className="mb-4" />
+      )}
 
-        // A FAILED summary load renders one explicit error panel for the
-        // organization zone — never silently missing modules, never zeros.
-        if (zone === "organization" && !vm.orgLoaded) {
-          return (
-            <section key={zone} className="mb-10" data-briefing-zone={zone}>
-              <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-4">
-                {ZONE_TITLES[zone]}
-              </h2>
-              <div
-                className="rounded-xl border p-8 text-center"
-                style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(239,68,68,0.25)" }}
-              >
-                <p className="text-sm font-semibold mb-1" style={{ color: "#fca5a5" }}>
-                  We couldn&apos;t load your organization&apos;s data.
-                </p>
-                <p className="text-xs" style={{ color: "#64748b" }}>
-                  This is a temporary problem loading your briefing — it does not
-                  mean your posture is clear. Refresh to try again.
-                </p>
-              </div>
-            </section>
-          );
-        }
+      {/* Legacy-preference projection disclosure (B2 migration, spec ruling C2):
+          shown until the user saves a layout or the legacy rows disappear.
+          Honest copy — names what was NOT carried over; no parity promises. */}
+      {props.layoutSource === "legacy_projection" && (
+        <div
+          className="rounded-xl border px-5 py-4 mb-8"
+          style={{ background: "rgba(0,196,180,0.06)", borderColor: "rgba(0,196,180,0.25)" }}
+          data-briefing-migration-disclosure
+        >
+          <p className="text-sm mb-1" style={{ color: "#5eead4" }}>
+            Your saved dashboard preferences shaped this Briefing.
+          </p>
+          <p className="text-xs" style={{ color: "#94a3b8" }}>
+            Tile choices with a Briefing counterpart were carried over.
+            {props.droppedTileLabels && props.droppedTileLabels.length > 0 ? (
+              <>
+                {" "}Analytical tiles without one were not:{" "}
+                {props.droppedTileLabels.join(", ")}. Organization-wide analysis
+                continues on the{" "}
+                <Link href="/posture" className="font-medium" style={{ color: "#00c4b4" }}>
+                  Posture
+                </Link>{" "}
+                and{" "}
+                <Link href="/frameworks" className="font-medium" style={{ color: "#00c4b4" }}>
+                  Frameworks
+                </Link>{" "}
+                dashboards.
+              </>
+            ) : null}
+            {" "}Saving a layout in Customize makes this arrangement yours.
+          </p>
+        </div>
+      )}
 
-        const rendered = zoneModules
-          .map((def) => ({ def, node: renderModule(def, props) }))
-          .filter((r) => r.node !== null);
-        if (rendered.length === 0) return null;
-
-        return (
-          <section key={zone} className="mb-10" data-briefing-zone={zone}>
-            <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-4">
-              {ZONE_TITLES[zone]}
-            </h2>
-            {zone === "intelligence" ? (
-              <div>{rendered.map((r) => <div key={r.def.id}>{r.node}</div>)}</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {rendered.map((r) => (
-                  <div
-                    key={r.def.id}
-                    className={r.def.id === "recent_findings" ? "md:col-span-2" : undefined}
-                  >
-                    {r.node}
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-        );
-      })}
+      {sections}
 
       {/* Dashboards keep answering "how is the organization performing?" — the
           Briefing links to them rather than reproducing them here. */}

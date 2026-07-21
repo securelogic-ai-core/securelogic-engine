@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFindingsSummary, getFrameworks, getFrameworkReadiness, getActionsSummary, planDisplayName, type Framework, type FrameworkReadiness } from "@/lib/api";
+import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFindingsSummary, getFrameworks, getFrameworkReadiness, getActionsSummary, getBriefingLayout, getDashboardPreferences, planDisplayName, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { IntelligenceBriefDashboardCard } from "@/components/IntelligenceBriefDashboardCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
@@ -15,7 +15,14 @@ import { dashboardPanel, pendingReviewTile } from "./dashboardState";
 import { RecentFindings } from "./RecentFindings";
 import { TheBriefing } from "./briefing/TheBriefing";
 import { composeBriefing } from "@/lib/briefing/composeBriefing";
-import { resolveEligibleModules } from "@/lib/briefing/resolveBriefing";
+import { filterRequestedModules, resolveEligibleModules } from "@/lib/briefing/resolveBriefing";
+import {
+  defaultBriefingModulesForRole,
+  moduleIdsFromEnvelope,
+  projectLegacyPreferences,
+  suggestBriefingModules,
+} from "@/lib/briefing/layout";
+import { TILE_LABELS } from "./PostureDashboard";
 
 export const revalidate = 0;
 
@@ -60,11 +67,29 @@ export default async function DashboardPage({
   // renders the legacy dashboard byte-for-byte; ON swaps the platform-tier
   // composition for The Briefing (personal work first, explicit scope chips).
   const briefingEnabled = process.env.SECURELOGIC_DASHBOARD_BRIEFING_ENABLED === "true";
-  // Briefing-only fetch — REUSES the existing GET /api/actions/summary (the
-  // Metric Contract my_open_count / my_overdue_count fields) for the My Work
-  // module. Never fetched on the legacy path, so flag-off behavior is unchanged.
-  const actionsSummary =
-    briefingEnabled && isPlatformEarly ? await getActionsSummary(token) : null;
+  // Briefing-only fetches — REUSE the existing GET /api/actions/summary (the
+  // Metric Contract my_open_count / my_overdue_count fields) and, for B2, the
+  // caller's saved layout. Never fetched on the legacy path, so flag-off
+  // behavior is unchanged.
+  const briefingIdentity = Boolean(session.jwtToken && session.userId);
+  const [actionsSummary, briefingLayoutRes] =
+    briefingEnabled && isPlatformEarly
+      ? await Promise.all([
+          getActionsSummary(token),
+          briefingIdentity ? getBriefingLayout(token) : Promise.resolve(null),
+        ])
+      : [null, null];
+  const savedBriefingIds =
+    briefingLayoutRes?.layout != null
+      ? moduleIdsFromEnvelope(briefingLayoutRes.layout)
+      : null;
+  // Legacy-preference projection input (B2 migration) — REUSES the existing
+  // GET /api/dashboard/preferences {layout, source}, fetched ONLY flag-on with
+  // no saved layout (spec ruling C5: no sunset yet, cost accepted pre-launch).
+  const legacyPrefs =
+    briefingEnabled && isPlatformEarly && briefingIdentity && !savedBriefingIds
+      ? await getDashboardPreferences(token)
+      : null;
   const [recentFindingsData, frameworksData] = isPlatformEarly
     ? await Promise.all([
         getFindings(token, { active: true, limit: 5 }),
@@ -110,6 +135,41 @@ export default async function DashboardPage({
       frameworks.length > 0 ||
       (dashboardSummary?.risks_summary?.open ?? 0) > 0,
   );
+
+  // Briefing Initiative B2 — resolve the render order + personalization surface.
+  // Precedence: saved layout → legacy-preference projection → role default.
+  // filterRequestedModules re-resolves eligibility on EVERY render (requested ⊆
+  // eligible) — a stored layout never grants access.
+  const briefingCtx = {
+    isPlatformUser,
+    hasUserIdentity: briefingIdentity,
+    flags: {
+      independent_review:
+        process.env.SECURELOGIC_INDEPENDENT_REVIEW_ENABLED === "true",
+    },
+  };
+  const roleDefaultIds = defaultBriefingModulesForRole(session.userRole ?? null);
+  const legacyProjection =
+    !savedBriefingIds && legacyPrefs && legacyPrefs.source !== "system_default"
+      ? projectLegacyPreferences(legacyPrefs.layout, roleDefaultIds)
+      : null;
+  const briefingLayoutSource =
+    savedBriefingIds ? ("saved" as const)
+    : legacyProjection ? ("legacy_projection" as const)
+    : ("role_default" as const);
+  const briefingModules = filterRequestedModules(
+    savedBriefingIds ?? legacyProjection?.seededIds ?? roleDefaultIds,
+    briefingCtx,
+  );
+  const briefingEligible = resolveEligibleModules(briefingCtx);
+  const briefingVm = composeBriefing({
+    summary: dashboardSummary,
+    findingsSummary: findingsSummaryData?.summary ?? null,
+    actionsSummary,
+  });
+  // Viewers cannot persist a layout (platform-wide viewer-mutation block) —
+  // the customize surface is withheld rather than offering a save that 403s.
+  const briefingCanCustomize = briefingIdentity && session.userRole !== "viewer";
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-12">
@@ -174,26 +234,32 @@ export default async function DashboardPage({
           displayName={displayName}
           orgName={orgName}
           planName={planName}
-          modules={resolveEligibleModules({
-            isPlatformUser,
-            // JWT sessions carry a user identity; legacy API-key sessions do not
-            // — their personal modules are omitted (never zeroed).
-            hasUserIdentity: Boolean(session.jwtToken && session.userId),
-            flags: {
-              independent_review:
-                process.env.SECURELOGIC_INDEPENDENT_REVIEW_ENABLED === "true",
-            },
-          })}
-          vm={composeBriefing({
-            summary: dashboardSummary,
-            findingsSummary: findingsSummaryData?.summary ?? null,
-            actionsSummary,
-          })}
+          modules={briefingModules}
+          vm={briefingVm}
           latestBrief={latestBrief}
           latestIssue={latestIssue}
           issuesCount={issuesData?.count ?? 0}
           recentFindings={recentFindings}
           summaryActiveFindings={dashboardSummary?.findings?.open ?? 0}
+          layoutSource={briefingLayoutSource}
+          droppedTileLabels={(legacyProjection?.droppedTiles ?? []).map(
+            (t) => TILE_LABELS[t] ?? t,
+          )}
+          customize={
+            briefingCanCustomize
+              ? {
+                  eligible: briefingEligible,
+                  currentIds: briefingModules.map((m) => m.id),
+                  roleDefaultIds,
+                  suggestions: suggestBriefingModules({
+                    currentIds: briefingModules.map((m) => m.id),
+                    eligibleIds: briefingEligible.map((m) => m.id),
+                    roleDefaultIds,
+                    pendingReviewsMine: briefingVm.myPendingReviews?.mine ?? null,
+                  }),
+                }
+              : null
+          }
         />
       ) : (
         <>

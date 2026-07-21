@@ -144,6 +144,32 @@ export type BriefingCategory =
  */
 export type BriefingFlagKey = "independent_review";
 
+// ── Persisted layout envelope (B2 — first consumer of the B1.1 direction) ────
+/**
+ * The instance-shaped, versioned envelope persisted per (org, user) in the
+ * engine's `briefing_layouts` table (docs/specs/briefing-initiative-b2-spec.md).
+ * B2 invariants (engine-enforced in briefingLayoutValidation.ts):
+ * `instanceKey === moduleId` (single-instance phase) and `config === {}` (fields
+ * land with their first consumer). The layout is the COMPLETE ordered statement
+ * of what is shown — absence = hidden. Eligibility is re-resolved against the
+ * registry on every render; a stored layout never grants access.
+ */
+export const BRIEFING_LAYOUT_VERSION = 1;
+
+export type BriefingLayoutModuleEntry = {
+  /** Registry id — the module's IDENTITY. */
+  moduleId: BriefingModuleId;
+  /** Stable per-instance key; equals moduleId while layouts are single-instance. */
+  instanceKey: string;
+  /** Per-instance configuration — empty in B2 (evolution policy). */
+  config: Record<string, never>;
+};
+
+export type BriefingLayoutEnvelope = {
+  version: typeof BRIEFING_LAYOUT_VERSION;
+  modules: BriefingLayoutModuleEntry[];
+};
+
 export type BriefingModuleDef = {
   id: BriefingModuleId;
   /** Display name, as shown in the module header and the future picker. */

@@ -117,6 +117,8 @@ tables once the `app_request` flip lands).
 | `user_alert_preferences` | user_id | low | pending | |
 | `alert_sends` | user_id | low | pending | Dedup ledger. |
 | `dashboard_preferences` | user_id | low | pending | `org_default` rows (user_id NULL) are effectively D — leave them. |
+| `finding_saved_views` | user_id | low | **enabled** | Per-user Findings filter presets. Reclassified C→B (B2 GDPR rider): purely user-scoped preference; the users-row CASCADE never fires (tombstone), so the reaper deletes explicitly. |
+| `briefing_layouts` | user_id | low | **enabled** | Per-user Briefing layout envelope (B2). Whitelisted module ids only — no PII. Reaper deletes explicitly; excluded from export like all preference objects. |
 | `legal_consents` | user_id | high | pending | Holds `ip_address` + `user_agent`. **No RLS today** (not an RLS template). |
 | `org_invites` | invited_by_user_id | medium | pending | FK is `ON DELETE CASCADE`; tombstone preserves pending invites this user sent. Export omits `token` (live invite capability). |
 

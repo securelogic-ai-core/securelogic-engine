@@ -327,7 +327,33 @@ Billing note:
 > `app/src/lib/actionsMetrics.ts`. `SECURELOGIC_INDEPENDENT_REVIEW_ENABLED` remains
 > operator-owned (deliberately NOT Blueprint-claimed by B1 — another feature's rollout);
 > staging validation of the My Pending Reviews module requires the operator to enable it.
-> B2 authorization state unchanged: NOT authorized.
+> B2 authorization state unchanged at that point: NOT authorized (superseded below).
+>
+> **B2 — role-aware defaults & personalization: COMPLETE (operator-authorized 2026-07-21;
+> built same day, dark, additive).** Authoritative decision record:
+> `docs/specs/briefing-initiative-b2-spec.md`. Per-user Briefing layout persistence:
+> `briefing_layouts` (migration `20260721`; canonical NULLIF RLS + `app_request` grants;
+> one row per org+user via the NAMED constraint `briefing_layouts_one_per_user` — B3 relaxes
+> it additively); engine surface `GET/PUT/DELETE /api/briefing/layout` dark behind
+> `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED` on the ENGINE services (engine half of the
+> two-switch; prod `"false"`, staging `"true"` in `render.yaml`; chain
+> `requireApiKey → attachOrganizationContext → requireEntitlement("premium")` + viewer-
+> mutation block + `asTenant`; layout envelopes validated against the generated engine
+> manifest — its first consumer, discharging the B1-hardening precondition's purpose).
+> Role-aware defaults are code, not rows (computed at request time per role; never
+> persisted implicitly); deterministic dismissible suggestions; legacy
+> `dashboard_preferences` migrate via lazy read-time `legacyTileToModule()` projection with
+> a disclosure banner — persist-on-save only, no bulk migration, no writes to the legacy
+> table. GDPR: `briefing_layouts` added to the account-deletion reaper's per-user delete
+> block, plus a clearly-marked rider fixing the pre-existing `finding_saved_views` erasure
+> gap (`docs/DATA_CLASSIFICATION.md` updated; preference objects remain excluded from the
+> data-rights export, consistent with existing policy). Validation: engine suite green
+> (375 files / 6449 tests), isolation lane green incl. new `briefingLayouts` cross-org/
+> cross-user + RLS fail-closed tests, app suite green (85 files / 1133 tests), typecheck +
+> `next build` green on both surfaces; flag-off remains byte-identical; rollback = flag off.
+> **GATE B unchanged — no production enablement**; the `/posture` analytical-home gap
+> (B1 weakness recorded in the B2 spec) must be resolved before the Briefing prod flip.
+> **B3 (profiles) is NOT authorized** — starting it requires separate operator approval.
 
 ## Active package
 `Priority 4 — Signal Ingestion Hardening` — **status: ACTIVE — IMPLEMENTATION AUTHORIZED & UNDERWAY (2026-06-26).**
