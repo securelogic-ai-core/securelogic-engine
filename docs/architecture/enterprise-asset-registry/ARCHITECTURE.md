@@ -396,3 +396,62 @@ posture), leaves `main` frozen, and performs no production enablement (GATE B co
 - **It finishes the ECL rather than competing with it** — the registry is `enterprise_entities`'
   header/child pattern generalized; the applicability engine, connectors, graph, and R6 stats
   endpoint already speak `(type,id)` and simply start speaking `asset_id`.
+
+---
+
+## 7. UNRESOLVED — Asset Lifecycle Governance (open ruling, 2026-07-21)
+
+**Status:** OPEN governance item. Documentation only — no code, persistence, schema,
+API, migration, or behavioral change is authorized under this record. Surfaced by the
+EAR reconciliation Phase-1 audit (2026-07-21); see
+`docs/investigation/ear-reconciliation-report-2026-07-21.md`.
+
+### 7.1 The ruling
+
+`assets.lifecycle_status` belongs to the canonical Enterprise Asset Registry **spine**
+(EAR-AD-2 — the identity layer) and must express the lifecycle of the **enterprise
+asset itself**. A subtype's own workflow/record state is **not** sufficient evidence
+that the canonical asset is inactive or retired.
+
+- **Do NOT map vendor archive (`vendors.status='archived'`) to `assets.lifecycle_status`.**
+- **Do NOT introduce a writer for `assets.lifecycle_status`** under the current scope.
+- **Do NOT infer canonical lifecycle from any subtype state** (vendor archive or otherwise).
+- **Cross-asset scope:** this applies to **every** asset type. No subtype-specific state
+  (`vendors.status`, `ai_systems.deployment_status`, a detail table's `status`, an
+  `enterprise_entities.status`, etc.) may mutate the canonical asset lifecycle **without
+  an approved cross-asset lifecycle contract**. This prevents a single subtype workflow
+  from quietly becoming the lifecycle model for the whole registry.
+
+### 7.2 Verified current state (as of 2026-07-21 — do NOT modify)
+
+- **Vendor archive field = `vendors.status`** (`TEXT NOT NULL DEFAULT 'active'`,
+  `db/migrations/001_securelogic_platform.sql:8`). Vendors are archived via
+  `PATCH /api/vendors/:id` with `{status:"archived"}` →
+  `UPDATE vendors SET status = …, updated_at = NOW()` (`src/api/routes/vendors.ts:711-731`);
+  there is **no hard-delete route** (`vendors.ts:18`); the list filter set is
+  `{active, archived}` (`vendors.ts:49`). This field and its behavior are correct for the
+  vendor subtype and are **left unchanged**.
+- **Spine field = `assets.lifecycle_status`** (`TEXT NOT NULL DEFAULT 'active'
+  CHECK (lifecycle_status IN ('active','archived','retired'))`,
+  `db/migrations/20260803_assets_spine.sql:46`). `asset_registry_v` `COALESCE`s it to
+  `'active'`. **No `UPDATE assets` statement writes `lifecycle_status` anywhere in `src/`
+  or `services/`** (grep-verified) — the field is currently **inert/unwired**. Deletes go
+  through `deregisterAsset()` (row removal), not a lifecycle transition.
+- Consequence today: an archived vendor's spine row keeps `lifecycle_status='active'`.
+  This is inert (consumers read the backing row's own `status`), and per this ruling it
+  is the **correct** posture until the contract below is ratified — the spine must not
+  silently inherit a subtype's archived state.
+
+### 7.3 What must be ratified BEFORE any implementation
+
+No writer, propagation, or lifecycle behavior may be built until all four are approved:
+
+1. **Canonical lifecycle vocabulary** — the meaning of `active | archived | retired` (and
+   whether that set is complete) at the enterprise-asset level, independent of any subtype.
+2. **Transition rules** — the legal state machine for the spine lifecycle (who/what triggers
+   each transition, and from which states).
+3. **Writer ownership** — the single authoritative writer of `assets.lifecycle_status`
+   (mirroring the "one writer" discipline used for finding `operational_status`).
+4. **Subtype-to-spine propagation** — the explicit, approved **cross-asset lifecycle
+   contract** governing whether/how any subtype state (vendor archive, AI-system
+   deployment status, detail-table status) may influence the canonical lifecycle.
