@@ -1,6 +1,8 @@
 # SecureLogic AI — Operator Runbook (Production Launch)
 
-> **Status:** definitive launch runbook for the **operator-only** gates that block the first `develop → main` promotion. Part A (app hardening, A1–A5) is complete on `develop`; this document reduces **Part B** to a precise, executable checklist.
+> **Status:** definitive launch runbook for the **operator-only** gates that block the `develop → main` promotion.
+>
+> **⚠ RE-BASELINED 2026-07-21 (Sprint-1 operator rulings D-A–D-E — see `SPRINT_1.md`).** The promotion object is now the composite `develop` head (266 commits / 65 staged migrations), promoted as a single true merge; the 2026-07-02 promote (`main` = `512cfa5a`) is archived historical evidence. **Gates 1–4 below remain valid as written** (correct display labels: Brief Pro / **Brief Team**). **The Gate 5 body below is OBSOLETE** — its `20260706`–`20260712` set and seat-cap pre-flight are already applied to production; execute **Gate 5′** from `PART_B_PREFLIGHT.md` §1 instead (65-file F-1 SQL, PF-1 staging-grant check, batch-application ruling). **Gate 6 (NEW, ruling D-D):** the authenticated staging walkthrough is a formal gate — see `SPRINT_1.md` §Gate 6.
 >
 > **Relationship to other docs:**
 > - `RELEASE_CHECKLIST.md` — the reusable, *mechanical* `develop → main` procedure (CI, true-merge, branch invariants, post-deploy). Use it for **every** release.
@@ -25,7 +27,7 @@ Engine `resolvePriceId()` — `src/api/routes/billing.ts:89-98`; entitlement map
 | Plan token | Stripe Price-ID env var | Billing | Expected amount | DB `entitlement_level` | Product name |
 |---|---|---|---|---|---|
 | `professional` | `STRIPE_PRICE_ID_PROFESSIONAL` | monthly | **$49/mo** | `professional` | Brief Pro |
-| `teams` | `STRIPE_PRICE_ID_TEAMS` | monthly | **$199/mo** | `professional` | Team Professional |
+| `teams` | `STRIPE_PRICE_ID_TEAMS` | monthly | **$199/mo** | `professional` | Brief Team |
 | `platform` | `STRIPE_PRICE_ID_PLATFORM` | monthly | **$800/mo** | `premium` | Platform Professional (monthly) |
 | `platform_annual` | `STRIPE_PRICE_ID_PLATFORM_ANNUAL` | annual | **$7,200/yr** (= $600/mo billed annually) | `premium` | Platform Professional (annual) |
 
@@ -47,7 +49,8 @@ Attach to the promotion PR / launch record.
 | 2 | | | | Stripe portal-config screenshot (capabilities + allowed prices) |
 | 3 | | | | 4× checkout screenshots (amount + interval) + Stripe Price amounts |
 | 4 | | | | 5× before/after `entitlement_level` query + webhook event IDs |
-| 5 | | | | F-1 count output + seat-cap pre-flight output + staging apply log |
+| 5′ | | | | 65-file F-1 output (prod 0 / staging 65) + PF-1 grant-check output + batch-application ruling (`PART_B_PREFLIGHT.md` §1) |
+| 6 | | | | Staging walkthrough PASS/FAIL + screenshots (Briefing, Posture Dashboard, nav, Executive Report export) |
 
 ---
 
@@ -259,6 +262,13 @@ For each transition above, on **staging** (test mode):
 
 ## Gate 5 — Migration validation + production pre-flight
 
+> **⚠ OBSOLETE (re-baselined 2026-07-21).** Everything below validates the
+> `20260706`–`20260712` set + seat-cap pre-flight — **already applied to production**
+> via the archived 2026-07-02 promote. Do not execute it. Execute **Gate 5′** instead:
+> `PART_B_PREFLIGHT.md` §1 (65-file F-1 SQL, PF-1 staging-grant check,
+> batch-application ruling). This body is preserved as the historical record and as
+> the reference pattern for migration-gate mechanics.
+
 ### Objective
 Confirm the seven staged migrations (`20260706`–`20260712`) apply cleanly on staging, are not silently skipped by the filename-keyed runner (F-1), and that the seat-cap migration won't wrongly lower a legitimately-provisioned 10-seat org.
 
@@ -344,7 +354,7 @@ Expected: all seven present with recent `applied_at`, and no migration errors in
 ---
 
 ## Done — what "all gates green" means
-When Gates 1–5 each have a **PASS** row in §0.4 with attached evidence, Part B's operator gates are cleared. Promotion itself is a **separate, explicitly-authorized step**: follow `RELEASE_CHECKLIST.md` §7–§10 (true-merge only, branch invariant, `/version` post-deploy, close-out). Do not promote, open a promotion PR, or enable flags as part of this runbook.
+When Gates 1–4, 5′, and 6 each have a **PASS** row in §0.4 with attached evidence, Part B's operator gates are cleared. Promotion itself is a **separate, explicitly-authorized step**: follow `RELEASE_CHECKLIST.md` §7–§10 (true-merge only, branch invariant, `/version` post-deploy, close-out). Do not promote, open a promotion PR, or enable flags as part of this runbook.
 
 ### Total estimated operator time
 **~2.5–3.5 hours** across Gates 1–5 (plus the separate promotion window).

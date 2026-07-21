@@ -13,7 +13,7 @@
 - [ ] Enumerate what is being promoted: `git log --oneline origin/main..origin/develop` and `git diff --stat origin/main...origin/develop`.
 - [ ] Identify every **migration** in the range and every **`render.yaml`** change. List them explicitly.
 
-## 1. CI — all 7 lanes green on the promotion head
+## 1. CI — all 8 lanes green on the promotion head
 
 - [ ] `typecheck`
 - [ ] `lint`
@@ -22,6 +22,7 @@
 - [ ] `cross-org-isolation`
 - [ ] `tenant-coverage`
 - [ ] `audit`
+- [ ] `url-drift`
 
 > The `audit` lane has flaked historically — re-verify it specifically, do not assume.
 
@@ -30,7 +31,7 @@
 The migration runner (`scripts/runMigrations.ts`) is **filename-keyed**: a reshaped migration whose filename already exists in `schema_migrations` is **silently skipped**.
 
 - [ ] For every migration in the range, confirm it has **not** been previously applied under the same filename with different content.
-- [ ] Specifically (F-1): `SELECT count(*) FROM schema_migrations WHERE filename='20260706_risk_numeric_score.sql'` returns **0** in **staging** and **prod**. Non-zero ⇒ do not promote as-is; add a re-stamp/controlled re-apply.
+- [ ] Specifically (F-1): run the full staged-filename check — every staged filename returns **0 rows in prod** and appears **applied in staging**. For the re-baselined Sprint-1 promotion, the runnable 65-file SQL is `PART_B_PREFLIGHT.md` §1.5. (The original single-file `20260706` check is superseded — that file is already applied to prod.) Non-zero in prod ⇒ do not promote as-is; re-stamp/controlled re-apply.
 - [ ] Validate every staged migration applies cleanly on **staging** before promotion.
 - [ ] Run any data-pre-flight required by a migration (e.g. seat-cap: confirm no legitimate 10-seat org would be wrongly lowered).
 - [ ] **Operator** — DB credentials required; not runnable from CI/dev shell.
@@ -39,7 +40,7 @@ The migration runner (`scripts/runMigrations.ts`) is **filename-keyed**: a resha
 
 - [ ] List every feature flag touched by the range.
 - [ ] Confirm each flag's **production** value is the intended launch state (default OFF for dark-shipped work).
-- [ ] For this launch specifically: `SOURCE_QUALIFICATION`, `SIGNAL_CLUSTERING`, `SOURCE_AUTHORITY`, `BRIEF_PROVENANCE` are **OFF** in prod; `SECURELOGIC_VENDOR_ASSURANCE_ENABLED` per decision.
+- [ ] For the re-baselined Sprint-1 promotion specifically: **every staged-feature flag** is OFF in prod per the dark-flag audit (`PART_B_PREFLIGHT.md` §2 — 27 declared + 18 undeclared flags), including the Briefing two-switch (`SECURELOGIC_DASHBOARD_BRIEFING_ENABLED` on engine **and** app — stays dark post-promotion per ruling D-E); plus the operator dashboard confirmation that no dashboard-set override enables staged work. `SECURELOGIC_VENDOR_ASSURANCE_ENABLED` per its own decision (previously-shipped feature, not staged payload).
 - [ ] **Operator** — Render env vars.
 
 ## 4. Billing gates (when the range touches billing/pricing/checkout)

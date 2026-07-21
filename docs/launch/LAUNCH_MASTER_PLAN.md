@@ -1,8 +1,8 @@
 # SecureLogic AI — Launch Master Plan
 
-> **Status:** Pre-launch hold (NO-GO). `develop` is staged and ahead of production `main`; promotion is gated on operator-only release gates (see `SPRINT_1.md`).
+> **Status:** Pre-launch hold (NO-GO). `develop` is staged and ahead of production `main`; promotion is gated on operator-only release gates (see `SPRINT_1.md`, **re-baselined 2026-07-21** — operator rulings D-A–D-E).
 > **Owner:** SecureLogic AI platform/operator.
-> **Last reconciled:** 2026-07-02 (`develop` tip `17353bb9`, production `main` `959951b9`).
+> **Last reconciled:** 2026-07-21 (`develop` tip `cb934b05`; production `main` `512cfa5a` — the archived 2026-07-02 historical baseline per ruling D-A; `develop` is 266 commits / 65 staged migrations ahead). Pre-flight evidence: `PART_B_PREFLIGHT.md`.
 
 This is the controlling launch document. It defines what "launch" means for SecureLogic AI, what is already shipped, what blocks production go-live, and the sprint sequence that gets us there safely. It is grounded only in verified repository and governing-doc state — not aspiration.
 
@@ -22,7 +22,7 @@ The launch is **not** a new build. It is the **promotion of already-built, stagi
 |---|---|---|
 | Intelligence Brief — Free | `free` | none |
 | Brief Pro | `professional` | $49 / mo |
-| Team Professional | `teams` | $199 / mo |
+| Brief Team | `teams` | $199 / mo |
 | Platform Professional | `platform` | $800 / mo (self-serve checkout) |
 | Platform Professional — Annual | `platform_annual` | $7,200 / yr |
 | Enterprise | (no Stripe key — custom contract) | custom |
@@ -35,14 +35,14 @@ The launch is **not** a new build. It is the **promotion of already-built, stagi
 
 Launch = **production go-live of the staged `develop` release onto `main`**, achieved when **all** of the following hold:
 
-1. **All 5 operator release gates pass** (Stripe portal config, Stripe checkout amounts, portal upgrade/downgrade transitions, migration validation, prod pre-flight). See `SPRINT_1.md`.
-2. **All 6 staged migrations are validated on staging** and confirmed safe on prod (filename-key skip risk cleared — `BUILD_SEQUENCE.md` gate F-1).
-3. **All 7 CI lanes green** on the promotion head: `typecheck`, `lint`, `test`, `build`, `cross-org-isolation`, `tenant-coverage`, `audit`.
-4. **Phase-4 signal flags confirmed OFF in production env** (`SOURCE_QUALIFICATION`, `SIGNAL_CLUSTERING`, `SOURCE_AUTHORITY`, `BRIEF_PROVENANCE`) — the whole Phase-4 B/C/D batch ships inert.
-5. **Promotion executed as a true merge** (`gh pr merge --merge`, never squash) so `origin/develop..origin/main` returns 0 and the back-merge invariant holds.
-6. **Post-deploy verification** passes on both production services (`/version` returns the promoted commit on engine + app).
+1. **All 6 operator release gates pass** (Stripe portal config, portal capabilities, checkout amounts, portal upgrade/downgrade transitions, the 65-migration pre-flight, and the authenticated staging walkthrough — formal Gate 6 per ruling D-D). See `SPRINT_1.md` (re-baselined).
+2. **All 65 staged migrations verified applied on staging and absent from prod** (filename-key skip risk cleared — F-1 check per `PART_B_PREFLIGHT.md` §1.5), with the Gate-5′ batch-application ruling recorded.
+3. **All 8 CI lanes green** on the promotion head: `typecheck`, `lint`, `test`, `build`, `cross-org-isolation`, `tenant-coverage`, `audit`, `url-drift`.
+4. **Every staged-feature flag confirmed OFF in production env** — the full dark-flag audit (`PART_B_PREFLIGHT.md` §2, incl. the operator dashboard confirmation), not just the Phase-4 signal flags. The entire staged payload ships inert.
+5. **Promotion executed as a single composite true merge** (ruling D-C; `gh pr merge --merge`, never squash) so `origin/develop..origin/main` returns 0 and the back-merge invariant holds.
+6. **Post-deploy verification** passes on both production services (`/version` returns the promoted commit on engine + app; 65 migrations recorded in prod `schema_migrations`).
 
-Until all six hold, the state is **NO-GO** and no promotion PR is opened.
+Until all six hold, the state is **NO-GO** and no promotion PR is opened. The production Briefing flag flip is **outside** these criteria (ruling D-E).
 
 ---
 
@@ -121,10 +121,10 @@ The automated session's job is to **keep the static evidence green and the promo
 
 ## 7. Risk posture at launch
 
-- **Largest blast radius:** the 6 staged migrations + the canonical billing-token change. Both have static evidence PASS; both still require operator validation on staging before prod.
-- **Inert-by-design:** the entire Phase-4 B/C/D signal batch and the GDPR deletion reaper are flag-gated OFF — they ship dark and change no production behavior.
-- **Known live limitation:** RLS is inert pre-flip; route-level scoping remains the only live tenant defense. This is acceptable for launch (it is the current production posture) but is tracked in `KNOWN_ISSUES.md` and scheduled for Sprint 3.
-- **Rollback:** production `main` is a known-good commit (`959951b9`); promotion is a single merge that can be reverted. Migrations are additive/guarded (see F-1).
+- **Largest blast radius (re-baselined):** the **65-migration batch application on the first post-promotion engine boot**. Staging applied them incrementally over ~3 weeks; prod applies them in one sequence (per-file atomic, batch not). Pre-flight audit PASS (additive-only, RLS-conformant); the Gate-5′ batch-rehearsal-or-accept ruling is the mitigation (`PART_B_PREFLIGHT.md` §1.4).
+- **Inert-by-design:** the entire staged feature payload (Briefing, EAR, ECL, ERG shadow, risk lifecycle, finding governance, connectors, Phase-4 signal batch, GDPR deletion reaper) is flag-gated OFF in prod — it ships dark and changes no production behavior (verified, `PART_B_PREFLIGHT.md` §2).
+- **Known live limitation:** RLS is inert pre-flip; route-level scoping remains the only live tenant defense. This is acceptable for launch (it is the current production posture) but is tracked in `KNOWN_ISSUES.md` and scheduled for Sprint 3. Note PF-1 (possible skipped staging grants) must be resolved before the staging RLS flip.
+- **Rollback:** production `main` is a known-good commit (`512cfa5a`, the archived 2026-07-02 baseline); promotion is a single merge that can be reverted. Migrations are additive/guarded (see F-1 / Gate 5′).
 
 Full catalogue: `KNOWN_ISSUES.md`. Step-by-step promotion procedure: `RELEASE_CHECKLIST.md`.
 
@@ -138,3 +138,4 @@ Full catalogue: `KNOWN_ISSUES.md`. Step-by-step promotion procedure: `RELEASE_CH
 - `SPRINT_3.md` — enterprise depth (queued, unauthorized).
 - `RELEASE_CHECKLIST.md` — reusable `develop → main` promotion procedure.
 - `KNOWN_ISSUES.md` — verified limitations, debt, and inert paths at launch.
+- `PART_B_PREFLIGHT.md` — re-baselined promotion pre-flight evidence (migration + dark-flag audits, 2026-07-21).

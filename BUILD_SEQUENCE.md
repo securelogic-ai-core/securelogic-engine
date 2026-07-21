@@ -57,6 +57,13 @@ Release rules:
 - seeded demo data belongs in Demo unless a non-production seed package explicitly targets another environment
 
 Release gates (must be cleared before any `develop → main` promotion):
+
+> **Re-baseline note (2026-07-21):** for the current re-baselined Sprint-1 promotion, the
+> F-1 check below is executed across the **full 65-file staged set** via
+> `docs/launch/PART_B_PREFLIGHT.md` §1.5 (the `20260706` file itself is already applied to
+> production via the archived 2026-07-02 promote). The F-1 principle is unchanged and
+> applies to every future promotion.
+
 - **F-1 — migration `20260706_risk_numeric_score.sql` not previously applied.**
   The migration runner is filename-keyed (`scripts/runMigrations.ts`): a
   reshaped migration whose filename already exists in `schema_migrations` is
@@ -386,8 +393,12 @@ Billing note:
 >
 > **Remaining operational approvals (operator-owned):** (1) authenticated staging
 > walkthrough of the Briefing + Posture Dashboard (visual pass; automated sessions hold no
-> staging credentials); (2) Sprint 1 Part B promotion gates 1–5 (`docs/launch/SPRINT_1.md`)
-> — prerequisite for any `develop → main` promotion under the launch freeze.
+> staging credentials — promoted to formal Gate 6 by the 2026-07-21 re-baseline ruling D-D);
+> (2) Sprint 1 Part B promotion gates 1–6 (`docs/launch/SPRINT_1.md`, **re-baselined
+> 2026-07-21** — operator rulings D-A–D-E: the 2026-07-02 promote `512cfa5a` is the archived
+> historical baseline, the prior main freeze is superseded, and the promotion object is the
+> composite `develop` head via a single true merge; pre-flight evidence
+> `docs/launch/PART_B_PREFLIGHT.md`) — prerequisite for any `develop → main` promotion.
 >
 > **Remaining production rollout activities (not started; each a separate operator
 > ruling):** promote `develop → main` per `RELEASE_CHECKLIST.md`, then flip
