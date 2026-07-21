@@ -229,8 +229,8 @@ reached; each state requires the previous one.
 | Milestone | State reached |
 |---|---|
 | M1 — Part B re-baseline (rulings D-A–D-E, gate redefinition, `PART_B_PREFLIGHT.md` audits) | **1 — Engineering completion** (docs-only; operator rulings ratified; no gate evidence exists yet) |
-| M2 — Operator gates execution (Gates 1–4, 5′, 6; execution order: Stripe chain 1→2→3→4, with 5′ and 6 in parallel) | **Not started** (pre-existing artifacts indexed: Gate 1 PASS carry-forward + Gate 3 engineering-half PASS under `docs/validation/billing-portal/`; every §0.4 row still requires operator sign-off at the promotion-candidate SHA) |
-| M3 — Promotion + post-deploy verification | **Not started** |
+| M2 — Operator gates execution (Gates 1–4, 5′, 6; execution order: Stripe chain 1→2→3→4, with 5′ and 6 in parallel) | **2 — Operator validation, COMPLETE 2026-07-21** (all six §0.4 rows recorded PASS at promotion-candidate `a8898368`; attested-but-unfiled artifact paths are flagged inside the rows for append when filed) |
+| M3 — Promotion + post-deploy verification | **In progress 2026-07-21** — promotion-preparation authorized; promotion PR opened `develop → main`. Merge, deploy, and post-deploy verification each require separate explicit operator authorization. Pre-merge operator items outstanding: §2.3 dashboard flag confirmation; Sprint-3A prod URL env vars (`RELEASE_CHECKLIST.md` §5) |
 
 ### Promotion-readiness gate
 - All **8** CI lanes green on the promotion head (`audit`, `build`, `lint`, `test`, `typecheck`, `cross-org-isolation`, `tenant-coverage`, `url-drift`).
