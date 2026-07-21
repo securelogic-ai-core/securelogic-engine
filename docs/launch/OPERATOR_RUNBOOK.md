@@ -41,14 +41,17 @@ One resolved decision and two webhook behaviours to keep in mind. None require a
 - **D-3 (Gate 4) — member seats (`max_members`) are not metered by the webhook.** The webhook raises only the *entity* cap (`max_monitored_entities`, `GREATEST(…,50)`, `stripeWebhook.ts:381`); it never writes `max_members`. Seat caps come from the seat-cap migration (Gate 5) + app default `DEFAULT_MAX_SEATS = 6` (`src/api/lib/seatLimit.ts:33`). So a Team→Platform upgrade does **not** auto-raise seats via Stripe. Confirm this matches intent before validating Gate 4 "entitlement correct."
 
 ### 0.4 Evidence log (fill one row per gate)
-Attach to the promotion PR / launch record.
+Attach to the promotion PR / launch record. **This log is the INDEX of authoritative
+evidence — point at artifacts, never duplicate them** (reconciled 2026-07-21). Record
+the promotion-candidate SHA each row was collected against (`SPRINT_1.md`
+§Promotion-candidate SHA + quiescence rule).
 
 | Gate | Result (PASS/FAIL) | Operator | Timestamp (UTC) | Evidence artifact |
 |---|---|---|---|---|
-| 1 | | | | Render env screenshot + redeploy ts + portal-opens screenshot |
+| 1 | | | | **CARRY-FORWARD** — authoritative PASS: `docs/validation/billing-portal/GATE_1_RESULT.md` (2026-07-01). Row records only the 3 re-confirmation criteria (`SPRINT_1.md` §Gate 1) |
 | 2 | | | | Stripe portal-config screenshot (capabilities + allowed prices) |
-| 3 | | | | 4× checkout screenshots (amount + interval) + Stripe Price amounts |
-| 4 | | | | 5× before/after `entitlement_level` query + webhook event IDs |
+| 3 | | | | Engineering half: authoritative PASS `docs/validation/billing-portal/GATE_3_RESULT.md` (2026-07-01, carries — `billing.ts` unchanged in range). Row records the outstanding operator half: 4× checkout screenshots (amount + interval) + Stripe Price amounts |
+| 4 | | | | **FULL RUN REQUIRED** (webhook surface changed in-range — PR-D1 `5389f620`): 5× before/after `entitlement_level` query + webhook event IDs |
 | 5′ | | | | 65-file F-1 output (prod 0 / staging 65) + PF-1 grant-check output + batch-application ruling (`PART_B_PREFLIGHT.md` §1) |
 | 6 | | | | Staging walkthrough PASS/FAIL + screenshots (Briefing, Posture Dashboard, nav, Executive Report export) |
 

@@ -126,20 +126,46 @@ entry; decision records under `docs/specs/`). Sprint-relevant facts:
 **Production has not launched.** Promotion and all production enablement remain pending
 operator approval.
 
-### The 6 launch-blocking gates (owner: operator; re-baselined 2026-07-21)
+### Promotion-candidate SHA + quiescence rule (added 2026-07-21 — replaces the superseded freeze as the head-pinning control)
 
-> The §0.4 evidence log in `OPERATOR_RUNBOOK.md` is **empty** — no gate has recorded
-> evidence. Whatever validation preceded the archived 2026-07-02 promote is historical
-> evidence (D-A), **not** a substitute for gate evidence against the current baseline.
-> Each gate below requires a PASS row with evidence before promotion.
+Ruling D-B removed the main freeze; nothing else pins the promotion head while gates run.
+Therefore, promotion is made deterministic and auditable as follows:
 
-**Gate 1 — Stripe Billing Portal configuration.** Set `STRIPE_PORTAL_CONFIGURATION_ID` on `securelogic-engine-staging` (+ confirm prod), redeploy, record timestamp.
+1. **When M2 begins, the operator declares a promotion-candidate SHA** (the `develop`
+   HEAD at that moment). Every §0.4 evidence row records the candidate SHA it was
+   collected against.
+2. **Quiescence:** from that declaration until M3 completes, `develop` accepts
+   **docs-only** commits (which extend the candidate without invalidating evidence —
+   the promotion head becomes the newest docs-only descendant). Any commit touching
+   application code, tests, config, flags, schemas, or `render.yaml` **invalidates the
+   candidate**: either re-declare a new candidate and re-affirm every gate whose object
+   the delta touches, or revert the commit off `develop`.
+3. **At M3, the promotion PR head must be the declared candidate (or its docs-only
+   descendant), verified by `git diff <candidate>..<head> -- . ':!docs' ':!*.md'`
+   returning empty.**
 
-**Gate 2 — Stripe test-mode portal capabilities.** subscription_update, price changes, prorations, cancellations (per decision); all 4 test Price IDs in the allowed-plan list.
+### The 6 launch-blocking gates (owner: operator; re-baselined 2026-07-21, reconciled 2026-07-21)
 
-**Gate 3 — Staging checkout amounts.** Brief Pro $49/mo; **Brief Team** $199/mo (display name per the shipped #447 rename; internal key `teams` unchanged); Platform Professional monthly $800/mo; Platform Professional — Annual $7,200/yr. All four paid plans are **self-serve checkout**; Free needs no checkout (default tier); Enterprise is sales-led only (custom contract, no Stripe checkout).
+> **Evidence correction (2026-07-21 reconciliation):** the §0.4 evidence log in
+> `OPERATOR_RUNBOOK.md` is empty, but committed evidence artifacts DO exist under
+> `docs/validation/billing-portal/` — Gate 1 holds a full PASS and Gate 3 a
+> code-prerequisite PASS (both 2026-07-01). §0.4 is now the **index** pointing at those
+> authoritative artifacts (never duplicating them). The archived 2026-07-02 promote
+> itself remains historical evidence only (D-A). Each gate below requires a §0.4 row
+> (PASS or carry-forward re-confirmation) before promotion.
+>
+> **M2 execution order (reconciled):** Gates **1 → 2 → 3 → 4** are a sequential Stripe
+> dependency chain (config → capabilities → checkout → transitions). Gates **5′ and 6
+> are independent** of the chain and of each other — they may run in parallel with it,
+> and Gate 6 has no prerequisite at all (staging already serves the baseline).
 
-**Gate 4 — Staging portal upgrade/downgrade transitions.** For each of the 5 transitions: Stripe sub updates + webhook fires + `entitlement_level` correct + return-to-app.
+**Gate 1 — Stripe Billing Portal configuration — CARRY-FORWARD gate (reconciled 2026-07-21).** A full PASS was recorded 2026-07-01 in `docs/validation/billing-portal/GATE_1_RESULT.md` (machine-verified prod config + operator-attested staging click-through), and the staged payload does not touch the portal path. The gate therefore does **not** re-run; it **re-confirms**. Re-confirmation criteria (all three, recorded as the §0.4 row): (a) `STRIPE_PORTAL_CONFIGURATION_ID` + `STRIPE_PORTAL_RETURN_URL` still set on both engine services (values unchanged since the PASS); (b) no Stripe portal-configuration change since 2026-07-01 (dashboard check); (c) one staging "Manage billing" click-through still opens the portal. Any failed criterion voids the carry-forward → run the full runbook Gate 1.
+
+**Gate 2 — Stripe test-mode portal capabilities.** subscription_update, price changes, prorations, cancellations (per decision); all 4 test Price IDs in the allowed-plan list. No prior evidence — full run.
+
+**Gate 3 — Staging checkout amounts — HALF-COMPLETE (reconciled 2026-07-21).** The **engineering half is PASS** (2026-07-01, `docs/validation/billing-portal/GATE_3_RESULT.md`: tier→price map, allow-list, invalid-tier rejection, 503-on-missing-var, UI-label consistency — and `billing.ts` is unchanged in the staged range, so the PASS carries forward). The **operator/Stripe half remains outstanding and is the only work in this gate**: the 4 Stripe checkout-page totals + 4 Price-object cross-checks + screenshots. Amounts: Brief Pro $49/mo; **Brief Team** $199/mo (display name per the shipped #447 rename; internal key `teams` unchanged); Platform Professional monthly $800/mo; Platform Professional — Annual $7,200/yr. All four paid plans are **self-serve checkout**; Free needs no checkout (default tier); Enterprise is sales-led only (custom contract, no Stripe checkout).
+
+**Gate 4 — Staging portal upgrade/downgrade transitions — FULL VALIDATION REQUIRED (reconciled 2026-07-21).** The gate's object **changed during Sprint 1**: `src/api/webhooks/stripeWebhook.ts` was modified in the staged range (PR-D1 `5389f620` — `api_key_id` demoted from fatal gate to resolver fallback, +28/−9). **No prior evidence can carry forward; this gate validates a modified surface and must run in full**: for each of the 5 transitions, Stripe sub updates + webhook fires + `entitlement_level` correct + return-to-app, executed against staging at the promotion-candidate SHA.
 
 **Gate 5′ — Migration pre-flight for the 65-migration staged set** (replaces the obsolete 7-file Gate 5). Per `PART_B_PREFLIGHT.md`: (a) F-1 filename-key check — the 65 staged filenames return **0 rows in prod** and **65 rows applied in staging** (§1.5 SQL); (b) resolve finding **PF-1** (possible skipped v2 grants on staging `enterprise_entities`/`data_stores` — §1.3; blocks the A04-G1 staging RLS flip, not promotion, but verify now); (c) **batch-application ruling** — rehearse the 65-file batch against a prod clone, or explicitly accept the risk on the per-file-atomicity + additive-only evidence (§1.4). The old seat-cap pre-flight is retired — `20260711` is already applied to prod.
 
@@ -167,7 +193,7 @@ reached; each state requires the previous one.
 | Milestone | State reached |
 |---|---|
 | M1 — Part B re-baseline (rulings D-A–D-E, gate redefinition, `PART_B_PREFLIGHT.md` audits) | **1 — Engineering completion** (docs-only; operator rulings ratified; no gate evidence exists yet) |
-| M2 — Operator gates execution (Gates 1–4, 5′, 6) | **Not started** (evidence log empty) |
+| M2 — Operator gates execution (Gates 1–4, 5′, 6; execution order: Stripe chain 1→2→3→4, with 5′ and 6 in parallel) | **Not started** (pre-existing artifacts indexed: Gate 1 PASS carry-forward + Gate 3 engineering-half PASS under `docs/validation/billing-portal/`; every §0.4 row still requires operator sign-off at the promotion-candidate SHA) |
 | M3 — Promotion + post-deploy verification | **Not started** |
 
 ### Promotion-readiness gate
