@@ -158,10 +158,55 @@ changed.
   flags (both app and engine halves); B1 does not change another feature's
   rollout posture.
 
+## B2 persistence direction — the layout envelope (B1.1; DOCUMENTED, NOT built)
+
+**Ratified direction, documentation only.** Nothing below exists in code,
+schema, persistence, serialization, or any API — B1.1 changes zero runtime
+behavior. This section exists so B2 does not design an overly simple
+persistence model that becomes expensive to migrate in B3/B4.
+
+The persisted user layout (B2) MUST be designed around **module instances, not
+bare module identifiers**, inside a versioned envelope. Target shape:
+
+```jsonc
+{
+  "version": 1,
+  "modules": [
+    {
+      "moduleId": "needs_attention",   // registry id — the module's IDENTITY
+      "instanceKey": "…",              // stable per-instance key within the layout
+      "config": {}                      // per-instance configuration (empty in B2)
+    }
+  ]
+}
+```
+
+Why instance-shaped from day one:
+- The registry is code — cheap to evolve additively. The layout is persisted
+  per-user rows inherited by B3 profiles and B4 templates — expensive to
+  migrate. The entry shape is therefore the ONE place a too-simple B2 decision
+  compounds: bare `{moduleId, order}` rows cannot represent configured or
+  multi-instance modules without a row migration across every user, profile,
+  and template.
+- `instanceKey` makes B3's "reuse the same module configuration across
+  profiles" and B4's template-inheritance/override precedence representable
+  without schema change, even though B2 ships single-instance with empty
+  `config`.
+- The envelope `version` (not per-row columns) is what future migrations key
+  on — the version-less `dashboard_preferences` JSONB is the cautionary
+  precedent.
+
+Boundaries (mirrors the contracts.ts B1.1 object-model section): the layout
+references registry ids and never restates module metadata; eligibility is
+re-resolved against the registry on every render (a stored layout never grants
+access); the engine validates ids via the generated manifest
+(`briefingModuleManifest.ts`) on any write path.
+
 ## Recommended B2 boundary
 
 Role-aware defaults + personal customization: (1) versioned layout persistence
-(new table on the `finding_saved_views` template; envelope with `version`);
+(new table on the `finding_saved_views` template; the instance-shaped envelope
+documented above);
 (2) wire the B2 write path through the SHIPPED engine manifest validators
 (`briefingModuleManifest.ts`) — precondition discharged above; (3) one-time
 `dashboard_preferences` → briefing migration via `legacyTileToModule()` with

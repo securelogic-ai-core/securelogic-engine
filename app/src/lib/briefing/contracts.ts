@@ -30,6 +30,48 @@
  * OMITTED — never rendered as a fake zero — when the session has no user
  * identity (legacy API-key sessions); that is the my_work_open honest-omission
  * contract from GET /api/findings/summary.
+ *
+ * ── Object-model boundaries (B1.1 contract refinement) ───────────────────────
+ * Four distinct concepts surround this contract. Only the FIRST exists today;
+ * the others are documented so later phases extend the model instead of
+ * blurring it:
+ *
+ *   1. The canonical MODULE REGISTRY (this file + registry.ts) — the catalog of
+ *      what modules EXIST: identity, meaning, scope, authorization-relevant
+ *      metadata, destination. Code-owned, organization-independent,
+ *      user-independent. Mirrored engine-side as a GENERATED, drift-tested
+ *      manifest (src/api/lib/briefingModuleManifest.generated.ts).
+ *   2. The persisted USER LAYOUT (B2 — not built) — a per-user, org-scoped,
+ *      VERSIONED selection/ordering/configuration of module INSTANCES that
+ *      references registry ids. It owns nothing about what a module IS; it
+ *      owns only which/where/how-configured for one user. The ratified
+ *      persistence direction (instance-shaped entries, not bare ids) is
+ *      documented in docs/specs/briefing-initiative-b1-spec.md — read it
+ *      before designing the B2 schema.
+ *   3. BRIEFING PROFILES (B3 — not built) — named, purposeful layouts a user
+ *      switches between (e.g. Morning / Audit / Incident). A profile is a
+ *      layout with identity and lifecycle; it introduces NO second module
+ *      system and NO second persistence path.
+ *   4. ORGANIZATIONAL BRIEFINGS (B4 — not built) — admin-published templates
+ *      assigned through the EXISTING org/role structures, from which user
+ *      layouts inherit. Mandatory-module policy lives HERE (a per-org template
+ *      property), never in the registry — SecureLogic does not decide what is
+ *      mandatory inside a tenant.
+ *
+ * Layers 2–4 REFERENCE registry ids; they never restate module metadata.
+ * Eligibility (entitlement × identity × flags) is re-resolved against this
+ * registry on EVERY render, so a stored layout, profile, or template can never
+ * grant access — permissions override personalization.
+ *
+ * ── Evolution policy (binding) ────────────────────────────────────────────────
+ *   - Module ids are IMMUTABLE and are never reused for a different meaning.
+ *   - Contract changes are OPTIONAL-ADDITIVE only. Removing a module or field,
+ *     or changing a field's meaning, requires a manifest schema_version bump
+ *     plus an explicit layout-migration step owned by the phase that does it.
+ *   - No speculative fields: a field lands with its first consumer, not before.
+ *   - The engine manifest is always regenerated
+ *     (`npm run generate:briefing-manifest`) and drift-tested — never
+ *     hand-edited.
  */
 
 /**
@@ -74,10 +116,17 @@ export type BriefingModuleId = (typeof BRIEFING_MODULE_IDS)[number];
 export type BriefingScope = "personal" | "organization";
 
 /**
- * Priority zones of the default composition. "your_work" leads (personal,
+ * Priority zones of the DEFAULT composition. "your_work" leads (personal,
  * assignment-driven), then the organization-wide operational picture, then
- * intelligence. Zones are the B1 substitute for free-form layout; B2's
- * personalization operates within this model.
+ * intelligence.
+ *
+ * B1.1 clarification: a module's `zone` is its placement in the canonical
+ * DEFAULT composition — it is NOT a hard constraint on where the module may
+ * ever appear. Future layouts, profiles, and organizational templates (B2–B4)
+ * may position any ELIGIBLE module explicitly (an Incident profile may lead
+ * with recent findings). The invariant that survives re-zoning is the scope
+ * chip — a personal module is visually distinct from an organizational one
+ * wherever it is placed — not the zone.
  */
 export type BriefingZone = "your_work" | "organization" | "intelligence";
 
