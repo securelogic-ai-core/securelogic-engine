@@ -46,9 +46,13 @@ evidence — point at artifacts, never duplicate them** (reconciled 2026-07-21).
 the promotion-candidate SHA each row was collected against (`SPRINT_1.md`
 §Promotion-candidate SHA + quiescence rule).
 
+> **Promotion-candidate SHA: `a8898368`** — declared 2026-07-21T17:40Z at M2 start
+> (develop HEAD; quiescence verified: zero non-docs commits since). All rows below
+> attach to this candidate unless a re-declaration is recorded here.
+
 | Gate | Result (PASS/FAIL) | Operator | Timestamp (UTC) | Evidence artifact |
 |---|---|---|---|---|
-| 1 | | | | **CARRY-FORWARD** — authoritative PASS: `docs/validation/billing-portal/GATE_1_RESULT.md` (2026-07-01). Row records only the 3 re-confirmation criteria (`SPRINT_1.md` §Gate 1) |
+| 1 | **PASS (carry-forward re-confirmed)** | Operator (info@securelogicai.com) | 2026-07-21T17:40Z | **CARRY-FORWARD** — authoritative PASS: `docs/validation/billing-portal/GATE_1_RESULT.md` (2026-07-01). Operator attested completion of the 3 re-confirmation criteria (`SPRINT_1.md` §Gate 1: (a) both portal vars set/unchanged on both engine services; (b) no Stripe portal-config change since the PASS; (c) staging "Manage billing" click-through opens the portal). Attestation received in-session 2026-07-21; no new artifacts required by the carry-forward definition — append screenshot/dashboard paths here if captured. Candidate SHA: `a8898368` |
 | 2 | | | | Stripe portal-config screenshot (capabilities + allowed prices) |
 | 3 | | | | Engineering half: authoritative PASS `docs/validation/billing-portal/GATE_3_RESULT.md` (2026-07-01, carries — `billing.ts` unchanged in range). Row records the outstanding operator half: 4× checkout screenshots (amount + interval) + Stripe Price amounts |
 | 4 | | | | **FULL RUN REQUIRED** (webhook surface changed in-range — PR-D1 `5389f620`): 5× before/after `entitlement_level` query + webhook event IDs |
