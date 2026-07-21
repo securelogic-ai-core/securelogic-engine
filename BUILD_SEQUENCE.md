@@ -351,9 +351,50 @@ Billing note:
 > (375 files / 6449 tests), isolation lane green incl. new `briefingLayouts` cross-org/
 > cross-user + RLS fail-closed tests, app suite green (85 files / 1133 tests), typecheck +
 > `next build` green on both surfaces; flag-off remains byte-identical; rollback = flag off.
-> **GATE B unchanged — no production enablement**; the `/posture` analytical-home gap
-> (B1 weakness recorded in the B2 spec) must be resolved before the Briefing prod flip.
+> **GATE B unchanged at that point — no production enablement**; the `/posture`
+> analytical-home gap (B1 weakness recorded in the B2 spec) had to be resolved before the
+> Briefing prod flip (resolved below — read-surface D1, superseding this blocker).
 > **B3 (profiles) is NOT authorized** — starting it requires separate operator approval.
+>
+> **D1 — read-surface architecture / GATE B closure: COMPLETE (operator-ratified & shipped
+> 2026-07-21). The GATE B architectural blocker for `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED`
+> is CLOSED.** Authoritative decision record: `docs/specs/read-surface-architecture-spec.md`
+> (Status: RATIFIED & IMPLEMENTED; committed together with the implementation). Diagnosis
+> was missing-destination, not taxonomy: nine analytical capabilities, layout customize, and
+> the Executive Report PDF export existed ONLY on the flag-off `/dashboard`, so enabling the
+> Briefing removed them from the product. D1 (app-only; no schema, engine, or flag change):
+> `/posture` is now the canonical **Posture Dashboard** — a fixed canonical analytics
+> composition (`PostureAnalyticsGrid`, reusing the existing `DashboardCharts` components
+> 1:1; deliberately NO per-user customization — dashboards are shared organizational truth,
+> personalization is a Briefing property) plus the Executive Report export entry point and a
+> flag-aware home back-link; the dark `WORKSPACE_NAV_ITEMS` gains a platform-gated
+> **"Posture"** link (legacy `NAV_ITEMS` + Application Knowledge Index untouched); the B2
+> migration-disclosure copy now truthfully states tile parity. The legacy flag-off
+> `/dashboard` stays byte-identical (it keeps its own export until it retires with the
+> flag). **Exit criterion met: with the Briefing flag ON, no analytical capability, export,
+> or destination is lost anywhere in the product.**
+>
+> **Completed engineering work (verified):** D1 shipped `develop` `a971f2a4`; B2
+> (`11ee6b9e`) + D1 pushed to `origin/develop`; the CI audit lane (red since 2026-07-20 on
+> an upstream `brace-expansion` advisory) restored by the lockfile-only, operator-authorized
+> `b91fbdd5` (`npm audit fix`; 0 vulnerabilities) → **all 8 CI lanes green on `develop` HEAD
+> `b91fbdd5`** (audit, build, lint, test, typecheck, cross-org-isolation, tenant-coverage,
+> url-drift); **staging deploy VERIFIED** (app + engine `/version` = `b91fbdd5`; `/posture`,
+> `/dashboard`, and the export endpoint live and auth-gated; engine `/api/briefing/layout`
+> returns 401 = flag ON + auth enforced; app suite 85 files / 1138 tests, engine suite 375
+> files / 6450 tests, both green).
+>
+> **Remaining operational approvals (operator-owned):** (1) authenticated staging
+> walkthrough of the Briefing + Posture Dashboard (visual pass; automated sessions hold no
+> staging credentials); (2) Sprint 1 Part B promotion gates 1–5 (`docs/launch/SPRINT_1.md`)
+> — prerequisite for any `develop → main` promotion under the launch freeze.
+>
+> **Remaining production rollout activities (not started; each a separate operator
+> ruling):** promote `develop → main` per `RELEASE_CHECKLIST.md`, then flip
+> `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED` on BOTH production services (engine + app —
+> two-switch). **Production remains dark and is explicitly PENDING OPERATOR APPROVAL;
+> nothing is enabled in production by this program.** **B3 (profiles) remains NOT
+> authorized.**
 
 ## Active package
 `Priority 4 — Signal Ingestion Hardening` — **status: ACTIVE — IMPLEMENTATION AUTHORIZED & UNDERWAY (2026-06-26).**

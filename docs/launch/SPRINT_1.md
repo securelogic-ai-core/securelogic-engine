@@ -1,6 +1,6 @@
 # Sprint 1 — Production Go-Live (Launch-Blocking Only)
 
-> **Status:** ACTIVE — **NO-GO** (promotion still gated). **Part A app-hardening COMPLETE (A1–A5 on `develop`); Part B operator gates 1–5 outstanding.**
+> **Status:** ACTIVE — **NO-GO** (promotion still gated). **Part A app-hardening COMPLETE (A1–A5 on `develop`); Part B operator gates 1–5 outstanding.** Staged release updated 2026-07-21: Briefing B1/B2 + read-surface D1 on `develop`, **all 8 CI lanes green on HEAD `b91fbdd5`**, staging deploy-verified — see *Staged release update (2026-07-21)* below. **Production has NOT launched; all new surfaces are prod-dark and prod enablement remains pending operator approval.**
 > **Goal:** Get the staged `develop` release ready for, and then promote it to, production `main`.
 > **Scope discipline:** This sprint contains **ONLY** launch-blocking work. No Sprint 2 / Sprint 3 items.
 
@@ -80,6 +80,40 @@ Execution rules (per operator directive): one issue at a time, root-cause first,
 - **Staging (`develop`):** ahead of `main` by the staged release + Part A app-hardening fixes. The entire Phase-4 B/C/D signal batch is flag-gated/inert.
 
 **Static evidence already PASS (automated-session-verifiable):** all 7 CI lanes green on `develop` HEAD; canonical checkout routing; seat-cap migration SQL reviewed; `render.yaml` diff limited to staging-only `STRIPE_PORTAL_CONFIGURATION_ID`; Phase-4 flags default OFF.
+
+### Staged release update (2026-07-21) — Briefing program + read-surface architecture
+
+The staged `develop` release now additionally carries the Briefing Initiative B1/B2 and
+the read-surface architecture D1 (full records: `BUILD_SEQUENCE.md` Briefing Initiative
+entry; decision records under `docs/specs/`). Sprint-relevant facts:
+
+- **Read-surface architecture COMPLETE; the Briefing GATE B architectural blocker is
+  DISCHARGED.** `/posture` is now the canonical Posture Dashboard (analytics grid +
+  Executive Report export re-homed); **no analytical capability, export, or destination is
+  lost when the Briefing feature is enabled.** Spec: `docs/specs/read-surface-architecture-spec.md`
+  (RATIFIED & IMPLEMENTED).
+- **`develop` HEAD is `b91fbdd5`** (D1 `a971f2a4` + B2 `11ee6b9e` + lockfile-only audit
+  fix). **CI is FULLY GREEN — all 8 lanes** (the audit lane, red on every push since
+  2026-07-20 due to an upstream `brace-expansion` advisory, is restored; `npm audit`
+  reports 0 vulnerabilities). This satisfies the promotion-readiness "CI green on the
+  promotion head" evidence as of this HEAD.
+- **Staging verification COMPLETE (automated-session scope):** app + engine `/version`
+  both report `b91fbdd5`; `/posture`, `/dashboard`, and the Executive Report export
+  endpoint are live and auth-gated; the engine Briefing-layout endpoint confirms flag-ON +
+  auth-enforced behavior; flag-off surfaces remain byte-identical (prod `main` untouched).
+- **Prod impact: none.** All Briefing/D1 surfaces are dark in production
+  (`SECURELOGIC_DASHBOARD_BRIEFING_ENABLED` prod `"false"` on both services); this update
+  changes no Sprint 1 gate and adds no launch-blocking scope.
+
+**Remaining operator-controlled production activities (unchanged in ownership):**
+1. Authenticated staging walkthrough of the Briefing + Posture Dashboard (visual pass).
+2. Part B promotion gates 1–5 below — still the launch-blocking set; still **NO-GO** until
+   they pass.
+3. Post-promotion, the production Briefing feature-flag enablement (engine + app
+   two-switch) — a separate operator ruling, NOT part of Sprint 1's definition of done.
+
+**Production has not launched.** Promotion and all production enablement remain pending
+operator approval.
 
 ### The 5 launch-blocking gates (owner: operator)
 
