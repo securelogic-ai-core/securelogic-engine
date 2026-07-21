@@ -104,7 +104,12 @@ export type ApplicabilityDecision = (typeof APPLICABILITY_DECISIONS)[number];
 export const CONFIDENCE_BANDS = ["low", "medium", "high"] as const;
 export type ConfidenceBand = (typeof CONFIDENCE_BANDS)[number];
 
-/** Applicability target types (mirror MATCH_TARGET_TYPES on the engine). */
+/**
+ * Applicability target types accepted in app triage surfaces. Deliberately
+ * NARROWER than the engine's MATCH_TARGET_TYPES, which additionally includes
+ * 'asset' (EAR Phase 2): the app offers only target types whose accept path
+ * is implemented end-to-end (the engine's asset accept currently returns 409).
+ */
 export const MATCH_TARGET_TYPES = ["vendor", "ai_system", "control", "obligation"] as const;
 export type MatchTargetType = (typeof MATCH_TARGET_TYPES)[number];
 

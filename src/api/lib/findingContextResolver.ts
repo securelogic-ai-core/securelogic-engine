@@ -32,12 +32,13 @@ import {
   type AffectedResolution,
   type AffectedResolutions,
 } from "./findingRiskScore.js";
+import { type TargetType } from "./signalMatchSuggestionValidation.js";
 
 export interface Queryable {
   query(text: string, params?: unknown[]): Promise<{ rows: any[]; rowCount: number | null }>;
 }
 
-export type AffectedEntityType = "vendor" | "ai_system" | "control" | "obligation";
+export type AffectedEntityType = TargetType;
 
 export interface FindingAffectedEntity {
   type: AffectedEntityType;
