@@ -318,6 +318,16 @@ Billing note:
 > package. **B2 is NOT authorized** — starting it requires separate operator approval, and
 > its hard precondition is an engine-side module manifest GENERATED from the registry
 > (drift-tested) before any write path accepts module ids.
+> **B1 hardening follow-on — COMPLETE (2026-07-21, operator-directed; additive).** The B2
+> hard precondition is **DISCHARGED**: `src/api/lib/briefingModuleManifest.generated.ts` is
+> generated from the app registry (`npm run generate:briefing-manifest`) and drift-tested
+> (`src/api/tests/briefingModuleManifest.test.ts`); validation surface
+> `briefingModuleManifest.ts` is INERT (no route imports it) until B2's write path consumes
+> it. The triplicated ACTIVE-actions client fallback is centralized in
+> `app/src/lib/actionsMetrics.ts`. `SECURELOGIC_INDEPENDENT_REVIEW_ENABLED` remains
+> operator-owned (deliberately NOT Blueprint-claimed by B1 — another feature's rollout);
+> staging validation of the My Pending Reviews module requires the operator to enable it.
+> B2 authorization state unchanged: NOT authorized.
 
 ## Active package
 `Priority 4 — Signal Ingestion Hardening` — **status: ACTIVE — IMPLEMENTATION AUTHORIZED & UNDERWAY (2026-06-26).**

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { DashboardSummary, DomainScore, Framework, FrameworkReadiness } from "@/lib/api";
 import { orgActionsHref } from "@/app/actions/myActions";
+import { activeActionsCount } from "@/lib/actionsMetrics";
 import { formatDateOnlyUTC } from "@/lib/dates";
 import { CoverageBar } from "@/lib/frameworkCoverage";
 
@@ -272,7 +273,7 @@ export function ActionsRing({ actions }: { actions: DashboardSummary["actions"] 
   // Metric Contract: the ring total is ACTIVE work (open|in_progress|blocked) —
   // the SAME number the destination page's Open tile shows (blocked work is
   // still work; it was previously invisible here and the totals diverged).
-  const total = actions.active ?? openCount + inProgressCount + blockedCount;
+  const total = activeActionsCount(actions);
   const openArc        = total > 0 ? (openCount        / total) * DONUT_CIRC : 0;
   const inProgressArc  = total > 0 ? (inProgressCount  / total) * DONUT_CIRC : 0;
   const blockedArc     = total > 0 ? (blockedCount     / total) * DONUT_CIRC : 0;
@@ -457,7 +458,7 @@ export function OpenItemsAging({
   const findingsOpen = findings.open;
   // Metric Contract: active = open|in_progress|blocked (same total as the ring
   // and the destination page); fallback for older engine payloads.
-  const actionsOpen  = actions.active ?? (actions.open ?? 0) + (actions.in_progress ?? 0) + (actions.blocked ?? 0);
+  const actionsOpen  = activeActionsCount(actions);
   const bothEmpty    = findingsOpen === 0 && actionsOpen === 0;
 
   return (

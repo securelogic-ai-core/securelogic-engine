@@ -20,6 +20,7 @@ import type {
   DashboardSummary,
   FindingsSummary,
 } from "@/lib/api";
+import { activeActionsCount } from "@/lib/actionsMetrics";
 
 export type BriefingInputs = {
   summary: DashboardSummary | null;
@@ -107,9 +108,9 @@ export function composeBriefing(inputs: BriefingInputs): BriefingViewModel {
       high: bySeverity?.High ?? 0,
     },
     overdueActions: {
-      active:
-        actions?.active ??
-        (actions ? actions.open + actions.in_progress + (actions.blocked ?? 0) : 0),
+      // The shared Metric Contract presentation fallback — same derivation as
+      // the legacy ActionsRing / OpenItemsAging tiles (one definition).
+      active: activeActionsCount(actions),
       overdue: actions?.overdue ?? 0,
     },
     readyToClose: orgWideReady > 0 ? { orgWide: orgWideReady } : null,

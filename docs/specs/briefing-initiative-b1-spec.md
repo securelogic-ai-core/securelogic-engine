@@ -135,12 +135,35 @@ changed.
   new model.
 - `briefing` label only renders with `risk_workspace` on (staging runs both).
 
+## B1 hardening (2026-07-21, operator-directed — the pre-B2 blockers)
+
+- **Engine-side module manifest — BUILT (discharges the B2 hard precondition).**
+  `src/api/lib/briefingModuleManifest.generated.ts` is GENERATED from the
+  canonical app registry (`npm run generate:briefing-manifest`, script
+  `scripts/generate-briefing-module-manifest.ts`) and drift-tested by
+  `src/api/tests/briefingModuleManifest.test.ts` — the Application Knowledge
+  Index pattern. Validation surface: `briefingModuleManifest.ts`
+  (`isKnownBriefingModuleId` / `briefingManifestModule`). INERT by construction
+  — no route imports it until B2's write path, which MUST validate ids and
+  scope/flag metadata through it (never trust the client catalog).
+- **ACTIVE-actions presentation fallback centralized** —
+  `app/src/lib/actionsMetrics.ts` `activeActionsCount()` replaces the three
+  inline copies (ActionsRing, OpenItemsAging, Briefing composer); unit-tested.
+  The predicate itself stays engine-owned (`metricDefinitions.ts`).
+- **Flag-ownership concern resolved by documentation, not by flipping:**
+  `SECURELOGIC_INDEPENDENT_REVIEW_ENABLED` belongs to the Independent
+  Governance Review feature and is operator/dashboard-set (not Blueprint-owned).
+  The My Pending Reviews module fails closed without it — by design. Staging
+  validation of that module requires the operator to enable that feature's
+  flags (both app and engine halves); B1 does not change another feature's
+  rollout posture.
+
 ## Recommended B2 boundary
 
 Role-aware defaults + personal customization: (1) versioned layout persistence
 (new table on the `finding_saved_views` template; envelope with `version`);
-(2) engine-side module manifest GENERATED from the registry + drift test —
-mandatory before any write path accepts module ids; (3) one-time
+(2) wire the B2 write path through the SHIPPED engine manifest validators
+(`briefingModuleManifest.ts`) — precondition discharged above; (3) one-time
 `dashboard_preferences` → briefing migration via `legacyTileToModule()` with
 visible disclosure of dropped tiles; (4) add/remove/reorder UI + restore
 default; (5) role-informed starting templates within the existing
