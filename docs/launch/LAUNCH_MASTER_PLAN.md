@@ -1,8 +1,8 @@
 # SecureLogic AI — Launch Master Plan
 
-> **Status:** Pre-launch hold (NO-GO). `develop` is staged and ahead of production `main`; promotion is gated on operator-only release gates (see `SPRINT_1.md`, **re-baselined 2026-07-21** — operator rulings D-A–D-E).
+> **Status:** **LIVE — launched 2026-07-21.** The composite promotion merged via PR #688 (true merge `dd79330c`, ruling D-C); both production services verified serving it (`/version` engine 19:00:59Z, app 19:02:00Z UTC), engine `/health` green post-migration-batch, CI 8/8 on `main`. All six Go criteria held (evidence: `OPERATOR_RUNBOOK.md` §0.4). The production Briefing flag flip remains a separate post-sprint decision (ruling D-E).
 > **Owner:** SecureLogic AI platform/operator.
-> **Last reconciled:** 2026-07-21 (`develop` tip `cb934b05`; production `main` `512cfa5a` — the archived 2026-07-02 historical baseline per ruling D-A; `develop` is 266 commits / 65 staged migrations ahead). Pre-flight evidence: `PART_B_PREFLIGHT.md`.
+> **Last reconciled:** 2026-07-21 post-launch (`main` = `develop` = `dd79330c`; prior production baseline `512cfa5a` superseded). Pre-flight evidence: `PART_B_PREFLIGHT.md`.
 
 This is the controlling launch document. It defines what "launch" means for SecureLogic AI, what is already shipped, what blocks production go-live, and the sprint sequence that gets us there safely. It is grounded only in verified repository and governing-doc state — not aspiration.
 
@@ -80,7 +80,7 @@ These are **verified** as present on `develop`/staging (and, where noted, alread
 
 | Sprint | Theme | Scope | Status |
 |---|---|---|---|
-| **Sprint 1** | **Production go-live** | ONLY the launch-blocking promotion gates. Nothing else. | **Active — NO-GO** |
+| **Sprint 1** | **Production go-live** | ONLY the launch-blocking promotion gates. Nothing else. | **COMPLETE — LIVE 2026-07-21** (PR #688, merge `dd79330c`) |
 | **Sprint 2** | First post-launch hardening | Activate inert paths (export-delivery email), reconcile in-app price labels, confirm vendor-assurance prod enablement, brand-asset swap. | Queued |
 | **Sprint 3** | Enterprise depth | A04-G1 `app_request` RLS flip, GDPR deletion reaper, Priority-4 signal-ingestion completion (4B/4C/4D), operational hardening. | Queued |
 
