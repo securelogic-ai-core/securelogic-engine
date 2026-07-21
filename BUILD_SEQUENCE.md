@@ -95,7 +95,7 @@ These categories are treated as materially established:
 The commercial model that all future product and packaging work must respect is:
 - Intelligence Brief — Free
 - Brief Pro
-- Team Professional
+- Brief Team
 - Platform Professional
 - Enterprise
 
@@ -662,7 +662,7 @@ Required outcomes:
 - free vs paid brief differentiation is clear across:
   - Intelligence Brief — Free
   - Brief Pro
-  - Team Professional
+  - Brief Team
 - platform relationship remains explicit
 
 Done when:

@@ -1,6 +1,6 @@
 # Sprint 1 — Production Go-Live (Launch-Blocking Only)
 
-> **Status:** ACTIVE — **NO-GO** (promotion still gated). **RE-BASELINED 2026-07-21** (operator rulings D-A–D-E below): the promotion object is now the **composite `develop` head** (266 commits / 65 staged migrations ahead of `main`, including Briefing B1/B2 + read-surface D1 as one validated architectural unit), promoted as a **single true merge**. The 2026-07-02 promote (`main` = `512cfa5a`, PR #449) is **archived historical evidence, not the governing baseline**, and the prior main freeze is **superseded by this baseline** — this document is the single promotion narrative. Part B operator gates 1–6 outstanding (empty evidence log). **All 8 CI lanes green on `develop`; staging deploy-verified at `cb934b05`. Production has NOT launched; all staged surfaces are prod-dark and prod enablement remains pending operator approval.**
+> **Status:** ACTIVE — **NO-GO** (promotion still gated). **RE-BASELINED 2026-07-21** (operator rulings D-A–D-E below): the promotion object is now the **composite `develop` head** (266 commits / 65 staged migrations ahead of `main`, including Briefing B1/B2 + read-surface D1 as one validated architectural unit), promoted as a **single true merge**. The 2026-07-02 promote (`main` = `512cfa5a`, PR #449) is **archived historical evidence, not the governing baseline**, and the prior main freeze is **superseded by this baseline** — this document is the single promotion narrative. Part B operator gates 1–6 outstanding (§0.4 sign-off rows pending; Gate 1 carry-forward + Gate 3 engineering-half evidence indexed from `docs/validation/billing-portal/`). **All 8 CI lanes green on `develop`; staging deploy-verified at `cb934b05`. Production has NOT launched; all staged surfaces are prod-dark and prod enablement remains pending operator approval.**
 > **Goal:** Get the staged `develop` release ready for, and then promote it to, production `main`.
 > **Scope discipline:** This sprint contains **ONLY** launch-blocking work. No Sprint 2 / Sprint 3 items.
 > **Pre-flight evidence:** `PART_B_PREFLIGHT.md` (migration + flag audits, 2026-07-21).
@@ -125,6 +125,42 @@ entry; decision records under `docs/specs/`). Sprint-relevant facts:
 
 **Production has not launched.** Promotion and all production enablement remain pending
 operator approval.
+
+### Sprint 1 governance model (ratified 2026-07-21)
+
+The 2026-07-21 reconciliation (`2638096d`) is **operator-ratified exactly as proposed**.
+The following principles are part of the Sprint 1 governance model:
+
+1. **Evidence has a single authoritative source.** Sprint documents **reference**
+   evidence (by path) — they never duplicate it.
+2. **Every operator gate records the promotion-candidate SHA** it was evidenced against
+   (§Promotion-candidate SHA + quiescence rule below).
+3. **Carry-forward evidence reduces duplicate work but never self-certifies a gate.**
+   A carried PASS still requires the operator's re-confirmation sign-off in §0.4.
+4. **Every operator gate requires explicit operator sign-off.** No gate closes on
+   automated-session evidence alone.
+5. **Milestone sequencing is fixed: M1 → M2 → M3.**
+6. **`OPERATOR_RUNBOOK.md` §0.4 is the canonical evidence log** — the index of record
+   for every gate.
+
+**Change-classification rule (standing, operator-directed).** Any proposed change to
+`BUILD_SEQUENCE.md`, this document, or `OPERATOR_RUNBOOK.md` after implementation has
+started must be explicitly classified as one of:
+
+1. **Documentation synchronization** — reflects completed work only;
+2. **Process improvement** — changes how work is validated or evidenced;
+3. **Scope change** — changes what will be built;
+4. **Governance change** — changes approval, promotion, or release criteria.
+
+Classes **3 and 4 require explicit operator approval BEFORE the documents are
+modified**. Classes 1 and 2 may be applied and presented for ratification.
+
+**Documentation baseline: FROZEN (2026-07-21).** With this ratification the Sprint 1
+documentation set (`SPRINT_1.md`, `OPERATOR_RUNBOOK.md`, `PART_B_PREFLIGHT.md`,
+`LAUNCH_MASTER_PLAN.md`, `KNOWN_ISSUES.md`, `RELEASE_CHECKLIST.md`, and the Sprint-1
+cross-references in `BUILD_SEQUENCE.md`) is the frozen baseline for Part B execution.
+Further changes to this set must carry a classification per the rule above; gate
+evidence rows in §0.4 are the expected (and exempt) working surface.
 
 ### Promotion-candidate SHA + quiescence rule (added 2026-07-21 — replaces the superseded freeze as the head-pinning control)
 

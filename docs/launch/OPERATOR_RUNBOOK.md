@@ -166,7 +166,7 @@ Checkout sends only `{ price: priceId, quantity: 1 }` (`billing.ts:165`) — the
 ### Step-by-step operator instructions
 For each plan, on **staging**, start checkout and read the Stripe-hosted page total (use a Stripe test card `4242 4242 4242 4242`):
 1. **Brief Pro** — `…/signup?plan=professional` → verify email → auto-redirect to checkout (or **Briefs → upgrade**). Expect **$49.00 / month**.
-2. **Team Professional** — `plan=teams`. Expect **$199.00 / month**.
+2. **Brief Team** — `plan=teams`. Expect **$199.00 / month**.
 3. **Platform Annual** — `plan=platform_annual`. Expect **$7,200.00 / year** (Stripe may show "$600.00/month billed annually" depending on the Price's interval config — confirm the **annual total is $7,200**).
 4. **Platform monthly** — `plan=platform` → expect **$800.00 / month** (self-serve, per §0.3 D-1).
 5. Cross-check each Stripe **Price** object's `unit_amount` × interval in the Stripe dashboard equals the above.
