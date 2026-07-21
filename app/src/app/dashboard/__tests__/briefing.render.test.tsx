@@ -369,6 +369,13 @@ describe("flag ON + B2 — legacy-preference projection (the migration path)", (
     const banner = container.querySelector("[data-briefing-migration-disclosure]");
     expect(banner).not.toBeNull();
     expect(banner?.textContent).toContain("Risk Heatmap");
+    // D1 parity copy: the banner may now truthfully claim every analytical
+    // tile lives on the Posture dashboard, and must link there.
+    expect(banner?.textContent).toContain("Every analytical tile now lives");
+    const postureLink = Array.from(banner?.querySelectorAll("a") ?? []).find(
+      (a) => a.getAttribute("href") === "/posture"
+    );
+    expect(postureLink).not.toBeUndefined();
   });
 
   it("system_default preferences mean NO projection and NO banner", async () => {

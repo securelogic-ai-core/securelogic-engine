@@ -237,6 +237,18 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
     ]);
   });
 
+  it("surfaces the Posture dashboard for platform users (D1 — no longer nav-orphaned)", () => {
+    // The canonical org-performance destination must be reachable from the nav
+    // once the workspace IA is on — otherwise relabeling /dashboard to
+    // "Briefing" leaves no Dashboards destination in the header at all.
+    expect(allHrefs(ws(true, false))).toContain("/posture");
+    // Platform-gated like the other org-analytics surfaces.
+    expect(allHrefs(ws(false, false))).not.toContain("/posture");
+    // The legacy menu (the live flag-off nav and the knowledge-index source)
+    // deliberately does NOT carry it.
+    expect(allHrefs(filterNav(NAV_ITEMS, true, true, true))).not.toContain("/posture");
+  });
+
   it("keeps Executive and Context dark until their own flags flip", () => {
     expect(allHrefs(ws(true, true))).not.toContain("/executive");
     expect(allHrefs(ws(true, true))).not.toContain("/enterprise-context");

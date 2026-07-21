@@ -228,7 +228,9 @@ export function TheBriefing(props: TheBriefingProps) {
 
       {/* Legacy-preference projection disclosure (B2 migration, spec ruling C2):
           shown until the user saves a layout or the legacy rows disappear.
-          Honest copy — names what was NOT carried over; no parity promises. */}
+          Copy updated under D1: /posture now hosts the full analytics
+          composition, so the banner may truthfully say every analytical tile
+          LIVES there (parity achieved — no longer an aspiration). */}
       {props.layoutSource === "legacy_projection" && (
         <div
           className="rounded-xl border px-5 py-4 mb-8"
@@ -243,16 +245,16 @@ export function TheBriefing(props: TheBriefingProps) {
             {props.droppedTileLabels && props.droppedTileLabels.length > 0 ? (
               <>
                 {" "}Analytical tiles without one were not:{" "}
-                {props.droppedTileLabels.join(", ")}. Organization-wide analysis
-                continues on the{" "}
+                {props.droppedTileLabels.join(", ")}. Every analytical tile now
+                lives on the{" "}
                 <Link href="/posture" className="font-medium" style={{ color: "#00c4b4" }}>
-                  Posture
-                </Link>{" "}
-                and{" "}
+                  Posture dashboard
+                </Link>
+                ; framework readiness detail is on{" "}
                 <Link href="/frameworks" className="font-medium" style={{ color: "#00c4b4" }}>
                   Frameworks
-                </Link>{" "}
-                dashboards.
+                </Link>
+                .
               </>
             ) : null}
             {" "}Saving a layout in Customize makes this arrangement yours.

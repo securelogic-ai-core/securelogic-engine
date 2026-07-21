@@ -1,8 +1,18 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getMe, getDashboardSummary } from "@/lib/api";
+import {
+  getMe,
+  getDashboardSummary,
+  getPostureHistory,
+  getFrameworks,
+  getFrameworkReadiness,
+  type Framework,
+  type FrameworkReadiness,
+} from "@/lib/api";
 import { formatDateOnlyUTC } from "@/lib/dates";
+import { briefingHomeLabel } from "@/lib/navigation";
+import { PostureAnalyticsGrid } from "./PostureAnalyticsGrid";
 
 const SEVERITY_STYLES: Record<string, { badge: string; bar: string; label: string; color: string }> = {
   Critical: { badge: "bg-red-900/40 text-red-300",      bar: "bg-red-500",    label: "Critical", color: "#fca5a5" },
@@ -33,13 +43,34 @@ export default async function PosturePage() {
   const isPlatformUser = ["premium", "platform", "team"].includes(entitlementLevel);
   if (!isPlatformUser) redirect("/dashboard");
 
-  const summary = await getDashboardSummary(token);
+  // Read-surface architecture D1: /posture is the canonical Posture Dashboard.
+  // It now carries the full analytics composition, so it needs the same inputs
+  // the legacy dashboard grid used — the 90-day trend history and the
+  // framework readiness pairs — alongside the summary. Existing endpoints
+  // only; no new calculations.
+  const [summary, postureHistory, frameworksData] = await Promise.all([
+    getDashboardSummary(token),
+    getPostureHistory(token, 90),
+    getFrameworks(token),
+  ]);
+  const frameworks = frameworksData?.frameworks ?? [];
+  const frameworkReadinessResults = frameworks.length > 0
+    ? await Promise.all(frameworks.map((f) => getFrameworkReadiness(token, f.id)))
+    : [];
+  const frameworkPairs: Array<{ framework: Framework; readiness: FrameworkReadiness | null }> =
+    frameworks.map((f, i) => ({ framework: f, readiness: frameworkReadinessResults[i] ?? null }));
+
+  // The home route renders The Briefing only under the briefing flag; the
+  // back-link must name the experience that is actually there (helper rule).
+  const homeLabel = briefingHomeLabel(
+    process.env.SECURELOGIC_DASHBOARD_BRIEFING_ENABLED === "true",
+  );
 
   if (!summary) {
     return (
       <div className="max-w-5xl mx-auto px-6 py-12">
         <Link href="/dashboard" className="text-xs font-medium mb-6 inline-block transition-colors hover:opacity-80" style={{ color: "#64748b" }}>
-          ← Dashboard
+          ← {homeLabel}
         </Link>
         <div className="rounded-xl border p-10 text-center" style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}>
           <p className="text-sm" style={{ color: "#94a3b8" }}>Unable to load posture data.</p>
@@ -60,7 +91,7 @@ export default async function PosturePage() {
         className="text-xs font-medium mb-6 inline-block transition-colors hover:opacity-80"
         style={{ color: "#64748b" }}
       >
-        ← Dashboard
+        ← {homeLabel}
       </Link>
 
       {/* Header */}
@@ -74,6 +105,19 @@ export default async function PosturePage() {
           <p className="text-sm" style={{ color: "#94a3b8" }}>
             Overall security health across all domains · higher = better
           </p>
+          {/* Executive Report export lives HERE (D1): the PDF is an
+              org-performance artifact, so its entry point is the Posture
+              Dashboard, not the opening experience. */}
+          <a
+            href="/api/export/executive-report"
+            download="executive-report.pdf"
+            target="_blank"
+            rel="noreferrer"
+            className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold"
+            style={{ border: "1px solid rgba(0,196,180,0.4)", color: "#00c4b4", textDecoration: "none" }}
+          >
+            &#8595; Executive Report
+          </a>
         </div>
 
         {hasSnapshot && (
@@ -268,6 +312,15 @@ export default async function PosturePage() {
           </div>
         </div>
       )}
+
+      {/* Canonical analytics composition (D1) — fixed order, org scope, no
+          per-user customize. Each tile carries its own empty state, so the
+          grid renders whenever the summary loaded. */}
+      <PostureAnalyticsGrid
+        summary={summary}
+        frameworkPairs={frameworkPairs}
+        postureSnapshots={postureHistory?.snapshots ?? []}
+      />
     </div>
   );
 }

@@ -148,6 +148,12 @@ export const NAV_ITEMS: NavItem[] = [
 // scope — Actions and both Vendor pages remain distinct items.
 export const WORKSPACE_NAV_ITEMS: NavItem[] = [
   { type: "link", label: "Dashboard", href: "/dashboard" },
+  // Posture Dashboard — the canonical org-performance destination (read-surface
+  // architecture D1). Previously nav-orphaned in BOTH IAs; surfaced here so the
+  // Dashboards concept survives the /dashboard → Briefing relabel. Legacy
+  // NAV_ITEMS (the live flag-off menu + knowledge-index source) is deliberately
+  // untouched.
+  { type: "link", label: "Posture", href: "/posture", platform: true },
   { type: "link", label: "Executive", href: "/executive", platform: true, featureFlag: "risk_intelligence" },
   { type: "group", label: "Intelligence",
     items: [

@@ -10,13 +10,24 @@
  * These tests assert the number and its destination agree. They fail against the old page.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { renderPage, expectRedirect, signedIn, signedOut, sp } from "@/test/harness";
-import { aDashboardSummary, aMe } from "@/test/fixtures";
+import {
+  aDashboardSummary,
+  aFramework,
+  aFrameworkReadiness,
+  aMe,
+  aPostureSnapshot,
+} from "@/test/fixtures";
 
 const api = vi.hoisted(() => ({
   getMe: vi.fn(),
   getDashboardSummary: vi.fn(),
+  // D1 — the canonical analytics composition needs the trend history and the
+  // framework readiness pairs (same inputs the legacy dashboard grid used).
+  getPostureHistory: vi.fn(),
+  getFrameworks: vi.fn(),
+  getFrameworkReadiness: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -38,9 +49,13 @@ function linkTo(container: HTMLElement, href: string): HTMLAnchorElement | undef
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "false");
   signedIn();
   api.getMe.mockResolvedValue(aMe({ entitlementLevel: "platform" }));
   api.getDashboardSummary.mockResolvedValue(aDashboardSummary());
+  api.getPostureHistory.mockResolvedValue({ snapshots: [aPostureSnapshot()] });
+  api.getFrameworks.mockResolvedValue({ frameworks: [aFramework()] });
+  api.getFrameworkReadiness.mockResolvedValue(aFrameworkReadiness());
 });
 
 describe("/posture — every findings number reconciles with the list it links to", () => {
@@ -137,6 +152,60 @@ describe("/posture — health-style display (posture display ruling 2026-07-15)"
     const { container } = await renderPage(PosturePage, { searchParams: sp({}) });
     expect(container.textContent).toContain("as of Jun 1, 2026");
     expect(container.textContent).not.toContain("May 31");
+  });
+});
+
+describe("/posture — the canonical analytics composition (read-surface architecture D1)", () => {
+  it("renders every re-homed analytical tile — the GATE B guarantee", async () => {
+    const { container } = await renderPage(PosturePage, { searchParams: sp({}) });
+
+    const grid = container.querySelector("[data-posture-analytics]");
+    expect(grid).not.toBeNull();
+    const g = within(grid as HTMLElement);
+
+    // One heading per re-homed tile. The three legacy tiles /posture reproduces
+    // natively (posture_score, findings_donut, domain_posture) are asserted via
+    // the page's own header/severity/domain sections below — capability parity,
+    // not pixel duplication.
+    for (const heading of [
+      "Open Risks",
+      "Risk Heatmap",
+      "Posture Score Trend",
+      "Vendor Risk",
+      "Largest Readiness Gaps",
+      "Compliance Coverage",
+      "Open Items Aging",
+      "Inventory",
+    ]) {
+      expect(g.getByText(heading), `missing tile: ${heading}`).toBeInTheDocument();
+    }
+    // "Actions" appears both as the Actions-ring heading and as an aging-tile
+    // label — presence, not uniqueness, is the contract here.
+    expect(g.getAllByText("Actions").length).toBeGreaterThan(0);
+
+    expect(screen.getByText("Overall Posture Score")).toBeInTheDocument();
+    expect(screen.getByText("Active Findings by Severity")).toBeInTheDocument();
+    expect(screen.getByText("Domain Breakdown")).toBeInTheDocument();
+  });
+
+  it("hosts the Executive Report export entry point (moved from the legacy grid)", async () => {
+    const { container } = await renderPage(PosturePage, { searchParams: sp({}) });
+    const link = Array.from(container.querySelectorAll("a")).find((a) =>
+      /Executive Report/.test(a.textContent ?? "")
+    );
+    expect(link?.getAttribute("href")).toBe("/api/export/executive-report");
+  });
+
+  it("names the home 'Dashboard' while the briefing flag is off", async () => {
+    const { container } = await renderPage(PosturePage, { searchParams: sp({}) });
+    expect(container.textContent).toContain("← Dashboard");
+    expect(container.textContent).not.toContain("← Briefing");
+  });
+
+  it("names the home 'Briefing' when the briefing flag is on (back-link honesty)", async () => {
+    vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
+    const { container } = await renderPage(PosturePage, { searchParams: sp({}) });
+    expect(container.textContent).toContain("← Briefing");
   });
 });
 
