@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFindingsSummary, getFrameworks, getFrameworkReadiness, planDisplayName, type Finding, type Framework, type FrameworkReadiness } from "@/lib/api";
+import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFindingsSummary, getFrameworks, getFrameworkReadiness, getActionsSummary, planDisplayName, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { IntelligenceBriefDashboardCard } from "@/components/IntelligenceBriefDashboardCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
@@ -12,6 +12,10 @@ import { LastLoginBanner } from "./LastLoginBanner";
 import { IndustryTemplatesBanner } from "./IndustryTemplatesBanner";
 import { CompactEmptyState } from "./DashboardCharts";
 import { dashboardPanel, pendingReviewTile } from "./dashboardState";
+import { RecentFindings } from "./RecentFindings";
+import { TheBriefing } from "./briefing/TheBriefing";
+import { composeBriefing } from "@/lib/briefing/composeBriefing";
+import { resolveEligibleModules } from "@/lib/briefing/resolveBriefing";
 
 export const revalidate = 0;
 
@@ -51,6 +55,16 @@ export default async function DashboardPage({
 
   const entitlementLevelEarly = me?.entitlementLevel ?? "starter";
   const isPlatformEarly = ["premium", "platform", "team"].includes(entitlementLevelEarly);
+
+  // Briefing Initiative B1 — dark flag. OFF (the default everywhere but staging)
+  // renders the legacy dashboard byte-for-byte; ON swaps the platform-tier
+  // composition for The Briefing (personal work first, explicit scope chips).
+  const briefingEnabled = process.env.SECURELOGIC_DASHBOARD_BRIEFING_ENABLED === "true";
+  // Briefing-only fetch — REUSES the existing GET /api/actions/summary (the
+  // Metric Contract my_open_count / my_overdue_count fields) for the My Work
+  // module. Never fetched on the legacy path, so flag-off behavior is unchanged.
+  const actionsSummary =
+    briefingEnabled && isPlatformEarly ? await getActionsSummary(token) : null;
   const [recentFindingsData, frameworksData] = isPlatformEarly
     ? await Promise.all([
         getFindings(token, { active: true, limit: 5 }),
@@ -149,6 +163,40 @@ export default async function DashboardPage({
         <OnboardingBanner />
       )}
 
+      {/* Briefing Initiative B1: flag ON + platform tier → The Briefing replaces
+          the composition below. Flag OFF (or a non-platform tier, which keeps the
+          brief-centric page and the sample-dashboard upsell) → the legacy page,
+          byte-for-byte. The entitlement branch is load-bearing: dashboardSummary
+          is fetched for every tier, so only THIS branch keeps platform UI from
+          leaking to Brief-only tiers. */}
+      {briefingEnabled && isPlatformUser ? (
+        <TheBriefing
+          displayName={displayName}
+          orgName={orgName}
+          planName={planName}
+          modules={resolveEligibleModules({
+            isPlatformUser,
+            // JWT sessions carry a user identity; legacy API-key sessions do not
+            // — their personal modules are omitted (never zeroed).
+            hasUserIdentity: Boolean(session.jwtToken && session.userId),
+            flags: {
+              independent_review:
+                process.env.SECURELOGIC_INDEPENDENT_REVIEW_ENABLED === "true",
+            },
+          })}
+          vm={composeBriefing({
+            summary: dashboardSummary,
+            findingsSummary: findingsSummaryData?.summary ?? null,
+            actionsSummary,
+          })}
+          latestBrief={latestBrief}
+          latestIssue={latestIssue}
+          issuesCount={issuesData?.count ?? 0}
+          recentFindings={recentFindings}
+          summaryActiveFindings={dashboardSummary?.findings?.open ?? 0}
+        />
+      ) : (
+        <>
       {/* Welcome */}
       <div className="mb-10">
         <h1 className="text-2xl font-bold text-slate-100 mb-1">
@@ -363,6 +411,8 @@ export default async function DashboardPage({
           </div>
         );
       })()}
+        </>
+      )}
     </div>
   );
 }
@@ -524,36 +574,8 @@ function SamplePostureDashboard() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Recent Findings — compact list for platform dashboard
+// Recent Findings lives in ./RecentFindings.tsx (shared with The Briefing).
 // ─────────────────────────────────────────────────────────────
-
-const SEVERITY_BADGE_STYLES: Record<string, React.CSSProperties> = {
-  Critical: { background: "rgba(239,68,68,0.15)",  color: "#fca5a5" },
-  High:     { background: "rgba(249,115,22,0.15)", color: "#fdba74" },
-  Moderate: { background: "rgba(245,158,11,0.15)", color: "#fcd34d" },
-  Low:      { background: "rgba(34,197,94,0.15)",  color: "#86efac" },
-};
-
-const SOURCE_COMPACT_LABELS: Record<string, string> = {
-  vendor_review:        "Vendor",
-  control_test:         "Control",
-  obligation_review:    "Obligation",
-  ai_review:            "AI Review",
-  ai_governance_review: "AI Gov",
-  manual:               "Manual",
-  assessment:           "Assessment",
-  signal:               "Signal",
-  risk:                 "Risk",
-  // Walkthrough item 6: complete coverage of the findings_source_type_check enum
-  // (migration 20260823) — these values previously fell through the raw
-  // `?? f.source_type` fallback below and rendered as internal enums.
-  cyber_signal:             "Signal",
-  intelligence_event:       "Intelligence",
-  dependency_review:        "Dependency",
-  vendor_cycle_review:      "Vendor",
-  applicability_assessment: "Applicability",
-  asset_assessment:         "Asset",
-};
 
 function FrameworkReadinessWidget({
   pairs,
@@ -639,82 +661,3 @@ function FrameworkReadinessWidget({
   );
 }
 
-function RecentFindings({ findings, summaryActiveCount }: { findings: Finding[]; summaryActiveCount: number }) {
-  const noFindings = findings.length === 0;
-  const summaryConfirmsZero = summaryActiveCount === 0;
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wide">
-          Recent Findings
-        </h2>
-        <Link
-          href="/findings?queue=all"
-          className="text-xs font-medium transition-colors"
-          style={{ color: "#00c4b4" }}
-        >
-          View all findings →
-        </Link>
-      </div>
-
-      {noFindings ? (
-        summaryConfirmsZero ? (
-          <div
-            className="rounded-xl border p-6 text-center"
-            style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(34,197,94,0.2)" }}
-          >
-            <p className="text-sm" style={{ color: "#86efac" }}>
-              No active findings. Your organization is in good shape.
-            </p>
-          </div>
-        ) : (
-          <div
-            className="rounded-xl border p-6 text-center"
-            style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}
-          >
-            <p className="text-sm mb-2" style={{ color: "#94a3b8" }}>
-              Could not load recent findings.
-            </p>
-            <Link href="/findings?queue=all" className="text-xs font-medium" style={{ color: "#00c4b4" }}>
-              View all findings →
-            </Link>
-          </div>
-        )
-      ) : (
-        <div
-          className="rounded-xl border divide-y"
-          style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b", "--tw-divide-opacity": "1" } as React.CSSProperties}
-        >
-          {findings.map((f) => {
-            const sevStyle = SEVERITY_BADGE_STYLES[f.severity ?? ""] ?? { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
-            const sourceLabel = SOURCE_COMPACT_LABELS[f.source_type] ?? f.source_type;
-            return (
-              <div
-                key={f.id}
-                className="flex items-center gap-3 px-4 py-3"
-                style={{ borderColor: "#1e293b" }}
-              >
-                <span
-                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold shrink-0"
-                  style={sevStyle}
-                >
-                  {f.severity}
-                </span>
-                <span className="text-sm font-medium flex-1 truncate" style={{ color: "#f1f5f9" }}>
-                  {f.title}
-                </span>
-                <span
-                  className="text-xs shrink-0 px-2 py-0.5 rounded"
-                  style={{ background: "rgba(148,163,184,0.08)", color: "#64748b" }}
-                >
-                  {f.domain ?? sourceLabel}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}

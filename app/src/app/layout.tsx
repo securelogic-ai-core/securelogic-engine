@@ -55,6 +55,10 @@ export default async function RootLayout({
     // Flips the header to the enterprise-workflow information architecture and the
     // "Review Suggested Links" queue reskin. Flag off = legacy nav byte-for-byte.
     risk_workspace: process.env.SECURELOGIC_RISK_WORKSPACE_ENABLED === "true",
+    // The Briefing (Briefing Initiative B1) — DARK (default off). Relabels the
+    // workspace nav's home entry "Briefing"; only takes effect together with
+    // risk_workspace (the legacy nav is never touched).
+    briefing: process.env.SECURELOGIC_DASHBOARD_BRIEFING_ENABLED === "true",
   };
 
   return (

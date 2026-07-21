@@ -35,7 +35,15 @@ export type NavFeatureFlag =
   // When on, `getNavItems` returns WORKSPACE_NAV_ITEMS (the enterprise-workflow
   // information architecture: Intelligence / Risk Operations / Assets / Compliance)
   // instead of the legacy NAV_ITEMS. Flag off is byte-for-byte the legacy header.
-  | "risk_workspace";
+  | "risk_workspace"
+  // The Briefing (Briefing Initiative B1) — DARK (default off). When on TOGETHER
+  // with risk_workspace, the workspace nav's "/dashboard" entry is relabeled
+  // "Briefing". It NEVER touches the legacy NAV_ITEMS (the live flag-off menu and
+  // the source of the generated Application Knowledge Index), so flag-off nav and
+  // the knowledge index stay byte-identical. Vocabulary: the "Briefing" label was
+  // operator-ratified (2026-07-21) — deliberately distinct from the Intelligence
+  // group's "Briefs" (the Intelligence Brief wedge product).
+  | "briefing";
 export type NavFlags = Partial<Record<NavFeatureFlag, boolean>>;
 
 export type NavItem =
@@ -194,7 +202,32 @@ export const WORKSPACE_NAV_ITEMS: NavItem[] = [
  * (the live, flag-off menu), so it is intentionally unaffected while dark.
  */
 export function getNavItems(flags?: NavFlags): NavItem[] {
-  return flags?.risk_workspace ? WORKSPACE_NAV_ITEMS : NAV_ITEMS;
+  if (!flags?.risk_workspace) return NAV_ITEMS;
+  if (!flags?.briefing) return WORKSPACE_NAV_ITEMS;
+  // Briefing Initiative B1: relabel the home entry INSIDE the flag-gated
+  // workspace nav only (cloned — the shared array is never mutated). The URL
+  // stays /dashboard: every redirect gate, email link, Stripe return URL, and
+  // bookmark keeps working.
+  return WORKSPACE_NAV_ITEMS.map((item) =>
+    item.type === "link" && item.href === "/dashboard"
+      ? { ...item, label: BRIEFING_NAV_LABEL }
+      : item,
+  );
+}
+
+// ─── The Briefing (home destination) names ────────────────────────────────────
+
+/** What /dashboard is CALLED when The Briefing experience is on. */
+export const BRIEFING_NAV_LABEL = "Briefing";
+
+/**
+ * What `/dashboard` is CALLED right now. The route renders The Briefing only
+ * under the briefing flag; with the flag off it is still the legacy Dashboard,
+ * so a back-link must not promise an experience that isn't rendered. Pass the
+ * resolved flag (server components read the env; clients take a prop).
+ */
+export function briefingHomeLabel(briefingEnabled: boolean): string {
+  return briefingEnabled ? BRIEFING_NAV_LABEL : "Dashboard";
 }
 
 // ─── Risk Operations destination names ────────────────────────────────────────

@@ -291,6 +291,34 @@ Billing note:
 > active `Priority 4 — Signal Ingestion Hardening` package below; it did not change the
 > active package.
 
+> **The Briefing Initiative — operator-directed program registered 2026-07-21; phase B1
+> COMPLETE (shipped dark to `develop`, additive to all records above, which are preserved
+> unchanged).** A phased program (B1 foundation → B2 role-aware defaults + personalization →
+> B3 profiles → B4 organizational Briefings → B5 intelligent Briefing) transforming the
+> generic `/dashboard` into **The Briefing** — a personalized, scope-explicit opening
+> experience — while keeping Operational Views and Dashboards distinct first-class surfaces
+> (the read-surface taxonomy is now an explicit standard: `FINAL_PRODUCT_STANDARD.md`
+> §Product standards 5). Authoritative decision record: `docs/specs/briefing-initiative-b1-spec.md`.
+> **B1 (VERIFIED, operator-approved):** canonical module registry + eligibility resolver +
+> composer (`app/src/lib/briefing/`), The Briefing composition on `/dashboard`
+> (`app/src/app/dashboard/briefing/`), workspace-nav home label **"Briefing"**
+> (operator-ratified; legacy `NAV_ITEMS` + Application Knowledge Index byte-identical) —
+> **app-only, zero engine surface, zero schema, no migration**; module data reuses the
+> existing Metric Contract endpoints (dashboard/findings/actions summaries, incl. the
+> previously-unused session-scoped `my_*` counts). B1 deliberately IGNORES the legacy
+> `dashboard_preferences` rows (flag-off keeps them untouched); the ratified
+> `legacyTileToModule()` projection is B2's migration key. **Dark behind
+> `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED`** (app prod `"false"`, app staging `"true"` in
+> `render.yaml`; flag-off byte-identical; rollback = flag off) — **GATE B in effect, no
+> production enablement.** Validation: full app suite green (83 files / 1105 tests incl. the
+> mandatory entitlement-branch render test), engine knowledge-index + workflow drift tests
+> green, `next build` green; no engine SQL changed → no isolation-lane additions.
+> **Sequencing note:** operator-directed program distinct from the active
+> `Priority 4 — Signal Ingestion Hardening` package below; it did not change the active
+> package. **B2 is NOT authorized** — starting it requires separate operator approval, and
+> its hard precondition is an engine-side module manifest GENERATED from the registry
+> (drift-tested) before any write path accepts module ids.
+
 ## Active package
 `Priority 4 — Signal Ingestion Hardening` — **status: ACTIVE — IMPLEMENTATION AUTHORIZED & UNDERWAY (2026-06-26).**
 

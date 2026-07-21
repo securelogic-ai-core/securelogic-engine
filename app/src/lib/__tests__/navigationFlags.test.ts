@@ -7,6 +7,7 @@ import {
   isNavItemActive,
   findingsHomeLabel,
   findingExplorerLabel,
+  briefingHomeLabel,
   type NavItem,
 } from "../navigation";
 
@@ -135,6 +136,40 @@ describe("getNavItems — legacy vs risk-workspace model", () => {
 
   it("returns the workspace model only when risk_workspace is true", () => {
     expect(getNavItems({ risk_workspace: true })).toBe(WORKSPACE_NAV_ITEMS);
+  });
+
+  // ── The Briefing home label (Briefing Initiative B1) — supported flag matrix ──
+  // briefing relabels the workspace nav's home entry ONLY; the legacy NAV_ITEMS
+  // (live flag-off menu + knowledge-index source) must never change under any
+  // flag combination.
+  it("briefing + risk_workspace relabels only the /dashboard entry to 'Briefing'", () => {
+    const items = getNavItems({ risk_workspace: true, briefing: true });
+    const home = items.find((i) => i.type === "link" && i.href === "/dashboard");
+    expect(home).toMatchObject({ label: "Briefing", href: "/dashboard" });
+    // Everything else is the workspace model untouched (same references).
+    expect(items.filter((i) => !(i.type === "link" && i.href === "/dashboard")))
+      .toEqual(WORKSPACE_NAV_ITEMS.filter((i) => !(i.type === "link" && i.href === "/dashboard")));
+    // The shared array itself was cloned, never mutated.
+    const wsHome = WORKSPACE_NAV_ITEMS.find((i) => i.type === "link" && i.href === "/dashboard");
+    expect(wsHome).toMatchObject({ label: "Dashboard" });
+  });
+
+  it("briefing WITHOUT risk_workspace leaves the legacy NAV_ITEMS byte-identical", () => {
+    // Legacy nav is the knowledge-index source — it must be the same reference,
+    // still labeled "Dashboard", no matter what the briefing flag says.
+    expect(getNavItems({ briefing: true })).toBe(NAV_ITEMS);
+    expect(getNavItems({ risk_workspace: false, briefing: true })).toBe(NAV_ITEMS);
+    const home = NAV_ITEMS.find((i) => i.type === "link" && i.href === "/dashboard");
+    expect(home).toMatchObject({ label: "Dashboard" });
+  });
+
+  it("risk_workspace WITHOUT briefing keeps the workspace home labeled 'Dashboard'", () => {
+    expect(getNavItems({ risk_workspace: true, briefing: false })).toBe(WORKSPACE_NAV_ITEMS);
+  });
+
+  it("briefingHomeLabel follows the flag (back-links must not promise an unrendered experience)", () => {
+    expect(briefingHomeLabel(true)).toBe("Briefing");
+    expect(briefingHomeLabel(false)).toBe("Dashboard");
   });
 
   it("flag-off nav is byte-for-byte the legacy nav (no regression, GATE B)", () => {

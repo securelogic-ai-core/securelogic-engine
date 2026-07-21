@@ -1145,6 +1145,18 @@ services:
       - key: SECURELOGIC_FINDINGS_QUEUE_CONTROLS_ENABLED
         value: "false"
 
+      # The Briefing (Briefing Initiative B1) — DARK (default off). Replaces the
+      # /dashboard composition for platform tiers with the personalized Briefing
+      # (My Work first, explicit "You" vs "Organization" scope chips) and relabels
+      # the workspace nav's home entry. App-only — no engine route branches on it;
+      # all module data comes from existing engine endpoints. RUNTIME (not
+      # NEXT_PUBLIC): a restart applies it. Flag off = legacy dashboard
+      # byte-for-byte. Staging app is defined below; prod flip is GATE B.
+      # NAMING: deliberately DASHBOARD_BRIEFING — the SECURELOGIC_BRIEF* namespace
+      # belongs to the Intelligence Brief product flags; do not shorten.
+      - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED
+        value: "false"
+
       # Secret used to encrypt the iron-session cookie.
       # Must be at least 32 characters. Generate with: openssl rand -hex 32
       - key: SESSION_SECRET
@@ -1279,6 +1291,13 @@ services:
       # (the Operations Center home is unchanged). STAGING ONLY; prod stays "false"
       # (GATE B). RUNTIME env — a restart applies, no rebuild.
       - key: SECURELOGIC_FINDINGS_QUEUE_CONTROLS_ENABLED
+        value: "true"
+      # ENABLED on STAGING: The Briefing (Briefing Initiative B1) — the /dashboard
+      # personalized composition + the workspace nav "Briefing" home label (label
+      # only renders because RISK_WORKSPACE is also true here). App-only, reads
+      # existing engine endpoints. STAGING ONLY; prod stays "false" (GATE B).
+      # RUNTIME env — a restart applies, no rebuild.
+      - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED
         value: "true"
 
       # STAGING session secret — a distinct 32+ char value, NEVER the prod secret.
