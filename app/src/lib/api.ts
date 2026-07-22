@@ -2500,7 +2500,7 @@ export async function getFindingSavedViews(apiKey: string): Promise<FindingSaved
 // while SECURELOGIC_DECISION_WORKSPACE_ENABLED is off → null (search UI not shown).
 export type EntityFindingsResponse = {
   query: string;
-  entities: Array<{ type: "vendor" | "ai_system" | "control" | "obligation"; id: string; name: string }>;
+  entities: Array<{ type: MatchTargetType; id: string; name: string }>;
   count: number;
   findings: Finding[];
 };

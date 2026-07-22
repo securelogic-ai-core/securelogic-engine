@@ -18,11 +18,13 @@
  * findingContextResolver. The query string is bound as a parameter (ILIKE).
  */
 
+import { type TargetType } from "./signalMatchSuggestionValidation.js";
+
 export interface Queryable {
   query(text: string, params?: unknown[]): Promise<{ rows: any[]; rowCount: number | null }>;
 }
 
-export type EntityMatchType = "vendor" | "ai_system" | "control" | "obligation";
+export type EntityMatchType = TargetType;
 
 export interface MatchedEntity {
   type: EntityMatchType;

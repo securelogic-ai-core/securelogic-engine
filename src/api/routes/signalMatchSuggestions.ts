@@ -43,11 +43,11 @@
  * signalMatchSuggestions.test.ts can invoke them directly with mocked pg.
  *
  * NOT IN SCOPE FOR THIS PACKAGE
- *   - The matcher itself. Today there is no code path that INSERTs into
- *     signal_match_suggestions; the matcher rewire is a separate package.
- *     This package lands the table, the validation lib, the route, the
- *     audit hooks, and the canonical-model row so the matcher work has a
- *     stable target to write against.
+ *   - The matcher itself. (Historical note: at package time no code path
+ *     INSERTed into signal_match_suggestions. The matcher rewire has since
+ *     landed — suggestions are written by runMatcherForSignal
+ *     (cyberSignalProcessingService.ts), llmControlMatcher.ts, and the
+ *     applicability workflow dispatcher.)
  *   - Bulk endpoints, backfill, posture/brief surfacing, UI work.
  *   - Per-target-type sidecar tables for forensic-grade link-row provenance
  *     (Option B in the design discussion). Revisit if/when CSV-export
