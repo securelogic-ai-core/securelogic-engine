@@ -93,9 +93,18 @@ async function acceptAndApprove(findingId: string, expiresAt: string): Promise<s
 }
 
 function isoInDays(days: number): string {
-  // The suite must not depend on the machine's clock drifting mid-run; compute once,
-  // relative to the DB's own CURRENT_DATE, in the caller.
-  const d = new Date(Date.UTC(2026, 6, 12));
+  // Offsets must be relative to TODAY, not to a fixed anchor. This used to be
+  // `Date.UTC(2026, 6, 12)` — a hard-coded 2026-07-12 — so `isoInDays(10)` meant
+  // the literal date 2026-07-22 forever. The review-queue summary counts an
+  // acceptance only while `expires_at >= CURRENT_DATE` (riskAcceptances.ts:729),
+  // so on 2026-07-23 that row silently moved into `lapsed_pending_sweep` and the
+  // review-window test began failing on a calendar boundary rather than on a code
+  // change. Anchoring to the current UTC date removes that cliff for every offset.
+  //
+  // Truncated to UTC midnight so the value stays a stable YYYY-MM-DD for the whole
+  // run and cannot shift if the clock crosses midnight mid-suite.
+  const now = new Date();
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
