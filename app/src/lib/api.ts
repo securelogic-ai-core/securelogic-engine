@@ -2250,6 +2250,10 @@ export type FindingContext = {
     ai_systems: FindingAffectedEntity[];
     controls: FindingAffectedEntity[];
     obligations: FindingAffectedEntity[];
+    // ERG convergence C5 — canonical Enterprise Assets the applicability
+    // decision reached, resolved through asset_registry_v. Absent (not empty)
+    // whenever the engine convergence is dark, so the dark surface is unchanged.
+    assets?: FindingAffectedEntity[];
     // Context Contract: per-bucket resolution outcome — distinguishes an
     // honest zero ('none_found') from a bucket the resolver has no path for
     // on this source type ('not_applicable'). Optional on older payloads.
@@ -2258,6 +2262,7 @@ export type FindingContext = {
       ai_systems: AffectedResolution;
       controls: AffectedResolution;
       obligations: AffectedResolution;
+      assets?: AffectedResolution;
     };
     // Matcher suggestions pending human review — candidate links, never
     // merged into the buckets above. Optional on older payloads.
