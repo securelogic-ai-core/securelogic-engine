@@ -25,6 +25,11 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
 import { registerAsset, deregisterAsset } from "../lib/assetRegistrar.js";
+import {
+  backingIdsOf,
+  normalizeAssetSearchTerm,
+  resolveAssetSearch
+} from "../lib/assetSearchResolver.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { asTenant } from "../middleware/asTenant.js";
@@ -237,6 +242,34 @@ router.get(
         }
         params.push(filterCriticality);
         conditions.push(`criticality = $${params.length}`);
+      }
+
+      // Shared asset-search q — the platform capability (name, alias, exact
+      // UUID, any registry identifier), narrowed to AI-system-typed assets
+      // and applied by BACKING id, so this list never re-implements matching.
+      const rawQ = req.query.q;
+      if (rawQ !== undefined && !(typeof rawQ === "string" && rawQ.trim().length === 0)) {
+        const searchTerm = normalizeAssetSearchTerm(rawQ);
+        if (searchTerm === null) {
+          res.status(400).json({ error: "invalid_search" });
+          return;
+        }
+        const resolved = await resolveAssetSearch(pg, organizationId, searchTerm, {
+          assetTypes: ["ai_system"]
+        });
+        const aiSystemIds = backingIdsOf(resolved.matches, "ai_systems");
+        if (aiSystemIds.length === 0) {
+          res.status(200).json({
+            count: 0,
+            limit,
+            organizationId,
+            nextCursor: null,
+            ai_systems: []
+          });
+          return;
+        }
+        params.push(aiSystemIds);
+        conditions.push(`id = ANY($${params.length}::uuid[])`);
       }
 
       if (useCursor) {

@@ -61,12 +61,21 @@ export default async function AssetsPage({
   // refinement and every page turn, or the customer lands on the right list and the very
   // first click silently widens it back to the whole registry.
   const atRisk = sp.at_risk === "true";
+  // Free-text search. Like the filters it is a URL param, so it composes with them,
+  // survives pagination, and the engine's shared asset-search resolver does the
+  // matching (name, asset ID, hostname, cloud account, native ref). Same 2–120
+  // bounds as the findings entity search — out-of-bounds terms are not sent.
+  const search =
+    typeof sp.q === "string" && sp.q.trim().length >= 2 && sp.q.trim().length <= 120
+      ? sp.q.trim()
+      : undefined;
   const offset = parseOffsetParam(sp.offset);
   const limit = ASSET_PAGE.defaultLimit;
 
   const result = await getAssets(token, {
     ...(typeFilter ? { asset_type: typeFilter } : {}),
     ...(atRisk ? { at_risk: true } : {}),
+    ...(search ? { q: search } : {}),
     limit,
     offset,
   });
@@ -75,6 +84,7 @@ export default async function AssetsPage({
     const q = new URLSearchParams();
     if (t) q.set("asset_type", t);
     if (atRisk) q.set("at_risk", "true");
+    if (search) q.set("q", search);
     const s = q.toString();
     return s ? `/assets?${s}` : "/assets";
   };
@@ -84,6 +94,7 @@ export default async function AssetsPage({
     const q = new URLSearchParams();
     if (typeFilter) q.set("asset_type", typeFilter);
     if (on) q.set("at_risk", "true");
+    if (search) q.set("q", search);
     const s = q.toString();
     return s ? `/assets?${s}` : "/assets";
   };
@@ -91,6 +102,7 @@ export default async function AssetsPage({
     const q = new URLSearchParams();
     if (typeFilter) q.set("asset_type", typeFilter);
     if (atRisk) q.set("at_risk", "true");
+    if (search) q.set("q", search);
     if (o > 0) q.set("offset", String(o));
     const s = q.toString();
     return s ? `/assets?${s}` : "/assets";
@@ -129,6 +141,42 @@ export default async function AssetsPage({
         />
       ) : (
         <>
+          {/* Search — the same GET-form pattern the Finding surface uses: the term is a
+              URL param, so it composes with the filter chips below and survives page
+              turns. Hidden inputs carry the active filters through a submit; omitting
+              offset means a new search honestly resets to page 1. */}
+          <form action="/assets" method="get" className="mb-6">
+            <label
+              htmlFor="asset-search"
+              className="block text-xs font-semibold uppercase tracking-wide mb-2"
+              style={{ color: "#64748b" }}
+            >
+              Search
+            </label>
+            {typeFilter && <input type="hidden" name="asset_type" value={typeFilter} />}
+            {atRisk && <input type="hidden" name="at_risk" value="true" />}
+            <div className="flex items-center gap-2 w-full max-w-xl">
+              <input
+                id="asset-search"
+                type="search"
+                name="q"
+                defaultValue={search ?? ""}
+                minLength={2}
+                maxLength={120}
+                placeholder="Name, asset ID, hostname, cloud account, vendor, business process..."
+                className="flex-1 px-3 py-2 rounded-lg text-sm"
+                style={{ background: "#0b1220", border: "1px solid #1e293b", color: "#e2e8f0" }}
+              />
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-lg text-sm font-medium"
+                style={{ background: "rgba(0,196,180,0.15)", color: "#00c4b4", border: "1px solid rgba(0,196,180,0.4)" }}
+              >
+                Search
+              </button>
+            </div>
+          </form>
+
           {/* Type filter chips */}
           <div className="flex flex-wrap items-center gap-2 mb-6">
             <FilterChip href={filterHref()} active={!typeFilter} label="All" />
@@ -157,7 +205,9 @@ export default async function AssetsPage({
           {result.assets.length === 0 ? (
             <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
               <p className="text-sm" style={{ color: "#94a3b8" }}>
-                {typeFilter
+                {search
+                  ? "No assets match your search."
+                  : typeFilter
                   ? `No ${assetTypeLabel(typeFilter).toLowerCase()} assets yet.`
                   : "No assets registered yet."}
               </p>

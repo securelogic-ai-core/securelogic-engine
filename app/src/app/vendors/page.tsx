@@ -39,12 +39,32 @@ export default async function VendorsPage({
   const sp = await searchParams;
   const critFilter = sp.criticality ?? null;
   const showInactive = sp.show_inactive === "1";
+  // Shared platform search (2–120 bounds, engine-resolved via the asset-search
+  // capability: name, product alias, exact UUID). A URL param like the filters.
+  const search =
+    typeof sp.q === "string" && sp.q.trim().length >= 2 && sp.q.trim().length <= 120
+      ? sp.q.trim()
+      : undefined;
 
   const [activeData, archivedData, assessmentsData] = await Promise.all([
-    getVendors(token, "active"),
-    showInactive ? getVendors(token, "archived") : Promise.resolve(null),
+    getVendors(token, "active", { q: search }),
+    showInactive ? getVendors(token, "archived", { q: search }) : Promise.resolve(null),
     getVendorAssessments(token, 100),
   ]);
+
+  // Every navigation on this page preserves the OTHER axes — a pill click must
+  // not silently drop an active search, and a search must not drop the filters.
+  const vendorsHref = (over: { crit?: string | null; inactive?: boolean; q?: string | null } = {}) => {
+    const p = new URLSearchParams();
+    const crit = over.crit === undefined ? critFilter : over.crit;
+    const inactive = over.inactive === undefined ? showInactive : over.inactive;
+    const term = over.q === undefined ? search : over.q;
+    if (crit) p.set("criticality", crit);
+    if (inactive) p.set("show_inactive", "1");
+    if (term) p.set("q", term);
+    const s = p.toString();
+    return s ? `/vendors?${s}` : "/vendors";
+  };
 
   const vendorsData = activeData;
 
@@ -102,7 +122,7 @@ export default async function VendorsPage({
             Showing <strong>{displayVendors.length}</strong> {critLabel} vendor{displayVendors.length !== 1 ? "s" : ""}
           </p>
           <Link
-            href="/vendors"
+            href={vendorsHref({ crit: null })}
             className="text-xs font-medium flex-shrink-0 transition-opacity hover:opacity-80"
             style={{ color: "#94a3b8" }}
           >
@@ -127,7 +147,7 @@ export default async function VendorsPage({
             </span>
           )}
           <Link
-            href={showInactive ? "/vendors" : "/vendors?show_inactive=1"}
+            href={vendorsHref({ inactive: !showInactive })}
             className="inline-flex items-center gap-1 text-xs font-medium transition-opacity hover:opacity-80"
             style={{ color: showInactive ? "#94a3b8" : "#475569" }}
           >
@@ -174,13 +194,48 @@ export default async function VendorsPage({
         </div>
       </div>
 
+      {/* Search — the platform list-page pattern: the term is a URL param resolved by
+          the shared asset-search capability (name, product alias, exact UUID), so it
+          composes with the pills below. Hidden inputs carry the active filters. */}
+      <form action="/vendors" method="get" className="mb-6">
+        <label
+          htmlFor="vendor-search"
+          className="block text-xs font-semibold uppercase tracking-wide mb-2"
+          style={{ color: "#64748b" }}
+        >
+          Search
+        </label>
+        {critFilter && <input type="hidden" name="criticality" value={critFilter} />}
+        {showInactive && <input type="hidden" name="show_inactive" value="1" />}
+        <div className="flex items-center gap-2 w-full max-w-xl">
+          <input
+            id="vendor-search"
+            type="search"
+            name="q"
+            defaultValue={search ?? ""}
+            minLength={2}
+            maxLength={120}
+            placeholder="Name, vendor ID, product alias..."
+            className="flex-1 px-3 py-2 rounded-lg text-sm"
+            style={{ background: "#0b1220", border: "1px solid #1e293b", color: "#e2e8f0" }}
+          />
+          <button
+            type="submit"
+            className="px-4 py-2 rounded-lg text-sm font-medium"
+            style={{ background: "rgba(0,196,180,0.15)", color: "#00c4b4", border: "1px solid rgba(0,196,180,0.4)" }}
+          >
+            Search
+          </button>
+        </div>
+      </form>
+
       {/* Criticality filter pills */}
       {allVendors.length > 0 && (
         <div className="mb-6 flex items-center gap-2 flex-wrap">
           <span className="text-xs font-semibold uppercase tracking-wide mr-1" style={{ color: "#64748b" }}>
             Criticality
           </span>
-          <FilterPill label="All" href="/vendors" active={!critFilter} />
+          <FilterPill label="All" href={vendorsHref({ crit: null })} active={!critFilter} />
           {(["critical", "high", "medium", "low"] as const).map((level) => {
             const count = critCounts[level];
             const label =
@@ -192,7 +247,7 @@ export default async function VendorsPage({
               <FilterPill
                 key={level}
                 label={label}
-                href={`/vendors?criticality=${level}`}
+                href={vendorsHref({ crit: level })}
                 active={critFilter === level}
               />
             );
@@ -209,8 +264,25 @@ export default async function VendorsPage({
         </div>
       )}
 
+      {/* Entitled but nothing to show — an active search gets an honest "no match",
+          never "add your first vendor" over a populated org. */}
+      {vendorsData !== null && allVendors.length === 0 && search && (
+        <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
+          <p className="text-sm" style={{ color: "#94a3b8" }}>
+            No vendors match your search.{" "}
+            <Link
+              href={vendorsHref({ q: null })}
+              className="font-medium hover:opacity-80"
+              style={{ color: "#00c4b4" }}
+            >
+              Clear search →
+            </Link>
+          </p>
+        </div>
+      )}
+
       {/* Entitled but no vendors yet */}
-      {vendorsData !== null && allVendors.length === 0 && (
+      {vendorsData !== null && allVendors.length === 0 && !search && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
           <p className="text-sm" style={{ color: "#94a3b8" }}>
             No active vendors.{" "}
@@ -231,7 +303,7 @@ export default async function VendorsPage({
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
           <p className="text-sm" style={{ color: "#94a3b8" }}>
             No {critLabel} vendors.{" "}
-            <Link href="/vendors" className="font-medium hover:opacity-80" style={{ color: "#00c4b4" }}>
+            <Link href={vendorsHref({ crit: null })} className="font-medium hover:opacity-80" style={{ color: "#00c4b4" }}>
               View all →
             </Link>
           </p>

@@ -64,6 +64,7 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
+import { assetSearchPattern, normalizeAssetSearchTerm } from "../lib/assetSearchResolver.js";
 import {
   validateSignalMatchSuggestionAccept,
   validateSignalMatchSuggestionDismiss,
@@ -364,9 +365,9 @@ export async function listSignalMatchSuggestions(req: Request, res: Response): P
     targetTypeFilter = assetAllowed ? "asset" : (rawTargetType as TargetType);
   }
 
-  // R3 — entity-name search. Same 2..120 bounds as the Findings entity search
-  // (findingEntitySearch.ts) so the two surfaces behave identically, and the same
-  // escaping of LIKE metacharacters so a literal "%" is a literal "%".
+  // R3 — entity search. The bounds and escaping are the SHARED asset-search
+  // semantics (assetSearchResolver.ts — the same 2..120 / LIKE-escape contract
+  // findingEntitySearch established), so every search surface behaves identically.
   let nameQuery: string | null = null;
   const rawQ = req.query.q;
   if (rawQ !== undefined) {
@@ -376,14 +377,15 @@ export async function listSignalMatchSuggestions(req: Request, res: Response): P
     }
     const trimmed = rawQ.trim();
     if (trimmed.length > 0) {
-      if (trimmed.length < 2 || trimmed.length > 120) {
+      const normalized = normalizeAssetSearchTerm(trimmed);
+      if (normalized === null) {
         res.status(400).json({
           error: "invalid_q",
           detail: "q must be between 2 and 120 characters",
         });
         return;
       }
-      nameQuery = `%${trimmed.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+      nameQuery = assetSearchPattern(normalized);
     }
   }
 
@@ -414,16 +416,34 @@ export async function listSignalMatchSuggestions(req: Request, res: Response): P
     sql += ` AND s.target_type = $${params.length}`;
   }
   // R3 — free-text filter on the ENTITY the suggestion is about, so the queue is
-  // searchable the way the Findings page is. Matches the same COALESCE the enriched
-  // SELECT already exposes as target_name (vendor / AI system / control name, or an
-  // obligation's title), so a search finds exactly what the row displays.
+  // searchable the way the Findings page is. Two match paths, one parameter:
+  //   1. the display name the row shows (the COALESCE the enriched SELECT exposes
+  //      as target_name — vendor / AI system / control name, obligation title);
+  //   2. the SHARED asset-search projection (asset_search_index_v), so an
+  //      asset-shaped target also matches on any subtype identifier — hostname,
+  //      cloud account, alias, native ref — without the caller knowing subtype
+  //      boundaries. Asset targets key on the registry asset_id; vendor / AI
+  //      targets key on their backing id (EAR-AD-1 federation). A correlated
+  //      EXISTS keeps this ONE query (no resolver round-trip, no cap).
   //
   // The pattern is parameterised and the operand is a fixed column expression, never
   // interpolated input. LIKE metacharacters in the user's string are escaped so a
   // query of "100%" means the literal text, not "anything".
   if (nameQuery !== null) {
     params.push(nameQuery);
-    sql += ` AND COALESCE(v.name, ai.name, c.name, o.title, ar.name) ILIKE $${params.length}`;
+    sql += ` AND (
+      COALESCE(v.name, ai.name, c.name, o.title, ar.name) ILIKE $${params.length}
+      OR EXISTS (
+        SELECT 1 FROM asset_search_index_v si
+         WHERE si.organization_id = s.organization_id
+           AND si.term ILIKE $${params.length}
+           AND (
+             (s.target_type = 'asset' AND si.asset_id = s.target_id)
+             OR (s.target_type = 'vendor' AND si.backing_kind = 'vendors' AND si.backing_id = s.target_id)
+             OR (s.target_type = 'ai_system' AND si.backing_kind = 'ai_systems' AND si.backing_id = s.target_id)
+           )
+      )
+    )`;
   }
   sql += ` ${SORT_DISPATCH[sort]}`;
   params.push(limit);

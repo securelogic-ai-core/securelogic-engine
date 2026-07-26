@@ -75,4 +75,51 @@ describe("entity→findings search — cross-org isolation (real Postgres)", () 
     const out = await searchFindingsByEntity(pool, seed.orgA.id, "zz-no-such-entity-zz");
     expect(out).toEqual({ entities: [], finding_ids: [] });
   });
+
+  it("resolves findings through a PRODUCT ALIAS via the shared asset-search pass", async () => {
+    // The vendor's findings exist, but the operator only knows the product's
+    // alias — a string that appears nowhere on the vendor row. The shared
+    // asset-search pass (alias → identity bridge → vendor-backed asset) must
+    // fold the vendor into the entity set and surface the same findings.
+    const a = await seedVendorWithFindings(seed.orgA.id, "AliasedVendor GmbH", "es-a-3");
+    const cp = await pool.query<{ id: string }>(
+      `INSERT INTO canonical_products (canonical_key, vendor_canonical, product_canonical, display_name)
+       VALUES ('aliasedvendor::widgetsuite', 'aliasedvendor', 'widgetsuite', 'WidgetSuite') RETURNING id`
+    );
+    await pool.query(
+      `INSERT INTO canonical_product_aliases (product_id, alias_raw, alias_canonical, source)
+       VALUES ($1, 'WdgtSuite Pro', 'wdgtsuite pro', 'nvd')`,
+      [cp.rows[0].id]
+    );
+    await pool.query(
+      `INSERT INTO asset_product_identities (organization_id, asset_id, canonical_product_id, provenance, confidence)
+       VALUES ($1, $2, $3, 'connector', 90)`,
+      [seed.orgA.id, a.vendorId, cp.rows[0].id]
+    );
+
+    const out = await searchFindingsByEntity(pool, seed.orgA.id, "WdgtSuite");
+    expect(out.entities.map((e) => e.id)).toContain(a.vendorId);
+    // The hydrated entity carries the vendor's REAL name, not the alias.
+    expect(out.entities.find((e) => e.id === a.vendorId)?.name).toBe("AliasedVendor GmbH");
+    expect(out.finding_ids).toContain(a.signalFindingId);
+    expect(out.finding_ids).toContain(a.assessmentFindingId);
+
+    // And org B searching the same alias gets nothing — the bridge is B-less here.
+    const outB = await searchFindingsByEntity(pool, seed.orgB.id, "WdgtSuite");
+    expect(outB.finding_ids).not.toContain(a.signalFindingId);
+    expect(outB.entities.every((e) => e.id !== a.vendorId)).toBe(true);
+  });
+
+  it("a vendor UUID resolves that vendor's findings (exact identity path)", async () => {
+    const a = await seedVendorWithFindings(seed.orgA.id, "UuidSearch Corp", "es-a-4");
+    const out = await searchFindingsByEntity(pool, seed.orgA.id, a.vendorId);
+    expect(out.entities.map((e) => e.id)).toContain(a.vendorId);
+    expect(out.finding_ids).toContain(a.signalFindingId);
+  });
+
+  it("name matches are not duplicated by the asset-search pass (one entity, once)", async () => {
+    const a = await seedVendorWithFindings(seed.orgA.id, "DedupVendor Inc", "es-a-5");
+    const out = await searchFindingsByEntity(pool, seed.orgA.id, "DedupVendor");
+    expect(out.entities.filter((e) => e.id === a.vendorId)).toHaveLength(1);
+  });
 });

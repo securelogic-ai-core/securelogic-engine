@@ -256,7 +256,7 @@ export default async function QueuePage({
           type="search"
           name="q"
           defaultValue={nameQuery ?? ""}
-          placeholder="Search by vendor, AI system, control or obligation…"
+          placeholder="Search by name, hostname, cloud account, or alias…"
           minLength={2}
           maxLength={120}
           className="px-3 py-1.5 rounded-lg text-sm"

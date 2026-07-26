@@ -1462,13 +1462,14 @@ export async function getPostureHistory(
 
 export async function getVendors(
   apiKey: string,
-  status: "active" | "archived" = "active"
+  status: "active" | "archived" = "active",
+  opts: { q?: string } = {}
 ): Promise<VendorsResponse | null> {
   try {
-    const res = await engineFetch(
-      `/api/vendors?status=${status}&limit=100`,
-      apiKey
-    );
+    const params = new URLSearchParams({ status, limit: "100" });
+    // Shared asset-search term (engine-resolved: name, alias, exact UUID).
+    if (opts.q) params.set("q", opts.q);
+    const res = await engineFetch(`/api/vendors?${params.toString()}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<VendorsResponse>;
   } catch {
@@ -1493,10 +1494,14 @@ export async function getVendorAssessments(
 }
 
 export async function getAiSystems(
-  apiKey: string
+  apiKey: string,
+  opts: { q?: string } = {}
 ): Promise<AiSystemsResponse | null> {
   try {
-    const res = await engineFetch("/api/ai-systems?limit=100", apiKey);
+    const params = new URLSearchParams({ limit: "100" });
+    // Shared asset-search term (engine-resolved: name, alias, exact UUID).
+    if (opts.q) params.set("q", opts.q);
+    const res = await engineFetch(`/api/ai-systems?${params.toString()}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<AiSystemsResponse>;
   } catch {
@@ -5690,13 +5695,16 @@ export async function uploadVendorAssuranceDocument(
 /** GET /api/assets — the unified cross-type list over asset_registry_v. */
 export async function getAssets(
   token: string,
-  params: { asset_type?: AssetType; at_risk?: boolean; limit?: number; offset?: number } = {},
+  params: { asset_type?: AssetType; at_risk?: boolean; q?: string; limit?: number; offset?: number } = {},
 ): Promise<ReadResult<{ assets: CanonicalAsset[]; total: number; limit: number; offset: number }>> {
   const q = new URLSearchParams();
   if (params.asset_type) q.set("asset_type", params.asset_type);
   // The population the executive "Assets at risk" tile counts (own_risk > 0 on the
   // current applicability decision) — so that tile has a destination that reproduces it.
   if (params.at_risk) q.set("at_risk", "true");
+  // Free-text search (Phase 1): substring match over the fields the registry view
+  // exposes (name, asset ID). Composes with the filters and survives pagination.
+  if (params.q) q.set("q", params.q);
   if (params.limit !== undefined) q.set("limit", String(params.limit));
   if (params.offset !== undefined) q.set("offset", String(params.offset));
   try {
@@ -5735,7 +5743,7 @@ export async function getAsset(
 
 export async function getEnterpriseEntities(
   token: string,
-  params: { entity_type?: EntityType; limit?: number; offset?: number } = {},
+  params: { entity_type?: EntityType; q?: string; limit?: number; offset?: number } = {},
 ): Promise<ReadResult<{ enterprise_entities: EnterpriseEntity[]; limit: number; offset: number }>> {
   try {
     const res = await engineFetch(`/api/enterprise-entities?${entitiesQuery(params)}`, token);

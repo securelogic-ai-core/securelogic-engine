@@ -43,6 +43,11 @@ import {
   type DataStoreInput
 } from "../lib/enterpriseEntityValidation.js";
 import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
+import {
+  backingIdsOf,
+  normalizeAssetSearchTerm,
+  resolveAssetSearch
+} from "../lib/assetSearchResolver.js";
 import { registerAsset, deregisterAsset } from "../lib/assetRegistrar.js";
 import { entityTypeToAssetType } from "../lib/assetRegistry.js";
 
@@ -111,14 +116,38 @@ export async function listEnterpriseEntities(req: Request, res: Response): Promi
   const entityType = req.query.entity_type;
   const typeFilter = typeof entityType === "string" && entityType.length > 0 ? entityType : null;
 
+  // Optional free-text search — the SHARED asset-search capability (names,
+  // external refs, aliases, exact UUIDs), narrowed to this list's own rows by
+  // BACKING id (every entity row is an enterprise_entities-backed asset).
+  // Same 2–120 bounds and error shape as every other search surface.
+  let searchEntityIds: string[] | null = null;
+  const rawSearch = req.query.q;
+  if (rawSearch !== undefined && !(typeof rawSearch === "string" && rawSearch.trim().length === 0)) {
+    const searchTerm = normalizeAssetSearchTerm(rawSearch);
+    if (searchTerm === null) {
+      res.status(400).json({ error: "invalid_search" });
+      return;
+    }
+    const resolved = await resolveAssetSearch(pg, orgId, searchTerm);
+    searchEntityIds = backingIdsOf(resolved.matches, "enterprise_entities");
+    if (searchEntityIds.length === 0) {
+      res.status(200).json({ enterprise_entities: [], limit, offset });
+      return;
+    }
+  }
+
+  const searchWhere = searchEntityIds ? `AND id = ANY($5::uuid[])` : ``;
   const rows = await pg.query(
     `SELECT ${ENTITY_COLS}
        FROM enterprise_entities
       WHERE organization_id = $1
         AND ($2::text IS NULL OR entity_type = $2)
+        ${searchWhere}
       ORDER BY created_at DESC, id DESC
       LIMIT $3 OFFSET $4`,
-    [orgId, typeFilter, limit, offset]
+    searchEntityIds !== null
+      ? [orgId, typeFilter, limit, offset, searchEntityIds]
+      : [orgId, typeFilter, limit, offset]
   );
 
   res.status(200).json({ enterprise_entities: rows.rows, limit, offset });

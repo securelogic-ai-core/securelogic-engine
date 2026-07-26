@@ -16,9 +16,19 @@
  * Every predicate is org-scoped from the caller (never request input). Table and
  * column names are constants — the same interpolation discipline as
  * findingContextResolver. The query string is bound as a parameter (ILIKE).
+ *
+ * Entity matching runs TWO passes with identical semantics:
+ *   1. direct name match over the four entity tables (below);
+ *   2. the SHARED asset-search resolver (assetSearchResolver.ts), so a term the
+ *      operator knows — a product alias, an asset UUID, any registry identifier —
+ *      also reaches findings when the matched asset is vendor- or AI-backed
+ *      (the two backings with finding paths today). Detail-backed assets
+ *      (endpoints, cloud resources, APIs, identity systems) have no
+ *      asset→finding linkage yet and are deliberately not surfaced here.
  */
 
 import { type TargetType } from "./signalMatchSuggestionValidation.js";
+import { resolveAssetSearch } from "./assetSearchResolver.js";
 
 export interface Queryable {
   query(text: string, params?: unknown[]): Promise<{ rows: any[]; rowCount: number | null }>;
@@ -104,6 +114,37 @@ export async function searchFindingsByEntity(
     );
     for (const x of r.rows) entities.push({ type: src.type, id: x.id, name: x.name });
   }
+
+  // 1b. Shared asset-search pass: identifiers the name match cannot see (product
+  // aliases, exact UUIDs) resolved through the one platform capability, then
+  // folded into the vendor/ai_system entity sets by BACKING id. Same bounds and
+  // escaping — the resolver and normalizeEntityQuery share the 2–120 contract.
+  const assetSearch = await resolveAssetSearch(client, organizationId, query);
+  const BACKING_TO_TYPE: Partial<Record<string, EntityMatchType>> = {
+    vendors: "vendor",
+    ai_systems: "ai_system"
+  };
+  const seenEntities = new Set(entities.map((e) => `${e.type}:${e.id}`));
+  const extraIdsByType = new Map<EntityMatchType, string[]>();
+  for (const m of assetSearch.matches) {
+    const type = BACKING_TO_TYPE[m.backing_kind];
+    if (!type || seenEntities.has(`${type}:${m.backing_id}`)) continue;
+    seenEntities.add(`${type}:${m.backing_id}`);
+    const ids = extraIdsByType.get(type) ?? [];
+    if (ids.length < maxEntities) extraIdsByType.set(type, [...ids, m.backing_id]);
+  }
+  for (const [type, ids] of extraIdsByType.entries()) {
+    // Hydrate names so "showing results for …" can display what actually matched.
+    const src = ENTITY_SOURCES.find((s) => s.type === type)!;
+    const r = await client.query(
+      `SELECT id, ${src.nameCol} AS name FROM ${src.table}
+        WHERE organization_id = $1 AND id = ANY($2::uuid[])
+        ORDER BY ${src.nameCol}`,
+      [organizationId, ids]
+    );
+    for (const x of r.rows) entities.push({ type, id: x.id, name: x.name });
+  }
+
   if (entities.length === 0) return { entities: [], finding_ids: [] };
 
   const idsByType = new Map<EntityMatchType, string[]>();

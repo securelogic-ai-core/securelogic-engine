@@ -1342,6 +1342,73 @@ describe("signalMatchSuggestions — list handler", () => {
 });
 
 // ====================================================================
+// list — the q entity search (shared asset-search semantics)
+// ====================================================================
+
+describe("signalMatchSuggestions — the q search", () => {
+  beforeEach(() => {
+    mockPgQuery.mockReset();
+  });
+
+  const reqWith = (q: unknown) =>
+    ({
+      query: { q },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    }) as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+
+  it("matches BOTH the display name and the shared asset-search projection, one pattern param", async () => {
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    await listSignalMatchSuggestions(
+      reqWith("web-01"),
+      makeRes() as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    const [sql, params] = mockPgQuery.mock.calls[0] as [string, unknown[]];
+    // Path 1: what the row displays.
+    expect(sql).toMatch(/COALESCE\(v\.name, ai\.name, c\.name, o\.title, ar\.name\) ILIKE \$2/);
+    // Path 2: the shared projection — subtype identifiers without subtype knowledge.
+    expect(sql).toContain("FROM asset_search_index_v si");
+    expect(sql).toContain("si.organization_id = s.organization_id");
+    expect(sql).toContain("s.target_type = 'asset' AND si.asset_id = s.target_id");
+    expect(sql).toContain("s.target_type = 'vendor' AND si.backing_kind = 'vendors' AND si.backing_id = s.target_id");
+    expect(sql).toContain("s.target_type = 'ai_system' AND si.backing_kind = 'ai_systems' AND si.backing_id = s.target_id");
+    expect(params[1]).toBe("%web-01%");
+  });
+
+  it("escapes LIKE metacharacters via the shared pattern helper", async () => {
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    await listSignalMatchSuggestions(
+      reqWith("50%_off"),
+      makeRes() as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    expect((mockPgQuery.mock.calls[0] as [string, unknown[]])[1][1]).toBe("%50\\%\\_off%");
+  });
+
+  it("keeps the platform 2–120 bounds: 400 invalid_q outside them, blank is a no-op", async () => {
+    for (const bad of ["a", "a".repeat(121)]) {
+      const res = makeRes();
+      await listSignalMatchSuggestions(
+        reqWith(bad),
+        res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+      );
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: "invalid_q" }));
+    }
+    expect(mockPgQuery).not.toHaveBeenCalled();
+
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    await listSignalMatchSuggestions(
+      reqWith("   "),
+      makeRes() as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+    expect((mockPgQuery.mock.calls[0] as [string, unknown[]])[0]).not.toContain("asset_search_index_v");
+  });
+});
+
+// ====================================================================
 // getSignalMatchSuggestionCounts — pending breakdown + lifetime_total
 // ====================================================================
 

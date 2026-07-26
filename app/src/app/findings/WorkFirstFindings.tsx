@@ -64,7 +64,7 @@ function EntitySearchForm({ initial }: { initial?: string }) {
         type="search"
         name="entity"
         defaultValue={initial ?? ""}
-        placeholder="Search by vendor, AI system, control, or obligation — e.g. Microsoft"
+        placeholder="Search by vendor, AI system, control, obligation, or product alias — e.g. Microsoft"
         className="flex-1 px-3 py-2 rounded-lg text-sm"
         style={{ background: "#0b1220", border: "1px solid #1e293b", color: "#e2e8f0" }}
       />

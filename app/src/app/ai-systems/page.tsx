@@ -6,7 +6,11 @@ import { getAiSystems, getGovernanceReviews, type AiSystem } from "@/lib/api";
 // StatusChip stays local — it styles DEPLOYMENT status, a different vocabulary.
 import { CriticalityBadge, MetaChip } from "@/components/assetKit";
 
-export default async function AiSystemsPage() {
+export default async function AiSystemsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | undefined>>;
+}) {
   const session = await getSession();
 
   const token = session.jwtToken ?? session.apiKey ?? null;
@@ -14,8 +18,16 @@ export default async function AiSystemsPage() {
     redirect("/login");
   }
 
+  const sp = (await searchParams) ?? {};
+  // Shared platform search (2–120 bounds, engine-resolved via the asset-search
+  // capability: name, product alias, exact UUID). A URL param like every list.
+  const search =
+    typeof sp.q === "string" && sp.q.trim().length >= 2 && sp.q.trim().length <= 120
+      ? sp.q.trim()
+      : undefined;
+
   const [systemsData, reviewsData] = await Promise.all([
-    getAiSystems(token),
+    getAiSystems(token, { q: search }),
     getGovernanceReviews(token),
   ]);
 
@@ -75,6 +87,38 @@ export default async function AiSystemsPage() {
         </div>
       </div>
 
+      {/* Search — the platform list-page pattern: the term is a URL param resolved by
+          the shared asset-search capability (name, product alias, exact UUID). */}
+      <form action="/ai-systems" method="get" className="mb-6">
+        <label
+          htmlFor="ai-system-search"
+          className="block text-xs font-semibold uppercase tracking-wide mb-2"
+          style={{ color: "#64748b" }}
+        >
+          Search
+        </label>
+        <div className="flex items-center gap-2 w-full max-w-xl">
+          <input
+            id="ai-system-search"
+            type="search"
+            name="q"
+            defaultValue={search ?? ""}
+            minLength={2}
+            maxLength={120}
+            placeholder="Name, system ID, product alias..."
+            className="flex-1 px-3 py-2 rounded-lg text-sm"
+            style={{ background: "#0b1220", border: "1px solid #1e293b", color: "#e2e8f0" }}
+          />
+          <button
+            type="submit"
+            className="px-4 py-2 rounded-lg text-sm font-medium"
+            style={{ background: "rgba(0,196,180,0.15)", color: "#00c4b4", border: "1px solid rgba(0,196,180,0.4)" }}
+          >
+            Search
+          </button>
+        </div>
+      </form>
+
       {/* Not entitled */}
       {systemsData === null && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
@@ -84,8 +128,25 @@ export default async function AiSystemsPage() {
         </div>
       )}
 
+      {/* Entitled but nothing to show — an active search gets an honest "no match",
+          never "no systems registered" over a populated org. */}
+      {systemsData !== null && aiSystems.length === 0 && search && (
+        <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
+          <p className="text-sm mb-3" style={{ color: '#94a3b8' }}>
+            No AI systems match your search.
+          </p>
+          <Link
+            href="/ai-systems"
+            className="text-sm font-medium hover:opacity-80"
+            style={{ color: "#00c4b4" }}
+          >
+            Clear search →
+          </Link>
+        </div>
+      )}
+
       {/* Entitled but no systems yet */}
-      {systemsData !== null && aiSystems.length === 0 && (
+      {systemsData !== null && aiSystems.length === 0 && !search && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
           <p className="text-sm mb-3" style={{ color: '#94a3b8' }}>
             No AI systems registered yet.

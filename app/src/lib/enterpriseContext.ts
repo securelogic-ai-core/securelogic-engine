@@ -342,11 +342,14 @@ export function clampDepth(requested: number | undefined): number {
 /** Build the query string for GET /api/enterprise-entities (already-clamped values). */
 export function entitiesQuery(params: {
   entity_type?: EntityType;
+  q?: string;
   limit?: number;
   offset?: number;
 }): string {
   const q = new URLSearchParams();
   if (params.entity_type) q.set("entity_type", params.entity_type);
+  // Shared asset-search term (engine-resolved: name, external ref, alias, UUID).
+  if (params.q) q.set("q", params.q);
   q.set("limit", String(clampLimit(params.limit, ENTITY_PAGE)));
   q.set("offset", String(clampOffset(params.offset, ENTITY_PAGE.maxOffset)));
   return q.toString();
