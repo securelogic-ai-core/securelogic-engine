@@ -442,10 +442,11 @@ services:
         value: "true"
       - key: SECURELOGIC_RISK_LIFECYCLE_ENABLED       # Epic R1 — risk lifecycle, DARK (default off)
         value: "false"
-      - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL (Priority 5) — DARK (default off); do NOT enable in prod until AD-17 grant + edge cap (H1) + graph load test (H2)
-        value: "false"
+      - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL (Priority 5) — ENABLED on STAGING (2026-07-26): EAR is live here and entity-backed
+        value: "true"                                 # assets deep-link into ECL; the two surfaces must flip together. Prod stays dark
+                                                      # until AD-17 grant + edge cap (H1) + graph load test (H2).
       - key: SECURELOGIC_ASSET_REGISTRY_ENABLED       # EAR Phase 0 (asset registry) — DARK (default off); GATE B posture, do NOT enable in prod under the EAR goal
-        value: "false"
+        value: "true"
       - key: SECURELOGIC_CONNECTOR_SCHEDULED_SYNC_ENABLED # ERIP E2.P1 (scheduled connector sync) — DARK (default off); triple fence: also requires ECL + asset-registry flags
         value: "false"
       - key: SECURELOGIC_CONNECTOR_WRITEBACK_ENABLED  # ERIP E2a (bidirectional connector writeback) — DARK (default off); only external-mutation fence; also requires ECL + asset-registry flags
@@ -1262,9 +1263,11 @@ services:
       #                         My Actions depth, Brief -> Decision/Event
       # Prod enablement stays GATE B (operator ledger).
       - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
-        value: "false"
+        # ENABLED on STAGING (2026-07-26): EAR is live here and entity-backed assets
+        # deep-link into ECL — the two surfaces must flip together. Prod stays dark.
+        value: "true"
       - key: SECURELOGIC_ASSET_REGISTRY_ENABLED
-        value: "false"
+        value: "true"
       # ENABLED on STAGING (Option B) so a Blueprint sync activates the Findings
       # decision queue, the "Review Suggested Links" queue reskin + bulk select, and
       # the enterprise nav IA — durably (dashboard edits get reverted on sync; the
