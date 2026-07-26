@@ -281,7 +281,9 @@ function FilterChip({ href, active, label }: { href: string; active: boolean; la
 }
 
 function AssetRow({ asset }: { asset: CanonicalAsset }) {
-  const href = assetDetailHref(asset);
+  const href = assetDetailHref(asset, {
+    enterpriseContextEnabled: process.env.SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED === "true",
+  });
   const name = (
     <span className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
       {asset.name}

@@ -75,6 +75,23 @@ describe("assetDetailHref (EAR-AD-1 deep links)", () => {
     }
     expect(assetDetailHref({ backing_kind: "mystery", backing_id: "x", asset_id: "r" })).toBeNull();
   });
+
+  it("entity-backed assets fall back to the canonical asset page when Enterprise Context is dark", () => {
+    const entity = { backing_kind: "enterprise_entities", backing_id: "e1", asset_id: "r3" };
+    expect(assetDetailHref(entity, { enterpriseContextEnabled: false })).toBe("/assets/r3");
+    expect(assetDetailHref(entity, { enterpriseContextEnabled: true })).toBe("/enterprise-context/entities/e1");
+    // Omitted flag keeps the federated link — only an explicit "dark" reroutes.
+    expect(assetDetailHref(entity, {})).toBe("/enterprise-context/entities/e1");
+  });
+
+  it("the dark-Enterprise-Context fallback never affects the other backing kinds", () => {
+    expect(
+      assetDetailHref({ backing_kind: "vendors", backing_id: "v1", asset_id: "r1" }, { enterpriseContextEnabled: false }),
+    ).toBe("/vendors/v1");
+    expect(
+      assetDetailHref({ backing_kind: "endpoints", backing_id: "x", asset_id: "reg-9" }, { enterpriseContextEnabled: false }),
+    ).toBe("/assets/reg-9");
+  });
 });
 
 describe("assetsReadFailure", () => {

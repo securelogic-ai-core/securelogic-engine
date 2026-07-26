@@ -14,7 +14,7 @@
  *      the page renders "0 assets" + an empty state, telling an org with a full
  *      inventory that it has none.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import { renderPage, expectRedirect, signedIn, signedOut, apiKeyOnly, sp, hrefs, hrefOf } from "@/test/harness";
 import { aCanonicalAsset } from "@/test/fixtures";
@@ -432,5 +432,45 @@ describe("/assets — the caller is not entitled", () => {
     expect(screen.getByText(/Something went wrong loading assets/i)).toBeInTheDocument();
     expect(screen.queryByText(/No assets registered yet/)).not.toBeInTheDocument();
     expect(container.textContent).not.toMatch(/\b0 assets\b/);
+  });
+});
+
+// ── 6 · Entity-backed rows never link into a dark Enterprise Context ─────────
+//
+// EAR-AD-1 sends enterprise-entity-backed assets to their ECL screens — but ECL
+// is independently flag-gated, and a deployment can run the registry with ECL
+// dark (staging did exactly this, 2026-07-26). A row that links into a dark
+// surface lands the customer on "isn't available for your organization yet".
+// The registry must degrade to its own canonical read-only page instead.
+
+describe("entity-backed row destination follows the Enterprise Context flag", () => {
+  const entityAsset = aCanonicalAsset({
+    asset_id: "as-3",
+    name: "Billing Platform",
+    asset_type: "application",
+    backing_kind: "enterprise_entities",
+    backing_id: "ee-7",
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("falls back to the canonical asset page while Enterprise Context is dark", async () => {
+    vi.stubEnv("SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED", "false");
+    api.getAssets.mockResolvedValue(okAssets([entityAsset]));
+
+    const { container } = await renderPage(AssetsPage, { searchParams: sp({}) });
+
+    expect(hrefOf(container, /Billing Platform/)).toBe("/assets/as-3");
+  });
+
+  it("links to the Enterprise Context entity page when the surface is lit", async () => {
+    vi.stubEnv("SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED", "true");
+    api.getAssets.mockResolvedValue(okAssets([entityAsset]));
+
+    const { container } = await renderPage(AssetsPage, { searchParams: sp({}) });
+
+    expect(hrefOf(container, /Billing Platform/)).toBe("/enterprise-context/entities/ee-7");
   });
 });
