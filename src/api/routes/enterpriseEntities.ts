@@ -69,6 +69,14 @@ const DATA_STORE_COLS = `
   data_classification, residency_region, retention_policy, encryption_at_rest
 `;
 
+// The GET-one query joins enterprise_data_stores, which shares the id,
+// organization_id, created_at, and updated_at column names — unqualified
+// entity columns make Postgres reject the whole query as ambiguous (42702).
+const ENTITY_COLS_QUALIFIED = ENTITY_COLS
+  .split(",")
+  .map((col) => `e.${col.trim()}`)
+  .join(", ");
+
 /** org id from context only; null → caller must 403. */
 function getOrgId(req: Request): string | null {
   return (
@@ -169,7 +177,7 @@ export async function getEnterpriseEntity(req: Request, res: Response): Promise<
   }
 
   const result = await pg.query(
-    `SELECT ${ENTITY_COLS},
+    `SELECT ${ENTITY_COLS_QUALIFIED},
             ds.data_classification, ds.residency_region,
             ds.retention_policy, ds.encryption_at_rest
        FROM enterprise_entities e
