@@ -6504,3 +6504,40 @@ export async function getIntelligenceEvent(
     return null;
   }
 }
+
+// =========================================================
+// GLOBAL SEARCH (GET /api/search)
+// =========================================================
+
+export type GlobalSearchHit = {
+  type: "finding" | "risk" | "vendor" | "ai_system" | "control" | "obligation" | "asset";
+  id: string;
+  title: string;
+  subtitle: string | null;
+  /** App route for this object — the engine owns routing, the UI just links. */
+  href: string;
+};
+
+export type GlobalSearchResponse = {
+  query: string;
+  total: number;
+  hits: GlobalSearchHit[];
+};
+
+/**
+ * Federated search across the canonical domain objects. Returns null on any
+ * failure (bad query, entitlement denial, engine error) — the search page
+ * degrades to an empty state and never throws.
+ */
+export async function searchGlobal(
+  apiKey: string,
+  q: string,
+): Promise<GlobalSearchResponse | null> {
+  try {
+    const res = await engineFetch(`/api/search?q=${encodeURIComponent(q)}`, apiKey);
+    if (!res.ok) return null;
+    return (await res.json()) as GlobalSearchResponse;
+  } catch {
+    return null;
+  }
+}

@@ -73,6 +73,7 @@ import obligationComplianceContextRouter from "./obligationComplianceContext.js"
 import aiSystemGovernanceContextRouter from "./aiSystemGovernanceContext.js";
 import risksRouter from "./risks.js";
 import risksExportRouter from "./risksExport.js";
+import searchRouter from "./search.js";
 import riskTreatmentsRouter from "./riskTreatments.js";
 import riskControlLinksRouter from "./riskControlLinks.js";
 import riskObligationLinksRouter from "./riskObligationLinks.js";
@@ -482,6 +483,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   // findingsExport documents above).
   router.use("/api", risksExportRouter);
   router.use("/api", risksRouter);
+  router.use("/api", searchRouter);
   router.use("/api", riskTreatmentsRouter);
   router.use("/api", riskControlLinksRouter);
   router.use("/api", riskObligationLinksRouter);
