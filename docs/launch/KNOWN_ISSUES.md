@@ -90,10 +90,16 @@ This file does **not** track CI bugs or transient failures. It tracks structural
 - **Consequence:** erasing a tenant is not merely unbuilt (D-3) — it is currently **impossible** for any real org. D-3 cannot be delivered by writing a reaper; the trigger/FK design must be resolved first (e.g. a session-var escape hatch honoured by the WORM triggers, or an explicit erasure path that suspends them under audit).
 - **Verified:** against a real database, not inferred. Reproduced by the validation teardown in `scripts/validation/seed-walkthrough-org.ts`, which can only delete its own seeded org by `ALTER TABLE … DISABLE TRIGGER` inside its transaction.
 - **NOT a workaround:** that teardown is an explicitly-invoked, org-scoped **validation** path for a `[SEED]` org on a non-prod database. It is not an offboarding mechanism and must not be generalised into one. Production FKs, WORM constraints, triggers and runtime deletion behaviour are unchanged.
-- **Resolution:** unowned. Must be settled before D-3 (Art. 17 erasure) can be built. → **architecture backlog**.
+- **Resolution:** owner assigned 2026-07-28 — mechanism proposed as **ADR-0005** (session-variable escape hatch honored by the WORM triggers, audited erasure transaction + certificate); implementation tracked in **#695 (Trust Infrastructure)**. Must land before D-3 (Art. 17 erasure) can be built.
 
 ### D-13 — PF-1: possible skipped `app_request` grants on staging (reshaped migration)
-- `20260719_enterprise_entities_rls.sql` was reshaped 59 minutes after first commit to add `app_request` DML grants on `enterprise_entities` + `data_stores`; the filename-keyed runner may have applied v1 and silently skipped v2 on staging (push/deploy timing UNKNOWN from repo). Prod is unaffected (applies v2 at promotion). Inert today; **would fail the staging A04-G1 RLS flip closed** on those tables. Verification SQL + remediation: `PART_B_PREFLIGHT.md` §1.3. → verify at Gate 5′; must be resolved before the staging RLS flip.
+- `20260719_enterprise_entities_rls.sql` was reshaped 59 minutes after first commit to add `app_request` DML grants on `enterprise_entities` + `data_stores`; the filename-keyed runner may have applied v1 and silently skipped v2 on staging (push/deploy timing UNKNOWN from repo). Prod is unaffected (applies v2 at promotion). Inert today; **would fail the staging A04-G1 RLS flip closed** on those tables. Verification SQL + remediation: `PART_B_PREFLIGHT.md` §1.3. → verify at Gate 5′; must be resolved before the staging RLS flip (now a precondition inside **#695**).
+
+### D-14 — Matcher re-fire duplicates findings (no ON CONFLICT on the findings INSERT)
+- The legacy signal path's findings INSERT (`cyberSignalProcessingService.ts`, `source_type='cyber_signal'`) has no idempotency guard — acknowledged in-code. Re-firing the matcher on the same signal produces duplicate findings rows in **production** (the path is live). Only `cyber_signals.dedup_hash` limits repeats today. Fix + prod duplicate-volume measurement → **#693 (Canonical Path Truth)**.
+
+### D-15 — Findings API validator accepts 11 of the DB's 15 `source_type` values
+- `findingValidation.ts` (and the `GET /findings?source_type=` filter) omits `cyber_signal`, `applicability_assessment`, `asset_assessment`, `intelligence_event` — the four types the engine's own automated writers create. Automated findings cannot be filtered by source through the public API. Align with the `20260823` CHECK → **#693**.
 
 ---
 

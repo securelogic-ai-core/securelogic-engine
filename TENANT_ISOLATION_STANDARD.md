@@ -118,8 +118,8 @@ When a column references another customer-data row (`vendor_id`, `control_id`, e
 - `JOIN` chains that lose org scoping at any join (every join into customer data must carry org context)
 - `req.body.organization_id` — never trust client-supplied tenant identity
 
-### Defense-in-depth (out of scope, recommended next)
-Postgres Row-Level Security on customer-data tables, gated by a `app.current_org_id` session variable set per request. This is **not** part of the current standard — it is the next-step recommendation that future packages should plan toward. Until RLS is in place, the discipline above is the only protection.
+### Defense-in-depth (amended 2026-07-28 via §14 — RLS rollout is IN FLIGHT, still inert)
+Postgres Row-Level Security on customer-data tables, gated by a `app.current_org_id` session variable set per request. **Amendment (2026-07-28, doc-sync package):** the A04-G1 program has since rolled RLS policies onto ~22 tables (`ENABLE ROW LEVEL SECURITY`, NOT FORCE, `app_request` grants; see `dataClassification.ts` for per-table `rlsStatus`). The policies remain **inert** — the request path still connects as the table owner — so §§1–4's route-level discipline remains the **only live protection**, exactly as before. The `app_request` credential flip (with its preconditions: D-13 grant verification, completion of `rlsStatus:"pending"` Tier-A tables, elevated-channel audit) is tracked as issue #695. This amendment records reality; it does not relax any rule (§14.3: no compensating control needed — nothing is weakened). Risk register: R8 remains open until the flip.
 
 ---
 

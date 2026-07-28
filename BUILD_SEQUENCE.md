@@ -408,7 +408,22 @@ Billing note:
 > authorized.**
 
 ## Active package
-`Priority 4 — Signal Ingestion Hardening` — **status: ACTIVE — IMPLEMENTATION AUTHORIZED & UNDERWAY (2026-06-26).**
+
+> **Reality-sync (2026-07-28, doc-sync package):** the row below is retained as history but no
+> longer describes the live workstream. Priority 4 stalled after slices 4A.1(a)/(b) + A3
+> (2026-06-26); the actual post-launch workstream on `develop` has been EAR Phase-1
+> reconciliation, ERG Convergence C5, asset-search consolidation, and the EC entity-detail fix
+> (#691). The 2026-07-28 Enterprise Architecture Review + Decision Review converted the open
+> recommendations into the tracked register: **#692 (Commercial Integrity) → #693 (Canonical
+> Path Truth) → #694 (Risk Governance Convergence, gated on ADR-0004) ∥ #695 (Trust
+> Infrastructure, gated on ADR-0005) → #696 (Priority-4 resumption + IQP completion) → #697
+> (Universal Finding v2 charter, gated on ADR-0006)** — that ordering is the recommended
+> sequence of record pending operator ratification of the Proposed ADRs.
+> Risk Lifecycle (R1+) note: code shipped dark in all environments while the spec remains
+> "not yet authorized" — retroactive disposition is pending the operator ruling tracked in
+> #694; the Backlog row below is superseded by that pending ruling.
+
+`Priority 4 — Signal Ingestion Hardening` — **status: STALLED at 4A.1+A3 (was: ACTIVE, authorized 2026-06-26); resumption tracked as #696.**
 
 > **Active-workstream update (2026-07-04):** the live build workstream has moved to the
 > **Enterprise Context Layer (ECL)** — authorized as the *Priority-5 foundation* (PRs #458,
