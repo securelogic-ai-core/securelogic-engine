@@ -11,7 +11,7 @@
  *   DELETE /api/sso/config              — Delete org SSO config (admin + professional+)
  */
 
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import * as samlify from "samlify";
 import { pg, pgElevated } from "../infra/postgres.js";
@@ -420,11 +420,20 @@ const exchangeLimiter = rateLimit({
   },
 });
 
-router.post("/sso/exchange", exchangeLimiter, async (req: Request, res: Response) => {
+// Flag gate FIRST, limiter second (security review #710 finding 1): with the
+// order reversed, a flag-off probe still received RateLimit-* headers and a
+// 404 body missing the app-wide handler's `path` field — fingerprinting the
+// feature as deployed-but-off. Flag-off now mirrors the default 404 handler
+// byte-for-byte and touches no limiter state.
+const exchangeFlagGate = (req: Request, res: Response, next: NextFunction): void => {
   if (!ssoCodeExchangeEnabled()) {
-    res.status(404).json({ error: "not_found" });
+    res.status(404).json({ error: "not_found", path: req.originalUrl });
     return;
   }
+  next();
+};
+
+router.post("/sso/exchange", exchangeFlagGate, exchangeLimiter, async (req: Request, res: Response) => {
   try {
     const code = (req.body ?? {})["code"];
     if (typeof code !== "string" || code.length === 0) {

@@ -7,7 +7,11 @@
  *   2. an expired code is inert even when never consumed;
  *   3. the stored row carries the sha256, never the raw code;
  *   4. FK integrity: deleting the user cascades the code away (erasure needs
- *      no reaper step, as the classification entry claims).
+ *      no reaper step, as the classification entry claims);
+ *   5. org binding: a code minted for an org A user yields org A identity,
+ *      even when an identically-named user exists in org B (security review
+ *      #710 finding 3 — insurance against a future refactor adding an org
+ *      input to the exchange).
  */
 
 process.env.JWT_SECRET ??= "test-jwt-secret-for-sso-exchange";
@@ -83,6 +87,29 @@ describe("SSO login codes — single-use against the real schema", () => {
     );
 
     expect(await consumeSsoLoginCode(raw)).toBeNull();
+  });
+
+  it("a code minted in org A can never yield org B identity, even with a same-email user in org B", async () => {
+    // The classic confusion setup: the SAME email exists in both orgs. The
+    // exchange takes no org parameter — identity must come solely from the
+    // minted row, never from any email/org lookup that could cross tenants.
+    const twinEmail = "twin@shared.test";
+    const twinA = (await seedUser(pool, seed.orgA.id, { email: twinEmail, name: "Twin A" })).id;
+    const twinB = (await seedUser(pool, seed.orgB.id, { email: twinEmail, name: "Twin B" })).id;
+
+    const raw = await createSsoLoginCode({
+      organizationId: seed.orgA.id,
+      userId: twinA,
+      email: twinEmail,
+      displayName: "Twin A",
+    });
+
+    const payload = await consumeSsoLoginCode(raw);
+    expect(payload).not.toBeNull();
+    expect(payload!.organizationId).toBe(seed.orgA.id);
+    expect(payload!.userId).toBe(twinA);
+    expect(payload!.organizationId).not.toBe(seed.orgB.id);
+    expect(payload!.userId).not.toBe(twinB);
   });
 
   it("deleting the user cascades the code away (erasure without a reaper step)", async () => {

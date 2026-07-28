@@ -83,6 +83,12 @@ describe("POST /api/sso/exchange — darkness", () => {
     const res = await request(makeApp()).post("/api/sso/exchange").send({ code: CODE });
     expect(res.status).toBe(404);
     expect(h.consume).not.toHaveBeenCalled();
+    // Security review #710 finding 1: flag-off must be indistinguishable from
+    // a route that does not exist — the app-wide 404 body (incl. `path`) and
+    // no RateLimit-* headers (the flag gate runs BEFORE the limiter).
+    expect(res.body).toEqual({ error: "not_found", path: "/api/sso/exchange" });
+    expect(res.headers["ratelimit-limit"]).toBeUndefined();
+    expect(res.headers["ratelimit-remaining"]).toBeUndefined();
   });
 });
 
