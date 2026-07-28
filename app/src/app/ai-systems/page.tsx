@@ -5,6 +5,7 @@ import { getAiSystems, getGovernanceReviews, type AiSystem } from "@/lib/api";
 // EAR Phase 4: badges come from the cross-domain kit (was a local duplicate).
 // StatusChip stays local — it styles DEPLOYMENT status, a different vocabulary.
 import { CriticalityBadge, MetaChip } from "@/components/assetKit";
+import { ExportCsvButton } from "@/components/ExportCsvButton";
 
 export default async function AiSystemsPage({
   searchParams,
@@ -77,6 +78,11 @@ export default async function AiSystemsPage({
           >
             ↑ Import CSV
           </Link>
+          <ExportCsvButton
+            endpoint="/api/export/ai-systems"
+            filenamePrefix="ai-systems"
+            queryString=""
+          />
           <Link
             href="/ai-systems/new"
             className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors hover:opacity-90"

@@ -29,6 +29,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { VALID_STATUSES, VALID_RISK_RATINGS } from "../lib/riskValidation.js";
 import { sqlRiskActive } from "../lib/metricDefinitions.js";
+import { csvRow } from "../lib/csvExport.js";
 
 const router = Router();
 
@@ -38,16 +39,6 @@ const CSV_MAX = 10000;
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
-}
-
-// RFC 4180 CSV cell serializer: wrap in double quotes, escape inner quotes by doubling.
-function csvCell(val: string | null | undefined): string {
-  const s = val == null ? "" : String(val);
-  return `"${s.replace(/"/g, '""')}"`;
-}
-
-function csvRow(cells: Array<string | null | undefined>): string {
-  return cells.map(csvCell).join(",");
 }
 
 router.get(

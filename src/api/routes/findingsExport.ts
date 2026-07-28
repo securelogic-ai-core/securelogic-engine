@@ -21,6 +21,7 @@ import {
   VALID_SEVERITIES,
   VALID_PRIORITIES,
 } from "../lib/findingValidation.js";
+import { csvRow } from "../lib/csvExport.js";
 
 const router = Router();
 
@@ -34,16 +35,6 @@ const VALID_DOMAINS = KNOWN_FINDING_DOMAINS;
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
-}
-
-// RFC 4180 CSV cell serializer: wrap in double quotes, escape inner quotes by doubling.
-function csvCell(val: string | null | undefined): string {
-  const s = val == null ? "" : String(val);
-  return `"${s.replace(/"/g, '""')}"`;
-}
-
-function csvRow(cells: Array<string | null | undefined>): string {
-  return cells.map(csvCell).join(",");
 }
 
 router.get(
@@ -144,7 +135,8 @@ router.get(
            f.created_at
          FROM findings f
          WHERE ${where}
-         ORDER BY f.created_at DESC, f.id DESC`,
+         ORDER BY f.created_at DESC, f.id DESC
+         LIMIT 10000`,
         params
       );
 
