@@ -239,15 +239,18 @@ router.get(
       return;
     }
 
-    // Status filter: default to active
+    // Status filter: default to active (unchanged contract for existing
+    // callers). The explicit `status=all` sentinel returns every lifecycle
+    // state — the register view the UI tabs need; absence-of-param stays
+    // "active" so no existing client's list silently grows.
     const filterStatus = isNonEmptyString(req.query.status)
       ? (req.query.status as string).trim()
       : "active";
 
-    if (!VALID_STATUS_FILTERS.has(filterStatus)) {
+    if (filterStatus !== "all" && !VALID_STATUS_FILTERS.has(filterStatus)) {
       res.status(400).json({
         error: "invalid_status_filter",
-        allowed: [...VALID_STATUS_FILTERS]
+        allowed: [...VALID_STATUS_FILTERS, "all"]
       });
       return;
     }
@@ -270,8 +273,10 @@ router.get(
       const conditions: string[] = ["organization_id = $1"];
       const params: unknown[] = [organizationId];
 
-      params.push(filterStatus);
-      conditions.push(`status = $${params.length}`);
+      if (filterStatus !== "all") {
+        params.push(filterStatus);
+        conditions.push(`status = $${params.length}`);
+      }
 
       if (filterDomain !== null) {
         params.push(filterDomain);
