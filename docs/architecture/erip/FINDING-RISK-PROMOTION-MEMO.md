@@ -90,6 +90,5 @@ worklist for acceptances approved before enablement.
 Staging: flag on engine service → approve a `[SEED]` acceptance → risk
 appears `status='accepted'` with `source_type='finding_promotion'`;
 re-approve after expiry → links, count stays 1. Then run §7 (expect zero).
-Prod: per GATE discipline. Enablement is an operator action tracked as a
-`docs/launch/KNOWN_ISSUES.md` entry (same pattern as the vendor-assurance and
-risk-acceptance flags), added when this ships.
+Prod: per GATE discipline. Rides `docs/launch/PENDING_ENABLEMENT.md`
+(arrives in PR #705; add this flag's row there once both PRs are merged).
