@@ -260,6 +260,24 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
       [email, orgId]
     );
 
+    // GDPR-lifecycle status gate — same rule as the password login path
+    // (customerAuth.ts): a pending_deletion/deleted account must not mint a
+    // session through ANY door, and SSO must not be the documented bypass.
+    const existingStatus = existing.rows[0]?.status ?? null;
+    if (existingStatus === "pending_deletion" || existingStatus === "deleted") {
+      writeAuditEvent({
+        organizationId: orgId,
+        actorUserId: null,
+        eventType: "auth.login_blocked",
+        resourceType: "user",
+        resourceId: existing.rows[0]!.id,
+        payload: { reason: existingStatus, provider: "saml", email: email.slice(0, 4) + "***" },
+        ipAddress: req.ip ?? null,
+      });
+      res.redirect(`${APP_URL}/login?error=account_pending_deletion`);
+      return;
+    }
+
     let userId: string;
     let userRole: string;
     let wasNewUser = false;
@@ -381,13 +399,25 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
 // are indistinguishable (uniform 401) — a leaked URL reveals nothing.
 // Dark: 404 while the exchange flag is off.
 
+// Sized for AGGREGATE platform login traffic, not per-user: the only
+// legitimate caller is the app server (server-side fetch), so every tenant's
+// SSO logins share ONE ip bucket — a per-user-sized cap would let one
+// tenant's morning peak 429 every other tenant's login (security review B1).
+// The limiter is a bot/abuse ceiling only; brute force is not its job
+// (2^256 code space, hashed at rest). Limit hits are loud in the logs.
 const exchangeLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10,
+  max: 600,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.ip ? ipKeyGenerator(req.ip) : "unknown",
-  message: { error: "rate_limit_exceeded" },
+  handler: (req, res) => {
+    logger.warn(
+      { event: "sso_exchange_rate_limited", ip: req.ip ?? null },
+      "SSO exchange rate limit hit — aggregate login traffic exceeded the abuse ceiling"
+    );
+    res.status(429).json({ error: "rate_limit_exceeded" });
+  },
 });
 
 router.post("/sso/exchange", exchangeLimiter, async (req: Request, res: Response) => {
@@ -404,23 +434,52 @@ router.post("/sso/exchange", exchangeLimiter, async (req: Request, res: Response
 
     const payload = await consumeSsoLoginCode(code);
     if (!payload) {
+      // Uniform toward the caller; loud toward operations (a spike here is a
+      // guessing attempt or an integration fault, either way worth seeing).
+      logger.warn({ event: "sso_exchange_invalid_code", ip: req.ip ?? null }, "SSO exchange: invalid code");
       res.status(401).json({ error: "invalid_code" });
       return;
     }
 
-    // Role is read at exchange time, not mint time — a role change in the
-    // 60-second window is honored, and the code row never carries authority.
-    const userResult = await pgElevated.query<{ role: string }>(
-      `SELECT role FROM users WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+    // Role AND status are read at exchange time, not mint time — a role
+    // change in the 60-second window is honored, the code row never carries
+    // authority, and the GDPR-lifecycle status gate (customerAuth.ts) holds
+    // at this mint site too (security review B2). Uniform 401 regardless.
+    const userResult = await pgElevated.query<{ role: string; status: string | null }>(
+      `SELECT role, status FROM users WHERE id = $1 AND organization_id = $2 LIMIT 1`,
       [payload.userId, payload.organizationId]
     );
-    const role = userResult.rows[0]?.role;
-    if (!role) {
+    const user = userResult.rows[0];
+    if (!user || user.status === "pending_deletion" || user.status === "deleted") {
+      if (user) {
+        writeAuditEvent({
+          organizationId: payload.organizationId,
+          actorUserId: null,
+          eventType: "auth.login_blocked",
+          resourceType: "user",
+          resourceId: payload.userId,
+          payload: { reason: user.status, provider: "saml_exchange" },
+          ipAddress: req.ip ?? null,
+        });
+      }
       res.status(401).json({ error: "invalid_code" });
       return;
     }
 
-    const token = signJwt(payload.userId, payload.organizationId, role);
+    const token = signJwt(payload.userId, payload.organizationId, user.role);
+
+    // The exchange is where the session JWT is actually minted now — audit it
+    // (security review N2): an intercepted-and-raced code leaves a winning
+    // exchange here and a losing invalid_code warn above, both visible.
+    writeAuditEvent({
+      organizationId: payload.organizationId,
+      actorUserId: payload.userId,
+      eventType: "auth.sso_login_exchanged",
+      resourceType: "user",
+      resourceId: payload.userId,
+      payload: { provider: "saml" },
+      ipAddress: req.ip ?? null,
+    });
     res.status(200).json({
       token,
       userId: payload.userId,

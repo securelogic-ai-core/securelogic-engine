@@ -43,25 +43,46 @@ export async function GET(request: Request) {
     }
     name = name || email;
 
+    // Kill switch for the legacy token-in-URL shape (security review N1b):
+    // once the engine's code-exchange flag is confirmed on everywhere, the
+    // operator sets this and the legacy query shape stops planting sessions.
+    // The code path above is unaffected.
+    if (
+      !code &&
+      process.env.SECURELOGIC_SSO_LEGACY_CALLBACK_DISABLED === "true"
+    ) {
+      return NextResponse.redirect(new URL("/login?error=sso_callback_invalid", request.url));
+    }
+
     if (!token || !userId || !email || !orgId) {
       return NextResponse.redirect(new URL("/login?error=sso_callback_invalid", request.url));
     }
 
-    // Fetch full me response to populate entitlement and org name
+    // Fetch full me response to populate entitlement and org name. HARD-FAIL
+    // when the token does not verify (security review N1a): a session must
+    // never be planted from an unverified token with attacker-chosen
+    // email/name/orgId — getAuthMe null means the engine rejected the token.
     const me = await getAuthMe(token);
+    if (!me) {
+      return NextResponse.redirect(new URL("/login?error=sso_session_failed", request.url));
+    }
 
     const cookieStore = await cookies();
     const session = await getIronSession<SessionData>(cookieStore, getSessionOptions());
 
+    // Identity comes from the VERIFIED token (/api/auth/me), never from the
+    // URL — the query params are, at best, a hint the engine already proved
+    // and, at worst, attacker-chosen (security review N1). The token itself
+    // is the only thing the session may trust.
     session.jwtToken            = token;
-    session.userId              = userId;
-    session.email               = email;
-    session.name                = name || email;
-    session.organizationId      = orgId;
-    session.organizationName    = me?.organizationName ?? "";
-    session.entitlementLevel    = me?.entitlementLevel ?? "starter";
-    session.userRole            = me?.role ?? "analyst";
-    session.billingActive       = me?.billingActive ?? false;
+    session.userId              = me.id;
+    session.email               = me.email;
+    session.name                = me.name || me.email;
+    session.organizationId      = me.organizationId;
+    session.organizationName    = me.organizationName ?? "";
+    session.entitlementLevel    = me.entitlementLevel ?? "starter";
+    session.userRole            = me.role ?? "analyst";
+    session.billingActive       = me.billingActive ?? false;
     session.onboardingCompleted = true; // SSO users skip onboarding
 
     await session.save();

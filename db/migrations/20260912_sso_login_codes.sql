@@ -58,7 +58,10 @@ BEGIN
   END IF;
 END $$;
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON sso_login_codes TO app_request;
+-- Deliberately NO app_request grant: this table is owner-pool-only by its
+-- access model (unauthenticated auth path; org unknown until the row is
+-- read), and the grant should match the model (security review N4). If a
+-- tenant-scoped reader ever appears, add the grant with that reader.
 
 COMMENT ON TABLE sso_login_codes IS
   'One-time short-TTL codes for the SAML ACS -> app session handoff (replaces the session JWT in the redirect URL). code_hash only, 60s TTL, single-use via atomic consumed_at claim. Written/consumed by the unauthenticated auth path on the owner pool.';
