@@ -1193,6 +1193,7 @@ export async function getSignalMatchSuggestionCounts(
       ai_system: string;
       control: string;
       obligation: string;
+      asset: string;
       lifetime_total: string;
     }>(
       `SELECT
@@ -1201,6 +1202,7 @@ export async function getSignalMatchSuggestionCounts(
          COUNT(*) FILTER (WHERE accepted_at IS NULL AND dismissed_at IS NULL AND target_type = 'ai_system') AS ai_system,
          COUNT(*) FILTER (WHERE accepted_at IS NULL AND dismissed_at IS NULL AND target_type = 'control')   AS control,
          COUNT(*) FILTER (WHERE accepted_at IS NULL AND dismissed_at IS NULL AND target_type = 'obligation') AS obligation,
+         COUNT(*) FILTER (WHERE accepted_at IS NULL AND dismissed_at IS NULL AND target_type = 'asset')     AS asset,
          COUNT(*)                                                                                          AS lifetime_total
          FROM signal_match_suggestions
         WHERE organization_id = $1`,
@@ -1219,7 +1221,12 @@ export async function getSignalMatchSuggestionCounts(
         vendor:     Number(row.vendor),
         ai_system:  Number(row.ai_system),
         control:    Number(row.control),
-        obligation: Number(row.obligation)
+        obligation: Number(row.obligation),
+        // EAR Phase 2: the asset key appears only while the registry is
+        // enabled — same gating as the `?target_type=asset` list filter, and
+        // the signal the queue UI uses to decide whether to render the Assets
+        // chip. Flag-off the response is byte-identical to pre-registry.
+        ...(assetRegistryEnabled() ? { asset: Number(row.asset) } : {})
       },
       lifetime_total: Number(row.lifetime_total)
     });

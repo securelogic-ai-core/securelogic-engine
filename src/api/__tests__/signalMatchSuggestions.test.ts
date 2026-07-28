@@ -1453,6 +1453,55 @@ describe("signalMatchSuggestions — counts handler", () => {
     expect(mockPgQuery).toHaveBeenCalledTimes(1);
   });
 
+  it("registry flag ON: by_target_type carries the asset count; OFF: shape is byte-identical to pre-registry", async () => {
+    const row = {
+      total: "12",
+      vendor: "5",
+      ai_system: "3",
+      control: "2",
+      obligation: "1",
+      asset: "1",
+      lifetime_total: "47"
+    };
+
+    // Flag ON → the asset key appears (the queue UI's registry-enabled signal).
+    process.env.SECURELOGIC_ASSET_REGISTRY_ENABLED = "true";
+    try {
+      mockPgQuery.mockResolvedValueOnce({ rowCount: 1, rows: [row] });
+      const reqOn = {
+        organizationContext: { organizationId: VALID_ORG_UUID }
+      } as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[0];
+      const resOn = makeRes();
+      await getSignalMatchSuggestionCounts(
+        reqOn,
+        resOn as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[1]
+      );
+      expect(resOn.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          by_target_type: { vendor: 5, ai_system: 3, control: 2, obligation: 1, asset: 1 }
+        })
+      );
+    } finally {
+      delete process.env.SECURELOGIC_ASSET_REGISTRY_ENABLED;
+    }
+
+    // Flag OFF → no asset key, even when asset rows exist in the DB.
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 1, rows: [row] });
+    const reqOff = {
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[0];
+    const resOff = makeRes();
+    await getSignalMatchSuggestionCounts(
+      reqOff,
+      resOff as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[1]
+    );
+    const body = (resOff.json as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+      by_target_type: Record<string, number>;
+    };
+    expect(body.by_target_type).toEqual({ vendor: 5, ai_system: 3, control: 2, obligation: 1 });
+    expect("asset" in body.by_target_type).toBe(false);
+  });
+
   it("coerces bigint string counts to JS numbers", async () => {
     // pg returns COUNT(*) as a string; the handler must coerce.
     mockPgQuery.mockResolvedValueOnce({

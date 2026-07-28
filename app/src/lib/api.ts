@@ -4996,7 +4996,11 @@ export type SignalMatchTargetType =
   | "vendor"
   | "ai_system"
   | "control"
-  | "obligation";
+  | "obligation"
+  // EAR Phase 2: registry-target suggestions. Listable/dismissable today;
+  // accept is engine-refused (409 asset_target_accept_unsupported) until the
+  // registry link store ships (Phase 3), and the UI must not offer it.
+  | "asset";
 
 export type SignalMatchSuggestionStatus = "pending" | "accepted" | "dismissed";
 
@@ -5030,7 +5034,11 @@ export type SignalMatchSuggestionsResponse = {
 export type SignalMatchSuggestionCounts = {
   organizationId: string;
   total: number;
-  by_target_type: Record<SignalMatchTargetType, number>;
+  // `asset` is present only while the engine's asset registry is enabled —
+  // its presence is the signal that the Assets queue chip should render.
+  by_target_type: Record<Exclude<SignalMatchTargetType, "asset">, number> & {
+    asset?: number;
+  };
   // lifetime_total counts ALL states (pending, accepted, dismissed). The
   // queue UI uses it to distinguish a filtered-empty state from a
   // first-time-empty state without a separate query — the alternative was

@@ -56,6 +56,7 @@ import {
   toggleSelectAll,
   pruneSelection,
   summarizeBulkResult,
+  partitionAcceptEligible,
 } from "./bulkSelection";
 import { useTimedNotice } from "@/hooks/useTimedNotice";
 import { Notice } from "./Notice";
@@ -78,6 +79,7 @@ const TARGET_LABEL: Record<SignalMatchTargetType, string> = {
   ai_system:  "AI System",
   control:    "Control",
   obligation: "Obligation",
+  asset:      "Asset",
 };
 
 const TARGET_ROUTE: Record<SignalMatchTargetType, string> = {
@@ -85,7 +87,19 @@ const TARGET_ROUTE: Record<SignalMatchTargetType, string> = {
   ai_system:  "/ai-systems",
   control:    "/controls",
   obligation: "/obligations",
+  asset:      "/assets",
 };
+
+/**
+ * EAR Phase 2: accepting an asset suggestion means writing a link row, and
+ * the registry link-store shape is a Phase-3 decision — the engine refuses
+ * with 409 asset_target_accept_unsupported. The UI therefore never offers
+ * Accept for asset rows (a button that always errors is a dead end); Dismiss
+ * works normally. Flips to true for everything else.
+ */
+export function isAcceptSupported(targetType: SignalMatchTargetType): boolean {
+  return targetType !== "asset";
+}
 
 export type EnrichedSuggestion = SignalMatchSuggestion & {
   // Server-rendered enrichments — joined into the row at page-load time
@@ -330,18 +344,41 @@ export function SuggestionList({
   const runBulk = useCallback(
     (decision: "accept" | "dismiss") => {
       if (selected.length === 0) return;
-      const ids = [...selected];
-      startBulk(async () => {
-        const res = await bulkDecideSuggestionsAction(ids, decision, { embeddedRevalidatePath });
+      // Bulk ACCEPT never sends asset rows — the engine refuses them (409)
+      // until the registry link store ships, so sending them only manufactures
+      // partial failures. They stay selected-and-skipped, called out in the
+      // notice. Dismiss takes everything.
+      const { eligible, skipped } =
+        decision === "accept"
+          ? partitionAcceptEligible(
+              selected,
+              new Map(initialSuggestions.map((s) => [s.id, s.target_type]))
+            )
+          : { eligible: [...selected], skipped: [] as string[] };
+      if (eligible.length === 0) {
         showNotice({
-          id: `bulk-${decision}-${ids.length}`,
-          message: summarizeBulkResult(decision, res.succeeded.length, res.failed.length),
+          id: `bulk-${decision}-none`,
+          message: summarizeBulkResult(decision, 0, 0, skipped.length),
+        });
+        exitSelectMode();
+        return;
+      }
+      startBulk(async () => {
+        const res = await bulkDecideSuggestionsAction(eligible, decision, { embeddedRevalidatePath });
+        showNotice({
+          id: `bulk-${decision}-${eligible.length}`,
+          message: summarizeBulkResult(
+            decision,
+            res.succeeded.length,
+            res.failed.length,
+            skipped.length
+          ),
         });
         exitSelectMode();
         router.refresh();
       });
     },
-    [selected, embeddedRevalidatePath, showNotice, exitSelectMode, router]
+    [selected, initialSuggestions, embeddedRevalidatePath, showNotice, exitSelectMode, router]
   );
 
   if (initialSuggestions.length === 0) {
@@ -639,22 +676,38 @@ function SuggestionRow({
           >
             Dismiss
           </button>
-          <button
-            type="button"
-            onClick={onAccept}
-            style={{
-              background: "#2563eb",
-              border: "1px solid #1d4ed8",
-              color: "white",
-              borderRadius: 6,
-              padding: "6px 12px",
-              fontSize: 13,
-              cursor: "pointer",
-              fontWeight: 500,
-            }}
-          >
-            Accept
-          </button>
+          {isAcceptSupported(suggestion.target_type) ? (
+            <button
+              type="button"
+              onClick={onAccept}
+              style={{
+                background: "#2563eb",
+                border: "1px solid #1d4ed8",
+                color: "white",
+                borderRadius: 6,
+                padding: "6px 12px",
+                fontSize: 13,
+                cursor: "pointer",
+                fontWeight: 500,
+              }}
+            >
+              Accept
+            </button>
+          ) : (
+            <span
+              title="Accepting asset suggestions arrives with the asset link store. Dismiss works today."
+              style={{
+                fontSize: 12,
+                color: "#9ca3af",
+                border: "1px dashed rgba(255,255,255,0.16)",
+                borderRadius: 6,
+                padding: "6px 12px",
+                alignSelf: "center",
+              }}
+            >
+              Accept coming soon
+            </span>
+          )}
         </div>
       )}
     </li>

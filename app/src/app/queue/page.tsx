@@ -26,6 +26,11 @@ const TARGET_TYPES: readonly SignalMatchTargetType[] = [
   "ai_system",
   "control",
   "obligation",
+  // EAR Phase 2: valid as a URL filter whenever the engine has the registry
+  // enabled; the chip itself renders only when the counts response carries
+  // the `asset` key (the engine's own registry-enabled signal), so flag-off
+  // the queue is byte-identical to pre-registry.
+  "asset",
 ];
 
 const TARGET_LABEL: Record<SignalMatchTargetType, string> = {
@@ -33,6 +38,7 @@ const TARGET_LABEL: Record<SignalMatchTargetType, string> = {
   ai_system:  "AI Systems",
   control:    "Controls",
   obligation: "Obligations",
+  asset:      "Assets",
 };
 
 const SORT_LABEL: Record<"created-desc" | "score-desc", string> = {
@@ -334,7 +340,16 @@ export default async function QueuePage({
           >
             All ({totalPending})
           </Link>
-          {TARGET_TYPES.map((t) => {
+          {TARGET_TYPES.filter(
+            // The Assets chip exists only when the engine advertises the type
+            // (registry enabled → counts carry the asset key), or when the
+            // user is already on an ?target_type=asset URL and needs the
+            // active chip to navigate away from it.
+            (t) =>
+              t !== "asset" ||
+              breakdown.asset !== undefined ||
+              targetFilter === "asset"
+          ).map((t) => {
             const active = targetFilter === t;
             return (
               <Link
@@ -350,7 +365,7 @@ export default async function QueuePage({
                   textDecoration: "none",
                 }}
               >
-                {TARGET_LABEL[t]} ({breakdown[t]})
+                {TARGET_LABEL[t]} ({breakdown[t] ?? 0})
               </Link>
             );
           })}
