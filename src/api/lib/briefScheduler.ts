@@ -84,6 +84,7 @@ import {
   fetchPriorBriefContext
 } from "./briefSynthesizer.js";
 import { sendBrief } from "./briefEmailSender.js";
+import { emitBriefPublished } from "./briefWebhookEmitter.js";
 import { isBriefSendDay } from "./briefSendWindow.js";
 import { maybeAlertBriefDelivery } from "./briefDeliveryHealth.js";
 
@@ -594,6 +595,15 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
         await client.query("ROLLBACK").catch(() => {});
         throw err;
       }
+    });
+
+    // Wave-1 (DS-15): emit AFTER the commit — a rollback can never produce a
+    // phantom brief.published. No-op while wave 1 is dark.
+    emitBriefPublished(orgId, {
+      brief_id: briefId,
+      signal_count: finalized.signal_count,
+      item_count: finalized.item_count,
+      trigger: "scheduler",
     });
 
     return briefId;

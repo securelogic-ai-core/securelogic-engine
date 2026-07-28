@@ -29,6 +29,10 @@ import {
   assertSafeWebhookUrl,
   UnsafeWebhookUrlError,
 } from "../lib/webhookUrlSafety.js";
+import {
+  webhookWave1Enabled,
+  WAVE1_EVENT_TYPES,
+} from "../lib/webhookWave1FeatureFlag.js";
 
 const router = Router();
 
@@ -44,6 +48,23 @@ const VALID_EVENT_TYPES = new Set([
   "action.created",
   "action.updated",
 ]);
+
+/**
+ * Wave-1 event types (DS-15) are registrable only while the wave-1 flag is
+ * on — flag-off, this route is byte-identical to pre-wave-1 (the new names
+ * are rejected, and never revealed in `allowed`). Read at call time so the
+ * flag needs no process restart to take effect in tests.
+ */
+function isValidEventType(t: string): boolean {
+  if (VALID_EVENT_TYPES.has(t)) return true;
+  return webhookWave1Enabled() && (WAVE1_EVENT_TYPES as readonly string[]).includes(t);
+}
+
+function allowedEventTypes(): string[] {
+  return webhookWave1Enabled()
+    ? [...VALID_EVENT_TYPES, ...WAVE1_EVENT_TYPES]
+    : [...VALID_EVENT_TYPES];
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isUuid(v: unknown): v is string {
@@ -175,11 +196,11 @@ router.post(
         : ["*"];
 
       for (const et of rawEventTypes) {
-        if (!VALID_EVENT_TYPES.has(et)) {
+        if (!isValidEventType(et)) {
           res.status(400).json({
             error: "invalid_event_type",
             invalid: et,
-            allowed: [...VALID_EVENT_TYPES],
+            allowed: allowedEventTypes(),
           });
           return;
         }
@@ -330,8 +351,8 @@ router.patch(
       if ("event_types" in body) {
         const et: string[] = Array.isArray(body.event_types) ? body.event_types : [];
         for (const t of et) {
-          if (!VALID_EVENT_TYPES.has(t)) {
-            res.status(400).json({ error: "invalid_event_type", invalid: t, allowed: [...VALID_EVENT_TYPES] });
+          if (!isValidEventType(t)) {
+            res.status(400).json({ error: "invalid_event_type", invalid: t, allowed: allowedEventTypes() });
             return;
           }
         }

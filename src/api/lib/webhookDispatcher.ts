@@ -27,6 +27,7 @@ import { fetch as undiciFetch } from "undici";
 import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { buildWebhookHeaders } from "./webhookSigning.js";
+import { webhookWave1Enabled } from "./webhookWave1FeatureFlag.js";
 import {
   assertSafeWebhookUrl,
   buildPinnedAgent,
@@ -60,9 +61,14 @@ export async function dispatchWebhookEvent(event: WebhookEvent): Promise<void> {
 
   if (endpoints.length === 0) return;
 
+  // Envelope `version` ships with wave 1 (DS-15: versioned payloads). The
+  // schema key for consumers is (event_type, version); existing event data
+  // shapes are grandfathered as version 1 unchanged. Flag-off the envelope is
+  // byte-identical to the pre-wave-1 shape.
   const payload = JSON.stringify({
     id: crypto.randomUUID(),
     event_type: event.event_type,
+    ...(webhookWave1Enabled() ? { version: 1 } : {}),
     created_at: new Date().toISOString(),
     data: event.data,
   });
