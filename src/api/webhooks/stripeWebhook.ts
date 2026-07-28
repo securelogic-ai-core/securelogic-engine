@@ -10,6 +10,7 @@ import {
 } from "../infra/entitlementStore.js";
 import { claimWebhookEvent } from "./webhookIdempotency.js";
 import { applyBriefToPlatformCredit } from "../lib/briefPlatformCredit.js";
+import { sendEmail } from "../infra/email.js";
 
 /* =========================================================
    CONSTANTS
@@ -287,6 +288,113 @@ function tierToDbLevel(tier: string): string {
     return "premium";
   }
   return "starter";
+}
+
+/**
+ * customer.subscription.trial_will_end → heads-up email to the org's admins
+ * (#692 A7). Stripe fires this once, ~3 days before the trial converts and the
+ * card is charged; before this email existed the webhook logged and the
+ * conversion charge (up to $7,200 for Platform Annual) landed unannounced.
+ *
+ * Recipients: verified admin users of the org resolved via stripe_customer_id.
+ * Content is built only from the event (plan via price ID, amount from the
+ * subscription item, end date from trial_end) — no extra Stripe API calls.
+ */
+async function sendTrialWillEndEmails(
+  sub: Stripe.Subscription,
+  customerId: string
+): Promise<void> {
+  const orgResult = await pg.query<{ id: string; name: string }>(
+    `SELECT id, name FROM organizations WHERE stripe_customer_id = $1 LIMIT 1`,
+    [customerId]
+  );
+  const org = orgResult.rows[0];
+  if (!org) {
+    logger.warn(
+      { event: "stripe_trial_will_end_org_missing", customerId },
+      "stripeWebhook: trial_will_end — no org for customer, skipping email"
+    );
+    return;
+  }
+
+  const admins = await pg.query<{ email: string; name: string | null }>(
+    `SELECT email, name FROM users
+      WHERE organization_id = $1 AND role = 'admin' AND email_verified = TRUE
+      ORDER BY created_at ASC`,
+    [org.id]
+  );
+  if (admins.rows.length === 0) {
+    logger.warn(
+      { event: "stripe_trial_will_end_no_admins", orgId: org.id },
+      "stripeWebhook: trial_will_end — org has no verified admins, skipping email"
+    );
+    return;
+  }
+
+  // Display labels mirror the canonical app map (app/src/lib/api.ts
+  // planDisplayName). Trial tiers are Platform-only by construction
+  // (PLATFORM_TRIAL_TIERS in billing.ts).
+  const tier = resolveTierFromPriceId(sub);
+  const planLabel =
+    tier === "platform_annual" ? "Platform Annual" : "Platform Professional";
+
+  const endDate = sub.trial_end
+    ? new Date(sub.trial_end * 1000).toLocaleDateString("en-US", {
+        month: "long", day: "numeric", year: "numeric",
+      })
+    : null;
+
+  const item = sub.items?.data?.[0];
+  const unitAmount = item?.price?.unit_amount ?? null;
+  const currency = (item?.price?.currency ?? "usd").toUpperCase();
+  const interval = item?.price?.recurring?.interval ?? null;
+  const amountLabel =
+    unitAmount !== null
+      ? `${currency === "USD" ? "$" : `${currency} `}${(unitAmount / 100).toLocaleString("en-US")}${interval ? ` / ${interval}` : ""}`
+      : null;
+
+  const appBase = (process.env.APP_BASE_URL ?? "https://app.securelogicai.com").replace(/\/$/, "");
+  const whenLine = endDate ? ` on <strong>${endDate}</strong>` : " in about 3 days";
+  const chargeLine = amountLabel
+    ? `Your subscription will start at <strong>${amountLabel}</strong> using the card on file.`
+    : "Your subscription will start using the card on file.";
+
+  const subject = `Your SecureLogic ${planLabel} trial ends soon`;
+  const html = `
+    <div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 560px; margin: 0 auto; color: #0f172a;">
+      <h2 style="margin-bottom: 8px;">Your ${planLabel} trial ends${endDate ? ` ${endDate}` : " soon"}</h2>
+      <p style="color: #334155; line-height: 1.6;">
+        The free trial for <strong>${org.name}</strong> converts${whenLine}.
+        ${chargeLine}
+      </p>
+      <p style="color: #334155; line-height: 1.6;">
+        To review your plan, update the payment method, or cancel before
+        conversion, open your billing settings:
+      </p>
+      <p>
+        <a href="${appBase}/account"
+           style="display: inline-block; background: #0d9488; color: #ffffff; text-decoration: none; font-weight: 600; padding: 10px 24px; border-radius: 8px;">
+          Manage Billing
+        </a>
+      </p>
+      <p style="color: #64748b; font-size: 13px;">
+        Nothing to do if you want to keep ${planLabel} — access continues uninterrupted.
+      </p>
+    </div>`;
+
+  for (const admin of admins.rows) {
+    const result = await sendEmail({ to: admin.email, subject, html });
+    logger.info(
+      {
+        event: "stripe_trial_will_end_email",
+        orgId: org.id,
+        to: admin.email,
+        ok: result.ok,
+        reason: result.ok ? null : result.reason,
+      },
+      "stripeWebhook: trial_will_end heads-up email attempted"
+    );
+  }
 }
 
 /**
@@ -688,21 +796,33 @@ export async function stripeWebhook(
     }
 
     // Trial ending soon (fires ~3 days before a trial converts). No
-    // entitlement change — access continues through conversion. Handle
-    // explicitly (rather than falling into the generic ignored path) so it
-    // is logged as a heads-up and never errors. A dunning/heads-up email can
-    // hang off this event later; for now it is a graceful, logged 200.
+    // entitlement change — access continues through conversion. Emails the
+    // org's admins so the conversion charge never lands unannounced; email
+    // failure is non-fatal (never block the 200 — Stripe would retry the
+    // whole event and we'd re-email on an unrelated failure).
     if (eventType === "customer.subscription.trial_will_end") {
       const sub = event.data.object as Stripe.Subscription;
+      const trialCustomerId =
+        typeof sub.customer === "string" ? sub.customer : sub.customer?.id ?? null;
       logger.info(
         {
           event: "stripe_trial_will_end",
           subscriptionId: sub.id,
           trialEnd: sub.trial_end,
-          customerId: typeof sub.customer === "string" ? sub.customer : sub.customer?.id ?? null,
+          customerId: trialCustomerId,
         },
-        "stripeWebhook: Platform trial ending soon — heads-up only, no entitlement change"
+        "stripeWebhook: Platform trial ending soon — notifying org admins, no entitlement change"
       );
+      if (trialCustomerId) {
+        try {
+          await sendTrialWillEndEmails(sub, trialCustomerId);
+        } catch (err) {
+          logger.warn(
+            { event: "stripe_trial_will_end_email_failed", customerId: trialCustomerId, err },
+            "stripeWebhook: trial_will_end email failed (non-fatal)"
+          );
+        }
+      }
       respond({ received: true, trial_will_end: true });
       return;
     }
