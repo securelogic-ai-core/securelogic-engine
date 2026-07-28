@@ -112,6 +112,28 @@ export default async function AccountPage({
   const daysLeftText = trialDaysLeft === null
     ? null
     : trialDaysLeft === 1 ? "1 day left" : `${trialDaysLeft} days left`;
+
+  // ── Renewal visibility (#692 A9, display only) ─────────────────────────
+  // current_period_end + amount/interval come from the same live Stripe read
+  // as the trial block. Rendered only for an active subscription: trialing
+  // shows the trial block instead, and none/canceled shows neither.
+  const isActiveSub = subscription?.status === "active";
+  const renewDate = isActiveSub && subscription?.current_period_end
+    ? new Date(subscription.current_period_end)
+    : null;
+  const renewDateLabel = renewDate
+    ? renewDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+    : null;
+  const renewAmountLabel = isActiveSub
+    ? formatSubscriptionPrice(
+        subscription?.amount ?? null,
+        subscription?.currency ?? null,
+        subscription?.interval ?? null,
+      )
+    : null;
+  const renewLabel = renewDateLabel
+    ? renewAmountLabel ? `${renewDateLabel} · ${renewAmountLabel}` : renewDateLabel
+    : null;
   const { billing_error: billingError, reason: billingReason, mfa_required: mfaRequired } = await searchParams;
   const billingErrorMessage = billingError ? BILLING_ERRORS[billingError] ?? null : null;
   const showMfaBanner = mfaRequired === "1";
@@ -180,6 +202,7 @@ export default async function AccountPage({
           <dl className="space-y-4">
             <Row label="Name" value={me.organizationName} />
             <Row label="Plan" value={planName} />
+            {renewLabel && <Row label="Renews" value={renewLabel} />}
           </dl>
         </div>
 
