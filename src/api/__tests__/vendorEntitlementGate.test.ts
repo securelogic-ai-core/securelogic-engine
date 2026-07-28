@@ -120,6 +120,10 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   // cyber signals (customer CRUD + fetch + reprocess)
   "cyberSignals.ts": 13,
   // Bucket C rank-4 flips
+  // teamInvites gates via requireTeamCapability() (#692 A2): premium ranks
+  // pass as before PLUS the 'teams' Stripe tier — Brief Team's headline
+  // feature stopped 403ing for its own paying customers. Counted via the
+  // TEAM_GATE token below; still zero standard, zero bare premium.
   "teamInvites.ts": 5,
   "webhooks.ts": 7,
   "templates.ts": 3,
@@ -139,6 +143,10 @@ const DUAL_GATE_FILES: ReadonlySet<string> = new Set([
 ]);
 const DUAL = "requirePremiumOrCorePlatform";
 
+// teamInvites' tier-scoped gate (#692 A2): premium-or-Brief-Team, team routes only.
+const TEAM_GATE_FILES: ReadonlySet<string> = new Set(["teamInvites.ts"]);
+const TEAM_GATE = "requireTeamCapability";
+
 describe("entitlement gate — Bucket A (core platform) is premium, never standard", () => {
   for (const [file, expectedPremium] of Object.entries(BUCKET_A_PREMIUM)) {
     it(`${file}: zero standard, ${expectedPremium} premium`, () => {
@@ -147,6 +155,11 @@ describe("entitlement gate — Bucket A (core platform) is premium, never standa
       if (DUAL_GATE_FILES.has(file)) {
         // import + route mounts; the count below excludes the import line.
         expect(count(src, DUAL) - count(src, `import { ${DUAL} }`)).toBe(expectedPremium);
+        expect(count(src, PREM)).toBe(0);
+      } else if (TEAM_GATE_FILES.has(file)) {
+        // Count route mounts only — the import line carries the bare name
+        // twice (binding + module path), so match the call form.
+        expect(count(src, `${TEAM_GATE}()`)).toBe(expectedPremium);
         expect(count(src, PREM)).toBe(0);
       } else {
         expect(count(src, PREM)).toBe(expectedPremium);
