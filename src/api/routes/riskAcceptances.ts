@@ -31,6 +31,7 @@ import {
   sendAcceptanceDecidedNotification,
 } from "../lib/riskAcceptanceNotifier.js";
 import { riskAcceptanceFeatureFlag } from "../lib/riskAcceptanceFeatureFlag.js";
+import { promoteApprovedAcceptance } from "../lib/riskPromotionService.js";
 import {
   ACCEPTANCE_SELECT,
   acceptanceSelect,
@@ -328,6 +329,25 @@ router.post(
         },
         ipAddress: req.ip ?? null,
       });
+
+      // ADR-0004: the approved acceptance lands in the Enterprise Risk
+      // Register (create-or-link, dark behind its own flag). Non-fatal —
+      // the governance record above is primary and already durable; a
+      // failed promotion is found by the memo §7 reconciliation query.
+      try {
+        await promoteApprovedAcceptance({
+          organizationId,
+          acceptanceId: acceptance.id,
+          findingId: acceptance.finding_id,
+          actorUserId: approver,
+          actorApiKeyId: (req as { apiKey?: { id?: string } }).apiKey?.id ?? null,
+        });
+      } catch (err) {
+        logger.error(
+          { event: "risk_promotion_failed", organizationId, acceptanceId: acceptance.id, err },
+          "riskAcceptances: promotion after approval failed (non-fatal)"
+        );
+      }
 
       // P2: tell the requester their acceptance was approved. Fire-and-forget, non-fatal.
       void sendAcceptanceDecidedNotification({
