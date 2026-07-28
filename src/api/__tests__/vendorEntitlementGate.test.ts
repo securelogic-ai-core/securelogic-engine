@@ -121,7 +121,8 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "cyberSignals.ts": 13,
   // Bucket C rank-4 flips
   "teamInvites.ts": 5,
-  "webhooks.ts": 7,
+  // 8 since POST /webhooks/:id/rotate-secret (premium + not-viewer, like test).
+  "webhooks.ts": 8,
   "templates.ts": 3,
   // auditLog: already premium (#233 era) + admin-role gated — pinned here
   "auditLog.ts": 3,
