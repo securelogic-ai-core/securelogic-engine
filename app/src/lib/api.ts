@@ -1917,6 +1917,14 @@ export async function getTeamMembers(token: string): Promise<TeamResponse | null
 
 export type OrgSettings = {
   require_mfa: boolean;
+  // Organization profile (customer-writable since the org-profile settings
+  // surface). The risk-context fields drive context-weighted scoring, finding
+  // enterprise context, and posture computation.
+  name: string;
+  regulated: boolean;
+  handles_pii: boolean;
+  safety_critical: boolean;
+  scale: "Small" | "Medium" | "Enterprise";
 };
 
 export async function getOrgSettings(token: string): Promise<OrgSettings | null> {
