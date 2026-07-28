@@ -36,5 +36,9 @@ export async function POST() {
   session.organizationName = me.organizationName;
   await session.save();
 
-  return NextResponse.json({ ok: true, entitlementLevel: me.entitlementLevel });
+  return NextResponse.json({
+    ok: true,
+    entitlementLevel: me.entitlementLevel,
+    stripeSubscriptionTier: me.stripeSubscriptionTier ?? null,
+  });
 }

@@ -75,7 +75,7 @@ const PLANS = [
     description: "Tailored for large organizations with compliance, procurement, and SLA requirements.",
     features: [
       "Everything in Platform Professional",
-      "SSO / SAML + multi-org (MSSP)",
+      "SSO / SAML",
       "Custom SLA",
       "Dedicated onboarding",
       "Invoice billing",

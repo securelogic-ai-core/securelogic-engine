@@ -36,6 +36,7 @@ export async function POST(request: Request) {
       session.userId               = me.id;
       session.email                = me.email;
       session.name                 = me.name;
+      session.userRole             = me.role ?? "viewer";
       session.organizationId       = me.organizationId;
       session.organizationName     = me.organizationName;
       session.entitlementLevel     = me.entitlementLevel;
