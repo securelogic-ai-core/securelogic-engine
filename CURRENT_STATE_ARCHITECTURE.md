@@ -135,7 +135,7 @@ Current recent hardening work has focused on:
 The current offer stack is:
 - Intelligence Brief — Free
 - Brief Pro
-- Team Professional
+- Brief Team
 - Platform Professional
 - Enterprise
 
@@ -147,9 +147,9 @@ Customer-facing package names map to internal Stripe / entitlement keys as follo
 
 | External (docs, UI, marketing) | Internal (Stripe key, entitlement_level) |
 |---|---|
-| Intelligence Brief — Free | `free` |
+| Intelligence Brief — Free | `starter` |
 | Brief Pro | `professional` |
-| Team Professional | `teams` |
+| Brief Team | `teams` |
 | Platform Professional | `platform` |
 | Platform Annual (billing variant) | `platform_annual` |
 | Enterprise | no Stripe key (custom contract) |

@@ -403,8 +403,11 @@ posture), leaves `main` frozen, and performs no production enablement (GATE B co
 
 **Status:** OPEN governance item. Documentation only — no code, persistence, schema,
 API, migration, or behavioral change is authorized under this record. Surfaced by the
-EAR reconciliation Phase-1 audit (2026-07-21); see
-`docs/investigation/ear-reconciliation-report-2026-07-21.md`.
+EAR reconciliation Phase-1 audit (2026-07-21). The audit report file was never
+committed; the ruling's evidence base is the ratified reconciliation merge
+(`bf2d923e`, "integrate ratified EAR reconciliation documentation into develop")
+and the tracker rows it updated (2026-07-28 doc-sync correction — the previously
+cited `docs/investigation/ear-reconciliation-report-2026-07-21.md` does not exist).
 
 ### 7.1 The ruling
 

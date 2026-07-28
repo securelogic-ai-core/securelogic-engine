@@ -17,7 +17,7 @@ All product decisions must reinforce that hierarchy.
 The active commercial packaging is:
 - Intelligence Brief — Free
 - Brief Pro
-- Team Professional
+- Brief Team
 - Platform Professional
 - Enterprise
 

@@ -59,7 +59,7 @@ This hierarchy is fixed:
 1. The Platform is the main product.
 2. The Intelligence Brief is the entry wedge.
 3. Brief Pro is the premium intelligence offer for individuals.
-4. Team Professional is the premium intelligence offer for small teams.
+4. Brief Team is the premium intelligence offer for small teams.
 5. Platform Professional is the core operating-layer offer.
 6. Enterprise is the customized offer for organizations with more complex requirements.
 
@@ -69,7 +69,7 @@ Platform Annual is not a separate product tier. It is the annual billing option 
 SecureLogic AI currently offers five commercial packages:
 - Intelligence Brief — Free
 - Brief Pro
-- Team Professional
+- Brief Team
 - Platform Professional
 - Enterprise
 
