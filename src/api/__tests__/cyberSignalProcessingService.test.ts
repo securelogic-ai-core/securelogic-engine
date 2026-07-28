@@ -167,6 +167,34 @@ describe("runMatcherForSignal — vendor match", () => {
     expect(mockClientRelease).toHaveBeenCalledTimes(1);
   });
 
+  it("D-14: re-fire on the same signal reuses the existing finding — no duplicate row", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                              // SLA policy SELECT (no policy)
+      .mockResolvedValueOnce(EMPTY)                                              // findings INSERT — NOT EXISTS hit, 0 rows
+      .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // existing-finding SELECT (reuse)
+      .mockResolvedValueOnce(EMPTY)                                              // weights SELECT (defaults)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // 3c: suggestion UPDATE -> accepted
+      .mockResolvedValueOnce(EMPTY);                                             // COMMIT
+
+    const result = await runMatcherForSignal(makeSignal(), ORG_A);
+
+    // The finding surfaced is the ORIGINAL row, not a fresh insert.
+    expect(result.finding).toEqual(findingRow());
+
+    // The INSERT the service issued carries the NOT EXISTS guard, and the
+    // follow-up query is a SELECT of the existing row — never a second INSERT.
+    const sqls = mockClientQuery.mock.calls.map((c) => String(c[0]));
+    const insertSql = sqls.find((s) => /INSERT INTO findings/.test(s))!;
+    expect(insertSql).toMatch(/WHERE NOT EXISTS/);
+    expect(insertSql).toMatch(/source_type = 'cyber_signal'/);
+    expect(sqls.filter((s) => /INSERT INTO findings/.test(s)).length).toBe(1);
+    expect(sqls[4]).toMatch(/SELECT[\s\S]*FROM findings/);
+  });
+
   it("uses external client when provided — does NOT issue its own BEGIN/COMMIT/release", async () => {
     const externalClient = { query: vi.fn(), release: vi.fn() };
     externalClient.query
