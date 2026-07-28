@@ -18,6 +18,7 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import { validateActionCreate } from "../lib/actionValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { recomputeFindingOperationalStatus } from "../lib/findingLifecycle.js";
 import { sqlActionActive, sqlActionOverdue } from "../lib/metricDefinitions.js";
 import { resolveOwnerMeFilter } from "../lib/findingListFilters.js";
@@ -126,6 +127,26 @@ router.post(
         payload: { priority: input.priority, source_type: input.source_type, title: input.title },
         ipAddress: req.ip ?? null,
       });
+
+      // action.created has been in the webhook allowlist since the surface
+      // shipped but never fired. Canonical fields only (same discipline as
+      // finding.created / risk.created): no description, no free-text notes.
+      dispatchWebhookEvent({
+        event_type: "action.created",
+        organization_id: organizationId,
+        data: {
+          id: result.rows[0].id,
+          title: result.rows[0].title,
+          status: result.rows[0].status,
+          priority: result.rows[0].priority,
+          action_type: result.rows[0].action_type ?? null,
+          source_type: result.rows[0].source_type,
+          source_id: result.rows[0].source_id ?? null,
+          owner_user_id: result.rows[0].owner_user_id ?? null,
+          due_date: result.rows[0].due_date ?? null,
+          created_at: result.rows[0].created_at,
+        },
+      }).catch(() => {});
 
       // Child→parent cascade (finding-lifecycle-spec §5): a new remediation
       // Action recomputes the parent Finding's derived operational_status in
@@ -794,6 +815,29 @@ router.patch(
         }
       }
 
+      // Webhook vocabulary stays `action.updated` for every successful PATCH
+      // (the allowlist never advertised a status_changed event); a status flip
+      // travels as the status_change from→to instead. blocked_reason and the
+      // completion note are audit-only free text — never in the payload.
+      dispatchWebhookEvent({
+        event_type: "action.updated",
+        organization_id: organizationId,
+        data: {
+          id: row.id,
+          title: row.title,
+          status: row.status,
+          priority: row.priority,
+          source_type: row.source_type,
+          source_id: row.source_id ?? null,
+          owner_user_id: row.owner_user_id ?? null,
+          due_date: row.due_date ?? null,
+          updated_at: row.updated_at,
+          status_change: statusChanged
+            ? { from: (row.old_status as string | null) ?? null, to: row.status }
+            : null,
+        },
+      }).catch(() => {});
+
       // `old_status` is an audit-only detail from the CTE — never part of the
       // Action resource contract. Strip it so the response shape is unchanged.
       const { old_status: _oldStatus, ...action } = row;
@@ -963,6 +1007,25 @@ router.post(
           });
         }
       }
+
+      // An unblock is a status write, so it emits the same `action.updated`
+      // vocabulary as the PATCH path. The blocker snapshot stays audit-only.
+      dispatchWebhookEvent({
+        event_type: "action.updated",
+        organization_id: organizationId,
+        data: {
+          id: result.rows[0].id,
+          title: result.rows[0].title,
+          status: result.rows[0].status,
+          priority: result.rows[0].priority,
+          source_type: result.rows[0].source_type,
+          source_id: result.rows[0].source_id ?? null,
+          owner_user_id: result.rows[0].owner_user_id ?? null,
+          due_date: result.rows[0].due_date ?? null,
+          updated_at: result.rows[0].updated_at,
+          status_change: { from: "blocked", to: result.rows[0].status },
+        },
+      }).catch(() => {});
 
       res.status(200).json({ action: result.rows[0] });
     } catch (err) {
