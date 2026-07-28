@@ -170,11 +170,14 @@ export function buildNodeNameMap(sources: {
   entities?: Array<{ id: string; name: string }>;
   vendors?: Array<{ id: string; name: string }>;
   aiSystems?: Array<{ id: string; name: string }>;
+  /** asset_registry_v rows — keyed by asset_id (the graph's asset node id). */
+  assets?: Array<{ asset_id: string; name: string }>;
 }): Map<string, string> {
   const map = new Map<string, string>();
   for (const e of sources.entities ?? []) map.set(graphNodeKey("enterprise_entity", e.id), e.name);
   for (const v of sources.vendors ?? []) map.set(graphNodeKey("vendor", v.id), v.name);
   for (const a of sources.aiSystems ?? []) map.set(graphNodeKey("ai_system", a.id), a.name);
+  for (const a of sources.assets ?? []) map.set(graphNodeKey("asset", a.asset_id), a.name);
   return map;
 }
 
