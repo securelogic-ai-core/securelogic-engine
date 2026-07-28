@@ -53,9 +53,11 @@ import frameworkReadinessRouter from "./frameworkReadiness.js";
 import frameworkActivationRouter from "./frameworkActivation.js";
 import requirementsRouter from "./requirements.js";
 import controlsRouter from "./controls.js";
+import controlsExportRouter from "./controlsExport.js";
 import controlMappingsRouter from "./controlMappings.js";
 import controlAssessmentsRouter from "./controlAssessments.js";
 import obligationsRouter from "./obligations.js";
+import obligationsExportRouter from "./obligationsExport.js";
 import obligationMappingsRouter from "./obligationMappings.js";
 import obligationAssessmentsRouter from "./obligationAssessments.js";
 import evidenceRouter from "./evidence.js";
@@ -459,9 +461,13 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", frameworkReadinessRouter);
   router.use("/api", frameworksRouter);
   router.use("/api", requirementsRouter);
+  // Export routers MUST mount before their register routers: GET /:id would
+  // otherwise capture the literal /export.csv path (the findingsExport trap).
+  router.use("/api", controlsExportRouter);
   router.use("/api", controlsRouter);
   router.use("/api", controlMappingsRouter);
   router.use("/api", controlAssessmentsRouter);
+  router.use("/api", obligationsExportRouter);
   router.use("/api", obligationsRouter);
   router.use("/api", obligationMappingsRouter);
   router.use("/api", obligationAssessmentsRouter);
