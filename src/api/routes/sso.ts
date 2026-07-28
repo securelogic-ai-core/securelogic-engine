@@ -14,7 +14,7 @@
 import { Router, type Request, type Response } from "express";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import * as samlify from "samlify";
-import { pg } from "../infra/postgres.js";
+import { pg, pgElevated } from "../infra/postgres.js";
 import { signJwt, SESSION_BLOCKED_STATUSES } from "../lib/jwt.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { enforceSeatLimit } from "../lib/seatLimit.js";
@@ -25,6 +25,11 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { getAppBaseUrl } from "../lib/alerting/alertPrimitives.js";
+import {
+  ssoCodeExchangeEnabled,
+  createSsoLoginCode,
+  consumeSsoLoginCode,
+} from "../lib/ssoLoginCodes.js";
 
 // No-op schema validator — production IdPs produce valid assertions.
 // Using @authenio/samlify-node-xmllint would require a native dependency
@@ -327,8 +332,6 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
       wasNewUser = true;
     }
 
-    const token = signJwt(userId, orgId, userRole);
-
     writeAuditEvent({
       organizationId: orgId,
       actorUserId: userId,
@@ -338,6 +341,24 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
       payload: { email, provider: "saml", jit: wasNewUser },
     });
 
+    if (ssoCodeExchangeEnabled()) {
+      // Hardened handoff: the URL carries only an opaque single-use 60s code;
+      // the app exchanges it server-side (POST /api/sso/exchange) for the
+      // session JWT + profile. No token, no PII in browser history or logs.
+      const code = await createSsoLoginCode({
+        organizationId: orgId,
+        userId,
+        email,
+        displayName,
+      });
+      res.redirect(`${APP_URL}/api/auth-sso-callback?code=${encodeURIComponent(code)}`);
+      return;
+    }
+
+    // Legacy handoff (flag off): session JWT + profile in the URL. Kept
+    // byte-identical until the operator flips the exchange flag, so either
+    // service can deploy first.
+    const token = signJwt(userId, orgId, userRole);
     const callbackUrl =
       `${APP_URL}/api/auth-sso-callback` +
       `?token=${encodeURIComponent(token)}` +
@@ -350,6 +371,66 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
   } catch (err) {
     logger.error({ event: "sso_acs_failed", orgId, err }, "POST /api/sso/:orgId/acs failed");
     res.redirect(`${APP_URL}/login?error=sso_failed`);
+  }
+});
+
+// ─── POST /api/sso/exchange ──────────────────────────────────────────────────
+// No auth (this IS the login path). Body: { code }. Consumes a single-use ACS
+// login code and returns the session JWT + the profile fields the app
+// callback previously read from the URL. Unknown / expired / replayed codes
+// are indistinguishable (uniform 401) — a leaked URL reveals nothing.
+// Dark: 404 while the exchange flag is off.
+
+const exchangeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip ? ipKeyGenerator(req.ip) : "unknown",
+  message: { error: "rate_limit_exceeded" },
+});
+
+router.post("/sso/exchange", exchangeLimiter, async (req: Request, res: Response) => {
+  if (!ssoCodeExchangeEnabled()) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  try {
+    const code = (req.body ?? {})["code"];
+    if (typeof code !== "string" || code.length === 0) {
+      res.status(400).json({ error: "code_required" });
+      return;
+    }
+
+    const payload = await consumeSsoLoginCode(code);
+    if (!payload) {
+      res.status(401).json({ error: "invalid_code" });
+      return;
+    }
+
+    // Role is read at exchange time, not mint time — a role change in the
+    // 60-second window is honored, and the code row never carries authority.
+    const userResult = await pgElevated.query<{ role: string }>(
+      `SELECT role FROM users WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [payload.userId, payload.organizationId]
+    );
+    const role = userResult.rows[0]?.role;
+    if (!role) {
+      res.status(401).json({ error: "invalid_code" });
+      return;
+    }
+
+    const token = signJwt(payload.userId, payload.organizationId, role);
+    res.status(200).json({
+      token,
+      userId: payload.userId,
+      email: payload.email,
+      name: payload.displayName,
+      orgId: payload.organizationId,
+    });
+  } catch (err) {
+    logger.error({ event: "sso_exchange_failed", err }, "POST /api/sso/exchange failed");
+    res.status(500).json({ error: "sso_exchange_failed" });
   }
 });
 
