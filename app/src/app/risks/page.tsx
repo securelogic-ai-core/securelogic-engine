@@ -9,6 +9,7 @@ import {
   getRiskScale,
 } from "@/lib/api";
 import { RiskTable } from "@/components/risks/RiskTable";
+import { ExportCsvButton } from "@/components/ExportCsvButton";
 import type { EnrichedRiskRow } from "@/components/risks/RiskRow";
 
 const STAT_CARD_STYLE: React.CSSProperties = {
@@ -258,6 +259,15 @@ export default async function RisksPage({
           >
             ↑ Import CSV
           </Link>
+          <ExportCsvButton
+            endpoint="/api/export/risks"
+            filenamePrefix="risk-register"
+            queryString={new URLSearchParams(
+              Object.fromEntries(
+                Object.entries(sp).filter(([, v]) => v !== undefined)
+              ) as Record<string, string>
+            ).toString()}
+          />
           <Link
             href="/risks/new"
             style={{

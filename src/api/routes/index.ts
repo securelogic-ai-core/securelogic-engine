@@ -69,6 +69,7 @@ import controlComplianceContextRouter from "./controlComplianceContext.js";
 import obligationComplianceContextRouter from "./obligationComplianceContext.js";
 import aiSystemGovernanceContextRouter from "./aiSystemGovernanceContext.js";
 import risksRouter from "./risks.js";
+import risksExportRouter from "./risksExport.js";
 import riskTreatmentsRouter from "./riskTreatments.js";
 import riskControlLinksRouter from "./riskControlLinks.js";
 import riskObligationLinksRouter from "./riskObligationLinks.js";
@@ -467,6 +468,10 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", evidenceRouter);
   router.use("/api", dependenciesRouter);
   router.use("/api", dependencyAssessmentsRouter);
+  // risksExportRouter MUST mount before risksRouter: its literal path
+  // /risks/export.csv is otherwise captured by GET /risks/:id (same trap
+  // findingsExport documents above).
+  router.use("/api", risksExportRouter);
   router.use("/api", risksRouter);
   router.use("/api", riskTreatmentsRouter);
   router.use("/api", riskControlLinksRouter);
