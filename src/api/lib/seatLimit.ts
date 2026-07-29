@@ -9,15 +9,17 @@ import { pg } from "../infra/postgres.js";
  * path — team-invite acceptance (teamInvites.ts) AND SSO JIT provisioning
  * (sso.ts). A cap that is bypassable on one creation path is not a cap.
  *
- * The cap above the default 6 is admin-set per contract (sales-led). The
- * locked pricing is: Free / Pro / Team are all "up to 6 seats" (= the default,
- * no raise needed), and Platform / Enterprise — "Unlimited seats", Custom /
- * invoice billing — are provisioned by an operator via
- * PATCH /admin/organizations/:id. Because NO self-serve Stripe tier exceeds 6
- * seats, the Stripe webhook deliberately does NOT auto-raise max_members
- * (unlike the entity cap, which a paid subscription raises to >= 50). Seat
- * allocation above the default is therefore an explicit operator action; an
- * admin-set cap is never lowered by a Stripe event.
+ * Cap sources (#692 A8 — matches the advertised model on both pricing
+ * surfaces): Free / Pro / Brief Team are "up to 6 seats" (= the default, no
+ * raise needed). Platform Professional is sold self-serve as "Up to 10 seats
+ * / 50 monitored entities", so a platform-tier Stripe grant raises
+ * max_members to >= 10 in the webhook (GREATEST — mirror of the entity-cap
+ * raise, same never-lower semantics across renewals and past_due dips).
+ * Anything above that is admin-set per contract (Enterprise, sales-led) via
+ * PATCH /admin/organizations/:id; an admin-set cap is never lowered by a
+ * Stripe event. (An earlier model had NO self-serve tier above 6 and the
+ * webhook deliberately never raised seats — that comment predated the
+ * 10-seat Platform copy and was the D-2-class drift behind sold-10/capped-6.)
  *
  * Existing over-cap members are grandfathered if a cap is later lowered — no
  * member is removed; the next create is simply blocked until the org is back

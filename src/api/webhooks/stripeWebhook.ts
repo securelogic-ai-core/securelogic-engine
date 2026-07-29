@@ -490,6 +490,17 @@ async function syncOrgEntitlement(
                                             WHEN $1 IN ('premium','professional') THEN GREATEST(max_monitored_entities, 50)
                                             ELSE max_monitored_entities
                                           END,
+             -- Seat cap (#692 A8): both pricing surfaces sell Platform as
+             -- "Up to 10 seats"; the DB default is 6. A platform-tier grant
+             -- ('premium' comes only from platform/platform_annual/legacy)
+             -- raises the cap to the advertised 10 — GREATEST + same
+             -- never-lower/downgrade-dip semantics as the entity cap above.
+             -- Brief tiers ('professional', incl. Brief Team) stay at the
+             -- default 6, matching their advertised seats.
+             max_members                = CASE
+                                            WHEN $1 = 'premium' THEN GREATEST(COALESCE(max_members, 6), 10)
+                                            ELSE max_members
+                                          END,
              stripe_customer_id         = COALESCE(stripe_customer_id, $3),
              stripe_subscription_id     = COALESCE($4, stripe_subscription_id),
              stripe_subscription_tier   = COALESCE($5, stripe_subscription_tier),
