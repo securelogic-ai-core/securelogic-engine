@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import {
   getAiSystems,
+  getAssets,
   getEnterpriseEntities,
   getEnterpriseGraph,
   getVendors,
@@ -35,7 +36,15 @@ const NODE_COLORS: Record<string, { fill: string; stroke: string; text: string }
   vendor:            { fill: "rgba(249,115,22,0.12)", stroke: "rgba(249,115,22,0.45)", text: "#fdba74" },
   ai_system:         { fill: "rgba(168,85,247,0.12)", stroke: "rgba(168,85,247,0.45)", text: "#d8b4fe" },
   user:              { fill: "rgba(148,163,184,0.12)", stroke: "rgba(148,163,184,0.4)", text: "#94a3b8" },
+  asset:             { fill: "rgba(16,185,129,0.12)", stroke: "rgba(16,185,129,0.45)", text: "#6ee7b7" },
 };
+
+// Every NODE_TYPES entry MUST resolve to a color. The legend's unguarded
+// NODE_COLORS[t].fill was the /enterprise-context/graph 500: "asset" joined
+// NODE_TYPES without a color entry, so the server component threw on every
+// render (#693 / DS-12). The fallback keeps a future type gray instead of down.
+const DEFAULT_NODE_COLOR = NODE_COLORS.user!;
+const nodeColors = (t: string) => NODE_COLORS[t] ?? DEFAULT_NODE_COLOR;
 
 export default async function EnterpriseGraphPage({
   searchParams,
@@ -65,11 +74,12 @@ export default async function EnterpriseGraphPage({
 
   // Graph + best-effort name sources (each list is page-capped; unknown names fall
   // back to short ids — never invented).
-  const [graphResult, entitiesResult, vendorsResult, aiSystemsResult] = await Promise.all([
+  const [graphResult, entitiesResult, vendorsResult, aiSystemsResult, assetsResult] = await Promise.all([
     getEnterpriseGraph(token, { node_type: nodeType, node_id: nodeId, depth }),
     getEnterpriseEntities(token, { limit: 100 }),
     getVendors(token),
     getAiSystems(token),
+    getAssets(token, { limit: 100 }),
   ]);
 
   if (!graphResult.ok) {
@@ -86,6 +96,7 @@ export default async function EnterpriseGraphPage({
     entities: entitiesResult.ok ? entitiesResult.enterprise_entities : [],
     vendors: vendorsResult?.vendors ?? [],
     aiSystems: aiSystemsResult?.ai_systems ?? [],
+    assets: assetsResult.ok ? assetsResult.assets : [],
   });
   const layout = layoutGraph(graph);
   const rootName = nodeDisplayName(nameMap, nodeType, nodeId);
@@ -137,7 +148,7 @@ export default async function EnterpriseGraphPage({
           <span key={t} className="inline-flex items-center gap-1.5 text-xs" style={{ color: "#94a3b8" }}>
             <span
               className="inline-block w-3 h-3 rounded"
-              style={{ background: NODE_COLORS[t].fill, border: `1px solid ${NODE_COLORS[t].stroke}` }}
+              style={{ background: nodeColors(t).fill, border: `1px solid ${nodeColors(t).stroke}` }}
             />
             {nodeTypeLabel(t)}
           </span>
@@ -237,7 +248,7 @@ function GraphNodeBox({
   name: string;
   isRoot: boolean;
 }) {
-  const colors = NODE_COLORS[node.node_type] ?? NODE_COLORS.user;
+  const colors = nodeColors(node.node_type);
   const { nodeWidth, nodeHeight } = GRAPH_LAYOUT;
   const label = name.length > 24 ? `${name.slice(0, 23)}…` : name;
   const box = (
