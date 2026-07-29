@@ -3044,6 +3044,9 @@ export async function getObligationComplianceContext(
 
 export type ObligationSummary = {
   total: number;
+  /** Metric Contract: ACTIVE with due_date strictly before today. Optional so
+   *  an older engine build degrades to 0 rather than a wrong render. */
+  overdue?: number;
   by_status: {
     active: number;
     waived: number;
@@ -3072,6 +3075,8 @@ export type Obligation = {
 export type ObligationsParams = {
   status?: string;
   domain?: string;
+  /** true = only overdue obligations (active + due before today). */
+  overdue?: boolean;
   limit?: number;
 };
 
@@ -3160,6 +3165,7 @@ export async function getObligations(
     const qs = new URLSearchParams();
     if (params?.status) qs.set("status", params.status);
     if (params?.domain) qs.set("domain", params.domain);
+    if (params?.overdue) qs.set("overdue", "true");
     qs.set("limit", String(params?.limit ?? 50));
     const res = await engineFetch(`/api/obligations?${qs.toString()}`, apiKey);
     if (!res.ok) return null;

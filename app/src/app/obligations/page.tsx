@@ -53,12 +53,17 @@ export default async function ObligationsPage({
   const activeStatus =
     STATUS_TABS.some((t) => t.value === sp.status) ? sp.status! : "active";
   const activeDomain = sp.domain ?? "";
+  // ?overdue=true — the deep-link view for the overdue count. The metric pins
+  // status='active' (a waived obligation cannot be overdue), so the overdue
+  // view always fetches the active set; its pill href drops any status param.
+  const activeOverdue = sp.overdue === "true";
 
   const [summaryData, obligationsData] = await Promise.all([
     getObligationSummary(token),
     getObligations(token, {
-      status: activeStatus,
+      status: activeOverdue ? "active" : activeStatus,
       domain: activeDomain || undefined,
+      overdue: activeOverdue || undefined,
       limit: 100,
     }),
   ]);
@@ -73,7 +78,15 @@ export default async function ObligationsPage({
   const currentSp: Params = {
     ...(sp.status ? { status: sp.status } : {}),
     ...(sp.domain ? { domain: sp.domain } : {}),
+    ...(activeOverdue ? { overdue: "true" } : {}),
   };
+  // Status pills and the Overdue pill are the same axis: picking a status
+  // drops `overdue`, picking Overdue drops `status` (the engine metric would
+  // AND them into a contradiction otherwise — same trap the risks page pins).
+  const statusSp: Params = { ...currentSp };
+  delete statusSp.overdue;
+  const overdueSp: Params = { ...currentSp };
+  delete overdueSp.status;
   // Domain pills come from real org data (domains are a non-exhaustive
   // vocabulary), so the filter never offers a value with zero rows.
   const domainValues = Object.keys(summary.by_domain).sort();
@@ -144,8 +157,9 @@ export default async function ObligationsPage({
       </div>
 
       {/* Summary stat cards */}
-      <div className="grid grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-4 gap-4 mb-8">
         <StatCard label="Active" value={summary.by_status.active} color="#00c4b4" />
+        <StatCard label="Overdue" value={summary.overdue ?? 0} color="#fca5a5" />
         <StatCard label="Waived" value={summary.by_status.waived} color="#94a3b8" />
         <StatCard label="Not Applicable" value={summary.by_status.not_applicable} color="#475569" />
       </div>
@@ -160,10 +174,15 @@ export default async function ObligationsPage({
           <FilterPill
             key={value}
             label={`${label} (${statusCount(value)})`}
-            href={filterHref(currentSp, "status", value === "active" ? null : value)}
-            active={activeStatus === value}
+            href={filterHref(statusSp, "status", value === "active" ? null : value)}
+            active={!activeOverdue && activeStatus === value}
           />
         ))}
+        <FilterPill
+          label={`Overdue (${summary.overdue ?? 0})`}
+          href={filterHref(overdueSp, "overdue", "true")}
+          active={activeOverdue}
+        />
       </div>
 
       {/* Domain filter — pills from real org data (non-exhaustive vocabulary). */}
@@ -202,9 +221,11 @@ export default async function ObligationsPage({
           creating the first obligation. */}
       {obligationsData !== null && obligations.length === 0 && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
-          {activeDomain || (activeStatus !== "active" && summary.total > 0) ? (
+          {activeOverdue || activeDomain || (activeStatus !== "active" && summary.total > 0) ? (
             <p className="text-sm" style={{ color: "#94a3b8" }}>
-              {STATUS_EMPTY_LABELS[activeStatus] ?? "No obligations match this filter."}{" "}
+              {activeOverdue
+                ? "No overdue obligations — every active deadline is in the future."
+                : STATUS_EMPTY_LABELS[activeStatus] ?? "No obligations match this filter."}{" "}
               <Link
                 href="/obligations"
                 className="font-medium transition-colors hover:opacity-80"
@@ -337,6 +358,12 @@ function ObligationRow({ obligation }: { obligation: Obligation }) {
         year: "numeric",
       })
     : null;
+  // Mirror sqlObligationOverdue: ACTIVE and due strictly before today (a
+  // due-today obligation is not overdue; a waived/NA one never is).
+  const isOverdue =
+    obligation.status === "active" &&
+    obligation.due_date != null &&
+    obligation.due_date.slice(0, 10) < new Date().toISOString().slice(0, 10);
 
   return (
     <div className="bg-brand-surface border border-brand-line hover:border-slate-500 rounded-xl p-5 cursor-pointer transition-colors">
@@ -363,8 +390,9 @@ function ObligationRow({ obligation }: { obligation: Obligation }) {
         </div>
         {dueDate && (
           <div className="flex-shrink-0 text-right">
-            <p className="text-xs" style={{ color: "#475569" }}>
-              Due {dueDate}
+            <p className="text-xs font-medium" style={{ color: isOverdue ? "#fca5a5" : "#475569" }}>
+              {isOverdue ? "Overdue — due " : "Due "}
+              {dueDate}
             </p>
           </div>
         )}
