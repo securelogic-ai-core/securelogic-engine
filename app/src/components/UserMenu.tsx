@@ -135,6 +135,11 @@ export default function UserMenu({ name, email, role, organizationName, isPlatfo
               Settings
             </MenuLink>
             {role === "admin" && (
+              <MenuLink href="/settings/organization" onClick={() => setOpen(false)}>
+                Organization
+              </MenuLink>
+            )}
+            {role === "admin" && (
               <MenuLink href="/settings/security" onClick={() => setOpen(false)}>
                 Security
               </MenuLink>
