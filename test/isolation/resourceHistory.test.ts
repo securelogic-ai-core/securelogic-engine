@@ -161,6 +161,54 @@ describe("fetchResourceHistory — vendor register", () => {
   });
 });
 
+describe("fetchResourceHistory — ai_system register (two satellite tables)", () => {
+  let orgA: string;
+  let orgB: string;
+  let systemA: string;
+  let assessmentA: string;
+
+  beforeAll(async () => {
+    orgA = seed.orgA.id;
+    orgB = seed.orgB.id;
+    const sysR = await pool.query<{ id: string }>(
+      `INSERT INTO ai_systems (organization_id, name) VALUES ($1, 'History System') RETURNING id`,
+      [orgA]
+    );
+    systemA = sysR.rows[0]!.id;
+    const asmR = await pool.query<{ id: string }>(
+      `INSERT INTO ai_governance_assessments (organization_id, ai_system_id) VALUES ($1, $2) RETURNING id`,
+      [orgA, systemA]
+    );
+    assessmentA = asmR.rows[0]!.id;
+    const revR = await pool.query<{ id: string }>(
+      `INSERT INTO governance_reviews (organization_id, ai_system_id, review_type) VALUES ($1, $2, 'initial') RETURNING id`,
+      [orgA, systemA]
+    );
+    const reviewA = revR.rows[0]!.id;
+
+    await seedAudit({ orgId: orgA, eventType: "ai_system.created", resourceType: "ai_system", resourceId: systemA, createdAt: "2026-07-10T10:00:00Z" });
+    await seedAudit({ orgId: orgA, eventType: "governance_review.created", resourceType: "governance_review", resourceId: reviewA, createdAt: "2026-07-11T10:00:00Z" });
+    await seedAudit({ orgId: orgA, eventType: "ai_governance_assessment.created", resourceType: "ai_governance_assessment", resourceId: assessmentA, createdAt: "2026-07-12T10:00:00Z" });
+    // Org-scope decoy: same assessment id logged under orgB.
+    await seedAudit({ orgId: orgB, eventType: "ai_governance_assessment.updated", resourceType: "ai_governance_assessment", resourceId: assessmentA, createdAt: "2026-07-13T10:00:00Z" });
+  });
+
+  it("merges events from both satellite tables with the root, newest first", async () => {
+    const page = await fetchResourceHistory(AI_SYSTEM_HISTORY_SPEC, orgA, systemA, 20, 0);
+    expect(page.total_count).toBe(3);
+    expect(page.events.map((e) => e.event_type)).toEqual([
+      "ai_governance_assessment.created",
+      "governance_review.created",
+      "ai_system.created",
+    ]);
+  });
+
+  it("org-scope decoy on the assessment id does not leak in", async () => {
+    const page = await fetchResourceHistory(AI_SYSTEM_HISTORY_SPEC, orgA, systemA, 20, 0);
+    expect(page.events.every((e) => e.event_type !== "ai_governance_assessment.updated")).toBe(true);
+  });
+});
+
 describe("fetchResourceHistory — all register specs execute against the live schema", () => {
   it("control / obligation / ai_system specs run clean on an empty target", async () => {
     // Nonexistent-but-valid UUID: routes 404 before ever calling the

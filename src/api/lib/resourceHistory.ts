@@ -204,5 +204,6 @@ export const AI_SYSTEM_HISTORY_SPEC: ResourceHistorySpec = {
   rootType: "ai_system",
   satellites: [
     { resourceType: "governance_review", table: "governance_reviews", fkColumn: "ai_system_id" },
+    { resourceType: "ai_governance_assessment", table: "ai_governance_assessments", fkColumn: "ai_system_id" },
   ],
 };

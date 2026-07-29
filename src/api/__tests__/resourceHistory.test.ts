@@ -118,6 +118,31 @@ const ROUTES: Array<{
   { file: "aiSystems.ts", path: "/ai-systems/:id/history", ownershipTable: "ai_systems", notFound: "ai_system_not_found" },
 ];
 
+// ─── AI governance assessment audit emission ────────────────────────────────
+// The ai_governance_assessment satellite in AI_SYSTEM_HISTORY_SPEC is only
+// meaningful if the route actually writes audit rows (it wrote none before
+// this suite existed). Guard both mutations.
+
+describe("aiGovernanceAssessments.ts emits audit events", () => {
+  const source = readFileSync(
+    resolve(__dirname, "../routes/aiGovernanceAssessments.ts"),
+    "utf8"
+  );
+
+  it("POST create writes ai_governance_assessment.created", () => {
+    expect(source).toContain('eventType: "ai_governance_assessment.created"');
+  });
+
+  it("PATCH transition writes ai_governance_assessment.updated", () => {
+    expect(source).toContain('eventType: "ai_governance_assessment.updated"');
+  });
+
+  it("both events carry the satellite resource type", () => {
+    const count = source.split('resourceType: "ai_governance_assessment"').length - 1;
+    expect(count).toBe(2);
+  });
+});
+
 describe("register history routes — source guards", () => {
   for (const r of ROUTES) {
     const source = readFileSync(resolve(__dirname, "../routes", r.file), "utf8");
