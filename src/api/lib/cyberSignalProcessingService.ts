@@ -213,12 +213,13 @@ export { canonicalizeVendorName } from "./vendorNameCanonical.js";
  * subsequent call — Package 1's deliberate design choice for accidental-
  * dismissal recovery and weight-change re-surfacing.
  *
- * Note: the findings INSERT today has no ON CONFLICT guard. Re-firing
- * the matcher on the same signal produces duplicate findings rows.
- * Pre-existing bug surfaced in Package 3.5 investigation; deferred to
- * a separate small package per the audit doc §7. Worker fan-out's
- * per-cycle ingestion does not increase risk because dedup_hash on
- * cyber_signals blocks signal repeats.
+ * Note: the findings INSERT is guarded (D-14, #693): NOT EXISTS on
+ * (org, source_type='cyber_signal', source_id) — one finding per
+ * (org, signal), the IE-AD-7 grain. A re-fire reuses the existing
+ * finding row for downstream linkage instead of minting a duplicate.
+ * The durable backstop (partial unique index) rides a follow-up
+ * approved migration; dedup_hash on cyber_signals still blocks
+ * signal-level repeats upstream.
  *
  * TRANSACTION OWNERSHIP
  * ---------------------
@@ -408,6 +409,14 @@ export async function runMatcherForSignal(
       // SLA policy (20260903): automated signal findings get an org-policy
       // due date at creation (client keeps the read inside this transaction).
       const slaDueDate = await resolveSlaDueDateWith(client, orgId, severity);
+      // D-14 idempotency guard: re-firing the matcher on the same signal must
+      // not mint a second finding (this INSERT is live in production; see the
+      // duplicate acknowledgment above). One finding per (org, signal) —
+      // the same grain IE-AD-7 chose for intelligence_event findings. The
+      // NOT EXISTS runs inside this transaction; the matcher processes a
+      // signal serially per org, so this closes the observed re-fire path.
+      // A partial unique index (like idx_findings_intelligence_event_unique)
+      // is the durable backstop and rides a follow-up approved migration.
       const findingResult = await client.query(
         `
         INSERT INTO findings (
@@ -423,7 +432,13 @@ export async function runMatcherForSignal(
           status,
           due_date
         )
-        VALUES ($1, NULL, 'cyber_signal', $2::uuid, $3, $4, $5, $6, $7, 'open', $8)
+        SELECT $1, NULL, 'cyber_signal', $2::uuid, $3, $4, $5, $6, $7, 'open', $8
+        WHERE NOT EXISTS (
+          SELECT 1 FROM findings
+           WHERE organization_id = $1
+             AND source_type = 'cyber_signal'
+             AND source_id = $2::uuid
+        )
         RETURNING
           id,
           organization_id,
@@ -452,6 +467,27 @@ export async function runMatcherForSignal(
       );
 
       createdFinding = findingResult.rows[0] ?? null;
+
+      // Re-fire on an already-processed signal: reuse the existing finding so
+      // downstream linkage (suggestion, GAP-3 action — both already idempotent
+      // on their own keys) attaches to the original row instead of a duplicate.
+      if (createdFinding === null) {
+        const existingFinding = await client.query(
+          `
+          SELECT id, organization_id, assessment_id, source_type, source_id,
+                 title, description, severity, domain, priority, status,
+                 created_at, updated_at
+            FROM findings
+           WHERE organization_id = $1
+             AND source_type = 'cyber_signal'
+             AND source_id = $2::uuid
+           ORDER BY created_at ASC
+           LIMIT 1
+          `,
+          [orgId, signalId]
+        );
+        createdFinding = existingFinding.rows[0] ?? null;
+      }
 
       // GAP-3: action recommendation — turn a high-signal finding into a
       // concrete "what to do next". Flag-gated (OFF by default) and threshold-
