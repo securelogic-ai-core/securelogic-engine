@@ -11,6 +11,7 @@
  *   GET    /api/webhooks/:id                   — get single endpoint
  *   PATCH  /api/webhooks/:id                   — update url/description/event_types/status
  *   DELETE /api/webhooks/:id                   — delete endpoint
+ *   POST   /api/webhooks/:id/rotate-secret     — rotate signing secret (returned once)
  *   POST   /api/webhooks/:id/test              — send test event
  *   GET    /api/webhooks/:id/deliveries        — delivery log
  */
@@ -24,6 +25,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireNotViewer } from "../middleware/requireRole.js";
 import { generateWebhookSecret, maskSecret, buildWebhookHeaders } from "../lib/webhookSigning.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 import { deliverWebhook } from "../lib/webhookDispatcher.js";
 import {
   assertSafeWebhookUrl,
@@ -426,6 +428,98 @@ router.delete(
     } catch (err) {
       logger.error({ event: "webhook_delete_failed", err }, "DELETE /api/webhooks/:id failed");
       res.status(500).json({ error: "webhook_delete_failed" });
+    }
+  }
+);
+
+/* =========================================================
+   POST /api/webhooks/:id/rotate-secret
+   Rotate the endpoint's HMAC signing secret in place.
+
+   Before this route the only way to rotate a compromised or aging secret
+   was delete + recreate — destroying the delivery log, failure counters,
+   and event-type configuration. Rotation is a plain org-scoped UPDATE:
+   the endpoint's identity and history survive, and the new secret is
+   returned ONCE (the create-route contract; masked everywhere after).
+
+   Cutover is immediate: deliveries signed after the UPDATE use the new
+   secret. The caller controls timing — rotate when ready to deploy the
+   new secret on the receiving side; the dispatcher's existing retry
+   path covers the deploy gap. A dual-secret overlap window would need
+   schema + dispatcher signing changes and is deliberately out of scope.
+   ========================================================= */
+
+router.post(
+  "/webhooks/:id/rotate-secret",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  requireNotViewer,
+  async (req, res) => {
+    try {
+      const organizationId = (req as any).organizationContext?.organizationId ?? null;
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const id = String(req.params.id ?? "").trim();
+      if (!isUuid(id)) {
+        res.status(400).json({ error: "invalid_endpoint_id" });
+        return;
+      }
+
+      const secret = generateWebhookSecret();
+
+      const result = await pg.query(
+        `UPDATE webhook_endpoints
+            SET secret = $1, updated_at = NOW()
+          WHERE id = $2 AND organization_id = $3
+          RETURNING id, organization_id, url, secret, description, status,
+                    event_types, failure_count, last_success_at, last_failure_at,
+                    created_at, updated_at`,
+        [secret, id, organizationId]
+      );
+
+      if ((result.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "webhook_endpoint_not_found" });
+        return;
+      }
+
+      const row = result.rows[0];
+
+      // Rotation is the security event on this surface — auditors expect it
+      // in the org trail with actor + timestamp. The secret itself (old or
+      // new) never appears in the audit payload.
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        actorUserId: (req as any).userId ?? null,
+        eventType: "webhook.secret_rotated",
+        resourceType: "webhook_endpoint",
+        resourceId: id,
+        payload: { url: row.url },
+        ipAddress: req.ip ?? null,
+      });
+
+      logger.info(
+        { event: "webhook_secret_rotated", endpointId: id, organizationId },
+        "Webhook endpoint signing secret rotated"
+      );
+
+      // Return the full secret once — never again (create-route contract).
+      res.status(200).json({
+        endpoint: {
+          ...safeEndpoint(row),
+          secret,
+        },
+      });
+    } catch (err) {
+      logger.error(
+        { event: "webhook_rotate_secret_failed", err },
+        "POST /api/webhooks/:id/rotate-secret failed"
+      );
+      res.status(500).json({ error: "webhook_rotate_secret_failed" });
     }
   }
 );

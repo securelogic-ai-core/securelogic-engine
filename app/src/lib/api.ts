@@ -4753,6 +4753,26 @@ export async function deleteWebhook(token: string, id: string): Promise<boolean>
   }
 }
 
+/**
+ * Rotate the endpoint's signing secret in place (identity and delivery
+ * history survive). The response carries the full new secret ONCE — the
+ * same show-once contract as create.
+ */
+export async function rotateWebhookSecret(
+  token: string,
+  id: string
+): Promise<{ endpoint: WebhookEndpointWithSecret } | null> {
+  try {
+    const res = await engineFetch(`/api/webhooks/${id}/rotate-secret`, token, {
+      method: "POST",
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ endpoint: WebhookEndpointWithSecret }>;
+  } catch {
+    return null;
+  }
+}
+
 export async function testWebhook(
   token: string,
   id: string
