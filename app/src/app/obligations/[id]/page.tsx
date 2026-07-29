@@ -25,6 +25,7 @@ import {
 } from "./FrameworkMappingsCard";
 import { EvidenceSection } from "./EvidenceSection";
 import { RisksLinkedCard } from "@/components/obligations/RisksLinkedCard";
+import { HistorySection } from "@/components/HistorySection";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -564,6 +565,7 @@ export default async function ObligationDetailPage({
           />
           <RisksLinkedCard obligationId={obligation.id} />
           <ActionsCard obligationId={obligation.id} />
+          <HistorySection resourcePath="obligations" resourceId={obligation.id} />
         </div>
       </div>
     </div>

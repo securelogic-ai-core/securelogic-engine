@@ -3838,16 +3838,47 @@ export async function getAuditLogEventTypes(token: string): Promise<string[] | n
   }
 }
 
-// Per-risk history (RR-3). Mirrors the AuditLogEvent shape so the
-// existing label/badge utilities can render rows verbatim. total_count
-// rather than total_pages because the RiskHistorySection uses
+// Per-object history (RR-3, generalized). Mirrors the AuditLogEvent
+// shape so the existing label/badge utilities can render rows verbatim.
+// total_count rather than total_pages because the HistorySection uses
 // limit/offset "Load more" paging instead of page-number navigation.
-export type RiskHistoryResponse = {
+export type ResourceHistoryResponse = {
   events:      AuditLogEvent[];
   total_count: number;
   limit:       number;
   offset:      number;
 };
+
+export type RiskHistoryResponse = ResourceHistoryResponse;
+
+// Register objects with an engine /:id/history endpoint. Kept as a
+// closed union so a typo'd path fails the build, not the request.
+export type HistoryResource =
+  | "risks"
+  | "vendors"
+  | "controls"
+  | "obligations"
+  | "ai-systems";
+
+export async function getResourceHistory(
+  resource: HistoryResource,
+  resourceId: string,
+  params: { limit?: number; offset?: number } = {}
+): Promise<ResourceHistoryResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (params.limit  !== undefined) qs.set("limit",  String(params.limit));
+    if (params.offset !== undefined) qs.set("offset", String(params.offset));
+    const path = `/api/${resource}/${encodeURIComponent(resourceId)}/history${qs.toString() ? `?${qs.toString()}` : ""}`;
+    // Browser-side fetch goes through the Next.js proxy, which attaches
+    // the JWT from the session cookie. No bearer token in the client.
+    const res = await fetch(path, { cache: "no-store" });
+    if (!res.ok) return null;
+    return res.json() as Promise<ResourceHistoryResponse>;
+  } catch {
+    return null;
+  }
+}
 
 // Risk-control linkage (RR-4) — forward direction (controls mitigating a risk)
 export type RiskControlLink = {
@@ -3943,19 +3974,7 @@ export async function getRiskHistory(
   riskId: string,
   params: { limit?: number; offset?: number } = {}
 ): Promise<RiskHistoryResponse | null> {
-  try {
-    const qs = new URLSearchParams();
-    if (params.limit  !== undefined) qs.set("limit",  String(params.limit));
-    if (params.offset !== undefined) qs.set("offset", String(params.offset));
-    const path = `/api/risks/${encodeURIComponent(riskId)}/history${qs.toString() ? `?${qs.toString()}` : ""}`;
-    // Browser-side fetch goes through the Next.js proxy, which attaches
-    // the JWT from the session cookie. No bearer token in the client.
-    const res = await fetch(path, { cache: "no-store" });
-    if (!res.ok) return null;
-    return res.json() as Promise<RiskHistoryResponse>;
-  } catch {
-    return null;
-  }
+  return getResourceHistory("risks", riskId, params);
 }
 
 // =========================================================

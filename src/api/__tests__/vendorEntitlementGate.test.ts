@@ -48,7 +48,7 @@ const PROF = 'requireEntitlement("professional")';
 // ---------------------------------------------------------------------------
 const BUCKET_A_PREMIUM: Record<string, number> = {
   // vendor / third-party-risk surface (#233 + #244)
-  "vendors.ts": 8,
+  "vendors.ts": 9,
   "vendorAssuranceDocuments.ts": 19,
   "vendorAssessments.ts": 3,
   "vendorReviews.ts": 4,
@@ -77,8 +77,8 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "signalObligationLinks.ts": 4,
   "signalMatchSuggestions.ts": 5,
   // controls / frameworks
-  // 6 since GET /controls/:id/findings — dual-gated like the rest.
-  "controls.ts": 6,
+  // 7 since GET /controls/:id/history — dual-gated like the rest.
+  "controls.ts": 7,
   "controlMappings.ts": 2,
   "controlAssessments.ts": 4,
   "controlComplianceContext.ts": 1,
@@ -87,14 +87,14 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "frameworkReadiness.ts": 1,
   "requirements.ts": 6,
   // obligations
-  // 6 since GET /obligations/:id/findings — dual-gated like the rest.
-  "obligations.ts": 6,
+  // 7 since GET /obligations/:id/history — dual-gated like the rest.
+  "obligations.ts": 7,
   "obligationMappings.ts": 2,
   "obligationAssessments.ts": 4,
   "obligationComplianceContext.ts": 1,
   // AI governance
-  // 6 since GET /ai-systems/:id/findings — dual-gated like the rest.
-  "aiSystems.ts": 6,
+  // 7 since GET /ai-systems/:id/history — dual-gated like the rest.
+  "aiSystems.ts": 7,
   "aiGovernanceAssessments.ts": 4,
   "aiSystemGovernanceContext.ts": 1,
   "aiSystemVendorDependencies.ts": 4,

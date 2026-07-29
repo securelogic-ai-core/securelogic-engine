@@ -41,6 +41,13 @@ import { validateAiSystemCreate } from "../lib/aiSystemValidation.js";
 import { sqlFindingActive } from "../lib/metricDefinitions.js";
 import { enforceEntityLimit } from "../lib/entityLimit.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import {
+  AI_SYSTEM_HISTORY_SPEC,
+  fetchResourceHistory,
+  isHistoryUuid,
+  parseHistoryLimit,
+  parseHistoryOffset,
+} from "../lib/resourceHistory.js";
 
 const router = Router();
 
@@ -379,6 +386,75 @@ router.get(
         "GET /api/ai-systems/:id failed"
       );
       res.status(500).json({ error: "ai_system_get_failed" });
+    }
+  })
+);
+
+/* =========================================================
+   GET /api/ai-systems/:id/history
+   Per-AI-system audit trail — the RR-3 per-risk history pattern
+   generalized via src/api/lib/resourceHistory.ts. Events on the
+   system plus its governance reviews, newest first, mirroring
+   the GET /api/audit-log field shape. (ai_governance_assessments
+   writes no audit events today — recorded follow-up.)
+
+   Auth mirrors GET /api/ai-systems/:id (no admin gate) — anyone
+   who can read the system can read its history.
+   ========================================================= */
+
+router.get(
+  "/ai-systems/:id/history",
+  requireApiKey,
+  attachOrganizationContext,
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const aiSystemId = String(req.params.id ?? "").trim();
+    if (!aiSystemId) {
+      res.status(400).json({ error: "ai_system_id_required" });
+      return;
+    }
+    if (!isHistoryUuid(aiSystemId)) {
+      res.status(400).json({ error: "ai_system_id_must_be_uuid" });
+      return;
+    }
+
+    const limit  = parseHistoryLimit(req.query.limit);
+    const offset = parseHistoryOffset(req.query.offset);
+
+    try {
+      // Ownership first: cross-org probes must 404 (an empty events
+      // list for a foreign id would leak existence by absence).
+      const ownership = await pg.query(
+        `SELECT 1 FROM ai_systems WHERE id = $1 AND organization_id = $2`,
+        [aiSystemId, organizationId]
+      );
+      if ((ownership.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "ai_system_not_found" });
+        return;
+      }
+
+      const page = await fetchResourceHistory(
+        AI_SYSTEM_HISTORY_SPEC,
+        organizationId,
+        aiSystemId,
+        limit,
+        offset
+      );
+      res.status(200).json(page);
+    } catch (err) {
+      logger.error(
+        { event: "ai_system_history_failed", err, aiSystemId },
+        "GET /api/ai-systems/:id/history failed"
+      );
+      res.status(500).json({ error: "ai_system_history_failed" });
     }
   })
 );

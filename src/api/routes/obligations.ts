@@ -34,6 +34,13 @@ import {
 } from "../lib/obligationValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { sqlFindingActive, sqlObligationOverdue } from "../lib/metricDefinitions.js";
+import {
+  OBLIGATION_HISTORY_SPEC,
+  fetchResourceHistory,
+  isHistoryUuid,
+  parseHistoryLimit,
+  parseHistoryOffset,
+} from "../lib/resourceHistory.js";
 import { searchLikePattern } from "../lib/findingQuerySearch.js";
 
 const router = Router();
@@ -484,6 +491,74 @@ router.get(
         "GET /api/obligations/:id failed"
       );
       res.status(500).json({ error: "obligation_get_failed" });
+    }
+  })
+);
+
+/* =========================================================
+   GET /api/obligations/:id/history
+   Per-obligation audit trail — the RR-3 per-risk history pattern
+   generalized via src/api/lib/resourceHistory.ts. Events on the
+   obligation plus its assessments and risk-obligation links,
+   newest first, mirroring the GET /api/audit-log field shape.
+
+   Auth mirrors GET /api/obligations/:id (no admin gate) — anyone
+   who can read the obligation can read its history.
+   ========================================================= */
+
+router.get(
+  "/obligations/:id/history",
+  requireApiKey,
+  attachOrganizationContext,
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const obligationId = String(req.params.id ?? "").trim();
+    if (!obligationId) {
+      res.status(400).json({ error: "obligation_id_required" });
+      return;
+    }
+    if (!isHistoryUuid(obligationId)) {
+      res.status(400).json({ error: "obligation_id_must_be_uuid" });
+      return;
+    }
+
+    const limit  = parseHistoryLimit(req.query.limit);
+    const offset = parseHistoryOffset(req.query.offset);
+
+    try {
+      // Ownership first: cross-org probes must 404 (an empty events
+      // list for a foreign id would leak existence by absence).
+      const ownership = await pg.query(
+        `SELECT 1 FROM obligations WHERE id = $1 AND organization_id = $2`,
+        [obligationId, organizationId]
+      );
+      if ((ownership.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "obligation_not_found" });
+        return;
+      }
+
+      const page = await fetchResourceHistory(
+        OBLIGATION_HISTORY_SPEC,
+        organizationId,
+        obligationId,
+        limit,
+        offset
+      );
+      res.status(200).json(page);
+    } catch (err) {
+      logger.error(
+        { event: "obligation_history_failed", err, obligationId },
+        "GET /api/obligations/:id/history failed"
+      );
+      res.status(500).json({ error: "obligation_history_failed" });
     }
   })
 );

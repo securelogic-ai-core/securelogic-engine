@@ -17,6 +17,7 @@ import {
   type AiVendorDependency,
 } from "@/lib/api";
 import { FindingCard } from "@/components/FindingCard";
+import { HistorySection } from "@/components/HistorySection";
 import { AssessmentStatusCard } from "./AssessmentStatusCard";
 
 // ─────────────────────────────────────────────────────────────
@@ -738,6 +739,7 @@ export default async function AiSystemDetailPage({
             <AssessmentStatusCard assessment={latestAssessment} systemId={system.id} />
           )}
           <ActionsCard systemId={system.id} />
+          <HistorySection resourcePath="ai-systems" resourceId={system.id} />
         </div>
       </div>
     </div>
