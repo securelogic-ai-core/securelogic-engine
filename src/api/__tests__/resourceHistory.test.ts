@@ -1,6 +1,7 @@
 /**
  * resourceHistory — unit guards for the shared per-object audit-trail
- * reader and the four register endpoints that consume it.
+ * reader and the register endpoints that consume it (risks pinned
+ * separately in risksHistoryRoute.test.ts — its gate differs).
  *
  * Two layers:
  *  1. Pure assertions on buildResourceHistoryWhere / the parsers —
@@ -22,6 +23,7 @@ import {
   HISTORY_DEFAULT_LIMIT,
   HISTORY_MAX_LIMIT,
   OBLIGATION_HISTORY_SPEC,
+  RISK_HISTORY_SPEC,
   VENDOR_HISTORY_SPEC,
   buildResourceHistoryWhere,
   isHistoryUuid,
@@ -62,6 +64,7 @@ describe("history paging parsers", () => {
 // ─── WHERE builder ──────────────────────────────────────────────────────────
 
 const ALL_SPECS = [
+  ["risk", RISK_HISTORY_SPEC],
   ["vendor", VENDOR_HISTORY_SPEC],
   ["control", CONTROL_HISTORY_SPEC],
   ["obligation", OBLIGATION_HISTORY_SPEC],

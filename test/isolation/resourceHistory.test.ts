@@ -1,7 +1,8 @@
 /**
  * resourceHistory.test.ts — real-Postgres proof for the shared per-object
- * audit-trail reader (src/api/lib/resourceHistory.ts) behind the new
- * /:id/history endpoints on vendors, controls, obligations, and AI systems.
+ * audit-trail reader (src/api/lib/resourceHistory.ts) behind the
+ * /:id/history endpoints on risks, vendors, controls, obligations, and
+ * AI systems.
  *
  * Proves, against the real schema:
  *   - root + satellite events are returned newest-first with a stable
@@ -12,7 +13,7 @@
  *     never appears (org scope), and a satellite of a DIFFERENT parent in
  *     the same org never appears (parent scope);
  *   - every register spec resolves its satellite tables/columns against
- *     the live schema (the query executes for all four specs).
+ *     the live schema (the query executes for all five specs).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
@@ -22,6 +23,7 @@ import {
   AI_SYSTEM_HISTORY_SPEC,
   CONTROL_HISTORY_SPEC,
   OBLIGATION_HISTORY_SPEC,
+  RISK_HISTORY_SPEC,
   VENDOR_HISTORY_SPEC,
   fetchResourceHistory,
 } from "../../src/api/lib/resourceHistory.js";
@@ -210,12 +212,12 @@ describe("fetchResourceHistory — ai_system register (two satellite tables)", (
 });
 
 describe("fetchResourceHistory — all register specs execute against the live schema", () => {
-  it("control / obligation / ai_system specs run clean on an empty target", async () => {
+  it("risk / control / obligation / ai_system specs run clean on an empty target", async () => {
     // Nonexistent-but-valid UUID: routes 404 before ever calling the
     // reader, but the reader itself must still execute (this is the
     // guard that every satellite table/FK in the specs exists).
     const ghost = "00000000-0000-4000-8000-000000000000";
-    for (const spec of [CONTROL_HISTORY_SPEC, OBLIGATION_HISTORY_SPEC, AI_SYSTEM_HISTORY_SPEC]) {
+    for (const spec of [RISK_HISTORY_SPEC, CONTROL_HISTORY_SPEC, OBLIGATION_HISTORY_SPEC, AI_SYSTEM_HISTORY_SPEC]) {
       const page = await fetchResourceHistory(spec, seed.orgA.id, ghost, 5, 0);
       expect(page.total_count).toBe(0);
       expect(page.events).toEqual([]);
