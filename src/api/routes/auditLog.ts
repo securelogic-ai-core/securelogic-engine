@@ -81,6 +81,16 @@ router.get(
         conditions.push(`sal.actor_user_id = $${params.length}::uuid`);
       }
 
+      if (isNonEmptyString(req.query.resource_type)) {
+        params.push(req.query.resource_type.trim().slice(0, 100));
+        conditions.push(`sal.resource_type = $${params.length}`);
+      }
+
+      if (isUuid(req.query.resource_id)) {
+        params.push(req.query.resource_id.trim());
+        conditions.push(`sal.resource_id = $${params.length}::uuid`);
+      }
+
       if (isIsoDate(req.query.date_from)) {
         params.push(req.query.date_from.trim());
         conditions.push(`sal.created_at >= $${params.length}::timestamptz`);
@@ -200,6 +210,14 @@ router.get(
       if (isUuid(req.query.user_id)) {
         params.push(req.query.user_id.trim());
         conditions.push(`sal.actor_user_id = $${params.length}::uuid`);
+      }
+      if (isNonEmptyString(req.query.resource_type)) {
+        params.push(req.query.resource_type.trim().slice(0, 100));
+        conditions.push(`sal.resource_type = $${params.length}`);
+      }
+      if (isUuid(req.query.resource_id)) {
+        params.push(req.query.resource_id.trim());
+        conditions.push(`sal.resource_id = $${params.length}::uuid`);
       }
       if (isIsoDate(req.query.date_from)) {
         params.push(req.query.date_from.trim());

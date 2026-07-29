@@ -3806,18 +3806,22 @@ export async function getAuditLog(
     limit?: number;
     event_type?: string;
     user_id?: string;
+    resource_type?: string;
+    resource_id?: string;
     date_from?: string;
     date_to?: string;
   } = {}
 ): Promise<AuditLogResponse | null> {
   try {
     const qs = new URLSearchParams();
-    if (params.page)       qs.set("page",       String(params.page));
-    if (params.limit)      qs.set("limit",      String(params.limit));
-    if (params.event_type) qs.set("event_type", params.event_type);
-    if (params.user_id)    qs.set("user_id",    params.user_id);
-    if (params.date_from)  qs.set("date_from",  params.date_from);
-    if (params.date_to)    qs.set("date_to",    params.date_to);
+    if (params.page)          qs.set("page",          String(params.page));
+    if (params.limit)         qs.set("limit",         String(params.limit));
+    if (params.event_type)    qs.set("event_type",    params.event_type);
+    if (params.user_id)       qs.set("user_id",       params.user_id);
+    if (params.resource_type) qs.set("resource_type", params.resource_type);
+    if (params.resource_id)   qs.set("resource_id",   params.resource_id);
+    if (params.date_from)     qs.set("date_from",     params.date_from);
+    if (params.date_to)       qs.set("date_to",       params.date_to);
     const path = `/api/audit-log${qs.toString() ? `?${qs.toString()}` : ""}`;
     const res = await engineFetch(path, token);
     if (!res.ok) return null;
