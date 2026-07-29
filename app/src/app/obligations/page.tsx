@@ -7,8 +7,33 @@ import {
   type Obligation,
 } from "@/lib/api";
 import { ExportCsvButton } from "@/components/ExportCsvButton";
+import { FilterPill } from "@/components/FilterPill";
 
-export default async function ObligationsPage() {
+type Params = Record<string, string | undefined>;
+
+// The engine's list vocabulary plus the explicit `all` sentinel it accepts.
+const STATUS_TABS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "all",            label: "All" },
+  { value: "active",         label: "Active" },
+  { value: "waived",         label: "Waived" },
+  { value: "not_applicable", label: "Not Applicable" },
+];
+
+function filterHref(current: Params, key: string, value: string | null): string {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(current)) {
+    if (v !== undefined && k !== key) params.set(k, v);
+  }
+  if (value !== null) params.set(key, value);
+  const qs = params.toString();
+  return `/obligations${qs ? `?${qs}` : ""}`;
+}
+
+export default async function ObligationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
   const session = await getSession();
 
   const token = session.jwtToken ?? session.apiKey ?? null;
@@ -21,9 +46,21 @@ export default async function ObligationsPage() {
     entitlementLevel === "team";
   if (!isPlatformUser) redirect("/dashboard");
 
+  const sp = await searchParams;
+  // URL state drives the fetch (the risks/findings list-page pattern). The
+  // default view stays "active" — the working set — with every lifecycle
+  // state one click away instead of invisible.
+  const activeStatus =
+    STATUS_TABS.some((t) => t.value === sp.status) ? sp.status! : "active";
+  const activeDomain = sp.domain ?? "";
+
   const [summaryData, obligationsData] = await Promise.all([
     getObligationSummary(token),
-    getObligations(token, { status: "active", limit: 50 }),
+    getObligations(token, {
+      status: activeStatus,
+      domain: activeDomain || undefined,
+      limit: 100,
+    }),
   ]);
 
   const obligations = obligationsData?.obligations ?? [];
@@ -31,6 +68,26 @@ export default async function ObligationsPage() {
     total: 0,
     by_status: { active: 0, waived: 0, not_applicable: 0 },
     by_domain: {},
+  };
+
+  const currentSp: Params = {
+    ...(sp.status ? { status: sp.status } : {}),
+    ...(sp.domain ? { domain: sp.domain } : {}),
+  };
+  // Domain pills come from real org data (domains are a non-exhaustive
+  // vocabulary), so the filter never offers a value with zero rows.
+  const domainValues = Object.keys(summary.by_domain).sort();
+
+  const statusCount = (value: string): number =>
+    value === "all"
+      ? summary.total
+      : summary.by_status[value as keyof typeof summary.by_status] ?? 0;
+
+  const STATUS_EMPTY_LABELS: Record<string, string> = {
+    all: "No obligations yet.",
+    active: "No active obligations.",
+    waived: "No waived obligations.",
+    not_applicable: "No not-applicable obligations.",
   };
 
   return (
@@ -71,7 +128,10 @@ export default async function ObligationsPage() {
           <ExportCsvButton
             endpoint="/api/export/obligations"
             filenamePrefix="obligations"
-            queryString=""
+            queryString={new URLSearchParams({
+              ...(activeStatus !== "all" ? { status: activeStatus } : {}),
+              ...(activeDomain ? { domain: activeDomain } : {}),
+            }).toString()}
           />
           <Link
             href="/obligations/new"
@@ -90,23 +150,43 @@ export default async function ObligationsPage() {
         <StatCard label="Not Applicable" value={summary.by_status.not_applicable} color="#475569" />
       </div>
 
-      {/* Filter tabs — visual only; page always shows active. Filtering will require
-          client component or search params in a future iteration. */}
-      <div className="flex gap-1 mb-6 p-1 rounded-lg" style={{ background: "rgba(30,45,69,0.5)" }}>
-        {(["All", "Active", "Waived", "Not Applicable"] as const).map((label) => (
-          <span
-            key={label}
-            className="px-3 py-1.5 rounded-md text-xs font-medium cursor-default transition-colors"
-            style={
-              label === "Active"
-                ? { background: "#0a0f1a", color: "#f1f5f9" }
-                : { color: "#94a3b8" }
-            }
-          >
-            {label}
-          </span>
+      {/* Status filter — URL-state pills (the risks/findings pattern), with
+          live counts from the summary so each tab says what it holds. */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <span className="text-xs font-semibold uppercase tracking-wide mr-1" style={{ color: "#64748b" }}>
+          Status
+        </span>
+        {STATUS_TABS.map(({ value, label }) => (
+          <FilterPill
+            key={value}
+            label={`${label} (${statusCount(value)})`}
+            href={filterHref(currentSp, "status", value === "active" ? null : value)}
+            active={activeStatus === value}
+          />
         ))}
       </div>
+
+      {/* Domain filter — pills from real org data (non-exhaustive vocabulary). */}
+      {domainValues.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mb-6">
+          <span className="text-xs font-semibold uppercase tracking-wide mr-1" style={{ color: "#64748b" }}>
+            Domain
+          </span>
+          <FilterPill
+            label="All"
+            href={filterHref(currentSp, "domain", null)}
+            active={!activeDomain}
+          />
+          {domainValues.map((d) => (
+            <FilterPill
+              key={d}
+              label={d}
+              href={filterHref(currentSp, "domain", d)}
+              active={activeDomain === d}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Not entitled */}
       {obligationsData === null && (
@@ -117,20 +197,35 @@ export default async function ObligationsPage() {
         </div>
       )}
 
-      {/* Empty state */}
+      {/* Empty state — filter-aware: a filtered view that comes up empty says
+          so and offers the way out; only the truly-empty register pitches
+          creating the first obligation. */}
       {obligationsData !== null && obligations.length === 0 && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>
-            No active obligations.{" "}
-            <Link
-              href="/obligations/new"
-              className="font-medium transition-colors hover:opacity-80"
-              style={{ color: "#00c4b4" }}
-            >
-              Add your first obligation
-            </Link>{" "}
-            to begin tracking compliance.
-          </p>
+          {activeDomain || (activeStatus !== "active" && summary.total > 0) ? (
+            <p className="text-sm" style={{ color: "#94a3b8" }}>
+              {STATUS_EMPTY_LABELS[activeStatus] ?? "No obligations match this filter."}{" "}
+              <Link
+                href="/obligations"
+                className="font-medium transition-colors hover:opacity-80"
+                style={{ color: "#00c4b4" }}
+              >
+                Clear filters →
+              </Link>
+            </p>
+          ) : (
+            <p className="text-sm" style={{ color: "#94a3b8" }}>
+              {STATUS_EMPTY_LABELS[activeStatus] ?? "No obligations."}{" "}
+              <Link
+                href="/obligations/new"
+                className="font-medium transition-colors hover:opacity-80"
+                style={{ color: "#00c4b4" }}
+              >
+                Add your first obligation
+              </Link>{" "}
+              to begin tracking compliance.
+            </p>
+          )}
         </div>
       )}
 
