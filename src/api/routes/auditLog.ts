@@ -14,6 +14,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireAdminRole } from "../middleware/requireRole.js";
+import { csvRow } from "../lib/csvExport.js";
 
 const router = Router();
 
@@ -175,15 +176,6 @@ router.get(
    GET /api/audit-log/export.csv
    ========================================================= */
 
-function escapeCsvValue(v: unknown): string {
-  if (v == null) return "";
-  const s = typeof v === "object" ? JSON.stringify(v) : String(v);
-  if (s.includes(",") || s.includes('"') || s.includes("\n")) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
-
 router.get(
   "/audit-log/export.csv",
   requireApiKey,
@@ -248,26 +240,31 @@ router.get(
         ipAddress:     req.ip ?? null,
       });
 
-      const header = "timestamp,event_type,actor_email,actor_name,resource_type,resource_id,ip_address,metadata";
-      const lines  = result.rows.map((r) =>
-        [
-          r.created_at,
+      const date = new Date().toISOString().slice(0, 10);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="audit-log-${date}.csv"`);
+
+      // Column names are the route's contract — unchanged across the shared-lib
+      // migration. Timestamps stay full ISO (audit precision), metadata is JSON.
+      const header = csvRow(["timestamp", "event_type", "actor_email", "actor_name",
+                             "resource_type", "resource_id", "ip_address", "metadata"]);
+      res.write(header + "\r\n");
+
+      for (const r of result.rows) {
+        const line = csvRow([
+          r.created_at ? new Date(r.created_at).toISOString() : null,
           r.event_type,
           r.actor_email,
           r.actor_name,
           r.resource_type,
           r.resource_id,
           r.ip_address,
-          r.metadata,
-        ]
-          .map(escapeCsvValue)
-          .join(",")
-      );
+          r.metadata == null ? null : JSON.stringify(r.metadata),
+        ]);
+        res.write(line + "\r\n");
+      }
 
-      const date = new Date().toISOString().slice(0, 10);
-      res.setHeader("Content-Type", "text/csv; charset=utf-8");
-      res.setHeader("Content-Disposition", `attachment; filename="audit-log-${date}.csv"`);
-      res.status(200).send([header, ...lines].join("\n"));
+      res.end();
     } catch (err) {
       logger.error({ event: "audit_log_export_failed", err }, "GET /api/audit-log/export.csv failed");
       res.status(500).json({ error: "audit_log_export_failed" });
