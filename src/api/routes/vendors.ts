@@ -267,6 +267,24 @@ router.get(
         conditions.push(`criticality = $${params.length}`);
       }
 
+      // ?reviewed=never — vendors with NO review on record (last_reviewed_at
+      // IS NULL): the factual TPRM audit slice, needing no cadence policy.
+      // A due-for-review filter (cadence-based) is a separate product ruling
+      // and deliberately not implied here.
+      const filterReviewed = isNonEmptyString(req.query.reviewed)
+        ? req.query.reviewed
+        : null;
+      if (filterReviewed !== null) {
+        if (filterReviewed !== "never") {
+          res.status(400).json({
+            error: "invalid_reviewed_filter",
+            allowed: ["never"]
+          });
+          return;
+        }
+        conditions.push("last_reviewed_at IS NULL");
+      }
+
       // Shared asset-search q — the platform capability (name, alias, exact
       // UUID, any registry identifier), narrowed to vendor-typed assets and
       // applied by BACKING id, so this list never re-implements matching.

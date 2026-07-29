@@ -39,6 +39,10 @@ export default async function VendorsPage({
   const sp = await searchParams;
   const critFilter = sp.criticality ?? null;
   const showInactive = sp.show_inactive === "1";
+  // ?reviewed=never — vendors with no review on record (the factual TPRM
+  // audit slice). Client-side over the fetched set, like the criticality
+  // pills; the engine also accepts reviewed=never for API callers.
+  const neverReviewedOnly = sp.reviewed === "never";
   // Shared platform search (2–120 bounds, engine-resolved via the asset-search
   // capability: name, product alias, exact UUID). A URL param like the filters.
   const search =
@@ -54,14 +58,16 @@ export default async function VendorsPage({
 
   // Every navigation on this page preserves the OTHER axes — a pill click must
   // not silently drop an active search, and a search must not drop the filters.
-  const vendorsHref = (over: { crit?: string | null; inactive?: boolean; q?: string | null } = {}) => {
+  const vendorsHref = (over: { crit?: string | null; inactive?: boolean; q?: string | null; reviewed?: string | null } = {}) => {
     const p = new URLSearchParams();
     const crit = over.crit === undefined ? critFilter : over.crit;
     const inactive = over.inactive === undefined ? showInactive : over.inactive;
     const term = over.q === undefined ? search : over.q;
+    const reviewed = over.reviewed === undefined ? (neverReviewedOnly ? "never" : null) : over.reviewed;
     if (crit) p.set("criticality", crit);
     if (inactive) p.set("show_inactive", "1");
     if (term) p.set("q", term);
+    if (reviewed) p.set("reviewed", reviewed);
     const s = p.toString();
     return s ? `/vendors?${s}` : "/vendors";
   };
@@ -100,10 +106,14 @@ export default async function VendorsPage({
     low:      allVendors.filter((v) => v.criticality === "low").length,
   };
 
-  // Filter for display.
-  const displayVendors = critFilter
-    ? allVendors.filter((v) => v.criticality === critFilter)
-    : allVendors;
+  const neverReviewedCount = allVendors.filter((v) => !v.last_reviewed_at).length;
+
+  // Filter for display — axes compose (criticality AND reviewed).
+  const displayVendors = allVendors.filter(
+    (v) =>
+      (!critFilter || v.criticality === critFilter) &&
+      (!neverReviewedOnly || !v.last_reviewed_at)
+  );
 
   const bannerStyle = critFilter ? BANNER_STYLES[critFilter] : null;
   const critLabel = critFilter
@@ -207,6 +217,7 @@ export default async function VendorsPage({
         </label>
         {critFilter && <input type="hidden" name="criticality" value={critFilter} />}
         {showInactive && <input type="hidden" name="show_inactive" value="1" />}
+        {neverReviewedOnly && <input type="hidden" name="reviewed" value="never" />}
         <div className="flex items-center gap-2 w-full max-w-xl">
           <input
             id="vendor-search"
@@ -252,6 +263,14 @@ export default async function VendorsPage({
               />
             );
           })}
+          <span className="text-xs font-semibold uppercase tracking-wide ml-3 mr-1" style={{ color: "#64748b" }}>
+            Reviewed
+          </span>
+          <FilterPill
+            label={`Never reviewed${neverReviewedCount > 0 ? ` (${neverReviewedCount})` : ""}`}
+            href={vendorsHref({ reviewed: neverReviewedOnly ? null : "never" })}
+            active={neverReviewedOnly}
+          />
         </div>
       )}
 
@@ -416,13 +435,19 @@ function VendorRow({
               </span>
             </div>
           )}
-          {lastReviewed && (
-            <div>
+          <div>
+            {lastReviewed ? (
               <span className="text-xs" style={{ color: "#475569" }}>
                 Reviewed {lastReviewed}
               </span>
-            </div>
-          )}
+            ) : (
+              // A vendor with no review on record says so — silence read as
+              // "fine" is how never-reviewed vendors stay never-reviewed.
+              <span className="text-xs font-medium" style={{ color: "#fcd34d" }}>
+                Never reviewed
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </div>
