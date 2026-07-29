@@ -46,6 +46,7 @@ import actionsRouter from "./actions.js";
 import vendorsRouter from "./vendors.js";
 import vendorAssessmentsRouter from "./vendorAssessments.js";
 import aiSystemsRouter from "./aiSystems.js";
+import aiSystemsExportRouter from "./aiSystemsExport.js";
 import governanceReviewsRouter from "./governanceReviews.js";
 import aiGovernanceAssessmentsRouter from "./aiGovernanceAssessments.js";
 import frameworksRouter from "./frameworks.js";
@@ -454,6 +455,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", controlComplianceContextRouter);
   router.use("/api", obligationComplianceContextRouter);
   router.use("/api", aiSystemGovernanceContextRouter);
+  // Export before register — GET /ai-systems/:id captures export.csv otherwise.
+  router.use("/api", aiSystemsExportRouter);
   router.use("/api", aiSystemsRouter);
   router.use("/api", governanceReviewsRouter);
   router.use("/api", aiGovernanceAssessmentsRouter);

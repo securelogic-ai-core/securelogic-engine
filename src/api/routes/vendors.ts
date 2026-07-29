@@ -25,6 +25,7 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { csvRow } from "../lib/csvExport.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
 import { registerAsset } from "../lib/assetRegistrar.js";
@@ -511,14 +512,8 @@ router.get(
    CSV export of all org vendors with optional filters.
    ========================================================= */
 
-function csvCell(val: string | null | undefined): string {
-  const s = val == null ? "" : String(val);
-  return `"${s.replace(/"/g, '""')}"`;
-}
-
-function csvRow(cells: Array<string | null | undefined>): string {
-  return cells.map(csvCell).join(",");
-}
+// CSV serialization migrated to the shared lib (src/api/lib/csvExport.ts) so
+// every register export escapes identically.
 
 router.get(
   "/vendors/export.csv",
@@ -577,7 +572,8 @@ router.get(
                 access_level, website, service_description, created_at, last_reviewed_at
          FROM vendors
          WHERE ${where}
-         ORDER BY created_at DESC, id DESC`,
+         ORDER BY created_at DESC, id DESC
+         LIMIT 10000`,
         params
       );
 
