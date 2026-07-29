@@ -8,6 +8,7 @@ import {
   type ControlAssessment,
 } from "@/lib/api";
 import { ControlsList } from "./ControlsList";
+import { ExportCsvButton } from "@/components/ExportCsvButton";
 
 export default async function ControlsPage({
   searchParams,
@@ -104,6 +105,11 @@ export default async function ControlsPage({
           >
             ↑ Import CSV
           </Link>
+          <ExportCsvButton
+            endpoint="/api/export/controls"
+            filenamePrefix="controls"
+            queryString=""
+          />
           <Link
             href="/controls/new"
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors"

@@ -6,6 +6,7 @@ import {
   getObligations,
   type Obligation,
 } from "@/lib/api";
+import { ExportCsvButton } from "@/components/ExportCsvButton";
 
 export default async function ObligationsPage() {
   const session = await getSession();
@@ -67,6 +68,11 @@ export default async function ObligationsPage() {
           >
             ↑ Import CSV
           </Link>
+          <ExportCsvButton
+            endpoint="/api/export/obligations"
+            filenamePrefix="obligations"
+            queryString=""
+          />
           <Link
             href="/obligations/new"
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
