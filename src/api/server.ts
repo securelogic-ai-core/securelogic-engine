@@ -20,6 +20,7 @@ import { startRiskHistoryWorker } from "./workers/riskHistoryWorker.js";
 import { startRiskAcceptanceExpiryWorker } from "./workers/riskAcceptanceExpiryWorker.js";
 import { startPredictiveForecastWorker } from "./workers/predictiveForecastWorker.js";
 import { startOrchestrationPlaybookWorker } from "./workers/orchestrationPlaybookWorker.js";
+import { startWebhookRetryWorker } from "./workers/webhookRetryWorker.js";
 import { createApp } from "./app.js";
 
 /* =========================================================
@@ -161,6 +162,10 @@ startPredictiveForecastWorker();
 // ERIP E6b: scheduled playbook instantiation (creates proposals; still human-
 // approved). Registered always; self-gates on SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED.
 startOrchestrationPlaybookWorker();
+// Webhook retry drain — makes the dispatcher's scheduled retries actually
+// fire (they were write-only before this worker). Registered always;
+// SECURELOGIC_WEBHOOK_RETRY_DISABLED=true is the ops brake.
+startWebhookRetryWorker();
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   logger.info(
