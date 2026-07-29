@@ -16,6 +16,7 @@ export const TARGET_NOUN: Record<SignalMatchTargetType, string> = {
   ai_system: "AI system",
   control: "control",
   obligation: "obligation",
+  asset: "asset",
 };
 
 /**
@@ -34,7 +35,12 @@ export function describeMatchReason(
   if (r.includes("cve")) return `The signal references a CVE associated with this ${noun}.`;
   if (r.includes("fuzzy")) return `The signal closely matches this ${noun}'s name.`;
   if (r.includes("domain")) return `The signal affects this ${noun}'s regulatory domain.`;
-  if (r.includes("name_ilike") || r.includes("name_match") || r.endsWith("_name")) {
+  if (
+    r.includes("name_ilike") ||
+    r.includes("name_match") ||
+    r.includes("name_canonical") || // registry matcher: asset_name_canonical
+    r.endsWith("_name")
+  ) {
     return `SecureLogic found this ${noun}'s name in the intelligence signal.`;
   }
   return `SecureLogic linked this signal to this ${noun}.`;
