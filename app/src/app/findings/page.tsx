@@ -12,7 +12,7 @@ import {
 } from "@/lib/api";
 import { FindingsList } from "./FindingsList";
 import { FindingCard } from "@/components/FindingCard";
-import { ExportCsvButton } from "./ExportCsvButton";
+import { ExportCsvButton } from "@/components/ExportCsvButton";
 import { isActiveStatus, urgencyBucket, URGENCY_LABELS } from "./decisionQueue";
 import SavedViewsBar from "./SavedViewsBar";
 import { currentViewFilters } from "./savedViews";
@@ -354,6 +354,8 @@ export default async function FindingsPage({
           ↑ Import CSV
         </Link>
         <ExportCsvButton
+          endpoint="/api/export/findings"
+          filenamePrefix="findings"
           queryString={new URLSearchParams(
             Object.fromEntries(
               Object.entries(currentSp).filter(([, v]) => v !== undefined)
