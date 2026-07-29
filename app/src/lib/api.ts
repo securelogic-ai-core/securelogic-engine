@@ -4728,6 +4728,29 @@ export async function getWebhooks(
   }
 }
 
+export interface WebhookEventDefinition {
+  event_type: string;
+  description: string;
+}
+
+/**
+ * The event catalog this deployment accepts. The engine owns the vocabulary
+ * (and gates wave-1 entries on its own feature flag), so the settings UI must
+ * render from this rather than a hardcoded copy that silently goes stale.
+ */
+export async function getWebhookEventTypes(
+  token: string
+): Promise<WebhookEventDefinition[] | null> {
+  try {
+    const res = await engineFetch("/api/webhooks/event-types", token);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { event_types?: WebhookEventDefinition[] };
+    return body.event_types ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function createWebhook(
   token: string,
   data: { url: string; description?: string; event_types?: string[] }

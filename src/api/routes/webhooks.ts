@@ -32,40 +32,31 @@ import {
   UnsafeWebhookUrlError,
 } from "../lib/webhookUrlSafety.js";
 import {
-  webhookWave1Enabled,
-  WAVE1_EVENT_TYPES,
-} from "../lib/webhookWave1FeatureFlag.js";
+  webhookEventCatalog,
+  webhookEventTypes,
+} from "../lib/webhookEventCatalog.js";
 
 const router = Router();
 
 const MAX_ENDPOINTS_PER_ORG = 10;
 
-const VALID_EVENT_TYPES = new Set([
-  "*",
-  "finding.created",
-  "finding.updated",
-  "risk.created",
-  "vendor.assessed",
-  "posture.snapshot_created",
-  "action.created",
-  "action.updated",
-]);
+/** The wildcard is a subscription shape, not a catalog entry. */
+const WILDCARD_EVENT_TYPE = "*";
 
 /**
- * Wave-1 event types (DS-15) are registrable only while the wave-1 flag is
- * on — flag-off, this route is byte-identical to pre-wave-1 (the new names
- * are rejected, and never revealed in `allowed`). Read at call time so the
- * flag needs no process restart to take effect in tests.
+ * Event-type validation reads the canonical catalog
+ * (lib/webhookEventCatalog.ts) at call time, so the types this route accepts,
+ * the types the catalog endpoint advertises, and the types the settings UI
+ * offers cannot drift apart. The catalog is itself wave-1-flag-aware: flag-off,
+ * the wave-1 names are absent, so this route stays byte-identical to
+ * pre-wave-1 (new names rejected, never revealed in `allowed`).
  */
 function isValidEventType(t: string): boolean {
-  if (VALID_EVENT_TYPES.has(t)) return true;
-  return webhookWave1Enabled() && (WAVE1_EVENT_TYPES as readonly string[]).includes(t);
+  return t === WILDCARD_EVENT_TYPE || webhookEventTypes().includes(t);
 }
 
 function allowedEventTypes(): string[] {
-  return webhookWave1Enabled()
-    ? [...VALID_EVENT_TYPES, ...WAVE1_EVENT_TYPES]
-    : [...VALID_EVENT_TYPES];
+  return [WILDCARD_EVENT_TYPE, ...webhookEventTypes()];
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -248,6 +239,32 @@ router.post(
       logger.error({ event: "webhook_create_failed", err }, "POST /api/webhooks failed");
       res.status(500).json({ error: "webhook_create_failed" });
     }
+  }
+);
+
+/* =========================================================
+   GET /api/webhooks/event-types
+   The event catalog this deployment currently accepts.
+   ========================================================= */
+
+/**
+ * ROUTE ORDER: this MUST stay above GET /webhooks/:id — Express would
+ * otherwise bind the literal path as :id and answer with a 404 for a
+ * webhook whose id is "event-types" (the same trap the register export
+ * routers document against their own /:id routes).
+ *
+ * Org-scoped only in the entitlement sense: the catalog is deployment-wide
+ * (no tenant rows are read), but it stays behind the same premium gate as the
+ * rest of the family so it cannot be used to fingerprint feature-flag state
+ * from an unentitled account.
+ */
+router.get(
+  "/webhooks/event-types",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  async (_req, res) => {
+    res.status(200).json({ event_types: webhookEventCatalog() });
   }
 );
 

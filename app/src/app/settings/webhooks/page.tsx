@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getWebhooks } from "@/lib/api";
+import { getWebhooks, getWebhookEventTypes } from "@/lib/api";
 import { WebhooksClient } from "./WebhooksClient";
 
 export default async function WebhooksSettingsPage() {
@@ -11,8 +11,14 @@ export default async function WebhooksSettingsPage() {
 
   const isAdmin = (session.userRole ?? "viewer") === "admin";
 
-  const data = await getWebhooks(token);
+  const [data, catalog] = await Promise.all([
+    getWebhooks(token),
+    getWebhookEventTypes(token),
+  ]);
   const endpoints = data?.endpoints ?? [];
+  // The engine owns the vocabulary; an unreachable catalog degrades to an
+  // empty picker rather than offering event types the engine may reject.
+  const eventTypes = catalog ?? [];
 
   return (
     <div style={{ maxWidth: "720px", margin: "0 auto", padding: "48px 24px" }}>
@@ -66,18 +72,15 @@ export default async function WebhooksSettingsPage() {
           Supported event types
         </summary>
         <div style={{ marginTop: "10px", background: "#0a0f1a", border: "1px solid #1e2d45", borderRadius: "8px", padding: "12px 16px" }}>
-          {[
-            ["finding.created",          "A new finding is created"],
-            ["finding.updated",          "A finding status or priority changes"],
-            ["risk.created",             "A new risk is added to the register"],
-            ["vendor.assessed",          "A vendor assessment is completed"],
-            ["posture.snapshot_created", "A posture snapshot is computed"],
-            ["action.created",           "A new action is created"],
-            ["action.updated",           "An action status changes"],
-          ].map(([evt, desc]) => (
-            <div key={evt} style={{ display: "flex", gap: "16px", padding: "4px 0", borderBottom: "1px solid #1e2d45", fontSize: "12px" }}>
-              <code style={{ color: "#00c4b4", minWidth: "220px", fontFamily: "monospace" }}>{evt}</code>
-              <span style={{ color: "#64748b" }}>{desc}</span>
+          {eventTypes.length === 0 && (
+            <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>
+              Event catalog unavailable right now — reload to try again.
+            </p>
+          )}
+          {eventTypes.map(({ event_type, description }) => (
+            <div key={event_type} style={{ display: "flex", gap: "16px", padding: "4px 0", borderBottom: "1px solid #1e2d45", fontSize: "12px" }}>
+              <code style={{ color: "#00c4b4", minWidth: "220px", fontFamily: "monospace" }}>{event_type}</code>
+              <span style={{ color: "#64748b" }}>{description}</span>
             </div>
           ))}
         </div>
@@ -103,7 +106,7 @@ X-SecureLogic-Event-Version: 1`}
         </div>
       </details>
 
-      <WebhooksClient initialEndpoints={endpoints} isAdmin={isAdmin} />
+      <WebhooksClient initialEndpoints={endpoints} isAdmin={isAdmin} eventTypes={eventTypes} />
     </div>
   );
 }
