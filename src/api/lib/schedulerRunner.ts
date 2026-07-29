@@ -46,6 +46,7 @@ import { runScheduler } from "./briefScheduler.js";
 import { runDailyDigest } from "./digestScheduler.js";
 import { runWeeklySummary } from "./summaryScheduler.js";
 import { runAuthAnomalyScan } from "./authAnomaly.js";
+import { runDailyPostureSnapshots } from "./postureSnapshotScheduler.js";
 
 /** True while a scheduler run is actively in progress. Prevents overlapping runs. */
 let isRunning = false;
@@ -120,6 +121,28 @@ export function startScheduler(): void {
   logger.info(
     { event: "scheduler_registered", schedule: "0 7 * * 2 (UTC)", description: "Every Tuesday 7:00 AM UTC" },
     "Intelligence Brief scheduler registered"
+  );
+
+  // Daily posture snapshot — 7:30 AM UTC, BEFORE the 8:00 digest and the
+  // Monday 9:00 weekly summary, so both read a fresh score. Idempotent
+  // ((org, snapshot_date) upsert): a signal-driven snapshot earlier the same
+  // day is refreshed, never duplicated. Continuous posture history is the
+  // platform promise this cron keeps for quiet orgs.
+  schedule(
+    "30 7 * * *",
+    async () => {
+      try {
+        await runDailyPostureSnapshots();
+      } catch (err) {
+        logger.error({ event: "daily_posture_snapshot_cron_error", err }, "Daily posture snapshot cron threw an unexpected error");
+      }
+    },
+    { timezone: "UTC" }
+  );
+
+  logger.info(
+    { event: "scheduler_registered", schedule: "30 7 * * * (UTC)", description: "Daily posture snapshot 7:30 AM UTC" },
+    "Daily posture snapshot scheduler registered"
   );
 
   // Daily digest — 8:00 AM UTC every day
