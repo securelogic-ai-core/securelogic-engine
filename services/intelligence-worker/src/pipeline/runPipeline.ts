@@ -38,6 +38,7 @@ import {
 // directly (cyberSignalProcessingService re-exports nothing here — confirmed).
 // Mirrors processSignal phase 7, which runs the control matcher AFTER its commit.
 import { runLlmControlMatcherForSignal } from "../../../../src/api/lib/llmControlMatcher.js";
+import { createSignalWebhookBatcher } from "../../../../src/api/lib/signalWebhookEmitter.js";
 import { buildDedupHash } from "../../../../src/api/lib/cyberSignalNormalizer.js";
 import { projectUnprojectedGlobalSignals, ageIntelligenceEvents } from "../../../../src/api/lib/signals/intelligenceEventStore.js";
 import { processEventLifecycleTriggers } from "../../../../src/api/lib/signals/eventLifecycleWorkflow.js";
@@ -297,12 +298,17 @@ async function fanOutMatcherToActiveOrgs(
     ? createAlertBatcher("critical_finding", "pipeline")
     : null;
 
+  // Wave-1 (DS-15): same post-commit seam as the alert batcher — add() per
+  // (signal, org) result, one signal.matched per org after the loop. No-op dark.
+  const webhookBatcher = createSignalWebhookBatcher("pipeline");
+
   for (const signal of signals) {
     for (const org of activeOrgs) {
       pairsAttempted++;
       try {
         const result = await runMatcherForSignal(signal, org.id);
         pairsSucceeded++;
+        webhookBatcher.add(org.id, signal.id, result);
         if (result.matched_branch !== "no_match") {
           matchesProduced++;
         }
@@ -356,6 +362,9 @@ async function fanOutMatcherToActiveOrgs(
       );
     }
   }
+
+  // One signal.matched per org for this cycle (fire-and-forget internally).
+  webhookBatcher.flush();
 
   const elapsedMs = Date.now() - start;
   logger.info(

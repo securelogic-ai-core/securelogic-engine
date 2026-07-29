@@ -42,6 +42,7 @@ import { personalizeBriefItems } from "../lib/briefPersonalizationService.js";
 import { fetchApplicabilityCitations } from "../lib/briefApplicabilityCitations.js";
 import { sendBrief } from "../lib/briefEmailSender.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { emitBriefPublished } from "../lib/briefWebhookEmitter.js";
 import { encryptField } from "../lib/fieldEncryption.js";
 import {
   runSynthesisSafely,
@@ -366,6 +367,15 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
     );
 
     await client.query("COMMIT");
+
+    // Wave-1 (DS-15): emit AFTER the commit — a rollback can never produce a
+    // phantom brief.published. No-op while wave 1 is dark.
+    emitBriefPublished(orgId, {
+      brief_id: briefId,
+      signal_count: result.signal_count,
+      item_count: result.item_count,
+      trigger: "on_demand",
+    });
 
     // Return the completed brief
     const briefResult = await pg.query<{

@@ -32,6 +32,7 @@ import {
 } from "../lib/riskAcceptanceNotifier.js";
 import { riskAcceptanceFeatureFlag } from "../lib/riskAcceptanceFeatureFlag.js";
 import { promoteApprovedAcceptance } from "../lib/riskPromotionService.js";
+import { emitAcceptanceEvent } from "../lib/acceptanceWebhookEmitter.js";
 import {
   ACCEPTANCE_SELECT,
   acceptanceSelect,
@@ -330,18 +331,39 @@ router.post(
         ipAddress: req.ip ?? null,
       });
 
+      // Wave-1 (DS-15): the governed decision is customer-visible integration
+      // surface. Fire-and-forget; no-op while wave 1 is dark.
+      emitAcceptanceEvent("acceptance.approved", organizationId, {
+        acceptance_id: acceptance.id,
+        finding_id: acceptance.finding_id,
+        owner_user_id: acceptance.owner_user_id ?? null,
+        expires_at: acceptance.expires_at ?? null,
+        finding_closed: recompute.toState === "closed",
+      });
+
       // ADR-0004: the approved acceptance lands in the Enterprise Risk
       // Register (create-or-link, dark behind its own flag). Non-fatal —
       // the governance record above is primary and already durable; a
       // failed promotion is found by the memo §7 reconciliation query.
       try {
-        await promoteApprovedAcceptance({
+        const promotion = await promoteApprovedAcceptance({
           organizationId,
           acceptanceId: acceptance.id,
           findingId: acceptance.finding_id,
           actorUserId: approver,
           actorApiKeyId: (req as { apiKey?: { id?: string } }).apiKey?.id ?? null,
         });
+        // Wave-1 (DS-15): risk.promoted is emitted here at the route (the
+        // service stays delivery-free). Only when a promotion actually ran —
+        // dark promotion flag means no event, matching the register's truth.
+        if (promotion.promoted && promotion.riskId) {
+          emitAcceptanceEvent("risk.promoted", organizationId, {
+            risk_id: promotion.riskId,
+            finding_id: acceptance.finding_id,
+            acceptance_id: acceptance.id,
+            created: promotion.created,
+          });
+        }
       } catch (err) {
         logger.error(
           { event: "risk_promotion_failed", organizationId, acceptanceId: acceptance.id, err },

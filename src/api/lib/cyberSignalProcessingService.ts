@@ -45,6 +45,10 @@ import { runSignalApplicabilityShadow, backingAssetIds } from "./signalApplicabi
 import { extractSignalProductEvidence } from "./signalProductEvidence.js";
 import { upsertCanonicalProduct } from "./canonicalProductStore.js";
 import { intelligenceEventsEnabled } from "./signals/intelligenceEventsFeatureFlag.js";
+// Runtime-safe despite the emitter's type-only import back into this module:
+// the MatcherResult import is erased at compile time, so the runtime edge is
+// one-directional (this module → emitter → dispatcher).
+import { createSignalWebhookBatcher } from "./signalWebhookEmitter.js";
 import { resolveEventIdForSignal } from "./signals/eventSignalResolver.js";
 import {
   computePosture,
@@ -1332,6 +1336,12 @@ export async function processSignal(
     });
 
     await client.query("COMMIT");
+
+    // Wave-1 (DS-15): emit AFTER the commit so a rollback can never produce a
+    // phantom event. Route path = a batch of one; no-op while wave 1 is dark.
+    const webhookBatch = createSignalWebhookBatcher("signal_processing");
+    webhookBatch.add(orgId, signalId, matcherResult);
+    webhookBatch.flush();
 
     logger.info(
       {

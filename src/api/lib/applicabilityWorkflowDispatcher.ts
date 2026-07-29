@@ -47,6 +47,7 @@ import type { StoredAssessment } from "../../engine/applicability/v1/explainabil
 import type { Queryable } from "./applicabilityAssessmentWriter.js";
 import type { AlertItem, AlertSeverity } from "./alerting/alertService.js";
 import { resolveSlaDueDateWith } from "./findingSlaPolicyRules.js";
+import { emitSuggestionCreated } from "./signalWebhookEmitter.js";
 
 /** action_type markers. MUST equal the literals in the 20260730 partial unique indexes. */
 export const APPLICABILITY_RISK_REVIEW_ACTION_TYPE = "auto_applicability_risk_review";
@@ -202,6 +203,21 @@ export async function dispatchApplicabilityWorkflow(
   }
 
   const domain = targetTypeToDomain(stored.target_type);
+
+  // Wave-1 (DS-15): a genuinely NEW pending suggestion is customer-visible
+  // review work — emit suggestion.created. Refreshes (DO UPDATE re-points the
+  // live row) stay silent: the integrator already has that row. Fire-and-
+  // forget, no-op while wave 1 is dark; org-scoped by construction (orgId is
+  // this dispatch's tenant).
+  if (suggestionRow && suggestionRow.inserted === true) {
+    emitSuggestionCreated(orgId, {
+      suggestion_id: String(suggestionRow.id),
+      signal_id: stored.signal_id,
+      match_score: stored.confidence,
+      domain,
+      source: "applicability_engine"
+    });
+  }
 
   // -------------------------------------------------------------
   // 2. finding_draft → findings (idempotent on (org, assessment) via the
