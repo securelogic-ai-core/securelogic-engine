@@ -140,3 +140,25 @@ describe("buildObligationSummary — by_domain", () => {
     expect(Object.keys(by_domain)).toHaveLength(2);
   });
 });
+
+// ====================================================================
+// buildObligationSummary — overdue (Metric Contract)
+// ====================================================================
+
+describe("buildObligationSummary — overdue", () => {
+  it("defaults to 0 when no overdue row is provided (older callers)", () => {
+    expect(buildObligationSummary([], []).overdue).toBe(0);
+    expect(buildObligationSummary([], [], null).overdue).toBe(0);
+  });
+
+  it("parses the overdue count row", () => {
+    const summary = buildObligationSummary(
+      [{ status: "active", count: "8" }],
+      [],
+      { count: "3" }
+    );
+    expect(summary.overdue).toBe(3);
+    // overdue is its own axis — it never inflates total.
+    expect(summary.total).toBe(8);
+  });
+});

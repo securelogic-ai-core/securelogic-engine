@@ -78,6 +78,17 @@ describe("GET /api/obligations — status filter contract", () => {
     expect(call.params).toEqual([ORG, 25]);
   });
 
+  it("overdue=true adds the Metric Contract predicate to the active view", async () => {
+    const res = await request(makeApp()).get("/api/obligations?overdue=true");
+    expect(res.status).toBe(200);
+    const call = h.state.calls[0]!;
+    // Default status=active bound + the overdue predicate appended.
+    expect(call.params[1]).toBe("active");
+    expect(call.sql).toContain(
+      "status = 'active' AND due_date IS NOT NULL AND due_date < CURRENT_DATE"
+    );
+  });
+
   it("still filters explicit lifecycle states and rejects unknown ones", async () => {
     await request(makeApp()).get("/api/obligations?status=waived");
     expect(h.state.calls[0]!.params[1]).toBe("waived");

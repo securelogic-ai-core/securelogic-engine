@@ -33,7 +33,7 @@ import {
   validateObligationPatch
 } from "../lib/obligationValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
-import { sqlFindingActive } from "../lib/metricDefinitions.js";
+import { sqlFindingActive, sqlObligationOverdue } from "../lib/metricDefinitions.js";
 
 const router = Router();
 
@@ -49,9 +49,11 @@ const router = Router();
  */
 export function buildObligationSummary(
   byStatusRows: ReadonlyArray<{ status: string; count: string }>,
-  byDomainRows: ReadonlyArray<{ domain: string; count: string }>
+  byDomainRows: ReadonlyArray<{ domain: string; count: string }>,
+  overdueRow: { count: string } | null = null
 ): {
   total: number;
+  overdue: number;
   by_status: Record<string, number>;
   by_domain: Record<string, number>;
 } {
@@ -73,7 +75,11 @@ export function buildObligationSummary(
 
   const total = Object.values(by_status).reduce((s, n) => s + n, 0);
 
-  return { total, by_status, by_domain };
+  // Metric Contract: overdue = ACTIVE with due_date strictly before today
+  // (sqlObligationOverdue) — the missed-regulatory-deadline number.
+  const overdue = overdueRow ? parseInt(overdueRow.count, 10) : 0;
+
+  return { total, overdue, by_status, by_domain };
 }
 
 const DEFAULT_LIMIT = 25;
@@ -278,6 +284,14 @@ router.get(
         conditions.push(`status = $${params.length}`);
       }
 
+      // ?overdue=true — the deep-link destination for the overdue count
+      // (Metric Contract: sqlObligationOverdue pins status='active', so this
+      // composes with the default/active status filter and would honestly
+      // return zero rows combined with status=waived/not_applicable).
+      if (req.query.overdue === "true") {
+        conditions.push(sqlObligationOverdue());
+      }
+
       if (filterDomain !== null) {
         params.push(filterDomain);
         conditions.push(`domain = $${params.length}`);
@@ -353,7 +367,7 @@ router.get(
     }
 
     try {
-      const [byStatusResult, byDomainResult] = await Promise.all([
+      const [byStatusResult, byDomainResult, overdueResult] = await Promise.all([
         pg.query<{ status: string; count: string }>(
           `
           SELECT status, COUNT(*)::text AS count
@@ -372,12 +386,22 @@ router.get(
           ORDER BY count DESC, domain ASC
           `,
           [organizationId]
+        ),
+        pg.query<{ count: string }>(
+          `
+          SELECT COUNT(*)::text AS count
+          FROM obligations
+          WHERE organization_id = $1
+            AND ${sqlObligationOverdue()}
+          `,
+          [organizationId]
         )
       ]);
 
       const summary = buildObligationSummary(
         byStatusResult.rows,
-        byDomainResult.rows
+        byDomainResult.rows,
+        overdueResult.rows[0] ?? null
       );
 
       res.status(200).json(summary);

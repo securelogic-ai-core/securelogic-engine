@@ -25,6 +25,7 @@ import {
   sqlActionActive,
   sqlFindingOverdue,
   sqlActionOverdue,
+  sqlObligationOverdue,
 } from "../lib/metricDefinitions.js";
 import { OPERATIONAL_STATUSES } from "../lib/findingLifecycleMachine.js";
 
@@ -106,6 +107,16 @@ describe("SQL fragments", () => {
     );
     expect(sqlActionOverdue()).not.toContain("NOW()");
     expect(sqlFindingOverdue()).not.toContain("NOW()");
+  });
+
+  it("overdue obligation = ACTIVE (decided states can't be overdue) AND date before CURRENT_DATE", () => {
+    expect(sqlObligationOverdue()).toBe(
+      "status = 'active' AND due_date IS NOT NULL AND due_date < CURRENT_DATE"
+    );
+    expect(sqlObligationOverdue("o.status", "o.due_date")).toBe(
+      "o.status = 'active' AND o.due_date IS NOT NULL AND o.due_date < CURRENT_DATE"
+    );
+    expect(sqlObligationOverdue()).not.toContain("NOW()");
   });
 });
 

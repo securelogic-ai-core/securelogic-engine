@@ -202,3 +202,12 @@ export function sqlFindingOverdue(
 export function sqlActionOverdue(statusCol = "status", dueCol = "due_date"): string {
   return `${sqlActionActive(statusCol)} AND ${dueCol} IS NOT NULL AND ${dueCol} < CURRENT_DATE`;
 }
+
+/**
+ * Overdue obligation: ACTIVE (waived / not_applicable are decided — a decided
+ * obligation cannot be overdue) AND due strictly before today. DATE comparison
+ * (CURRENT_DATE), never NOW() — a due-today obligation is NOT overdue anywhere.
+ */
+export function sqlObligationOverdue(statusCol = "status", dueCol = "due_date"): string {
+  return `${statusCol} = 'active' AND ${dueCol} IS NOT NULL AND ${dueCol} < CURRENT_DATE`;
+}
