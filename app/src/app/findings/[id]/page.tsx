@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import { ActionCard } from "@/components/ActionCard";
 import { FindingEvidenceSection } from "@/components/findings/FindingEvidenceSection";
+import { HistorySection } from "@/components/HistorySection";
 import { AddActionForm } from "./AddActionForm";
 import { FindingStatusButtons } from "./FindingStatusButtons";
 import { DecisionWorkspace } from "./DecisionWorkspace";
@@ -573,6 +574,10 @@ export default async function FindingDetailPage({
 
           {/* Remediation Actions */}
           <RemediationActionsSection finding={finding} actions={actions} />
+
+          {/* Activity history — finding events plus its risk acceptances
+              and the actions it spawned (shared per-object audit trail). */}
+          <HistorySection resourcePath="findings" resourceId={finding.id} />
         </div>
 
         {/* Right: sidebar */}

@@ -20,6 +20,7 @@ import { resolve } from "path";
 import {
   AI_SYSTEM_HISTORY_SPEC,
   CONTROL_HISTORY_SPEC,
+  FINDING_HISTORY_SPEC,
   HISTORY_DEFAULT_LIMIT,
   HISTORY_MAX_LIMIT,
   OBLIGATION_HISTORY_SPEC,
@@ -65,6 +66,7 @@ describe("history paging parsers", () => {
 
 const ALL_SPECS = [
   ["risk", RISK_HISTORY_SPEC],
+  ["finding", FINDING_HISTORY_SPEC],
   ["vendor", VENDOR_HISTORY_SPEC],
   ["control", CONTROL_HISTORY_SPEC],
   ["obligation", OBLIGATION_HISTORY_SPEC],

@@ -22,6 +22,7 @@ import { bootstrapTestDb, type TestDbSeed } from "./testDb.js";
 import {
   AI_SYSTEM_HISTORY_SPEC,
   CONTROL_HISTORY_SPEC,
+  FINDING_HISTORY_SPEC,
   OBLIGATION_HISTORY_SPEC,
   RISK_HISTORY_SPEC,
   VENDOR_HISTORY_SPEC,
@@ -211,13 +212,66 @@ describe("fetchResourceHistory — ai_system register (two satellite tables)", (
   });
 });
 
+describe("fetchResourceHistory — finding register (polymorphic action satellite)", () => {
+  let orgA: string;
+  let findingA: string;
+
+  beforeAll(async () => {
+    orgA = seed.orgA.id;
+    const fR = await pool.query<{ id: string }>(
+      `INSERT INTO findings (organization_id, title, severity, description, source_type)
+       VALUES ($1, 'History Finding', 'high', 'seeded for history', 'manual') RETURNING id`,
+      [orgA]
+    );
+    findingA = fR.rows[0]!.id;
+
+    // Action genuinely spawned by this finding.
+    const aR = await pool.query<{ id: string }>(
+      `INSERT INTO actions (organization_id, title, source_type, source_id, priority)
+       VALUES ($1, 'Remediate', 'finding', $2, 'immediate') RETURNING id`,
+      [orgA, findingA]
+    );
+    const actionFromFinding = aR.rows[0]!.id;
+
+    // Polymorphism decoy: an action whose source_id equals the finding id
+    // but whose source_type is 'signal' — must NOT appear in the trail.
+    const dR = await pool.query<{ id: string }>(
+      `INSERT INTO actions (organization_id, title, source_type, source_id, priority)
+       VALUES ($1, 'Signal action decoy', 'signal', $2, 'planned') RETURNING id`,
+      [orgA, findingA]
+    );
+    const decoyAction = dR.rows[0]!.id;
+
+    await seedAudit({ orgId: orgA, eventType: "finding.created", resourceType: "finding", resourceId: findingA, createdAt: "2026-07-10T10:00:00Z" });
+    await seedAudit({ orgId: orgA, eventType: "action.created", resourceType: "action", resourceId: actionFromFinding, createdAt: "2026-07-11T10:00:00Z" });
+    await seedAudit({ orgId: orgA, eventType: "action.created", resourceType: "action", resourceId: decoyAction, createdAt: "2026-07-12T10:00:00Z" });
+  });
+
+  it("includes the finding's own events and its spawned action's events", async () => {
+    const page = await fetchResourceHistory(FINDING_HISTORY_SPEC, orgA, findingA, 20, 0);
+    expect(page.total_count).toBe(2);
+    expect(page.events.map((e) => e.event_type)).toEqual([
+      "action.created",
+      "finding.created",
+    ]);
+  });
+
+  it("source_type decoy: a signal-sourced action sharing the id does not leak in", async () => {
+    const page = await fetchResourceHistory(FINDING_HISTORY_SPEC, orgA, findingA, 20, 0);
+    // Only ONE action event (the finding-sourced one) — the decoy's
+    // audit row exists but its action fails the source_type pin.
+    const actionEvents = page.events.filter((e) => e.resource_type === "action");
+    expect(actionEvents).toHaveLength(1);
+  });
+});
+
 describe("fetchResourceHistory — all register specs execute against the live schema", () => {
-  it("risk / control / obligation / ai_system specs run clean on an empty target", async () => {
+  it("risk / finding / control / obligation / ai_system specs run clean on an empty target", async () => {
     // Nonexistent-but-valid UUID: routes 404 before ever calling the
     // reader, but the reader itself must still execute (this is the
     // guard that every satellite table/FK in the specs exists).
     const ghost = "00000000-0000-4000-8000-000000000000";
-    for (const spec of [RISK_HISTORY_SPEC, CONTROL_HISTORY_SPEC, OBLIGATION_HISTORY_SPEC, AI_SYSTEM_HISTORY_SPEC]) {
+    for (const spec of [RISK_HISTORY_SPEC, FINDING_HISTORY_SPEC, CONTROL_HISTORY_SPEC, OBLIGATION_HISTORY_SPEC, AI_SYSTEM_HISTORY_SPEC]) {
       const page = await fetchResourceHistory(spec, seed.orgA.id, ghost, 5, 0);
       expect(page.total_count).toBe(0);
       expect(page.events).toEqual([]);

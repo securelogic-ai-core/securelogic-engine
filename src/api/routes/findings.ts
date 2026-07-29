@@ -23,6 +23,12 @@ import { resolveFindingContext } from "../lib/findingContextResolver.js";
 import { normalizeEntityQuery, searchFindingsByEntity } from "../lib/findingEntitySearch.js";
 import { resolveOwnerMeFilter } from "../lib/findingListFilters.js";
 import {
+  FINDING_HISTORY_SPEC,
+  fetchResourceHistory,
+  parseHistoryLimit,
+  parseHistoryOffset
+} from "../lib/resourceHistory.js";
+import {
   DECISION_STATES,
   evaluateFindingDecisionTransition,
   isLegacyTerminal,
@@ -1081,6 +1087,76 @@ router.get(
         "GET /api/findings/:id failed"
       );
       res.status(500).json({ error: "finding_get_failed" });
+    }
+  })
+);
+
+/* =========================================================
+   GET /api/findings/:id/history
+   Per-finding audit trail — the RR-3 pattern via the shared
+   resourceHistory lib. Events on the finding plus its risk
+   acceptances and the actions it spawned (polymorphic
+   source_type='finding' satellite), newest first, mirroring
+   the GET /api/audit-log field shape.
+
+   Auth mirrors GET /api/findings/:id (no admin gate) — anyone
+   who can read the finding can read its history.
+   ========================================================= */
+
+router.get(
+  "/findings/:id/history",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  asTenant(async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const findingId = String(req.params["id"] ?? "").trim();
+    if (!findingId) {
+      res.status(400).json({ error: "finding_id_required" });
+      return;
+    }
+    if (!isUuid(findingId)) {
+      res.status(400).json({ error: "finding_id_must_be_uuid" });
+      return;
+    }
+
+    const limit  = parseHistoryLimit(req.query.limit);
+    const offset = parseHistoryOffset(req.query.offset);
+
+    try {
+      // Ownership-404 first — an empty list for a foreign id would leak
+      // existence by absence, mirroring GET /api/findings/:id.
+      const ownership = await pg.query(
+        `SELECT 1 FROM findings WHERE id = $1 AND organization_id = $2`,
+        [findingId, organizationId]
+      );
+      if ((ownership.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "finding_not_found" });
+        return;
+      }
+
+      const page = await fetchResourceHistory(
+        FINDING_HISTORY_SPEC,
+        organizationId,
+        findingId,
+        limit,
+        offset
+      );
+
+      res.status(200).json(page);
+    } catch (err) {
+      logger.error(
+        { event: "finding_history_failed", err, findingId },
+        "GET /api/findings/:id/history failed"
+      );
+      res.status(500).json({ error: "finding_history_failed" });
     }
   })
 );

@@ -28,6 +28,7 @@ const PAGE_SIZE = 20;
 
 export type HistoryResourcePath =
   | "risks"
+  | "findings"
   | "vendors"
   | "controls"
   | "obligations"

@@ -3859,6 +3859,7 @@ export type RiskHistoryResponse = ResourceHistoryResponse;
 // closed union so a typo'd path fails the build, not the request.
 export type HistoryResource =
   | "risks"
+  | "findings"
   | "vendors"
   | "controls"
   | "obligations"
