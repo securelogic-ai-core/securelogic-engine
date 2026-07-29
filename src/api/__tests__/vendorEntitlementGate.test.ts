@@ -126,7 +126,9 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   // TEAM_GATE token below; still zero standard, zero bare premium.
   "teamInvites.ts": 5,
   // 8 since POST /webhooks/:id/rotate-secret (premium + not-viewer, like test).
-  "webhooks.ts": 8,
+  // 9 since GET /webhooks/event-types (premium — the catalog must not
+  // fingerprint feature-flag state for unentitled accounts).
+  "webhooks.ts": 9,
   "templates.ts": 3,
   // auditLog: already premium (#233 era) + admin-role gated — pinned here
   "auditLog.ts": 3,

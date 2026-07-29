@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import type { WebhookEndpoint, WebhookEndpointWithSecret, WebhookDelivery } from "@/lib/api";
+import type {
+  WebhookEndpoint,
+  WebhookEndpointWithSecret,
+  WebhookDelivery,
+  WebhookEventDefinition,
+} from "@/lib/api";
 import {
   createWebhookAction,
   deleteWebhookAction,
@@ -26,16 +31,6 @@ const INPUT: React.CSSProperties = {
   fontSize: "13px",
   outline: "none",
 };
-
-const ALL_EVENT_TYPES = [
-  { value: "finding.created",          label: "finding.created" },
-  { value: "finding.updated",          label: "finding.updated" },
-  { value: "risk.created",             label: "risk.created" },
-  { value: "vendor.assessed",          label: "vendor.assessed" },
-  { value: "posture.snapshot_created", label: "posture.snapshot_created" },
-  { value: "action.created",           label: "action.created" },
-  { value: "action.updated",           label: "action.updated" },
-];
 
 function statusColor(status: string): string {
   if (status === "active") return "#86efac";
@@ -91,7 +86,13 @@ function SecretReveal({ secret, onDone }: { secret: string; onDone: () => void }
   );
 }
 
-function AddForm({ onSuccess }: { onSuccess: (ep: WebhookEndpointWithSecret) => void }) {
+function AddForm({
+  onSuccess,
+  eventTypes,
+}: {
+  onSuccess: (ep: WebhookEndpointWithSecret) => void;
+  eventTypes: WebhookEventDefinition[];
+}) {
   const [url, setUrl]             = useState("");
   const [description, setDesc]    = useState("");
   const [allEvents, setAllEvents] = useState(true);
@@ -140,10 +141,15 @@ function AddForm({ onSuccess }: { onSuccess: (ep: WebhookEndpointWithSecret) => 
           <input type="checkbox" checked={allEvents} onChange={(e) => setAllEvents(e.target.checked)} />
           All events (*)
         </label>
-        {!allEvents && ALL_EVENT_TYPES.map(({ value, label }) => (
-          <label key={value} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#94a3b8", marginBottom: "4px", cursor: "pointer", paddingLeft: "20px" }}>
-            <input type="checkbox" checked={selected.includes(value)} onChange={() => toggle(value)} />
-            {label}
+        {!allEvents && eventTypes.length === 0 && (
+          <p style={{ margin: "4px 0 0 20px", fontSize: "12px", color: "#64748b" }}>
+            Event catalog unavailable — save with “All events” or reload.
+          </p>
+        )}
+        {!allEvents && eventTypes.map(({ event_type, description }) => (
+          <label key={event_type} title={description} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#94a3b8", marginBottom: "4px", cursor: "pointer", paddingLeft: "20px" }}>
+            <input type="checkbox" checked={selected.includes(event_type)} onChange={() => toggle(event_type)} />
+            {event_type}
           </label>
         ))}
       </div>
@@ -318,9 +324,11 @@ function EndpointCard({
 interface Props {
   initialEndpoints: WebhookEndpoint[];
   isAdmin: boolean;
+  /** Engine-owned event catalog; empty when the engine was unreachable. */
+  eventTypes: WebhookEventDefinition[];
 }
 
-export function WebhooksClient({ initialEndpoints, isAdmin }: Props) {
+export function WebhooksClient({ initialEndpoints, isAdmin, eventTypes }: Props) {
   const [endpoints, setEndpoints]       = useState<WebhookEndpoint[]>(initialEndpoints);
   const [newSecret, setNewSecret]       = useState<string | null>(null);
   const [showForm, setShowForm]         = useState(false);
@@ -341,7 +349,7 @@ export function WebhooksClient({ initialEndpoints, isAdmin }: Props) {
       {newSecret && <SecretReveal secret={newSecret} onDone={() => setNewSecret(null)} />}
 
       {showForm ? (
-        <AddForm onSuccess={handleCreated} />
+        <AddForm onSuccess={handleCreated} eventTypes={eventTypes} />
       ) : (
         <button
           onClick={() => setShowForm(true)}
