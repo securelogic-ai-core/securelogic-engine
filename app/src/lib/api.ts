@@ -1647,10 +1647,15 @@ export async function getFrameworkReadiness(
 }
 
 export async function getControls(
-  apiKey: string
+  apiKey: string,
+  params?: { q?: string }
 ): Promise<ControlsResponse | null> {
   try {
-    const res = await engineFetch("/api/controls?limit=100", apiKey);
+    const qs = new URLSearchParams({ limit: "100" });
+    // Engine search mode: name/description ILIKE, alphabetical, no cursor
+    // (the CUEC ControlPicker contract — reused, not duplicated).
+    if (params?.q) qs.set("q", params.q);
+    const res = await engineFetch(`/api/controls?${qs.toString()}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<ControlsResponse>;
   } catch {
@@ -2660,6 +2665,8 @@ export async function getRisks(
     archived?:      boolean;
     /** Metric Contract: only risks still on the register — what an "open risks" count links to. */
     active?:        boolean;
+    /** Register search term (2–120): title / description. */
+    q?:             string;
     limit?:         number;
   }
 ): Promise<RisksResponse | null> {
@@ -2671,6 +2678,7 @@ export async function getRisks(
     if (params?.review_status)  qs.set("review_status", params.review_status);
     if (params?.archived)       qs.set("archived",      "true");
     if (params?.active)         qs.set("active",        "true");
+    if (params?.q)              qs.set("q",             params.q);
     qs.set("limit", String(params?.limit ?? 50));
     const res = await engineFetch(`/api/risks?${qs.toString()}`, apiKey);
     if (!res.ok) return null;
@@ -3077,6 +3085,8 @@ export type ObligationsParams = {
   domain?: string;
   /** true = only overdue obligations (active + due before today). */
   overdue?: boolean;
+  /** Register search term (2–120): title / source_regulation / description. */
+  q?: string;
   limit?: number;
 };
 
@@ -3166,6 +3176,7 @@ export async function getObligations(
     if (params?.status) qs.set("status", params.status);
     if (params?.domain) qs.set("domain", params.domain);
     if (params?.overdue) qs.set("overdue", "true");
+    if (params?.q) qs.set("q", params.q);
     qs.set("limit", String(params?.limit ?? 50));
     const res = await engineFetch(`/api/obligations?${qs.toString()}`, apiKey);
     if (!res.ok) return null;

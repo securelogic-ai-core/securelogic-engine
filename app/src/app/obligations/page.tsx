@@ -8,6 +8,7 @@ import {
 } from "@/lib/api";
 import { ExportCsvButton } from "@/components/ExportCsvButton";
 import { FilterPill } from "@/components/FilterPill";
+import { ListSearchForm } from "@/components/ListSearchForm";
 
 type Params = Record<string, string | undefined>;
 
@@ -57,6 +58,11 @@ export default async function ObligationsPage({
   // status='active' (a waived obligation cannot be overdue), so the overdue
   // view always fetches the active set; its pill href drops any status param.
   const activeOverdue = sp.overdue === "true";
+  // Register search — platform 2–120 bounds (never send a term the engine 400s).
+  const search =
+    typeof sp.q === "string" && sp.q.trim().length >= 2 && sp.q.trim().length <= 120
+      ? sp.q.trim()
+      : undefined;
 
   const [summaryData, obligationsData] = await Promise.all([
     getObligationSummary(token),
@@ -64,6 +70,7 @@ export default async function ObligationsPage({
       status: activeOverdue ? "active" : activeStatus,
       domain: activeDomain || undefined,
       overdue: activeOverdue || undefined,
+      q: search,
       limit: 100,
     }),
   ]);
@@ -79,6 +86,7 @@ export default async function ObligationsPage({
     ...(sp.status ? { status: sp.status } : {}),
     ...(sp.domain ? { domain: sp.domain } : {}),
     ...(activeOverdue ? { overdue: "true" } : {}),
+    ...(search ? { q: search } : {}),
   };
   // Status pills and the Overdue pill are the same axis: picking a status
   // drops `overdue`, picking Overdue drops `status` (the engine metric would
@@ -164,6 +172,18 @@ export default async function ObligationsPage({
         <StatCard label="Not Applicable" value={summary.by_status.not_applicable} color="#475569" />
       </div>
 
+      {/* Search — the register list-page pattern (2–120 bounds); hidden inputs
+          carry the active filters so a search never drops them. */}
+      <ListSearchForm
+        action="/obligations"
+        inputId="obligation-search"
+        placeholder="Title, regulation, or description..."
+        defaultValue={search}
+        hidden={Object.fromEntries(
+          Object.entries(currentSp).filter(([k]) => k !== "q")
+        ) as Record<string, string>}
+      />
+
       {/* Status filter — URL-state pills (the risks/findings pattern), with
           live counts from the summary so each tab says what it holds. */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -221,9 +241,11 @@ export default async function ObligationsPage({
           creating the first obligation. */}
       {obligationsData !== null && obligations.length === 0 && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
-          {activeOverdue || activeDomain || (activeStatus !== "active" && summary.total > 0) ? (
+          {search || activeOverdue || activeDomain || (activeStatus !== "active" && summary.total > 0) ? (
             <p className="text-sm" style={{ color: "#94a3b8" }}>
-              {activeOverdue
+              {search
+                ? "No obligations match your search."
+                : activeOverdue
                 ? "No overdue obligations — every active deadline is in the future."
                 : STATUS_EMPTY_LABELS[activeStatus] ?? "No obligations match this filter."}{" "}
               <Link

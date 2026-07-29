@@ -99,3 +99,29 @@ describe("GET /api/obligations — status filter contract", () => {
     expect(bad.body.allowed).toEqual(["active", "waived", "not_applicable", "all"]);
   });
 });
+
+describe("GET /api/obligations — register search (q)", () => {
+  it("q adds the escaped three-field ILIKE predicate", async () => {
+    const res = await request(makeApp()).get("/api/obligations?q=GDPR%20Art");
+    expect(res.status).toBe(200);
+    const call = h.state.calls[0]!;
+    expect(call.sql).toContain("title ILIKE");
+    expect(call.sql).toContain("source_regulation, '') ILIKE");
+    expect(call.sql).toContain("description, '') ILIKE");
+    // Bound once, escaped, wildcard-wrapped.
+    expect(call.params).toContain("%GDPR Art%");
+  });
+
+  it("escapes LIKE metacharacters in the bound pattern", async () => {
+    await request(makeApp()).get("/api/obligations?q=" + encodeURIComponent("50%_off"));
+    expect(h.state.calls[0]!.params).toContain("%50\\%\\_off%");
+  });
+
+  it("enforces the platform 2–120 bounds with 400 invalid_search", async () => {
+    expect((await request(makeApp()).get("/api/obligations?q=x")).status).toBe(400);
+    expect(
+      (await request(makeApp()).get("/api/obligations?q=" + "x".repeat(121))).status
+    ).toBe(400);
+    expect(h.state.calls).toHaveLength(0);
+  });
+});

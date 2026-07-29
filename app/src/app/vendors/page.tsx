@@ -8,6 +8,7 @@ import {
 } from "@/lib/api";
 // EAR Phase 4: badges come from the cross-domain kit (was a local duplicate).
 import { CriticalityBadge, MetaChip } from "@/components/assetKit";
+import { ListSearchForm } from "@/components/ListSearchForm";
 
 const CRIT_ORDER: Record<string, number> = {
   critical: 0, high: 1, medium: 2, low: 3,
@@ -204,41 +205,20 @@ export default async function VendorsPage({
         </div>
       </div>
 
-      {/* Search — the platform list-page pattern: the term is a URL param resolved by
-          the shared asset-search capability (name, product alias, exact UUID), so it
-          composes with the pills below. Hidden inputs carry the active filters. */}
-      <form action="/vendors" method="get" className="mb-6">
-        <label
-          htmlFor="vendor-search"
-          className="block text-xs font-semibold uppercase tracking-wide mb-2"
-          style={{ color: "#64748b" }}
-        >
-          Search
-        </label>
-        {critFilter && <input type="hidden" name="criticality" value={critFilter} />}
-        {showInactive && <input type="hidden" name="show_inactive" value="1" />}
-        {neverReviewedOnly && <input type="hidden" name="reviewed" value="never" />}
-        <div className="flex items-center gap-2 w-full max-w-xl">
-          <input
-            id="vendor-search"
-            type="search"
-            name="q"
-            defaultValue={search ?? ""}
-            minLength={2}
-            maxLength={120}
-            placeholder="Name, vendor ID, product alias..."
-            className="flex-1 px-3 py-2 rounded-lg text-sm"
-            style={{ background: "#0b1220", border: "1px solid #1e293b", color: "#e2e8f0" }}
-          />
-          <button
-            type="submit"
-            className="px-4 py-2 rounded-lg text-sm font-medium"
-            style={{ background: "rgba(0,196,180,0.15)", color: "#00c4b4", border: "1px solid rgba(0,196,180,0.4)" }}
-          >
-            Search
-          </button>
-        </div>
-      </form>
+      {/* Search — the shared register list-page form; the term is a URL param
+          resolved by the asset-search capability (name, product alias, exact UUID),
+          so it composes with the pills below. `hidden` carries the active filters. */}
+      <ListSearchForm
+        action="/vendors"
+        inputId="vendor-search"
+        placeholder="Name, vendor ID, product alias..."
+        defaultValue={search ?? ""}
+        hidden={{
+          ...(critFilter ? { criticality: critFilter } : {}),
+          ...(showInactive ? { show_inactive: "1" } : {}),
+          ...(neverReviewedOnly ? { reviewed: "never" } : {}),
+        }}
+      />
 
       {/* Criticality filter pills */}
       {allVendors.length > 0 && (
