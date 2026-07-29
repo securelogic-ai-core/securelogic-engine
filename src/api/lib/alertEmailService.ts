@@ -37,7 +37,9 @@ export async function sendCriticalFindingAlert(payload: CriticalFindingAlertPayl
   const duplicate = await isDuplicate(userId, "critical_finding_immediate", dedupeKey);
   if (duplicate) return;
 
-  const findingUrl = `${getAppBaseUrl()}/findings`;
+  // Deep-link to THE finding the alert is about — landing an operator on the
+  // generic list and making them hunt for the row defeats an immediate alert.
+  const findingUrl = `${getAppBaseUrl()}/findings/${encodeURIComponent(findingId)}`;
   const domainLabel = domain ? ` · ${htmlEscape(domain)}` : "";
   const severityColor = severity === "Critical" ? "#ef4444" : "#f97316";
 

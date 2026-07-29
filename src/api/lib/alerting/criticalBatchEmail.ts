@@ -51,10 +51,12 @@ export function renderCriticalBatchEmail(
     .map((item) => {
       const color = SEVERITY_COLOR[item.severity];
       const domainLabel = item.domain ? ` · ${htmlEscape(item.domain)}` : "";
+      // Each row deep-links to ITS finding; the footer keeps the list link.
+      const itemUrl = `${getAppBaseUrl()}/findings/${encodeURIComponent(item.findingId)}`;
       return `
         <div style="background:#0f172a;border-radius:8px;padding:16px;margin-bottom:12px;border-left:3px solid ${color};">
           <p style="margin:0 0 4px;font-size:11px;font-weight:600;letter-spacing:0.06em;color:${color};text-transform:uppercase;">${htmlEscape(item.severity)}</p>
-          <p style="margin:0;font-size:14px;font-weight:600;color:#f1f5f9;">${htmlEscape(item.title)}</p>
+          <p style="margin:0;font-size:14px;font-weight:600;"><a href="${itemUrl}" style="color:#f1f5f9;text-decoration:none;">${htmlEscape(item.title)}</a></p>
           <p style="margin:4px 0 0;font-size:11px;color:#64748b;">${htmlEscape(organizationName)}${domainLabel}</p>
         </div>`;
     })
