@@ -131,3 +131,41 @@ describe("GET /api/vendors?q= — the shared asset search", () => {
     expect(list!.params.slice(0, 4)).toEqual([ORG, "active", "high", [VENDOR_ID]]);
   });
 });
+
+describe("GET /api/vendors?reviewed= — never-reviewed filter", () => {
+  beforeEach(() => {
+    h.calls = [];
+    h.searchRows = [];
+  });
+
+  it("reviewed=never adds the last_reviewed_at IS NULL predicate", async () => {
+    const res = await request(makeApp()).get("/api/vendors?reviewed=never");
+    expect(res.status).toBe(200);
+    const list = h.calls.find((c) => /FROM vendors/.test(c.sql));
+    expect(list).toBeDefined();
+    expect(list!.sql).toContain("last_reviewed_at IS NULL");
+  });
+
+  it("composes with status and criticality", async () => {
+    await request(makeApp()).get(
+      "/api/vendors?reviewed=never&criticality=critical&status=active"
+    );
+    const list = h.calls.find((c) => /FROM vendors/.test(c.sql))!;
+    expect(list.sql).toContain("last_reviewed_at IS NULL");
+    expect(list.params).toContain("critical");
+    expect(list.params).toContain("active");
+  });
+
+  it("rejects unknown reviewed values with the allowed list", async () => {
+    const res = await request(makeApp()).get("/api/vendors?reviewed=recently");
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "invalid_reviewed_filter", allowed: ["never"] });
+    expect(h.calls.some((c) => /FROM vendors/.test(c.sql))).toBe(false);
+  });
+
+  it("absent reviewed param leaves the list unfiltered on review recency", async () => {
+    await request(makeApp()).get("/api/vendors");
+    const list = h.calls.find((c) => /FROM vendors/.test(c.sql))!;
+    expect(list.sql).not.toContain("last_reviewed_at IS NULL");
+  });
+});
