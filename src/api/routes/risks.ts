@@ -25,6 +25,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { sqlRiskActive } from "../lib/metricDefinitions.js";
+import { searchLikePattern } from "../lib/findingQuerySearch.js";
 import {
   validateRiskCreate,
   validateRiskUpdate,
@@ -492,6 +493,15 @@ router.get(
       if (input.risk_rating !== null) {
         params.push(input.risk_rating);
         conditions.push(`risk_rating = $${params.length}`);
+      }
+
+      // Register search — the ratified ILIKE escaping (searchLikePattern), a
+      // plain predicate so it composes with every filter and the cursor.
+      if (input.q !== null) {
+        params.push(searchLikePattern(input.q));
+        conditions.push(
+          `(title ILIKE $${params.length} OR COALESCE(description, '') ILIKE $${params.length})`
+        );
       }
 
       // Archived filter (Epic R4, §4.6) — archived is a lifecycle_state, so this

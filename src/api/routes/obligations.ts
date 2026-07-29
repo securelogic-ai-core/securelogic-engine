@@ -34,6 +34,7 @@ import {
 } from "../lib/obligationValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { sqlFindingActive, sqlObligationOverdue } from "../lib/metricDefinitions.js";
+import { searchLikePattern } from "../lib/findingQuerySearch.js";
 
 const router = Router();
 
@@ -290,6 +291,21 @@ router.get(
       // return zero rows combined with status=waived/not_applicable).
       if (req.query.overdue === "true") {
         conditions.push(sqlObligationOverdue());
+      }
+
+      // Register search — platform 2–120 bounds, ratified ILIKE escaping.
+      // Matches the fields a compliance officer knows an obligation by:
+      // title, the regulation it comes from, and the description.
+      if (req.query.q !== undefined && !(typeof req.query.q === "string" && req.query.q.trim().length === 0)) {
+        const term = typeof req.query.q === "string" ? req.query.q.trim() : "";
+        if (term.length < 2 || term.length > 120) {
+          res.status(400).json({ error: "invalid_search" });
+          return;
+        }
+        params.push(searchLikePattern(term));
+        conditions.push(
+          `(title ILIKE $${params.length} OR COALESCE(source_regulation, '') ILIKE $${params.length} OR COALESCE(description, '') ILIKE $${params.length})`
+        );
       }
 
       if (filterDomain !== null) {

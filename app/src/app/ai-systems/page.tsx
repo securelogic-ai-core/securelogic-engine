@@ -6,6 +6,7 @@ import { getAiSystems, getGovernanceReviews, type AiSystem } from "@/lib/api";
 // StatusChip stays local — it styles DEPLOYMENT status, a different vocabulary.
 import { CriticalityBadge, MetaChip } from "@/components/assetKit";
 import { ExportCsvButton } from "@/components/ExportCsvButton";
+import { ListSearchForm } from "@/components/ListSearchForm";
 
 export default async function AiSystemsPage({
   searchParams,
@@ -93,37 +94,14 @@ export default async function AiSystemsPage({
         </div>
       </div>
 
-      {/* Search — the platform list-page pattern: the term is a URL param resolved by
-          the shared asset-search capability (name, product alias, exact UUID). */}
-      <form action="/ai-systems" method="get" className="mb-6">
-        <label
-          htmlFor="ai-system-search"
-          className="block text-xs font-semibold uppercase tracking-wide mb-2"
-          style={{ color: "#64748b" }}
-        >
-          Search
-        </label>
-        <div className="flex items-center gap-2 w-full max-w-xl">
-          <input
-            id="ai-system-search"
-            type="search"
-            name="q"
-            defaultValue={search ?? ""}
-            minLength={2}
-            maxLength={120}
-            placeholder="Name, system ID, product alias..."
-            className="flex-1 px-3 py-2 rounded-lg text-sm"
-            style={{ background: "#0b1220", border: "1px solid #1e293b", color: "#e2e8f0" }}
-          />
-          <button
-            type="submit"
-            className="px-4 py-2 rounded-lg text-sm font-medium"
-            style={{ background: "rgba(0,196,180,0.15)", color: "#00c4b4", border: "1px solid rgba(0,196,180,0.4)" }}
-          >
-            Search
-          </button>
-        </div>
-      </form>
+      {/* Search — the shared register list-page form; the term is a URL param
+          resolved by the asset-search capability (name, product alias, exact UUID). */}
+      <ListSearchForm
+        action="/ai-systems"
+        inputId="ai-system-search"
+        placeholder="Name, system ID, product alias..."
+        defaultValue={search}
+      />
 
       {/* Not entitled */}
       {systemsData === null && (

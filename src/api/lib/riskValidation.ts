@@ -760,6 +760,10 @@ export type RiskListQueryInput = {
   status: string | null;
   domain: string | null;
   risk_rating: string | null;
+  // Register search: trimmed 2–120 term matched against title/description
+  // (ILIKE via the ratified searchLikePattern escaping). Platform bounds
+  // shared with the vendor/ai-system list search.
+  q: string | null;
   // RR-5: filter on review-cadence position relative to today.
   review_status: "overdue" | "due_soon" | "up_to_date" | null;
   // R4 §4.6: when true, return ONLY archived risks (the explicit archived view).
@@ -863,7 +867,19 @@ export function validateRiskListQuery(query: unknown): RiskListQueryResult {
 
   const limit = parseLimit(q["limit"]);
 
+  // Register search term — platform 2–120 bounds (the vendor/ai-system list
+  // contract). Absent/blank means "no search"; out-of-bounds is an explicit
+  // 400 so a truncated term can never silently return the wrong population.
+  let search_q: string | null = null;
+  if ("q" in q && typeof q["q"] === "string" && q["q"].trim().length > 0) {
+    const term = (q["q"] as string).trim();
+    if (term.length < 2 || term.length > 120) {
+      return { error: "invalid_search", detail: "Search term must be 2–120 characters" };
+    }
+    search_q = term;
+  }
+
   return {
-    input: { status, domain, risk_rating, review_status, archived, active, limit, before_created_at, before_id }
+    input: { status, domain, risk_rating, q: search_q, review_status, archived, active, limit, before_created_at, before_id }
   };
 }

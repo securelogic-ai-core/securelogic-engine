@@ -9,6 +9,7 @@ import {
 } from "@/lib/api";
 import { ControlsList } from "./ControlsList";
 import { ExportCsvButton } from "@/components/ExportCsvButton";
+import { ListSearchForm } from "@/components/ListSearchForm";
 
 export default async function ControlsPage({
   searchParams,
@@ -24,9 +25,15 @@ export default async function ControlsPage({
 
   const sp = await searchParams;
   const filterOverdue = sp.filter === "overdue";
+  // Register search — platform 2–120 bounds; rides the engine's existing
+  // controls search mode (name/description ILIKE, the CUEC picker contract).
+  const search =
+    typeof sp.q === "string" && sp.q.trim().length >= 2 && sp.q.trim().length <= 120
+      ? sp.q.trim()
+      : undefined;
 
   const [controlsData, assessmentsData] = await Promise.all([
-    getControls(token),
+    getControls(token, { q: search }),
     getControlAssessments(token),
   ]);
 
@@ -120,6 +127,15 @@ export default async function ControlsPage({
         </div>
       </div>
 
+      {/* Search — the register list-page pattern; preserves the overdue filter. */}
+      <ListSearchForm
+        action="/controls"
+        inputId="control-search"
+        placeholder="Name or description..."
+        defaultValue={search}
+        hidden={filterOverdue ? { filter: "overdue" } : {}}
+      />
+
       {controlsData === null && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
           <p className="text-sm" style={{ color: "#94a3b8" }}>
@@ -128,7 +144,23 @@ export default async function ControlsPage({
         </div>
       )}
 
-      {controlsData !== null && allControls.length === 0 && (
+      {/* Search-empty: honest "no match" over a populated org, with the way out. */}
+      {controlsData !== null && allControls.length === 0 && search && (
+        <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
+          <p className="text-sm mb-3" style={{ color: "#94a3b8" }}>
+            No controls match your search.
+          </p>
+          <Link
+            href="/controls"
+            className="text-sm font-medium hover:opacity-80"
+            style={{ color: "#00c4b4" }}
+          >
+            Clear search →
+          </Link>
+        </div>
+      )}
+
+      {controlsData !== null && allControls.length === 0 && !search && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
           <p className="text-sm mb-3" style={{ color: "#94a3b8" }}>
             No controls defined yet. Controls are the security measures your organization has in place.
