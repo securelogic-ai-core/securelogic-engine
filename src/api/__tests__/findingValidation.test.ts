@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   validateFindingCreate,
-  VALID_SOURCE_TYPES,
+  USER_CREATABLE_SOURCE_TYPES,
   VALID_SEVERITIES,
   VALID_PRIORITIES,
   VALID_LIKELIHOODS,
@@ -125,7 +125,7 @@ describe("validateFindingCreate — source_type", () => {
     if ("error" in r) expect(r.error).toBe("invalid_source_type");
   });
 
-  it.each([...VALID_SOURCE_TYPES])("accepts source_type=%s", (st) => {
+  it.each([...USER_CREATABLE_SOURCE_TYPES])("accepts source_type=%s", (st) => {
     const r = validateFindingCreate(valid({ source_type: st }));
     expect("input" in r).toBe(true);
   });

@@ -22,7 +22,42 @@ const MAX_SCORING_RATIONALE = 2000;
 // Canonical enums
 // ---------------------------------------------------------------------------
 
-export const VALID_SOURCE_TYPES = new Set([
+/**
+ * FINDING_SOURCE_TYPES — the COMPLETE findings.source_type vocabulary, kept in
+ * lock-step with the DB CHECK (db/migrations/20260823_findings_intelligence_event.sql;
+ * drift is pinned by findingVocabularyContract.test.ts).
+ *
+ * This is the FILTER vocabulary (list + export query params). It includes the
+ * four types only the engine's own writers create — cyber_signal,
+ * applicability_assessment, asset_assessment, intelligence_event. D-15: these
+ * were missing from every route-local copy, so automated findings could not
+ * be filtered by source through the public API.
+ */
+export const FINDING_SOURCE_TYPES = new Set([
+  "assessment",
+  "control_test",
+  "vendor_review",
+  "vendor_cycle_review",
+  "ai_review",
+  "ai_governance_review",
+  "obligation_review",
+  "dependency_review",
+  "cyber_signal",
+  "signal",
+  "manual",
+  "risk",
+  "applicability_assessment",
+  "asset_assessment",
+  "intelligence_event"
+]);
+
+/**
+ * USER_CREATABLE_SOURCE_TYPES — the subset a caller may claim on
+ * POST /api/findings. The engine-written types are deliberately EXCLUDED:
+ * accepting them here would let a user mint findings that impersonate
+ * pipeline provenance (a cyber_signal finding nobody's matcher produced).
+ */
+export const USER_CREATABLE_SOURCE_TYPES = new Set([
   "assessment",
   "control_test",
   "vendor_review",
@@ -34,6 +69,27 @@ export const VALID_SOURCE_TYPES = new Set([
   "signal",
   "manual",
   "risk"
+]);
+
+/**
+ * FINDING_STATUSES — the legacy governed-status axis in full
+ * (finding-lifecycle-spec §1.2). Filter vocabulary for list/export.
+ */
+export const FINDING_STATUSES = new Set([
+  "open",
+  "in_progress",
+  "closed",
+  "accepted"
+]);
+
+/**
+ * KNOWN_FINDING_DOMAINS — filter vocabulary for the domain query param.
+ * Note: domain is free text at create (capped, sanitized) — this set validates
+ * FILTERS only and must stay a superset of what the product writes by default.
+ */
+export const KNOWN_FINDING_DOMAINS = new Set([
+  "Cyber", "Compliance", "Vendor", "AI", "Operational", "Strategic",
+  "Legal", "Financial", "General",
 ]);
 
 export const VALID_SEVERITIES = new Set([
@@ -144,10 +200,10 @@ export function validateFindingCreate(body: unknown): FindingCreateResult {
   if (!isNonEmptyString(b["source_type"])) {
     return { error: "source_type_required" };
   }
-  if (!VALID_SOURCE_TYPES.has(b["source_type"] as string)) {
+  if (!USER_CREATABLE_SOURCE_TYPES.has(b["source_type"] as string)) {
     return {
       error: "invalid_source_type",
-      detail: `Must be one of: ${[...VALID_SOURCE_TYPES].join(", ")}`
+      detail: `Must be one of: ${[...USER_CREATABLE_SOURCE_TYPES].join(", ")}`
     };
   }
   const source_type = b["source_type"] as string;

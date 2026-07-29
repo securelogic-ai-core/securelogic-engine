@@ -15,7 +15,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
-import { validateFindingCreate } from "../lib/findingValidation.js";
+import { validateFindingCreate, FINDING_SOURCE_TYPES } from "../lib/findingValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { triggerFindingAlert } from "../lib/findingAlertTrigger.js";
@@ -75,18 +75,10 @@ const MAX_OFFSET = 100_000;
 
 const VALID_STATUSES = new Set(["open", "in_progress", "closed", "accepted"]);
 const VALID_SEVERITIES = new Set(["Critical", "High", "Moderate", "Low"]);
-const VALID_SOURCE_TYPES = new Set([
-  "assessment",
-  "control_test",
-  "vendor_review",
-  "ai_review",
-  "ai_governance_review",
-  "obligation_review",
-  "dependency_review",
-  "signal",
-  "manual",
-  "risk"
-]);
+// Filter vocabulary: the canonical, DB-CHECK-aligned set (D-15 — a route-local
+// copy here silently dropped the engine-written source types, making automated
+// findings unfilterable through the public API).
+const VALID_SOURCE_TYPES = FINDING_SOURCE_TYPES;
 const VALID_PRIORITIES = new Set(["immediate", "near_term", "planned", "watch"]);
 // The SYSTEM-DERIVED operational axis (finding-lifecycle-spec §1.1).
 const VALID_OPERATIONAL_STATUSES = new Set(["open", "in_progress", "remediated", "closed"]);
