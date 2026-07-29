@@ -3,9 +3,8 @@
  *
  * Every register export (findings, risks, obligations, controls, …) must
  * escape identically or a title containing a quote breaks one export and
- * not another. findingsExport/risksExport predate this module and carry
- * local copies; new exports use this one, and the older two can migrate
- * in a cleanup pass.
+ * not another. All CSV export routes — including the audit log — serialize
+ * through this module; do not add local escaping copies.
  */
 
 /** RFC 4180 cell: wrap in double quotes, escape inner quotes by doubling. */
