@@ -89,27 +89,35 @@ describe("SSO login codes — single-use against the real schema", () => {
     expect(await consumeSsoLoginCode(raw)).toBeNull();
   });
 
-  it("a code minted in org A can never yield org B identity, even with a same-email user in org B", async () => {
-    // The classic confusion setup: the SAME email exists in both orgs. The
-    // exchange takes no org parameter — identity must come solely from the
-    // minted row, never from any email/org lookup that could cross tenants.
-    const twinEmail = "twin@shared.test";
-    const twinA = (await seedUser(pool, seed.orgA.id, { email: twinEmail, name: "Twin A" })).id;
-    const twinB = (await seedUser(pool, seed.orgB.id, { email: twinEmail, name: "Twin B" })).id;
+  it("a code minted in org A binds to org A's user — org B can never be resolved", async () => {
+    // The classic confusion setup would be the SAME email in both orgs — but
+    // the schema forbids it outright: users_email_unique is GLOBAL, so an
+    // email cannot exist twice anywhere. That constraint is itself the
+    // structural anti-confusion control (proven by the expect().rejects
+    // below). The org-binding proof therefore uses distinct users: identity
+    // must come solely from the minted row — org and user in the payload are
+    // the mint-time pair, never anything resolvable toward org B.
+    const bindA = (await seedUser(pool, seed.orgA.id, { email: "bind-a@shared.test", name: "Bind A" })).id;
+    const bindB = (await seedUser(pool, seed.orgB.id, { email: "bind-b@shared.test", name: "Bind B" })).id;
+
+    // The twin-email scenario is impossible by schema — pin that.
+    await expect(
+      seedUser(pool, seed.orgB.id, { email: "bind-a@shared.test", name: "Twin B" })
+    ).rejects.toThrow(/users_email_unique|duplicate key/);
 
     const raw = await createSsoLoginCode({
       organizationId: seed.orgA.id,
-      userId: twinA,
-      email: twinEmail,
-      displayName: "Twin A",
+      userId: bindA,
+      email: "bind-a@shared.test",
+      displayName: "Bind A",
     });
 
     const payload = await consumeSsoLoginCode(raw);
     expect(payload).not.toBeNull();
     expect(payload!.organizationId).toBe(seed.orgA.id);
-    expect(payload!.userId).toBe(twinA);
+    expect(payload!.userId).toBe(bindA);
     expect(payload!.organizationId).not.toBe(seed.orgB.id);
-    expect(payload!.userId).not.toBe(twinB);
+    expect(payload!.userId).not.toBe(bindB);
   });
 
   it("deleting the user cascades the code away (erasure without a reaper step)", async () => {
