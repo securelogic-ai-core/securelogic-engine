@@ -394,9 +394,8 @@ router.get(
    GET /api/ai-systems/:id/history
    Per-AI-system audit trail — the RR-3 per-risk history pattern
    generalized via src/api/lib/resourceHistory.ts. Events on the
-   system plus its governance reviews, newest first, mirroring
-   the GET /api/audit-log field shape. (ai_governance_assessments
-   writes no audit events today — recorded follow-up.)
+   system plus its governance reviews and governance assessments,
+   newest first, mirroring the GET /api/audit-log field shape.
 
    Auth mirrors GET /api/ai-systems/:id (no admin gate) — anyone
    who can read the system can read its history.
