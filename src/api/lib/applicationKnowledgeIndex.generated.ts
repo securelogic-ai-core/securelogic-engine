@@ -545,6 +545,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "platform"
     },
     {
+      "path": "/evidence",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
       "path": "/executive",
       "dynamic": false,
       "navLabel": "Executive",

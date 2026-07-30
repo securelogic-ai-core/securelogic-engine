@@ -3189,6 +3189,36 @@ export type EvidenceResponse = {
   evidence: Evidence[];
 };
 
+export type EvidenceSummary = {
+  total: number;
+  by_source_type: Record<string, number>;
+};
+
+/** Org-wide evidence counts by workflow — the /evidence page's headline read. */
+export async function getEvidenceSummary(apiKey: string): Promise<EvidenceSummary | null> {
+  try {
+    const res = await engineFetch("/api/evidence/summary", apiKey);
+    if (!res.ok) return null;
+    return (await res.json()) as EvidenceSummary;
+  } catch {
+    return null;
+  }
+}
+
+/** Latest evidence records across the whole org (EG2 Tier 2 slice 8). */
+export async function getRecentEvidence(
+  apiKey: string,
+  limit = 50
+): Promise<{ count: number; evidence: Evidence[] } | null> {
+  try {
+    const res = await engineFetch(`/api/evidence/recent?limit=${limit}`, apiKey);
+    if (!res.ok) return null;
+    return (await res.json()) as { count: number; evidence: Evidence[] };
+  } catch {
+    return null;
+  }
+}
+
 // ─── Obligation API functions ─────────────────────────────────────────────────
 
 export async function getObligationSummary(
@@ -3390,14 +3420,41 @@ export function uploadFindingEvidence(
   },
   onProgress?: (pct: number) => void
 ): Promise<ActionResult<{ evidence: Evidence }>> {
+  return uploadEvidenceFile("finding", findingId, file, meta, onProgress);
+}
+
+/**
+ * Upload a FILE as evidence against ANY canonical evidence source (multipart).
+ * The engine upload lane has always accepted every source_type in its table
+ * (control_test, obligation_review, ai_review, ai_governance_review, …) — only
+ * this client was finding-only, which is why the control/obligation/AI
+ * evidence forms could record a ticket reference but never attach the actual
+ * artifact an auditor asks for (EG2 Tier 2 slice 8).
+ */
+export function uploadEvidenceFile(
+  sourceType: string,
+  sourceId: string,
+  file: File,
+  meta: {
+    title: string;
+    evidence_type: string;
+    description?: string | null;
+    external_ref?: string | null;
+    collected_at?: string | null;
+    collected_by?: string | null;
+  },
+  onProgress?: (pct: number) => void
+): Promise<ActionResult<{ evidence: Evidence }>> {
   return new Promise((resolve) => {
     const form = new FormData();
-    form.append("source_type", "finding");
-    form.append("source_id", findingId);
+    form.append("source_type", sourceType);
+    form.append("source_id", sourceId);
     form.append("title", meta.title);
     form.append("evidence_type", meta.evidence_type);
     if (meta.description) form.append("description", meta.description);
     if (meta.external_ref) form.append("external_ref", meta.external_ref);
+    if (meta.collected_at) form.append("collected_at", meta.collected_at);
+    if (meta.collected_by) form.append("collected_by", meta.collected_by);
     // `file` last so the text fields are parsed first server-side.
     form.append("file", file, file.name);
 

@@ -200,6 +200,9 @@ export const WORKSPACE_NAV_ITEMS: NavItem[] = [
       { label: "Frameworks",  href: "/frameworks" },
       { label: "Policies",    href: "/policies" },
       { label: "Obligations", href: "/obligations" },
+      // EG2 slice 8 — the org-wide evidence inventory. Workspace nav only:
+      // the legacy flat nav (line ~114) stays byte-identical (EG v1 preserved).
+      { label: "Evidence",    href: "/evidence" },
     ],
   },
   { type: "link", label: "Context", href: "/enterprise-context", platform: true, featureFlag: "enterprise_context" },

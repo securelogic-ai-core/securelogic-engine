@@ -399,3 +399,50 @@ plumbing, then an in-app surface.
 `src/api/lib/assignmentAlertTrigger.ts` (new), `routes/findings.ts` (2 sites),
 `routes/actions.ts` (2 sites), `routes/alertPreferences.ts`, app `lib/api.ts` +
 `account/alerts/page.tsx`, `__tests__/assignmentAlertTrigger.test.ts` (new, 6).
+
+---
+
+## Slice 8 — Evidence Experience: the artifact, everywhere; the inventory, somewhere
+
+**Status:** implemented, tests green (engine evidence suites 158/158 + 3 new route pins +
+knowledge-index drift 17/17; full app suite 1222/1222; typecheck clean).
+
+**Gate answers.** Problem that disappears: (a) the control/obligation/AI evidence forms could
+record a ticket reference but never attach the artifact an auditor actually asks for — the
+engine's hardened multipart lane (magic-byte validation, quota, SHA-256, fail-closed blob
+ordering) accepted every source type while three of four forms had no file input; (b) no
+surface answered "what evidence do we have, and where?" despite the summary endpoint existing.
+Workflow improved: audit preparation. Friction removed: attaching a SOC PDF to a control goes
+from impossible → one picker on the form; the evidence inventory goes from spreadsheet
+reconstruction → one page. Demo: yes. Noticed unprompted: yes — the first auditor question.
+
+**What was built.**
+- `uploadEvidenceFile()` — the generic multipart client (the finding-only wrapper delegates);
+  shared `EvidenceFileField` (same accept-list, client validation, and progress as the
+  findings surface) added to the control (`control_test`), obligation (`obligation_review`)
+  and AI (`ai_review`/`ai_governance_review`) evidence forms. File chosen → upload lane; no
+  file → the JSON reference-only action, byte-identical.
+- `GET /api/evidence/recent` — additive org-wide read (premium + asTenant, LIMIT-clamped,
+  `EVIDENCE_SELECT` projection so the storage key never leaves the engine; registered before
+  `/evidence/:id` with a source-pin test on the ordering).
+- `/evidence` — the inventory page: counts by workflow (each tile links to the owning
+  surface), latest 50 records with audit-logged file downloads and reference links; honest
+  failed-load and true-empty states. Workspace nav (Compliance → Evidence); legacy flat nav
+  deliberately untouched (EG v1 preserved); knowledge index regenerated.
+
+**Deliberately deferred:** `valid_until`/staleness flagging (schema change — own slice);
+evidence→many-sources reuse (data-model decision); the framework self-assessment's
+`evidence_url` disconnect (needs a design ruling).
+
+**Estimated impact.** "Hand the auditor the artifact for this control": impossible → 2 clicks.
+"What evidence exists org-wide": unanswerable → 1 nav click.
+
+**Competitive review.** Now better: fail-closed hashed uploads + audit-logged downloads are
+stronger mechanics than mid-market GRC file attachments. Still stronger elsewhere:
+AuditBoard/OneTrust have evidence reuse across controls, expiry tracking, and requestor
+workflows (ask an owner to provide evidence). Next: staleness (`valid_until`), then reuse.
+
+**Files.** Engine: `routes/evidence.ts` (+recent route), `tests/evidenceRecentRoute.test.ts`
+(new). App: `lib/api.ts` (generic upload + summary/recent clients),
+`components/evidence/EvidenceFileField.tsx` (new), three evidence forms, `app/evidence/page.tsx`
+(new), `lib/navigation.ts` (workspace Compliance group), knowledge index regenerated.
