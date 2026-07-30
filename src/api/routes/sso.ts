@@ -452,14 +452,16 @@ router.post("/sso/exchange", exchangeFlagGate, exchangeLimiter, async (req: Requ
 
     // Role AND status are read at exchange time, not mint time — a role
     // change in the 60-second window is honored, the code row never carries
-    // authority, and the GDPR-lifecycle status gate (customerAuth.ts) holds
-    // at this mint site too (security review B2). Uniform 401 regardless.
+    // authority, and the full session-blocked gate (SESSION_BLOCKED_STATUSES,
+    // #732) holds at this mint site too: a member removed ('inactive') or in
+    // the deletion lifecycle between ACS and exchange must not mint a JWT
+    // here when every other login door refuses them. Uniform 401 regardless.
     const userResult = await pgElevated.query<{ role: string; status: string | null }>(
       `SELECT role, status FROM users WHERE id = $1 AND organization_id = $2 LIMIT 1`,
       [payload.userId, payload.organizationId]
     );
     const user = userResult.rows[0];
-    if (!user || user.status === "pending_deletion" || user.status === "deleted") {
+    if (!user || (user.status !== null && SESSION_BLOCKED_STATUSES.has(user.status))) {
       if (user) {
         writeAuditEvent({
           organizationId: payload.organizationId,

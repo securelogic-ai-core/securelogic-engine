@@ -35,6 +35,7 @@ vi.mock("../infra/postgres.js", () => ({
 vi.mock("../lib/jwt.js", () => ({
   signJwt: vi.fn(() => "signed.jwt.token"),
   verifyJwt: vi.fn(() => ({ sub: USER, org: ORG, role: "admin", iat: 0, exp: 9_999_999_999 })),
+  SESSION_BLOCKED_STATUSES: new Set(["inactive", "pending_deletion", "deleted"]),
 }));
 vi.mock("../lib/auditLog.js", () => ({ writeAuditEvent: vi.fn() }));
 vi.mock("../lib/ssoLoginCodes.js", async (importOriginal) => {
@@ -139,9 +140,9 @@ describe("POST /api/sso/exchange — uniform failure surface", () => {
   });
 });
 
-describe("POST /api/sso/exchange — status gate at the mint site (review B2)", () => {
-  it("pending_deletion / deleted users get the uniform 401 and a blocked-login audit", async () => {
-    for (const status of ["pending_deletion", "deleted"]) {
+describe("POST /api/sso/exchange — status gate at the mint site (review B2 + #732)", () => {
+  it("inactive / pending_deletion / deleted users get the uniform 401 and a blocked-login audit", async () => {
+    for (const status of ["inactive", "pending_deletion", "deleted"]) {
       vi.clearAllMocks();
       h.userRows = [{ role: "admin", status }];
       h.consume.mockResolvedValue({
