@@ -36,7 +36,7 @@ vi.mock("../lib/auditLog.js", () => ({
   writeAuditEvent: vi.fn(),
 }));
 vi.mock("../lib/jwt.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../lib/jwt.js")>();
+  const actual = (await importOriginal()) as Record<string, unknown>;
   return { ...actual, verifyJwt: () => jwtPayload };
 });
 
