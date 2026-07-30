@@ -15,7 +15,7 @@ import { Router, type Request, type Response } from "express";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import * as samlify from "samlify";
 import { pg } from "../infra/postgres.js";
-import { signJwt } from "../lib/jwt.js";
+import { signJwt, SESSION_BLOCKED_STATUSES } from "../lib/jwt.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { enforceSeatLimit } from "../lib/seatLimit.js";
 import { logger } from "../infra/logger.js";
@@ -246,8 +246,9 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
       email: string;
       role: string;
       organization_id: string;
+      status: string;
     }>(
-      `SELECT id, name, email, role, organization_id
+      `SELECT id, name, email, role, organization_id, status
        FROM users
        WHERE email = $1 AND organization_id = $2
        LIMIT 1`,
@@ -260,6 +261,26 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
 
     if (existing.rows.length > 0) {
       const u = existing.rows[0]!;
+
+      // A removed member ('inactive') or deletion-lifecycle user must not
+      // get a fresh session via the IdP: removal is an explicit admin
+      // action and SSO re-auth must not silently undo it. The row still
+      // exists, so without this gate the existing-user branch would
+      // happily reissue a JWT. Admins restore access by re-inviting.
+      if (SESSION_BLOCKED_STATUSES.has(u.status)) {
+        writeAuditEvent({
+          organizationId: orgId,
+          actorUserId: null,
+          eventType: "auth.login_blocked",
+          resourceType: "user",
+          resourceId: u.id,
+          payload: { reason: u.status, method: "sso" },
+          ipAddress: req.ip ?? null
+        });
+        res.redirect(`${APP_URL}/login?error=account_inactive`);
+        return;
+      }
+
       userId   = u.id;
       userRole = u.role ?? "analyst";
     } else {

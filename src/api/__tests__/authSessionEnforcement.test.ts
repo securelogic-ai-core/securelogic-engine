@@ -191,6 +191,23 @@ describe("requireAuth — live-session enforcement", () => {
   });
 });
 
+describe("sso source guards", () => {
+  const source = readFileSync(resolve(__dirname, "../routes/sso.ts"), "utf8");
+
+  it("ACS blocks SESSION_BLOCKED_STATUSES before reissuing a session", () => {
+    expect(source).toMatch(/SESSION_BLOCKED_STATUSES\.has\(u\.status\)/);
+    expect(source).toMatch(/error=account_inactive/);
+    // The gate must run before the JWT is signed.
+    expect(source.indexOf("SESSION_BLOCKED_STATUSES.has(u.status)")).toBeLessThan(
+      source.indexOf("signJwt(userId, orgId, userRole)")
+    );
+  });
+
+  it("the existing-user lookup selects status", () => {
+    expect(source).toMatch(/SELECT id, name, email, role, organization_id, status\s+FROM users/);
+  });
+});
+
 describe("customerAuth source guards", () => {
   const source = readFileSync(resolve(__dirname, "../routes/customerAuth.ts"), "utf8");
 
