@@ -66,6 +66,14 @@ export type SatelliteSpec = {
   table: string;
   /** FK column on `table` pointing at the root object. */
   fkColumn: string;
+  /**
+   * Optional extra predicate for polymorphic satellites (e.g. actions
+   * reference their origin via source_type + source_id, so the finding
+   * spec needs `source_type = 'finding'` alongside fkColumn source_id).
+   * MUST be a compile-time constant from the specs in this module —
+   * never caller input; it is interpolated into the subquery.
+   */
+  extraWhere?: string;
 };
 
 export type ResourceHistorySpec = {
@@ -84,7 +92,9 @@ export function buildResourceHistoryWhere(spec: ResourceHistorySpec): string {
     ...spec.satellites.map(
       (s) => `(sal.resource_type = '${s.resourceType}' AND sal.resource_id IN (
               SELECT id FROM ${s.table}
-              WHERE ${s.fkColumn} = $2::uuid AND organization_id = $1
+              WHERE ${s.fkColumn} = $2::uuid AND organization_id = $1${
+                s.extraWhere ? ` AND ${s.extraWhere}` : ""
+              }
             ))`
     ),
   ];
@@ -170,6 +180,17 @@ export async function fetchResourceHistory(
    writeAuditEvent calls in the corresponding route files;
    table/FK columns verified against db/migrations.
    ========================================================= */
+
+// Actions reference their origin polymorphically (source_type/source_id),
+// hence the extraWhere pin to 'finding' — without it, an action spawned by
+// a signal whose source_id collided with this finding id would leak in.
+export const FINDING_HISTORY_SPEC: ResourceHistorySpec = {
+  rootType: "finding",
+  satellites: [
+    { resourceType: "finding_risk_acceptance", table: "finding_risk_acceptances", fkColumn: "finding_id" },
+    { resourceType: "action", table: "actions", fkColumn: "source_id", extraWhere: "source_type = 'finding'" },
+  ],
+};
 
 // The original RR-3 shape this module generalizes. Link satellites join on
 // the risk-side FK; the control/obligation specs reference the same link

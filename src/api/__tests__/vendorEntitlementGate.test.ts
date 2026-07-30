@@ -60,7 +60,8 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   // premium-gated (never standard; the STD==0 assertion below still holds).
   // +1 for POST /findings/from-signal (Brief → Finding promotion): it CREATES a
   // finding, so it is gated exactly like every other finding write.
-  "findings.ts": 10,
+  // +1 for GET /findings/:id/history (per-finding audit trail).
+  "findings.ts": 11,
   "findingsExport.ts": 1,
   // risk engine
   "risks.ts": 8,
