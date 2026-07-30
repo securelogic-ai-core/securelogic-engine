@@ -3,7 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
-import { verifyJwt } from "../lib/jwt.js";
+import { verifyJwt, SESSION_BLOCKED_STATUSES } from "../lib/jwt.js";
 
 declare global {
   namespace Express {
@@ -66,21 +66,51 @@ export async function requireApiKey(
         return;
       }
 
-      // Reject tokens issued before the user's most recent password change.
-      // Fail CLOSED on DB error: leaked pre-rotation tokens must not replay
-      // during a Postgres degradation window. The api_keys lookup below has
-      // no fallback either, so failing JWT-bridge auth here doesn't widen
-      // the outage envelope.
+      // Live-session enforcement against the users row: status, role, and
+      // password recency. Fail CLOSED on DB error: leaked pre-rotation
+      // tokens must not replay during a Postgres degradation window. The
+      // api_keys lookup below has no fallback either, so failing JWT-bridge
+      // auth here doesn't widen the outage envelope.
+      let effectiveRole: string;
       try {
-        const pwResult = await pg.query<{ password_changed_at: Date | null }>(
-          `SELECT password_changed_at FROM users WHERE id = $1 LIMIT 1`,
+        const pwResult = await pg.query<{
+          password_changed_at: Date | null;
+          status: string;
+          role: string;
+        }>(
+          `SELECT password_changed_at, status, role FROM users WHERE id = $1 LIMIT 1`,
           [payload.sub]
         );
-        const changedAt = pwResult.rows[0]?.password_changed_at ?? null;
+        const userRow = pwResult.rows[0] ?? null;
+
+        // Removed members ('inactive'), deletion-lifecycle statuses, and
+        // hard-deleted rows terminate the session now — not at the token's
+        // natural expiry up to 7 days later.
+        if (userRow === null || SESSION_BLOCKED_STATUSES.has(userRow.status)) {
+          writeAuditEvent({
+            actorUserId: payload.sub,
+            eventType: "auth.session_blocked_inactive",
+            resourceType: "user",
+            resourceId: payload.sub,
+            payload: { route: req.originalUrl, method: req.method, status: userRow?.status ?? "missing" },
+            ipAddress: req.ip ?? null
+          });
+          res.status(401).json({
+            error: "account_inactive",
+            detail: "This account no longer has access. Contact your administrator."
+          });
+          return;
+        }
+
+        const changedAt = userRow.password_changed_at;
         if (changedAt !== null && payload.iat < Math.floor(new Date(changedAt).getTime() / 1000)) {
           res.status(401).json({ error: "session_invalidated", detail: "Password was changed. Please sign in again." });
           return;
         }
+
+        // Role changes take effect immediately: authz below uses the
+        // current DB role, not the claim baked into the token at issue.
+        effectiveRole = userRow.role;
       } catch (err) {
         logger.error(
           { event: "jwt_bridge_pw_check_db_error", err, userId: payload.sub },
@@ -102,7 +132,7 @@ export async function requireApiKey(
 
       // Viewer accounts may not perform mutations.
       // API key auth (non-JWT) bypasses this check — API keys are admin-level.
-      if (payload.role === "viewer" && MUTATION_METHODS.has(req.method.toUpperCase())) {
+      if (effectiveRole === "viewer" && MUTATION_METHODS.has(req.method.toUpperCase())) {
         res.status(403).json({
           error: "read_only_access",
           detail: "Viewer accounts cannot make changes."
@@ -134,9 +164,9 @@ export async function requireApiKey(
       ).catch(() => { /* silent */ });
 
       (req as any).apiKey     = orgApiKey;
-      (req as any).jwtPayload = payload;
+      (req as any).jwtPayload = { ...payload, role: effectiveRole };
       req.userId              = payload.sub;
-      req.userRole            = payload.role;
+      req.userRole            = effectiveRole;
       req.autoUserId          = payload.sub;
       next();
       return;
