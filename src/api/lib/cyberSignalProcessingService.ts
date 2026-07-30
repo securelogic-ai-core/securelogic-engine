@@ -95,6 +95,8 @@ import {
 import { runLlmControlMatcherForSignal } from "./llmControlMatcher.js";
 import { enqueueApplicabilityReassessment } from "./applicabilityReassessment.js";
 import { resolveSlaDueDateWith } from "./findingSlaPolicyRules.js";
+import { createAlertBatcher } from "./alerting/alertService.js";
+import { matcherAlertsEnabled } from "./alerting/matcherAlertsFeatureFlag.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -136,6 +138,8 @@ export type MatcherResult = {
   matched_ai_system_id: string | null;
   /** Finding row created by phase 3a, or null when no match. */
   finding: Record<string, unknown> | null;
+  /** True only when phase 3a INSERTed a NEW finding this run; false when the D-14 guard reused the existing (org, signal) finding. Alerting keys off this so a re-fired signal never re-notifies. */
+  finding_was_created: boolean;
   /** Suggestion row created by phase 3b. NULL when no match OR when ON CONFLICT skipped (a row already exists in any state per the partial unique index). */
   suggestion_id: string | null;
   /** Score, integer [0, 100], from computeRiskScore. NULL when no match (so no suggestion was attempted) OR when the suggestion existed already and was skipped. */
@@ -149,6 +153,44 @@ export type MatcherResult = {
   /** Number of open risk rows this run set exposure_flagged=TRUE on (phase 5, org-scoped). 0 when no open risk in the signal's domain needed flagging. */
   risks_flagged: number;
 };
+
+// ---------------------------------------------------------------------------
+// Post-commit alerting
+// ---------------------------------------------------------------------------
+
+/**
+ * Real-time alert for a finding phase 3a NEWLY created on the processSignal
+ * path (API ingest + briefScheduler). The worker fan-out paths (runPipeline,
+ * kevPoller) already run their own per-cycle coalescing batcher; this closes
+ * the same gap for the remaining matcher invocation path using the SAME
+ * flag (`SECURELOGIC_MATCHER_ALERTS_ENABLED`), the SAME batcher, and the SAME
+ * post-commit rule — a rollback must never have emailed about a finding that
+ * doesn't exist. Batch-of-one, mirroring the webhook batcher at this seam.
+ *
+ * finding_was_created gates re-fires (the D-14 guard's reused finding must not
+ * re-notify); the per-(user, finding) ledger inside the batcher is the durable
+ * backstop. Fire-and-forget: an alert failure never breaks signal processing.
+ */
+function alertOnCreatedSignalFinding(orgId: string, result: MatcherResult): void {
+  if (!matcherAlertsEnabled()) return;
+  if (!result.finding_was_created || result.finding === null) return;
+  const severity = result.finding.severity as string;
+  if (severity !== "Critical" && severity !== "High") return;
+
+  const batcher = createAlertBatcher("critical_finding", "signal_processing");
+  batcher.add(orgId, {
+    findingId: result.finding.id as string,
+    title: (result.finding.title as string) ?? "",
+    severity,
+    domain: (result.finding.domain as string | null) ?? null
+  });
+  batcher.flush().catch((err) => {
+    logger.warn(
+      { event: "signal_processing_alert_flush_failed", orgId, err },
+      "Signal-processing alert flush failed (non-fatal)"
+    );
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Domain routing
@@ -271,6 +313,7 @@ export async function runMatcherForSignal(
   let matchedAiSystemName: string | null = null;
   let matchedAiSystemCriticality: string | null = null;
   let createdFinding: Record<string, unknown> | null = null;
+  let findingWasCreated = false;
   let suggestionId: string | null = null;
   let matchScore: number | null = null;
   let matchedBranch: MatcherResult["matched_branch"] = "no_match";
@@ -471,6 +514,7 @@ export async function runMatcherForSignal(
       );
 
       createdFinding = findingResult.rows[0] ?? null;
+      findingWasCreated = createdFinding !== null;
 
       // Re-fire on an already-processed signal: reuse the existing finding so
       // downstream linkage (suggestion, GAP-3 action — both already idempotent
@@ -1194,10 +1238,11 @@ export async function runMatcherForSignal(
       "Matcher run for signal"
     );
 
-    return {
+    const result: MatcherResult = {
       matched_vendor_id: matchedVendorId,
       matched_ai_system_id: matchedAiSystemId,
       finding: createdFinding,
+      finding_was_created: findingWasCreated,
       suggestion_id: suggestionId,
       match_score: matchScore,
       domain,
@@ -1205,6 +1250,11 @@ export async function runMatcherForSignal(
       obligation_suggestion_ids: obligationSuggestionIds,
       risks_flagged: risksFlagged
     };
+
+    // No alerting here: the worker fan-out callers (runPipeline, kevPoller) own
+    // per-cycle coalescing batchers, and the processSignal caller alerts after
+    // ITS commit. finding_was_created on the result carries the truth they need.
+    return result;
   } catch (err) {
     if (ownsTransaction) {
       try {
@@ -1342,6 +1392,11 @@ export async function processSignal(
     const webhookBatch = createSignalWebhookBatcher("signal_processing");
     webhookBatch.add(orgId, signalId, matcherResult);
     webhookBatch.flush();
+
+    // Real-time alert (flag-gated, coalesced) for a finding created inside OUR
+    // transaction — same post-commit rule as the webhook emit above. This is
+    // the API-ingest/briefScheduler counterpart of the worker fan-out batchers.
+    alertOnCreatedSignalFinding(orgId, matcherResult);
 
     logger.info(
       {
