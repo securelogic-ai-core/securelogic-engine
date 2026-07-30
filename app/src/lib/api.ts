@@ -2996,6 +2996,33 @@ export async function getAiSystemSignals(
   }
 }
 
+/**
+ * Deterministic linked signals for a VENDOR (signal_vendor_links) — the same
+ * projection as the AI-system read (shared engine LINK/SIGNAL_SELECT). This
+ * client is what the vendor page's intelligence section reads (EG2 Tier 2
+ * slice 9); before it existed, accepted vendor↔signal links were written to a
+ * table no UI displayed and the vendor page showed a per-pageload LLM guess.
+ */
+export async function getVendorSignals(
+  apiKey: string,
+  vendorId: string,
+  limit = 10
+): Promise<AiSystemLinkedSignal[] | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendors/${encodeURIComponent(vendorId)}/signals?limit=${limit}`,
+      apiKey
+    );
+    // null on failure, [] only on a genuine empty read — an outage must never
+    // render as "no intelligence on this vendor" (the clean-vendor lie).
+    if (!res.ok) return null;
+    const body = (await res.json()) as { signals?: AiSystemLinkedSignal[] };
+    return body.signals ?? [];
+  } catch {
+    return null;
+  }
+}
+
 // AI system → vendor dependency (ai_system_vendor_dependencies).
 export type AiVendorDependency = {
   dependency_id: string;

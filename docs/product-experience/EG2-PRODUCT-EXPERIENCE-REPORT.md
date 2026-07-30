@@ -446,3 +446,51 @@ workflows (ask an owner to provide evidence). Next: staleness (`valid_until`), t
 (new). App: `lib/api.ts` (generic upload + summary/recent clients),
 `components/evidence/EvidenceFileField.tsx` (new), three evidence forms, `app/evidence/page.tsx`
 (new), `lib/navigation.ts` (workspace Compliance group), knowledge index regenerated.
+
+---
+
+## Slice 9 — Deterministic vendor intelligence: evidence, not prose
+
+**Status:** implemented, tests green (vendors suite 49/49 incl. 3 rewritten + 2 strengthened
+contracts; full app suite 1222/1222; typecheck + lint clean).
+
+**Gate answers.** Problem that disappears: the vendor page's "Live Intelligence" was a
+synchronous Claude call on every page load whose rows had no id, date, source, or link and
+whose content changed between refreshes — on exactly the surface a CISO judges the "vendor
+intelligence" claim by. Meanwhile the deterministic truth (accepted `vendor_signal_links`,
+written by every queue accept since the linkage package) sat in a table no UI read. Friction
+removed: a per-pageload LLM latency + spend, and the analyst's "accepted 50 suggestions,
+nothing changed" confusion. Demo: this IS the demo surface. Noticed unprompted: yes.
+
+**Before → after.**
+- Before: nondeterministic prose, zero drill-down, silent-failure to "no signals available";
+  accepted queue links invisible anywhere.
+- After: the same section renders the accepted links — severity, CVE, accepted date, event
+  summary, "View intelligence event →" drill-through — mirroring the AI-system section so the
+  two sibling surfaces agree on what linked intelligence looks like. Empty state routes to the
+  review queue pre-filtered to vendor targets; a failed read renders an explicit outage note
+  ("does not mean the vendor is clear") — strictly stronger than the old documented-not-
+  endorsed behavior of showing the empty state on outage. The LLM analysis remains where its
+  output is consumed: the assess flow.
+
+**Measurable.** One synchronous LLM call removed from every vendor-detail load (latency +
+token spend); accepted-link visibility 0 → 100%; signal drill-through on vendors: impossible
+→ 1 click.
+
+**Competitive review.** Now better: dated/sourced/drillable per-vendor intel connected to a
+GRC workflow — RecordedFuture-class tools match but don't run the workflow;
+Archer/ServiceNow/OneTrust don't match at all. Still stronger elsewhere:
+SecurityScorecard/BitSight external posture ratings (outside-in telemetry) have no
+counterpart here; ProcessUnity ships rating-feed integrations. Next: vendor score history +
+"changed this week" delta (Tier 2 executive-awareness slice), then rating-feed evaluation as
+a strategic decision.
+
+**Remaining opportunities discovered.** The vendor LIST page still has no intelligence
+indicator column; `getAiSystemSignals` still coalesces outage to [] (the AI section should
+adopt the same null-honesty); the intelligence-event drill link renders for flag-on
+environments only by route availability (dark-flag reality, documented in Tier 1).
+
+**Files.** App: `lib/api.ts` (`getVendorSignals`, outage-honest), `vendors/[id]/page.tsx`
+(deterministic section + outage state; LLM fetch removed from page load),
+`vendorDetail.render.test.tsx` (5 contracts rewritten/strengthened). Engine: none (the read
+route existed all along).
