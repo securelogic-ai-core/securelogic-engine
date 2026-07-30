@@ -647,3 +647,45 @@ per-dimension trend drill-downs; our PDF still has no prose. Next: the PDF narra
 (180/365 + tick-thinning), `lib/briefing/composeBriefing.ts` + `TheBriefing.tsx` +
 `dashboard/page.tsx` (delta chip), tests: `postureTrend.test.ts` (new, 6),
 `briefing.render.test.tsx` (+2).
+
+---
+
+## Slice 13 — The executive PDF learns to say "so what" — deterministically
+
+**Status:** implemented, tests green (engine 416 files / 6,804 incl. 8 new narrative tests;
+typecheck clean).
+
+**Gate answers.** Problem that disappears: the executive PDF assembled every fact a board
+asks about and presented only tables — an appendix, not an answer; a CISO still wrote the
+summary slide by hand. Workflow easier: board-pack preparation. Decision faster: the
+leadership ask is stated on page 2. Demo: the artifact you leave behind. Noticed: by the
+first board that receives it.
+
+**The AI-assistance ruling (goal priority 4, applied).** The narrative is deliberately
+**deterministic — no LLM**. Every sentence is computed from the report's own assembled data,
+so the summary is reproducible, audit-defensible, and structurally incapable of
+contradicting the tables below it — and the page says so in a footnote. "Use AI only where
+it materially improves decision-making" cuts both ways: here, determinism materially
+improves it. LLM assistance remains right for surfaces where synthesis is the value (brief
+enrichment, assess-flow analysis), not where fidelity to the record is.
+
+**Before → after.**
+- Before: cover → stat grid → tables. Zero prose.
+- After: page 2 is an **Executive Summary** of five composed paragraphs: posture position
+  with direction and dates ("scores 72 of 100, up 9 points from 63 on April 30"); named
+  exposure (Critical/High counts + the highest open residual band); the 90-day decision
+  record in prose (closed / remediated / formally accepted / new, open actions); compliance
+  position by name (strongest framework %, widest unmapped gap); and a derived **Leadership
+  focus** ask that escalates Critical findings → High residual risks → the widest framework
+  gap → sustain. Empty programs get honest baseline sentences ("no posture snapshot yet…
+  establishes the baseline"), never filler; the banned generic vocabulary is test-pinned to
+  never appear.
+
+**Competitive comparison.** Now better: a self-consistent, regenerable board narrative —
+AuditBoard/ServiceNow board packs are hand-assembled or template mail-merge; ours derives
+from the immutable lifecycle streams. Still stronger elsewhere: their period selection and
+tenant branding (both remain deferred report items), per-dimension trend charts in-PDF.
+
+**Files.** `src/api/lib/executiveNarrative.ts` (new, pure),
+`src/api/routes/executiveReport.ts` (page-2 insertion),
+`src/api/tests/executiveNarrative.test.ts` (new, 8 — incl. the no-generic-language pin).
