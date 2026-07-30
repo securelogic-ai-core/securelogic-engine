@@ -48,7 +48,10 @@ describe("defaultBriefingModulesForRole", () => {
   });
   it("analyst leads with work and triage (recent findings before posture score)", () => {
     const ids = defaultBriefingModulesForRole("analyst");
-    expect(ids[0]).toBe("my_work");
+    // EG2 slice 10: the delta leads — the first question a returning analyst
+    // has is "what changed?", then their standing work queue.
+    expect(ids[0]).toBe("whats_changed");
+    expect(ids[1]).toBe("my_work");
     expect(ids.indexOf("recent_findings")).toBeLessThan(ids.indexOf("posture_score"));
   });
   it("viewer omits workflow modules (my_work, overdue_actions, ready_to_close)", () => {

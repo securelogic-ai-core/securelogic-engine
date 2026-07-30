@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFindingsSummary, getFrameworks, getFrameworkReadiness, getActionsSummary, getBriefingLayout, getDashboardPreferences, planDisplayName, type Framework, type FrameworkReadiness } from "@/lib/api";
+import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFindingsSummary, getFrameworks, getFrameworkReadiness, getActionsSummary, getBriefingChanges, getBriefingLayout, getDashboardPreferences, planDisplayName, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { IntelligenceBriefDashboardCard } from "@/components/IntelligenceBriefDashboardCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
@@ -162,10 +162,20 @@ export default async function DashboardPage({
     briefingCtx,
   );
   const briefingEligible = resolveEligibleModules(briefingCtx);
+  // Since-last-visit delta (EG2 slice 10): fetched only when the Briefing is
+  // live for this session AND there is a previous login to diff against —
+  // a first visit has no delta, and the engine route is Briefing-flag-gated.
+  const previousLoginAt = authMe?.previousLoginAt ?? null;
+  const briefingChanges =
+    briefingEnabled && isPlatformUser && previousLoginAt
+      ? await getBriefingChanges(token, previousLoginAt)
+      : null;
   const briefingVm = composeBriefing({
     summary: dashboardSummary,
     findingsSummary: findingsSummaryData?.summary ?? null,
     actionsSummary,
+    changes: briefingChanges,
+    previousLoginAt,
   });
   // Viewers cannot persist a layout (platform-wide viewer-mutation block) —
   // the customize surface is withheld rather than offering a save that 403s.

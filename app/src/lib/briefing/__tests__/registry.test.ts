@@ -41,11 +41,18 @@ describe("briefing module registry — contract", () => {
     }
   });
 
-  it("personal modules require a user identity; org modules never do", () => {
+  it("personal modules require a user identity; org modules don't — except the personal-clock delta", () => {
+    // whats_changed (EG2 slice 10) is the ratified exception: ORGANIZATION
+    // numbers diffed against the SESSION USER's previous login. The scope chip
+    // says whose numbers; the identity requirement exists because an API-key
+    // session has no last-visit clock to diff against (module hides, honestly).
+    const ORG_SCOPED_IDENTITY_EXCEPTIONS = new Set(["whats_changed"]);
     for (const m of BRIEFING_MODULES) {
       if (m.scope === "personal") {
         expect(m.requiresUserIdentity).toBe(true);
         expect(m.zone).toBe("your_work");
+      } else if (ORG_SCOPED_IDENTITY_EXCEPTIONS.has(m.id)) {
+        expect(m.requiresUserIdentity).toBe(true);
       } else {
         expect(m.requiresUserIdentity).toBe(false);
       }

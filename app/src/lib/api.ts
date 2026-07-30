@@ -3782,6 +3782,37 @@ export async function getAiSystemGovernanceContext(
 // Alert Preferences
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** GET /api/briefing/changes — the since-last-visit delta (EG2 slice 10). */
+export type BriefingChangesResponse = {
+  since: string;
+  clamped: boolean;
+  window_days_max: number;
+  changes: {
+    new_active_findings: number;
+    new_critical_high: number;
+    remediation_completed: number;
+    resolved: number;
+    newly_overdue_actions: number;
+    briefs_published: number;
+  };
+};
+
+export async function getBriefingChanges(
+  apiKey: string,
+  sinceIso: string
+): Promise<BriefingChangesResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/briefing/changes?since=${encodeURIComponent(sinceIso)}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as BriefingChangesResponse;
+  } catch {
+    return null;
+  }
+}
+
 export type AlertPreferences = {
   critical_finding_immediate: boolean;
   high_finding_immediate: boolean;

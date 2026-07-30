@@ -33,6 +33,25 @@ import type {
 export const BRIEFING_MODULES: readonly BriefingModuleDef[] = [
   // ── Zone 1: Your work (personal, assignment-driven) ────────────────────────
   {
+    // EG2 slice 10 (Operational Presence): the delta since the session user's
+    // previous login — worse / needs-a-decision / better / new intelligence.
+    // Leads the canonical composition: the first question a returning user has
+    // is "what changed?", not "what is the standing state?". Personal FRAMING
+    // (your last visit) over ORGANIZATION numbers — the scope chip says whose
+    // numbers, the title says whose clock.
+    id: "whats_changed",
+    title: "Since Your Last Visit",
+    description:
+      "What changed while you were away — new findings, work that became overdue, remediation completed, findings closed, and new intelligence.",
+    zone: "your_work",
+    category: "my_work",
+    scope: "organization",
+    requiresUserIdentity: true,
+    minEntitlement: "platform",
+    destination: "/findings?queue=all",
+    legacyTileId: null,
+  },
+  {
     id: "my_work",
     title: "My Work",
     description:

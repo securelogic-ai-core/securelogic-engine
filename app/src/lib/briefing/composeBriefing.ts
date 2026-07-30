@@ -17,6 +17,7 @@
 
 import type {
   ActionsSummary,
+  BriefingChangesResponse,
   DashboardSummary,
   FindingsSummary,
 } from "@/lib/api";
@@ -26,6 +27,12 @@ export type BriefingInputs = {
   summary: DashboardSummary | null;
   findingsSummary: FindingsSummary | null;
   actionsSummary: ActionsSummary | null;
+  /** The since-last-visit delta (EG2 slice 10). Omitted/undefined = the page
+   *  had no previous login to diff against (module hidden); null = the fetch
+   *  FAILED (render an honest unavailable line, never zeros). */
+  changes?: BriefingChangesResponse | null;
+  /** ISO timestamp of the session user's previous login, when known. */
+  previousLoginAt?: string | null;
 };
 
 export type MyWorkModel = {
@@ -57,6 +64,22 @@ export type PostureScoreModel = {
   asOf: string | null;
 };
 
+export type WhatsChangedModel = {
+  /** The window start actually used by the engine (clamped to its max). */
+  since: string;
+  clamped: boolean;
+  /** false = the changes fetch failed — the module says so, never zeros. */
+  loaded: boolean;
+  newActiveFindings: number;
+  newCriticalHigh: number;
+  remediationCompleted: number;
+  resolved: number;
+  newlyOverdueActions: number;
+  briefsPublished: number;
+  /** Every count known and zero — the "quiet since your last visit" state. */
+  allQuiet: boolean;
+};
+
 export type BriefingViewModel = {
   /**
    * false = the dashboard summary fetch FAILED: the organization zone renders
@@ -72,6 +95,8 @@ export type BriefingViewModel = {
   /** null = module hidden (empty org-wide ready-to-close population). */
   readyToClose: ReadyToCloseModel | null;
   postureScore: PostureScoreModel;
+  /** null = module hidden (no previous login to diff against). */
+  whatsChanged: WhatsChangedModel | null;
 };
 
 export function composeBriefing(inputs: BriefingInputs): BriefingViewModel {
@@ -89,6 +114,47 @@ export function composeBriefing(inputs: BriefingInputs): BriefingViewModel {
 
   const bySeverity = summary?.findings?.by_severity;
   const actions = summary?.actions;
+
+  // Since-last-visit delta (EG2 slice 10). Hidden without a previous login;
+  // a failed fetch keeps the module visible with an honest unavailable state
+  // anchored to the login timestamp the page DOES know.
+  const { changes, previousLoginAt } = inputs;
+  let whatsChanged: WhatsChangedModel | null = null;
+  if (previousLoginAt) {
+    if (changes) {
+      const c = changes.changes;
+      whatsChanged = {
+        since: changes.since,
+        clamped: changes.clamped,
+        loaded: true,
+        newActiveFindings: c.new_active_findings,
+        newCriticalHigh: c.new_critical_high,
+        remediationCompleted: c.remediation_completed,
+        resolved: c.resolved,
+        newlyOverdueActions: c.newly_overdue_actions,
+        briefsPublished: c.briefs_published,
+        allQuiet:
+          c.new_active_findings === 0 &&
+          c.remediation_completed === 0 &&
+          c.resolved === 0 &&
+          c.newly_overdue_actions === 0 &&
+          c.briefs_published === 0,
+      };
+    } else {
+      whatsChanged = {
+        since: previousLoginAt,
+        clamped: false,
+        loaded: false,
+        newActiveFindings: 0,
+        newCriticalHigh: 0,
+        remediationCompleted: 0,
+        resolved: 0,
+        newlyOverdueActions: 0,
+        briefsPublished: 0,
+        allQuiet: false,
+      };
+    }
+  }
 
   return {
     orgLoaded: summary !== null,
@@ -119,5 +185,6 @@ export function composeBriefing(inputs: BriefingInputs): BriefingViewModel {
       severity: summary?.posture?.overall_severity ?? null,
       asOf: summary?.posture?.snapshot_date ?? null,
     },
+    whatsChanged,
   };
 }

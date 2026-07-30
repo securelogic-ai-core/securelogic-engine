@@ -494,3 +494,65 @@ environments only by route availability (dark-flag reality, documented in Tier 1
 (deterministic section + outage state; LLM fetch removed from page load),
 `vendorDetail.render.test.tsx` (5 contracts rewritten/strengthened). Engine: none (the read
 route existed all along).
+
+---
+
+## Slice 10 — "Since Your Last Visit": the Briefing opens with the delta
+
+**Status:** implemented, tests green (engine 413 files / 6,790 incl. 6 new route pins +
+gate-pin update; app 96 files / 1,226 incl. 4 new render contracts + 2 deliberately updated
+registry/layout pins; briefing manifest regenerated, drift test green).
+
+**Gate answers.** Problem that disappears: every return visit greeted the user with the same
+static modules — `previousLoginAt` existed but nothing diffed against it, so "what changed
+overnight?" was answered by re-scanning every surface. Workflow easier: morning triage starts
+at the delta. Decision faster: worse / needs-a-decision / better / can-wait is triaged on
+screen one. Demo: the mission-control moment. Noticed immediately: it is the first module on
+the first screen.
+
+**Before → after.**
+- Before: Briefing = standing state only; the LastLoginBanner showed a timestamp and nothing
+  used it.
+- After: a new `whats_changed` module LEADS the canonical composition for every role:
+  "Since Jul 28, 9:14 AM" — new active findings (number linked to the exact
+  `created_from` population, Critical/High called out), actions that BECAME overdue in the
+  window (not standing overdue — deduped from the SLA bucket), findings that completed
+  remediation (→ Ready to Close), findings closed ("posture improved"), and a new brief if one
+  published. Quiet windows earn an explicit "Quiet since your last visit"; a failed read says
+  "that does not mean nothing happened"; a first visit hides the module and never queries.
+- Engine: new `GET /api/briefing/changes?since=` — one round trip, six org-scoped counts,
+  transitions read from the append-only `finding_lifecycle_events` stream (deduped per
+  finding), `since` clamped to 90 days with the clamp reported. Dark behind the engine
+  Briefing flag, same chain as the layout routes.
+
+**Ratified contract exceptions (documented in the updated pins):** `whats_changed` is the one
+org-scoped module with `requiresUserIdentity` (org numbers on the session user's clock — an
+API-key session has no last visit); the analyst default now leads with the delta before
+My Work.
+
+**Customer impact.** Morning re-scan across findings/actions/briefs (~4 pages) → one glance;
+"what got worse vs better since yesterday" goes from unanswerable to the first thing on
+screen. Decision latency on ready-to-close work drops: the queue announces itself.
+
+**Screens affected.** The Briefing (/dashboard flag-on) — new leading module; engine
+`/api/briefing/changes`.
+
+**Competitive comparison.** Now better: none of Archer/ServiceNow/AuditBoard/OneTrust open on
+a personalized change-delta; their landing pages are static dashboards — this is the
+"mission control, not dashboard" differentiator made real. Still stronger elsewhere:
+ServiceNow's activity streams offer per-record change feeds (our delta is counts + routes,
+not a feed); no in-app notification center yet. Next: the executive week-over-week variant
+(Tier 2 Executive Awareness) reuses this exact seam with a fixed 7-day window.
+
+**Remaining opportunities discovered.** The lifecycle-events read means transition counts
+only cover the two-axis era (pre-#607 history has no events — correct, not a gap).
+`created_from` reproduces the new-findings population at date granularity (documented).
+A per-vendor/per-domain breakdown of the delta would make it drillable by team.
+
+**Files.** Engine: `routes/briefingChanges.ts` (new), `routes/index.ts` (mount),
+`tests/briefingChangesRoute.test.ts` (new, 6), `vendorEntitlementGate.test.ts` (pin +1 for
+slice 8's route). App: `lib/briefing/contracts.ts` + `registry.ts` + `layout.ts` +
+`composeBriefing.ts` (module + view model), `lib/api.ts` (`getBriefingChanges`),
+`dashboard/page.tsx` (conditional fetch), `TheBriefing.tsx` (render case),
+`briefing.render.test.tsx` (+4), registry/layout pins updated with rationale; briefing
+manifest regenerated.

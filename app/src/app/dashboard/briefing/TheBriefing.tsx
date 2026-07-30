@@ -301,6 +301,103 @@ function renderModule(
   const { vm } = props;
 
   switch (def.id) {
+    case "whats_changed": {
+      const m = vm.whatsChanged;
+      if (!m) return null; // first visit — no delta to show
+
+      const sinceLabel = new Date(m.since).toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+
+      if (!m.loaded) {
+        return (
+          <ModuleCard def={def}>
+            <p className="text-sm" style={{ color: "#fca5a5" }}>
+              Couldn&apos;t load what changed since your last visit ({sinceLabel})
+              — that does not mean nothing happened. Refresh to try again.
+            </p>
+          </ModuleCard>
+        );
+      }
+
+      if (m.allQuiet) {
+        return (
+          <ModuleCard def={def}>
+            <p className="text-sm" style={{ color: "#86efac" }}>
+              Quiet since your last visit ({sinceLabel}) — no new findings, no
+              new overdue work, no decisions waiting on this window.
+            </p>
+          </ModuleCard>
+        );
+      }
+
+      // Only the new-findings NUMBER is a link — created_from reproduces that
+      // population (date-granular). Transition counts have no event-filtered
+      // list to land on, so they read as sentences with labeled destinations.
+      const sinceDate = m.since.slice(0, 10);
+      return (
+        <ModuleCard def={def}>
+          <p className="text-xs mb-3" style={{ color: "#64748b" }}>
+            Since {sinceLabel}
+            {m.clamped ? " (showing the last 90 days)" : ""}
+          </p>
+          <div className="space-y-2">
+            {m.newActiveFindings > 0 && (
+              <Link
+                href={`/findings?queue=all&created_from=${sinceDate}`}
+                className="flex items-baseline justify-between group"
+              >
+                <span className="text-sm group-hover:text-slate-200 transition-colors" style={{ color: "#fca5a5" }}>
+                  New active findings
+                  {m.newCriticalHigh > 0 ? (
+                    <span className="ml-2 text-xs font-semibold" style={{ color: "#f87171" }}>
+                      {m.newCriticalHigh} Critical/High
+                    </span>
+                  ) : null}
+                </span>
+                <span className="text-xl font-bold tabular-nums text-slate-100">
+                  {m.newActiveFindings}
+                </span>
+              </Link>
+            )}
+            {m.newlyOverdueActions > 0 && (
+              <p className="text-sm" style={{ color: "#fdba74" }}>
+                {m.newlyOverdueActions} action{m.newlyOverdueActions !== 1 ? "s" : ""} became overdue{" "}
+                <Link href="/actions?overdue=true&view=team" className="font-medium" style={{ color: "#00c4b4" }}>
+                  View overdue →
+                </Link>
+              </p>
+            )}
+            {m.remediationCompleted > 0 && (
+              <p className="text-sm" style={{ color: "#c4b5fd" }}>
+                {m.remediationCompleted} finding{m.remediationCompleted !== 1 ? "s" : ""} completed remediation
+                — your decision{" "}
+                <Link href="/findings?bucket=ready_to_close" className="font-medium" style={{ color: "#00c4b4" }}>
+                  Review ready to close →
+                </Link>
+              </p>
+            )}
+            {m.resolved > 0 && (
+              <p className="text-sm" style={{ color: "#86efac" }}>
+                {m.resolved} finding{m.resolved !== 1 ? "s" : ""} closed — posture improved.
+              </p>
+            )}
+            {m.briefsPublished > 0 && (
+              <p className="text-sm" style={{ color: "#93c5fd" }}>
+                New Intelligence Brief published{" "}
+                <Link href="/briefs" className="font-medium" style={{ color: "#00c4b4" }}>
+                  Read it →
+                </Link>
+              </p>
+            )}
+          </div>
+        </ModuleCard>
+      );
+    }
+
     case "my_work": {
       const m = vm.myWork;
       const unknown = m.findingsOpen === null && m.actionsOpen === null;

@@ -41,6 +41,7 @@ const api = vi.hoisted(() => ({
   getActionsSummary: vi.fn(),
   // B2 — saved layout + legacy-preference projection inputs.
   getBriefingLayout: vi.fn(),
+  getBriefingChanges: vi.fn(),
   getDashboardPreferences: vi.fn(),
 }));
 
@@ -88,6 +89,7 @@ beforeEach(() => {
   );
   // B2 defaults: no saved layout, no legacy customization → role default.
   api.getBriefingLayout.mockResolvedValue({ layout: null, updated_at: null });
+  api.getBriefingChanges.mockResolvedValue(null);
   api.getDashboardPreferences.mockResolvedValue({ layout: [], source: "system_default" });
 });
 
@@ -350,6 +352,7 @@ describe("flag ON + B2 — legacy-preference projection (the migration path)", (
   it("carries superseded tile visibility, discloses dropped tiles by LABEL, and stays unsaved", async () => {
     vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
     api.getBriefingLayout.mockResolvedValue({ layout: null, updated_at: null });
+  api.getBriefingChanges.mockResolvedValue(null);
     api.getDashboardPreferences.mockResolvedValue({
       source: "personal",
       layout: [
@@ -464,5 +467,97 @@ describe("flag ON — fresh-org truthfulness (EG2 slice 2)", () => {
     expect(screen.getByText(/No Critical or High active findings/)).toBeInTheDocument();
     expect(screen.getByText(/You're clear/)).toBeInTheDocument();
     expect(screen.queryByText(/Nothing assessed yet/)).toBeNull();
+  });
+});
+
+describe("flag ON — Since Your Last Visit (EG2 slice 10, Operational Presence)", () => {
+  beforeEach(() => {
+    vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
+  });
+
+  const CHANGES = {
+    since: "2026-07-28T09:14:00.000Z",
+    clamped: false,
+    window_days_max: 90,
+    changes: {
+      new_active_findings: 4,
+      new_critical_high: 2,
+      remediation_completed: 3,
+      resolved: 1,
+      newly_overdue_actions: 2,
+      briefs_published: 1,
+    },
+  };
+
+  it("leads the Briefing with the delta: what got worse, what needs a decision, what got better", async () => {
+    api.getAuthMe.mockResolvedValue(anAuthMe({ previousLoginAt: "2026-07-28T09:14:00.000Z" }));
+    api.getBriefingChanges.mockResolvedValue(CHANGES);
+
+    const { container } = await renderDashboard();
+
+    const mod = container.querySelector('[data-briefing-module="whats_changed"]') as HTMLElement;
+    expect(mod).not.toBeNull();
+    // The delta is the FIRST module on the page.
+    expect(
+      container.querySelector("[data-briefing-module]")?.getAttribute("data-briefing-module")
+    ).toBe("whats_changed");
+    // The engine was asked for the delta since the REAL previous login.
+    expect(api.getBriefingChanges).toHaveBeenCalledWith(
+      expect.anything(),
+      "2026-07-28T09:14:00.000Z"
+    );
+    // The new-findings NUMBER links to the population that reproduces it.
+    expect(
+      within(mod).getByRole("link", { name: /New active findings/ })
+    ).toHaveAttribute("href", "/findings?queue=all&created_from=2026-07-28");
+    expect(within(mod).getByText("4")).toBeInTheDocument();
+    expect(within(mod).getByText(/2 Critical\/High/)).toBeInTheDocument();
+    // Transitions read as sentences with labeled destinations.
+    expect(within(mod).getByText(/3 findings completed remediation/)).toBeInTheDocument();
+    expect(
+      within(mod).getByRole("link", { name: /Review ready to close/ })
+    ).toHaveAttribute("href", "/findings?bucket=ready_to_close");
+    expect(within(mod).getByText(/1 finding closed — posture improved/)).toBeInTheDocument();
+    expect(within(mod).getByText(/2 actions became overdue/)).toBeInTheDocument();
+  });
+
+  it("a quiet window is an earned quiet, anchored to the real timestamp", async () => {
+    api.getAuthMe.mockResolvedValue(anAuthMe({ previousLoginAt: "2026-07-28T09:14:00.000Z" }));
+    api.getBriefingChanges.mockResolvedValue({
+      ...CHANGES,
+      changes: {
+        new_active_findings: 0,
+        new_critical_high: 0,
+        remediation_completed: 0,
+        resolved: 0,
+        newly_overdue_actions: 0,
+        briefs_published: 0,
+      },
+    });
+
+    await renderDashboard();
+
+    expect(screen.getByText(/Quiet since your last visit/)).toBeInTheDocument();
+  });
+
+  it("first visit (no previous login): the module is absent — and the engine is never asked", async () => {
+    api.getAuthMe.mockResolvedValue(anAuthMe({ previousLoginAt: null }));
+
+    const { container } = await renderDashboard();
+
+    expect(container.querySelector('[data-briefing-module="whats_changed"]')).toBeNull();
+    expect(api.getBriefingChanges).not.toHaveBeenCalled();
+  });
+
+  it("a failed delta read says so — never a fabricated quiet", async () => {
+    api.getAuthMe.mockResolvedValue(anAuthMe({ previousLoginAt: "2026-07-28T09:14:00.000Z" }));
+    api.getBriefingChanges.mockResolvedValue(null);
+
+    await renderDashboard();
+
+    expect(
+      screen.getByText(/does not mean nothing happened/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Quiet since your last visit/)).toBeNull();
   });
 });

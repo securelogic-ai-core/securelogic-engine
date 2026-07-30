@@ -101,6 +101,7 @@ export type LegacyDashboardTileId = (typeof LEGACY_DASHBOARD_TILE_IDS)[number];
 
 /** Stable module identities. Additive-only once a phase ships them. */
 export const BRIEFING_MODULE_IDS = [
+  "whats_changed",
   "my_work",
   "my_pending_reviews",
   "needs_attention",
