@@ -24,6 +24,7 @@ import { FrameworkMappingsCard, type MappedRequirementDisplay } from "./Framewor
 import { EvidenceSection } from "./EvidenceSection";
 import { LinkedPoliciesCard } from "./LinkedPoliciesCard";
 import { RisksMitigatedCard } from "@/components/controls/RisksMitigatedCard";
+import { HistorySection } from "@/components/HistorySection";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -576,6 +577,7 @@ export default async function ControlDetailPage({
           />
           <RisksMitigatedCard controlId={control.id} />
           <ActionsCard controlId={control.id} />
+          <HistorySection resourcePath="controls" resourceId={control.id} />
         </div>
       </div>
     </div>

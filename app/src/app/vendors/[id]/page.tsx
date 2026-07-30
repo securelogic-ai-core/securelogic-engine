@@ -24,6 +24,7 @@ import {
   type VendorAssuranceDocument,
   type VendorAssuranceExtractionResponse,
 } from "@/lib/api";
+import { HistorySection } from "@/components/HistorySection";
 import { CompleteReviewSection } from "./CompleteReviewSection";
 import { RecalculateScoreButton } from "./RecalculateScoreButton";
 import { ArchiveVendorButton } from "./ArchiveVendorButton";
@@ -972,6 +973,7 @@ export default async function VendorDetailPage({
             inProgressReviews={inProgressReviews}
             vendorId={vendor.id}
           />
+          <HistorySection resourcePath="vendors" resourceId={vendor.id} />
         </div>
 
         {/* Right: sidebar */}

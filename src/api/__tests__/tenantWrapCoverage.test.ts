@@ -17,13 +17,13 @@ import path from "path";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 const WRAPPED_FILES: Record<string, { endpoints: number; unwrapped: string[] }> = {
-  "vendors.ts": { endpoints: 8, unwrapped: ["/vendors/export.csv"] },
-  // 6 since GET /ai-systems/:id/findings — asTenant-wrapped like the rest.
-  "aiSystems.ts": { endpoints: 6, unwrapped: [] },
-  // 6 since GET /controls/:id/findings — asTenant-wrapped like the rest.
-  "controls.ts": { endpoints: 6, unwrapped: [] },
-  // 6 since GET /obligations/:id/findings — asTenant-wrapped like the rest.
-  "obligations.ts": { endpoints: 6, unwrapped: [] },
+  "vendors.ts": { endpoints: 9, unwrapped: ["/vendors/export.csv"] },
+  // 7 since GET /ai-systems/:id/history — asTenant-wrapped like the rest.
+  "aiSystems.ts": { endpoints: 7, unwrapped: [] },
+  // 7 since GET /controls/:id/history — asTenant-wrapped like the rest.
+  "controls.ts": { endpoints: 7, unwrapped: [] },
+  // 7 since GET /obligations/:id/history — asTenant-wrapped like the rest.
+  "obligations.ts": { endpoints: 7, unwrapped: [] },
   // 6 since POST /actions/:id/unblock — asTenant-wrapped like the rest.
   "actions.ts": { endpoints: 6, unwrapped: [] },
   "aiGovernanceAssessments.ts": { endpoints: 4, unwrapped: [] },

@@ -44,6 +44,13 @@ import {
   validateVendorPatch
 } from "../lib/vendorValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import {
+  VENDOR_HISTORY_SPEC,
+  fetchResourceHistory,
+  isHistoryUuid,
+  parseHistoryLimit,
+  parseHistoryOffset,
+} from "../lib/resourceHistory.js";
 import { sqlFindingActive } from "../lib/metricDefinitions.js";
 import { computeVendorRiskScore } from "../lib/vendorRiskScore.js";
 
@@ -672,6 +679,74 @@ router.get(
         "GET /api/vendors/:id failed"
       );
       res.status(500).json({ error: "vendor_get_failed" });
+    }
+  })
+);
+
+/* =========================================================
+   GET /api/vendors/:id/history
+   Per-vendor audit trail — the RR-3 per-risk history pattern
+   generalized via src/api/lib/resourceHistory.ts. Events on the
+   vendor plus its assessments, reviews, and assurance documents,
+   newest first, mirroring the GET /api/audit-log field shape.
+
+   Auth mirrors GET /api/vendors/:id (no admin gate) — anyone who
+   can read the vendor can read its history.
+   ========================================================= */
+
+router.get(
+  "/vendors/:id/history",
+  requireApiKey,
+  attachOrganizationContext,
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const vendorId = String(req.params.id ?? "").trim();
+    if (!vendorId) {
+      res.status(400).json({ error: "vendor_id_required" });
+      return;
+    }
+    if (!isHistoryUuid(vendorId)) {
+      res.status(400).json({ error: "vendor_id_must_be_uuid" });
+      return;
+    }
+
+    const limit  = parseHistoryLimit(req.query.limit);
+    const offset = parseHistoryOffset(req.query.offset);
+
+    try {
+      // Ownership first: cross-org probes must 404 (an empty events
+      // list for a foreign id would leak existence by absence).
+      const ownership = await pg.query(
+        `SELECT 1 FROM vendors WHERE id = $1 AND organization_id = $2`,
+        [vendorId, organizationId]
+      );
+      if ((ownership.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "vendor_not_found" });
+        return;
+      }
+
+      const page = await fetchResourceHistory(
+        VENDOR_HISTORY_SPEC,
+        organizationId,
+        vendorId,
+        limit,
+        offset
+      );
+      res.status(200).json(page);
+    } catch (err) {
+      logger.error(
+        { event: "vendor_history_failed", err, vendorId },
+        "GET /api/vendors/:id/history failed"
+      );
+      res.status(500).json({ error: "vendor_history_failed" });
     }
   })
 );
