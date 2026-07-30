@@ -236,6 +236,7 @@ export default async function DashboardPage({
           planName={planName}
           modules={briefingModules}
           vm={briefingVm}
+          hasPlatformData={hasPlatformData}
           latestBrief={latestBrief}
           latestIssue={latestIssue}
           issuesCount={issuesData?.count ?? 0}

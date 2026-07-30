@@ -58,3 +58,38 @@ after (flag on) = one coalesced email per org per ingest cycle.
 in `render.yaml` (staging first), run the staging volume check the flag's design comment
 requires, then decide production enablement.
 
+---
+
+## Slice 2 — Fresh-org truthfulness: "nothing measured yet" is not "all clear"
+
+**Status:** implemented, tests green (app 68/68 across both render suites, incl. 4 new).
+
+**Customer problem solved.** A brand-new org with zero assessments was greeted with green
+reassurance: "You're clear — nothing assigned to you", "No Critical or High active findings"
+(The Briefing), and "All clear — no decision work is due" (Operations Workspace). A risk
+analyst who later realizes "clear" meant "empty" stops trusting every number on the platform —
+the highest trust-damage-per-line defect in the audit.
+
+**What was built.** The D-2 `hasPlatformData` signal (already computed on /dashboard, used
+only by the onboarding banner) now also gates the Briefing's zero-count module copy; the
+Operations Workspace gained a `hasAnyFindings` signal derived from the findings summary
+(`active_total`/`closed_count` — zero of both = no finding has ever existed). Fresh orgs see
+neutral "Nothing assessed yet / Nothing assigned to you yet" states with a **Start setup →**
+link into /getting-started; orgs with real history keep the earned green all-clear. Unknown
+summary (older engine) preserves legacy rendering — never guesses.
+
+**Screens affected.** The Briefing (/dashboard, flag-on): My Work + Needs Attention modules.
+Operations Workspace (/findings, flag-on): the all-clear panel.
+
+**Competitive improvement.** Archer/ServiceNow don't confuse empty with attested either; this
+removes the one place SecureLogic did. Honesty engineering is the platform's differentiator —
+this closes its most visible violation.
+
+**Measurable.** Render-tested: green all-clear strings are unreachable when
+`hasPlatformData === false` / `hasAnyFindings === false`; the earned all-clear is pinned for
+orgs with history.
+
+**Files.** `app/src/app/dashboard/briefing/TheBriefing.tsx`, `app/src/app/dashboard/page.tsx`,
+`app/src/app/findings/WorkFirstFindings.tsx`, `app/src/app/findings/page.tsx`, + 4 tests in
+`briefing.render.test.tsx` / `opsCenter.render.test.tsx`.
+

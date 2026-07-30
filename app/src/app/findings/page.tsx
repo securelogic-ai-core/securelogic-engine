@@ -348,6 +348,11 @@ export default async function FindingsPage({
           mode={workFirstMode}
           counts={wfCounts}
           unknownCounts={wfUnknown}
+          hasAnyFindings={
+            summary
+              ? (summary.active_total ?? 0) > 0 || (summary.closed_count ?? 0) > 0
+              : null
+          }
           independentReview={independentReviewEnabled}
           summaryItems={summaryItems}
           generatedAt={generatedAt}

@@ -387,3 +387,82 @@ describe("flag ON + B2 — legacy-preference projection (the migration path)", (
     expect(container.querySelector('[data-briefing-module="needs_attention"]')).not.toBeNull();
   });
 });
+
+describe("flag ON — fresh-org truthfulness (EG2 slice 2)", () => {
+  beforeEach(() => {
+    vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
+  });
+
+  /** An org with NO platform data at all: no snapshot, findings, actions,
+   *  domains, risks, or frameworks. hasPlatformData (D-2) must be false. */
+  function freshOrg() {
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        posture: null,
+        domains: [],
+        findings: {
+          open: 0,
+          by_severity: { Critical: 0, High: 0, Moderate: 0, Low: 0 },
+        },
+        actions: { open: 0, in_progress: 0, blocked: 0, active: 0, overdue: 0 },
+        risks_summary: {
+          open: 0,
+          by_risk_rating: {},
+          by_residual_rating: {},
+          by_residual_likelihood_impact: [],
+        },
+      } as never)
+    );
+    api.getPostureHistory.mockResolvedValue({ snapshots: [] });
+    api.getFindings.mockResolvedValue(aFindingsResponse([]));
+    api.getFrameworks.mockResolvedValue({ frameworks: [] });
+    api.getFindingsSummary.mockResolvedValue({
+      summary: aFindingsSummary({ my_work_open: 0, active_total: 0, closed_count: 0 }),
+    });
+    api.getActionsSummary.mockResolvedValue(
+      anActionsSummary({ my_open_count: 0, my_overdue_count: 0 })
+    );
+  }
+
+  it("an unmeasured org is never told it is clear — zero-count modules read as 'nothing yet'", async () => {
+    freshOrg();
+
+    await renderDashboard();
+
+    // The trust rule: green reassurance must not render on unassessed data.
+    expect(screen.queryByText(/You're clear/)).toBeNull();
+    expect(screen.queryByText(/No Critical or High active findings/)).toBeNull();
+    // Instead: honest not-yet-measured states with a route into setup.
+    expect(screen.getByText(/Nothing assigned to you yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing assessed yet/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Start setup/ })).toHaveAttribute(
+      "href",
+      "/getting-started"
+    );
+  });
+
+  it("an org WITH data and zero Critical/High still gets the earned all-clear", async () => {
+    // Real data present (default SUMMARY has domains + snapshot) but no
+    // critical/high and nothing assigned to the caller.
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        findings: {
+          open: 1,
+          by_severity: { Critical: 0, High: 0, Moderate: 1, Low: 0 },
+        },
+      } as never)
+    );
+    api.getFindingsSummary.mockResolvedValue({
+      summary: aFindingsSummary({ my_work_open: 0 }),
+    });
+    api.getActionsSummary.mockResolvedValue(
+      anActionsSummary({ my_open_count: 0, my_overdue_count: 0 })
+    );
+
+    await renderDashboard();
+
+    expect(screen.getByText(/No Critical or High active findings/)).toBeInTheDocument();
+    expect(screen.getByText(/You're clear/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing assessed yet/)).toBeNull();
+  });
+});

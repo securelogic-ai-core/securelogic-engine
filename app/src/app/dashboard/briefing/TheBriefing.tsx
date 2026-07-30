@@ -88,6 +88,14 @@ export type TheBriefingProps = {
   /** Eligible modules in RENDER order (saved layout / projection / role default). */
   modules: BriefingModuleDef[];
   vm: BriefingViewModel;
+  /**
+   * D-2 signal from the page: false = the org has NO platform data yet (no
+   * snapshot, finding, action, risk, domain, or framework). Zero-count modules
+   * must then read as "nothing measured yet", never as green "all clear" —
+   * reassurance on an unassessed org is the fastest way to lose trust in every
+   * number that follows.
+   */
+  hasPlatformData: boolean;
   latestBrief: IntelligenceBriefDetailResponse | null;
   latestIssue: NewsletterIssue | null;
   issuesCount: number;
@@ -303,9 +311,16 @@ function renderModule(
               Could not load your assigned work right now.
             </p>
           ) : m.allClear ? (
-            <p className="text-sm" style={{ color: "#86efac" }}>
-              You&apos;re clear — nothing assigned to you needs attention.
-            </p>
+            props.hasPlatformData ? (
+              <p className="text-sm" style={{ color: "#86efac" }}>
+                You&apos;re clear — nothing assigned to you needs attention.
+              </p>
+            ) : (
+              <p className="text-sm" style={{ color: "#94a3b8" }}>
+                Nothing assigned to you yet. Work you own appears here once your
+                organization starts assessing.
+              </p>
+            )
           ) : (
             <div className="space-y-2">
               <Link href={def.destination} className="flex items-baseline justify-between group">
@@ -361,9 +376,19 @@ function renderModule(
       return (
         <ModuleCard def={def}>
           {clear ? (
-            <p className="text-sm" style={{ color: "#86efac" }}>
-              No Critical or High active findings.
-            </p>
+            props.hasPlatformData ? (
+              <p className="text-sm" style={{ color: "#86efac" }}>
+                No Critical or High active findings.
+              </p>
+            ) : (
+              <p className="text-sm" style={{ color: "#94a3b8" }}>
+                Nothing assessed yet — findings appear here once assessments run
+                or intelligence matches your inventory.{" "}
+                <Link href="/getting-started" className="font-medium" style={{ color: "#00c4b4" }}>
+                  Start setup →
+                </Link>
+              </p>
+            )
           ) : (
             <div className="space-y-2">
               <Link
