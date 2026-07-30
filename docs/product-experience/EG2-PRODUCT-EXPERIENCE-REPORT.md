@@ -93,3 +93,46 @@ orgs with history.
 `app/src/app/findings/WorkFirstFindings.tsx`, `app/src/app/findings/page.tsx`, + 4 tests in
 `briefing.render.test.tsx` / `opsCenter.render.test.tsx`.
 
+---
+
+## Slice 3 — Vendor risk score that reacts to remediation + no auto-finding on clean reviews
+
+**Status:** implemented, tests green (unit 7/7 new module tests; route suites 129/129;
+real-Postgres isolation lane 9/9 incl. 1 new).
+
+**Customer problems solved (two trust traps from the TPRM walkthrough).**
+1. *Stale scores:* closing findings from /findings never recomputed
+   `vendors.current_risk_score` — remediate everything and the vendor still looked risky until
+   someone clicked "Recalculate". A risk number that ignores remediation is a number a TPRM
+   director stops believing.
+2. *The clean-review penalty:* EVERY vendor assessment minted an OPEN finding — a satisfactory
+   annual review recorded as "Low" created a permanent work item and a score penalty. A clean
+   review made the vendor look riskier.
+
+**What was built.**
+- New shared module `src/api/lib/vendorRiskScoreRecompute.ts` — the ONE recompute:
+  the canonical ACTIVE-finding union over BOTH vendor workflows (assessments + review
+  cycles), tenant-scoped, with fire-and-forget schedulers that respect the A04-G1 γ.3
+  post-commit discipline. The manual Recalculate endpoint, the assessment-create path
+  (which previously counted only one of the two workflows — silently), and the new hooks
+  all converge on it: "Recalculate" can never disagree with the automatic refresh again.
+- Hooks: PATCH /api/findings/:id (any lifecycle change) and all three action-cascade sites
+  (create / status change / unblock — whenever the parent finding's derived status changed)
+  now schedule a vendor score refresh. No-op for non-vendor findings.
+- Threshold: a **Low**-severity assessment no longer creates the summary finding (the
+  assessment row remains the complete record; reviewer-imported AI findings are still always
+  created). Moderate+ behavior unchanged. ⚠ *Reviewable behavior change* — flagged for
+  operator attention at review; trivially revertible (one conditional).
+
+**Competitive improvement.** ProcessUnity/Prevalent scores react to state changes; ours now
+does too, without a manual button. Removes the two behaviors most likely to make a TPRM
+director distrust the numbers in a POC.
+
+**Measurable.** `vendor_score_recompute_failed` warn counter; before/after: close all findings
+for a vendor → score returns to criticality baseline on the next page load (95 for a low-
+criticality vendor, unit-pinned).
+
+**Files.** `src/api/lib/vendorRiskScoreRecompute.ts` (new), `src/api/routes/findings.ts`,
+`src/api/routes/actions.ts` (3 cascade hooks), `src/api/routes/vendorAssessments.ts`,
+`src/api/routes/vendors.ts`, tests: `vendorRiskScoreRecompute.test.ts` (new),
+`test/isolation/vendorAssessmentsTenantWrap.test.ts` (+1).

@@ -52,7 +52,7 @@ import {
   parseHistoryOffset,
 } from "../lib/resourceHistory.js";
 import { sqlFindingActive } from "../lib/metricDefinitions.js";
-import { computeVendorRiskScore } from "../lib/vendorRiskScore.js";
+import { recomputeAndPersistVendorRiskScore } from "../lib/vendorRiskScoreRecompute.js";
 
 const router = Router();
 
@@ -926,50 +926,24 @@ router.get(
         return;
       }
 
-      const criticality = vendorResult.rows[0]!.criticality;
-
-      const findingsResult = await pg.query<{ severity: string; status: string }>(
-        `
-        SELECT f.severity, f.status
-        FROM findings f
-        JOIN vendor_assessments va
-          ON va.id::text = f.source_id::text
-          AND f.source_type = 'vendor_review'
-        WHERE va.vendor_id = $1
-          AND f.organization_id = $2
-          AND ${sqlFindingActive("f.operational_status")}
-
-        UNION ALL
-
-        SELECT f.severity, f.status
-        FROM findings f
-        JOIN vendor_reviews vr
-          ON vr.id::text = f.source_id::text
-          AND f.source_type = 'vendor_cycle_review'
-        WHERE vr.vendor_id = $1
-          AND f.organization_id = $2
-          AND ${sqlFindingActive("f.operational_status")}
-        `,
-        [vendorId, organizationId]
+      // Shared recompute (vendorRiskScoreRecompute.ts) — the same canonical
+      // finding union and persist every automatic refresh path now uses, so
+      // "Recalculate" can never disagree with the hooks.
+      const recomputed = await recomputeAndPersistVendorRiskScore(
+        organizationId,
+        vendorId
       );
-
-      const { score, risk_level } = computeVendorRiskScore(
-        criticality,
-        findingsResult.rows
-      );
-
-      await pg.query(
-        `UPDATE vendors SET current_risk_score = $1, updated_at = NOW()
-         WHERE id = $2 AND organization_id = $3`,
-        [score, vendorId, organizationId]
-      );
+      if (recomputed === null) {
+        res.status(404).json({ error: "vendor_not_found" });
+        return;
+      }
 
       res.status(200).json({
         vendor_id: vendorId,
-        score,
-        risk_level,
-        finding_count: findingsResult.rowCount ?? 0,
-        criticality,
+        score: recomputed.score,
+        risk_level: recomputed.risk_level,
+        finding_count: recomputed.finding_count,
+        criticality: recomputed.criticality,
         computed_at: new Date().toISOString(),
       });
     } catch (err) {

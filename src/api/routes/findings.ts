@@ -19,6 +19,7 @@ import { validateFindingCreate, FINDING_SOURCE_TYPES } from "../lib/findingValid
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { triggerFindingAlert } from "../lib/findingAlertTrigger.js";
+import { scheduleVendorScoreRecomputeForFinding } from "../lib/vendorRiskScoreRecompute.js";
 import { resolveFindingContext } from "../lib/findingContextResolver.js";
 import { normalizeEntityQuery, searchFindingsByEntity } from "../lib/findingEntitySearch.js";
 import { resolveOwnerMeFilter } from "../lib/findingListFilters.js";
@@ -1980,6 +1981,14 @@ router.patch(
           updated_at: row.updated_at,
         },
       }).catch(() => {});
+
+      // A lifecycle change on a vendor-workflow finding changes the vendor's
+      // risk picture — refresh vendors.current_risk_score so remediating work
+      // is reflected without the manual Recalculate click. Post-commit,
+      // fire-and-forget, no-op for non-vendor findings.
+      if (legacyStatus !== null || decisionTransition !== null || reconciled.changed) {
+        scheduleVendorScoreRecomputeForFinding(organizationId, findingId);
+      }
 
       res.status(200).json({ finding: row });
     } catch (err) {

@@ -20,6 +20,7 @@ import { validateActionCreate } from "../lib/actionValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { recomputeFindingOperationalStatus } from "../lib/findingLifecycle.js";
+import { scheduleVendorScoreRecomputeForFinding } from "../lib/vendorRiskScoreRecompute.js";
 import { sqlActionActive, sqlActionOverdue } from "../lib/metricDefinitions.js";
 import { resolveOwnerMeFilter } from "../lib/findingListFilters.js";
 
@@ -172,6 +173,12 @@ router.post(
             payload: { from: recompute.fromState ?? null, to: recompute.toState ?? null, trigger: "action.created" },
             ipAddress: req.ip ?? null,
           });
+        }
+        // A derived-status change on a vendor-workflow finding changes the
+        // vendor's risk picture — refresh the score post-commit (no-op for
+        // non-vendor findings; best-effort by contract).
+        if (recompute.changed) {
+          scheduleVendorScoreRecomputeForFinding(organizationId, input.source_id);
         }
       }
 
@@ -813,6 +820,10 @@ router.patch(
             ipAddress: req.ip ?? null,
           });
         }
+        // Vendor score refresh on derived-status change (see action-create path).
+        if (recompute.changed) {
+          scheduleVendorScoreRecomputeForFinding(organizationId, parentFindingId);
+        }
       }
 
       // Webhook vocabulary stays `action.updated` for every successful PATCH
@@ -1005,6 +1016,10 @@ router.post(
             payload: { from: recompute.fromState ?? null, to: recompute.toState ?? null, trigger: "action.unblocked" },
             ipAddress: req.ip ?? null,
           });
+        }
+        // Vendor score refresh on derived-status change (see action-create path).
+        if (recompute.changed) {
+          scheduleVendorScoreRecomputeForFinding(organizationId, parentFindingId);
         }
       }
 
