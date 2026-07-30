@@ -54,9 +54,11 @@ after (flag on) = one coalesced email per org per ingest cycle.
 `src/api/__tests__/cyberSignalProcessingService.test.ts` (5 new wiring tests),
 `src/api/tests/webhookWave1.test.ts` (factory field).
 
-**Operator follow-up (ledgered, not executed):** declare `SECURELOGIC_MATCHER_ALERTS_ENABLED`
-in `render.yaml` (staging first), run the staging volume check the flag's design comment
-requires, then decide production enablement.
+**Operator follow-up (updated at merge-prep `f8384a4d`):** the render.yaml declaration WAS
+executed — `SECURELOGIC_MATCHER_ALERTS_ENABLED` is declared `"false"` on engine and
+intelligence-worker, prod and staging. Remaining operator actions: run the staging volume
+check the flag's design comment requires, then decide production enablement (see
+`docs/runbooks/FEATURE-FLAG-ENABLEMENT-MATRIX.md`).
 
 ---
 
@@ -297,6 +299,12 @@ merge, per operator ruling. One deliberate behavior change flagged for that revi
 vendor assessments no longer mint a summary finding (slice 3).
 
 ## Product Experience Score (baseline 2026-07-30 audit → after Tier 1, flag-on experience)
+
+> **Honesty note (added at release review):** the "After" column and the capability
+> movements below describe the **flag-on (staging) experience** — they are projections
+> of what production becomes once the operator promotes the flag train, not
+> measurements of current production, where the Briefing/workspace/queue flags and
+> both alert flags remain dark.
 
 | Dimension | Before | After | Why |
 |---|---|---|---|
