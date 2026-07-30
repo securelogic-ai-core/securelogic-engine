@@ -25,6 +25,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     },
     {
       "type": "link",
+      "label": "Search",
+      "href": "/search",
+      "access": "platform"
+    },
+    {
+      "type": "link",
       "label": "Ask",
       "href": "/ask",
       "access": "platform"
@@ -126,6 +132,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "label": "Briefs",
       "href": "/briefs",
       "access": "all",
+      "group": null
+    },
+    {
+      "label": "Search",
+      "href": "/search",
+      "access": "platform",
       "group": null
     },
     {
@@ -740,6 +752,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "path": "/risks/new",
       "dynamic": false,
       "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/search",
+      "dynamic": false,
+      "navLabel": "Search",
       "access": "platform"
     },
     {

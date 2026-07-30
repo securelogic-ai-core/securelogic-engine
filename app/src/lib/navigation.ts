@@ -82,6 +82,10 @@ export type NavItem =
 export const NAV_ITEMS: NavItem[] = [
   { type: "link",  label: "Dashboard", href: "/dashboard" },
   { type: "link",  label: "Briefs",    href: "/briefs" },
+  // Global search — federated lookup across the canonical domain objects
+  // (findings, risks, vendors, AI systems, controls, obligations, assets).
+  // Platform-gated to mirror the engine route's premium-or-core-platform gate.
+  { type: "link",  label: "Search",    href: "/search",    platform: true },
   { type: "link",  label: "Ask",       href: "/ask",       platform: true },
   { type: "link",  label: "Queue",     href: "/queue",     platform: true },
   // Assets — the unified Asset Registry is the SINGLE canonical entry point
@@ -148,6 +152,8 @@ export const NAV_ITEMS: NavItem[] = [
 // scope — Actions and both Vendor pages remain distinct items.
 export const WORKSPACE_NAV_ITEMS: NavItem[] = [
   { type: "link", label: "Dashboard", href: "/dashboard" },
+  // Global search — same entry as the legacy IA (see NAV_ITEMS note).
+  { type: "link", label: "Search", href: "/search", platform: true },
   // Posture Dashboard — the canonical org-performance destination (read-surface
   // architecture D1). Previously nav-orphaned in BOTH IAs; surfaced here so the
   // Dashboards concept survives the /dashboard → Briefing relabel. Legacy
