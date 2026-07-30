@@ -12,6 +12,7 @@ Preconditions reference: `docs/DR_PLAN.md`, `docs/runbooks/PRODUCTION_READINESS_
 - [ ] Staging smoke re-run green on the exact SHA being promoted (method: `docs/validation/staging-smoke-2026-07-30.md`)
 - [ ] Promotion executed: develop → main → prod deploy green; `/health` green; Sentry quiet for 24 h soak
 - [x] Merged-train validation: engine 6722 / isolation 858 / app 1200 green (2026-07-30)
+- [x] Post-train integration merged (#710 SSO code exchange, dark · #711 global search, live): engine 6751 / isolation 863 / app 1200 green on the merged tree (2026-07-30)
 - [x] Stale-session enforcement live (#732) — offboarding is real
 - [x] Export purge worker live (#733) — data-minimization promise enforced
 
@@ -29,7 +30,7 @@ Preconditions reference: `docs/DR_PLAN.md`, `docs/runbooks/PRODUCTION_READINESS_
 ## Gate C — First 30 days of beta
 
 - [ ] Weekly: Sentry triage, queue-depth review, scheduler ledger check, webhook delivery failure review
-- [ ] Rule on the deferred decisions as usage data arrives: webhook_deliveries retention window, wave-1 enablement, session architecture, npm majors, #710/#711 disposition
+- [ ] Rule on the deferred decisions as usage data arrives: webhook_deliveries retention window, wave-1 enablement, SSO code-exchange enablement (#710 merged dark), session architecture, npm majors
 - [ ] Collect the beta feedback that gates soft launch: import friction, report usefulness, missing-integration asks
 - [ ] Quarterly DR restore test scheduled
 

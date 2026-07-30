@@ -13,7 +13,7 @@ Each unchecked box is an open item; nothing here is aspirational boilerplate —
 - [x] Argon2id hashing; password policy (12–128 + complexity) on signup/reset/invite/change (#732)
 - [x] Account lockout (5 fails / 15 min) + admin unlock + audit events
 - [x] MFA (TOTP) + org-level `require_mfa`
-- [x] SAML SSO with seat-cap-gated JIT; inactive users blocked on all three login surfaces (#732)
+- [x] SAML SSO with seat-cap-gated JIT; inactive users blocked on every login surface incl. the dark code-exchange door (#732, #710)
 - [x] Stale-session enforcement: status + current role checked per request (#732)
 - [x] Portal cookie idle 30 min / absolute 12 h (env-tunable: SESSION_IDLE_SECONDS / SESSION_ABSOLUTE_SECONDS)
 - [ ] Known limitation (accepted): 7-day engine JWT TTL, no refresh/sign-out-everywhere — post-launch session-architecture workstream
@@ -25,6 +25,7 @@ Each unchecked box is an open item; nothing here is aspirational boilerplate —
 
 ## Feature flags (state at go-live)
 - [x] Webhook wave-1 events: **OFF in prod** (merge ≠ enablement — separate decision)
+- [x] SSO code exchange: **OFF everywhere** (dark behind `SECURELOGIC_SSO_CODE_EXCHANGE_ENABLED`; ACS byte-path unchanged while off) (#710)
 - [x] Risk acceptance: staging ON, **prod OFF** (GATE B)
 - [x] Enterprise context/registry: staging ON, prod per rollout plan
 - [x] Ops brakes exist on every worker (RETRY/PURGE/etc. `_DISABLED` envs)
@@ -42,7 +43,7 @@ Each unchecked box is an open item; nothing here is aspirational boilerplate —
 - [x] Migrations are filename-tracked, idempotent, additive-only discipline (no destructive migration shipped this cycle)
 
 ## Security validation
-- [x] Tenant isolation: 858 real-SQL isolation tests green on merged develop (2026-07-30)
+- [x] Tenant isolation: 863 real-SQL isolation tests green on merged develop incl. #710/#711 integration (2026-07-30)
 - [x] Audit WORM (DB triggers); every mutating register route writes audit events
 - [x] SSRF-pinned webhook egress; rate limiting (tiered, hashed-key); admin network allowlist
 - [x] Staging smoke incl. RBAC negative test passed 2026-07-30 (`docs/validation/staging-smoke-2026-07-30.md`)
