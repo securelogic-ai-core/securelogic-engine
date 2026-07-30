@@ -139,14 +139,17 @@ describe("runDailySlaBreachSweep", () => {
     expect(mockRecordSend).not.toHaveBeenCalled();
   });
 
-  it("the breach query targets work that BECAME overdue yesterday, active and owned only", async () => {
+  it("the breach query targets work that became overdue within the 7-day catch-up window, active and owned only", async () => {
     mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
 
     await runDailySlaBreachSweep();
 
     const sql = String(mockPgQuery.mock.calls[0]![0]);
     expect(sql).toMatch(/due_date < CURRENT_DATE/);
-    expect(sql).toMatch(/due_date >= CURRENT_DATE - 1/);
+    // 7 days, not 1: a failed send, missed cron tick, or overflowed email must
+    // be re-selectable by a later sweep — the per-(user, item, due-date) ledger
+    // keeps the catch-up spam-free.
+    expect(sql).toMatch(/due_date >= CURRENT_DATE - 7/);
     expect(sql).toMatch(/owner_user_id IS NOT NULL/);
     expect((mockPgQuery.mock.calls[0]![1] as unknown[])[0]).toBe(ORG.id);
   });

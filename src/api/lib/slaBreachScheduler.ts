@@ -8,9 +8,12 @@
  * a queue. This sweep closes that gap with the platform's notification
  * discipline:
  *
- *   PRIORITIZED   only work that BECAME overdue since the previous daily
- *                 sweep (due date fell in the last day) — standing breaches
- *                 were already announced once and live in the SLA bucket
+ *   PRIORITIZED   only work that BECAME overdue recently — the query looks
+ *                 back 7 days so a failed send, a missed cron tick, or an
+ *                 overflowed email is caught up by a later sweep (the ledger
+ *                 dedupe below keeps catch-up spam-free); standing breaches
+ *                 older than the window were announced once and live in the
+ *                 SLA bucket
  *   GROUPED       one email per OWNER per day listing their newly-breached
  *                 findings and actions together — never per-item spam
  *   ACTIONABLE    every item deep-links to the record (finding page, or the
@@ -20,7 +23,7 @@
  *                 sweep over the same breach never does; suppression list
  *                 honored; per-user opt-out (sla_breach_daily, default ON)
  *
- * Dark behind SECURELOGIC_SLA_ALERTS_ENABLED (default off; undeclared in
+ * Dark behind SECURELOGIC_SLA_ALERTS_ENABLED (default off; declared dark in
  * render.yaml — enabling is an operator action after a staging check, the
  * matcher-alerts pattern). Wired into the daily scheduler tick at 8:15 UTC,
  * after the 7:30 posture snapshot and alongside the 8:00 digest.
@@ -93,7 +96,7 @@ export async function runDailySlaBreachSweep(): Promise<SlaBreachSweepSummary> {
             AND ${sqlFindingActive("f.operational_status")}
             AND f.owner_user_id IS NOT NULL
             AND f.due_date < CURRENT_DATE
-            AND f.due_date >= CURRENT_DATE - 1
+            AND f.due_date >= CURRENT_DATE - 7
 
           UNION ALL
 
@@ -105,7 +108,7 @@ export async function runDailySlaBreachSweep(): Promise<SlaBreachSweepSummary> {
             AND ${sqlActionActive("a.status")}
             AND a.owner_user_id IS NOT NULL
             AND a.due_date < CURRENT_DATE
-            AND a.due_date >= CURRENT_DATE - 1
+            AND a.due_date >= CURRENT_DATE - 7
           `,
           [org.id]
         );
@@ -231,7 +234,7 @@ function renderSlaBreachEmail(
           <td style="padding:32px 36px;">
             <p style="margin:0 0 4px;font-size:11px;font-weight:600;letter-spacing:0.08em;color:#64748b;text-transform:uppercase;">SecureLogic AI · SLA</p>
             <h1 style="margin:0 0 8px;font-size:20px;font-weight:700;color:#f1f5f9;">Work you own went overdue</h1>
-            <p style="margin:0 0 20px;font-size:13px;color:#94a3b8;">${htmlEscape(orgName)} — these items passed their due date yesterday. Unaddressed breaches age into the SLA queue and count against posture.</p>
+            <p style="margin:0 0 20px;font-size:13px;color:#94a3b8;">${htmlEscape(orgName)} — these items recently passed their due date. Unaddressed breaches age into the SLA queue and count against posture.</p>
             <table width="100%" cellpadding="0" cellspacing="0">${rows}</table>
             ${overflowRow}
             <p style="margin:24px 0 0;font-size:11px;color:#334155;">You received this because SLA alerts are enabled in your <a href="${getAppBaseUrl()}/account/alerts" style="color:#00c4b4;text-decoration:none;">alert preferences</a>.</p>

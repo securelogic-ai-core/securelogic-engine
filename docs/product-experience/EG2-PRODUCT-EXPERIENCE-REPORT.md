@@ -574,19 +574,25 @@ notification story started in slice 7. Noticed: the first morning an item breach
 **Before → after.**
 - Before: breach → silence.
 - After: a daily 8:15 UTC sweep sends **one grouped email per owner** listing the findings
-  and actions that **became overdue yesterday** (standing breaches were announced once and
-  live in the SLA queue — never re-spammed), each item deep-linked (actions land on their
-  parent finding), with an overflow cap into the SLA-queue link. Ledger-deduped per
-  (user, item, due-date) — a due-date extension that later re-breaches re-notifies; a repeat
-  sweep never does. Unowned overdue work is deliberately excluded (it belongs to the Needs
-  Assignment queue, not email). Per-user opt-out `sla_breach_daily` (default ON) on
-  /account/alerts; send-failure leaves the ledger unstamped for tomorrow's retry.
-- Dark behind `SECURELOGIC_SLA_ALERTS_ENABLED` (default off, undeclared in render.yaml —
-  operator enablement after a staging check, the matcher-alerts pattern). Flag-off = zero-DB
-  no-op, cron registered but inert.
+  and actions that **became overdue within the last 7 days** and were never announced —
+  the window is a catch-up buffer, not a batch: on a normal day only yesterday's breaches
+  are fresh; the ledger dedupe makes the wider window spam-free while letting a failed
+  send, a missed cron day, or an overflowed email be picked up by a later sweep. Standing
+  breaches older than the window were announced once and live in the SLA queue — never
+  re-spammed. Each item deep-linked (actions land on their parent finding), with an
+  overflow cap into the SLA-queue link. Ledger-deduped per (user, item, due-date) — a
+  due-date extension that later re-breaches re-notifies; a repeat sweep never does.
+  Unowned overdue work is deliberately excluded (it belongs to the Needs Assignment
+  queue, not email). Per-user opt-out `sla_breach_daily` (default ON) on /account/alerts;
+  send-failure leaves the ledger unstamped and the 7-day window guarantees a later sweep
+  actually re-selects the item (merge-prep correction 2026-07-30: the original 1-day
+  window contradicted this retry contract).
+- Dark behind `SECURELOGIC_SLA_ALERTS_ENABLED` (default off, declared dark in render.yaml
+  alongside `SECURELOGIC_MATCHER_ALERTS_ENABLED` — operator enablement after a staging
+  check). Flag-off = zero-DB no-op, cron registered but inert.
 
 **Notification-quality contract (the goal's four questions).** Why am I seeing this: you own
-these items and they went overdue yesterday. What should I do: open each (deep link). How
+these items and they recently went overdue. What should I do: open each (deep link). How
 urgent: severity shown per item; the color band says SLA. What if I ignore it: "unaddressed
 breaches age into the SLA queue and count against posture" — stated in the email.
 
