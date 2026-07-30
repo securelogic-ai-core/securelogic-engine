@@ -36,9 +36,10 @@ router.get(
         daily_digest: boolean;
         weekly_summary: boolean;
         assignment_immediate: boolean;
+        sla_breach_daily: boolean;
       }>(
         `SELECT critical_finding_immediate, high_finding_immediate, daily_digest, weekly_summary,
-                assignment_immediate
+                assignment_immediate, sla_breach_daily
          FROM user_alert_preferences
          WHERE user_id = $1 AND organization_id = $2`,
         [userId, organizationId]
@@ -52,6 +53,7 @@ router.get(
             daily_digest: true,
             weekly_summary: true,
             assignment_immediate: true,
+            sla_breach_daily: true,
           },
         });
         return;
@@ -76,6 +78,7 @@ const BOOLEAN_FIELDS = new Set([
   "daily_digest",
   "weekly_summary",
   "assignment_immediate",
+  "sla_breach_daily",
 ]);
 
 router.patch(
@@ -132,9 +135,10 @@ router.patch(
         daily_digest: boolean;
         weekly_summary: boolean;
         assignment_immediate: boolean;
+        sla_breach_daily: boolean;
       }>(
         `SELECT critical_finding_immediate, high_finding_immediate, daily_digest, weekly_summary,
-                assignment_immediate
+                assignment_immediate, sla_breach_daily
          FROM user_alert_preferences WHERE user_id = $1 AND organization_id = $2`,
         [userId, organizationId]
       );

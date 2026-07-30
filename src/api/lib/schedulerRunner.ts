@@ -47,6 +47,7 @@ import { runDailyDigest } from "./digestScheduler.js";
 import { runWeeklySummary } from "./summaryScheduler.js";
 import { runAuthAnomalyScan } from "./authAnomaly.js";
 import { runDailyPostureSnapshots } from "./postureSnapshotScheduler.js";
+import { runDailySlaBreachSweep } from "./slaBreachScheduler.js";
 
 /** True while a scheduler run is actively in progress. Prevents overlapping runs. */
 let isRunning = false;
@@ -161,6 +162,26 @@ export function startScheduler(): void {
   logger.info(
     { event: "scheduler_registered", schedule: "0 8 * * * (UTC)", description: "Daily digest 8:00 AM UTC" },
     "Daily digest scheduler registered"
+  );
+
+  // Daily SLA-breach sweep — 8:15 AM UTC (EG2 slice 11): one grouped email
+  // per owner for work that BECAME overdue yesterday. Self-gating (dark
+  // behind SECURELOGIC_SLA_ALERTS_ENABLED → zero-DB no-op while off).
+  schedule(
+    "15 8 * * *",
+    async () => {
+      try {
+        await runDailySlaBreachSweep();
+      } catch (err) {
+        logger.error({ event: "sla_breach_cron_error", err }, "SLA-breach sweep cron threw an unexpected error");
+      }
+    },
+    { timezone: "UTC" }
+  );
+
+  logger.info(
+    { event: "scheduler_registered", schedule: "15 8 * * * (UTC)", description: "Daily SLA-breach sweep 8:15 AM UTC" },
+    "SLA-breach sweep scheduler registered"
   );
 
   // Weekly posture summary — 9:00 AM UTC every Monday

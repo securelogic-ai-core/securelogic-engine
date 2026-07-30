@@ -556,3 +556,47 @@ slice 8's route). App: `lib/briefing/contracts.ts` + `registry.ts` + `layout.ts`
 `dashboard/page.tsx` (conditional fetch), `TheBriefing.tsx` (render case),
 `briefing.render.test.tsx` (+4), registry/layout pins updated with rationale; briefing
 manifest regenerated.
+
+---
+
+## Slice 11 — SLA-breach notifications: overdue work announces itself
+
+**Status:** implemented, tests green (engine 414 files / 6,790 incl. 6 new sweep tests;
+typecheck clean both surfaces).
+
+**Gate answers.** Problem that disappears: findings and actions carry due dates, the
+workspace shows an SLA Breached bucket, cards say "Overdue by N days" — but a breach itself
+notified NO ONE, in any environment. Work went overdue silently until someone opened a queue.
+Workflow easier: SLA enforcement stops depending on queue-checking vigilance. Decision
+faster: the owner knows the morning after, not the week after. Demo: completes the
+notification story started in slice 7. Noticed: the first morning an item breaches.
+
+**Before → after.**
+- Before: breach → silence.
+- After: a daily 8:15 UTC sweep sends **one grouped email per owner** listing the findings
+  and actions that **became overdue yesterday** (standing breaches were announced once and
+  live in the SLA queue — never re-spammed), each item deep-linked (actions land on their
+  parent finding), with an overflow cap into the SLA-queue link. Ledger-deduped per
+  (user, item, due-date) — a due-date extension that later re-breaches re-notifies; a repeat
+  sweep never does. Unowned overdue work is deliberately excluded (it belongs to the Needs
+  Assignment queue, not email). Per-user opt-out `sla_breach_daily` (default ON) on
+  /account/alerts; send-failure leaves the ledger unstamped for tomorrow's retry.
+- Dark behind `SECURELOGIC_SLA_ALERTS_ENABLED` (default off, undeclared in render.yaml —
+  operator enablement after a staging check, the matcher-alerts pattern). Flag-off = zero-DB
+  no-op, cron registered but inert.
+
+**Notification-quality contract (the goal's four questions).** Why am I seeing this: you own
+these items and they went overdue yesterday. What should I do: open each (deep link). How
+urgent: severity shown per item; the color band says SLA. What if I ignore it: "unaddressed
+breaches age into the SLA queue and count against posture" — stated in the email.
+
+**Competitive comparison.** Now better: became-overdue semantics + per-item ledger dedupe is
+lower-noise than ServiceNow's default repeat reminders. Still stronger elsewhere: ServiceNow
+escalation CHAINS (notify the manager after N days) and per-record watchers; no in-app
+notification center yet. Next: approval-pending nudges ride the risk-acceptance notifier
+when that flag lights up; escalation tiers are a future org-policy decision.
+
+**Files.** `db/migrations/20260914_sla_breach_alert_preference.sql`,
+`src/api/lib/slaBreachScheduler.ts` (new), `schedulerRunner.ts` (8:15 registration),
+`routes/alertPreferences.ts`, app `lib/api.ts` + `account/alerts/page.tsx`,
+`__tests__/slaBreachScheduler.test.ts` (new, 6).

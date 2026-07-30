@@ -3820,6 +3820,8 @@ export type AlertPreferences = {
   weekly_summary: boolean;
   /** "Assigned to you" emails (EG2 Tier 2 slice 7). Optional: older engines omit it. */
   assignment_immediate?: boolean;
+  /** Daily "work you own went overdue" email (EG2 Tier 2 slice 11). */
+  sla_breach_daily?: boolean;
 };
 
 export async function getAlertPreferences(apiKey: string): Promise<AlertPreferences | null> {

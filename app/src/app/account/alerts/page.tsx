@@ -15,6 +15,11 @@ const ALERT_FIELDS: Array<{
     description: "Email immediately when a finding or remediation action is assigned to you.",
   },
   {
+    field: "sla_breach_daily",
+    label: "SLA breach — daily",
+    description: "A grouped morning email when findings or actions you own went overdue the previous day.",
+  },
+  {
     field: "critical_finding_immediate",
     label: "Critical finding — immediate",
     description: "Email immediately when a Critical severity finding is created.",
@@ -49,6 +54,7 @@ export default async function AlertPreferencesPage() {
     daily_digest: true,
     weekly_summary: true,
     assignment_immediate: true,
+    sla_breach_daily: true,
   };
 
   const effective: AlertPreferences = {
@@ -57,6 +63,7 @@ export default async function AlertPreferencesPage() {
     daily_digest: prefs?.daily_digest ?? defaults.daily_digest,
     weekly_summary: prefs?.weekly_summary ?? defaults.weekly_summary,
     assignment_immediate: prefs?.assignment_immediate ?? defaults.assignment_immediate,
+    sla_breach_daily: prefs?.sla_breach_daily ?? defaults.sla_breach_daily,
   };
 
   return (
