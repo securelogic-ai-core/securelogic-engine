@@ -285,3 +285,79 @@ audit item, M). Per-item email deep links need stable item identity in `EmailBri
 App: `lib/api.ts` (item type), `components/BriefItemPlatformContext.tsx` (new),
 `components/IntelligenceBriefSignalCard.tsx`, `briefs/[id]/signal/item/[index]/page.tsx`,
 `components/__tests__/briefItemPlatformContext.test.tsx` (new, 8).
+
+---
+
+# Tier 1 Closeout — Scores, Matrix, Competitive Delta (2026-07-30)
+
+Six slices, six commits (`70cb47d6..35021a88`), 40 new/extended tests. Full suites green:
+engine 410 files / 6,769 tests; app 96 files / 1,222 tests; isolation lane green; typecheck +
+lint clean. Branch `feat/eg2-trust-wiring` — NOT merged; independent review required before any
+merge, per operator ruling. One deliberate behavior change flagged for that review: Low-severity
+vendor assessments no longer mint a summary finding (slice 3).
+
+## Product Experience Score (baseline 2026-07-30 audit → after Tier 1, flag-on experience)
+
+| Dimension | Before | After | Why |
+|---|---|---|---|
+| User Experience | 48 (prod) / 65 (staging) | 52 / 71 | Dead ends eliminated on 6 daily-driver surfaces; honest zero states; saved views reachable |
+| Enterprise Delight | 40 | 50 | Personalization visible ("affects YOUR vendor"), accept outcomes, live-demonstrable AI supply chain |
+| Executive Experience | 55 | 57 | Brief archive browsable; email routes into the product (exec PDF/trends unchanged — Tier 2) |
+| Enterprise Capability | 45 / 62 | 47 / 65 | Alerting seam completed, dependency write path, score reactivity |
+| Trust (qualitative) | weakest area found | materially improved | Fresh-org truthfulness, scores that react to remediation, no clean-review penalty |
+
+Scores stay honest: nothing here crosses 75 — the flag gap, notifications, and collaboration
+still dominate the distance to "stands beside the best."
+
+## Capability movements (matrix rows that changed)
+
+| Capability | Before | After |
+|---|---|---|
+| Proactive alerting | Basic (paths silent) | Basic+ → machinery Competitive (one flag from live on all 3 matcher paths) |
+| Continuous vendor monitoring | Basic (stale scores, manual recalc) | Basic+ (scores react to every lifecycle path) |
+| Nth-party / concentration risk | Basic, UI nearly Missing | Basic+ (write path exists; graph reachable from vendor) |
+| Findings ops (saved views) | shipped-to-no-one | Competitive-supporting (queue-native saved views) |
+| Signal-to-context linkage UX | Basic (computed, invisible) | Competitive (rendered, linked, in email) |
+| Brief archive continuity | Missing (wrong artifact) | Competitive |
+| Onboarding | Basic (one-shot, irrecoverable) | Basic+ (re-enterable, truthful states) |
+
+Unchanged (Tier 2+ targets): Approvals (still flag-dark in prod), Notifications (assignment/SLA
+still unwired), Collaboration (Missing), Bulk ops, Evidence UX, Crosswalks, Exec trends/PDF.
+
+## Competitive delta
+
+- **vs Archer / ServiceNow GRC:** closed the first-hour credibility gaps (dead ends, untruthful
+  zeros, unsaveable views). Still behind on notifications/escalation, collaboration, ITSM sync,
+  configurable workflow. Ahead on: metric honesty, external-intel→inventory matching (they have
+  none), two-axis lifecycle design (staging).
+- **vs OneTrust / AuditBoard:** unchanged on crosswalks/content depth (their moat). Ahead on
+  intelligence connectivity, now visibly so.
+- **vs ProcessUnity / Prevalent:** removed the two POC-killing score behaviors; dependency
+  graph + SOC extraction remain differentiators; questionnaire campaigns/portal remain the
+  replacement blocker.
+
+## Highest-value remaining UX improvements before private beta
+
+1. **Operator: promote the flag train** (workspace/decision/acceptance/queue-controls/Briefing
+   + declare the orphan flags, incl. `SECURELOGIC_MATCHER_ALERTS_ENABLED` staging volume check).
+   Everything above is invisible-in-prod until this. Zero build.
+2. **Workflow notifications (M):** assignment + SLA-breach + approval-pending emails on the
+   existing sender/preference plumbing. "My Work is a queue nobody knows to check."
+3. **Evidence UX completion (M):** file inputs on control/obligation/AI evidence forms (engine
+   ready), an /evidence page on the existing summary endpoint, `valid_until` staleness.
+4. **Deterministic vendor intelligence (M):** replace the per-pageload LLM section with the
+   accepted `vendor_signal_links` (dates, severity, drill-through), demote the LLM to assess.
+5. **QoQ posture trends + exec PDF narrative/branding (M):** lift the 180-day cap, chart the
+   series the API already returns, one-page narrative + tenant logo on the board PDF.
+6. **Auditor trail access (S–M):** full history in the Decision Workspace, a read-only
+   auditor path to /audit-log, `promoted_risk_id` provenance rendering.
+
+## Recommended next workstream
+
+**Tier 2 "Operational Presence": notifications + evidence UX + deterministic vendor
+intelligence (items 2–4).** Rationale: after trust and wiring, the loudest walkthrough theme
+was *silence* — work assigned that no one hears about, evidence engines without doors, and
+intelligence claims backed by nondeterministic prose. All three reuse existing engine
+machinery (senders, upload lane, link tables), none needs a schema or ADR change, and each is
+independently demonstrable to a Fortune 500 CISO. The flag-train promotion (item 1) is
+operator-owned and can run in parallel.
