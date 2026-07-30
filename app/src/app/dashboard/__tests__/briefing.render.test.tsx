@@ -561,3 +561,32 @@ describe("flag ON — Since Your Last Visit (EG2 slice 10, Operational Presence)
     expect(screen.queryByText(/Quiet since your last visit/)).toBeNull();
   });
 });
+
+describe("flag ON — posture module 30-day delta (EG2 slice 12)", () => {
+  beforeEach(() => {
+    vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
+  });
+
+  it("renders the delta when an honest 30-day baseline exists", async () => {
+    api.getPostureHistory.mockResolvedValue({
+      snapshots: [
+        aPostureSnapshot({ id: "s1", snapshot_date: "2026-06-30", overall_score: 60 }),
+        aPostureSnapshot({ id: "s2", snapshot_date: "2026-07-30", overall_score: 69 }),
+      ],
+    });
+
+    const { container } = await renderDashboard();
+
+    const mod = container.querySelector('[data-briefing-module="posture_score"]') as HTMLElement;
+    expect(within(mod).getByText(/\+9 \(\+15%\) · 30d/)).toBeInTheDocument();
+  });
+
+  it("insufficient history renders NO delta — never a fabricated 0%", async () => {
+    api.getPostureHistory.mockResolvedValue({ snapshots: [aPostureSnapshot()] });
+
+    const { container } = await renderDashboard();
+
+    const mod = container.querySelector('[data-briefing-module="posture_score"]') as HTMLElement;
+    expect(within(mod).queryByText(/30d/)).toBeNull();
+  });
+});

@@ -600,3 +600,50 @@ when that flag lights up; escalation tiers are a future org-policy decision.
 `src/api/lib/slaBreachScheduler.ts` (new), `schedulerRunner.ts` (8:15 registration),
 `routes/alertPreferences.ts`, app `lib/api.ts` + `account/alerts/page.tsx`,
 `__tests__/slaBreachScheduler.test.ts` (new, 6).
+
+---
+
+## Slice 12 — Executive Awareness: "are we improving?" answered with honest deltas
+
+**Status:** implemented, tests green (app 97 files / 1,234 incl. 8 new; engine posture suites
+63/63; typecheck clean).
+
+**Gate answers.** Problem that disappears: "we improved posture 15% this quarter" was not
+producible anywhere — the history API hard-capped at 180 days, the trend chart stopped at 90,
+and no surface computed a delta. Workflow easier: board prep stops being a spreadsheet
+exercise. Decision faster: improving-vs-falling-behind is on the score card itself. Demo:
+the executive moment. Noticed: by every leader who opens /posture or the Briefing.
+
+**Before → after.**
+- Engine: history cap 180 → 400 days (a year + the comparison quarter; still one bounded
+  row per org per day).
+- /posture: fetches 365 days; the Overall Posture Score card now carries **30d and 90d
+  deltas** ("30d +9 (+15%)", green/red by direction); the trend chart gains **180d and 365d
+  windows** with tick-thinning (~6 labels; per-snapshot tooltips retained) so the long
+  windows are readable.
+- The Briefing's posture module shows the **30-day delta chip** beside the score — "are we
+  improving?" on the opening screen.
+- All deltas flow through one shared, unit-tested helper (`postureTrend.ts`) with an
+  **honest-baseline rule**: the baseline must be a snapshot within ±25% of the window edge —
+  20 days of history can never masquerade as a 90-day story; insufficient history renders
+  nothing, never a fabricated 0%. /posture and the Briefing read the same function and can
+  never disagree.
+
+**Deliberately deferred (documented):** multi-series charting of the finding/action counts
+the history API returns (real charting work — next executive slice); quarter-labeled framing
+("Q2 → Q3") pending a fiscal-calendar decision; executive PDF narrative (needs the
+`securelogic-executive-report-writer` standard applied — its own slice).
+
+**Customer impact.** "Show leadership our quarter's progress": spreadsheet reconstruction →
+a screenshot of /posture. Executive question-to-answer latency: minutes → on-screen.
+
+**Competitive comparison.** Now better: honest-baseline deltas (most GRC dashboards happily
+draw a percent against whatever data exists); mission-control opening + trend direction in
+one glance. Still stronger elsewhere: AuditBoard/ServiceNow board-pack narratives and
+per-dimension trend drill-downs; our PDF still has no prose. Next: the PDF narrative slice.
+
+**Files.** Engine: `routes/posture.ts` (cap). App: `lib/postureTrend.ts` (new, shared),
+`posture/page.tsx` (365d fetch + delta stats), `dashboard/PostureTrendChart.tsx`
+(180/365 + tick-thinning), `lib/briefing/composeBriefing.ts` + `TheBriefing.tsx` +
+`dashboard/page.tsx` (delta chip), tests: `postureTrend.test.ts` (new, 6),
+`briefing.render.test.tsx` (+2).

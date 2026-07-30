@@ -16,6 +16,7 @@
  */
 
 import Link from "next/link";
+import { formatPostureDelta } from "@/lib/postureTrend";
 import type { IntelligenceBriefDetailResponse, NewsletterIssue, Finding } from "@/lib/api";
 import type { BriefingModuleDef, BriefingScope } from "@/lib/briefing/contracts";
 import type { BriefingViewModel } from "@/lib/briefing/composeBriefing";
@@ -573,6 +574,16 @@ function renderModule(
                   {m.severity}
                 </span>
               ) : null}
+              {/* "Are we improving?" on the opening screen (EG2 slice 12) —
+                  rendered only when an honest 30-day baseline exists. */}
+              {m.delta30 && (
+                <span
+                  className="text-xs font-semibold"
+                  style={{ color: m.delta30.points >= 0 ? "#86efac" : "#fca5a5" }}
+                >
+                  {formatPostureDelta(m.delta30)} · 30d
+                </span>
+              )}
               {m.asOf ? (
                 <span className="text-xs" style={{ color: "#64748b" }}>
                   as of {m.asOf}

@@ -274,8 +274,12 @@ router.get(
       }
 
       const rawDays = parseInt(String(req.query.days ?? "90"), 10);
+      // Cap raised 180 → 400 (EG2 slice 12): the 180-day ceiling made
+      // quarter-over-quarter and year-over-year posture claims unanswerable
+      // from the UI. 400 covers a year plus the comparison quarter; the
+      // series stays one bounded row per org per day.
       const days = Number.isFinite(rawDays) && rawDays > 0
-        ? Math.min(rawDays, 180)
+        ? Math.min(rawDays, 400)
         : 90;
 
       const result = await pg.query(

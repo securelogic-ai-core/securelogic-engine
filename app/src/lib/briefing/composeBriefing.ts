@@ -22,6 +22,7 @@ import type {
   FindingsSummary,
 } from "@/lib/api";
 import { activeActionsCount } from "@/lib/actionsMetrics";
+import { postureDelta, type PostureDelta, type PostureSnapshotLike } from "@/lib/postureTrend";
 
 export type BriefingInputs = {
   summary: DashboardSummary | null;
@@ -33,6 +34,8 @@ export type BriefingInputs = {
   changes?: BriefingChangesResponse | null;
   /** ISO timestamp of the session user's previous login, when known. */
   previousLoginAt?: string | null;
+  /** Posture snapshot history — feeds the 30-day delta on the score module. */
+  postureSnapshots?: readonly PostureSnapshotLike[];
 };
 
 export type MyWorkModel = {
@@ -62,6 +65,8 @@ export type PostureScoreModel = {
   score: number | null;
   severity: string | null;
   asOf: string | null;
+  /** 30-day delta; null = insufficient history (rendered as nothing, never 0%). */
+  delta30: PostureDelta | null;
 };
 
 export type WhatsChangedModel = {
@@ -184,6 +189,7 @@ export function composeBriefing(inputs: BriefingInputs): BriefingViewModel {
       score: summary?.posture?.overall_score ?? null,
       severity: summary?.posture?.overall_severity ?? null,
       asOf: summary?.posture?.snapshot_date ?? null,
+      delta30: postureDelta(inputs.postureSnapshots ?? [], 30),
     },
     whatsChanged,
   };

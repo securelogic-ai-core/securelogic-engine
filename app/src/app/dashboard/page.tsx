@@ -176,6 +176,7 @@ export default async function DashboardPage({
     actionsSummary,
     changes: briefingChanges,
     previousLoginAt,
+    postureSnapshots: postureHistory?.snapshots ?? [],
   });
   // Viewers cannot persist a layout (platform-wide viewer-mutation block) —
   // the customize surface is withheld rather than offering a save that 403s.
