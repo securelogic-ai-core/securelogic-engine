@@ -625,3 +625,27 @@ describe("renderBriefEmail — app base URL injection", () => {
     expect(html).not.toContain("securelogicai.com//signup");
   });
 });
+
+describe("renderBriefEmail — Open in SecureLogic link (EG2 slice 6)", () => {
+  it("renders the whole-brief deep link when brief_id is present, against the caller's base URL", () => {
+    const html = renderBriefEmail(
+      { ...fullData, brief_id: "b-123", app_base_url: "https://app.staging.example" },
+      "Acme"
+    );
+    expect(html).toContain('href="https://app.staging.example/briefs/b-123"');
+    expect(html).toContain("Open this brief in SecureLogic");
+  });
+
+  it("omits the section entirely when brief_id is absent — older callers keep today's output", () => {
+    const html = renderBriefEmail(fullData, "Acme");
+    expect(html).not.toContain("Open this brief in SecureLogic");
+  });
+
+  it("the plain-text rendering carries the same link", () => {
+    const text = renderBriefEmailText(
+      { ...fullData, brief_id: "b-123", app_base_url: "https://app.staging.example" },
+      "Acme"
+    );
+    expect(text).toContain("Open this brief in SecureLogic: https://app.staging.example/briefs/b-123");
+  });
+});

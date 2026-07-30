@@ -610,6 +610,9 @@ export async function sendBrief(
       // Env-driven app base URL so logo + CTA links match the sending environment
       // (staging brief → staging app) instead of always pointing at production.
       app_base_url: getAppBaseUrl(),
+      // Route the reader INTO the product: the renderer emits an
+      // "Open this brief in SecureLogic" button when brief_id is present.
+      brief_id: briefId,
       executive_headline: executiveHeadline,
       executive_summary: executiveSummary
     };

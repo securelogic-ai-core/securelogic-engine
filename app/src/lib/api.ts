@@ -238,6 +238,19 @@ export type IntelligenceBriefItem = {
   recommended_actions: string | null;
   analyst_notes: string | null;
   urgency: IntelligenceBriefUrgency | null;
+  /**
+   * Personalization (computed at generation since 20260511, returned since EG2
+   * slice 6): whether this item matched the org's own platform entities, and
+   * exactly which ones — the visible proof the Brief is connected to the
+   * tenant's context. Optional: older engine deploys omit both fields.
+   */
+  is_personalized?: boolean;
+  platform_context?: {
+    matched_vendors?: Array<{ id: string; name: string }>;
+    matched_risks?: Array<{ id: string; title: string }>;
+    matched_ai_systems?: Array<{ id: string; name: string }>;
+    matched_obligations?: Array<{ id: string; title: string }>;
+  } | null;
 };
 
 /**

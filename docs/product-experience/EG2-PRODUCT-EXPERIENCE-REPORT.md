@@ -233,3 +233,55 @@ rows are still unlinked LLM output (slice-6+ territory).
 (new), `components/UserMenu.tsx`, `getting-started/page.tsx`, tests:
 `vendorDependencyManager.test.tsx` (new, 5), `getting-started/page.render.test.tsx` (contract
 updated).
+
+---
+
+## Slice 6 — Render the personalization the engine already computes; route the email into the product
+
+**Status:** implemented, tests green (engine renderer 68/68 incl. 3 new; app briefs + component suites 34/34 incl. 8 new).
+
+**Customer problem solved.** The engine has matched every brief item against the org's own
+vendors, AI systems, open risks, and obligations at generation time since migration 20260511 —
+and never showed anyone. The customer-facing GET omitted `is_personalized`/`platform_context`,
+the web reader rendered `affected_vendor` as plain text, and the flagship brief email
+contained exactly three links: the logo, the upgrade CTA, and unsubscribe. The product's core
+claim — "intelligence connected to YOUR context" — was computed, stored, and invisible.
+
+**Before → after.**
+- Engine GET: personalization fields absent | → `is_personalized` + `platform_context`
+  returned per item (additive; older items return false/null).
+- Brief item cards: generic | → "Affects your vendor: Acme Cloud → (+2 more in your
+  inventory)" strip linking to the tenant's record.
+- Item detail: generic | → "Why this reached you — matches in your environment" callout
+  listing every matched vendor/AI system/risk/obligation as a link; the Source panel's vendor
+  name links to the matched vendor record.
+- Email: zero product links | → "Open this brief in SecureLogic →" button (HTML + plain-text),
+  environment-correct base URL, rendered only when the sender passes `brief_id` (older callers
+  byte-identical). Per-item email links deliberately deferred: the email's category grouping
+  reorders items, so index-based item URLs could mislink — noted as a follow-up requiring
+  stable item ids in email data.
+
+**Screens/workflows affected.** GET /api/intelligence-briefs/:id, brief reader cards, brief
+item detail, the weekly brief email (HTML + text).
+
+**Estimated impact.** The "does this affect us?" question — previously answered by manually
+cross-referencing vendor names against the inventory — becomes zero clicks (stated on the
+item) with a 1-click path to the affected record. Email→product re-engagement gets its first
+functioning route.
+
+**Competitive improvement.** This is the demonstrable version of the vision claim no
+incumbent makes: Archer/ServiceNow/OneTrust have no external-intelligence-to-your-inventory
+matching at all; RecordedFuture-class tools match but don't run your GRC workflow. One screen
+now shows both.
+
+**Remaining opportunities discovered.** Personalization matches only render for items
+generated after the columns ship in responses (historical items carry the data — nothing to
+backfill). The vendor "Live Intelligence" LLM section still isn't deterministic (assessment
+audit item, M). Per-item email deep links need stable item identity in `EmailBriefItem`.
+
+**Files.** Engine: `routes/intelligenceBriefs.ts` (SELECT + response),
+`lib/briefEmailRenderer.ts` (`brief_id`, Open-in-SecureLogic HTML/text),
+`lib/briefEmailSender.ts` (passes brief_id), `__tests__/briefEmailRenderer.test.ts` (+3).
+App: `lib/api.ts` (item type), `components/BriefItemPlatformContext.tsx` (new),
+`components/IntelligenceBriefSignalCard.tsx`, `briefs/[id]/signal/item/[index]/page.tsx`,
+`components/__tests__/briefItemPlatformContext.test.tsx` (new, 8).

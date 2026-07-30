@@ -71,6 +71,11 @@ export type BriefEmailData = {
    *  Optional to preserve the pure-renderer contract; the renderer falls back to
    *  the production app only when a caller omits it. */
   app_base_url?: string;
+  /** The canonical intelligence_briefs.id — when present, the email links to
+   *  the brief's web reader ({app_base_url}/briefs/{brief_id}). Before this,
+   *  the ONLY links in the entire email were the logo, the upgrade CTA and
+   *  unsubscribe: the flagship customer email led nowhere into the product. */
+  brief_id?: string;
   /** v2 — short punchy headline shown in the hero, e.g. "High-threat week." */
   executive_headline?: string | null;
   /** v2 — full executive summary paragraph shown beneath the hero */
@@ -328,6 +333,33 @@ function renderExecutiveSummary(data: BriefEmailData): string {
         </div>
         <div style="color:#374151;font-size:14px;line-height:1.7;font-family:Arial,Helvetica,sans-serif;">
           ${escHtml(data.executive_summary.trim())}
+        </div>
+      </td>
+    </tr>`.trim();
+}
+
+/**
+ * "Open in SecureLogic" — the email's route INTO the product. Rendered only
+ * when the caller supplies brief_id (older callers keep today's output,
+ * byte-identical). One robust whole-brief link rather than per-item links:
+ * the email's category grouping reorders items, so index-based item URLs
+ * could point at the wrong record.
+ */
+function renderOpenInPlatform(data: BriefEmailData): string {
+  if (!data.brief_id?.trim()) return "";
+  const href = `${resolveAppBaseUrl(data)}/briefs/${encodeURIComponent(data.brief_id.trim())}`;
+
+  return `
+    <tr>
+      <td style="padding:20px 40px;background-color:#ffffff;border-bottom:1px solid #e2e8f0;" align="center">
+        <a href="${href}"
+           style="display:inline-block;background-color:#0d9488;color:#ffffff;font-size:13px;
+                  font-weight:700;font-family:Arial,Helvetica,sans-serif;text-decoration:none;
+                  border-radius:6px;padding:11px 24px;">
+          Open this brief in SecureLogic &rarr;
+        </a>
+        <div style="margin-top:8px;font-size:11px;color:#94a3b8;font-family:Arial,Helvetica,sans-serif;">
+          Full analysis, your matched vendors and systems, and one-click promotion to a tracked finding.
         </div>
       </td>
     </tr>`.trim();
@@ -675,6 +707,13 @@ export function renderBriefEmailText(data: BriefEmailData, orgName: string): str
     lines.push("EXECUTIVE SUMMARY", data.executive_summary.trim(), "");
   }
 
+  if (data.brief_id?.trim()) {
+    lines.push(
+      `Open this brief in SecureLogic: ${resolveAppBaseUrl(data)}/briefs/${encodeURIComponent(data.brief_id.trim())}`,
+      ""
+    );
+  }
+
   const populated = data.categories.filter((g) => g.items.length > 0);
 
   if (populated.length === 0) {
@@ -750,6 +789,7 @@ export function renderBriefEmailText(data: BriefEmailData, orgName: string): str
 export function renderBriefEmail(data: BriefEmailData, orgName: string): string {
   const masthead = renderMasthead(data);
   const executiveSummary = renderExecutiveSummary(data);
+  const openInPlatform = renderOpenInPlatform(data);
   const upgradeBanner = renderUpgradeBanner(data);
   const cycleSummary = renderCycleSummary(data);
   const footer = renderFooter(orgName, resolveAppBaseUrl(data));
@@ -789,6 +829,7 @@ export function renderBriefEmail(data: BriefEmailData, orgName: string): string 
                style="max-width:640px;width:100%;background-color:#ffffff;border-radius:8px;">
           ${masthead}
           ${executiveSummary}
+          ${openInPlatform}
           ${categoryRows}
           ${noContentRow}
           ${upgradeBanner}

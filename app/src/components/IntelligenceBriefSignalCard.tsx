@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { IntelligenceBriefItem, IntelligenceBriefUrgency } from "@/lib/api";
+import { BriefItemContextStrip } from "@/components/BriefItemPlatformContext";
 
 interface IntelligenceBriefSignalCardProps {
   briefId: string;
@@ -134,6 +135,10 @@ export function IntelligenceBriefSignalCard({
             {severityLabel(item.relevance)}
           </span>
         </div>
+
+        {/* Personalization: this item matched the org's own records — say so,
+            and link straight to them. */}
+        <BriefItemContextStrip item={item} />
 
         {action && (
           <div className="mb-4 bg-slate-700/40 rounded-lg p-4 border border-slate-700/50">
