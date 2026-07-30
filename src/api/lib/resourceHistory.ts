@@ -19,10 +19,6 @@
  * Query execution is strictly sequential (events, then count): under the
  * asTenant wrap both queries share the single per-request tenant client,
  * which cannot run concurrent queries (A04-G1 γ.1).
- *
- * risks.ts still carries its original inline copy of this pattern — its
- * SQL is pinned by risksHistoryRoute.test.ts. Porting it here is a
- * recorded follow-up (csvExport-style two-step migration).
  */
 
 // Type-only: does not execute postgres.ts at load.
@@ -174,6 +170,18 @@ export async function fetchResourceHistory(
    writeAuditEvent calls in the corresponding route files;
    table/FK columns verified against db/migrations.
    ========================================================= */
+
+// The original RR-3 shape this module generalizes. Link satellites join on
+// the risk-side FK; the control/obligation specs reference the same link
+// tables from their side of the relationship.
+export const RISK_HISTORY_SPEC: ResourceHistorySpec = {
+  rootType: "risk",
+  satellites: [
+    { resourceType: "risk_treatment", table: "risk_treatments", fkColumn: "risk_id" },
+    { resourceType: "risk_control_link", table: "risk_control_links", fkColumn: "risk_id" },
+    { resourceType: "risk_obligation_link", table: "risk_obligation_links", fkColumn: "risk_id" },
+  ],
+};
 
 export const VENDOR_HISTORY_SPEC: ResourceHistorySpec = {
   rootType: "vendor",
