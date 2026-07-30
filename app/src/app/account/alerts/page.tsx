@@ -10,6 +10,11 @@ const ALERT_FIELDS: Array<{
   description: string;
 }> = [
   {
+    field: "assignment_immediate",
+    label: "Assigned to you — immediate",
+    description: "Email immediately when a finding or remediation action is assigned to you.",
+  },
+  {
     field: "critical_finding_immediate",
     label: "Critical finding — immediate",
     description: "Email immediately when a Critical severity finding is created.",
@@ -43,6 +48,7 @@ export default async function AlertPreferencesPage() {
     high_finding_immediate: true,
     daily_digest: true,
     weekly_summary: true,
+    assignment_immediate: true,
   };
 
   const effective: AlertPreferences = {
@@ -50,6 +56,7 @@ export default async function AlertPreferencesPage() {
     high_finding_immediate: prefs?.high_finding_immediate ?? defaults.high_finding_immediate,
     daily_digest: prefs?.daily_digest ?? defaults.daily_digest,
     weekly_summary: prefs?.weekly_summary ?? defaults.weekly_summary,
+    assignment_immediate: prefs?.assignment_immediate ?? defaults.assignment_immediate,
   };
 
   return (
@@ -78,7 +85,7 @@ export default async function AlertPreferencesPage() {
               field={item.field}
               label={item.label}
               description={item.description}
-              initialValue={effective[item.field]}
+              initialValue={effective[item.field] ?? true}
             />
           ))}
         </div>

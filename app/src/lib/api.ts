@@ -3703,6 +3703,8 @@ export type AlertPreferences = {
   high_finding_immediate: boolean;
   daily_digest: boolean;
   weekly_summary: boolean;
+  /** "Assigned to you" emails (EG2 Tier 2 slice 7). Optional: older engines omit it. */
+  assignment_immediate?: boolean;
 };
 
 export async function getAlertPreferences(apiKey: string): Promise<AlertPreferences | null> {

@@ -361,3 +361,41 @@ intelligence claims backed by nondeterministic prose. All three reuse existing e
 machinery (senders, upload lane, link tables), none needs a schema or ADR change, and each is
 independently demonstrable to a Fortune 500 CISO. The flag-train promotion (item 1) is
 operator-owned and can run in parallel.
+
+---
+
+# Tier 2 — Operational Confidence (authorized 2026-07-30)
+
+## Slice 7 — Assignment notifications: work finds its owner
+
+**Status:** implemented, tests green (6 new trigger tests; actions/findings/account suites green; typecheck clean).
+
+**Gate answers.** Customer problem that disappears: assignment is a silent row update — "My
+Work is a queue nobody knows to check" (the audit's loudest notification finding). Workflow
+improved: triage→assign→remediate loses its dead air. Measurable friction: owner discovery
+drops from "whenever they next visit /findings" to one email with one click. Live-demo: yes —
+assign during a demo, the email arrives with a deep link. Noticed without being told: yes.
+
+**What was built.** Additive migration `20260913` (`assignment_immediate` preference, default
+ON like every other alert). New `assignmentAlertTrigger.ts` — single-recipient, post-commit,
+fire-and-forget, deep-linked ("Open your work →" lands on the finding, or the parent finding
+for a remediation action). Never noisy by construction: self-assignment never notifies, the
+existing `alert_sends` ledger dedupes per (user, record) so re-saves and A→B→A reassignment
+cannot re-email, suppression honored, per-user opt-out. Wired at all four assignment sites:
+finding create/PATCH, action create/PATCH. Preference exposed end-to-end (engine route +
+/account/alerts toggle).
+
+**Deliberately deferred:** SLA-breach digests (belongs with the existing daily-digest scheduler
+as its own slice) and in-app notification surface (a bell needs a read-model design — not a
+bolt-on).
+
+**Competitive review.** Now better: notification *quality* discipline (single recipient,
+ledger-deduped, self-assignment-silent) is tighter than ServiceNow's default flood. Still
+stronger elsewhere: Archer/ServiceNow have escalation chains, digest bundling, and in-app
+inboxes; AuditBoard has watcher subscriptions. Next: SLA-breach + approval-pending on the same
+plumbing, then an in-app surface.
+
+**Files.** `db/migrations/20260913_assignment_alert_preference.sql`,
+`src/api/lib/assignmentAlertTrigger.ts` (new), `routes/findings.ts` (2 sites),
+`routes/actions.ts` (2 sites), `routes/alertPreferences.ts`, app `lib/api.ts` +
+`account/alerts/page.tsx`, `__tests__/assignmentAlertTrigger.test.ts` (new, 6).
