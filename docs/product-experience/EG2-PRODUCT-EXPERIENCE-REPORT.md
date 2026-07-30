@@ -184,3 +184,52 @@ The accept outcome link could additionally point at the auto-created finding whe
 `findings/page.tsx`, `lib/api.ts` (`getIntelligenceBriefs`), `briefs/page.tsx`,
 `hooks/useTimedNotice.ts`, `components/queue/Notice.tsx`, `components/queue/SuggestionList.tsx`,
 tests: `savedViews.test.ts` (+3), `brief.render.test.tsx` (+2), `notice.render.test.tsx` (new).
+
+---
+
+## Slice 5 — Dead-end elimination: vendor findings, graph reach, dependency writes, onboarding re-entry
+
+**Status:** implemented, tests green (app ai-systems 39/39, vendors + getting-started suites green).
+
+**Customer problems solved (four verified dead ends).**
+1. Vendor-page finding cards were static divs — the only findings in the app you could see but
+   not open (the AI-system page's cards always linked).
+2. The enterprise graph could answer "what depends on this vendor" but was reachable only from
+   the Assets row — never from the vendor page a TPRM analyst lives on.
+3. **AI-system vendor dependencies had no write UI anywhere.** The vendor page said
+   "Dependencies are declared on an AI system's detail page" while that page only rendered
+   them; the engine POST/DELETE existed unused. The entire concentration-risk chain (reverse
+   dependency card, graph edge, future matcher cascade) depended on data customers could not
+   create.
+4. "Skip setup" permanently redirected users away from /getting-started, and the user-menu
+   entry `SECONDARY_NAV_ITEMS` declared was never rendered — onboarding was one-shot and
+   irrecoverable.
+
+**Before → after.**
+- Vendor findings: read-only cards | → cards link to `/findings/{id}` (the finding's workflow).
+- Graph: unreachable from /vendors/[id] | → sidebar "View relationships in the enterprise
+  graph →" (same ECL flag gate as the asset page's link).
+- Dependencies: API-only | → add (vendor picker + canonical 9-role vocabulary) and remove on
+  the AI-system card, viewer-role-aware, engine-validated, revalidating both sides of the edge.
+- Onboarding: dismissed = gone forever | → "Getting Started" in the user menu; the checklist
+  renders live completion for finished orgs (a record, not a nag).
+
+**Screens affected.** /vendors/[id], /ai-systems/[id], user menu (all pages), /getting-started.
+
+**Estimated reduction in clicks/confusion.** Vendor finding → its workflow: impossible from
+that card → 1 click. Declaring a dependency: impossible → 3 interactions. Onboarding re-entry:
+impossible → 2 clicks.
+
+**Competitive improvement.** Kills the "click it and nothing happens" moments an evaluator
+remembers; the dependency write path makes the AI-supply-chain story demonstrable live rather
+than by API scripting — a claim none of Archer/ServiceNow/OneTrust can demo natively.
+
+**Remaining opportunities discovered.** The dependency form lists the first 100 active vendors
+(no typeahead — fine at demo scale, needs search past ~100). Vendor-page "Live Intelligence"
+rows are still unlinked LLM output (slice-6+ territory).
+
+**Files.** `vendors/[id]/page.tsx`, `ai-systems/[id]/page.tsx`,
+`ai-systems/[id]/dependencyActions.ts` (new), `ai-systems/[id]/VendorDependencyManager.tsx`
+(new), `components/UserMenu.tsx`, `getting-started/page.tsx`, tests:
+`vendorDependencyManager.test.tsx` (new, 5), `getting-started/page.render.test.tsx` (contract
+updated).

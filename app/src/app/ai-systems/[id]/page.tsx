@@ -9,6 +9,7 @@ import {
   getAiSystemFindings,
   getAiSystemSignals,
   getAiSystemVendorDependencies,
+  getVendors,
   type AiSystem,
   type GovernanceReview,
   type AiGovernanceAssessment,
@@ -19,6 +20,10 @@ import {
 import { FindingCard } from "@/components/FindingCard";
 import { HistorySection } from "@/components/HistorySection";
 import { AssessmentStatusCard } from "./AssessmentStatusCard";
+import {
+  AddVendorDependencyForm,
+  RemoveVendorDependencyButton,
+} from "./VendorDependencyManager";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -563,7 +568,17 @@ const ROLE_LABELS: Record<string, string> = {
   training_data: "Training data",
 };
 
-function VendorDependenciesCard({ dependencies }: { dependencies: AiVendorDependency[] }) {
+function VendorDependenciesCard({
+  dependencies,
+  aiSystemId,
+  vendors,
+}: {
+  dependencies: AiVendorDependency[];
+  aiSystemId: string;
+  /** Empty = the session may not manage (viewer) or no vendors exist — read-only card. */
+  vendors: Array<{ id: string; name: string }>;
+}) {
+  const canManage = vendors.length > 0;
   return (
     <div className="rounded-xl border p-4" style={{ background: "rgba(255,255,255,0.02)", borderColor: "#1e2d45" }}>
       <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: "#64748b" }}>
@@ -589,10 +604,21 @@ function VendorDependenciesCard({ dependencies }: { dependencies: AiVendorDepend
                   {d.vendor_criticality}
                 </span>
               )}
+              {canManage && (
+                <RemoveVendorDependencyButton
+                  dependencyId={d.dependency_id}
+                  aiSystemId={aiSystemId}
+                  vendorId={d.vendor_id}
+                  vendorName={d.vendor_name}
+                />
+              )}
             </div>
           ))}
         </div>
       )}
+      {/* The declare path this card's copy (and the vendor page's) always
+          promised — previously the engine routes existed with no UI anywhere. */}
+      {canManage && <AddVendorDependencyForm aiSystemId={aiSystemId} vendors={vendors} />}
     </div>
   );
 }
@@ -623,7 +649,11 @@ export default async function AiSystemDetailPage({
     entitlementLevel === "team";
   if (!isPlatformUser) redirect("/dashboard");
 
-  const [system, reviewsData, assessmentsData, findingsData, linkedSignals, vendorDeps] = await Promise.all([
+  // Viewers read; analysts/admins manage dependencies (the engine enforces the
+  // viewer-mutation block authoritatively — this only decides what to render).
+  const canManageDependencies = session.userRole !== "viewer";
+
+  const [system, reviewsData, assessmentsData, findingsData, linkedSignals, vendorDeps, vendorsData] = await Promise.all([
     getAiSystem(token, id),
     getGovernanceReviewsForSystem(token, id, 20),
     getAiGovernanceAssessments(token, id, 20),
@@ -635,6 +665,8 @@ export default async function AiSystemDetailPage({
     getAiSystemFindings(token, id),
     getAiSystemSignals(token, id, 10),
     getAiSystemVendorDependencies(token, id),
+    // Vendor choices for the add-dependency form (active vendors, first 100).
+    getVendors(token),
   ]);
 
   if (!system) redirect("/ai-systems");
@@ -726,7 +758,15 @@ export default async function AiSystemDetailPage({
         {/* Right: sidebar */}
         <div className="w-full lg:w-72 flex-shrink-0 space-y-4">
           <SystemDetailsCard system={system} />
-          <VendorDependenciesCard dependencies={vendorDeps} />
+          <VendorDependenciesCard
+            dependencies={vendorDeps}
+            aiSystemId={id}
+            vendors={
+              canManageDependencies
+                ? (vendorsData?.vendors ?? []).map((v) => ({ id: v.id, name: v.name }))
+                : []
+            }
+          />
           <GovernanceSummaryCard
             activeFindings={activeFindings}
             count={activeFindingCount}

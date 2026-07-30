@@ -385,12 +385,17 @@ describe("/getting-started — progress and resume", () => {
     expect(hrefOf(container, "Open Asset Registry →")).toBeNull();
   });
 
-  it("an already-onboarded org is sent to the dashboard — never looped back to step 1", async () => {
-    vi.stubEnv("SECURELOGIC_ASSET_REGISTRY_ENABLED", "true");
+  it("an already-onboarded org can still open the checklist (EG2: the user-menu link must not dead-end) — completion derives from live inventory, no redirect loop", async () => {
+    vi.stubEnv("SECURELOGIC_ASSET_REGISTRY_ENABLED", "false");
     Object.assign(sessionStore.current, { onboardingCompleted: true });
+    api.getDashboardSummary.mockResolvedValue(LEGACY_ALL_DONE());
 
-    expect(await expectRedirect(GettingStartedPage, {})).toBe("/dashboard");
-    expect(api.getDashboardSummary).not.toHaveBeenCalled();
+    await render();
+
+    // The page renders (no forced /dashboard redirect) and reports the org's
+    // real progress — a record, not a restart at step 1.
+    expect(screen.getByText("5 of 5 steps complete")).toBeInTheDocument();
+    expect(screen.getByText("All done!")).toBeInTheDocument();
   });
 
   it("a failed summary read shows an honest empty checklist, not a fabricated one", async () => {

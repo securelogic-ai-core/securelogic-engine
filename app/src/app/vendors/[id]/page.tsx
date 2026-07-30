@@ -258,10 +258,14 @@ function OpenFindingsSectionClient({
               f.severity === "Moderate" ? { background: "rgba(245,158,11,0.15)", color: "#fcd34d" } :
               f.severity === "Low"      ? { background: "rgba(34,197,94,0.15)",  color: "#86efac" } :
               { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
+            // The card links to the finding's own workflow page — these were
+            // static divs, the only findings anywhere in the app you could see
+            // but not open (the AI-system page's cards have always linked).
             return (
-              <div
+              <Link
                 key={f.id}
-                className="bg-brand-surface border border-brand-line rounded-xl p-4"
+                href={`/findings/${f.id}`}
+                className="block bg-brand-surface border border-brand-line rounded-xl p-4 transition-colors hover:border-teal-700/60 group"
               >
                 <div className="flex items-start gap-3">
                   <span
@@ -271,7 +275,7 @@ function OpenFindingsSectionClient({
                     {f.severity}
                   </span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium mb-0.5" style={{ color: "#f1f5f9" }}>
+                    <p className="text-sm font-medium mb-0.5 group-hover:text-teal-300 transition-colors" style={{ color: "#f1f5f9" }}>
                       {f.title}
                     </p>
                     {f.description && (
@@ -285,7 +289,7 @@ function OpenFindingsSectionClient({
                     </p>
                   </div>
                 </div>
-              </div>
+              </Link>
             );
           })}
         </div>
@@ -980,6 +984,19 @@ export default async function VendorDetailPage({
         <div className="w-full lg:w-72 flex-shrink-0 space-y-4">
           <VendorDetailsCard vendor={vendor} />
           <DependentAiSystemsCard dependencies={aiDeps} />
+          {/* The enterprise graph could always answer "what depends on this
+              vendor" but was reachable only via the Assets row — never from
+              the page a TPRM analyst actually lives on. Same flag gate as the
+              asset page's link. */}
+          {process.env.SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED === "true" && (
+            <Link
+              href={`/enterprise-context/graph?node_type=vendor&node_id=${encodeURIComponent(vendor.id)}`}
+              className="block text-sm font-medium transition-colors hover:opacity-80"
+              style={{ color: "#00c4b4" }}
+            >
+              View relationships in the enterprise graph →
+            </Link>
+          )}
           <RiskSummaryCard
             vendor={vendor}
             activeFindingCount={activeFindings.length}
