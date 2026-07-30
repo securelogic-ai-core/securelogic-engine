@@ -21,6 +21,7 @@ import { startRiskAcceptanceExpiryWorker } from "./workers/riskAcceptanceExpiryW
 import { startPredictiveForecastWorker } from "./workers/predictiveForecastWorker.js";
 import { startOrchestrationPlaybookWorker } from "./workers/orchestrationPlaybookWorker.js";
 import { startWebhookRetryWorker } from "./workers/webhookRetryWorker.js";
+import { startExportFilePurgeWorker } from "./workers/exportFilePurgeWorker.js";
 import { createApp } from "./app.js";
 
 /* =========================================================
@@ -166,6 +167,11 @@ startOrchestrationPlaybookWorker();
 // fire (they were write-only before this worker). Registered always;
 // SECURELOGIC_WEBHOOK_RETRY_DISABLED=true is the ops brake.
 startWebhookRetryWorker();
+// O-11 export-bundle TTL sweep — deletes expired R2 export bundles and marks
+// rows purged (the declared-but-never-implemented 'export_file_purge' half
+// of the data-export lifecycle). Registered always;
+// SECURELOGIC_EXPORT_PURGE_DISABLED=true is the ops brake.
+startExportFilePurgeWorker();
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   logger.info(
