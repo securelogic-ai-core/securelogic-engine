@@ -9,7 +9,30 @@
  * same as the /findings query params.
  */
 
-export const SAVED_VIEW_FILTER_KEYS = ["status", "severity", "source_type", "domain", "priority"] as const;
+// Two filter vocabularies share this whitelist: the legacy /findings list
+// (status / source_type / priority) and the queue-controls browse view
+// (q / governance / operational / due / mine / has_action / has_evidence /
+// created_from / created_to / sort — the URL param names, verbatim). Both are
+// "the /findings query params"; a saved view stores whichever set the surface
+// that saved it was using. `page` is deliberately excluded — a view is a
+// filter set, not a scroll position.
+export const SAVED_VIEW_FILTER_KEYS = [
+  "status",
+  "severity",
+  "source_type",
+  "domain",
+  "priority",
+  "q",
+  "governance",
+  "operational",
+  "due",
+  "mine",
+  "has_action",
+  "has_evidence",
+  "created_from",
+  "created_to",
+  "sort",
+] as const;
 export type SavedViewFilterKey = (typeof SAVED_VIEW_FILTER_KEYS)[number];
 export type SavedViewFilters = Partial<Record<SavedViewFilterKey, string>>;
 

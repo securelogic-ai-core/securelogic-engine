@@ -56,6 +56,7 @@ const api = vi.hoisted(() => ({
   getIssues: vi.fn(),
   getIssue: vi.fn(),
   getIntelligenceBrief: vi.fn(),
+  getIntelligenceBriefs: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -87,6 +88,8 @@ beforeEach(() => {
   api.getIssues.mockResolvedValue(anIssuesResponse([aNewsletterIssue()]));
   api.getIssue.mockResolvedValue(null);
   api.getIntelligenceBrief.mockResolvedValue(null);
+  // Default: no canonical briefs → the archive falls back to legacy issues.
+  api.getIntelligenceBriefs.mockResolvedValue(null);
 });
 
 // ───────────────────────────── /briefs (the archive) ─────────────────────────
@@ -389,5 +392,51 @@ describe("/briefs — feature flags (no mixed state)", () => {
     const off = await renderPage(BriefsPage, {});
 
     expect(off.container.textContent).toBe(onText);
+  });
+});
+
+// ─────────────── /briefs — canonical intelligence-brief archive (EG2 slice 4) ───────────────
+
+describe("/briefs — the canonical archive lists intelligence briefs, not the retired newsletter", () => {
+  const listBrief = (id: string, period_end: string) => ({
+    id,
+    period_start: "2026-07-20",
+    period_end,
+    status: "published" as const,
+    signal_count: 41,
+    item_count: 7,
+    generated_at: period_end,
+    published_at: period_end,
+    created_at: period_end,
+  });
+
+  it("published intelligence briefs render as the featured card + previous grid, each linking to its detail page", async () => {
+    api.getIntelligenceBriefs.mockResolvedValue({
+      briefs: [listBrief("ib-2", "2026-07-27"), listBrief("ib-1", "2026-07-20")],
+      next_cursor: null,
+    });
+
+    const { container } = await renderPage(BriefsPage, {});
+
+    expect(screen.getByText("Latest Brief")).toBeInTheDocument();
+    expect(screen.getByText("Previous Briefs")).toBeInTheDocument();
+    expect(container.querySelector('a[href="/briefs/ib-2"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/briefs/ib-1"]')).not.toBeNull();
+    // The list endpoint was asked for published briefs only.
+    expect(api.getIntelligenceBriefs).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: "published" })
+    );
+    // Legacy issues demote to a clearly-labeled legacy section.
+    expect(screen.getByText("Legacy Issues")).toBeInTheDocument();
+  });
+
+  it("with no canonical briefs the legacy archive renders exactly as before", async () => {
+    const { container } = await renderPage(BriefsPage, {});
+
+    expect(screen.queryByText("Latest Brief")).toBeNull();
+    expect(screen.queryByText("Legacy Issues")).toBeNull();
+    // The legacy issue from the beforeEach fixture is still reachable.
+    expect(container.textContent).toContain("Latest Issue");
   });
 });

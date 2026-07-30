@@ -383,6 +383,15 @@ export default async function FindingsPage({
           {queueSummaryItems && (
             <FindingsSummaryBar items={queueSummaryItems} generatedAt={queueGeneratedAt} />
           )}
+          {/* Saved views apply to THIS branch too (the browse queue is where
+              analysts filter daily) — previously rendered only on the legacy
+              list, which is unreachable under the queue-controls flag, so the
+              feature shipped to no one. Filters captured here are the queue's
+              own URL params; applying a view pins queue=all so it always lands
+              back on this view. */}
+          {savedViewsEnabled && (
+            <SavedViewsBar views={savedViews} currentFilters={currentViewFilters(sp)} />
+          )}
           {/* Scalable Risk Findings queue: compact toolbar + server-paged cards. */}
           <FindingsQueueToolbar
             state={queueState}

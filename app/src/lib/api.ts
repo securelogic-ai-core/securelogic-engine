@@ -1328,6 +1328,29 @@ export async function getIntelligenceBrief(
 }
 
 /**
+ * List the org's canonical intelligence briefs (metadata only — no items).
+ * The /briefs archive reads this; it previously listed the legacy
+ * newsletter-issues table, whose generation pipeline is off by default, so
+ * paying readers could not browse brief history at all.
+ */
+export async function getIntelligenceBriefs(
+  apiKey: string,
+  opts: { limit?: number; status?: string } = {}
+): Promise<IntelligenceBriefListResponse | null> {
+  try {
+    const p = new URLSearchParams();
+    if (opts.limit) p.set("limit", String(opts.limit));
+    if (opts.status) p.set("status", opts.status);
+    const qs = p.toString();
+    const res = await engineFetch(`/api/intelligence-briefs${qs ? `?${qs}` : ""}`, apiKey);
+    if (!res.ok) return null;
+    return (await res.json()) as IntelligenceBriefListResponse;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Fetch the most recent intelligence brief for the org with all items embedded.
  *
  * Two-step: GET /api/intelligence-briefs?limit=1 to find the latest brief id,

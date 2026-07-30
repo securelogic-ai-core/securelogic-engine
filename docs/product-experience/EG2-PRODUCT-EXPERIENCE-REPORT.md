@@ -136,3 +136,51 @@ criticality vendor, unit-pinned).
 `src/api/routes/actions.ts` (3 cascade hooks), `src/api/routes/vendorAssessments.ts`,
 `src/api/routes/vendors.ts`, tests: `vendorRiskScoreRecompute.test.ts` (new),
 `test/isolation/vendorAssessmentsTenantWrap.test.ts` (+1).
+
+---
+
+## Slice 4 — Un-strand finished features: saved views, the brief archive, accept outcomes
+
+**Status:** implemented, tests green (app queue/briefs/saved-view suites; engine validation suite).
+
+**Customer problems solved (three verified dead ends).**
+1. *Saved views shipped to no one.* `SavedViewsBar` rendered only in the legacy filter branch of
+   /findings — unreachable when the queue-controls flag is on (the staging RC state) and dark in
+   prod. An analyst's daily filter sets could not be saved anywhere.
+2. *The brief archive listed the wrong artifact.* /briefs fetched the legacy newsletter table,
+   whose generation pipeline is off by default — paying readers could not browse the canonical
+   Intelligence Brief history at all (the dashboard card only ever showed the latest one).
+3. *Accept felt inert.* Accepting a matcher suggestion showed "Suggestion accepted" and the row
+   vanished — no path to the entity the link landed on.
+
+**Before → after.**
+- Saved views: filter in the browse queue → no way to keep it | → "＋ Save this view" in the
+  queue branch; the whitelist (engine + app, kept in lockstep) now covers the queue's own URL
+  params (q/governance/operational/due/mine/has_action/has_evidence/created_from/created_to/
+  sort); applying a view pins `queue=all` so it deterministically reopens the browse view.
+- Archive: /briefs shows "No briefs published yet" to orgs with months of briefs | → canonical
+  published briefs render as featured card + period grid, linking to the existing detail reader;
+  legacy issues demote to a labeled "Legacy Issues" section so old links keep working.
+- Accept: dead-end toast | → "Linked to Microsoft — View vendor →" beside Undo (navigation
+  during the undo window commits, by the list's existing unmount semantics).
+
+**Screens affected.** /findings (browse queue), /briefs, /queue toast.
+
+**Estimated reduction in clicks/confusion.** Re-applying a daily triage filter: ~5 clicks → 1.
+Reaching last month's brief: impossible → 2 clicks. Verifying an accept landed: ~3 clicks
+(navigate to entity manually) → 1.
+
+**Competitive improvement.** Saved views and a browsable report archive are table stakes in
+Archer/ServiceNow/AuditBoard; these close two "feels unfinished" gaps an evaluator hits in the
+first hour, and the accept-outcome link makes triage feel connected rather than write-only.
+
+**Remaining opportunities discovered.** Legacy saved views carrying `status`/`source_type`/
+`priority` applied while the queue flag is on still silently drop those three filters (the
+queue's server params don't support them — pre-existing; needs a queue-param extension).
+The accept outcome link could additionally point at the auto-created finding when one exists
+(needs the accept response to return it).
+
+**Files.** Engine: `findingSavedViewValidation.ts` (+ its test). App: `savedViews.ts`,
+`findings/page.tsx`, `lib/api.ts` (`getIntelligenceBriefs`), `briefs/page.tsx`,
+`hooks/useTimedNotice.ts`, `components/queue/Notice.tsx`, `components/queue/SuggestionList.tsx`,
+tests: `savedViews.test.ts` (+3), `brief.render.test.tsx` (+2), `notice.render.test.tsx` (new).
