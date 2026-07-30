@@ -86,6 +86,41 @@ export default async function WebhooksSettingsPage() {
         </div>
       </details>
 
+      {/* Payload format & delivery semantics — the envelope the dispatcher
+          actually builds (id/event_type/version/created_at/data) and the
+          retry contract the retry worker enforces. */}
+      <details style={{ marginBottom: "28px" }}>
+        <summary style={{ fontSize: "12px", fontWeight: 600, color: "#94a3b8", cursor: "pointer", userSelect: "none" }}>
+          Payload format &amp; delivery
+        </summary>
+        <div style={{ marginTop: "10px", background: "#0a0f1a", border: "1px solid #1e2d45", borderRadius: "8px", padding: "16px" }}>
+          <p style={{ margin: "0 0 10px", fontSize: "12px", color: "#94a3b8" }}>
+            Every delivery is a JSON envelope. <code style={{ color: "#00c4b4" }}>data</code> carries the
+            event-specific fields; its schema is keyed by{" "}
+            <code style={{ color: "#00c4b4" }}>(event_type, version)</code>.
+          </p>
+          <pre style={{ margin: 0, fontSize: "11px", color: "#64748b", overflow: "auto" }}>
+{`{
+  "id": "9f4b1c2e-…",            // unique per delivery — use for idempotency
+  "event_type": "finding.created",
+  "version": 1,                   // present once versioned payloads are enabled
+  "created_at": "2026-07-30T00:00:00.000Z",
+  "data": { … }                   // event-specific fields
+}`}
+          </pre>
+          <p style={{ margin: "12px 0 4px", fontSize: "12px", fontWeight: 600, color: "#94a3b8" }}>
+            Delivery &amp; retries
+          </p>
+          <ul style={{ margin: 0, paddingLeft: "18px", fontSize: "12px", color: "#64748b", lineHeight: 1.7 }}>
+            <li>Any <code style={{ color: "#00c4b4" }}>2xx</code> response marks the delivery successful. Respond quickly; do your processing asynchronously.</li>
+            <li>Failures are retried after 1 minute, then 5 minutes; after 3 attempts the delivery is marked failed.</li>
+            <li>Redelivery stops 24 hours after the event — treat webhooks as at-least-once and deduplicate on <code style={{ color: "#00c4b4" }}>id</code>.</li>
+            <li>Retries sign with the endpoint&apos;s <em>current</em> secret — after a rotation, verify against the new secret only.</li>
+            <li>Disabled endpoints are never retried.</li>
+          </ul>
+        </div>
+      </details>
+
       {/* Signing instructions */}
       <details style={{ marginBottom: "32px" }}>
         <summary style={{ fontSize: "12px", fontWeight: 600, color: "#94a3b8", cursor: "pointer", userSelect: "none" }}>
