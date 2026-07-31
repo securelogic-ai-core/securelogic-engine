@@ -703,3 +703,50 @@ tenant branding (both remain deferred report items), per-dimension trend charts 
 **Files.** `src/api/lib/executiveNarrative.ts` (new, pure),
 `src/api/routes/executiveReport.ts` (page-2 insertion),
 `src/api/tests/executiveNarrative.test.ts` (new, 8 — incl. the no-generic-language pin).
+
+---
+
+## Certification Addendum 001 — worker-build gate escape (2026-07-31)
+
+**Status of the original certification:** AMENDED, not revoked. Every claim the
+2026-07-30 certification actually verified (engine suite, app render tests, runtime
+cross-org isolation proofs, typechecks) remained true on re-verification. One gate was
+absent from the verified set entirely; nothing verified was wrong.
+
+**The defect.** Commit `70cb47d6` (Slice 1, alerting seam) added `finding_was_created`
+as a REQUIRED field on the shared `MatcherResult` type
+(`src/api/lib/cyberSignalProcessingService.ts:142`) without updating the three worker-side
+test mocks that construct that type
+(`services/intelligence-worker/src/__tests__/kevPoller.test.ts:217,369,560`). The worker
+compile — `npx tsc -p services/intelligence-worker/tsconfig.json`, the exact command both
+Render worker services and the CI `build` job run — failed with three TS2345 errors. The
+defect was empirically confirmed present at the certified tip `fd6d8b03` (detached-HEAD
+compile, exit 2).
+
+**Why certification missed it.** Three compounding causes:
+1. CI's `pull_request` trigger filters on base `develop`/`main`, so the branch never
+   received the `build` job (the gate added after incident #251 for precisely this
+   failure mode).
+2. No local certification gate compiles the worker: `npm run typecheck`
+   (tsconfig.ci.json → extends tsconfig.prod.json) and `npm run build` are engine-only.
+3. The root vitest suite DOES run `kevPoller.test.ts`, but vitest strips types without
+   checking them — the missing boolean is `undefined` at runtime and all 31 tests pass.
+   Green tests therefore coexisted with a red deployable.
+
+**Corrective commit.** `02e45a12` — three test-fixture insertions
+(`finding_was_created: false` on the `no_match` default mocks); no runtime code.
+
+**Commands rerun after correction (full certification gate, this branch):**
+engine typecheck PASS · app typecheck PASS · lint PASS · url-drift PASS ·
+engine tests 416 files / 6,804 passed (3 skipped) · app tests 97 files / 1,234 passed ·
+engine build PASS · **worker build PASS** (previously the failing gate) ·
+cross-org isolation harness 135 files / 869 passed against throwaway Postgres ·
+tenant-coverage census exit 0 (warn-only) · npm audit: 19 high — pre-existing baseline,
+identical to `develop` (the only red CI job on `develop`'s tip), recorded as deferred.
+
+**Final verified result:** every required gate green at `02e45a12`.
+
+**Methodology consequence.** Certification now requires compiling every deployable
+artifact with its deployer's exact command before a branch may be certified — see
+`docs/release/ENTERPRISE-GRADE-CERTIFICATION-CHECKLIST.md` (introduced with this
+addendum).
