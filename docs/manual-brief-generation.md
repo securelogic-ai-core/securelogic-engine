@@ -5,8 +5,10 @@ There are **two** routes that generate Intelligence Briefs by hand. They are not
 ## Which route do you want?
 
 - Want to regenerate a brief for **one specific organization**? → **Route 1**.
-- Want to manually run the **full scheduler** (same code path as the daily 8 AM UTC cron, every eligible org)? → **Route 2**.
-- Want a daily/scheduled trigger? → Don't use either. Let the cron run. The cron lives in the intelligence-worker; see *Related* below.
+- Want to manually run the **full scheduler** (same code path as the weekly Tuesday 07:00 UTC cron, every eligible org)? → **Route 2**.
+- Want a scheduled trigger? → Don't use either. Let the cron run. The cron is an in-process node-cron in the engine service (`schedulerRunner.ts`); see *Related* below.
+
+**"Eligible org" means every organization with `status = 'active'`** (ADR-0007: brief generation is an organizational entitlement). `intelligence_brief_subscribers` holds email recipients only — an org with zero recipients still gets its brief generated and published in-platform; only the email send is skipped (recorded as a delivery-health condition).
 
 ---
 
@@ -61,7 +63,7 @@ curl -X POST https://securelogic-engine.onrender.com/api/intelligence-briefs/gen
 
 `POST /api/admin/briefs/run-scheduler`
 
-Operator endpoint. Runs `runScheduler()` over **every** eligible org — same code path as the daily 8 AM UTC cron. There is no per-org variant of this route; it is all-or-nothing.
+Operator endpoint. Runs `runScheduler()` over **every** active org — same code path as the weekly Tuesday 07:00 UTC cron. There is no per-org variant of this route; it is all-or-nothing. On a non-Tuesday run, briefs are generated and published but no email is sent (`isBriefSendDay` guard).
 
 **Auth:** `Authorization: Bearer <SCHEDULER_SECRET>` only.
 Independent of both `X-Api-Key` (the customer API key system) and `X-Admin-Key` (the admin panel system). Compared in constant time against `process.env.SCHEDULER_SECRET`.
@@ -84,7 +86,7 @@ curl -X POST https://securelogic-engine.onrender.com/api/admin/briefs/run-schedu
 | 500    | `internal_error`              | The scheduler run itself threw; check engine logs for `scheduler_manual_trigger_failed` |
 
 **When to use:**
-- Validating end-to-end pipeline changes without waiting until 8 AM UTC. This is the route to hit to answer "does the daily cron now produce what we expect?"
+- Validating end-to-end pipeline changes without waiting until Tuesday 07:00 UTC. This is the route to hit to answer "does the weekly cron now produce what we expect?"
 - Re-running after a known transient failure (e.g. an LLM provider outage during the cron window).
 
 ---
@@ -101,7 +103,8 @@ To rotate: generate a new value (`openssl rand -hex 32` or similar, ≥ 32 chars
 
 ## Related
 
-- **Daily 8 AM UTC cron:** `services/intelligence-worker/src/scheduler.js` (compiled entry point) drives the cadence; the actual brief generation logic lives in `src/api/lib/briefScheduler.ts` (the `runScheduler` function called by both the cron and Route 2).
+- **Weekly Tuesday 07:00 UTC cron:** `src/api/lib/schedulerRunner.ts` (`"0 7 * * 2"`, in-process node-cron in the engine web service) drives the cadence; the brief generation logic lives in `src/api/lib/briefScheduler.ts` (the `runScheduler` function called by the cron, the boot-time catch-up, and Route 2). The retired daily worker newsletter path (`services/intelligence-worker`) is dark behind `SECURELOGIC_LEGACY_NEWSLETTER_ENABLED` and is not the Brief.
+- **Operational monitoring:** per-run delivery health (`src/api/lib/briefDeliveryHealth.ts` — zero generation with active orgs = error; zero recipients = warning) plus the daily 08:30 UTC outcome sweep (`src/api/lib/briefStalenessMonitor.ts` — alerts when any active org's newest published brief is missing or >8 days old).
 - **Per-org generation handler:** `src/api/routes/intelligenceBriefs.ts:84`.
 - **Scheduler trigger handler:** `src/api/routes/adminBriefs.ts:51`.
 - **Three auth surfaces in this codebase** — `X-Api-Key` (customer/per-org), `X-Admin-Key` (admin panel via `SECURELOGIC_ADMIN_KEY`), and `Authorization: Bearer <SCHEDULER_SECRET>` (this route only). A broader audit and consolidated `docs/admin-operations.md` is deferred — see deferred-followups.

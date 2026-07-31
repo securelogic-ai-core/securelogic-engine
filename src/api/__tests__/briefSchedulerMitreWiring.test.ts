@@ -50,11 +50,14 @@ describe("SchedulerRunSummary type", () => {
   // would fail to type-check.
   it("requires mitre_attack and mitre_atlas counters in signals_fetched", () => {
     const summary: SchedulerRunSummary = {
+      active_orgs: 0,
       orgs_processed: 0,
       orgs_skipped: 0,
       signals_fetched: {
         cisa_kev: 0,
         nvd: 0,
+        sec_edgar: 0,
+        federal_register: 0,
         cisa_alerts: 0,
         mitre_attack: 0,
         mitre_atlas: 0,
@@ -65,6 +68,8 @@ describe("SchedulerRunSummary type", () => {
       emails_sent: 0,
       emails_failed: 0,
       emails_skipped_off_day: 0,
+      emails_skipped_no_recipients: 0,
+      orgs_without_recipients: [],
       errors: []
     };
     expect(summary.signals_fetched.mitre_attack).toBe(0);

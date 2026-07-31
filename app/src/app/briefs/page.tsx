@@ -171,7 +171,7 @@ export default async function BriefsPage() {
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-12 text-center">
           <p className="text-slate-400 text-sm">
             No briefs have been published yet — the weekly Intelligence Brief is
-            generated every Monday and will appear here.
+            generated every Tuesday and will appear here.
           </p>
         </div>
       ) : (
