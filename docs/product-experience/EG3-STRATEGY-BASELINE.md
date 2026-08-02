@@ -58,6 +58,26 @@ building; it is validating and lighting up what exists.**
 Second finding: **we are attempting to replace eight companies across four
 categories.** Some of those we should never attempt.
 
+### 2.1 The decision thesis — the permanent product philosophy
+
+This is not a property of any release, wave, or capability. It is the standing
+gate every implementation must pass before it is built:
+
+> **What customer decision becomes faster, more confident, and more defensible
+> because of this capability?**
+
+All three clauses are required. A capability that makes a decision faster but
+less defensible is not an improvement; one that improves confidence without
+changing any decision is decoration. A capability that cannot answer the
+question is not ready to build, regardless of how strategically attractive it is
+or how complete its engineering.
+
+This is what "system of intelligence, not system of record" means in practice.
+Incumbents optimize for completeness of the record; we optimize for the quality
+of the next decision. Every item in the roadmap below is subject to this gate,
+and it supersedes any framing that treats decision intelligence as the
+deliverable of one particular release.
+
 ---
 
 ## 3. Capability classification
@@ -170,7 +190,7 @@ a broken promise.*
 
 | # | Item | Customer problem | Persona | Competitive impact | Revenue impact | Effort | Depends on | Sequence |
 |---|---|---|---|---|---|---|---|---|
-| A1 | Flag train promotion + staging validation | Customers cannot see what we built | All | Converts 13 EG2 slices from invisible to visible | Unblocks every deal | S (operator) | ADR-0007 validation | **First — everything follows** |
+| A1 | Flag train promotion + staging validation — **SPLIT INTO THREE WAVES, see §5.1** | Customers cannot see what we built | All | Converts 13 EG2 slices from invisible to visible | Unblocks every deal | S (operator) per wave | ADR-0007 validation | **First — everything follows** |
 | A2 | Auditor role (read-only) | CAE needs audit access without admin rights | CAE, external auditor | Parity with AuditBoard | Unblocks a persona | S–M | Security + isolation pass | After A1 |
 | A3 | SCIM provisioning | Automated deprovisioning | CISO, IT | Security-review gate | Removes a hard blocker | M | Existing SAML | Parallel with A2 |
 | A4 | Our own SOC 2 + pen-test evidence | "Show us yours" | Procurement | Table stakes | Hard gate | ? | — | **Verify immediately** |
@@ -188,6 +208,70 @@ gate. No migration required.
 **A8 should start immediately** despite being Track A's longest item: it is
 content acquisition rather than engineering, so it parallelizes with everything
 and gates nothing until B6.
+
+#### 5.1 A1 is split into three waves
+
+A1 as originally written bundled ~16 already-built capabilities into one
+irreversible customer-facing event, and collided with four gates recorded in
+`render.yaml` by people who understood the risk better than a promotion
+checklist does. Approved split:
+
+**Wave 1 — Reveal.** `DASHBOARD_BRIEFING` (engine + app), `RISK_WORKSPACE`,
+`DECISION_WORKSPACE` (engine + app), `VENDOR_ASSURANCE`. Additive only: no API
+that returns 200 today changes. Delivers the reachable-surfaces and
+change-delta outcomes. Ships with a customer-facing orientation surface — an
+unexplained navigation change reads as instability even when every change is an
+improvement.
+
+**Wave 2 — Workflow.** `RISK_ACCEPTANCE` + notifications,
+`FINDINGS_QUEUE_CONTROLS`, `BRIEF_QUALITY` (after its staging validation),
+`BRIEF_CATCHUP`. New capability, opt-in in character. Ships after Wave 1 is
+stable. **Per-organization rollout (§5.2) is mandatory before this wave.**
+
+**Wave 3 — Gated. NOT part of Private Beta Readiness.**
+`FINDING_CLOSURE_GATE` is a breaking API change — `PATCH /api/findings/:id`
+returns 409 where it returned 200, and its own header requires an inventory of
+affected clients that does not exist. `ENTERPRISE_CONTEXT` + `ASSET_REGISTRY`
+must flip together and are blocked on the AD-17 grant, the edge cap (H1), and
+the graph load test (H2). **These are preconditions, not schedule items.**
+Promoting them to satisfy a checklist would override rulings made with more
+context than the checklist has.
+
+#### 5.2 Per-organization rollout is foundational architecture
+
+Elevated out of roadmap sequencing. Feature flags today resolve from
+`process.env` at SERVICE scope (`app/src/app/layout.tsx`), so every promotion is
+all-or-nothing for 100% of an environment: no canary, no design-partner cohort,
+no per-customer enablement. `organizations.core_platform_capability` is a
+per-org grant but gates ENTITLEMENT in the engine only — it is not a
+feature-flag mechanism.
+
+**What it unlocks:** design partners · canary releases · beta cohorts · premium
+capabilities · customer-specific enablement · controlled enterprise rollout.
+
+**Design constraints:** one canonical resolver; env value as the default with a
+per-org override on top; fail-closed on lookup failure; grants are org-scoped
+data and therefore a tenant-isolation surface; every grant change audited.
+**Warrants an ADR before implementation.**
+
+**Sequencing:** Wave 1 ships globally without it (additive-only, low blast
+radius). It is a separate architectural initiative — ADR, architecture, rollout
+model, feature-resolution strategy, audit considerations, implementation roadmap
+— and implementation begins after Wave 1 stabilizes. It is MANDATORY before
+Wave 2.
+
+#### 5.3 Product communication becomes a platform capability
+
+Wave 1 ships a deliberately minimal orientation surface (release notes, "why
+this changed", dismiss / show later) reusing the existing per-user banner
+mechanism. It is **not** an onboarding system and must not grow into one by
+accretion.
+
+Product communication — in-product announcements, targeted release notes,
+capability discovery, per-cohort messaging — is recorded here as a future
+platform capability. It is naturally downstream of §5.2: announcing a change to
+the customers who actually received it requires per-org resolution. Not scoped,
+not scheduled, not part of Wave 1.
 
 ### Track B — Enterprise Replacement
 
