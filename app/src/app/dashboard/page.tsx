@@ -10,6 +10,7 @@ import { PostureDashboard } from "./PostureDashboard";
 import { CoverageBar } from "@/lib/frameworkCoverage";
 import { LastLoginBanner } from "./LastLoginBanner";
 import { IndustryTemplatesBanner } from "./IndustryTemplatesBanner";
+import { WhatsNewPanel } from "./WhatsNewPanel";
 import { CompactEmptyState } from "./DashboardCharts";
 import { dashboardPanel, pendingReviewTile } from "./dashboardState";
 import { RecentFindings } from "./RecentFindings";
@@ -226,6 +227,11 @@ export default async function DashboardPage({
 
       {/* Industry templates banner — first 7 days, dismissible.
           Self-gates on env var + user state; renders null when not applicable. */}
+      {/* Wave 1 orientation — explains the navigation change that shipped with
+          the promotion. Gated on the same flag that made the change, so it can
+          never describe a layout the customer isn't looking at. */}
+      <WhatsNewPanel authMe={authMe} />
+
       <IndustryTemplatesBanner authMe={authMe} />
 
       {/* Onboarding banner — only when setup is genuinely incomplete (D-2): a
