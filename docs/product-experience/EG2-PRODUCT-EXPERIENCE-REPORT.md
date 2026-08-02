@@ -965,3 +965,177 @@ the weekly `orgs_without_recipients` warning), the vendor-score hook into
 
 This addendum records the certification verdict for release head a656397a and closes
 Gate 12's repository-evidence requirement.
+
+---
+
+## Certification Addendum 003 — EG3 Wave 1 functional head `204a8971` (2026-08-02)
+
+**Relationship to prior addenda.** Addenda 001 and 002 are preserved above exactly as
+written and are NOT revised. Addendum 002 certified `a656397a` and stated that every
+later commit was documentation-only. That is no longer true: two of the three commits
+below are functional. **This addendum supersedes Addendum 002 for the functional
+release head** while leaving 002's verdict on `a656397a` intact and accurate for the
+ADR-0007 scope it describes.
+
+### 1. Certified head
+
+- **Branch:** `feat/brief-generation-org-entitlement`
+- **Certified functional head:** `204a8971`
+- **Prior certified head (ADR-0007 scope, still valid):** `a656397a`
+
+### 2. The three Wave 1 commits
+
+| Commit | Type | Purpose |
+|---|---|---|
+| `2a8a21d3` | `feat(release)` | EG3 Wave 1 — promote the Reveal flag set to production |
+| `8d3e3910` | `feat(app)` | First-login orientation for the Wave 1 navigation change |
+| `204a8971` | `docs(product-strategy)` | EG3 strategy synchronization (Wave split, per-org rollout ruling) |
+
+### 3. Scope and file counts
+
+| Commit | Files | Lines |
+|---|---|---|
+| `2a8a21d3` | 1 (`render.yaml`) | +21 / −7 |
+| `8d3e3910` | 7 (5 new, 2 modified) | +425 / −4 |
+| `204a8971` | 1 (`EG3-STRATEGY-BASELINE.md`) | +85 / −1 |
+| **Total** | **9 files** | **+531 / −12** |
+
+New files in `8d3e3910`: `app/src/lib/whatsNew.ts`, `app/src/lib/__tests__/whatsNew.test.ts`,
+`app/src/app/dashboard/WhatsNewPanel.tsx`, `app/src/app/dashboard/WhatsNewClient.tsx`,
+`app/src/app/dashboard/__tests__/WhatsNewPanel.render.test.tsx`. Modified:
+`app/src/app/dashboard/page.tsx` (+6), `app/src/app/dashboard/__tests__/page.render.test.tsx`.
+
+**No schema, migration, or SQL of any kind.** No new engine route. No dependency
+manifest changed. The orientation surface reuses the existing
+`POST /api/me/dismiss-banner` → `users.dismissed_banner_keys` mechanism.
+
+### 4. Gate evidence at the certified head
+
+| # | Gate | Command | Exit | Result |
+|---|---|---|---|---|
+| 1 | Engine typecheck | `npm run typecheck` | 0 | PASS |
+| 2 | App typecheck | `cd app && npx tsc --noEmit` | 0 | PASS |
+| 3 | Lint | `npm run lint` / app eslint | 0 | PASS — 0 errors, 1 pre-existing warning |
+| 4 | URL drift | `node scripts/check-env-url-drift.mjs` | 0 | PASS |
+| 5 | Engine tests | `npm test` | 0 | PASS — **419 files / 6,835 passed**, 3 skipped |
+| 6 | App tests | `cd app && npm run test` | 0 | PASS — **99 files / 1,246 passed** |
+| 7 | Engine build | `npm run build` | 0 | PASS |
+| 8 | Worker build | `npx tsc -p services/intelligence-worker/tsconfig.json` | 0 | PASS |
+| 9 | App production build | `cd app && npm run build` | 0 | PASS (local deploy-parity) |
+| 10 | Isolation harness | `npm run test:isolation` (Docker PG16) | 0 | PASS — **135 files / 869 passed**, 834s |
+| 11 | Tenant coverage | `npm run coverage:tenant` | 0 | PASS (warn-only) — 246 flagged, **no new bypass** |
+| 12 | Audit baseline | `npm audit --audit-level=high` | 1 | **RED — INHERITED** |
+
+**Test delta vs Addendum 002:** engine +1 file / +5 tests, app +2 files / +12 tests —
+fully accounted for by the 12 new Wave 1 tests (5 content contract, 7 gate matrix).
+
+**Audit is inherited, not introduced.** Root 4 high; app 5 high / 3 moderate. **Zero
+dependency manifests changed by any Wave 1 commit**, so the posture is `develop`'s by
+construction. This head is therefore NOT fully green, and the red is recorded rather
+than absorbed.
+
+**Evidence-timing note (stated for precision).** All source-consuming gates ran against
+source byte-identical to `204a8971`. The only change made after the engine and app
+lanes completed was to `docs/product-experience/EG3-STRATEGY-BASELINE.md` — a markdown
+file no gate consumes.
+
+### 5. Feature-flag behavior
+
+**Promoted (Wave 1 — Reveal):**
+
+| Flag | Service |
+|---|---|
+| `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED` | engine + app |
+| `SECURELOGIC_DECISION_WORKSPACE_ENABLED` | engine + app |
+| `SECURELOGIC_RISK_WORKSPACE_ENABLED` | app |
+| `SECURELOGIC_VENDOR_ASSURANCE_ENABLED` | engine — **newly declared**; previously absent in the prod block, so it resolved absent→false while the workspace nav surfaces the item unconditionally. Without the declaration the promoted menu entry would 403. |
+
+**Remaining dark:** `FINDINGS_QUEUE_CONTROLS`, `RISK_ACCEPTANCE` (+ notifications),
+`BRIEF_QUALITY`, `BRIEF_CATCHUP` (Wave 2); `FINDING_CLOSURE_GATE`,
+`ENTERPRISE_CONTEXT`, `ASSET_REGISTRY` (Wave 3); `RISK_INTELLIGENCE`,
+`PREDICTIVE_INTELLIGENCE`, `KNOWLEDGE_GRAPH`, `AUTONOMOUS_OPERATIONS`,
+`CONNECTOR_*`, `CAPABILITY_GATING`, `APPLICABILITY_WORKFLOW`,
+`BRIEF_APPLICABILITY_CITATION`, `RISK_LIFECYCLE`, `INTELLIGENCE_EVENTS`,
+`PLATFORM_TRIAL`.
+
+**`/executive` is not advertised.** `SECURELOGIC_RISK_INTELLIGENCE_ENABLED` is `false`
+on both engine services and undeclared on both app services, so the executive dashboard
+remains dark everywhere. The release content contains no reference to it, pinned by
+test (`whatsNew.test.ts` asserts the string `/executive` never appears).
+
+**Wave 3 is gated by preconditions, not scheduling.** `FINDING_CLOSURE_GATE` is a
+breaking API change — `PATCH /api/findings/:id` returns 409 where it returned 200 — and
+its own header requires an inventory of affected clients that does not exist.
+`ENTERPRISE_CONTEXT` and `ASSET_REGISTRY` must flip together and are blocked on the
+AD-17 grant, the edge cap (H1), and the graph load test (H2). None of these is
+satisfied. They must not be promoted to satisfy a checklist.
+
+### 6. Orientation behavior
+
+**Purpose.** Wave 1 moves surfaces into the navigation and changes what the dashboard
+opens with. An unexplained change of that shape reads as instability even when every
+change is an improvement, so the promotion ships with a customer-facing explanation:
+release notes plus a "why this changed" line per item stating our intent rather than
+describing a feature. Content is authored, typed, and static — never generated.
+
+**Dismissal.** Two deliberately different semantics. "Got it" persists across sessions
+and devices via the existing per-user banner mechanism. "Show later" is client state
+for the current visit only and writes nothing. A single dismiss would force the
+customer to choose between reading it now and losing it permanently.
+
+**Gating.** The panel keys on `RISK_WORKSPACE` — the flag that actually changes the
+navigation — so it shares one lifecycle with the change it describes. It cannot appear
+before promotion and disappears on rollback. Under the legacy IA the announced menu
+items do not exist, so a panel leaking past its flag would send customers hunting for
+them.
+
+**Why the tile assertion was NARROWED, not weakened.** The `/dashboard` contract test
+asserted that every href is identical whether `RISK_WORKSPACE` is on or off, so a flip
+could never half-migrate the page. No deliberately flag-conditional element can satisfy
+that literal form. The tile-destination contract itself is unchanged and still enforced;
+only the orientation panel is excluded from the comparison. The panel cannot
+half-migrate for an independent reason: it renders only when the flag is on, and every
+one of its links is pinned by test to a Wave-1-reachable destination.
+
+### 7. Rollback
+
+Each commit is independently revertible; that is why the work was split.
+
+- **Revert `2a8a21d3`** — flags return to their pre-Wave-1 values. The orientation
+  surface disables itself through its own gate; no application code is touched. No
+  migration, no data written by promotion.
+- **Revert `8d3e3910`** — removes the orientation surface and restores the original
+  tile assertion, leaving the flag promotion intact.
+- **Revert `204a8971`** — documentation only.
+
+No data-repair tail in any case.
+
+### 8. Outstanding operator-owned conditions
+
+| # | Condition | Status |
+|---|---|---|
+| W3 | Staging validation (temporary repoint) | NOT RUN |
+| W4 | Rollback rehearsal on staging | NOT RUN |
+| W5 | Production promotion — **engine before app** (the app's Briefing calls `/api/briefing/layout`) | NOT RUN |
+| W6 | 24-hour post-promotion monitoring | NOT RUN |
+
+Staging remains coupled to `develop`, which does not contain this branch, so W3 requires
+the approved temporary repoint before any of W4–W6 can proceed.
+
+Additionally inherited from Addendum 002 and still open: the audit baseline red (§4),
+CI never executing on this feature-based PR, and the parent-branch merge dependency.
+
+### 9. Certification verdict
+
+**CERTIFIED WITH CONDITIONS.**
+
+All twelve build and test gates pass at `204a8971`. Two conditions prevent an
+unconditional verdict: the audit baseline is red (inherited, zero introduced), and all
+four operator-owned conditions (W3–W6) are outstanding. This addendum certifies
+build-and-test evidence only and makes no claim about runtime behavior on any deployed
+environment.
+
+### 10. Required statement
+
+This addendum supersedes Addendum 002 for the functional release head and records the
+certification evidence for EG3 Wave 1.
