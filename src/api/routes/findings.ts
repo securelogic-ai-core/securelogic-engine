@@ -19,6 +19,8 @@ import { validateFindingCreate, FINDING_SOURCE_TYPES } from "../lib/findingValid
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { triggerFindingAlert } from "../lib/findingAlertTrigger.js";
+import { scheduleVendorScoreRecomputeForFinding } from "../lib/vendorRiskScoreRecompute.js";
+import { triggerAssignmentAlert } from "../lib/assignmentAlertTrigger.js";
 import { resolveFindingContext } from "../lib/findingContextResolver.js";
 import { normalizeEntityQuery, searchFindingsByEntity } from "../lib/findingEntitySearch.js";
 import { resolveOwnerMeFilter } from "../lib/findingListFilters.js";
@@ -265,6 +267,23 @@ router.post(
         severity: severity as string,
         domain: (domain as string | null) ?? null,
       });
+
+      // Assignment at creation notifies the owner (post-commit via asTenant;
+      // self-assignment and preference-off are handled inside the trigger).
+      if (owner_user_id) {
+        triggerAssignmentAlert({
+          organizationId,
+          assigneeUserId: owner_user_id as string,
+          actorUserId: (req.userId as string | undefined) ?? null,
+          item: {
+            kind: "finding",
+            id: result.rows[0].id as string,
+            title: title as string,
+            severity: severity as string,
+            dueDate: (effective_due_date as string | null) ?? null,
+          },
+        });
+      }
 
       dispatchWebhookEvent({
         event_type: "finding.created",
@@ -1980,6 +1999,31 @@ router.patch(
           updated_at: row.updated_at,
         },
       }).catch(() => {});
+
+      // A lifecycle change on a vendor-workflow finding changes the vendor's
+      // risk picture — refresh vendors.current_risk_score so remediating work
+      // is reflected without the manual Recalculate click. Post-commit,
+      // fire-and-forget, no-op for non-vendor findings.
+      if (legacyStatus !== null || decisionTransition !== null || reconciled.changed) {
+        scheduleVendorScoreRecomputeForFinding(organizationId, findingId);
+      }
+
+      // Assignment notifies the new owner (post-commit; the ledger inside the
+      // trigger dedupes re-saves of the same owner; self-assignment is a no-op).
+      if ("owner_user_id" in body && row.owner_user_id) {
+        triggerAssignmentAlert({
+          organizationId,
+          assigneeUserId: row.owner_user_id as string,
+          actorUserId: (req.userId as string | undefined) ?? null,
+          item: {
+            kind: "finding",
+            id: row.id as string,
+            title: row.title as string,
+            severity: (row.severity as string | null) ?? null,
+            dueDate: (row.due_date as string | null) ?? null,
+          },
+        });
+      }
 
       res.status(200).json({ finding: row });
     } catch (err) {

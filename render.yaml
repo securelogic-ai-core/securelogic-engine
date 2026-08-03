@@ -211,6 +211,17 @@ services:
         value: "false"
       - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED   # Briefing Initiative B2 — DARK (default off); engine half of the two-switch: gates /api/briefing/layout (per-user Briefing layout persistence). Prod flip is GATE B.
         value: "false"
+
+      # EG2 notification flags (declared 2026-07-30 release review) — DARK
+      # (default off), listed so the operator flag inventory is complete. Both
+      # initiate outbound customer email, so enablement is operator-owned:
+      # staging first, prod only after the staging checks pass. The matcher
+      # flag is ALSO read by the intelligence worker (declared there too) —
+      # flip both services together.
+      - key: SECURELOGIC_MATCHER_ALERTS_ENABLED       # EG2 s1 — coalesced Critical/High finding alerts from the automated signal→finding path; run the staging VOLUME CHECK before any prod flip
+        value: "false"
+      - key: SECURELOGIC_SLA_ALERTS_ENABLED           # EG2 s11 — daily 8:15 UTC SLA-breach sweep (7-day catch-up window, ledger-deduped); off = zero-DB no-op, cron inert
+        value: "false"
       - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
         value: "false"
       - key: SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED # ERIP E6 (approval-gated orchestration) — DARK (default off); human approval required
@@ -474,6 +485,14 @@ services:
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
 
+      # EG2 notification flags (declared 2026-07-30 release review) — DARK
+      # (default off) on staging too; staging enablement for the EG2 validation
+      # pass is a separate operator action (Blueprint sync, then flip here).
+      - key: SECURELOGIC_MATCHER_ALERTS_ENABLED       # EG2 s1 — coalesced Critical/High finding alerts from the automated signal→finding path
+        value: "false"
+      - key: SECURELOGIC_SLA_ALERTS_ENABLED           # EG2 s11 — daily 8:15 UTC SLA-breach sweep (7-day catch-up window, ledger-deduped)
+        value: "false"
+
       # Finding risk-acceptance lifecycle (ruling 2026-07-12, PR #646) — STAGING
       # ONLY, for staging validation. Gates ENFORCEMENT: approved acceptance
       # closes a Finding; expiry/withdrawal reopens it; routes 404 when off.
@@ -636,6 +655,12 @@ services:
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
 
+      # EG2 s1 matcher alerting (declared 2026-07-30 release review) — DARK
+      # (default off). Read at signal-processing time in this worker too; the
+      # engine web service declares it as well — flip both services together.
+      - key: SECURELOGIC_MATCHER_ALERTS_ENABLED
+        value: "false"
+
       # Canonical Intelligence Event projection (Pipeline Hardening / IE) — DARK.
       # Projects cyber_signals into the global intelligence_events layer
       # (corroboration ledger + timeline). Off => zero DB work, legacy behaviour.
@@ -754,6 +779,13 @@ services:
         value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
+
+      # EG2 s1 matcher alerting (declared 2026-07-30 release review) — DARK
+      # (default off) on staging too; staging enablement for the EG2 validation
+      # pass is a separate operator action. The staging engine declares it as
+      # well — flip both services together.
+      - key: SECURELOGIC_MATCHER_ALERTS_ENABLED
+        value: "false"
 
       # Canonical Intelligence Event projection (Pipeline Hardening / IE) — DARK.
       # Projects cyber_signals into the global intelligence_events layer

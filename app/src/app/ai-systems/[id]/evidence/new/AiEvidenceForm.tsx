@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { createAiSystemEvidence, type CreateAiSystemEvidenceResult } from "./actions";
-import type { GovernanceReview, AiGovernanceAssessment } from "@/lib/api";
+import { uploadEvidenceFile, type GovernanceReview, type AiGovernanceAssessment } from "@/lib/api";
+import { EvidenceFileField } from "@/components/evidence/EvidenceFileField";
 
 const INPUT_STYLE: React.CSSProperties = {
   width: "100%",
@@ -55,14 +57,50 @@ type Props = {
 };
 
 export function AiEvidenceForm({ systemId, systemName, reviews, assessments }: Props) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
 
   const hasNoSources = reviews.length === 0 && assessments.length === 0;
 
   function handleSubmit(formData: FormData) {
     setError(null);
     startTransition(async () => {
+      // File chosen → multipart upload lane (the engine accepts ai_review /
+      // ai_governance_review there); no file → JSON reference-only action.
+      if (file) {
+        const combo = String(formData.get("source_combo") ?? "");
+        const [source_type, source_id] = combo.split("::");
+        if (!source_type || !source_id) {
+          setError("Select what this evidence supports.");
+          return;
+        }
+        setProgress(0);
+        const res = await uploadEvidenceFile(
+          source_type,
+          source_id,
+          file,
+          {
+            title: String(formData.get("title") ?? ""),
+            evidence_type: String(formData.get("evidence_type") ?? ""),
+            description: String(formData.get("description") ?? "").trim() || null,
+            external_ref: String(formData.get("external_ref") ?? "").trim() || null,
+            collected_at: String(formData.get("collected_at") ?? "").trim() || null,
+            collected_by: String(formData.get("collected_by") ?? "").trim() || null,
+          },
+          setProgress
+        );
+        setProgress(null);
+        if (!res.ok) {
+          setError(`Could not upload the file: ${res.error}`);
+          return;
+        }
+        router.push(`/ai-systems/${systemId}`);
+        router.refresh();
+        return;
+      }
       const result = (await createAiSystemEvidence(systemId, formData)) as CreateAiSystemEvidenceResult | void;
       if (result && "error" in result) {
         setError(result.error);
@@ -202,6 +240,9 @@ export function AiEvidenceForm({ systemId, systemName, reviews, assessments }: P
             style={INPUT_STYLE}
           />
         </div>
+
+        {/* File — the artifact itself (EG2 slice 8) */}
+        <EvidenceFileField file={file} onChange={setFile} disabled={isPending} progress={progress} />
       </div>
 
       {error && (

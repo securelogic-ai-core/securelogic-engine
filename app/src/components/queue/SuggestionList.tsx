@@ -254,10 +254,24 @@ export function SuggestionList({
       }, UNDO_WINDOW_MS);
       timersRef.current.set(suggestionId, handle);
 
+      // Accept must not end in a dead-end toast: name the entity the link
+      // landed on and offer the path to it. Navigating during the undo window
+      // commits the accept (unmount semantics above) — safe by design.
+      const suggestion = initialSuggestions.find((s) => s.id === suggestionId);
+      const outcome =
+        kind === "accept" && suggestion
+          ? {
+              message: `Linked to ${suggestion.target_name ?? "the selected record"}`,
+              href: `${TARGET_ROUTE[suggestion.target_type]}/${suggestion.target_id}`,
+              hrefLabel: `View ${TARGET_LABEL[suggestion.target_type] ?? "record"} →`,
+            }
+          : null;
+
       showNotice({
         id: `pending-${suggestionId}-${kind}`,
-        message:
-          kind === "accept" ? "Suggestion accepted" : "Suggestion dismissed",
+        message: outcome?.message ?? (kind === "accept" ? "Suggestion accepted" : "Suggestion dismissed"),
+        href: outcome?.href,
+        hrefLabel: outcome?.hrefLabel,
         actionLabel: "Undo",
         onAction: () => {
           cancelTimer(suggestionId);
@@ -270,7 +284,7 @@ export function SuggestionList({
         },
       });
     },
-    [cancelTimer, commitAccept, commitDismiss, dismissNotice, showNotice]
+    [cancelTimer, commitAccept, commitDismiss, dismissNotice, showNotice, initialSuggestions]
   );
 
   // Component-wide unmount cleanup. Per the design-decisions doc, we DO NOT

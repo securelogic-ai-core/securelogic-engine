@@ -957,12 +957,15 @@ router.get("/intelligence-briefs/:id", async (req, res) => {
       recommended_actions: string | null;
       analyst_notes: string | null;
       urgency: string | null;
+      is_personalized: boolean | null;
+      platform_context: Record<string, unknown> | null;
     }>(
       `SELECT id, category, relevance, title, summary, affected_cve, affected_vendor,
               source_slug, signal_type, severity, cyber_signal_id,
               ingestion_timestamp, sort_order,
               why_it_matters, recommended_actions, analyst_notes,
-              urgency
+              urgency,
+              is_personalized, platform_context
        FROM intelligence_brief_items
        WHERE brief_id = $1 AND organization_id = $2
        ORDER BY sort_order ASC`,
@@ -1013,6 +1016,12 @@ router.get("/intelligence-briefs/:id", async (req, res) => {
           recommended_actions: item.recommended_actions,
           analyst_notes: item.analyst_notes,
           urgency: item.urgency,
+          // Personalization has been computed and stored since 20260511 but
+          // never returned — "this affects YOUR vendor" is the visible proof
+          // the Brief is connected to the tenant's context, so the UI and
+          // email layers finally get to render it.
+          is_personalized: item.is_personalized ?? false,
+          platform_context: item.platform_context ?? null,
           ...(itemCitations && itemCitations.length > 0
             ? { applicability_citations: itemCitations }
             : {})

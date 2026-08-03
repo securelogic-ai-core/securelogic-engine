@@ -36,3 +36,23 @@ describe("hasAnyFilter", () => {
     expect(hasAnyFilter({ domain: "Vendor Risk" })).toBe(true);
   });
 });
+
+describe("savedViewHref — queue-controls browse keys (EG2 slice 4)", () => {
+  it("pins queue=all when any queue-only key is present, so the view opens the browse queue", () => {
+    expect(savedViewHref({ q: "backup", severity: "Critical", sort: "severity" })).toBe(
+      "/findings?severity=Critical&q=backup&sort=severity&queue=all"
+    );
+  });
+
+  it("legacy-only views keep their exact legacy URL — no queue pin", () => {
+    expect(savedViewHref({ severity: "Critical", status: "open" })).toBe(
+      "/findings?status=open&severity=Critical"
+    );
+  });
+
+  it("currentViewFilters captures the queue params an analyst filtered by", () => {
+    expect(
+      currentViewFilters({ q: "backup", governance: "needs_review", mine: "1", page: "3", junk: "x" })
+    ).toEqual({ q: "backup", governance: "needs_review", mine: "1" });
+  });
+});

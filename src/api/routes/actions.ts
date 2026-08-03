@@ -20,6 +20,8 @@ import { validateActionCreate } from "../lib/actionValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { recomputeFindingOperationalStatus } from "../lib/findingLifecycle.js";
+import { scheduleVendorScoreRecomputeForFinding } from "../lib/vendorRiskScoreRecompute.js";
+import { triggerAssignmentAlert } from "../lib/assignmentAlertTrigger.js";
 import { sqlActionActive, sqlActionOverdue } from "../lib/metricDefinitions.js";
 import { resolveOwnerMeFilter } from "../lib/findingListFilters.js";
 
@@ -128,6 +130,24 @@ router.post(
         ipAddress: req.ip ?? null,
       });
 
+      // Assignment at creation notifies the owner (post-commit via asTenant;
+      // self-assignment and preference-off are handled inside the trigger).
+      if (input.owner_user_id) {
+        triggerAssignmentAlert({
+          organizationId,
+          assigneeUserId: input.owner_user_id,
+          actorUserId: ((req as any).userId as string | undefined) ?? null,
+          item: {
+            kind: "action",
+            id: result.rows[0].id as string,
+            title: input.title,
+            dueDate: input.due_date ?? null,
+            parentFindingId:
+              input.source_type === "finding" ? (input.source_id ?? null) : null,
+          },
+        });
+      }
+
       // action.created has been in the webhook allowlist since the surface
       // shipped but never fired. Canonical fields only (same discipline as
       // finding.created / risk.created): no description, no free-text notes.
@@ -172,6 +192,12 @@ router.post(
             payload: { from: recompute.fromState ?? null, to: recompute.toState ?? null, trigger: "action.created" },
             ipAddress: req.ip ?? null,
           });
+        }
+        // A derived-status change on a vendor-workflow finding changes the
+        // vendor's risk picture — refresh the score post-commit (no-op for
+        // non-vendor findings; best-effort by contract).
+        if (recompute.changed) {
+          scheduleVendorScoreRecomputeForFinding(organizationId, input.source_id);
         }
       }
 
@@ -740,6 +766,24 @@ router.patch(
       const statusChanged = "status" in body;
       const eventType = statusChanged ? "action.status_changed" : "action.updated";
 
+      // Assignment notifies the new owner (post-commit; ledger-deduped inside
+      // the trigger; self-assignment is a no-op).
+      if ("owner_user_id" in body && row.owner_user_id) {
+        triggerAssignmentAlert({
+          organizationId,
+          assigneeUserId: row.owner_user_id as string,
+          actorUserId: ((req as any).userId as string | undefined) ?? null,
+          item: {
+            kind: "action",
+            id: row.id as string,
+            title: (row.title as string) ?? "Remediation action",
+            dueDate: (row.due_date as string | null) ?? null,
+            parentFindingId:
+              row.source_type === "finding" ? ((row.source_id as string | null) ?? null) : null,
+          },
+        });
+      }
+
       // Audit-grade payload: WHAT (the action's title, snapshotted so the trail
       // stays readable even after a rename/delete), the resulting state, and —
       // for a status change — the real prior → new transition.
@@ -812,6 +856,10 @@ router.patch(
             payload: { from: recompute.fromState ?? null, to: recompute.toState ?? null, trigger: "action.status_changed" },
             ipAddress: req.ip ?? null,
           });
+        }
+        // Vendor score refresh on derived-status change (see action-create path).
+        if (recompute.changed) {
+          scheduleVendorScoreRecomputeForFinding(organizationId, parentFindingId);
         }
       }
 
@@ -1005,6 +1053,10 @@ router.post(
             payload: { from: recompute.fromState ?? null, to: recompute.toState ?? null, trigger: "action.unblocked" },
             ipAddress: req.ip ?? null,
           });
+        }
+        // Vendor score refresh on derived-status change (see action-create path).
+        if (recompute.changed) {
+          scheduleVendorScoreRecomputeForFinding(organizationId, parentFindingId);
         }
       }
 

@@ -155,6 +155,7 @@ export default function WorkFirstFindings({
   mode,
   counts,
   unknownCounts,
+  hasAnyFindings = null,
   independentReview = false,
   summaryItems,
   generatedAt,
@@ -169,6 +170,13 @@ export default function WorkFirstFindings({
   mode: "home" | "bucket" | "entity";
   counts: Record<OpsBucketId, number>;
   unknownCounts: OpsBucketId[];
+  /**
+   * Whether ANY finding (active or closed) has ever existed for this org.
+   * false = fresh, unassessed org — the zero-due state must read as "nothing
+   * measured yet", never as a green "All clear". null/undefined = unknown
+   * (older engine summary) — keep the legacy all-clear rendering.
+   */
+  hasAnyFindings?: boolean | null;
   /** SECURELOGIC_INDEPENDENT_REVIEW_ENABLED — surfaces the reviewer queue bucket. */
   independentReview?: boolean;
   summaryItems?: SummaryItem[];
@@ -478,14 +486,30 @@ export default function WorkFirstFindings({
       </div>
 
       {due === 0 && unknownCounts.length === 0 && (
-        <div className="rounded-xl border p-6 text-center mb-8" style={{ ...CARD, borderColor: "rgba(34,197,94,0.2)" }}>
-          <p className="text-sm font-semibold mb-1" style={{ color: "#86efac" }}>
-            All clear — no decision work is due right now.
-          </p>
-          <p className="text-xs" style={{ color: "#64748b" }}>
-            New intelligence, assessments, and reviews land here as work when they affect your organization.
-          </p>
-        </div>
+        hasAnyFindings === false ? (
+          // Fresh org: zero due work because nothing has been measured yet.
+          // Green reassurance here would misread as attested posture.
+          <div className="rounded-xl border p-6 text-center mb-8" style={{ ...CARD, borderColor: "#1e293b" }}>
+            <p className="text-sm font-semibold mb-1" style={{ color: "#94a3b8" }}>
+              Nothing assessed yet — no findings are on record for your organization.
+            </p>
+            <p className="text-xs" style={{ color: "#64748b" }}>
+              Work appears here once assessments run or intelligence matches your inventory.{" "}
+              <Link href="/getting-started" className="font-medium" style={{ color: "#00c4b4" }}>
+                Start setup →
+              </Link>
+            </p>
+          </div>
+        ) : (
+          <div className="rounded-xl border p-6 text-center mb-8" style={{ ...CARD, borderColor: "rgba(34,197,94,0.2)" }}>
+            <p className="text-sm font-semibold mb-1" style={{ color: "#86efac" }}>
+              All clear — no decision work is due right now.
+            </p>
+            <p className="text-xs" style={{ color: "#64748b" }}>
+              New intelligence, assessments, and reviews land here as work when they affect your organization.
+            </p>
+          </div>
+        )
       )}
 
       <BucketGroup group="decisions" counts={counts} unknown={unknownCounts} independentReview={independentReview} />

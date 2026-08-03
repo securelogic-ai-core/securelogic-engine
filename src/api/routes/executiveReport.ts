@@ -18,6 +18,7 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { sqlFindingActive } from "../lib/metricDefinitions.js";
 import { toDisplayPosture, toDisplayDomain } from "../lib/postureDisplay.js";
 import { secureLogicLogo, stampFooters } from "../lib/reportBranding.js";
+import { buildExecutiveNarrative } from "../lib/executiveNarrative.js";
 
 const router = Router();
 
@@ -520,7 +521,43 @@ export function generateExecutivePDF(data: ExecReportData, out: NodeJS.WritableS
       { width: contentW, align: "center" }
     );
 
-  // ─── Page 2: Security Posture Overview ───────────────────────────────────────
+  // ─── Page 2: Executive Summary (EG2 slice 13) ────────────────────────────────
+  // The "so what" page a board reads first. Deterministic prose composed from
+  // the SAME assembled data as every table below (buildExecutiveNarrative) —
+  // reproducible, audit-defensible, and incapable of contradicting the report.
+
+  doc.addPage();
+
+  doc
+    .fillColor(TEXT_PRIMARY)
+    .font("Helvetica-Bold")
+    .fontSize(14)
+    .text("Executive Summary", margin, margin);
+  doc.rect(margin, doc.y + 4, contentW, 1.5).fill(TEAL);
+  doc.moveDown(1.4);
+
+  for (const paragraph of buildExecutiveNarrative(data)) {
+    doc
+      .fillColor(TEXT_PRIMARY)
+      .font("Helvetica")
+      .fontSize(10.5)
+      .text(paragraph, margin, doc.y, { width: contentW, lineGap: 3 });
+    doc.moveDown(0.9);
+  }
+
+  doc.moveDown(0.4);
+  doc
+    .fillColor(TEXT_MUTED)
+    .font("Helvetica-Oblique")
+    .fontSize(8)
+    .text(
+      "Every figure in this summary reproduces a table in the sections that follow; the narrative is derived from the same data, not authored separately.",
+      margin,
+      doc.y,
+      { width: contentW }
+    );
+
+  // ─── Page 3: Security Posture Overview ───────────────────────────────────────
 
   doc.addPage();
 

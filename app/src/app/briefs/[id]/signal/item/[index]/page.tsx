@@ -4,6 +4,7 @@ import { getSession } from "@/lib/session";
 import { getIntelligenceBrief, getFindings, getFindingContext } from "@/lib/api";
 import { intelligenceEventHref } from "@/lib/intelligenceLinks";
 import PromoteSignalButton from "./PromoteSignalButton";
+import { BriefItemContextCallout } from "@/components/BriefItemPlatformContext";
 import {
   briefDecisionAffordance,
   shouldResolveBriefDecision,
@@ -287,6 +288,11 @@ export default async function SignalDetailPage({ params }: Props) {
               </span>
             </div>
 
+            {/* Personalization: name the tenant records this item matched and
+                link straight to them — the proof this Brief reads YOUR
+                environment, placed above the generic action list. */}
+            <BriefItemContextCallout item={item} />
+
             {actions.length > 0 && (
               <section className="mb-6 bg-teal-50 rounded-lg p-5 border border-teal-100">
                 <p className="text-xs font-bold text-teal-700 uppercase tracking-wide mb-3">
@@ -384,7 +390,20 @@ export default async function SignalDetailPage({ params }: Props) {
                   {item.affected_vendor && (
                     <div>
                       <dt className="text-xs text-slate-500 uppercase tracking-wide mb-0.5">Vendor</dt>
-                      <dd className="text-slate-300">{item.affected_vendor}</dd>
+                      <dd className="text-slate-300">
+                        {/* When personalization matched this vendor to the org's
+                            own record, the name is a link, not just a string. */}
+                        {(() => {
+                          const matched = item.platform_context?.matched_vendors?.[0];
+                          return matched ? (
+                            <Link href={`/vendors/${matched.id}`} className="hover:underline" style={{ color: "#5eead4" }}>
+                              {item.affected_vendor} →
+                            </Link>
+                          ) : (
+                            item.affected_vendor
+                          );
+                        })()}
+                      </dd>
                     </div>
                   )}
                   {/* R1: the "Feed" row (CISA KEV / NVD / BleepingComputer ...) is

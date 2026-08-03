@@ -37,6 +37,7 @@ function matchResult(overrides: Partial<MatcherResult> = {}): MatcherResult {
     matched_vendor_id: "v1",
     matched_ai_system_id: null,
     finding: { id: "f1" },
+    finding_was_created: true,
     suggestion_id: "s1",
     match_score: 80,
     domain: "Vendor Risk",

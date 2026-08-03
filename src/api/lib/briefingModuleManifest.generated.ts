@@ -13,6 +13,18 @@ export const BRIEFING_MODULE_MANIFEST: BriefingModuleManifest =
   "schema_version": 1,
   "modules": [
     {
+      "id": "whats_changed",
+      "title": "Since Your Last Visit",
+      "description": "What changed while you were away — new findings, work that became overdue, remediation completed, findings closed, and new intelligence.",
+      "zone": "your_work",
+      "category": "my_work",
+      "scope": "organization",
+      "requiresUserIdentity": true,
+      "minEntitlement": "platform",
+      "destination": "/findings?queue=all",
+      "legacyTileId": null
+    },
+    {
       "id": "my_work",
       "title": "My Work",
       "description": "Findings you own and remediation actions assigned to you, with overdue work called out.",

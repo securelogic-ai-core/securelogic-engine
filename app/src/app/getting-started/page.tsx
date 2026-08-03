@@ -74,8 +74,10 @@ export default async function GettingStartedPage() {
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  // If onboarding already completed, skip to dashboard
-  if (session.onboardingCompleted === true) redirect("/dashboard");
+  // Deliberately NO completed-users redirect: "Skip setup" used to make this
+  // page permanently unreachable (the user-menu link now returns here). The
+  // checklist derives completion from live inventory counts, so a finished org
+  // simply sees every step checked — a progress record, not a nag.
 
   const orgName = session.organizationName ?? "Your organization";
 

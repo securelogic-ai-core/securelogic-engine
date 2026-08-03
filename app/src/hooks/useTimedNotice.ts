@@ -9,6 +9,11 @@ export type TimedNotice = {
   // generic toasts (e.g. an error) leave them undefined.
   actionLabel?: string;
   onAction?: () => void;
+  // Optional outcome link — "you accepted this; here is where it landed".
+  // A decision that ends in a dead-end toast makes the workflow feel inert;
+  // navigation during an undo window is safe by design (unmount commits).
+  href?: string;
+  hrefLabel?: string;
 };
 
 /**

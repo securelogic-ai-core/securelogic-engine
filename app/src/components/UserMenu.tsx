@@ -131,6 +131,15 @@ export default function UserMenu({ name, email, role, organizationName, isPlatfo
                 API Keys
               </MenuLink>
             )}
+            {/* SECONDARY_NAV_ITEMS declares this entry; it was never rendered —
+                combined with the completed-users redirect on /getting-started,
+                dismissing onboarding once made the checklist permanently
+                unreachable. */}
+            {isPlatformUser && (
+              <MenuLink href="/getting-started" onClick={() => setOpen(false)}>
+                Getting Started
+              </MenuLink>
+            )}
             <MenuLink href="/settings/risk-scale" onClick={() => setOpen(false)} icon={<GearIcon />}>
               Settings
             </MenuLink>

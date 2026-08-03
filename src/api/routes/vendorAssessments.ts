@@ -24,7 +24,7 @@
  */
 
 import { Router } from "express";
-import { pg, withTenant } from "../infra/postgres.js";
+import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -34,8 +34,7 @@ import { validateVendorAssessmentCreate } from "../lib/vendorAssessmentValidatio
 import { severityToPriority } from "../lib/postureComputation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
-import { computeVendorRiskScore } from "../lib/vendorRiskScore.js";
-import { sqlFindingActive } from "../lib/metricDefinitions.js";
+import { scheduleVendorScoreRecompute } from "../lib/vendorRiskScoreRecompute.js";
 
 const router = Router();
 
@@ -162,10 +161,19 @@ router.post(
       const assessment = assessmentResult.rows[0];
       const assessmentId: string = assessment.id;
 
-      // Insert the finding linked to this assessment.
+      // Insert the finding linked to this assessment — for Moderate+ outcomes.
       // source_type = 'vendor_review', source_id = assessmentId (NOT vendor_id).
       // domain = 'Vendor Risk' — hardcoded so findings feed the correct domain
       // bucket in DomainRiskAggregationEngineV2 on next posture snapshot.
+      //
+      // EG2 trust ruling: a LOW-severity outcome is the assessment saying "this
+      // vendor is fine" — minting an OPEN finding from it put a permanent work
+      // item and a risk-score penalty on every satisfactory annual review, which
+      // customers read as a bug (a clean review made the vendor look riskier).
+      // The assessment row itself is still the complete record of the review;
+      // Low creates no summary finding. AI-imported findings below are the
+      // reviewer's explicit selections and are always created, at any severity.
+      const createSummaryFinding = input.overall_severity !== "Low";
       const priority = severityToPriority(input.overall_severity);
       const findingTitle = `Vendor Risk: ${vendorName} — ${input.overall_severity} severity`;
       const findingDescription =
@@ -173,7 +181,8 @@ router.post(
           ? input.summary.trim()
           : `Vendor review finding from ${input.assessment_type} assessment.`;
 
-      const findingResult = await client.query(
+      const findingResult = createSummaryFinding
+        ? await client.query(
         `
         INSERT INTO findings (
           organization_id,
@@ -211,9 +220,10 @@ router.post(
           input.overall_severity,
           priority
         ]
-      );
+          )
+        : null;
 
-      const finding = findingResult.rows[0];
+      const finding = findingResult?.rows[0] ?? null;
 
       // Insert any AI-extracted findings imported by the user.
       for (const importedFinding of input.findings) {
@@ -253,7 +263,7 @@ router.post(
           organizationId,
           assessmentId,
           vendorId: input.vendor_id,
-          findingId: finding.id,
+          findingId: finding?.id ?? null,
           overall_severity: input.overall_severity
         },
         "Vendor assessment created"
@@ -281,49 +291,12 @@ router.post(
       }).catch(() => {});
 
       // Background: recompute and persist vendor risk score after new assessment.
-      // A04-G1 γ.3 — this fire-and-forget job runs as a macrotask AFTER the
-      // asTenant wrap has committed and RELEASED the request's tenant client, so
-      // it must NOT touch the ambient `pg` proxy on its own (that would route to
-      // the released ctx.client — use-after-release on a pooled connection; see
-      // feedback_route_wrap_fire_and_forget). It opens its OWN withTenant(orgId)
-      // scope: a fresh client + transaction + `SET LOCAL app.current_org_id`, so
-      // the ambient `pg` queries inside route to that client and (post-flip) the
-      // vendors UPDATE / findings read are RLS-scoped, not merely WHERE-scoped.
-      // Behavior-preserving: the recompute still runs and still updates
-      // vendors.current_risk_score; only its DB channel changed. See design §2.1.
-      setImmediate(() => {
-        void withTenant(organizationId, async () => {
-          try {
-            const vendorRow = await pg.query<{ criticality: string | null }>(
-              `SELECT criticality FROM vendors WHERE id = $1 AND organization_id = $2`,
-              [input.vendor_id, organizationId]
-            );
-            if ((vendorRow.rowCount ?? 0) === 0) return;
-
-            const criticality = vendorRow.rows[0]!.criticality;
-            const findingsRows = await pg.query<{ severity: string; status: string }>(
-              `SELECT f.severity, f.status
-               FROM findings f
-               JOIN vendor_assessments va ON va.id::text = f.source_id::text
-               WHERE va.vendor_id = $1
-                 AND f.organization_id = $2
-                 AND ${sqlFindingActive("f.operational_status")}`,
-              [input.vendor_id, organizationId]
-            );
-
-            const { score } = computeVendorRiskScore(criticality, findingsRows.rows);
-            await pg.query(
-              `UPDATE vendors SET current_risk_score = $1, updated_at = NOW()
-               WHERE id = $2 AND organization_id = $3`,
-              [score, input.vendor_id, organizationId]
-            );
-          } catch {
-            // silent — score update is best-effort
-          }
-        }).catch(() => {
-          // withTenant itself failed (connect/commit) — best-effort, swallow.
-        });
-      });
+      // The shared scheduler owns the A04-G1 γ.3 discipline (setImmediate past
+      // the asTenant commit, then its OWN withTenant scope) and the CANONICAL
+      // finding union — the inline version here counted only vendor_review
+      // findings, silently ignoring review-cycle findings the manual
+      // Recalculate endpoint always included. Best-effort by contract.
+      scheduleVendorScoreRecompute(organizationId, input.vendor_id);
 
       res.status(201).json({ assessment, finding });
     } catch (err) {

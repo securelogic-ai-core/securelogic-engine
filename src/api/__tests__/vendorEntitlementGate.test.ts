@@ -104,7 +104,8 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "assess.ts": 1,
   "assessments.ts": 2,
   // 6 since POST /evidence/upload + GET /evidence/:id/file (file attachments).
-  "evidence.ts": 6,
+  // 7th gate: GET /evidence/recent (EG2 slice 8, org-wide inventory read).
+  "evidence.ts": 7,
   "dependencies.ts": 5,
   "dependencyAssessments.ts": 4,
   // findings/actions/policies

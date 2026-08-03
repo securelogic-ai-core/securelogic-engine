@@ -331,7 +331,8 @@ production (no prod enablement without an explicit operator ruling).
 | `SECURELOGIC_PLATFORM_TRIAL_ENABLED` | Platform trial gating | Engine | `"false"` | yes | — |
 | `SECURELOGIC_BRIEF_CATCHUP_ENABLED` | Missed-send Brief catch-up | Engine | `"false"` | yes | — |
 | `SECURELOGIC_RISK_LIFECYCLE_NOTIFICATIONS_ENABLED` | Risk lifecycle notifications | Engine | off (code-default) | no | `RISK_LIFECYCLE` |
-| `SECURELOGIC_MATCHER_ALERTS_ENABLED` | Matcher real-time alerts | Engine | off (code-default) | no | — |
+| `SECURELOGIC_MATCHER_ALERTS_ENABLED` | Matcher real-time alerts (coalescing batcher; all 3 matcher invocation paths since EG2 slice 1) | Engine + Intelligence Worker — **flip both together** | `"false"` | yes (declared `"false"` ×4: engine + worker, prod + staging, since `f8384a4d`) | staging volume check first |
+| `SECURELOGIC_SLA_ALERTS_ENABLED` | Daily SLA-breach sweep — one grouped email per owner, 8:15 UTC (EG2 slice 11) | Engine only (scheduler; the worker never reads it) | `"false"` | yes (declared `"false"`: engine prod + staging, since `f8384a4d`) | observe one staging sweep (`sla_breach_sweep_complete`) first |
 | `SECURELOGIC_DAILY_DIGEST_ENABLED` | Daily digest send | Engine | off (code-default) | no | — |
 | `SECURELOGIC_LEGACY_NEWSLETTER_ENABLED` | Legacy newsletter path | Engine + Intelligence Worker | off (code-default) | no | — |
 | `SECURELOGIC_SIGNAL_CLUSTERING_ENABLED` | Signal clustering in processing | Engine | off (code-default) | no | — |
@@ -342,6 +343,15 @@ production (no prod enablement without an explicit operator ruling).
 | `SECURELOGIC_BRIEF_PROVENANCE_ENABLED` | Brief provenance writes | Engine | off (code-default) | no | pairs with citations |
 | `SECURELOGIC_BRIEF_PLATFORM_CREDIT_ENABLED` | Brief→Platform upgrade credit | Engine | off (code-default) | no | — |
 
+> **Alert-flag enablement fence (EG2):** both alert flags follow staging-first with a
+> specific staging gate — matcher alerts need the volume check on `[SEED] Walkthrough
+> Org` (coalesced batch sizes, no per-finding storm) with the flag flipped on **engine
+> and intelligence-worker together**; the SLA sweep needs one observed 8:15 UTC run
+> (`sla_breach_sweep_complete`, then a second run sending nothing — ledger dedupe).
+> Rollback for either = set back to `"false"` + restart; the sweep becomes a zero-DB
+> no-op and the batcher goes silent. Assignment emails (same EG2 train) have **no
+> flag** — they activate wherever the code deploys; rollback is revert.
+>
 > **Restart for all Tier-B flags:** runtime env → restart the listed service(s) on
 > change; no rebuild. **Validation/rollback** follow the same pattern: enable on the
 > listed service → exercise the feature's endpoint/UI → set back to `"false"` (or
