@@ -207,7 +207,72 @@ verified from the repository.
 
 ---
 
-## 7. Evidence to capture during promotion
+## 7. Staging rollback rehearsal (operator-executed)
+
+Prepared here in full; **not executed** — every step is a Render control-plane
+operation and no Render credential exists in the authoring environment
+(`api.render.com` returns 401). Run this on **staging only**.
+
+### 7.1 Known-good targets (pinned)
+
+| Ref | Commit | Migration files | Role |
+|---|---|---|---|
+| Release candidate | `develop` @ `b293e0cc` | 202 | What is being rehearsed |
+| Staging known-good | `62f21e10` | 200 | `develop` immediately before the EG2 merges |
+| Production current | `main` @ `83f41957` | 197 | Untouched by this rehearsal |
+
+Flag values at the known-good point `62f21e10` — the state a flag revert must
+reproduce:
+
+| Service | Flag | Known-good value |
+|---|---|---|
+| `securelogic-engine` | `SECURELOGIC_DECISION_WORKSPACE_ENABLED` | `false` |
+| `securelogic-engine` | `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED` | `false` |
+| `securelogic-engine` | `SECURELOGIC_VENDOR_ASSURANCE_ENABLED` | *(undeclared → false)* |
+| `securelogic-app` | `SECURELOGIC_RISK_WORKSPACE_ENABLED` | `false` |
+| `securelogic-app` | `SECURELOGIC_DECISION_WORKSPACE_ENABLED` | `false` |
+| `securelogic-app` | `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED` | `false` |
+
+### 7.2 Procedure
+
+**Before starting:** confirm Auto Sync is OFF, and record the current staging
+deploy ids for `securelogic-engine-staging` and `securelogic-app-staging` — those
+are what you restore to in step 5.
+
+1. **Baseline.** `GET /health` on the staging engine → 200 `{"status":"ok","db":"connected"}`.
+   `GET /api/health` on the staging app → 200 `{"status":"ok"}` (this returns **404**
+   until the app health-check change is deployed — see §6.1).
+2. **Flag rollback first — the cheap lever.** Set the six flags to their known-good
+   values above and restart both services. Expect the legacy navigation and legacy
+   finding detail, byte-for-byte. **App first, then engine** (§4). Confirm both
+   health endpoints still return 200 — a flag revert must not affect readiness.
+3. **Deploy rollback — the heavy lever.** Roll `securelogic-app-staging`, then
+   `securelogic-engine-staging`, back to their pre-release deploys. Confirm both
+   health endpoints return 200 on the older images.
+4. **Confirm no data-repair tail.** With the older code live, verify the five
+   migration rows are still present and nothing errors:
+   ```sql
+   SELECT filename FROM schema_migrations
+    WHERE filename LIKE '202609%' ORDER BY filename;
+   ```
+   The older code must run correctly with those columns, table and view present.
+   That is the whole claim being rehearsed: rollback needs no down-migration.
+5. **Restore the release candidate.** Redeploy both staging services to the
+   release-candidate commit, restore the six flags to `true`, and re-confirm both
+   health endpoints.
+
+### 7.3 Evidence to collect
+
+- [ ] Pre-rehearsal deploy ids for both staging services
+- [ ] Health responses at baseline, after flag revert, after deploy rollback, after restore
+- [ ] Screenshot or note that legacy navigation returned under flag revert
+- [ ] The `schema_migrations` query result while rolled back
+- [ ] Confirmation that no error appeared in staging logs attributable to the extra schema
+- [ ] Post-restore deploy ids
+
+---
+
+## 8. Evidence to capture during promotion
 
 - [ ] Engine deploy id + timestamp, reached live
 - [ ] The 5-row `schema_migrations` query result
