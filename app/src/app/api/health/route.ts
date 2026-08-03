@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { evaluateReadiness } from "@/lib/appReadiness";
+
 /**
  * Readiness probe for the Next app (Render `healthCheckPath`).
  *
@@ -18,59 +20,15 @@ import { NextResponse } from "next/server";
  * process is correctly configured to serve", never "every dependency is up".
  * Dependency health belongs to the engine's own `/health`.
  *
- * The two checks below are exactly the app's hard runtime requirements:
+ * The checks themselves live in `@/lib/appReadiness`: a route module may export
+ * only handlers and segment config, so the helper cannot live here — exporting
+ * it fails `next build` at deploy time even though bare `tsc --noEmit` accepts
+ * it.
  *
- *   SESSION_SECRET  — `middleware.ts` deliberately fails OPEN when this is
- *                     missing or shorter than 32 characters, so session
- *                     enforcement is silently disabled rather than locking
- *                     everyone out. Serving traffic in that state is a
- *                     security posture the app should never be promoted into,
- *                     and nothing else in the stack would report it.
- *
- *   ENGINE_API_URL  — every server-side engine call defaults to
- *                     `http://localhost:4000` when unset. In a Render service
- *                     nothing listens there, so the app renders shells and
- *                     fails every data fetch while looking alive.
- *
- * Both are process-local reads: no I/O, no mutation, no authentication (the
- * middleware matcher excludes `/api`), and no secret ever leaves the process —
- * the response names failing checks, never their values.
+ * No I/O, no mutation, no authentication (the middleware matcher excludes
+ * `/api`), and no secret leaves the process: the response names failing checks,
+ * never their values.
  */
-
-/** Names of the env vars this probe requires. Values are never read out. */
-const SESSION_SECRET_MIN_LENGTH = 32;
-
-export type ReadinessResult = {
-  ready: boolean;
-  /** Names of failed checks — never values. Empty when ready. */
-  failed: string[];
-};
-
-/**
- * Pure readiness evaluation, separated from the handler so both the ready and
- * unready branches are unit-testable without standing up a server.
- */
-export function evaluateReadiness(env: NodeJS.ProcessEnv): ReadinessResult {
-  const failed: string[] = [];
-
-  const sessionSecret = (env.SESSION_SECRET ?? "").trim();
-  if (sessionSecret.length < SESSION_SECRET_MIN_LENGTH) {
-    // Covers both "missing" and "too short" — middleware treats them
-    // identically, so the probe does too.
-    failed.push("SESSION_SECRET");
-  }
-
-  const engineUrl = (env.ENGINE_API_URL ?? "").trim();
-  if (engineUrl === "") {
-    failed.push("ENGINE_API_URL");
-  } else if (env.NODE_ENV === "production" && /^https?:\/\/(localhost|127\.0\.0\.1)\b/i.test(engineUrl)) {
-    // The localhost default is correct for local development and never correct
-    // for a deployed service, so this arm is production-only.
-    failed.push("ENGINE_API_URL");
-  }
-
-  return { ready: failed.length === 0, failed };
-}
 
 // Never statically optimized: the probe must read the live environment on every
 // request, not a value captured at build time.

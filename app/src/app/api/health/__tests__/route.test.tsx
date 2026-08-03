@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 
-import { evaluateReadiness, GET } from "../route";
+import { evaluateReadiness } from "@/lib/appReadiness";
+
+import { GET } from "../route";
 
 /**
  * The probe's whole value is that it fails when the app is misconfigured, so
@@ -69,7 +71,9 @@ describe("evaluateReadiness", () => {
 });
 
 describe("GET /api/health", () => {
-  const withEnv = async <T>(env: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> => {
+  // The trailing comma in `<T,>` keeps this a generic parameter rather than JSX,
+  // which is required in a .tsx file.
+  const withEnv = async <T,>(env: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> => {
     const saved = { ...process.env };
     Object.assign(process.env, env);
     try {
