@@ -4,8 +4,10 @@
  * Runs weekly (Tuesday 07:00 UTC, cron "0 7 * * 2" in schedulerRunner) over a
  * trailing 7-day signal window. Email delivery is additionally gated by
  * isBriefSendDay() (Tuesday UTC) so manual/off-day runs generate but do not
- * email. Processes every organization that has at least one active Intelligence
- * Brief subscriber, running the complete pipeline for each:
+ * email. Processes every ACTIVE organization — brief generation is an
+ * organizational entitlement (ADR-0007); intelligence_brief_subscribers holds
+ * email recipients only and never gates generation — running the complete
+ * pipeline for each:
  *
  *   Step 1 — Fetch signals (once per run, shared across all orgs)
  *     - CISA KEV — full catalog, actively exploited CVEs
@@ -23,6 +25,9 @@
  *
  *   Step 4 — Send brief per org
  *     - Calls sendBrief() — renders HTML, sends via Resend, records audit rows
+ *     - Recipients resolve from intelligence_brief_subscribers; an org with
+ *       zero active recipients keeps its generated in-platform brief and the
+ *       skip is recorded as a delivery-health condition
  *
  * Orgs are processed sequentially to avoid DB and external API contention.
  * Signal feeds are fetched ONCE and ingested per-org to avoid repeated
@@ -87,6 +92,7 @@ import { sendBrief } from "./briefEmailSender.js";
 import { emitBriefPublished } from "./briefWebhookEmitter.js";
 import { isBriefSendDay } from "./briefSendWindow.js";
 import { maybeAlertBriefDelivery } from "./briefDeliveryHealth.js";
+import { listBriefEligibleOrgIds } from "./briefEligibility.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -100,6 +106,8 @@ const WINDOW_DAYS = 7;
 // ---------------------------------------------------------------------------
 
 export type SchedulerRunSummary = {
+  /** Active organizations enumerated for this run — the generation population. */
+  active_orgs: number;
   orgs_processed: number;
   orgs_skipped: number;
   signals_fetched: {
@@ -118,6 +126,10 @@ export type SchedulerRunSummary = {
   emails_failed: number;
   /** Orgs whose brief was generated but NOT emailed because the run fell on a non-send day (any day except Tuesday UTC). */
   emails_skipped_off_day: number;
+  /** Orgs whose brief was generated + published but NOT emailed because they have zero active recipients (send day only). */
+  emails_skipped_no_recipients: number;
+  /** Org ids with zero active email recipients on a send day — feeds the recurring delivery-health report; never a generation gate. */
+  orgs_without_recipients: string[];
   errors: string[];
 };
 
@@ -628,8 +640,8 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 /**
- * Run the full weekly Intelligence Brief pipeline for every org with active
- * subscribers.
+ * Run the full weekly Intelligence Brief pipeline for every active
+ * organization.
  *
  * Called by:
  *   - schedulerRunner.ts (node-cron, Tuesday 07:00 UTC — "0 7 * * 2")
@@ -640,6 +652,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
  */
 export async function runScheduler(): Promise<SchedulerRunSummary> {
   const summary: SchedulerRunSummary = {
+    active_orgs: 0,
     orgs_processed: 0,
     orgs_skipped: 0,
     signals_fetched: {
@@ -657,6 +670,8 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     emails_sent: 0,
     emails_failed: 0,
     emails_skipped_off_day: 0,
+    emails_skipped_no_recipients: 0,
+    orgs_without_recipients: [],
     errors: []
   };
 
@@ -668,17 +683,15 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
 
   logger.info({ event: "scheduler_run_start", isSendDay }, "Brief scheduler run started");
 
-  // ── Step 1: Find all orgs with active subscribers ───────────────────────
+  // ── Step 1: Enumerate active organizations (the generation population) ──
+  // Generation eligibility comes from the organization's active status alone
+  // (ADR-0007). Recipient resolution happens later, inside sendBrief().
 
   let orgIds: string[];
 
   try {
-    const orgsResult = await pgElevated.query<{ organization_id: string }>(
-      `SELECT DISTINCT organization_id
-       FROM intelligence_brief_subscribers
-       WHERE active = TRUE`
-    );
-    orgIds = orgsResult.rows.map((r) => r.organization_id);
+    orgIds = await listBriefEligibleOrgIds();
+    summary.active_orgs = orgIds.length;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`orgs_query_failed: ${msg}`);
@@ -688,12 +701,12 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   }
 
   if (orgIds.length === 0) {
-    logger.info({ event: "scheduler_no_orgs" }, "No orgs with active subscribers — nothing to do");
+    logger.info({ event: "scheduler_no_active_orgs" }, "No active organizations — nothing to do");
     await maybeAlertBriefDelivery(summary, isSendDay);
     return summary;
   }
 
-  logger.info({ event: "scheduler_orgs_found", count: orgIds.length }, "Orgs with active subscribers found");
+  logger.info({ event: "scheduler_orgs_found", count: orgIds.length }, "Active organizations found");
 
   // ── Step 2: Fetch signal feeds once (global, shared across all orgs) ────
 
@@ -1161,6 +1174,22 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
       const sendResult = await sendBrief(briefId, orgId);
       summary.emails_sent += sendResult.sent;
       summary.emails_failed += sendResult.failed;
+      if (sendResult.skipped) {
+        // Zero active recipients: the brief above is generated + published and
+        // stays current in-platform — only the email leg is skipped. Recorded
+        // so the delivery-health report can surface uncovered orgs weekly.
+        summary.emails_skipped_no_recipients++;
+        summary.orgs_without_recipients.push(orgId);
+        logger.info(
+          {
+            event: "scheduler_brief_send_skipped_no_recipients",
+            orgId,
+            briefId,
+            reason: sendResult.message ?? "no_active_subscribers"
+          },
+          "Brief generated and published; email skipped — org has no active recipients (delivery-health condition, not a generation gate)"
+        );
+      }
       logger.info(
         {
           event: "scheduler_brief_sent",
@@ -1187,12 +1216,15 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   logger.info(
     {
       event: "scheduler_run_complete",
+      active_orgs: summary.active_orgs,
       orgs_processed: summary.orgs_processed,
       orgs_skipped: summary.orgs_skipped,
       briefs_generated: summary.briefs_generated,
       emails_sent: summary.emails_sent,
       emails_failed: summary.emails_failed,
       emails_skipped_off_day: summary.emails_skipped_off_day,
+      emails_skipped_no_recipients: summary.emails_skipped_no_recipients,
+      orgs_without_recipients: summary.orgs_without_recipients,
       error_count: summary.errors.length
     },
     "Brief scheduler run completed"

@@ -207,10 +207,18 @@ services:
         value: "false"
       - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
         value: "false"
-      - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED   # ERIP Package 3 (Decision Workspace) — DARK (default off); gates GET /api/findings/:id/context (read-only)
-        value: "false"
-      - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED   # Briefing Initiative B2 — DARK (default off); engine half of the two-switch: gates /api/briefing/layout (per-user Briefing layout persistence). Prod flip is GATE B.
-        value: "false"
+      - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED   # ERIP Package 3 (Decision Workspace) — EG3 WAVE 1 (Reveal): ON. Gates GET /api/findings/:id/context (read-only; additive — no existing response shape changes)
+        value: "true"
+      - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED   # Briefing Initiative B2 — EG3 WAVE 1 (Reveal): ON. Engine half of the two-switch: opens /api/briefing/layout (per-user Briefing layout persistence). PROMOTE ENGINE BEFORE APP — the app's Briefing calls this endpoint
+        value: "true"
+
+      # Vendor Assurance — EG3 WAVE 1 (Reveal). Previously UNDECLARED in this
+      # block, so it resolved absent→false while the staging block set it true.
+      # The workspace nav surfaces "Vendor Assurance" unconditionally, so without
+      # this declaration the prod menu item would appear and the API would 403.
+      # Declared explicitly rather than relying on a default.
+      - key: SECURELOGIC_VENDOR_ASSURANCE_ENABLED
+        value: "true"
 
       # EG2 notification flags (declared 2026-07-30 release review) — DARK
       # (default off), listed so the operator flag inventory is complete. Both
@@ -1161,16 +1169,20 @@ services:
       # is byte-for-byte the legacy nav. The securelogic-app-staging service is
       # defined below in this file — set it true there for staging validation. Prod
       # flip is GATE B.
+      # EG3 WAVE 1 (Reveal): ON. This is the flag that changes the navigation, so
+      # it is also the flag the WhatsNewPanel keys on — the orientation panel and
+      # the change it describes share one lifecycle and roll back together.
       - key: SECURELOGIC_RISK_WORKSPACE_ENABLED
-        value: "false"
+        value: "true"
 
       # ERIP Package 3 (Decision Workspace) — DARK (default off). App half of the
       # two-switch model: renders the Decision Workspace on /findings/:id when on
       # AND the engine returns a context (engine flag on too). RUNTIME (not
       # NEXT_PUBLIC): a restart applies it. Flag off = legacy finding detail
       # byte-for-byte. Staging app is defined below in this file; prod flip is GATE B.
+      # EG3 WAVE 1 (Reveal): ON — paired with the engine flag above.
       - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED
-        value: "false"
+        value: "true"
 
       # Scalable Risk Findings queue controls — DARK (default off). Adds the
       # search/filter/sort toolbar, due-status urgency labels, and server-side
@@ -1191,8 +1203,10 @@ services:
       # byte-for-byte. Staging app is defined below; prod flip is GATE B.
       # NAMING: deliberately DASHBOARD_BRIEFING — the SECURELOGIC_BRIEF* namespace
       # belongs to the Intelligence Brief product flags; do not shorten.
+      # EG3 WAVE 1 (Reveal): ON — app half of the two-switch. The engine half is
+      # set above in the securelogic-engine block; promote engine first.
       - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED
-        value: "false"
+        value: "true"
 
       # Secret used to encrypt the iron-session cookie.
       # Must be at least 32 characters. Generate with: openssl rand -hex 32

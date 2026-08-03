@@ -12,16 +12,21 @@
  * WHAT
  * ----
  * On boot, if the catch-up flag is on AND today is the Tuesday send day AND it
- * is past 07:00 UTC AND no brief has been sent yet this week, run the scheduler
- * once (through the shared overlap lock). The window is intentionally the same
- * Tuesday only — it never sends on a different weekday, preserving the B6
- * weekly-Tuesday cadence.
+ * is past 07:00 UTC AND no brief has been generated yet today, run the
+ * scheduler once (through the shared overlap lock). The window is intentionally
+ * the same Tuesday only — it never sends on a different weekday, preserving the
+ * B6 weekly-Tuesday cadence.
  *
  * SAFETY
  * ------
  * - DARK by default (SECURELOGIC_BRIEF_CATCHUP_ENABLED), operator-owned.
- * - "Delivered this week?" is derived from the newest 'sent' row in
- *   intelligence_brief_sends; if the cron already sent today, catch-up no-ops.
+ * - "Did this week's run happen?" is derived from the newest published
+ *   intelligence_briefs row, NOT from intelligence_brief_sends. Generation is
+ *   an organizational entitlement decoupled from email recipients (ADR-0007),
+ *   so a legitimate run with zero recipients records no sends — send-based
+ *   detection would re-run the scheduler on every Tuesday boot and generate
+ *   duplicate briefs. Missed/failed DELIVERY is the delivery-health alert's
+ *   job (briefDeliveryHealth), not catch-up's.
  * - Even if it does run after a partial send, briefEmailSender's idempotency
  *   guard means no subscriber is emailed twice.
  * - Best-effort: never throws into the boot sequence.
@@ -38,18 +43,18 @@ const SEND_HOUR_UTC = 7;
 
 /**
  * Pure predicate: should a catch-up run given the current time and the most
- * recent successful-send timestamp?
+ * recent published-brief timestamp?
  *
  * True only when ALL hold:
  *   - `now` is the Tuesday send day (isBriefSendDay) — never any other weekday.
  *   - `now` is at/after 07:00 UTC (the cron's fire time has passed).
- *   - no brief has been sent since 00:00 UTC today (i.e. `lastSentAt` is null or
- *     strictly before today's UTC midnight) — if the cron already delivered
- *     today, there is nothing to recover.
+ *   - no brief has been generated since 00:00 UTC today (i.e. `lastGeneratedAt`
+ *     is null or strictly before today's UTC midnight) — if the cron already
+ *     ran today, there is nothing to recover.
  *
  * Exported for unit testing. No I/O.
  */
-export function shouldRunCatchup(now: Date, lastSentAt: Date | null): boolean {
+export function shouldRunCatchup(now: Date, lastGeneratedAt: Date | null): boolean {
   if (!isBriefSendDay(now)) return false;
   if (now.getUTCHours() < SEND_HOUR_UTC) return false;
 
@@ -63,22 +68,22 @@ export function shouldRunCatchup(now: Date, lastSentAt: Date | null): boolean {
     0
   );
 
-  if (lastSentAt !== null && lastSentAt.getTime() >= todayMidnightUtc) {
-    // A brief was already delivered today (by the cron) — no catch-up needed.
+  if (lastGeneratedAt !== null && lastGeneratedAt.getTime() >= todayMidnightUtc) {
+    // The cron already ran today (briefs were generated) — no catch-up needed.
     return false;
   }
 
   return true;
 }
 
-/** Most recent successful Brief send across all orgs, or null if none ever. */
-async function fetchLastBriefSentAt(): Promise<Date | null> {
-  const result = await pgElevated.query<{ last_sent: Date | null }>(
-    `SELECT MAX(sent_at) AS last_sent
-     FROM intelligence_brief_sends
-     WHERE status = 'sent'`
+/** Most recent published-brief generation across all orgs, or null if none ever. */
+async function fetchLastBriefGeneratedAt(): Promise<Date | null> {
+  const result = await pgElevated.query<{ last_generated: Date | null }>(
+    `SELECT MAX(generated_at) AS last_generated
+     FROM intelligence_briefs
+     WHERE status = 'published'`
   );
-  const raw = result.rows[0]?.last_sent ?? null;
+  const raw = result.rows[0]?.last_generated ?? null;
   return raw === null ? null : new Date(raw);
 }
 
@@ -104,28 +109,28 @@ export async function runBriefCatchupIfMissed(
     return { ran: false, reason: "outside_window" };
   }
 
-  let lastSentAt: Date | null;
+  let lastGeneratedAt: Date | null;
   try {
-    lastSentAt = await fetchLastBriefSentAt();
+    lastGeneratedAt = await fetchLastBriefGeneratedAt();
   } catch (err) {
     logger.error(
       { event: "brief_catchup_query_failed", err },
-      "Brief catch-up: failed to query last send — skipping (non-fatal)"
+      "Brief catch-up: failed to query last generated brief — skipping (non-fatal)"
     );
     return { ran: false, reason: "query_failed" };
   }
 
-  if (!shouldRunCatchup(now, lastSentAt)) {
+  if (!shouldRunCatchup(now, lastGeneratedAt)) {
     logger.info(
-      { event: "brief_catchup_not_needed", lastSentAt: lastSentAt?.toISOString() ?? null },
-      "Brief catch-up: this week's brief already sent — nothing to recover"
+      { event: "brief_catchup_not_needed", lastGeneratedAt: lastGeneratedAt?.toISOString() ?? null },
+      "Brief catch-up: this week's briefs already generated — nothing to recover"
     );
-    return { ran: false, reason: "already_sent_this_week" };
+    return { ran: false, reason: "already_generated_this_week" };
   }
 
   logger.warn(
-    { event: "brief_catchup_triggered", lastSentAt: lastSentAt?.toISOString() ?? null },
-    "Brief catch-up: no brief sent yet this Tuesday — running the scheduler now to recover the missed weekly edition"
+    { event: "brief_catchup_triggered", lastGeneratedAt: lastGeneratedAt?.toISOString() ?? null },
+    "Brief catch-up: no brief generated yet this Tuesday — running the scheduler now to recover the missed weekly edition"
   );
 
   // Runs through the shared overlap lock; idempotency prevents any double-send.
