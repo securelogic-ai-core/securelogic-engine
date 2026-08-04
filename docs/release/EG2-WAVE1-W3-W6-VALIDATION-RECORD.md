@@ -280,9 +280,36 @@ technical debt, not this release's, not blocking.
 |---|---|---|
 | Engine health check | **PASS** | `healthCheckPath: /health` declared (`render.yaml:8`); live probe → `200 {"status":"ok","db":"connected"}` |
 | **App health check** | **GAP** | No `healthCheckPath` declared for `securelogic-app`; `/api/health` → `404`. Render cannot health-gate app deploys, and there is no app liveness signal for the 24-hour watch |
-| Sentry | **NOT VERIFIABLE** | All DSNs `sync: false` — dashboard-managed, absent from the repo by design. Operator must confirm before promotion |
+| Sentry | ~~NOT VERIFIABLE~~ → **PASS with gaps** (corrected 2026-08-04, see note below) | All five prod values read live and confirmed present/correct. Two real limitations found, neither blocking — promotion runbook §9 |
 | Alerting | **INTENTIONALLY OFF** | Prod engine `MATCHER_ALERTS=false`, `SLA_ALERTS=false`. This release ships the SLA sweep (`5159ade4`) and assignment notifications (`275fa726`) dark — consistent with a Reveal wave, but alerts contribute nothing to W6 observation |
 | Logging | **NOT VERIFIED** | No structured-logging assertion collected |
+
+> **Correction, 2026-08-04 — the Sentry row.** The original assessment above is
+> preserved struck-through rather than deleted, because the reasoning behind it was
+> wrong in a way worth keeping visible.
+>
+> `sync: false` means a value is dashboard-managed and absent from the repository.
+> This record treated that as equivalent to *unverifiable*, which conflates "not in
+> git" with "not observable." The values are readable through the Render API using
+> the authenticated `render` CLI token (`~/.render/cli.yaml`), and the engine's
+> initialization is independently observable in its own logs.
+>
+> Verified live 2026-08-04: `SENTRY_DSN_ENGINE`, `SENTRY_DSN_APP`,
+> `NEXT_PUBLIC_SENTRY_DSN_APP` all present (95 chars each); `SENTRY_ENV` and
+> `NEXT_PUBLIC_SENTRY_ENV` both `production`. Engine init proven by the
+> `sentry_initialized` log event (`src/api/lib/sentry.ts:165`).
+>
+> Two genuine gaps were found in the process, both pre-existing and neither a
+> promotion blocker: the client release label is dead
+> (`NEXT_PUBLIC_RENDER_GIT_COMMIT` is read at `app/sentry.client.config.ts:27` but
+> declared nowhere in `render.yaml`), and the app emits no boot-time Sentry status
+> log, so log inspection cannot confirm app-side initialization. Full detail and the
+> verification methods that do work: `EG2-WAVE1-PROMOTION-RUNBOOK.md` §9.
+>
+> The **App health check** row above is also now historical — `/api/health` shipped
+> in PR #738 (merged to `develop` @ `a7d1fa2b`, 2026-08-04) and `healthCheckPath` is
+> declared for both app services in `render.yaml`. That row is left unedited as the
+> point-in-time W6 finding that motivated the fix.
 
 ---
 
