@@ -1114,6 +1114,12 @@ services:
     buildCommand: cd app && npm ci --include=dev && rm -rf .next && npm run build
     startCommand: cd app && npx next start -p $PORT
     autoDeploy: true
+    # Readiness probe. Verifies the app process is CONFIGURED to serve
+    # (SESSION_SECRET usable, ENGINE_API_URL set and not the localhost default),
+    # deliberately without calling the engine or the database — a dependency
+    # blip must not fail the app's own health check and cascade into a second
+    # outage. See app/src/app/api/health/route.ts.
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
@@ -1278,7 +1284,11 @@ services:
     buildCommand: cd app && npm ci --include=dev && rm -rf .next && npm run build
     startCommand: cd app && npx next start -p $PORT
     autoDeploy: true
-    healthCheckPath: /login    # public, client-rendered 200; no engine/DB coupling
+    # Was /login, which only proved Next was serving HTML — an app booted without
+    # SESSION_SECRET or ENGINE_API_URL renders it perfectly while being unable to
+    # authenticate anyone or reach the engine. Same probe as production so the two
+    # environments report readiness identically.
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production      # required for `next start` (prod build); env identity is APP_ENV
