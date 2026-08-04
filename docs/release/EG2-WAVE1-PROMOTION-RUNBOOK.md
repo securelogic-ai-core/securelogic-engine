@@ -1,6 +1,6 @@
 # EG2 / Wave 1 — Production Promotion Runbook
 
-**Release head:** `develop` @ `a7d1fa2b` (PR #738 merged 2026-08-04)
+**Release head:** `develop` @ `cc61ced4` (PR #739 merged 2026-08-04)
 **Production head at time of writing:** `main` @ `83f41957` (verified unchanged 2026-08-04)
 **Status:** promotion NOT authorized. This runbook records the order and the
 evidence to collect; it does not itself authorize anything.
@@ -13,10 +13,14 @@ Promote in exactly this sequence. Do not parallelize steps 1 and 3.
 
 | # | Action | Service | Gate before continuing |
 |---|---|---|---|
-| 1 | Deploy the engine | `securelogic-engine` | Deploy reaches **live** |
+| 1 | Deploy the engine | `securelogic-engine` | Deploy reaches **live** at the intended commit SHA |
 | 2 | Confirm migrations and engine health | `securelogic-engine` | 5 migrations applied; `/health` returns 200 |
-| 3 | Deploy the app | `securelogic-app` | Deploy reaches **live** |
+| 3 | Deploy the app | `securelogic-app` | Deploy reaches **live** at the intended commit SHA |
 | 4 | Confirm app health | `securelogic-app` | `/api/health` returns 200 `{"status":"ok"}` |
+
+Gates 1 and 3 require the **deployed commit SHA**, not merely a live deploy on the
+right branch. The two are not the same check, and the staging rehearsal proved it
+(§7.2, "How a deploy is actually triggered").
 
 ### Why the engine MUST precede the app
 
@@ -309,11 +313,17 @@ ordering hazards that do not exist for any other change in the release.
 production only through a deliberate operator sync. This is also why the live
 dashboard has drifted from `render.yaml` (§3.1).
 
-`/api/health` ships in this release. Measured 2026-08-04, the staging app still
-returns **404** for it while `/login` returns 200 — the route does not exist in the
-currently deployed build. (Staging app and engine are pinned to
-`feat/brief-generation-org-entitlement` @ `d927301d`, so the merge of PR #738 into
-`develop` did not move them — see §7.)
+`/api/health` ships in this release. Measured 2026-08-04 **before** the Phase 0
+staging repoint, the staging app returned **404** for it while `/login` returned 200
+— the route did not exist in the then-deployed build (both staging services were
+pinned to `feat/brief-generation-org-entitlement` @ `d927301d`). **After** the Phase 0
+repoint to `develop` @ `cc61ced4`, the staging app serves `/api/health` → 200
+`{"status":"ok"}`. Production remains at `main` @ `83f41957` and still 404s.
+
+Render is nonetheless **still probing `/login`** on the staging app, and will
+continue to until a Blueprint synchronization updates the service configuration —
+`healthCheckPath` lives in `render.yaml`, and the Blueprint is paused. Serving the
+route and *enforcing* it are two separate events.
 
 **Consequence:** syncing the Blueprint (which applies `healthCheckPath: /api/health`)
 *before* the service redeploys with this commit points the health check at a 404 on
@@ -361,7 +371,7 @@ Run this on **staging only**.
 
 | Ref | Commit | Migration files | Role |
 |---|---|---|---|
-| Release candidate | `develop` @ `a7d1fa2b` | 202 | What is being rehearsed (includes PR #738) |
+| Release candidate | `develop` @ `cc61ced4` | 202 | What is being rehearsed (includes PRs #738, #739) |
 | Staging known-good | **`4ff7811b`** | **197** | Re-pinned — schema-equivalent to production |
 | Production current | `main` @ `83f41957` | 197 | Untouched by this rehearsal |
 
@@ -427,42 +437,124 @@ is nothing to reproduce.
 
 #### Precondition — repointing staging to `develop` (operator-authorized)
 
-Verified live via the Render API, 2026-08-04:
+Verified live via the Render API, 2026-08-04, **before** the Phase 0 repoint:
 
 | Service | Service id | Branch | Live commit | `healthCheckPath` | `autoDeploy` |
 |---|---|---|---|---|---|
 | `securelogic-app-staging` | `srv-d7n0ss3bc2fs738hltf0` | `feat/brief-generation-org-entitlement` | `d927301d` (`dep-d9o6lbht0dsc739idjo0`) | **`/login`** | **yes** |
 | `securelogic-engine-staging` | `srv-d7n0rju8bjmc738jbs7g` | `feat/brief-generation-org-entitlement` | `d927301d` (`dep-d9o6lbht0dsc739idk5g`) | `/health` | **yes** |
 
-Both services are missing PRs #737 and #738, which is why the staging app still
-404s on `/api/health`. The rehearsal baseline cannot pass in this state.
+In that state both services were missing PRs #737 and #738, which is why the staging
+app 404'd on `/api/health`; the rehearsal baseline could not pass. **This has since
+been resolved** — see the executed record under Phase 0 below. The table is retained
+as the pre-repoint snapshot and as the rollback reference for the deploy ids.
 
 **Operator decision, recorded 2026-08-04:** repoint both services to `develop`,
 accepting the loss of the `d927301d` feature-branch staging state on the grounds
 that its validation evidence has already been captured
-(`EG2-WAVE1-W3-W6-VALIDATION-RECORD.md`). After the rehearsal both services remain
-on `develop` @ `a7d1fa2b`; they are **not** returned to
-`feat/brief-generation-org-entitlement`.
+(`EG2-WAVE1-W3-W6-VALIDATION-RECORD.md`). **That decision stands as recorded and was
+correctly conditioned** — the operator authorized giving up a validated environment
+only because its evidence was already durable.
 
-Note that `autoDeploy: yes` on both services means **the repoint is itself the
-deploy** — changing the branch triggers a build immediately. There is no separate
-"repoint, then deploy" step, and no opportunity to stage the change.
+**Technical clarification from the Phase 0 execution.** What the repoint costs should
+be read on two separate axes, which the original single phrase collapsed:
+
+- **Git history — no commits are lost.** `d927301d` is an **ancestor of** `develop` @
+  `cc61ced4`, having reached it via PRs #736/#737. The repoint is a fast-forward: no
+  commit and no code becomes unreachable, and the feature-branch work is fully
+  contained in the new baseline.
+- **Operational staging state — it transitions.** The environment moves from the
+  **release-validation state** it held on `feat/brief-generation-org-entitlement` @
+  `d927301d` — the exact deployed build the W3–W6 record was executed against — to
+  the **current `develop` integration state** at `cc61ced4`. The validated
+  environment no longer stands to be re-observed; reproducing it means rebuilding
+  that commit (§4.1), since Render exposes no rollback operation.
+
+The distinction matters for how the W3–W6 evidence is read: it is the durable record
+of an environment that no longer exists, not a description of what staging is serving
+now. After the rehearsal both services remain on `develop` @ `cc61ced4`; they are
+**not** returned to `feat/brief-generation-org-entitlement`.
+
+#### How a deploy is actually triggered — corrected against observed behaviour
+
+> **Correction to an earlier revision.** This section previously stated that
+> `autoDeploy: yes` means "**the repoint is itself the deploy** — changing the branch
+> triggers a build immediately. There is no separate 'repoint, then deploy' step."
+> **That is wrong, and the Phase 0 repoint on 2026-08-04 disproved it.**
+
+Verified during the Phase 0 repoint:
+
+- **Changing the tracked branch does NOT trigger a deployment.** After
+  `PATCH /v1/services/srv-d7n0rju8bjmc738jbs7g {"branch":"develop"}` returned
+  `branch=develop` at 17:22:36Z, the service's deploy list was polled for
+  approximately 60 seconds and **no new deploy was created**. The latest deploy
+  remained `dep-d9o6lbht0dsc739idk5g` at `d927301d` — the old feature-branch commit.
+- **Render Auto Deploy responds to new commits on the tracked branch, not to
+  branch-field changes.** `autoDeploy: yes` with `autoDeployTrigger: commit` is a
+  webhook on incoming commits. Repointing to a branch whose head already exists
+  produces no commit event, so nothing fires.
+- **Deployment verification must therefore include the deployed commit SHA, not only
+  the tracked branch.** Between 17:22:36Z and the explicit deploy, the service
+  reported `branch=develop` while still *running* `d927301d`. Any check that read
+  only the branch field would have reported success.
+
+**Why this matters more than a procedural nit:** the previous procedure would have
+had the operator repoint both services, observe `branch=develop`, and proceed —
+**rehearsing the rollback against `d927301d`, the wrong deployed commit**, while
+every dashboard indicated `develop`. The rehearsal is the sole evidence behind §4's
+ordering; run against the wrong commit it would have evidenced nothing, and the
+failure would have been invisible rather than loud.
+
+**Required sequence, per service:**
+
+| # | Step | Check |
+|---|---|---|
+| 1 | Repoint the service to the desired branch | `PATCH /v1/services/{id} {"branch":"<branch>"}` |
+| 2 | Verify the branch change succeeded | `GET /v1/services/{id}` → `branch` is the desired branch |
+| 3 | **Explicitly deploy the intended commit**, SHA-pinned | `POST /v1/services/{id}/deploys {"commitId":"<sha>"}` |
+| 4 | Wait for deployment completion | deploy status reaches **live** |
+| 5 | **Verify the deployed commit matches the intended SHA** | deploy record `commit.id` == intended SHA |
+| 6 | Verify service health | engine `/health` 200; app `/api/health` 200 |
+| 7 | Continue with the next service | only after 1–6 pass |
+
+SHA-pinning at step 3 is not ceremony: it makes the deploy target explicit and
+immune to a branch head that moves between the repoint and the deploy.
+
+**Scope of this evidence, stated rather than assumed.** The no-auto-deploy behaviour
+was observed directly on `securelogic-engine-staging` over a ~60-second window. The
+app repoint followed the corrected sequence with its deploy issued immediately after
+the `PATCH`, so it provides **no independent observation window** and corroborates
+nothing on its own. The claim rests on the engine observation. This correction is
+based on observed platform behaviour, not on inference from Render's documentation.
 
 Note also that `healthCheckPath` on `securelogic-app-staging` is live as `/login`,
 not `/api/health`; the Blueprint is paused (§6.1) so `render.yaml`'s value has not
-reached it. This is convenient for the rehearsal — the app can move between commits
-that do and do not serve `/api/health` without the probe failing — but it means the
-staging run does **not** exercise the health-check activation hazard of §6.
+reached it. **This remains true after the Phase 0 repoint:** the app now serves
+`/api/health` → 200 `{"status":"ok"}`, but **Render is still probing `/login`**, and
+will continue to until a Blueprint synchronization updates the service
+configuration. The probe is not yet load-bearing on staging. This is convenient for
+the rehearsal — the app can move between commits that do and do not serve
+`/api/health` without the probe failing — but it means the staging run does **not**
+exercise the health-check activation hazard of §6.
 
 **Before starting:** confirm Auto Sync is OFF at the Blueprint (verified OFF and
 paused — §6.1), and record the pre-rehearsal deploy ids above.
 
 #### Phase 0 — establish the release candidate on staging
 
-0. **Repoint and build.** Set both services' branch to `develop`. Wait for both
-   deploys to reach **live** at `a7d1fa2b`. Record deploy ids and elapsed build time
-   — this is the first real measurement of how long a rebuild takes on these
-   services, and §4.1 depends on it.
+0. **Repoint and build.** For each service in turn — **engine first, then app** —
+   run the seven-step sequence in "How a deploy is actually triggered" above:
+   repoint, verify the branch changed, **explicitly deploy the intended SHA**, wait
+   for **live**, **verify the deployed commit equals the intended SHA**, verify
+   health, then move to the next service. Do not assume the repoint deploys anything;
+   it does not. Record deploy ids and elapsed build time — this is the first real
+   measurement of how long a rebuild takes on these services, and §4.1 depends on it.
+
+   > **Executed 2026-08-04.** Engine `dep-d9p1vvlbedkc73duqca0` and app
+   > `dep-d9p214j7uimc73ae8980`, both **live** at `cc61ced4`; build+deploy **88s**
+   > (engine) and **182s** (app); engine `Migrations complete` applying nothing;
+   > mixed-version interval **4m02s**. `SECURELOGIC_VENDOR_ASSURANCE_ENABLED`
+   > confirmed `true` on the staging engine, unchanged. Verdict: **PHASE 0 PASS**.
 1. **Baseline.** `GET /health` on the staging engine → 200
    `{"status":"ok","db":"connected"}`. `GET /api/health` on the staging app → 200
    `{"status":"ok"}`. Record the five flag values as they stand. Record
@@ -484,7 +576,7 @@ paused — §6.1), and record the pre-rehearsal deploy ids above.
 This is the sequence a real rollback would follow (§4). It is a **rebuild of
 `4ff7811b`**, not an image restore (§4.1).
 
-4. **Rebuild and redeploy the app to `4ff7811b`.** Engine stays at `a7d1fa2b`.
+4. **Rebuild and redeploy the app to `4ff7811b`.** Engine stays at `cc61ced4`.
    Record start time, deploy id, and completion time. Expect `/api/health` to 404
    while rolled back — `4ff7811b` predates the route — and do not read that as a
    failure; the live probe is `/login` (see precondition).
@@ -523,7 +615,7 @@ This is the sequence a real rollback would follow (§4). It is a **rebuild of
 
 #### Phase 3 — restore
 
-9. **Return both services to `develop` @ `a7d1fa2b`**, app first then engine, restore
+9. **Return both services to `develop` @ `cc61ced4`**, app first then engine, restore
    the five flags to `true`, and re-confirm both health endpoints and the Wave 1
    surfaces. Record the final branch, commit, deploy ids, and flag state. Both
    services **stay** on `develop` — this is the new staging baseline, not a temporary
@@ -584,7 +676,7 @@ the only evidence standing behind §4's ordering and §4.1's duration risk.
 **Outcome**
 
 - [ ] Any errors or unexpected behaviour, including ones that did not stop the run
-- [ ] Final staging state: both services on `develop` @ `a7d1fa2b`, deploy ids
+- [ ] Final staging state: both services on `develop` @ `cc61ced4`, deploy ids
       recorded, five flags `true`, health 200 on both
 - [ ] Explicit verdict: rehearsal **PASS** or **REHEARSAL FAIL**, with the failing
       step named if applicable
