@@ -390,8 +390,18 @@ before Phase 1 solely because documentation-only commits landed.**
 Verified rather than asserted. `git diff --name-status cc61ced4 e54928fb` reports a
 single changed file — this runbook (PR #740). The `src/` and `db/` trees and
 `render.yaml`, `package.json` and `package-lock.json` are byte-identical across the
-two commits, and both carry **202** migration files. Staging is running `cc61ced4`
-from Phase 0 and stays there for the rehearsal; the two commits are the same code.
+two commits, and both carry **202** migration files; the two commits are the same
+code.
+
+> **Corrected after the rehearsal.** An earlier revision of this paragraph stated
+> that staging "is running `cc61ced4` from Phase 0 and stays there for the
+> rehearsal". That did not hold: when PR #740 landed on `develop`, Render Auto
+> Deploy — then still `autoDeploy: yes` — rebuilt **both** services to `e54928fb`
+> before the rehearsal continued. The code was identical either way, so no evidence
+> was affected, but the statement described an intent rather than the observed state.
+> **The validated post-rehearsal staging baseline is `develop` @ `a976f3dc`**, both
+> services live and healthy, five flags `true`. Both services now carry
+> `autoDeploy: no`.
 
 **Rule — documentation-only commits do not invalidate runtime evidence.** Once the
 rehearsal is pinned, commits that land on `develop` afterwards and touch **only**
@@ -553,6 +563,24 @@ failure would have been invisible rather than loud.
 SHA-pinning at step 3 is not ceremony: it makes the deploy target explicit and
 immune to a branch head that moves between the repoint and the deploy.
 
+**An environment-variable change does not take effect on its own under
+`autoDeploy: no`.** Verified during the rehearsal: writing new values via
+`PUT /v1/services/{id}/env-vars/{key}` returned the updated values and created
+**no deploy and no restart**. The running processes kept serving the previous
+values — confirmed by request, not assumed — until an explicit
+`POST /v1/services/{id}/restart` was issued. Only then did the new values apply.
+
+The hazard is that this failure is **silent and looks like success**: the API and
+dashboard both report the new value, so an operator who changes a variable and
+watches for a deploy sees nothing happen and may reasonably conclude it applied. Any
+verification that reads the configured value rather than the served behaviour would
+report success while the change was still inert. Verify by observing the behaviour
+the variable controls.
+
+This is the same shape as the branch-repoint correction above — a configuration
+write that Render accepts without acting on — and it applies to any environment
+variable, feature flags included.
+
 **Scope of this evidence, stated rather than assumed.** The no-auto-deploy behaviour
 was observed directly on `securelogic-engine-staging` over a ~60-second window. The
 app repoint followed the corrected sequence with its deploy issued immediately after
@@ -650,11 +678,30 @@ This is the sequence a real rollback would follow (§4). It is a **rebuild of
 #### Phase 3 — restore
 
 9. **Return both services to `develop` at the release-candidate commit established in
-   Phase 0**, app first then engine, restore
-   the five flags to `true`, and re-confirm both health endpoints and the Wave 1
+   Phase 0** — **engine first, then the app, then restore the five flags to `true`**
+   — and re-confirm both health endpoints and the Wave 1
    surfaces. Record the final branch, commit, deploy ids, and flag state. Both
    services **stay** on `develop` — this is the new staging baseline, not a temporary
    state.
+
+   > **Ordering corrected against the executed rehearsal.** An earlier revision said
+   > "app first then engine". That is the rollback ordering (§4) applied to a move in
+   > the promotion direction. Phase 3 moves *forward* to the release candidate, so
+   > **§1 governs, not §4** — the same dependency read forwards.
+   >
+   > Following the earlier wording would have produced RC-app against known-good
+   > engine and held it for the whole engine rebuild (~90–100s measured). The engine
+   > route surface is **strictly additive** across this release — 343 routes at
+   > `4ff7811b`, 358 at the release candidate, none removed — and the RC app calls
+   > several of the added ones, including `/api/search`, `/api/evidence/recent`,
+   > `/api/briefing/changes`, `/api/sso/exchange`, the five `*/export.csv` routes and
+   > the `*/:id/history` routes. Those would 404. The history and export BFF routes
+   > carry **no flag gate**, so the breakage is not suppressed by the flags being
+   > `false` during the window.
+   >
+   > Restoring flags only after both services are at the release candidate keeps the
+   > Wave 1 surfaces from being enabled against older code at any point. The sequence
+   > written above is the one the rehearsal actually executed.
 
 **Fallback if `4ff7811b` cannot be built or deployed:** issue `REHEARSAL FAIL` and
 stop. Do not substitute `62f21e10` — it carries 200 migration files and would
