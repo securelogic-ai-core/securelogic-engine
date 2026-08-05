@@ -1,6 +1,7 @@
 # EG2 / Wave 1 — Production Promotion Runbook
 
-**Release head:** `develop` @ `cc61ced4` (PR #739 merged 2026-08-04)
+**Release head:** `develop` @ `e54928fb` (PR #740 merged 2026-08-04; documentation-only
+above `cc61ced4`)
 **Production head at time of writing:** `main` @ `83f41957` (verified unchanged 2026-08-04)
 **Status:** promotion NOT authorized. This runbook records the order and the
 evidence to collect; it does not itself authorize anything.
@@ -371,9 +372,41 @@ Run this on **staging only**.
 
 | Ref | Commit | Migration files | Role |
 |---|---|---|---|
-| Release candidate | `develop` @ `cc61ced4` | 202 | What is being rehearsed (includes PRs #738, #739) |
+| Release candidate | `develop` @ `e54928fb` | 202 | What is being rehearsed (includes PRs #738, #739, #740) |
 | Staging known-good | **`4ff7811b`** | **197** | Re-pinned — schema-equivalent to production |
 | Production current | `main` @ `83f41957` | 197 | Untouched by this rehearsal |
+
+The known-good target stays pinned to the literal SHA `4ff7811b`: it is chosen for a
+fixed property (schema equivalence with production at 197 migrations) that a moving
+reference would destroy.
+
+#### Why the release candidate moved from `cc61ced4` to `e54928fb`
+
+`cc61ced4` → `e54928fb` is **documentation-only**: the application code, migrations,
+and runtime behaviour under test are unchanged, the Phase 0 evidence recorded below
+remains valid for the code under test, and **no additional redeploy is required
+before Phase 1 solely because documentation-only commits landed.**
+
+Verified rather than asserted. `git diff --name-status cc61ced4 e54928fb` reports a
+single changed file — this runbook (PR #740). The `src/` and `db/` trees and
+`render.yaml`, `package.json` and `package-lock.json` are byte-identical across the
+two commits, and both carry **202** migration files. Staging is running `cc61ced4`
+from Phase 0 and stays there for the rehearsal; the two commits are the same code.
+
+**Rule — documentation-only commits do not invalidate runtime evidence.** Once the
+rehearsal is pinned, commits that land on `develop` afterwards and touch **only**
+documentation do not invalidate evidence already collected and do not require a
+rebuild or redeploy to keep the rehearsal valid. They change what this runbook says,
+not what the services run. Two obligations survive that rule:
+
+- **Classify before relying on it.** A commit touching application code, migrations,
+  `render.yaml`, or dependencies **does** invalidate the pin and requires
+  re-establishing Phase 0. Confirm which kind it is with
+  `git diff --name-status <pinned-sha> <develop-head>`; do not infer it from the
+  commit message or the branch name.
+- **The exact promotion SHA must be re-confirmed at promotion time.** It is not
+  inherited from this document. This pin records what the rehearsal ran against;
+  what gets promoted is the `develop` head verified at the moment of promotion.
 
 #### Why the known-good was re-pinned from `62f21e10` to `4ff7811b`
 
@@ -472,8 +505,8 @@ be read on two separate axes, which the original single phrase collapsed:
 
 The distinction matters for how the W3–W6 evidence is read: it is the durable record
 of an environment that no longer exists, not a description of what staging is serving
-now. After the rehearsal both services remain on `develop` @ `cc61ced4`; they are
-**not** returned to `feat/brief-generation-org-entitlement`.
+now. After the rehearsal both services remain on `develop` at the current release
+candidate; they are **not** returned to `feat/brief-generation-org-entitlement`.
 
 #### How a deploy is actually triggered — corrected against observed behaviour
 
@@ -576,7 +609,8 @@ paused — §6.1), and record the pre-rehearsal deploy ids above.
 This is the sequence a real rollback would follow (§4). It is a **rebuild of
 `4ff7811b`**, not an image restore (§4.1).
 
-4. **Rebuild and redeploy the app to `4ff7811b`.** Engine stays at `cc61ced4`.
+4. **Rebuild and redeploy the app to the designated known-good commit `4ff7811b`.**
+   The engine stays at the release-candidate commit established in Phase 0.
    Record start time, deploy id, and completion time. Expect `/api/health` to 404
    while rolled back — `4ff7811b` predates the route — and do not read that as a
    failure; the live probe is `/login` (see precondition).
@@ -615,7 +649,8 @@ This is the sequence a real rollback would follow (§4). It is a **rebuild of
 
 #### Phase 3 — restore
 
-9. **Return both services to `develop` @ `cc61ced4`**, app first then engine, restore
+9. **Return both services to `develop` at the release-candidate commit established in
+   Phase 0**, app first then engine, restore
    the five flags to `true`, and re-confirm both health endpoints and the Wave 1
    surfaces. Record the final branch, commit, deploy ids, and flag state. Both
    services **stay** on `develop` — this is the new staging baseline, not a temporary
@@ -676,8 +711,9 @@ the only evidence standing behind §4's ordering and §4.1's duration risk.
 **Outcome**
 
 - [ ] Any errors or unexpected behaviour, including ones that did not stop the run
-- [ ] Final staging state: both services on `develop` @ `cc61ced4`, deploy ids
-      recorded, five flags `true`, health 200 on both
+- [ ] Final staging state: both services on `develop` at the release-candidate commit
+      established in Phase 0, deploy ids recorded, five flags `true`, health 200 on
+      both
 - [ ] Explicit verdict: rehearsal **PASS** or **REHEARSAL FAIL**, with the failing
       step named if applicable
 
