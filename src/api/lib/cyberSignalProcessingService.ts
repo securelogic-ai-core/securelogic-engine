@@ -41,6 +41,7 @@ import { logger } from "../infra/logger.js";
 import { canonicalizeVendorName } from "./vendorNameCanonical.js";
 import { buildSignalFindingTitle, resolveSignalDomain } from "./signalFindingShape.js";
 import { signalApplicabilityEnabled } from "./signalApplicabilityFeatureFlag.js";
+import { signalFindingCveDedupEnabled } from "./signalFindingCveDedupFlag.js";
 import { runSignalApplicabilityShadow, backingAssetIds } from "./signalApplicabilityShadowRunner.js";
 import { extractSignalProductEvidence } from "./signalProductEvidence.js";
 import { upsertCanonicalProduct } from "./canonicalProductStore.js";
@@ -453,6 +454,59 @@ export async function runMatcherForSignal(
           : { kind: "ai_system", name: entityName },
       });
 
+      // CVE-grain duplicate guard — DARK behind
+      // SECURELOGIC_SIGNAL_FINDING_CVE_DEDUP_ENABLED (see
+      // signalFindingCveDedupFlag.ts for the staging evidence). The D-14 guard
+      // below is per-signal, so a second SOURCE reporting the same CVE (or a
+      // re-ingested signal under a fresh id) mints a duplicate open finding
+      // for the same vulnerability+entity. When ON and the signal carries a
+      // CVE, an ACTIVE cyber_signal finding for the same (org, CVE, matched
+      // entity) is reused instead — the same reuse contract as the D-14
+      // re-fire path, so downstream linkage attaches to the original row.
+      // Entity match is via the machine-asserted link tables, with a
+      // lower(affected_vendor) fallback for findings that predate 3c's
+      // link-writing. CVE-less signals keep per-signal grain untouched.
+      let cveGrainReused: Record<string, unknown> | null = null;
+      if (signalFindingCveDedupEnabled() && signal.affected_cve !== null) {
+        const dedupLinkTable = hasVendorMatch
+          ? "signal_vendor_links"
+          : "signal_ai_system_links";
+        const dedupLinkFk = hasVendorMatch ? "vendor_id" : "ai_system_id";
+        const dedupTargetId = hasVendorMatch ? matchedVendorId : matchedAiSystemId;
+        const dupResult = await client.query(
+          `
+          SELECT f.id, f.organization_id, f.assessment_id, f.source_type,
+                 f.source_id, f.title, f.description, f.severity, f.domain,
+                 f.priority, f.status, f.created_at, f.updated_at
+            FROM findings f
+            JOIN cyber_signals s ON s.id = f.source_id
+           WHERE f.organization_id = $1
+             AND f.source_type = 'cyber_signal'
+             AND ${sqlFindingActive("f.operational_status")}
+             AND s.affected_cve = $2
+             AND (
+               EXISTS (
+                 SELECT 1 FROM ${dedupLinkTable} l
+                  WHERE l.organization_id = $1
+                    AND l.signal_id = f.source_id
+                    AND l.${dedupLinkFk} = $3::uuid
+                    AND l.deleted_at IS NULL
+               )
+               OR (s.affected_vendor IS NOT NULL
+                   AND lower(s.affected_vendor) = lower($4))
+             )
+           ORDER BY f.created_at ASC
+           LIMIT 1
+          `,
+          [orgId, signal.affected_cve, dedupTargetId, signal.affected_vendor]
+        );
+        cveGrainReused = dupResult.rows[0] ?? null;
+      }
+
+      if (cveGrainReused !== null) {
+        createdFinding = cveGrainReused;
+        findingWasCreated = false;
+      } else {
       // SLA policy (20260903): automated signal findings get an org-policy
       // due date at creation (client keeps the read inside this transaction).
       const slaDueDate = await resolveSlaDueDateWith(client, orgId, severity);
@@ -515,6 +569,7 @@ export async function runMatcherForSignal(
 
       createdFinding = findingResult.rows[0] ?? null;
       findingWasCreated = createdFinding !== null;
+      }
 
       // Re-fire on an already-processed signal: reuse the existing finding so
       // downstream linkage (suggestion, GAP-3 action — both already idempotent
