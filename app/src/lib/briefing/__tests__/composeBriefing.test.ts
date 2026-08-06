@@ -6,8 +6,8 @@
  * personal presentation, null posture score = insufficient data.
  */
 import { describe, it, expect } from "vitest";
-import { composeBriefing } from "../composeBriefing";
-import type { ActionsSummary, DashboardSummary, FindingsSummary } from "@/lib/api";
+import { composeBriefing, rankMyWorkItems, type MyWorkTopItem } from "../composeBriefing";
+import type { Action, ActionsSummary, DashboardSummary, Finding, FindingsSummary } from "@/lib/api";
 
 function aSummary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
   return {
@@ -164,6 +164,10 @@ describe("composeBriefing — personal counts (scope honesty)", () => {
       actionsOpen: 0,
       actionsOverdue: 0,
       allClear: true,
+      // EX1 PR-2: lists not fetched → feature absent, no failures signaled.
+      topItems: null,
+      topItemsFindingsFailed: false,
+      topItemsActionsFailed: false,
     });
   });
 
@@ -177,5 +181,111 @@ describe("composeBriefing — personal counts (scope honesty)", () => {
     expect(vm.myWork.actionsOpen).toBe(2);
     expect(vm.myWork.actionsOverdue).toBe(1);
     expect(vm.myWork.allClear).toBe(false);
+  });
+});
+
+// ─── EX1 PR-2: My Work top items — deterministic ranking + honest states ─────
+
+const NOW = new Date("2026-08-06T12:00:00.000Z");
+
+function aFinding(overrides: Partial<Finding>): Finding {
+  return { ...({
+    id: "f-0000", organization_id: "org", assessment_id: null, source_type: "manual",
+    source_id: null, title: "A finding", description: "", severity: "High",
+    domain: "Vendor Risk", framework_control_id: null, priority: "near_term",
+    status: "open", confidence: null, due_date: null,
+    created_at: "2026-08-01T00:00:00.000Z", updated_at: "2026-08-01T00:00:00.000Z",
+  } as unknown as Finding), ...overrides };
+}
+
+function anAction(overrides: Partial<Action>): Action {
+  return { ...({
+    id: "a-0000", organization_id: "org", title: "An action", description: null,
+    source_type: "finding", source_id: null, priority: "planned", due_date: null,
+    owner_user_id: "u1", status: "open",
+  } as unknown as Action), ...overrides };
+}
+
+describe("rankMyWorkItems — deterministic prioritization", () => {
+  it("overdue beats urgency; urgency beats due date; ids make the order total", () => {
+    const findings = [
+      aFinding({ id: "f-crit", severity: "Critical", due_date: "2026-08-20T00:00:00.000Z" }),
+      aFinding({ id: "f-high-overdue", severity: "High", due_date: "2026-08-01T00:00:00.000Z" }),
+    ];
+    const actions = [
+      anAction({ id: "a-imm", priority: "immediate", due_date: "2026-08-10T00:00:00.000Z" }),
+    ];
+    const ranked = rankMyWorkItems(findings, actions, NOW);
+    // Overdue High first (overdue outranks the not-yet-due Critical). The
+    // Immediate action and the Critical finding tie on urgency (both rank 0),
+    // so due dates decide: action due Aug 10 < finding due Aug 20.
+    expect(ranked.map((i) => i.id)).toEqual(["f-high-overdue", "a-imm", "f-crit"]);
+    expect(ranked[0].overdue).toBe(true);
+  });
+
+  it("is order-insensitive: permuted inputs produce the identical list", () => {
+    const findings = [
+      aFinding({ id: "f-1", severity: "High", due_date: "2026-08-10T00:00:00.000Z" }),
+      aFinding({ id: "f-2", severity: "High", due_date: "2026-08-10T00:00:00.000Z" }),
+    ];
+    const actions = [
+      anAction({ id: "a-1", priority: "near_term", due_date: "2026-08-10T00:00:00.000Z" }),
+    ];
+    const a = rankMyWorkItems(findings, actions, NOW);
+    const b = rankMyWorkItems([...findings].reverse(), actions, NOW);
+    expect(a).toEqual(b);
+    // Full tie on ⟨overdue, urgency, due⟩ → finding-before-action, then id.
+    expect(a.map((i) => i.id)).toEqual(["f-1", "f-2", "a-1"]);
+  });
+
+  it("caps at 3 and carries the WHY (urgency label, overdue, due date, deep link)", () => {
+    const findings = [
+      aFinding({ id: "f-1", severity: "Critical" }),
+      aFinding({ id: "f-2", severity: "Critical" }),
+      aFinding({ id: "f-3", severity: "Critical" }),
+      aFinding({ id: "f-4", severity: "Critical" }),
+    ];
+    const ranked = rankMyWorkItems(findings, [], NOW);
+    expect(ranked).toHaveLength(3);
+    expect(ranked[0]).toMatchObject({
+      urgency: "Critical", urgencyRank: 0, href: "/findings/f-1", overdue: false,
+    });
+  });
+
+  it("actions link to the owner queue (no detail route) with display-ready labels", () => {
+    const ranked = rankMyWorkItems([], [anAction({ id: "a-1", priority: "near_term" })], NOW);
+    expect(ranked[0]).toMatchObject({ href: "/actions?view=mine", urgency: "Near term" });
+  });
+});
+
+describe("composeBriefing — My Work top-item honest states", () => {
+  it("null list input = FAILED fetch: flagged, other source still ranked", () => {
+    const vm = composeBriefing({
+      summary: aSummary(), findingsSummary: aFindingsSummary({}), actionsSummary: anActionsSummary({}),
+      myFindings: null,
+      myActions: [anAction({ id: "a-1", priority: "immediate" })],
+      now: NOW,
+    });
+    expect(vm.myWork.topItemsFindingsFailed).toBe(true);
+    expect(vm.myWork.topItemsActionsFailed).toBe(false);
+    expect(vm.myWork.topItems?.map((i: MyWorkTopItem) => i.id)).toEqual(["a-1"]);
+  });
+
+  it("both lists loaded and empty = empty array (row hidden), never null", () => {
+    const vm = composeBriefing({
+      summary: aSummary(), findingsSummary: aFindingsSummary({}), actionsSummary: anActionsSummary({}),
+      myFindings: [], myActions: [], now: NOW,
+    });
+    expect(vm.myWork.topItems).toEqual([]);
+    expect(vm.myWork.topItemsFindingsFailed).toBe(false);
+  });
+
+  it("undefined inputs = feature absent: topItems null, no failure flags", () => {
+    const vm = composeBriefing({
+      summary: aSummary(), findingsSummary: aFindingsSummary({}), actionsSummary: anActionsSummary({}),
+    });
+    expect(vm.myWork.topItems).toBeNull();
+    expect(vm.myWork.topItemsFindingsFailed).toBe(false);
+    expect(vm.myWork.topItemsActionsFailed).toBe(false);
   });
 });

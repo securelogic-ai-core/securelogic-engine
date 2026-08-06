@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFindingsSummary, getFrameworks, getFrameworkReadiness, getActionsSummary, getBriefingChanges, getBriefingLayout, getDashboardPreferences, planDisplayName, type Framework, type FrameworkReadiness } from "@/lib/api";
+import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFindingsSummary, getFrameworks, getFrameworkReadiness, getActions, getActionsSummary, getBriefingChanges, getBriefingLayout, getDashboardPreferences, planDisplayName, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
 import { IntelligenceBriefDashboardCard } from "@/components/IntelligenceBriefDashboardCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
@@ -73,13 +73,25 @@ export default async function DashboardPage({
   // caller's saved layout. Never fetched on the legacy path, so flag-off
   // behavior is unchanged.
   const briefingIdentity = Boolean(session.jwtToken && session.userId);
-  const [actionsSummary, briefingLayoutRes] =
+  // EX1 PR-2 — the two owner=me lists behind My Work's NEXT UP items. The
+  // "me" is the literal accepted by the engine's resolveOwnerMeFilter and is
+  // resolved server-side from the session — never a client-supplied user id.
+  // Identity-gated like the layout fetch (owner=me requires a user identity);
+  // undefined = not fetched, null = fetch failed (composeBriefing keeps the
+  // two distinguishable). Fetched in the SAME parallel block — no waterfall.
+  const [actionsSummary, briefingLayoutRes, myFindingsRes, myActionsRes] =
     briefingEnabled && isPlatformEarly
       ? await Promise.all([
           getActionsSummary(token),
           briefingIdentity ? getBriefingLayout(token) : Promise.resolve(null),
+          briefingIdentity
+            ? getFindings(token, { owner: "me", active: true, limit: 25 })
+            : Promise.resolve(undefined),
+          briefingIdentity
+            ? getActions(token, { owner: "me", active: true, limit: 25 })
+            : Promise.resolve(undefined),
         ])
-      : [null, null];
+      : [null, null, undefined, undefined];
   const savedBriefingIds =
     briefingLayoutRes?.layout != null
       ? moduleIdsFromEnvelope(briefingLayoutRes.layout)
@@ -184,6 +196,12 @@ export default async function DashboardPage({
     changes: briefingChanges,
     previousLoginAt,
     postureSnapshots: postureHistory?.snapshots ?? [],
+    // EX1 PR-2: undefined = not fetched; null = fetch failed; array = loaded.
+    myFindings:
+      myFindingsRes === undefined ? undefined : myFindingsRes?.findings ?? null,
+    myActions:
+      myActionsRes === undefined ? undefined : myActionsRes?.actions ?? null,
+    now: new Date(),
   });
   // Viewers cannot persist a layout (platform-wide viewer-mutation block) —
   // the customize surface is withheld rather than offering a save that 403s.

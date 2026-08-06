@@ -446,6 +446,65 @@ function renderModule(
               </Link>
             </div>
           )}
+          {/* EX1 PR-2 — NEXT UP: the user's highest-priority owned items,
+              ranked deterministically (overdue → urgency → due date). Answers
+              "what should I do first?" instead of only "how many?". Hidden
+              when the lists were not fetched (null) or are empty; a FAILED
+              source gets an explicit notice — never a silent-empty list. */}
+          {(m.topItemsFindingsFailed || m.topItemsActionsFailed) && (
+            <p className="mt-3 text-xs text-red-300">
+              {m.topItemsFindingsFailed && m.topItemsActionsFailed
+                ? "Couldn't load your assigned work items right now — the counts above may be more current."
+                : m.topItemsFindingsFailed
+                  ? "Couldn't load your assigned findings right now."
+                  : "Couldn't load your assigned actions right now."}
+            </p>
+          )}
+          {m.topItems && m.topItems.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-brand-line">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-2">
+                Next up
+              </p>
+              <ul className="space-y-2">
+                {m.topItems.map((item) => (
+                  <li key={`${item.kind}-${item.id}`}>
+                    <Link
+                      href={item.href}
+                      className="flex items-baseline justify-between gap-3 group rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-teal"
+                    >
+                      <span className="text-sm text-slate-300 group-hover:text-slate-100 transition-colors truncate">
+                        <span
+                          className={`mr-2 text-xs font-semibold ${
+                            item.urgencyRank === 0
+                              ? "text-red-300"
+                              : item.urgencyRank === 1
+                                ? "text-orange-300"
+                                : "text-slate-400"
+                          }`}
+                        >
+                          {item.urgency}
+                        </span>
+                        {item.title}
+                      </span>
+                      <span
+                        className={`text-xs shrink-0 tabular-nums ${
+                          item.overdue
+                            ? "font-semibold text-red-400"
+                            : "text-slate-500"
+                        }`}
+                      >
+                        {item.overdue
+                          ? "Overdue"
+                          : item.dueDate
+                            ? `Due ${new Date(item.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+                            : ""}
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </ModuleCard>
       );
     }
