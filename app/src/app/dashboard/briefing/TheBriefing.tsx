@@ -620,6 +620,7 @@ function renderModule(
 
     case "posture_score": {
       const m = vm.postureScore;
+      const d = m.driver;
       return (
         <ModuleCard def={def}>
           {m.score === null ? (
@@ -648,6 +649,87 @@ function renderModule(
                   as of {m.asOf}
                 </span>
               ) : null}
+            </div>
+          )}
+          {/* EX1 PR-3 — PRIMARY DRIVER: WHY the score is what it is, from the
+              canonical computation itself (overall = weighted blend of the
+              worst domains), never a narrative. Facts (scores, counts, dates)
+              render as data with provenance; the single recommendation line is
+              explicitly labeled as one. Hidden when the summary carries no
+              scored domain breakdown — a score without its parts gets no
+              guessed explanation. */}
+          {d && (
+            <div className="mt-4 pt-3 border-t border-brand-line" data-posture-driver>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-2">
+                Primary driver
+              </p>
+              {d.stale && (
+                <p className="text-xs text-amber-300 mb-2">
+                  Snapshot not refreshed since {m.asOf} — this breakdown may be
+                  out of date.
+                </p>
+              )}
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-sm text-slate-200">
+                  {d.primary.domain}
+                  {d.primary.severity ? (
+                    <span
+                      className={`ml-2 text-xs font-semibold ${
+                        d.primary.severity === "Critical"
+                          ? "text-red-300"
+                          : d.primary.severity === "High"
+                            ? "text-orange-300"
+                            : "text-slate-400"
+                      }`}
+                    >
+                      {d.primary.severity}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="text-sm font-bold tabular-nums text-slate-100">
+                  {d.primary.score}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                {d.scoredDomainCount > 1
+                  ? `Weakest of ${d.scoredDomainCount} scored domains — the posture score weights its worst domains most heavily.`
+                  : "The only scored domain — it sets the posture score."}
+              </p>
+              {d.primary.signalDriven ? (
+                <p className="text-xs text-slate-400 mt-2">
+                  No active findings are recorded in this domain — its score
+                  reflects risk and inventory signals.{" "}
+                  <Link href={d.primary.href} className="font-medium text-brand-teal">
+                    View posture detail →
+                  </Link>
+                </p>
+              ) : (
+                <p className="text-xs text-slate-400 mt-2">
+                  Recommended focus: remediating the{" "}
+                  <Link href={d.primary.href} className="font-medium text-brand-teal">
+                    {d.primary.findingCount} active finding
+                    {d.primary.findingCount !== 1 ? "s" : ""} in{" "}
+                    {d.primary.domain} →
+                  </Link>{" "}
+                  is the largest single lever on this score.
+                </p>
+              )}
+              {d.supporting.length > 0 && (
+                <p className="text-xs text-slate-500 mt-2">
+                  Also weighing on posture:{" "}
+                  {d.supporting.map((s, i) => (
+                    <span key={s.domain}>
+                      {i > 0 ? " · " : ""}
+                      <Link
+                        href={s.href}
+                        className="text-slate-400 hover:text-slate-200 transition-colors rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-teal"
+                      >
+                        {s.domain} ({s.score})
+                      </Link>
+                    </span>
+                  ))}
+                </p>
+              )}
             </div>
           )}
         </ModuleCard>
