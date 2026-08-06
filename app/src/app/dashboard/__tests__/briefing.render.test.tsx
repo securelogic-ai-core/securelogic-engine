@@ -22,6 +22,7 @@ import {
   aFramework,
   aFrameworkReadiness,
   aMe,
+  anAction,
   anActionsSummary,
   anAuthMe,
   aPostureSnapshot,
@@ -39,6 +40,8 @@ const api = vi.hoisted(() => ({
   getFrameworks: vi.fn(),
   getFrameworkReadiness: vi.fn(),
   getActionsSummary: vi.fn(),
+  // EX1 PR-2 — the owner=me actions list behind My Work's NEXT UP items.
+  getActions: vi.fn(),
   // B2 — saved layout + legacy-preference projection inputs.
   getBriefingLayout: vi.fn(),
   getBriefingChanges: vi.fn(),
@@ -87,6 +90,8 @@ beforeEach(() => {
   api.getActionsSummary.mockResolvedValue(
     anActionsSummary({ my_open_count: 2, my_overdue_count: 1 })
   );
+  // EX1 PR-2 default: owner=me actions list loads empty (no assigned actions).
+  api.getActions.mockResolvedValue({ actions: [], count: 0 });
   // B2 defaults: no saved layout, no legacy customization → role default.
   api.getBriefingLayout.mockResolvedValue({ layout: null, updated_at: null });
   api.getBriefingChanges.mockResolvedValue(null);
@@ -117,6 +122,51 @@ describe("flag ON + platform JWT — The Briefing", () => {
   beforeEach(() => {
     vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
     vi.stubEnv("SECURELOGIC_INDEPENDENT_REVIEW_ENABLED", "true");
+  });
+
+  it("NEXT UP surfaces the user's highest-priority owned items with why, due date, and deep link", async () => {
+    // The owner=me findings call shares the getFindings mock with the
+    // recent-findings fetch; give it an overdue Critical + a dated High.
+    api.getFindings.mockResolvedValue(
+      aFindingsResponse([
+        aFinding({ id: "f-crit", title: "KEV exploit affects vendor: Cisco", severity: "Critical", due_date: "2026-01-01T00:00:00.000Z" }),
+        aFinding({ id: "f-high", title: "Unencrypted backups", severity: "High", due_date: "2099-01-01T00:00:00.000Z" }),
+      ])
+    );
+    api.getActions.mockResolvedValue({
+      actions: [anAction({ id: "a-imm", title: "Rotate exposed key", priority: "immediate", due_date: "2099-06-01T00:00:00.000Z", owner_user_id: "u-1" })],
+      count: 1,
+    });
+    const { container } = await renderDashboard();
+    const myWork = container.querySelector('[data-briefing-module="my_work"]')!;
+    expect(within(myWork as HTMLElement).getByText("Next up")).toBeInTheDocument();
+    const items = within(myWork as HTMLElement).getAllByRole("listitem");
+    // Overdue Critical first; each item carries urgency + due labels.
+    expect(items[0].textContent).toContain("KEV exploit affects vendor: Cisco");
+    expect(items[0].textContent).toContain("Critical");
+    expect(items[0].textContent).toContain("Overdue");
+    expect(within(items[0]).getByRole("link")).toHaveAttribute("href", "/findings/f-crit");
+    const actionItem = items.find((li) => li.textContent?.includes("Rotate exposed key"))!;
+    expect(within(actionItem).getByRole("link")).toHaveAttribute("href", "/actions?view=mine");
+    expect(actionItem.textContent).toContain("Immediate");
+  });
+
+  it("NEXT UP is hidden entirely when the user owns nothing — counts render exactly as before", async () => {
+    api.getFindings.mockResolvedValue(aFindingsResponse([]));
+    api.getActions.mockResolvedValue({ actions: [], count: 0 });
+    const { container } = await renderDashboard();
+    const myWork = container.querySelector('[data-briefing-module="my_work"]')!;
+    expect(within(myWork as HTMLElement).queryByText("Next up")).toBeNull();
+    expect(within(myWork as HTMLElement).getByText("Findings you own")).toBeInTheDocument();
+  });
+
+  it("a FAILED owner=me actions fetch is an explicit notice, never a silent-empty list", async () => {
+    api.getActions.mockResolvedValue(null); // client returns null on failure
+    const { container } = await renderDashboard();
+    const myWork = container.querySelector('[data-briefing-module="my_work"]')!;
+    expect(
+      within(myWork as HTMLElement).getByText(/Couldn't load your assigned actions/)
+    ).toBeInTheDocument();
   });
 
   it("does NOT fetch the framework catalog — readiness feeds only the legacy composition", async () => {

@@ -16,9 +16,11 @@
  */
 
 import type {
+  Action,
   ActionsSummary,
   BriefingChangesResponse,
   DashboardSummary,
+  Finding,
   FindingsSummary,
 } from "@/lib/api";
 import { activeActionsCount } from "@/lib/actionsMetrics";
@@ -36,7 +38,107 @@ export type BriefingInputs = {
   previousLoginAt?: string | null;
   /** Posture snapshot history — feeds the 30-day delta on the score module. */
   postureSnapshots?: readonly PostureSnapshotLike[];
+  /**
+   * EX1 PR-2 (My Work top items). Active findings owned by the session user
+   * (owner=me, resolved server-side from the session — never a client id).
+   * undefined = not fetched (identity-less session / legacy path) → the row
+   * is absent; null = the fetch FAILED → an explicit notice, never silence.
+   */
+  myFindings?: readonly Finding[] | null;
+  /** Same contract for the user's assigned actions (owner=me). */
+  myActions?: readonly Action[] | null;
+  /** Render-time clock for overdue determination — injected for determinism. */
+  now?: Date;
 };
+
+/** One ranked "next up" work item — a finding or action the user owns. */
+export type MyWorkTopItem = {
+  kind: "finding" | "action";
+  id: string;
+  title: string;
+  /** WHY it ranks: the finding severity or action priority, display-ready. */
+  urgency: string;
+  /** 0 = Critical/Immediate … 3 = Low/Watch; drives the label's color tier. */
+  urgencyRank: 0 | 1 | 2 | 3;
+  overdue: boolean;
+  /** ISO due date; null = none set. */
+  dueDate: string | null;
+  href: string;
+};
+
+const FINDING_URGENCY: Record<string, 0 | 1 | 2 | 3> = {
+  Critical: 0,
+  High: 1,
+  Moderate: 2,
+  Low: 3,
+};
+const ACTION_URGENCY: Record<string, 0 | 1 | 2 | 3> = {
+  immediate: 0,
+  near_term: 1,
+  planned: 2,
+  watch: 3,
+};
+const ACTION_URGENCY_LABEL: Record<string, string> = {
+  immediate: "Immediate",
+  near_term: "Near term",
+  planned: "Planned",
+  watch: "Watch",
+};
+
+/**
+ * Deterministic ranking of the user's owned work. Ascending on the tuple
+ * ⟨overdue-first, urgency (severity/priority mapped to one 0–3 scale),
+ * earliest due date (none = last), kind (finding before action), id⟩ — the
+ * final id key makes the order total, so identical inputs always produce an
+ * identical list regardless of input order. Pure; `now` is injected.
+ */
+export function rankMyWorkItems(
+  findings: readonly Finding[],
+  actions: readonly Action[],
+  now: Date,
+  limit = 3,
+): MyWorkTopItem[] {
+  const nowMs = now.getTime();
+  const items: Array<MyWorkTopItem & { dueMs: number }> = [];
+  for (const f of findings) {
+    const dueMs = f.due_date ? Date.parse(f.due_date) : Number.POSITIVE_INFINITY;
+    items.push({
+      kind: "finding",
+      id: f.id,
+      title: f.title,
+      urgency: f.severity,
+      urgencyRank: FINDING_URGENCY[f.severity] ?? 3,
+      overdue: dueMs < nowMs,
+      dueDate: f.due_date,
+      href: `/findings/${f.id}`,
+      dueMs,
+    });
+  }
+  for (const a of actions) {
+    const dueMs = a.due_date ? Date.parse(a.due_date) : Number.POSITIVE_INFINITY;
+    items.push({
+      kind: "action",
+      id: a.id,
+      title: a.title,
+      urgency: ACTION_URGENCY_LABEL[a.priority] ?? a.priority,
+      urgencyRank: ACTION_URGENCY[a.priority] ?? 3,
+      overdue: dueMs < nowMs,
+      dueDate: a.due_date,
+      // No action detail route exists — the owner queue is the canonical
+      // destination (same contract as the module's overdue callout).
+      href: "/actions?view=mine",
+      dueMs,
+    });
+  }
+  items.sort((x, y) =>
+    (x.overdue === y.overdue ? 0 : x.overdue ? -1 : 1) ||
+    x.urgencyRank - y.urgencyRank ||
+    x.dueMs - y.dueMs ||
+    (x.kind === y.kind ? 0 : x.kind === "finding" ? -1 : 1) ||
+    (x.id < y.id ? -1 : x.id > y.id ? 1 : 0),
+  );
+  return items.slice(0, limit).map(({ dueMs: _dueMs, ...item }) => item);
+}
 
 export type MyWorkModel = {
   /** Active findings owned by the signed-in user; null = summary unavailable. */
@@ -46,6 +148,16 @@ export type MyWorkModel = {
   actionsOverdue: number | null;
   /** Every count known and zero — render the all-clear state. */
   allClear: boolean;
+  /**
+   * Ranked owned items (≤3). null = lists not fetched (identity-less session /
+   * legacy path) — the NEXT UP row is absent; [] = fetched and empty — also
+   * hidden; non-empty = rendered. Failure of a source is signaled separately.
+   */
+  topItems: MyWorkTopItem[] | null;
+  /** true = the owner=me findings list fetch FAILED (explicit notice). */
+  topItemsFindingsFailed: boolean;
+  /** true = the owner=me actions list fetch FAILED (explicit notice). */
+  topItemsActionsFailed: boolean;
 };
 
 export type MyPendingReviewsModel = {
@@ -161,6 +273,15 @@ export function composeBriefing(inputs: BriefingInputs): BriefingViewModel {
     }
   }
 
+  // EX1 PR-2: ranked owned work. undefined inputs = feature absent (legacy
+  // path or identity-less session) → null; a null input = that fetch failed
+  // (rank what DID load, flag the failure — null is never treated as empty).
+  const { myFindings, myActions } = inputs;
+  const topFetched = myFindings !== undefined || myActions !== undefined;
+  const topItems = topFetched
+    ? rankMyWorkItems(myFindings ?? [], myActions ?? [], inputs.now ?? new Date())
+    : null;
+
   return {
     orgLoaded: summary !== null,
     myWork: {
@@ -169,6 +290,9 @@ export function composeBriefing(inputs: BriefingInputs): BriefingViewModel {
       actionsOverdue,
       allClear:
         findingsOpen === 0 && actionsOpen === 0 && actionsOverdue === 0,
+      topItems,
+      topItemsFindingsFailed: myFindings === null,
+      topItemsActionsFailed: myActions === null,
     },
     // Personal variant only on a KNOWN, non-zero personal count (the a817aa36
     // rule) — an unknown `mine` must never surface a personal module.
