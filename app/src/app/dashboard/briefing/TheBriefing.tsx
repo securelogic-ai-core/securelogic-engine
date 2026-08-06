@@ -34,15 +34,15 @@ const ZONE_TITLES: Record<BriefingModuleDef["zone"], string> = {
 function ScopeChip({ scope }: { scope: BriefingScope }) {
   return scope === "personal" ? (
     <span
-      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide shrink-0"
-      style={{ background: "rgba(139,92,246,0.15)", color: "#c4b5fd" }}
+      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide shrink-0 bg-violet-500/15 text-violet-300"
+      title="Personal scope"
     >
       You
     </span>
   ) : (
     <span
-      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide shrink-0"
-      style={{ background: "rgba(148,163,184,0.12)", color: "#94a3b8" }}
+      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide shrink-0 bg-slate-400/[0.12] text-slate-400"
+      title="Organization scope"
     >
       Organization
     </span>
@@ -58,8 +58,7 @@ function ModuleCard({
 }) {
   return (
     <div
-      className="rounded-xl border p-5"
-      style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}
+      className="rounded-xl border p-5 bg-brand-surface border-brand-line"
       data-briefing-module={def.id}
     >
       <div className="flex items-center justify-between gap-2 mb-3">
@@ -71,8 +70,8 @@ function ModuleCard({
         </div>
         <Link
           href={def.destination}
-          className="text-xs font-medium shrink-0"
-          style={{ color: "#00c4b4" }}
+          className="text-xs font-medium shrink-0 text-brand-teal rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-teal"
+          aria-label={`View ${def.title}`}
         >
           View →
         </Link>
@@ -143,16 +142,21 @@ export function TheBriefing(props: TheBriefingProps) {
         {ZONE_TITLES.organization}
       </h2>
       <div
-        className="rounded-xl border p-8 text-center"
-        style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(239,68,68,0.25)" }}
+        className="rounded-xl border p-8 text-center bg-brand-surface border-red-500/25"
       >
-        <p className="text-sm font-semibold mb-1" style={{ color: "#fca5a5" }}>
+        <p className="text-sm font-semibold mb-1 text-red-300">
           We couldn&apos;t load your organization&apos;s data.
         </p>
-        <p className="text-xs" style={{ color: "#64748b" }}>
+        <p className="text-xs text-slate-500">
           This is a temporary problem loading your briefing — it does not
-          mean your posture is clear. Refresh to try again.
+          mean your posture is clear.
         </p>
+        <Link
+          href="/dashboard"
+          className="inline-block mt-3 text-xs font-medium text-brand-teal rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-teal"
+        >
+          Reload the Briefing →
+        </Link>
       </div>
     </section>
   );
@@ -209,8 +213,7 @@ export function TheBriefing(props: TheBriefingProps) {
       {/* Identity header — the experience is The Briefing; the URL stays /dashboard. */}
       <div className="mb-6">
         <p
-          className="text-xs font-semibold uppercase tracking-widest mb-1"
-          style={{ color: "#00c4b4" }}
+          className="text-xs font-semibold uppercase tracking-widest mb-1 text-brand-teal"
         >
           The Briefing
         </p>
@@ -242,25 +245,24 @@ export function TheBriefing(props: TheBriefingProps) {
           LIVES there (parity achieved — no longer an aspiration). */}
       {props.layoutSource === "legacy_projection" && (
         <div
-          className="rounded-xl border px-5 py-4 mb-8"
-          style={{ background: "rgba(0,196,180,0.06)", borderColor: "rgba(0,196,180,0.25)" }}
+          className="rounded-xl border px-5 py-4 mb-8 bg-brand-teal/[0.06] border-brand-teal/25"
           data-briefing-migration-disclosure
         >
-          <p className="text-sm mb-1" style={{ color: "#5eead4" }}>
+          <p className="text-sm mb-1 text-teal-300">
             Your saved dashboard preferences shaped this Briefing.
           </p>
-          <p className="text-xs" style={{ color: "#94a3b8" }}>
+          <p className="text-xs text-slate-400">
             Tile choices with a Briefing counterpart were carried over.
             {props.droppedTileLabels && props.droppedTileLabels.length > 0 ? (
               <>
                 {" "}Analytical tiles without one were not:{" "}
                 {props.droppedTileLabels.join(", ")}. Every analytical tile now
                 lives on the{" "}
-                <Link href="/posture" className="font-medium" style={{ color: "#00c4b4" }}>
+                <Link href="/posture" className="font-medium text-brand-teal">
                   Posture dashboard
                 </Link>
                 ; framework readiness detail is on{" "}
-                <Link href="/frameworks" className="font-medium" style={{ color: "#00c4b4" }}>
+                <Link href="/frameworks" className="font-medium text-brand-teal">
                   Frameworks
                 </Link>
                 .
@@ -276,13 +278,13 @@ export function TheBriefing(props: TheBriefingProps) {
       {/* Dashboards keep answering "how is the organization performing?" — the
           Briefing links to them rather than reproducing them here. */}
       <div className="flex items-center gap-4 text-xs" data-briefing-dashboards>
-        <span className="font-semibold uppercase tracking-wide" style={{ color: "#64748b" }}>
+        <span className="font-semibold uppercase tracking-wide text-slate-500">
           Dashboards
         </span>
-        <Link href="/posture" className="font-medium" style={{ color: "#00c4b4" }}>
+        <Link href="/posture" className="font-medium text-brand-teal">
           Security Posture →
         </Link>
-        <Link href="/frameworks" className="font-medium" style={{ color: "#00c4b4" }}>
+        <Link href="/frameworks" className="font-medium text-brand-teal">
           Framework Readiness →
         </Link>
       </div>
@@ -316,7 +318,7 @@ function renderModule(
       if (!m.loaded) {
         return (
           <ModuleCard def={def}>
-            <p className="text-sm" style={{ color: "#fca5a5" }}>
+            <p className="text-sm text-red-300">
               Couldn&apos;t load what changed since your last visit ({sinceLabel})
               — that does not mean nothing happened. Refresh to try again.
             </p>
@@ -327,7 +329,7 @@ function renderModule(
       if (m.allQuiet) {
         return (
           <ModuleCard def={def}>
-            <p className="text-sm" style={{ color: "#86efac" }}>
+            <p className="text-sm text-green-300">
               Quiet since your last visit ({sinceLabel}) — no new findings, no
               new overdue work, no decisions waiting on this window.
             </p>
@@ -341,7 +343,7 @@ function renderModule(
       const sinceDate = m.since.slice(0, 10);
       return (
         <ModuleCard def={def}>
-          <p className="text-xs mb-3" style={{ color: "#64748b" }}>
+          <p className="text-xs mb-3 text-slate-500">
             Since {sinceLabel}
             {m.clamped ? " (showing the last 90 days)" : ""}
           </p>
@@ -349,12 +351,12 @@ function renderModule(
             {m.newActiveFindings > 0 && (
               <Link
                 href={`/findings?queue=all&created_from=${sinceDate}`}
-                className="flex items-baseline justify-between group"
+                className="flex items-baseline justify-between group rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-teal"
               >
-                <span className="text-sm group-hover:text-slate-200 transition-colors" style={{ color: "#fca5a5" }}>
+                <span className="text-sm group-hover:text-slate-200 transition-colors text-red-300">
                   New active findings
                   {m.newCriticalHigh > 0 ? (
-                    <span className="ml-2 text-xs font-semibold" style={{ color: "#f87171" }}>
+                    <span className="ml-2 text-xs font-semibold text-red-400">
                       {m.newCriticalHigh} Critical/High
                     </span>
                   ) : null}
@@ -365,31 +367,31 @@ function renderModule(
               </Link>
             )}
             {m.newlyOverdueActions > 0 && (
-              <p className="text-sm" style={{ color: "#fdba74" }}>
+              <p className="text-sm text-orange-300">
                 {m.newlyOverdueActions} action{m.newlyOverdueActions !== 1 ? "s" : ""} became overdue{" "}
-                <Link href="/actions?overdue=true&view=team" className="font-medium" style={{ color: "#00c4b4" }}>
+                <Link href="/actions?overdue=true&view=team" className="font-medium text-brand-teal">
                   View overdue →
                 </Link>
               </p>
             )}
             {m.remediationCompleted > 0 && (
-              <p className="text-sm" style={{ color: "#c4b5fd" }}>
+              <p className="text-sm text-violet-300">
                 {m.remediationCompleted} finding{m.remediationCompleted !== 1 ? "s" : ""} completed remediation
                 — your decision{" "}
-                <Link href="/findings?bucket=ready_to_close" className="font-medium" style={{ color: "#00c4b4" }}>
+                <Link href="/findings?bucket=ready_to_close" className="font-medium text-brand-teal">
                   Review ready to close →
                 </Link>
               </p>
             )}
             {m.resolved > 0 && (
-              <p className="text-sm" style={{ color: "#86efac" }}>
+              <p className="text-sm text-green-300">
                 {m.resolved} finding{m.resolved !== 1 ? "s" : ""} closed — posture improved.
               </p>
             )}
             {m.briefsPublished > 0 && (
-              <p className="text-sm" style={{ color: "#93c5fd" }}>
+              <p className="text-sm text-blue-300">
                 New Intelligence Brief published{" "}
-                <Link href="/briefs" className="font-medium" style={{ color: "#00c4b4" }}>
+                <Link href="/briefs" className="font-medium text-brand-teal">
                   Read it →
                 </Link>
               </p>
@@ -405,23 +407,23 @@ function renderModule(
       return (
         <ModuleCard def={def}>
           {unknown ? (
-            <p className="text-sm" style={{ color: "#94a3b8" }}>
+            <p className="text-sm text-slate-400">
               Could not load your assigned work right now.
             </p>
           ) : m.allClear ? (
             props.hasPlatformData ? (
-              <p className="text-sm" style={{ color: "#86efac" }}>
+              <p className="text-sm text-green-300">
                 You&apos;re clear — nothing assigned to you needs attention.
               </p>
             ) : (
-              <p className="text-sm" style={{ color: "#94a3b8" }}>
+              <p className="text-sm text-slate-400">
                 Nothing assigned to you yet. Work you own appears here once your
                 organization starts assessing.
               </p>
             )
           ) : (
             <div className="space-y-2">
-              <Link href={def.destination} className="flex items-baseline justify-between group">
+              <Link href={def.destination} className="flex items-baseline justify-between group rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-teal">
                 <span className="text-sm text-slate-400 group-hover:text-slate-200 transition-colors">
                   Findings you own
                 </span>
@@ -429,11 +431,11 @@ function renderModule(
                   {m.findingsOpen ?? "—"}
                 </span>
               </Link>
-              <Link href="/actions?view=mine" className="flex items-baseline justify-between group">
+              <Link href="/actions?view=mine" className="flex items-baseline justify-between group rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-teal">
                 <span className="text-sm text-slate-400 group-hover:text-slate-200 transition-colors">
                   Actions assigned to you
                   {m.actionsOverdue !== null && m.actionsOverdue > 0 ? (
-                    <span className="ml-2 text-xs font-semibold" style={{ color: "#f87171" }}>
+                    <span className="ml-2 text-xs font-semibold text-red-400">
                       {m.actionsOverdue} overdue
                     </span>
                   ) : null}
@@ -454,13 +456,13 @@ function renderModule(
       return (
         <ModuleCard def={def}>
           <div className="flex items-center justify-between">
-            <p className="text-xs" style={{ color: "#94a3b8" }}>
+            <p className="text-xs text-slate-400">
               Assigned to you to validate and close
               {m.orgWide > m.mine
                 ? ` · ${m.orgWide} organization-wide ready to close`
                 : ""}
             </p>
-            <span className="text-2xl font-bold tabular-nums" style={{ color: "#c4b5fd" }}>
+            <span className="text-2xl font-bold tabular-nums text-violet-300">
               {m.mine}
             </span>
           </div>
@@ -475,14 +477,14 @@ function renderModule(
         <ModuleCard def={def}>
           {clear ? (
             props.hasPlatformData ? (
-              <p className="text-sm" style={{ color: "#86efac" }}>
+              <p className="text-sm text-green-300">
                 No Critical or High active findings.
               </p>
             ) : (
-              <p className="text-sm" style={{ color: "#94a3b8" }}>
+              <p className="text-sm text-slate-400">
                 Nothing assessed yet — findings appear here once assessments run
                 or intelligence matches your inventory.{" "}
-                <Link href="/getting-started" className="font-medium" style={{ color: "#00c4b4" }}>
+                <Link href="/getting-started" className="font-medium text-brand-teal">
                   Start setup →
                 </Link>
               </p>
@@ -491,18 +493,18 @@ function renderModule(
             <div className="space-y-2">
               <Link
                 href="/findings?severity=Critical&active=true"
-                className="flex items-baseline justify-between group"
+                className="flex items-baseline justify-between group rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-teal"
               >
-                <span className="text-sm group-hover:text-slate-200 transition-colors" style={{ color: "#fca5a5" }}>
+                <span className="text-sm group-hover:text-slate-200 transition-colors text-red-300">
                   Critical findings
                 </span>
                 <span className="text-xl font-bold tabular-nums text-slate-100">{m.critical}</span>
               </Link>
               <Link
                 href="/findings?severity=High&active=true"
-                className="flex items-baseline justify-between group"
+                className="flex items-baseline justify-between group rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-teal"
               >
-                <span className="text-sm group-hover:text-slate-200 transition-colors" style={{ color: "#fdba74" }}>
+                <span className="text-sm group-hover:text-slate-200 transition-colors text-orange-300">
                   High findings
                 </span>
                 <span className="text-xl font-bold tabular-nums text-slate-100">{m.high}</span>
@@ -520,17 +522,16 @@ function renderModule(
           <div className="space-y-2">
             <Link
               href="/actions?overdue=true&view=team"
-              className="flex items-baseline justify-between group"
+              className="flex items-baseline justify-between group rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-teal"
             >
               <span
-                className="text-sm group-hover:text-slate-200 transition-colors"
-                style={{ color: m.overdue > 0 ? "#f87171" : "#94a3b8" }}
+                className={`text-sm group-hover:text-slate-200 transition-colors ${m.overdue > 0 ? "text-red-400" : "text-slate-400"}`}
               >
                 Overdue
               </span>
               <span className="text-xl font-bold tabular-nums text-slate-100">{m.overdue}</span>
             </Link>
-            <Link href={def.destination} className="flex items-baseline justify-between group">
+            <Link href={def.destination} className="flex items-baseline justify-between group rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-teal">
               <span className="text-sm text-slate-400 group-hover:text-slate-200 transition-colors">
                 Active organization-wide
               </span>
@@ -547,10 +548,10 @@ function renderModule(
       return (
         <ModuleCard def={def}>
           <div className="flex items-center justify-between">
-            <p className="text-xs" style={{ color: "#94a3b8" }}>
+            <p className="text-xs text-slate-400">
               Remediation complete, governance decision pending
             </p>
-            <span className="text-2xl font-bold tabular-nums" style={{ color: "#c4b5fd" }}>
+            <span className="text-2xl font-bold tabular-nums text-violet-300">
               {m.orgWide}
             </span>
           </div>
@@ -563,14 +564,14 @@ function renderModule(
       return (
         <ModuleCard def={def}>
           {m.score === null ? (
-            <p className="text-sm" style={{ color: "#94a3b8" }}>
+            <p className="text-sm text-slate-400">
               Insufficient data — no posture snapshot yet.
             </p>
           ) : (
             <div className="flex items-baseline gap-3">
               <span className="text-3xl font-bold tabular-nums text-slate-100">{m.score}</span>
               {m.severity ? (
-                <span className="text-xs font-semibold" style={{ color: "#94a3b8" }}>
+                <span className="text-xs font-semibold text-slate-400">
                   {m.severity}
                 </span>
               ) : null}
@@ -578,14 +579,13 @@ function renderModule(
                   rendered only when an honest 30-day baseline exists. */}
               {m.delta30 && (
                 <span
-                  className="text-xs font-semibold"
-                  style={{ color: m.delta30.points >= 0 ? "#86efac" : "#fca5a5" }}
+                  className={`text-xs font-semibold ${m.delta30.points >= 0 ? "text-green-300" : "text-red-300"}`}
                 >
                   {formatPostureDelta(m.delta30)} · 30d
                 </span>
               )}
               {m.asOf ? (
-                <span className="text-xs" style={{ color: "#64748b" }}>
+                <span className="text-xs text-slate-500">
                   as of {m.asOf}
                 </span>
               ) : null}
@@ -613,7 +613,9 @@ function renderModule(
           ) : (
             <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
               <p className="text-slate-400 text-sm">
-                No briefs published yet. Check back soon.
+                No Intelligence Briefs have been published for your
+                organization yet. New briefs appear here as your intelligence
+                pipeline produces them.
               </p>
             </div>
           )}

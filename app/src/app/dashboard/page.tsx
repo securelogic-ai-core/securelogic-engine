@@ -91,10 +91,16 @@ export default async function DashboardPage({
     briefingEnabled && isPlatformEarly && briefingIdentity && !savedBriefingIds
       ? await getDashboardPreferences(token)
       : null;
+  // Framework readiness feeds ONLY the legacy composition (FrameworkReadinessWidget
+  // and the PostureDashboard framework pairs) — The Briefing never renders it and
+  // links to /frameworks instead. Skipping the catalog fetch when the Briefing will
+  // render also skips the per-framework readiness fan-out below (guarded on
+  // frameworks.length), removing 1+N engine round-trips of pure TTFB from the
+  // opening screen. Flag-off (legacy) fetch behavior is byte-identical.
   const [recentFindingsData, frameworksData] = isPlatformEarly
     ? await Promise.all([
         getFindings(token, { active: true, limit: 5 }),
-        getFrameworks(token),
+        briefingEnabled ? Promise.resolve(null) : getFrameworks(token),
       ])
     : [null, null];
   const recentFindings = recentFindingsData?.findings ?? [];

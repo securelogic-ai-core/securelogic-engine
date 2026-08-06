@@ -119,6 +119,17 @@ describe("flag ON + platform JWT — The Briefing", () => {
     vi.stubEnv("SECURELOGIC_INDEPENDENT_REVIEW_ENABLED", "true");
   });
 
+  it("does NOT fetch the framework catalog — readiness feeds only the legacy composition", async () => {
+    // EX1 PR-1 perf guard: the Briefing links to /frameworks instead of
+    // rendering readiness, so the catalog fetch (and the per-framework
+    // readiness fan-out it seeds) must be skipped on the Briefing path.
+    // The legacy (flag-off) path keeps fetching it — pinned by the legacy
+    // suite rendering FrameworkReadinessWidget from this same mock.
+    await renderDashboard();
+    expect(api.getFrameworks).not.toHaveBeenCalled();
+    expect(api.getFrameworkReadiness).not.toHaveBeenCalled();
+  });
+
   it("renders the three zones, personal work FIRST", async () => {
     const { container } = await renderDashboard();
 
