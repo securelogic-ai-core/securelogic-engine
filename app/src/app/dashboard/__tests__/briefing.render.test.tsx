@@ -623,6 +623,130 @@ describe("flag ON — Since Your Last Visit (EG2 slice 10, Operational Presence)
   });
 });
 
+describe("flag ON — posture PRIMARY DRIVER (EX1 PR-3)", () => {
+  beforeEach(() => {
+    vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
+  });
+
+  /** The page injects the REAL clock, so non-stale renders must anchor the
+   *  snapshot date to the test's own clock, never a fixed date. */
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
+  it("explains the score: worst domain leads, provenance stated, recommendation linked", async () => {
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        posture: { overall_score: 58, overall_severity: "Moderate", snapshot_date: yesterday },
+        domains: [
+          aDomainScore({ domain: "Cyber", score: 70, severity: "High", finding_count: 3 }),
+          aDomainScore({ domain: "Vendor Risk", score: 22, severity: "Critical", finding_count: 5 }),
+          aDomainScore({ domain: "Regulatory", score: 48, severity: "Moderate", finding_count: 2 }),
+        ],
+      })
+    );
+
+    const { container } = await renderDashboard();
+
+    const driver = container.querySelector("[data-posture-driver]") as HTMLElement;
+    expect(driver).not.toBeNull();
+    // The worst domain (lowest health score) is the primary driver — fact row.
+    expect(within(driver).getByText("Primary driver")).toBeInTheDocument();
+    expect(within(driver).getByText("Vendor Risk")).toBeInTheDocument();
+    expect(within(driver).getByText("Critical")).toBeInTheDocument();
+    expect(within(driver).getByText("22")).toBeInTheDocument();
+    // Provenance: WHY this domain is the driver, from the canonical rule.
+    expect(
+      within(driver).getByText(/Weakest of 3 scored domains/)
+    ).toBeInTheDocument();
+    // The recommendation is labeled as one and links the evidence population.
+    expect(within(driver).getByText(/Recommended focus/)).toBeInTheDocument();
+    expect(
+      within(driver).getByRole("link", { name: /5 active findings in Vendor Risk/ })
+    ).toHaveAttribute("href", "/findings?domain=Vendor%20Risk&active=true");
+    // Supporting factors, worst-first, each linked.
+    expect(within(driver).getByText(/Also weighing on posture/)).toBeInTheDocument();
+    expect(
+      within(driver).getByRole("link", { name: "Regulatory (48)" })
+    ).toHaveAttribute("href", "/findings?domain=Regulatory&active=true");
+    expect(within(driver).getByRole("link", { name: "Cyber (70)" })).toBeInTheDocument();
+    // Fresh snapshot → no stale warning.
+    expect(within(driver).queryByText(/may be out of date/)).toBeNull();
+  });
+
+  it("a zero-finding driver is declared signal-driven — no link to an empty findings list", async () => {
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        posture: { overall_score: 58, overall_severity: "Moderate", snapshot_date: yesterday },
+        domains: [
+          aDomainScore({ domain: "Vendor Risk", score: 30, severity: "High", finding_count: 0 }),
+        ],
+      })
+    );
+
+    const { container } = await renderDashboard();
+
+    const driver = container.querySelector("[data-posture-driver]") as HTMLElement;
+    expect(
+      within(driver).getByText(/its score reflects risk and inventory signals/)
+    ).toBeInTheDocument();
+    expect(within(driver).queryByText(/Recommended focus/)).toBeNull();
+    expect(
+      within(driver).getByRole("link", { name: /View posture detail/ })
+    ).toHaveAttribute("href", "/posture");
+    // A single scored domain states its role honestly.
+    expect(
+      within(driver).getByText(/The only scored domain — it sets the posture score/)
+    ).toBeInTheDocument();
+  });
+
+  it("a stale snapshot carries an explicit warning — never presented as current", async () => {
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        posture: { overall_score: 58, overall_severity: "Moderate", snapshot_date: "2026-06-01" },
+        domains: [aDomainScore({ domain: "Cyber", score: 70 })],
+      })
+    );
+
+    const { container } = await renderDashboard();
+
+    const driver = container.querySelector("[data-posture-driver]") as HTMLElement;
+    expect(
+      within(driver).getByText(/Snapshot not refreshed since 2026-06-01/)
+    ).toBeInTheDocument();
+  });
+
+  it("a score WITHOUT a scored domain breakdown renders the module exactly as before — no driver", async () => {
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        posture: { overall_score: 58, overall_severity: "Moderate", snapshot_date: yesterday },
+        domains: [],
+      })
+    );
+
+    const { container } = await renderDashboard();
+
+    const mod = container.querySelector('[data-briefing-module="posture_score"]') as HTMLElement;
+    expect(within(mod).getByText("58")).toBeInTheDocument();
+    expect(container.querySelector("[data-posture-driver]")).toBeNull();
+  });
+
+  it("no snapshot at all keeps the honest insufficient-data state — no driver", async () => {
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        posture: { overall_score: null, overall_severity: null, snapshot_date: null },
+        domains: [aDomainScore({ domain: "Cyber" })],
+      } as never)
+    );
+
+    const { container } = await renderDashboard();
+
+    const mod = container.querySelector('[data-briefing-module="posture_score"]') as HTMLElement;
+    expect(within(mod).getByText(/Insufficient data/)).toBeInTheDocument();
+    expect(container.querySelector("[data-posture-driver]")).toBeNull();
+  });
+});
+
 describe("flag ON — posture module 30-day delta (EG2 slice 12)", () => {
   beforeEach(() => {
     vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");

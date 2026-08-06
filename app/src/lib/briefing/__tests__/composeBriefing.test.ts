@@ -6,8 +6,13 @@
  * personal presentation, null posture score = insufficient data.
  */
 import { describe, it, expect } from "vitest";
-import { composeBriefing, rankMyWorkItems, type MyWorkTopItem } from "../composeBriefing";
-import type { Action, ActionsSummary, DashboardSummary, Finding, FindingsSummary } from "@/lib/api";
+import {
+  composeBriefing,
+  rankMyWorkItems,
+  rankPostureDrivers,
+  type MyWorkTopItem,
+} from "../composeBriefing";
+import type { Action, ActionsSummary, DashboardSummary, DomainScore, Finding, FindingsSummary } from "@/lib/api";
 
 function aSummary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
   return {
@@ -287,5 +292,176 @@ describe("composeBriefing — My Work top-item honest states", () => {
     expect(vm.myWork.topItems).toBeNull();
     expect(vm.myWork.topItemsFindingsFailed).toBe(false);
     expect(vm.myWork.topItemsActionsFailed).toBe(false);
+  });
+});
+
+// ─── EX1 PR-3: Posture Driver — deterministic ranking + honest states ────────
+
+function aDomain(overrides: Partial<DomainScore> = {}): DomainScore {
+  return {
+    domain: "Cyber",
+    score: 55,
+    severity: "High",
+    finding_count: 3,
+    action_count: 0,
+    trend_direction: "unknown",
+    ...overrides,
+  };
+}
+
+describe("rankPostureDrivers — deterministic worst-domain ranking", () => {
+  it("ranks by display score ascending (lowest health = the driver)", () => {
+    const ranked = rankPostureDrivers([
+      aDomain({ domain: "Cyber", score: 70 }),
+      aDomain({ domain: "Vendor Risk", score: 22, severity: "Critical" }),
+      aDomain({ domain: "Regulatory", score: 48 }),
+    ]);
+    expect(ranked.map((d) => d.domain)).toEqual(["Vendor Risk", "Regulatory", "Cyber"]);
+    expect(ranked[0].severity).toBe("Critical");
+  });
+
+  it("ties break by finding_count (more findings ranks worse), then domain name", () => {
+    const byCount = rankPostureDrivers([
+      aDomain({ domain: "Cyber", score: 40, finding_count: 1 }),
+      aDomain({ domain: "AI Governance", score: 40, finding_count: 6 }),
+    ]);
+    expect(byCount.map((d) => d.domain)).toEqual(["AI Governance", "Cyber"]);
+
+    const byName = rankPostureDrivers([
+      aDomain({ domain: "Cyber", score: 40, finding_count: 2 }),
+      aDomain({ domain: "AI Governance", score: 40, finding_count: 2 }),
+    ]);
+    expect(byName.map((d) => d.domain)).toEqual(["AI Governance", "Cyber"]);
+  });
+
+  it("is order-insensitive: permuted inputs produce the identical ranking", () => {
+    const domains = [
+      aDomain({ domain: "Cyber", score: 40 }),
+      aDomain({ domain: "AI Governance", score: 40 }),
+      aDomain({ domain: "Vendor Risk", score: 12 }),
+    ];
+    expect(rankPostureDrivers(domains)).toEqual(
+      rankPostureDrivers([...domains].reverse()),
+    );
+  });
+
+  it("excludes unscored domains — a null score carries no computed weight", () => {
+    const ranked = rankPostureDrivers([
+      aDomain({ domain: "Cyber", score: null }),
+      aDomain({ domain: "Regulatory", score: 60 }),
+    ]);
+    expect(ranked.map((d) => d.domain)).toEqual(["Regulatory"]);
+    expect(rankPostureDrivers([aDomain({ score: null })])).toEqual([]);
+  });
+
+  it("caps at 3 factors and deep-links the domain-filtered active findings", () => {
+    const ranked = rankPostureDrivers([
+      aDomain({ domain: "A", score: 10 }),
+      aDomain({ domain: "B", score: 20 }),
+      aDomain({ domain: "C", score: 30 }),
+      aDomain({ domain: "D", score: 40 }),
+    ]);
+    expect(ranked).toHaveLength(3);
+    expect(ranked[0].href).toBe("/findings?domain=A&active=true");
+  });
+
+  it("URL-encodes multi-word domains in the evidence link", () => {
+    const [d] = rankPostureDrivers([aDomain({ domain: "Vendor Risk", score: 30 })]);
+    expect(d.href).toBe("/findings?domain=Vendor%20Risk&active=true");
+  });
+
+  it("a zero-finding domain is signal-driven: no findings link, /posture instead", () => {
+    const [d] = rankPostureDrivers([
+      aDomain({ domain: "Vendor Risk", score: 30, finding_count: 0 }),
+    ]);
+    expect(d.signalDriven).toBe(true);
+    expect(d.href).toBe("/posture");
+  });
+});
+
+describe("composeBriefing — posture driver honest states", () => {
+  const FRESH = "2026-08-05"; // NOW is 2026-08-06 — one day old, not stale.
+
+  function drivenSummary(
+    domains: DomainScore[],
+    snapshotDate: string | null = FRESH,
+  ): DashboardSummary {
+    return aSummary({
+      posture: { overall_score: 58, overall_severity: "Moderate", snapshot_date: snapshotDate },
+      domains,
+    });
+  }
+
+  it("no overall score = no driver, even when domain rows exist", () => {
+    const vm = composeBriefing({
+      summary: aSummary({
+        posture: { overall_score: null, overall_severity: null, snapshot_date: null },
+        domains: [aDomain()],
+      }),
+      findingsSummary: null,
+      actionsSummary: null,
+      now: NOW,
+    });
+    expect(vm.postureScore.driver).toBeNull();
+  });
+
+  it("a score with NO scored domain breakdown gets no driver — never a guessed one", () => {
+    const noDomains = composeBriefing({
+      summary: drivenSummary([]),
+      findingsSummary: null, actionsSummary: null, now: NOW,
+    });
+    expect(noDomains.postureScore.driver).toBeNull();
+
+    const allUnscored = composeBriefing({
+      summary: drivenSummary([aDomain({ score: null })]),
+      findingsSummary: null, actionsSummary: null, now: NOW,
+    });
+    expect(allUnscored.postureScore.driver).toBeNull();
+  });
+
+  it("surfaces the worst domain as primary with ≤2 supporting and the scored count", () => {
+    const vm = composeBriefing({
+      summary: drivenSummary([
+        aDomain({ domain: "Cyber", score: 70 }),
+        aDomain({ domain: "Vendor Risk", score: 22, severity: "Critical", finding_count: 5 }),
+        aDomain({ domain: "Regulatory", score: 48 }),
+        aDomain({ domain: "AI Governance", score: 90 }),
+      ]),
+      findingsSummary: null, actionsSummary: null, now: NOW,
+    });
+    const d = vm.postureScore.driver!;
+    expect(d.primary).toMatchObject({
+      domain: "Vendor Risk",
+      score: 22,
+      severity: "Critical",
+      findingCount: 5,
+      signalDriven: false,
+      href: "/findings?domain=Vendor%20Risk&active=true",
+    });
+    expect(d.supporting.map((s) => s.domain)).toEqual(["Regulatory", "Cyber"]);
+    expect(d.scoredDomainCount).toBe(4);
+    expect(d.stale).toBe(false);
+  });
+
+  it("a snapshot older than 3 days is flagged stale; a fresh one is not", () => {
+    const stale = composeBriefing({
+      summary: drivenSummary([aDomain()], "2026-08-01"),
+      findingsSummary: null, actionsSummary: null, now: NOW,
+    });
+    expect(stale.postureScore.driver?.stale).toBe(true);
+
+    const fresh = composeBriefing({
+      summary: drivenSummary([aDomain()], FRESH),
+      findingsSummary: null, actionsSummary: null, now: NOW,
+    });
+    expect(fresh.postureScore.driver?.stale).toBe(false);
+  });
+
+  it("an unparseable snapshot date is not claimed stale (unknown ≠ stale)", () => {
+    const vm = composeBriefing({
+      summary: drivenSummary([aDomain()], null),
+      findingsSummary: null, actionsSummary: null, now: NOW,
+    });
+    expect(vm.postureScore.driver?.stale).toBe(false);
   });
 });

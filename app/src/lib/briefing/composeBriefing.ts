@@ -20,6 +20,7 @@ import type {
   ActionsSummary,
   BriefingChangesResponse,
   DashboardSummary,
+  DomainScore,
   Finding,
   FindingsSummary,
 } from "@/lib/api";
@@ -172,6 +173,85 @@ export type OverdueActionsModel = { active: number; overdue: number };
 
 export type ReadyToCloseModel = { orgWide: number };
 
+/**
+ * EX1 PR-3 (Posture Driver). One domain-level factor behind the posture score.
+ * Scores here are DISPLAY-style (health, higher = better) — the engine's
+ * risk-style scores were inverted once at the API boundary (postureDisplay.ts);
+ * "worst" therefore means LOWEST score on this side.
+ */
+export type PostureDriverFactor = {
+  domain: string;
+  /** Display-style domain score (higher = better). Never null once ranked. */
+  score: number;
+  /** The domain's posture severity band, as labeled by the engine. */
+  severity: string | null;
+  /** Active findings counted under this domain (primary-domain, no dedup overlap). */
+  findingCount: number;
+  /**
+   * true = the domain scored with ZERO direct findings — its score can only
+   * come from the auxiliary scoring signals (risks with a residual rating,
+   * vendor-criticality inventory). The copy must say so instead of linking to
+   * an empty findings list.
+   */
+  signalDriven: boolean;
+  /** Evidence drill-down: the domain-filtered active findings, or /posture. */
+  href: string;
+};
+
+export type PostureDriverModel = {
+  /** The single worst domain — the score's primary driver under the engine's
+   *  own rule (overall = weighted blend of the worst domains, worst weighted 1.0). */
+  primary: PostureDriverFactor;
+  /** The next-worst domains (≤2) — the rest of the engine's weighted blend. */
+  supporting: PostureDriverFactor[];
+  /** Domains that fed the ranking (score !== null) — provenance copy input. */
+  scoredDomainCount: number;
+  /** Snapshot older than STALE_SNAPSHOT_DAYS — rendered as an explicit warning. */
+  stale: boolean;
+};
+
+/** The posture-worker recomputes 6-hourly; a snapshot this old means the
+ *  pipeline has not run and the driver must say so rather than present the
+ *  data as current. */
+export const STALE_SNAPSHOT_DAYS = 3;
+
+/**
+ * Deterministic ranking of the domains driving the posture score (EX1 PR-3).
+ * Mirrors the canonical computation instead of inventing one: the engine's
+ * overall score is a weighted blend of the WORST domains (weights 1.0/0.6/0.3,
+ * OverallRiskAggregationEngineV2), so the primary driver IS the worst domain.
+ * Ascending on the tuple ⟨display score, −finding_count, domain name⟩ — more
+ * findings rank a tied domain worse, and the name key makes the order total,
+ * so identical inputs always produce an identical ranking regardless of input
+ * order. Unscored domains (score null) carry no computed weight and are
+ * excluded. Pure; returns null when nothing is scored.
+ */
+export function rankPostureDrivers(
+  domains: readonly DomainScore[],
+  limit = 3,
+): PostureDriverFactor[] {
+  const scored = domains.filter(
+    (d): d is DomainScore & { score: number } => d.score !== null,
+  );
+  const ranked = [...scored].sort(
+    (a, b) =>
+      a.score - b.score ||
+      b.finding_count - a.finding_count ||
+      (a.domain < b.domain ? -1 : a.domain > b.domain ? 1 : 0),
+  );
+  return ranked.slice(0, limit).map((d) => ({
+    domain: d.domain,
+    score: d.score,
+    severity: d.severity,
+    findingCount: d.finding_count,
+    signalDriven: d.finding_count === 0,
+    href:
+      d.finding_count > 0
+        ? `/findings?domain=${encodeURIComponent(d.domain)}&active=true`
+        : "/posture",
+  }));
+}
+
 export type PostureScoreModel = {
   /** null = no snapshot yet — MUST render as "insufficient data", never 0. */
   score: number | null;
@@ -179,6 +259,12 @@ export type PostureScoreModel = {
   asOf: string | null;
   /** 30-day delta; null = insufficient history (rendered as nothing, never 0%). */
   delta30: PostureDelta | null;
+  /**
+   * EX1 PR-3: what is driving the score. null = hidden — no overall score, or
+   * no scored domain rows on the summary (a score without its breakdown gets
+   * no driver rather than a guessed one).
+   */
+  driver: PostureDriverModel | null;
 };
 
 export type WhatsChangedModel = {
@@ -309,12 +395,51 @@ export function composeBriefing(inputs: BriefingInputs): BriefingViewModel {
       overdue: actions?.overdue ?? 0,
     },
     readyToClose: orgWideReady > 0 ? { orgWide: orgWideReady } : null,
-    postureScore: {
-      score: summary?.posture?.overall_score ?? null,
-      severity: summary?.posture?.overall_severity ?? null,
-      asOf: summary?.posture?.snapshot_date ?? null,
-      delta30: postureDelta(inputs.postureSnapshots ?? [], 30),
-    },
+    postureScore: composePostureScore(inputs),
     whatsChanged,
+  };
+}
+
+/**
+ * The posture module's view model (EX1 PR-3 extracts this from the inline
+ * object literal to host the driver assembly; score/severity/asOf/delta30 are
+ * byte-identical to PR-2 behavior).
+ *
+ * Driver honesty rules:
+ *   - no overall score → no driver (the module renders "insufficient data");
+ *   - a score with NO scored domain rows → no driver, never a guessed one;
+ *   - staleness is computed against the injected clock, so it is testable and
+ *     a server render and its test can never disagree.
+ */
+function composePostureScore(inputs: BriefingInputs): PostureScoreModel {
+  const { summary } = inputs;
+  const score = summary?.posture?.overall_score ?? null;
+  const asOf = summary?.posture?.snapshot_date ?? null;
+
+  let driver: PostureDriverModel | null = null;
+  if (score !== null) {
+    const ranked = rankPostureDrivers(summary?.domains ?? []);
+    if (ranked.length > 0) {
+      const now = inputs.now ?? new Date();
+      const asOfMs = asOf ? Date.parse(asOf) : Number.NaN;
+      driver = {
+        primary: ranked[0],
+        supporting: ranked.slice(1),
+        scoredDomainCount: (summary?.domains ?? []).filter(
+          (d) => d.score !== null,
+        ).length,
+        stale:
+          !Number.isNaN(asOfMs) &&
+          now.getTime() - asOfMs > STALE_SNAPSHOT_DAYS * 24 * 60 * 60 * 1000,
+      };
+    }
+  }
+
+  return {
+    score,
+    severity: summary?.posture?.overall_severity ?? null,
+    asOf,
+    delta30: postureDelta(inputs.postureSnapshots ?? [], 30),
+    driver,
   };
 }
