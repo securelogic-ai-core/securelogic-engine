@@ -242,6 +242,8 @@ services:
         value: "false"
       - key: SECURELOGIC_BRIEF_QUALITY_ENABLED # IQP Q4 title/summary quality contract. OFF = titles are cut mid-word at 77 chars and stored that way. BLOCKED ON STAGING VALIDATION — flip to "true" after staging confirms headings
         value: "false"
+      - key: SECURELOGIC_SIGNAL_RECENCY_ENABLED # IQP Q2 recency enforcement (operator ledger OP-3). OFF = brief window filters on ingestion time, so decades-old KEV entries ship as "this period" (staging evidence 2026-08-07: CVE-2002-0367 in the Jul 26–Aug 2 brief). BLOCKED ON STAGING VALIDATION — flip to "true" after staging shows stale_signal_suppressed + a clean brief. Requires OP-2 published_at migration on this env's DB; value change reaches the process only on a deploy (same-SHA rebuild), not a restart
+        value: "false"
       - key: SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED # ECL R2/S6 dispatcher — DARK (default off); requires ECL flag too
         value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
@@ -473,6 +475,8 @@ services:
       - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
         value: "false"
       - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED   # ERIP Package 3 (Decision Workspace) — DARK (default off); gates GET /api/findings/:id/context (read-only)
+        value: "true"
+      - key: SECURELOGIC_SIGNAL_RECENCY_ENABLED # IQP Q2 recency enforcement (operator ledger OP-3). ON — staging validates that the brief window suppresses old-dateAdded KEV rows (expect stale_signal_suppressed in logs and no pre-window published_at item in the next generated brief) before any prod flip. Requires OP-2 published_at migration applied to the staging DB; value change reaches the process only on a deploy (same-SHA rebuild), not a restart
         value: "true"
       - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED   # Briefing Initiative B2 — ENABLED on STAGING: engine half of the two-switch; opens /api/briefing/layout (per-user Briefing layout persistence) for the staging app (app half is "true" below)
         value: "true"

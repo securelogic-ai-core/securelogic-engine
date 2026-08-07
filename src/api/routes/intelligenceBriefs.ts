@@ -959,16 +959,25 @@ router.get("/intelligence-briefs/:id", async (req, res) => {
       urgency: string | null;
       is_personalized: boolean | null;
       platform_context: Record<string, unknown> | null;
+      signal_published_at: string | null;
     }>(
-      `SELECT id, category, relevance, title, summary, affected_cve, affected_vendor,
-              source_slug, signal_type, severity, cyber_signal_id,
-              ingestion_timestamp, sort_order,
-              why_it_matters, recommended_actions, analyst_notes,
-              urgency,
-              is_personalized, platform_context
-       FROM intelligence_brief_items
-       WHERE brief_id = $1 AND organization_id = $2
-       ORDER BY sort_order ASC`,
+      // IQP Q2 / IQ-1 A3: join the source signal's source-authoritative event
+      // date (published_at, e.g. KEV dateAdded) so the reader can see how old
+      // an item actually is — stale intelligence must never appear current.
+      // Columns are alias-qualified: intelligence_brief_items and cyber_signals
+      // share id/organization_id names (the 42702 ambiguous-column shape).
+      `SELECT i.id, i.category, i.relevance, i.title, i.summary, i.affected_cve,
+              i.affected_vendor,
+              i.source_slug, i.signal_type, i.severity, i.cyber_signal_id,
+              i.ingestion_timestamp, i.sort_order,
+              i.why_it_matters, i.recommended_actions, i.analyst_notes,
+              i.urgency,
+              i.is_personalized, i.platform_context,
+              cs.published_at AS signal_published_at
+       FROM intelligence_brief_items i
+       LEFT JOIN cyber_signals cs ON cs.id = i.cyber_signal_id
+       WHERE i.brief_id = $1 AND i.organization_id = $2
+       ORDER BY i.sort_order ASC`,
       [id, orgId]
     );
 
@@ -1022,6 +1031,10 @@ router.get("/intelligence-briefs/:id", async (req, res) => {
           // email layers finally get to render it.
           is_personalized: item.is_personalized ?? false,
           platform_context: item.platform_context ?? null,
+          // Source-authoritative event date (KEV dateAdded / NVD published /
+          // RSS pubDate). Null when the source asserted no date or the signal
+          // row is gone — the UI shows nothing rather than inferring a date.
+          signal_published_at: item.signal_published_at,
           ...(itemCitations && itemCitations.length > 0
             ? { applicability_citations: itemCitations }
             : {})

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { IntelligenceBriefItem, IntelligenceBriefUrgency } from "@/lib/api";
 import { BriefItemContextStrip } from "@/components/BriefItemPlatformContext";
+import { formatDateOnlyUTC } from "@/lib/dates";
 
 interface IntelligenceBriefSignalCardProps {
   briefId: string;
@@ -163,13 +164,21 @@ export function IntelligenceBriefSignalCard({
         )}
 
         <div className="flex items-center justify-between pt-4 border-t border-slate-700 gap-3">
-          {item.affected_cve ? (
-            <span className="text-xs font-mono text-slate-400 uppercase tracking-wide truncate">
-              {item.affected_cve}
-            </span>
-          ) : (
-            <span />
-          )}
+          <div className="flex items-center gap-3 min-w-0">
+            {item.affected_cve && (
+              <span className="text-xs font-mono text-slate-400 uppercase tracking-wide truncate">
+                {item.affected_cve}
+              </span>
+            )}
+            {/* Source-authoritative event date (IQP Q2): how old this item
+                actually is, per the source itself. Absent → render nothing;
+                a date is never inferred. */}
+            {formatDateOnlyUTC(item.signal_published_at) && (
+              <span className="text-xs text-slate-500 flex-shrink-0">
+                Reported {formatDateOnlyUTC(item.signal_published_at)}
+              </span>
+            )}
+          </div>
           <Link
             href={detailHref}
             className="inline-flex items-center gap-1.5 text-xs font-semibold border border-teal-200 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"

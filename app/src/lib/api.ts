@@ -233,6 +233,13 @@ export type IntelligenceBriefItem = {
   severity: string | null;
   cyber_signal_id: string | null;
   ingestion_timestamp: string | null;
+  /**
+   * Source-authoritative event date (IQP Q2): the date the source itself
+   * asserts — KEV dateAdded, NVD published, RSS pubDate. Optional because
+   * older engine deploys omit it; null when the source asserted no date.
+   * Display renders nothing in that case — a date is never inferred.
+   */
+  signal_published_at?: string | null;
   sort_order: number;
   why_it_matters: string | null;
   recommended_actions: string | null;
