@@ -26,7 +26,7 @@ interface Props {
 // ---------------------------------------------------------------------------
 
 const URGENCY_BAND_BG: Record<IntelligenceBriefUrgency, string> = {
-  immediate: "bg-red-600",
+  immediate: "bg-rose-800",
   near_term: "bg-orange-500",
   far_term: "bg-slate-700",
 };
