@@ -97,7 +97,7 @@ function FeaturedIssueCard({ issue }: { issue: NewsletterIssue }) {
           </p>
         )}
         <span className="text-teal-600 text-sm font-semibold group-hover:text-teal-700 transition-colors">
-          Read this week's brief →
+          Read this week&apos;s brief →
         </span>
       </div>
     </Link>
@@ -123,9 +123,14 @@ export default async function BriefsPage() {
   const briefs = briefList?.briefs ?? [];
   const issues = data?.issues ?? [];
   const entitlementLevel = me?.entitlementLevel ?? session.entitlementLevel ?? "free";
-  const isPremium =
+  // Platform-family rule mirrors the dashboard's isPlatformUser: a platform
+  // tenant must never see Free-tier or Brief Pro upsell messaging, even when
+  // the engine returns a locked issue (entitlement drift).
+  const isPlatformFamily =
     entitlementLevel === "premium" ||
-    entitlementLevel === "professional";
+    entitlementLevel === "platform" ||
+    entitlementLevel === "team";
+  const suppressUpsell = isPlatformFamily || entitlementLevel === "professional";
   const lockedCount = issues.filter((i) => i.locked).length;
 
   // Featured card: the newest published canonical brief; legacy issues only
@@ -158,7 +163,10 @@ export default async function BriefsPage() {
         </p>
         {briefs.length > 0 ? (
           <p className="text-xs text-slate-500">
-            {briefs.length} brief{briefs.length !== 1 ? "s" : ""} in the archive
+            {briefs.length} brief{briefs.length !== 1 ? "s" : ""}
+            {issues.length > 0
+              ? ` · ${issues.length} archived issue${issues.length !== 1 ? "s" : ""}`
+              : " in the archive"}
           </p>
         ) : issues.length > 0 ? (
           <p className="text-xs text-slate-500">
@@ -199,11 +207,11 @@ export default async function BriefsPage() {
           {remainingIssues.length > 0 && (
             <>
               <p className={`text-xs font-semibold text-slate-500 uppercase tracking-widest mb-5${latestBrief || latestUnlocked ? " mt-10" : ""}`}>
-                {briefs.length > 0 ? "Legacy Issues" : "Previous Issues"}
+                {briefs.length > 0 ? "Archived Issues" : "Previous Issues"}
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 {remainingIssues.map((issue) => (
-                  <BriefCard key={issue.id} issue={issue} />
+                  <BriefCard key={issue.id} issue={issue} viewerIsPlatform={isPlatformFamily} />
                 ))}
               </div>
             </>
@@ -211,7 +219,7 @@ export default async function BriefsPage() {
         </>
       )}
 
-      {!isPremium && lockedCount > 0 && (
+      {!suppressUpsell && lockedCount > 0 && (
         <div className="mt-10 bg-teal-50 border border-teal-200 rounded-xl p-6 text-center">
           <p className="text-teal-900 font-semibold mb-1">
             {lockedCount} brief{lockedCount !== 1 ? "s" : ""} locked

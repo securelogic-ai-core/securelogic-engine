@@ -974,10 +974,10 @@ function IntelligenceBriefDetailView({
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
         <div className="mb-6">
           <Link
-            href="/dashboard"
+            href="/briefs"
             className="text-brand-teal hover:text-teal-300 text-sm font-medium transition-colors"
           >
-            ← Back to dashboard
+            ← All Briefs
           </Link>
         </div>
 
