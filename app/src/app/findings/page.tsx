@@ -77,7 +77,10 @@ function StatTile({
   population,
 }: {
   label: string;
-  value: number;
+  // null = the count is genuinely unknown (every source failed). Render the
+  // ops-center's em-dash convention, never a fabricated zero — "0 Critical"
+  // during an outage is a lie an executive acts on.
+  value: number | null;
   color: string;
   href: string;
   population: string;
@@ -85,15 +88,45 @@ function StatTile({
   return (
     <Link
       href={href}
-      aria-label={`${value} ${population} — view the list`}
+      aria-label={
+        value === null
+          ? `${label} count unavailable right now — view the list`
+          : `${value} ${population} — view the list`
+      }
       className="block transition-shadow hover:ring-1 hover:ring-teal-600/50 focus-visible:ring-2 focus-visible:ring-teal-500 outline-none rounded-xl"
       style={STAT_CARD_STYLE}
     >
       <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
         {label}
       </p>
-      <p className="text-3xl font-bold" style={{ color }}>{value}</p>
+      <p className="text-3xl font-bold" style={{ color: value === null ? "#64748b" : color }}>
+        {value ?? "—"}
+      </p>
     </Link>
+  );
+}
+
+// A failed fetch is a loading problem, not an empty result. Rendering the
+// filtered-empty message on an engine error told the reader their findings
+// were gone (or that nothing matched) — the one thing a trust product must
+// never do. role="alert" so assistive tech hears the difference too.
+function FindingsUnavailable({ retryHref }: { retryHref: string }) {
+  return (
+    <div
+      role="alert"
+      className="rounded-xl border p-10 text-center"
+      style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}
+    >
+      <p className="text-sm font-semibold mb-1" style={{ color: "#f1f5f9" }}>
+        Findings couldn’t be loaded right now.
+      </p>
+      <p className="text-sm mb-4" style={{ color: "#94a3b8" }}>
+        This is a loading problem, not an empty list — your findings are unchanged.
+      </p>
+      <Link href={retryHref} className="text-sm font-medium" style={{ color: "#00c4b4" }}>
+        Try again
+      </Link>
+    </div>
   );
 }
 
@@ -152,6 +185,14 @@ export default async function FindingsPage({
 
   const findings = findingsData?.findings ?? [];
   const summary = summaryData?.summary;
+  // getFindings returns null ONLY on failure (a successful empty list is
+  // {findings: []}). Track the distinction — it decides between "no findings
+  // match" (an answer) and "couldn't load" (an outage).
+  const findingsUnavailable = findingsData === null;
+  // Tiles fabricate zeros only when EVERY source is gone: no org summary AND
+  // no slice to fall back to. Summary-missing-but-slice-present keeps the
+  // documented under-reporting fallback unchanged.
+  const countsUnavailable = !summary && findingsUnavailable;
 
   // Metric Contract: these tiles count the ACTIVE population (operational_status
   // <> 'closed'), not the strictly-open one. A Critical finding under active
@@ -434,7 +475,12 @@ export default async function FindingsPage({
             total={queueTotal}
             count={queueFindings.length}
           />
-          {queueFindings.length === 0 ? (
+          {queueData === null ? (
+            /* Engine failure ≠ zero matches: the filtered-empty message with a
+               "Clear all" link would send the reader chasing their own filters
+               for an outage that isn't theirs. */
+            <FindingsUnavailable retryHref={queueHref(queueState)} />
+          ) : queueFindings.length === 0 ? (
             <div
               className="rounded-xl border p-10 text-center"
               style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}
@@ -497,12 +543,12 @@ export default async function FindingsPage({
           axes (active=true + severity); In Progress counts in_progress_open,
           which the status filter expresses exactly. */}
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
-        <StatTile label="Active"      value={activeCount}     color="#fca5a5" href="/findings?active=true"                        population="active findings" />
-        <StatTile label="Critical"    value={criticalCount}   color="#fca5a5" href="/findings?active=true&severity=Critical"      population="active critical findings" />
-        <StatTile label="High"        value={highCount}       color="#fdba74" href="/findings?active=true&severity=High"          population="active high-severity findings" />
-        <StatTile label="Moderate"    value={moderateCount}   color="#fbbf24" href="/findings?active=true&severity=Moderate"      population="active moderate-severity findings" />
-        <StatTile label="Low"         value={lowCount}        color="#86efac" href="/findings?active=true&severity=Low"           population="active low-severity findings" />
-        <StatTile label="In Progress" value={inProgressCount} color="#93c5fd" href="/findings?status=in_progress"                 population="findings in progress" />
+        <StatTile label="Active"      value={countsUnavailable ? null : activeCount}     color="#fca5a5" href="/findings?active=true"                   population="active findings" />
+        <StatTile label="Critical"    value={countsUnavailable ? null : criticalCount}   color="#fca5a5" href="/findings?active=true&severity=Critical" population="active critical findings" />
+        <StatTile label="High"        value={countsUnavailable ? null : highCount}       color="#fdba74" href="/findings?active=true&severity=High"     population="active high-severity findings" />
+        <StatTile label="Moderate"    value={countsUnavailable ? null : moderateCount}   color="#fbbf24" href="/findings?active=true&severity=Moderate" population="active moderate-severity findings" />
+        <StatTile label="Low"         value={countsUnavailable ? null : lowCount}        color="#86efac" href="/findings?active=true&severity=Low"      population="active low-severity findings" />
+        <StatTile label="In Progress" value={countsUnavailable ? null : inProgressCount} color="#93c5fd" href="/findings?status=in_progress"            population="findings in progress" />
       </div>
 
       {/* Filter bar */}
@@ -569,14 +615,18 @@ export default async function FindingsPage({
       {savedViewsEnabled && (
         <SavedViewsBar views={savedViews} currentFilters={currentViewFilters(sp)} />
       )}
-      <FindingsList
-        findings={findings}
-        hasFilters={hasFilters}
-        workspace={workspace}
-        orgSummary={summary}
-        total={findingsData?.total}
-        ownerNames={ownerNames}
-      />
+      {findingsUnavailable ? (
+        <FindingsUnavailable retryHref={filterHref(currentSp, "", null)} />
+      ) : (
+        <FindingsList
+          findings={findings}
+          hasFilters={hasFilters}
+          workspace={workspace}
+          orgSummary={summary}
+          total={findingsData?.total}
+          ownerNames={ownerNames}
+        />
+      )}
         </>
       )}
     </div>
