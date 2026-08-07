@@ -245,17 +245,33 @@ export default async function PosturePage() {
                       </span>
                     </td>
                     <td className="px-5 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-20 rounded-full h-1.5 flex-shrink-0" style={{ background: "rgba(255,255,255,0.08)" }}>
-                          <div
-                            className={`h-1.5 rounded-full ${severityStyle(d.severity).bar}`}
-                            style={{ width: `${Math.min(d.score ?? 0, 100)}%` }}
-                          />
-                        </div>
-                        <span className="text-sm font-bold tabular-nums w-8" style={{ color: severityStyle(d.severity).color }}>
-                          {d.score ?? 0}
+                      {d.score === null ? (
+                        /* Enterprise truth: a domain that has not been scored is
+                           UNKNOWN, not failing. `?? 0` rendered it as the worst
+                           possible health (bold 0, empty bar) — a fabrication on
+                           the executive table. The severity column already
+                           renders its null as "—"; the score column now keeps
+                           the same promise. */
+                        <span
+                          className="text-xs"
+                          style={{ color: "#475569" }}
+                          aria-label={`${d.domain} has not been scored yet`}
+                        >
+                          — not yet scored
                         </span>
-                      </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <div className="w-20 rounded-full h-1.5 flex-shrink-0" style={{ background: "rgba(255,255,255,0.08)" }}>
+                            <div
+                              className={`h-1.5 rounded-full ${severityStyle(d.severity).bar}`}
+                              style={{ width: `${Math.min(d.score, 100)}%` }}
+                            />
+                          </div>
+                          <span className="text-sm font-bold tabular-nums w-8" style={{ color: severityStyle(d.severity).color }}>
+                            {d.score}
+                          </span>
+                        </div>
+                      )}
                     </td>
                     <td className="px-5 py-3">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${severityStyle(d.severity).badge}`}>
