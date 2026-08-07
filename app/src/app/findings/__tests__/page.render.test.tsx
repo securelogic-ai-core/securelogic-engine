@@ -303,3 +303,42 @@ describe("/findings — the summary tiles count the ACTIVE population", () => {
     expect(tile("High").textContent).toContain("2");
   });
 });
+
+describe("/findings — the summary tiles are doors to their exact populations", () => {
+  // Metric Contract, final step (same defect class as #638): a number a reader
+  // trusts must LINK to the population it counts. Severity tiles count the
+  // *_active fields, so their doors carry both axes; the bare severity pill
+  // (which includes closed findings) is NOT an acceptable landing.
+  const tileHref = (label: string) => tile(label).closest("a")?.getAttribute("href");
+
+  it("each tile links to precisely the population its number counts", async () => {
+    await renderPage(FindingsPage, { searchParams: sp({}) });
+
+    expect(tileHref("Active")).toBe("/findings?active=true");
+    expect(tileHref("Critical")).toBe("/findings?active=true&severity=Critical");
+    expect(tileHref("High")).toBe("/findings?active=true&severity=High");
+    expect(tileHref("Moderate")).toBe("/findings?active=true&severity=Moderate");
+    expect(tileHref("Low")).toBe("/findings?active=true&severity=Low");
+    // In Progress counts in_progress_open — the status filter expresses it exactly.
+    expect(tileHref("In Progress")).toBe("/findings?status=in_progress");
+  });
+
+  it("tile doors REPLACE current filters — never intersect into a different population", async () => {
+    // Reading "Critical N" while filtered to Low must still open the critical
+    // active list, not Low∩Critical (an empty lie) or Critical-including-closed.
+    await renderPage(FindingsPage, { searchParams: sp({ severity: "Low", status: "open" }) });
+
+    expect(tileHref("Critical")).toBe("/findings?active=true&severity=Critical");
+    expect(tileHref("Active")).toBe("/findings?active=true");
+  });
+
+  it("tiles are labeled for assistive tech with count and population", async () => {
+    await renderPage(FindingsPage, { searchParams: sp({}) });
+
+    // critical_active defaults to 2 in aFindingsSummary — the label carries the
+    // same number the sighted reader sees.
+    expect(
+      screen.getByRole("link", { name: "2 active critical findings — view the list" })
+    ).toBeInTheDocument();
+  });
+});
