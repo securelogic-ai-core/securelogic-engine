@@ -3,6 +3,7 @@ import { redirect, notFound } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getIntelligenceBrief, getFindings, getFindingContext } from "@/lib/api";
 import { intelligenceEventHref } from "@/lib/intelligenceLinks";
+import { formatDateOnlyUTC } from "@/lib/dates";
 import PromoteSignalButton from "./PromoteSignalButton";
 import { BriefItemContextCallout } from "@/components/BriefItemPlatformContext";
 import {
@@ -109,7 +110,9 @@ function parseActions(raw: string | null): string[] {
 // R1: the feed slug is no longer part of what makes a "source" section worth
 // rendering — it is internal plumbing, not something a customer should read.
 function hasAnySource(item: IntelligenceBriefItem): boolean {
-  return Boolean(item.affected_cve || item.affected_vendor || item.ingestion_timestamp);
+  return Boolean(
+    item.affected_cve || item.affected_vendor || item.ingestion_timestamp || item.signal_published_at
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -413,6 +416,17 @@ export default async function SignalDetailPage({ params }: Props) {
                       claim, which is the part that was ever load-bearing. Feed
                       attribution is retained internally (intelligence_brief_item_
                       provenance, cyber_signals.source) for audit. */}
+                  {/* IQP Q2: the source's own event date (KEV dateAdded / NVD
+                      published / RSS pubDate) — how old this item actually is.
+                      Rendered UTC-pinned; absent → no row, never inferred. */}
+                  {formatDateOnlyUTC(item.signal_published_at, { year: "numeric", month: "long", day: "numeric" }) && (
+                    <div>
+                      <dt className="text-xs text-slate-500 uppercase tracking-wide mb-0.5">Reported</dt>
+                      <dd className="text-slate-300">
+                        {formatDateOnlyUTC(item.signal_published_at, { year: "numeric", month: "long", day: "numeric" })}
+                      </dd>
+                    </div>
+                  )}
                   {item.ingestion_timestamp && (
                     <div>
                       <dt className="text-xs text-slate-500 uppercase tracking-wide mb-0.5">Ingested</dt>

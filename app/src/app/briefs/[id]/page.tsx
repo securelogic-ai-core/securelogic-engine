@@ -13,6 +13,7 @@ import { ScrollSpyTOC, type TocEntry } from "@/components/ScrollSpyTOC";
 import { CollapsibleSignalList } from "@/components/CollapsibleSignalList";
 import { PrintButton } from "@/components/PrintButton";
 import { IntelligenceBriefSignalGroup } from "@/components/IntelligenceBriefSignalGroup";
+import { formatDateOnlyUTC } from "@/lib/dates";
 
 function formatDate(date: string): string {
   return new Date(date).toLocaleDateString("en-US", {
@@ -946,7 +947,13 @@ function IntelligenceBriefDetailView({
   const synthesis = brief.content_json?.synthesis ?? null;
   const headline = synthesis?.headline ?? null;
   const execSummary = synthesis?.exec_summary ?? null;
-  const date = formatDate(brief.period_end);
+  // IQP Q2 / IQ-1 A3: state the coverage window, not just its end date — the
+  // masthead is the promise every item's "Reported" date is checked against.
+  // UTC-pinned so the label can't drift a day from the stored period.
+  const windowStart = formatDateOnlyUTC(brief.period_start);
+  const windowEnd = formatDateOnlyUTC(brief.period_end);
+  const date =
+    windowStart && windowEnd ? `${windowStart} – ${windowEnd}` : formatDate(brief.period_end);
 
   // Inline rather than extracting to a util — IntelligenceBriefDashboardCard
   // has its own copy and cross-importing between app/src/components and

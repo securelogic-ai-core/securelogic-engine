@@ -80,6 +80,7 @@ import {
 import { recomputeSourceReliability } from "./signals/sourceReliability.js";
 import { signalClusteringEnabled } from "./signals/signalClustering.js";
 import { briefProvenanceEnabled, buildProvenanceRows } from "./signals/briefProvenance.js";
+import { personalizeBriefItems } from "./briefPersonalizationService.js";
 import { intelligenceEventsEnabled } from "./signals/intelligenceEventsFeatureFlag.js";
 import { signalRecencyEnabled } from "./signalRecencyFeatureFlag.js";
 import { briefRelevanceEnabled, filterSignalsByOrgRelevance } from "./briefRelevance.js";
@@ -465,10 +466,35 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
     "Brief capped"
   );
 
+  // Personalize items — the SAME step, in the SAME position, as the manual
+  // generate route (POST /api/intelligence-briefs/generate): match capped
+  // items against the org's vendors, risks, AI systems and obligations BEFORE
+  // synthesis and persistence. Until IQ-1 this call existed only on the manual
+  // route, so every scheduler-produced brief shipped is_personalized=FALSE /
+  // platform_context=NULL and the customer-facing "affects your environment"
+  // surfaces had nothing to render. Non-fatal, exactly like the route: a
+  // personalization failure publishes the brief without personalization.
+  // (fetchOrgPlatformContext opens its own withTenant scope internally.)
+  let personalizedItems: Awaited<ReturnType<typeof personalizeBriefItems>>;
+  try {
+    personalizedItems = await personalizeBriefItems(cappedItems, orgId);
+  } catch (personalizationErr) {
+    logger.warn(
+      { event: "brief_personalization_failed", orgId, briefId, err: personalizationErr },
+      "Brief personalization failed — publishing without personalization data"
+    );
+    personalizedItems = cappedItems.map((item) => ({
+      ...item,
+      is_personalized: false,
+      platform_context: null
+    }));
+  }
+
   // Brief-level synthesis — one Claude call producing a 12-word headline.
   // Non-fatal: failure resolves to null and the brief publishes without one.
-  // Run on cappedItems so headline/teaser describe what's actually in the
-  // brief, not what was dropped.
+  // Run on personalizedItems (same objects as cappedItems, post-cap) so
+  // headline/teaser describe what's actually in the brief, not what was
+  // dropped — and so synthesis sees personalization, matching the route.
   //
   // Prior-brief context drives the exec summary's week-on-week calibration
   // sentence. Returns null on first-brief-ever cases; the prompt drops to
@@ -478,10 +504,10 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
   const priorContext = await withTenant(orgId, () =>
     fetchPriorBriefContext(orgId, briefId)
   );
-  const synthesis = await runSynthesisSafely(cappedItems, priorContext, orgId);
+  const synthesis = await runSynthesisSafely(personalizedItems, priorContext, orgId);
 
   const finalized = finalizeBrief(
-    cappedItems,
+    personalizedItems,
     periodStart.toISOString(),
     periodEnd.toISOString(),
     base.signal_count
@@ -504,17 +530,20 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
       try {
         await client.query("BEGIN");
 
-        if (finalized.items.length > 0) {
+        if (personalizedItems.length > 0) {
           const itemValues: unknown[] = [];
           const itemPlaceholders: string[] = [];
 
-          finalized.items.forEach((item: BriefItem, idx: number) => {
-            const b = idx * 17;
+          // 19 columns per item — the manual route's exact insert (incl.
+          // is_personalized + platform_context), so scheduler-produced briefs
+          // persist personalization identically to manually generated ones.
+          personalizedItems.forEach((item, idx: number) => {
+            const b = idx * 19;
             itemPlaceholders.push(
               `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, ` +
               `$${b + 6}, $${b + 7}, $${b + 8}, $${b + 9}, $${b + 10}, ` +
               `$${b + 11}, $${b + 12}, $${b + 13}, $${b + 14}, $${b + 15}, ` +
-              `$${b + 16}, $${b + 17})`
+              `$${b + 16}, $${b + 17}, $${b + 18}, $${b + 19})`
             );
             itemValues.push(
               orgId,
@@ -533,6 +562,8 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
               item.why_it_matters ?? null,
               item.recommended_actions ?? null,
               item.analyst_notes ?? null,
+              item.is_personalized,
+              item.platform_context ? JSON.stringify(item.platform_context) : null,
               item.urgency ?? null
             );
           });
@@ -543,6 +574,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
                 title, summary, affected_cve, affected_vendor, source_slug,
                 signal_type, severity, sort_order,
                 why_it_matters, recommended_actions, analyst_notes,
+                is_personalized, platform_context,
                 urgency)
              VALUES ${itemPlaceholders.join(", ")}
              RETURNING id, sort_order`,
@@ -716,14 +748,24 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   let federalRegisterSignals: CyberSignalIngestInput[] = [];
 
   try {
-    const { signals, total } = await fetchCisaKevSignals();
+    const { signals, total, fromCache } = await fetchCisaKevSignals();
     cisaKevSignals = signals;
     summary.signals_fetched.cisa_kev = total;
     await recordFeedSuccess("cisa_kev", total);
-    logger.info(
-      { event: "scheduler_cisa_kev_fetched", total, mapped: signals.length },
-      "CISA KEV feed fetched"
-    );
+    if (fromCache) {
+      // The 15-min kevPoller shares CISA_KEV_ETAG_KEY, so the weekly run
+      // normally lands on a 304: zero rows here is the HEALTHY case, not a
+      // dead feed — the brief window reads the poller's global rows instead.
+      logger.info(
+        { event: "scheduler_cisa_kev_not_modified" },
+        "CISA KEV catalog unchanged (ETag 304) — weekly ingest skipped; brief window reads the 15-min poller's global rows"
+      );
+    } else {
+      logger.info(
+        { event: "scheduler_cisa_kev_fetched", total, mapped: signals.length },
+        "CISA KEV feed fetched"
+      );
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`cisa_kev_fetch_failed: ${msg}`);
