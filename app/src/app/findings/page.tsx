@@ -61,6 +61,42 @@ const STAT_CARD_STYLE: React.CSSProperties = {
   padding: "16px 20px",
 };
 
+// Metric Contract, final step: a tile's link must land on EXACTLY the
+// population its number counts — the same rule that repointed every dashboard
+// findings tile at ?active=true (#638). These tiles held org-wide ACTIVE
+// counts but were inert, so the nearest click (the bare severity pill, which
+// includes closed findings) disagreed with the number the reader just trusted.
+// The href IS the tile's definition; it deliberately REPLACES any current
+// filters rather than intersecting with them. Hover/focus affordance uses a
+// ring so the inline card style stays byte-identical at rest.
+function StatTile({
+  label,
+  value,
+  color,
+  href,
+  population,
+}: {
+  label: string;
+  value: number;
+  color: string;
+  href: string;
+  population: string;
+}) {
+  return (
+    <Link
+      href={href}
+      aria-label={`${value} ${population} — view the list`}
+      className="block transition-shadow hover:ring-1 hover:ring-teal-600/50 focus-visible:ring-2 focus-visible:ring-teal-500 outline-none rounded-xl"
+      style={STAT_CARD_STYLE}
+    >
+      <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
+        {label}
+      </p>
+      <p className="text-3xl font-bold" style={{ color }}>{value}</p>
+    </Link>
+  );
+}
+
 type Params = Record<string, string | undefined>;
 
 function filterHref(current: Params, key: string, value: string | null): string {
@@ -456,44 +492,17 @@ export default async function FindingsPage({
         </>
       ) : (
         <>
-      {/* Summary stat cards */}
+      {/* Summary stat tiles — every number is a door to the exact population
+          it counts. Severity tiles count *_active, so their href carries BOTH
+          axes (active=true + severity); In Progress counts in_progress_open,
+          which the status filter expresses exactly. */}
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
-        <div style={STAT_CARD_STYLE}>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            Active
-          </p>
-          <p className="text-3xl font-bold" style={{ color: "#fca5a5" }}>{activeCount}</p>
-        </div>
-        <div style={STAT_CARD_STYLE}>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            Critical
-          </p>
-          <p className="text-3xl font-bold" style={{ color: "#fca5a5" }}>{criticalCount}</p>
-        </div>
-        <div style={STAT_CARD_STYLE}>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            High
-          </p>
-          <p className="text-3xl font-bold" style={{ color: "#fdba74" }}>{highCount}</p>
-        </div>
-        <div style={STAT_CARD_STYLE}>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            Moderate
-          </p>
-          <p className="text-3xl font-bold" style={{ color: "#fbbf24" }}>{moderateCount}</p>
-        </div>
-        <div style={STAT_CARD_STYLE}>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            Low
-          </p>
-          <p className="text-3xl font-bold" style={{ color: "#86efac" }}>{lowCount}</p>
-        </div>
-        <div style={STAT_CARD_STYLE}>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            In Progress
-          </p>
-          <p className="text-3xl font-bold" style={{ color: "#93c5fd" }}>{inProgressCount}</p>
-        </div>
+        <StatTile label="Active"      value={activeCount}     color="#fca5a5" href="/findings?active=true"                        population="active findings" />
+        <StatTile label="Critical"    value={criticalCount}   color="#fca5a5" href="/findings?active=true&severity=Critical"      population="active critical findings" />
+        <StatTile label="High"        value={highCount}       color="#fdba74" href="/findings?active=true&severity=High"          population="active high-severity findings" />
+        <StatTile label="Moderate"    value={moderateCount}   color="#fbbf24" href="/findings?active=true&severity=Moderate"      population="active moderate-severity findings" />
+        <StatTile label="Low"         value={lowCount}        color="#86efac" href="/findings?active=true&severity=Low"           population="active low-severity findings" />
+        <StatTile label="In Progress" value={inProgressCount} color="#93c5fd" href="/findings?status=in_progress"                 population="findings in progress" />
       </div>
 
       {/* Filter bar */}
