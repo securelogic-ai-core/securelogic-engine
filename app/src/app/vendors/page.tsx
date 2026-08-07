@@ -10,10 +10,6 @@ import {
 import { CriticalityBadge, MetaChip } from "@/components/assetKit";
 import { ListSearchForm } from "@/components/ListSearchForm";
 
-const CRIT_ORDER: Record<string, number> = {
-  critical: 0, high: 1, medium: 2, low: 3,
-};
-
 const BANNER_STYLES: Record<string, React.CSSProperties> = {
   critical: { background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", color: "#fca5a5" },
   high:     { background: "rgba(249,115,22,0.08)", border: "1px solid rgba(249,115,22,0.25)", color: "#fdba74" },
@@ -74,6 +70,18 @@ export default async function VendorsPage({
   };
 
   const vendorsData = activeData;
+
+  // Count honesty: the engine serves at most 100 vendors per request and its
+  // `count` is the PAGE size, never a table total. A non-null nextCursor on a
+  // fetch means more vendors exist beyond what this page shows — every derived
+  // number below (pills, "N active", never-reviewed) then describes the shown
+  // slice, and the page must say so instead of presenting it as the org.
+  const activeCapped = activeData?.nextCursor != null;
+  const archivedCapped = showInactive && archivedData?.nextCursor != null;
+  const capped = activeCapped || archivedCapped;
+  // The archived fetch can fail independently of the active one; silence would
+  // present a partial merge as the whole inventory.
+  const archivedUnavailable = showInactive && archivedData === null;
 
   // Build vendor_id → assessment count.
   const assessmentCountByVendor = new Map<string, number>();
@@ -145,16 +153,27 @@ export default async function VendorsPage({
       <div className="mb-6 flex items-baseline justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>Vendors</h1>
+          {/* Ordering honesty: the engine guarantees criticality-first order
+              (ORDER BY criticality, created_at DESC — deterministic). "Sorted
+              by risk level" overclaimed: risk is the assessed score, which
+              this list neither sorts by nor shows. Say what is true. */}
           <p className="text-sm mt-1" style={{ color: "#94a3b8" }}>
             {critFilter
-              ? `Showing ${displayVendors.length} of ${allVendors.length} vendor${allVendors.length !== 1 ? "s" : ""}`
-              : "Third-party vendors tracked for this organization. Sorted by risk level."}
+              ? `Showing ${displayVendors.length} of ${capped ? `the ${allVendors.length} listed` : allVendors.length} vendor${allVendors.length !== 1 ? "s" : ""}`
+              : "Third-party vendors tracked for this organization. Sorted by criticality — most critical first."}
           </p>
+          {capped && (
+            <p className="text-xs mt-1" style={{ color: "#64748b" }}>
+              Showing the first {allVendors.length} vendors (most critical
+              first) — more exist. Counts on this page reflect the vendors
+              shown.
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           {activeVendors.length > 0 && !critFilter && (
             <span className="text-sm" style={{ color: "#94a3b8" }}>
-              {activeVendors.length} active
+              {activeCapped ? `${activeVendors.length}+ active` : `${activeVendors.length} active`}
             </span>
           )}
           <Link
@@ -254,12 +273,29 @@ export default async function VendorsPage({
         </div>
       )}
 
-      {/* Not entitled */}
+      {/* Unavailable ≠ unauthorized ≠ empty. getVendors returns null on ANY
+          failure, and this branch used to render "not available for your
+          current plan" — an outage impersonating an entitlement denial to a
+          platform-gated user. Say what is actually known: nothing loaded. */}
       {vendorsData === null && (
-        <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>
-            Vendor data is not available for your current plan.
+        <div role="alert" className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
+          <p className="text-sm font-semibold mb-1" style={{ color: "#f1f5f9" }}>
+            Vendors couldn’t be loaded right now.
           </p>
+          <p className="text-sm mb-4" style={{ color: "#94a3b8" }}>
+            This is a loading problem, not an empty list — your vendor records are unchanged.
+          </p>
+          <Link href={vendorsHref()} className="text-sm font-medium hover:opacity-80" style={{ color: "#00c4b4" }}>
+            Try again
+          </Link>
+        </div>
+      )}
+
+      {/* The archived fetch can fail while the active one succeeds — say so
+          rather than silently presenting a partial merge as the inventory. */}
+      {vendorsData !== null && archivedUnavailable && (
+        <div role="alert" className="mb-4 rounded-xl px-5 py-3 text-xs" style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)", color: "#fcd34d" }}>
+          Inactive vendors couldn’t be loaded right now — the list below shows active vendors only.
         </div>
       )}
 
