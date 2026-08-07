@@ -342,3 +342,53 @@ describe("/findings — the summary tiles are doors to their exact populations",
     ).toBeInTheDocument();
   });
 });
+
+describe("/findings — an outage never impersonates an empty result", () => {
+  // getFindings returns null ONLY on failure (success-empty is {findings: []}).
+  // Before this contract, an engine error rendered the filtered-empty message
+  // and — when the summary also failed — six confident zeros above it.
+  it("a failed findings fetch renders the loading-problem alert, not 'no findings match'", async () => {
+    api.getFindings.mockResolvedValue(null);
+
+    const { container } = await renderPage(FindingsPage, { searchParams: sp({}) });
+    const text = container.textContent ?? "";
+
+    expect(screen.getByRole("alert").textContent).toContain("Findings couldn’t be loaded right now");
+    expect(text).toContain("not an empty list — your findings are unchanged");
+    expect(text).toContain("Try again");
+    expect(text).not.toContain("No findings match");
+  });
+
+  it("when every count source fails, tiles show an honest — instead of fabricated zeros", async () => {
+    api.getFindings.mockResolvedValue(null);
+    api.getFindingsSummary.mockResolvedValue(null);
+
+    await renderPage(FindingsPage, { searchParams: sp({}) });
+
+    expect(tile("Critical").textContent).toContain("—");
+    expect(tile("Critical").textContent).not.toContain("0");
+    expect(
+      screen.getByRole("link", { name: "Critical count unavailable right now — view the list" })
+    ).toBeInTheDocument();
+  });
+
+  it("summary-only failure keeps the documented slice fallback — counts, not dashes", async () => {
+    // Old-engine builds omit the summary; the slice under-reports rather than
+    // lying with an em-dash while findings are visibly listed below.
+    api.getFindingsSummary.mockResolvedValue(null);
+
+    const { container } = await renderPage(FindingsPage, { searchParams: sp({}) });
+
+    expect(tile("Critical").textContent).toContain("1"); // ACTIVE fixture has 1 critical
+    expect(container.textContent).not.toContain("couldn’t be loaded");
+  });
+
+  it("a genuinely empty result still reads as an answer, not an error", async () => {
+    api.getFindings.mockResolvedValue(aFindingsResponse([]));
+
+    const { container } = await renderPage(FindingsPage, { searchParams: sp({}) });
+
+    expect(container.textContent).toContain("No findings match your current filters");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
