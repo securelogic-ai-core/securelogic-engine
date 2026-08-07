@@ -28,6 +28,41 @@ const TYPE_ORDER: ReadonlyArray<GlobalSearchHit["type"]> = [
   "obligation",
 ];
 
+// Mirror of the engine's PER_TYPE_LIMIT (globalSearch.ts): each category
+// returns at most this many hits, and the response carries no true match
+// count. A section AT the limit may therefore be truncated — the page must
+// say so rather than let "5 rows" read as "5 matches exist".
+const SEARCH_PER_TYPE_LIMIT = 5;
+
+// Where each category's full workspace lives — the "keep going" path when
+// search comes up empty or capped. Hrefs are the canonical list routes.
+const TYPE_BROWSE: ReadonlyArray<{ label: string; href: string }> = [
+  { label: "Findings",    href: "/findings" },
+  { label: "Risks",       href: "/risks" },
+  { label: "Vendors",     href: "/vendors" },
+  { label: "AI Systems",  href: "/ai-systems" },
+  { label: "Assets",      href: "/assets" },
+  { label: "Controls",    href: "/controls" },
+  { label: "Obligations", href: "/obligations" },
+];
+
+function BrowseChips() {
+  return (
+    <div className="flex flex-wrap justify-center gap-2">
+      {TYPE_BROWSE.map(({ label, href }) => (
+        <Link
+          key={href}
+          href={href}
+          className="text-xs px-3 py-1.5 rounded-full transition-colors hover:bg-white/10"
+          style={{ background: "#1e293b", color: "#94a3b8" }}
+        >
+          {label}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 const CARD_STYLE: React.CSSProperties = {
   background: "var(--color-brand-surface, #111827)",
   border: "1px solid #1e293b",
@@ -95,6 +130,7 @@ export default async function SearchPage({
           name="q"
           defaultValue={rawQuery}
           placeholder="Search by name or title…"
+          aria-label="Search your organization by name or title"
           autoFocus
           minLength={2}
           maxLength={200}
@@ -103,9 +139,24 @@ export default async function SearchPage({
         />
       </form>
 
+      {!query && (
+        <div className="px-6 py-8 text-center" style={CARD_STYLE}>
+          <p className="text-sm text-slate-400 mb-4">
+            Search spans every record your organization holds — or go straight
+            to a workspace:
+          </p>
+          <BrowseChips />
+        </div>
+      )}
+
       {query && results && results.total === 0 && (
-        <div className="px-4 py-8 text-center text-sm text-slate-400" style={CARD_STYLE}>
-          No results for “{query}”.
+        <div className="px-6 py-8 text-center" style={CARD_STYLE}>
+          <p className="text-sm text-slate-400 mb-1">No results for “{query}”.</p>
+          <p className="text-xs text-slate-500 mb-4">
+            Try a shorter term or a name prefix — search matches names and
+            titles, not full text.
+          </p>
+          <BrowseChips />
         </div>
       )}
 
@@ -117,10 +168,29 @@ export default async function SearchPage({
 
       {results && results.total > 0 && (
         <div className="flex flex-col gap-6">
+          {/* The whole truth about what came back: total returned, and — when
+              any category sits AT the engine's per-type cap — the fact that
+              deeper matches may exist. Silent truncation teaches readers to
+              distrust every count in the product. role="status" announces the
+              outcome to screen readers after the no-JS form round-trip. */}
+          <p role="status" className="text-sm text-slate-400 -mb-1">
+            <span className="font-semibold text-slate-200">{results.total}</span>{" "}
+            result{results.total !== 1 ? "s" : ""} for “{query}”
+            {[...grouped.values()].some((l) => l.length >= SEARCH_PER_TYPE_LIMIT) && (
+              <span className="text-slate-500">
+                {" "}· showing the top {SEARCH_PER_TYPE_LIMIT} per category — refine
+                your search to narrow
+              </span>
+            )}
+          </p>
           {TYPE_ORDER.filter((t) => grouped.has(t)).map((type) => (
             <section key={type}>
               <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
-                {TYPE_LABELS[type]}
+                {TYPE_LABELS[type]}{" "}
+                <span className="ml-1 font-medium text-slate-600 tracking-normal">
+                  · {grouped.get(type)!.length}
+                  {grouped.get(type)!.length >= SEARCH_PER_TYPE_LIMIT ? "+" : ""}
+                </span>
               </h2>
               <div className="divide-y divide-slate-800" style={CARD_STYLE}>
                 {grouped.get(type)!.map((hit) => (
