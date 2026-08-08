@@ -466,9 +466,28 @@ export type Vendor = {
   active_findings_count?: number;
 };
 
+/** Exact per-band counts over the applied filter set. Parts always sum to `total`. */
+export type VendorCriticalityCounts = {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  /** NULL or outside the four known bands — so nothing vanishes from the breakdown. */
+  uncategorized: number;
+};
+
 export type VendorsResponse = {
+  /** Length of the returned SLICE. Never a population size — that is `total`. */
   count: number;
   limit: number;
+  /**
+   * Exact count of the whole matching population for the applied filters
+   * (cursor and limit excluded). Optional: absent on older engine builds, and a
+   * caller must treat its absence as "unknown", never as zero.
+   */
+  total?: number;
+  /** Exact criticality breakdown over the same population as `total`. */
+  by_criticality?: VendorCriticalityCounts;
   organizationId: string;
   statusFilter: string;
   nextCursor: { created_at: string; id: string } | null;
@@ -1503,15 +1522,38 @@ export async function getPostureHistory(
   }
 }
 
+/**
+ * The register filters GET /api/vendors applies in SQL.
+ *
+ * `criticality` and `reviewed` live here rather than in the page because
+ * filtering a fetched page can only ever narrow the ≤100 rows the engine chose
+ * to return: past the cap a matching vendor is simply absent from the filtered
+ * view, with nothing disclosing the loss. The same rule the Actions and
+ * Findings queues already follow.
+ */
+export type VendorListOpts = {
+  /** Shared asset-search term (engine-resolved: name, alias, exact UUID). */
+  q?: string;
+  criticality?: "critical" | "high" | "medium" | "low";
+  /** The only value the engine accepts: vendors with NO review on record. */
+  reviewed?: "never";
+  /** Slice size. Use 1 when the response is wanted only for its aggregates. */
+  limit?: number;
+};
+
 export async function getVendors(
   apiKey: string,
   status: "active" | "archived" = "active",
-  opts: { q?: string } = {}
+  opts: VendorListOpts = {}
 ): Promise<VendorsResponse | null> {
   try {
-    const params = new URLSearchParams({ status, limit: "100" });
-    // Shared asset-search term (engine-resolved: name, alias, exact UUID).
+    const params = new URLSearchParams({
+      status,
+      limit: String(opts.limit ?? 100),
+    });
     if (opts.q) params.set("q", opts.q);
+    if (opts.criticality) params.set("criticality", opts.criticality);
+    if (opts.reviewed) params.set("reviewed", opts.reviewed);
     const res = await engineFetch(`/api/vendors?${params.toString()}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<VendorsResponse>;

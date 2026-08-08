@@ -5,16 +5,68 @@ import {
   getVendors,
   getVendorAssessments,
   type Vendor,
+  type VendorsResponse,
+  type VendorListOpts,
+  type VendorCriticalityCounts,
 } from "@/lib/api";
 // EAR Phase 4: badges come from the cross-domain kit (was a local duplicate).
 import { CriticalityBadge, MetaChip } from "@/components/assetKit";
 import { ListSearchForm } from "@/components/ListSearchForm";
 import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { UnknownValue, UnknownValueNote } from "@/components/edx/UnknownValue";
 import { isUnavailable } from "@/lib/edx/loadState";
 
 const CRIT_ORDER: Record<string, number> = {
   critical: 0, high: 1, medium: 2, low: 3,
 };
+
+/** The four bands the pills offer. `uncategorized` is counted by the engine but has no pill. */
+const CRIT_LEVELS = ["critical", "high", "medium", "low"] as const;
+type CritLevel = (typeof CRIT_LEVELS)[number];
+
+function isCritLevel(v: string | null): v is CritLevel {
+  return v !== null && (CRIT_LEVELS as readonly string[]).includes(v);
+}
+
+/** An exact count, or `null` when the number is not known. Never collapse the two. */
+type ExactCount = number | null;
+
+/**
+ * Add the `total`s of the status populations on screen (active, plus archived
+ * when "Show inactive" is on).
+ *
+ * Unknown is contagious ON PURPOSE: if any population failed or predates the
+ * aggregate, the sum is unknown rather than a partial figure presented whole.
+ * A number that silently omits the archived half is a wrong number, not a
+ * stale one.
+ */
+function sumTotals(responses: readonly (VendorsResponse | null)[]): ExactCount {
+  let sum = 0;
+  for (const r of responses) {
+    if (!r || typeof r.total !== "number") return null;
+    sum += r.total;
+  }
+  return sum;
+}
+
+/** The same discipline for the criticality breakdown. */
+function sumCriticality(
+  responses: readonly (VendorsResponse | null)[]
+): VendorCriticalityCounts | null {
+  const out: VendorCriticalityCounts = {
+    critical: 0, high: 0, medium: 0, low: 0, uncategorized: 0,
+  };
+  for (const r of responses) {
+    const b = r?.by_criticality;
+    if (!b) return null;
+    out.critical += b.critical;
+    out.high += b.high;
+    out.medium += b.medium;
+    out.low += b.low;
+    out.uncategorized += b.uncategorized;
+  }
+  return out;
+}
 
 const BANNER_STYLES: Record<string, React.CSSProperties> = {
   critical: { background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", color: "#fca5a5" },
@@ -53,11 +105,60 @@ export default async function VendorsPage({
       ? sp.q.trim()
       : undefined;
 
-  const [activeData, archivedData, assessmentsData] = await Promise.all([
-    getVendors(token, "active", { q: search }),
-    showInactive ? getVendors(token, "archived", { q: search }) : Promise.resolve(null),
+  // The status populations on screen. "Show inactive" adds the archived half,
+  // and every count below is summed across exactly these.
+  const statuses = showInactive
+    ? (["active", "archived"] as const)
+    : (["active"] as const);
+
+  const critFilterLevel = isCritLevel(critFilter) ? critFilter : undefined;
+
+  /** One filter set, read across the visible status populations. */
+  const read = (opts: VendorListOpts) =>
+    Promise.all(statuses.map((s) => getVendors(token, s, opts)));
+
+  // The LIST filter set. criticality and reviewed now go to the ENGINE.
+  //
+  // They used to be applied here, over the fetched page — and the engine caps a
+  // page at 100, so under "Critical" an org past the cap simply did not see
+  // critical vendors that existed. Filtering a bounded slice can only
+  // under-report, and it made every exact aggregate below contradict the rows
+  // beside it.
+  const listOpts: VendorListOpts = {
+    ...(search ? { q: search } : {}),
+    ...(critFilterLevel ? { criticality: critFilterLevel } : {}),
+    ...(neverReviewedOnly ? { reviewed: "never" as const } : {}),
+  };
+
+  // A pill's count must describe the population its own link navigates to:
+  // every active filter EXCEPT the axis that pill toggles. Otherwise the number
+  // on the pill is unreachable by clicking it.
+  const critCountOpts: VendorListOpts = {
+    ...(search ? { q: search } : {}),
+    ...(neverReviewedOnly ? { reviewed: "never" as const } : {}),
+    limit: 1,
+  };
+  const neverReviewedOpts: VendorListOpts = {
+    ...(search ? { q: search } : {}),
+    ...(critFilterLevel ? { criticality: critFilterLevel } : {}),
+    reviewed: "never" as const,
+    limit: 1,
+  };
+
+  // The extra reads are skipped whenever the list request is ALREADY that
+  // population, so the unfiltered register costs one additional tiny request
+  // and a fully filtered one costs two.
+  const [listRes, critRes, neverReviewedRes, assessmentsData] = await Promise.all([
+    read(listOpts),
+    critFilterLevel ? read(critCountOpts) : null,
+    neverReviewedOnly ? null : read(neverReviewedOpts),
     getVendorAssessments(token, 100),
   ]);
+
+  const critSource = critRes ?? listRes;
+  const neverReviewedSource = neverReviewedRes ?? listRes;
+
+  const [activeData, archivedData] = [listRes[0] ?? null, listRes[1] ?? null];
 
   // Every navigation on this page preserves the OTHER axes — a pill click must
   // not silently drop an active search, and a search must not drop the filters.
@@ -97,26 +198,36 @@ export default async function VendorsPage({
 
   const activeVendors = vendorsData?.vendors ?? [];
   const archivedVendors = archivedData?.vendors ?? [];
-  const allVendors = showInactive
+  // The rows are already the filtered population — the engine applied every
+  // axis — so there is no second, client-side filter to under-report.
+  const displayVendors = showInactive
     ? [...activeVendors, ...archivedVendors]
     : activeVendors;
 
-  // Local criticality counts for pill badges.
-  const critCounts = {
-    critical: allVendors.filter((v) => v.criticality === "critical").length,
-    high:     allVendors.filter((v) => v.criticality === "high").length,
-    medium:   allVendors.filter((v) => v.criticality === "medium").length,
-    low:      allVendors.filter((v) => v.criticality === "low").length,
-  };
+  // EXACT counts, over the population each label promises.
+  //
+  // These were `allVendors.filter(…).length` — the ≤100 page counted as though
+  // it were the register. Below the cap that is right, which is why it lasted;
+  // past it every pill quietly under-counted and "Showing N of M" printed a cap
+  // in the position where the same idiom on /actions means a true total.
+  const critCounts = sumCriticality(critSource);
+  const neverReviewedCount = sumTotals(neverReviewedSource);
+  /** The filtered population the rows belong to — the M in "Showing N of M". */
+  const filteredTotal = sumTotals(listRes);
+  /** Active-status size of the current filter set, for the header chip. */
+  const activeTotal: ExactCount =
+    activeData && typeof activeData.total === "number" ? activeData.total : null;
+  /** The register WITHOUT the criticality axis — what the pills are counted over. */
+  const registerTotal = sumTotals(critSource);
 
-  const neverReviewedCount = allVendors.filter((v) => !v.last_reviewed_at).length;
+  const countsUnavailable =
+    critCounts === null || neverReviewedCount === null || filteredTotal === null;
 
-  // Filter for display — axes compose (criticality AND reviewed).
-  const displayVendors = allVendors.filter(
-    (v) =>
-      (!critFilter || v.criticality === critFilter) &&
-      (!neverReviewedOnly || !v.last_reviewed_at)
-  );
+  // The pills stay reachable whenever the register has anything in it, even when
+  // the CURRENT filter matches nothing — a filter that empties the page must not
+  // also remove the control that clears it.
+  const hasRegister = (registerTotal ?? 0) > 0 || displayVendors.length > 0;
+  const isFiltered = Boolean(critFilter) || neverReviewedOnly;
 
   const bannerStyle = critFilter ? BANNER_STYLES[critFilter] : null;
   const critLabel = critFilter
@@ -132,7 +243,16 @@ export default async function VendorsPage({
           style={bannerStyle}
         >
           <p className="text-sm">
-            Showing <strong>{displayVendors.length}</strong> {critLabel} vendor{displayVendors.length !== 1 ? "s" : ""}
+            {filteredTotal === null ? (
+              <>
+                <UnknownValue label={`${critLabel} vendors`} /> {critLabel} vendors
+              </>
+            ) : (
+              <>
+                <strong>{filteredTotal}</strong> {critLabel} vendor
+                {filteredTotal !== 1 ? "s" : ""}
+              </>
+            )}
           </p>
           <Link
             href={vendorsHref({ crit: null })}
@@ -148,15 +268,29 @@ export default async function VendorsPage({
         <div>
           <h1 className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>Vendors</h1>
           <p className="text-sm mt-1" style={{ color: "#94a3b8" }}>
-            {critFilter
-              ? `Showing ${displayVendors.length} of ${allVendors.length} vendor${allVendors.length !== 1 ? "s" : ""}`
-              : "Third-party vendors tracked for this organization. Sorted by risk level."}
+            {critFilter ? (
+              // N is what rendered; M is the engine's exact count of the same
+              // filtered population. M used to be `allVendors.length` — the page
+              // length, i.e. N's own ceiling — so the disclosure could never
+              // actually disclose a truncation.
+              filteredTotal === null ? (
+                <>
+                  Showing {displayVendors.length} vendor
+                  {displayVendors.length !== 1 ? "s" : ""}; the filtered total
+                  couldn&rsquo;t be loaded
+                </>
+              ) : (
+                `Showing ${displayVendors.length} of ${filteredTotal} vendor${filteredTotal !== 1 ? "s" : ""}`
+              )
+            ) : (
+              "Third-party vendors tracked for this organization. Sorted by risk level."
+            )}
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          {activeVendors.length > 0 && !critFilter && (
+          {!critFilter && (activeTotal === null ? displayVendors.length > 0 : activeTotal > 0) && (
             <span className="text-sm" style={{ color: "#94a3b8" }}>
-              {activeVendors.length} active
+              {activeTotal === null ? <UnknownValue label="Active vendors" /> : activeTotal} active
             </span>
           )}
           <Link
@@ -222,24 +356,24 @@ export default async function VendorsPage({
         }}
       />
 
-      {/* Criticality filter pills */}
-      {allVendors.length > 0 && (
+      {/* Criticality filter pills — each count is the exact size of the
+          population its own link navigates to, so clicking a pill reproduces
+          the number printed on it. */}
+      {hasRegister && (
         <div className="mb-6 flex items-center gap-2 flex-wrap">
           <span className="text-xs font-semibold uppercase tracking-wide mr-1" style={{ color: "#64748b" }}>
             Criticality
           </span>
           <FilterPill label="All" href={vendorsHref({ crit: null })} active={!critFilter} />
-          {(["critical", "high", "medium", "low"] as const).map((level) => {
-            const count = critCounts[level];
-            const label =
-              level === "critical" ? `Critical${count > 0 ? ` (${count})` : ""}` :
-              level === "high"     ? `High${count > 0 ? ` (${count})` : ""}` :
-              level === "medium"   ? `Medium${count > 0 ? ` (${count})` : ""}` :
-                                     `Low${count > 0 ? ` (${count})` : ""}`;
+          {CRIT_LEVELS.map((level) => {
+            const count = critCounts?.[level];
+            const base = level.charAt(0).toUpperCase() + level.slice(1);
             return (
               <FilterPill
                 key={level}
-                label={label}
+                // An unknown count omits the parenthetical rather than printing
+                // "(0)" — a pill that says zero is a claim about the register.
+                label={typeof count === "number" && count > 0 ? `${base} (${count})` : base}
                 href={vendorsHref({ crit: level })}
                 active={critFilter === level}
               />
@@ -249,11 +383,19 @@ export default async function VendorsPage({
             Reviewed
           </span>
           <FilterPill
-            label={`Never reviewed${neverReviewedCount > 0 ? ` (${neverReviewedCount})` : ""}`}
+            label={`Never reviewed${neverReviewedCount !== null && neverReviewedCount > 0 ? ` (${neverReviewedCount})` : ""}`}
             href={vendorsHref({ reviewed: neverReviewedOnly ? null : "never" })}
             active={neverReviewedOnly}
           />
         </div>
+      )}
+
+      {/* A count that failed to load is disclosed, never rendered as a zero.
+          Gated on the register actually having count-bearing UI on screen: a
+          successful EMPTY response renders no counts at all, and disclosing
+          nothing would turn an honest empty state back into an outage. */}
+      {!isUnavailable(vendorsData) && hasRegister && countsUnavailable && (
+        <UnknownValueNote subject="Some vendor counts" />
       )}
 
       {/* EDX-1: a failed fetch, not a plan limit. getVendors returns null for
@@ -270,9 +412,29 @@ export default async function VendorsPage({
         />
       )}
 
-      {/* Entitled but nothing to show — an active search gets an honest "no match",
-          never "add your first vendor" over a populated org. */}
-      {vendorsData !== null && allVendors.length === 0 && search && (
+      {/* Nothing to show. Each branch says which of the three reasons applies —
+          a filter, a search, or a genuinely empty register — because "Add your
+          first vendor" over a populated org is the same class of falsehood as a
+          capped count. The branches are now mutually exclusive by construction:
+          the unfiltered, unsearched one is the only place that invitation can
+          appear, and it is reachable only when the register really is empty. */}
+      {vendorsData !== null && displayVendors.length === 0 && isFiltered && (
+        <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
+          <p className="text-sm" style={{ color: "#94a3b8" }}>
+            No {critLabel ? `${critLabel} ` : ""}
+            {neverReviewedOnly ? "never-reviewed " : ""}vendors.{" "}
+            <Link
+              href={vendorsHref({ crit: null, reviewed: null })}
+              className="font-medium hover:opacity-80"
+              style={{ color: "#00c4b4" }}
+            >
+              View all →
+            </Link>
+          </p>
+        </div>
+      )}
+
+      {vendorsData !== null && displayVendors.length === 0 && !isFiltered && search && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
           <p className="text-sm" style={{ color: "#94a3b8" }}>
             No vendors match your search.{" "}
@@ -287,8 +449,8 @@ export default async function VendorsPage({
         </div>
       )}
 
-      {/* Entitled but no vendors yet */}
-      {vendorsData !== null && allVendors.length === 0 && !search && (
+      {/* Entitled, unfiltered, unsearched, and genuinely empty. */}
+      {vendorsData !== null && displayVendors.length === 0 && !isFiltered && !search && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
           <p className="text-sm" style={{ color: "#94a3b8" }}>
             No active vendors.{" "}
@@ -300,18 +462,6 @@ export default async function VendorsPage({
               Add your first vendor
             </Link>{" "}
             to populate this view.
-          </p>
-        </div>
-      )}
-
-      {/* No results for current filter */}
-      {vendorsData !== null && allVendors.length > 0 && displayVendors.length === 0 && (
-        <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>
-            No {critLabel} vendors.{" "}
-            <Link href={vendorsHref({ crit: null })} className="font-medium hover:opacity-80" style={{ color: "#00c4b4" }}>
-              View all →
-            </Link>
           </p>
         </div>
       )}
