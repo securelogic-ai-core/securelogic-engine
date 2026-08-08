@@ -1017,6 +1017,19 @@ services:
       - key: NODE_ENV
         value: production
 
+      # Vendor Assurance claim gate — MUST track the engine block's value.
+      # runOneTick() calls vendorAssuranceEnabled() against THIS service's
+      # environment (src/api/workers/vendorExtractionWorker.ts), and that helper
+      # returns false under NODE_ENV=production whenever the var is unset. While
+      # the key was undeclared here, the engine's "true" opened the upload/enqueue
+      # route but this worker idle-skipped every claim: vendor_assurance_extract
+      # jobs could queue with nothing ever extracting them. Declaring it true
+      # closes that split — the enqueue side and the claim side are one decision.
+      # The staging worker deliberately omits the key: NODE_ENV=staging there, and
+      # vendorAssuranceEnabled() defaults ON off-production.
+      - key: SECURELOGIC_VENDOR_ASSURANCE_ENABLED
+        value: "true"
+
       # Shared with API service — same (virginia) Postgres instance.
       - key: DATABASE_URL
         sync: false
