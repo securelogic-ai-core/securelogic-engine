@@ -10,6 +10,8 @@ import {
 import { ControlsList } from "./ControlsList";
 import { ExportCsvButton } from "@/components/ExportCsvButton";
 import { ListSearchForm } from "@/components/ListSearchForm";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { isUnavailable } from "@/lib/edx/loadState";
 
 export default async function ControlsPage({
   searchParams,
@@ -31,6 +33,15 @@ export default async function ControlsPage({
     typeof sp.q === "string" && sp.q.trim().length >= 2 && sp.q.trim().length <= 120
       ? sp.q.trim()
       : undefined;
+
+  // A retry must land back on the view the customer was looking at, not reset
+  // their filter and search (EDX-1: recovery preserves context).
+  const controlsRetryParams = new URLSearchParams();
+  if (filterOverdue) controlsRetryParams.set("filter", "overdue");
+  if (search) controlsRetryParams.set("q", search);
+  const controlsRetryHref = `/controls${
+    controlsRetryParams.toString() ? `?${controlsRetryParams.toString()}` : ""
+  }`;
 
   const [controlsData, assessmentsData] = await Promise.all([
     getControls(token, { q: search }),
@@ -136,12 +147,18 @@ export default async function ControlsPage({
         hidden={filterOverdue ? { filter: "overdue" } : {}}
       />
 
-      {controlsData === null && (
-        <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>
-            Controls data is not available for your current plan.
-          </p>
-        </div>
+      {/* EDX-1: getControls returns null for ANY non-OK response or thrown
+          request. Same shape as /ai-systems — this page has no platform
+          redirect while GET /api/controls is entitlement-gated, so a 403 is
+          reachable and the denial refuses only what the data rules out (an
+          empty library), never attributing a cause we cannot see. */}
+      {isUnavailable(controlsData) && (
+        <UnavailableNotice
+          subject="Controls"
+          denial="not an empty library"
+          reassurance="Your controls are unchanged."
+          retryHref={controlsRetryHref}
+        />
       )}
 
       {/* Search-empty: honest "no match" over a populated org, with the way out. */}

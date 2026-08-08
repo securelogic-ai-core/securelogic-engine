@@ -9,6 +9,8 @@ import {
 import { ExportCsvButton } from "@/components/ExportCsvButton";
 import { FilterPill } from "@/components/FilterPill";
 import { ListSearchForm } from "@/components/ListSearchForm";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { isUnavailable } from "@/lib/edx/loadState";
 
 type Params = Record<string, string | undefined>;
 
@@ -227,13 +229,17 @@ export default async function ObligationsPage({
         </div>
       )}
 
-      {/* Not entitled */}
-      {obligationsData === null && (
-        <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>
-            Obligations data is not available for your current plan.
-          </p>
-        </div>
+      {/* EDX-1: a failed fetch, not a plan limit. The comment this replaced
+          said "Not entitled" — the belief itself was the bug. getObligations
+          returns null for ANY non-OK response or thrown request, and this page
+          already redirected non-platform callers above. */}
+      {isUnavailable(obligationsData) && (
+        <UnavailableNotice
+          subject="Obligations"
+          denial="not a limit of your plan, and not an empty register"
+          reassurance="Your obligations are unchanged."
+          retryHref={filterHref(currentSp, "", null)}
+        />
       )}
 
       {/* Empty state — filter-aware: a filtered view that comes up empty says
