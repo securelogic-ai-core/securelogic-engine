@@ -4,6 +4,8 @@ import { getSession } from "@/lib/session";
 import { getIntelligenceBrief, getFindings, getFindingContext } from "@/lib/api";
 import { intelligenceEventHref } from "@/lib/intelligenceLinks";
 import { formatDateOnlyUTC } from "@/lib/dates";
+import { windowContradictionAge } from "@/lib/edx/freshness";
+import { WindowContradictionNote } from "@/components/edx/WindowContradictionNote";
 import PromoteSignalButton from "./PromoteSignalButton";
 import { BriefItemContextCallout } from "@/components/BriefItemPlatformContext";
 import {
@@ -424,6 +426,13 @@ export default async function SignalDetailPage({ params }: Props) {
                       <dt className="text-xs text-slate-500 uppercase tracking-wide mb-0.5">Reported</dt>
                       <dd className="text-slate-300">
                         {formatDateOnlyUTC(item.signal_published_at, { year: "numeric", month: "long", day: "numeric" })}
+                        {/* EDX-8: when the source's own date predates the
+                            brief's coverage window, say so here — never leave
+                            the reader to subtract it from the masthead. */}
+                        <WindowContradictionNote
+                          age={windowContradictionAge(item.signal_published_at, brief.period_start)}
+                          className="mt-1"
+                        />
                       </dd>
                     </div>
                   )}
